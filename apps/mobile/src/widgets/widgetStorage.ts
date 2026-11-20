@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import { carryProjectIcons, reconcileOverviewSnapshot } from "./pseudocode/overviewSnapshot";
 import * as Linking from "expo-linking";
 import type { DirectWidgetUpdate } from "@t3tools/contracts";
@@ -13,7 +15,25 @@ function write<T>(operation: () => Promise<T>): Promise<T> {
   pending = result.catch(() => undefined);
   return result;
 }
-export function saveWidgetSnapshot(snapshot: AgentWidgetSnapshot) {
+export function saveWidgetSnapshot(input: AgentWidgetSnapshot) {
+  const copy = {
+    caughtUp: m(msg("All caught up. Start a task in PseudoCode.")),
+    recent: m(msg("Recent results")),
+    reviewError: m(msg("Open thread to review the error")),
+    respond: m(msg("Tap to respond and keep work moving")),
+    connectAgent: m(msg("Your tasks, at a glance. Open PseudoCode to connect.")),
+    moreActive: m(msg("+{extra} more active", { extra: "{extra}" })),
+    tapReview: m(msg("Tap to review")),
+    tapOpen: m(msg("Tap to open")),
+    needsAttention: m(msg("{attentionCount} need you", { attentionCount: "{attentionCount}" })),
+    connectOverview: m(
+      msg("Follow your work and see when your agent needs you. Open PseudoCode to connect."),
+    ),
+    delayed: m(msg("Updates delayed · Open to reconnect")),
+    moreThreads: m(msg("+{value} more threads", { value: "{value}" })),
+    workOverview: m(msg("Your work, at a glance")),
+  };
+  const snapshot = { ...input, copy };
   return write(async () => {
     const { default: widget } = await import("./AgentWidget");
     widget.updateSnapshot(snapshot);

@@ -2,16 +2,28 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Effect from "effect/Effect";
 import * as Tracer from "effect/Tracer";
+// Load the runtime's module graph once at collection, outside the per-test timeout;
+// each case re-evaluates it from that cache after vi.resetModules().
+import "./runtime";
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
+const answers = (...values: Array<boolean | null>) => {
+  let call = 0;
+  return () => values[Math.min(call++, values.length - 1)] ?? null;
+};
+
 describe("web runtime relay telemetry policy", () => {
   it.each([
     { surface: "desktop opt-out", desktopBridge: { getRelayTelemetryEnabled: () => false } },
     { surface: "desktop enabled", desktopBridge: { getRelayTelemetryEnabled: () => true } },
+    {
+      surface: "desktop login-shell reload",
+      desktopBridge: { getRelayTelemetryEnabled: answers(null, true) },
+    },
     { surface: "ordinary browser", desktopBridge: undefined },
   ])("never exports relay spans from $surface", async ({ desktopBridge }) => {
     vi.resetModules();

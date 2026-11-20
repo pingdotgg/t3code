@@ -10,7 +10,24 @@ import {
   type AgentAwarenessState,
 } from "@t3tools/shared/agentAwareness";
 
+export interface AgentWidgetCopy {
+  readonly caughtUp: string;
+  readonly recent: string;
+  readonly reviewError: string;
+  readonly respond: string;
+  readonly connectAgent: string;
+  readonly moreActive: string;
+  readonly tapReview: string;
+  readonly tapOpen: string;
+  readonly needsAttention: string;
+  readonly connectOverview: string;
+  readonly delayed: string;
+  readonly moreThreads: string;
+  readonly workOverview: string;
+}
+
 export interface AgentWidgetSnapshot {
+  readonly copy?: AgentWidgetCopy;
   readonly appScheme?: string;
   readonly activeCount: number;
   readonly attentionCount: number;

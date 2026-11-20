@@ -132,7 +132,7 @@ app includes background notification support and native application metadata.
 An over-the-air JavaScript update to an older client is insufficient.
 
 1. Pair the app with the updated environment and open Settings.
-2. Under **Apple notifications from my servers**, enable **Use my servers** and
+2. Open **Notifications**, enable **Use my servers**, and
    allow notifications and sound. Check that the environment reports registration.
 3. Enable **Live Activities**, start work, and keep the app open until a card is
    created. Lock the phone and confirm the card remains visible and updates.

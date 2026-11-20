@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { createNativeStackScreen } from "@react-navigation/native-stack";
 
 import type { AppScreenOptions } from "../../native/glass-header-options";
@@ -11,17 +13,17 @@ export function dictationSettingsScreens(options: AppScreenOptions) {
     SettingsDictationModels: createNativeStackScreen({
       screen: SettingsDictationModelsRouteScreen,
       linking: "settings/voice/model",
-      options: { ...options, title: "Dictation model" },
+      options: { ...options, title: m(msg("Dictation model")) },
     }),
     SettingsDictationVoice: createNativeStackScreen({
       screen: SettingsDictationVoiceRouteScreen,
       linking: "settings/voice/voice",
-      options: { ...options, title: "Only my voice" },
+      options: { ...options, title: m(msg("Only my voice")) },
     }),
     SettingsDictationCorrections: createNativeStackScreen({
       screen: SettingsDictationCorrectionsRouteScreen,
       linking: "settings/voice/corrections",
-      options: { ...options, title: "Corrections" },
+      options: { ...options, title: m(msg("Corrections")) },
     }),
   };
 }

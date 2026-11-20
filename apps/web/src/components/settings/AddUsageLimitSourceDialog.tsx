@@ -1,10 +1,13 @@
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
 import type {
   EnvironmentId,
   SecretReference,
   UnifiedSettings,
   UsageLimitSourceKind,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { T, useGT, Var } from "gt-react";
+import { useId, useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
@@ -33,22 +36,25 @@ const KINDS: ReadonlyArray<{
 }> = [
   {
     kind: "cliproxy",
-    label: "CLIProxyAPI hub",
-    urlLabel: "Hub URL",
+    label: m(msg("CLIProxyAPI hub")),
+    urlLabel: m(msg("Hub URL")),
     urlPlaceholder: "https://hub.example.ts.net:8318",
     needsKey: true,
-    description: "Every account the hub pools, read through its management API.",
+    description: m(msg("Every account the hub pools, read through its management API.")),
   },
   {
     kind: "aiusage",
-    label: "Usage dashboard",
-    urlLabel: "Dashboard URL",
+    label: m(msg("Usage dashboard")),
+    urlLabel: m(msg("Dashboard URL")),
     urlPlaceholder: "http://127.0.0.1:8787",
     needsKey: false,
     // It holds the credentials itself and answers on loopback, so there is
     // nothing for PseudoCode to authenticate with.
-    description:
-      "Every subscription the dashboard polls, including accounts nothing here is signed into.",
+    description: m(
+      msg(
+        "Every subscription the dashboard polls, including accounts nothing here is signed into.",
+      ),
+    ),
   },
 ];
 
@@ -66,6 +72,8 @@ export function AddUsageLimitSourceDialog({
   readonly environmentLabel: string;
   readonly sources: UnifiedSettings["usageLimitSources"];
 }) {
+  const gt = useGT();
+  const formId = useId();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [kind, setKind] = useState<UsageLimitSourceKind>("cliproxy");
   const [label, setLabel] = useState("");
@@ -114,14 +122,19 @@ export function AddUsageLimitSourceDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add a usage source</DialogTitle>
+          <DialogTitle>
+            <T>Add a usage source</T>
+          </DialogTitle>
           <DialogDescription>
-            Show quota from outside {environmentLabel}&apos;s own providers, beside them. Anything
-            secret stays on that server.
+            <T>
+              Show quota alongside the providers on <Var>{environmentLabel}</Var>. The key stays on
+              that server.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <form
+            id={formId}
             className="grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
@@ -129,7 +142,9 @@ export function AddUsageLimitSourceDialog({
             }}
           >
             <div className="grid gap-1.5">
-              <Label>Kind</Label>
+              <Label>
+                <T>Kind</T>
+              </Label>
               <ToggleGroup
                 value={[kind]}
                 onValueChange={(next) => {
@@ -157,12 +172,15 @@ export function AddUsageLimitSourceDialog({
             </div>
             {spec.needsKey ? (
               <div className="grid gap-1.5">
-                <Label htmlFor="usage-source-key">Management key</Label>
+                <Label htmlFor="usage-source-key">
+                  <T>Management key</T>
+                </Label>
                 <SecretSourceInput
                   id="usage-source-key"
-                  aria-label="Management key"
+                  aria-label={gt("Management key")}
                   value={keyDraft}
                   sources={secretSources}
+                  environmentId={environmentId}
                   onChange={(event) => setKeyDraft(event.target.value)}
                   onSecretChange={(secret) => setKeyDraft(secret ?? "")}
                   onValidityChange={setKeyValid}
@@ -170,10 +188,12 @@ export function AddUsageLimitSourceDialog({
               </div>
             ) : null}
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-label">Label (optional)</Label>
+              <Label htmlFor="usage-source-label">
+                <T>Label (optional)</T>
+              </Label>
               <Input
                 id="usage-source-label"
-                placeholder="Defaults to the host name"
+                placeholder={gt("Defaults to the host name")}
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
               />
@@ -188,10 +208,10 @@ export function AddUsageLimitSourceDialog({
               onOpenChange(false);
             }}
           >
-            Cancel
+            <T>Cancel</T>
           </Button>
-          <Button onClick={save} disabled={!canSave}>
-            Add source
+          <Button type="submit" form={formId} disabled={!canSave}>
+            <T>Add source</T>
           </Button>
         </DialogFooter>
       </DialogPopup>

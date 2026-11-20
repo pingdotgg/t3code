@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { Alert, Pressable, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import {
@@ -20,6 +21,7 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
  * pill and send button; tapping opens the full breakdown, mobile's stand-in for web's popover.
  */
 export function ContextWindowMeter(props: { readonly usage: ContextWindowSnapshot }) {
+  const gt = useGT();
   const { usage } = props;
   const theme = useUniwindTheme();
   const percentageLabel = formatContextWindowPercentage(usage.usedPercentage);
@@ -43,15 +45,19 @@ export function ContextWindowMeter(props: { readonly usage: ContextWindowSnapsho
         "API-equivalent cost for this thread. Subscription plans bill separately.",
       );
     }
-    Alert.alert("Context window", lines.join("\n\n"));
+    Alert.alert(gt("Context window"), lines.join("\n\n"));
   };
 
   return (
     <Pressable
       accessibilityLabel={
         costLabel
-          ? `Context window ${usedLabel} used, ${costLabel} ${costNoun}`
-          : `Context window ${usedLabel} used`
+          ? gt("Context window {usedLabel} used, {costLabel} {costNoun}", {
+              usedLabel,
+              costLabel,
+              costNoun,
+            })
+          : gt("Context window {usedLabel} used", { usedLabel })
       }
       accessibilityRole="button"
       className="h-11 flex-row items-center gap-1.5 rounded-xl px-1.5 active:bg-subtle"

@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { useAuth } from "@clerk/expo";
 import {
   AuthView,
@@ -14,7 +16,7 @@ import { T3ConnectProfilePage } from "../cloud/T3ConnectProfilePage";
 const USER_PROFILE_CUSTOM_PAGES = [
   {
     path: "t3-connect",
-    label: "Cloud Connect",
+    label: m(msg("Cloud Connect")),
     icon: "globe",
     content: <T3ConnectProfilePage />,
   },

@@ -20,6 +20,7 @@ const legacyReaders = [
  * list short; new V1 reads belong in the importer.
  */
 const legacyReaderFiles: Record<string, string> = {
+  "persistence/DatabaseMaintenance.ts": "counts records still present only in the retired database",
   "serverSettings.ts": "one-time provider history for settings migration",
 };
 const retiredPaths = [

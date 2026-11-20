@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { orchestrationEnvironment } from "~/state/orchestration";
@@ -12,6 +13,7 @@ export function WorkflowScriptView({
   threadId: ThreadId;
   scriptPath: string;
 }) {
+  const gt = useGT();
   const query = useEnvironmentQuery(
     orchestrationEnvironment.workflowScript({
       environmentId,
@@ -27,7 +29,7 @@ export function WorkflowScriptView({
         </pre>
       ) : (
         <p className="text-xs text-muted-foreground">
-          {query.error ? "Could not load the script." : "Loading script…"}
+          {query.error ? gt("Could not load the script.") : gt("Loading script…")}
         </p>
       )}
     </div>

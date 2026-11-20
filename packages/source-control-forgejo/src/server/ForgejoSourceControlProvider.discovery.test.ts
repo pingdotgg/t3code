@@ -1,6 +1,8 @@
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -145,12 +147,19 @@ const pull = (number: number, head: string, owner = "owner") => ({
   head: { ref: head, repo: { full_name: `${owner}/repo`, owner: { login: owner } } },
 });
 
-/** Serves `/pulls` in pages of 50, narrowing by `head` only when the server version would. */
 function makeForgejo(input: {
   readonly pulls: ReadonlyArray<ReturnType<typeof pull>>;
   readonly honoursHeadFilter: boolean;
 }) {
   const requests: Array<URLSearchParams> = [];
+  const pullDetails: number[] = [];
+  const latestUpdate = DateTime.makeUnsafe("2026-10-12T00:00:00Z");
+  const pulls = input.pulls.map((pull, index) => ({
+    ...pull,
+    updated_at: DateTime.formatIso(
+      DateTime.subtractDuration(latestUpdate, Duration.seconds(index)),
+    ),
+  }));
   const provider = make.pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -163,16 +172,25 @@ function makeForgejo(input: {
               baseUrl: "https://git.example.org",
             }),
           api: (request) => {
-            const query = new URL(request.path, "https://git.example.org/api/v1/").searchParams;
-            requests.push(query);
-            const head = query.get("head");
-            const page = Number(query.get("page"));
-            const rows = input.pulls
-              .filter((row) => !input.honoursHeadFilter || head === null || row.head.ref === head)
-              .slice((page - 1) * 50, page * 50);
+            const url = new URL(request.path, "https://git.example.org/api/v1/");
+            const detail = /\/pulls\/(\d+)$/.exec(url.pathname)?.[1];
+            let payload;
+            if (detail !== undefined) {
+              const number = Number(detail);
+              pullDetails.push(number);
+              payload = pulls.find((pull) => pull.number === number);
+            } else {
+              const query = url.searchParams;
+              requests.push(query);
+              const head = query.get("head");
+              const page = Number(query.get("page"));
+              payload = pulls
+                .filter((row) => !input.honoursHeadFilter || head === null || row.head.ref === head)
+                .slice((page - 1) * 50, page * 50);
+            }
             return Effect.succeed({
               exitCode: ChildProcessSpawner.ExitCode(0),
-              stdout: JSON.stringify(rows),
+              stdout: JSON.stringify(payload),
               stderr: "HTTP/1.1 200\n",
               stdoutTruncated: false,
               stderrTruncated: false,
@@ -184,7 +202,7 @@ function makeForgejo(input: {
       ),
     ),
   );
-  return { provider, requests };
+  return { provider, requests, pullDetails };
 }
 
 const otherBranches = (count: number) =>
@@ -257,45 +275,49 @@ describe("Forgejo branch pull request lookup", () => {
     }),
   );
 
-  it.effect("caps the scan on servers that ignore the head filter", () =>
+  it.effect("only refreshes the front of the list when the server ignores the head filter", () =>
     Effect.gen(function* () {
       const forgejo = makeForgejo({ pulls: otherBranches(1_000), honoursHeadFilter: false });
       const provider = yield* forgejo.provider;
 
-      const found = yield* provider.listChangeRequests({
+      const input = {
         cwd: "/repo",
         headSelector: "feature/no-pr",
-        state: "open",
+        state: "all" as const,
         limit: 1,
-      });
+      };
 
-      assert.deepStrictEqual(found, []);
+      assert.deepStrictEqual(yield* provider.listChangeRequests(input), []);
+      assert.strictEqual(forgejo.requests.length, 21);
+      assert.deepStrictEqual(yield* provider.listChangeRequests(input), []);
       assert.deepStrictEqual(
-        forgejo.requests.map((query) => query.get("page")),
-        ["1", "2", "3", "4", "5"],
+        forgejo.requests.slice(21).map((query) => query.get("page")),
+        ["1"],
       );
     }),
   );
 
-  it.effect("still finds a recent pull request on servers that ignore the head filter", () =>
-    Effect.gen(function* () {
-      const pulls = otherBranches(1_000);
-      pulls.splice(70, 0, pull(7, "feature/x"));
-      const forgejo = makeForgejo({ pulls, honoursHeadFilter: false });
-      const provider = yield* forgejo.provider;
+  it.effect(
+    "finds and verifies an older pull request when the server ignores the head filter",
+    () =>
+      Effect.gen(function* () {
+        const pulls = otherBranches(1_000);
+        pulls.splice(270, 0, pull(7, "feature/x"));
+        const forgejo = makeForgejo({ pulls, honoursHeadFilter: false });
+        const provider = yield* forgejo.provider;
 
-      const found = yield* provider.listChangeRequests({
-        cwd: "/repo",
-        headSelector: "feature/x",
-        state: "open",
-        limit: 1,
-      });
+        const found = yield* provider.listChangeRequests({
+          cwd: "/repo",
+          headSelector: "feature/x",
+          state: "open",
+          limit: 1,
+        });
 
-      assert.deepStrictEqual(
-        found.map((changeRequest) => changeRequest.number),
-        [7],
-      );
-      assert.strictEqual(forgejo.requests.length, 2);
-    }),
+        assert.deepStrictEqual(
+          found.map((changeRequest) => changeRequest.number),
+          [7],
+        );
+        assert.deepStrictEqual(forgejo.pullDetails, [7]);
+      }),
   );
 });

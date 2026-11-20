@@ -2,7 +2,7 @@ import { useEffect } from "react";
 
 import { resolveCopyOnSelectText } from "~/lib/copyOnSelect";
 
-import { writeTextToClipboard } from "./useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "./useCopyToClipboard";
 
 export function useCopyOnSelect(input: {
   enabled: boolean;
@@ -48,7 +48,7 @@ export function useCopyOnSelect(input: {
         // Copy-on-select is silent by design, so a denied clipboard permission
         // has nowhere to report to and must not surface as an unhandled
         // rejection on a gesture the user makes constantly.
-        void writeTextToClipboard(text, target).catch(() => {});
+        void writeTextToClipboard(text, namedClipboardTarget(target)).catch(() => {});
       });
     };
 

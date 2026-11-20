@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react-native";
 import { useNavigation } from "@react-navigation/native";
 import { View } from "react-native";
 
@@ -17,6 +18,7 @@ export function DictationSettingsSection() {
 }
 
 function DictationSettings() {
+  const gt = useGT();
   const navigation = useNavigation();
   const { settings, learning, lastRun } = useDictationState();
   const appleMissing = useAppleDictationAvailable() === false;
@@ -28,13 +30,13 @@ function DictationSettings() {
   const suggestions = learning.candidates.filter((candidate) => candidate.suggested).length;
   return (
     <>
-      <SettingsSection title="Dictation">
+      <SettingsSection title={gt("Dictation")}>
         <ListRow
           icon="brain"
-          label="Model"
+          label={gt("Model")}
           detail={
             settings.modelId === "apple" && appleMissing
-              ? "None"
+              ? gt("None")
               : dictationModelName(settings.modelId)
           }
           onPress={() => navigation.navigate("SettingsDictationModels")}
@@ -42,7 +44,7 @@ function DictationSettings() {
         <View className="border-t border-border-subtle">
           <ListRow
             icon="person.fill.checkmark"
-            label="Only my voice"
+            label={gt("Only my voice")}
             detail={voiceDetail}
             onPress={() => navigation.navigate("SettingsDictationVoice")}
           />
@@ -50,21 +52,29 @@ function DictationSettings() {
         <View className="border-t border-border-subtle">
           <ListRow
             icon="checkmark.circle"
-            label="Corrections"
-            detail={suggestions > 0 ? `${suggestions} to review` : `${learning.rules.length}`}
+            label={gt("Corrections")}
+            detail={
+              suggestions > 0
+                ? gt("{suggestions} to review", { suggestions })
+                : `${learning.rules.length}`
+            }
             onPress={() => navigation.navigate("SettingsDictationCorrections")}
           />
         </View>
         <View className="border-t border-border-subtle">
           <ListToggleRow
             icon="text.word.spacing"
-            label="Remove ums and uhs"
+            label={gt("Remove ums and uhs")}
             value={settings.removeFillers}
             onValueChange={(removeFillers) => updateDictationSettings({ removeFillers })}
           />
         </View>
       </SettingsSection>
-      {lastRun === null ? null : <Footnote>Last dictation: {describeRun(lastRun)}</Footnote>}
+      {lastRun === null ? null : (
+        <Footnote>
+          <T>Last dictation:</T> {describeRun(lastRun)}
+        </Footnote>
+      )}
     </>
   );
 }

@@ -306,6 +306,9 @@ const config: ExpoConfig = {
         }),
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
+      ...(isIosPersonalTeamBuild
+        ? {}
+        : { "aps-environment": APP_VARIANT === "development" ? "development" : "production" }),
     },
     infoPlist: {
       UISupportedInterfaceOrientations: [
@@ -318,6 +321,8 @@ const config: ExpoConfig = {
       },
       NSLocalNetworkUsageDescription:
         "Allow PseudoCode to connect to PseudoCode servers on your local network or tailnet.",
+      // Built with the iOS 27 SDK, only view controllers can hide or style the status bar.
+      UIViewControllerBasedStatusBarAppearance: true,
       NSPhotoLibraryAddUsageDescription: "Allow PseudoCode to save images to your photo library.",
       // System picture in picture needs background audio to start and survive outside the app.
       UIBackgroundModes: ["audio"],
@@ -404,8 +409,8 @@ const config: ExpoConfig = {
       {
         icon: variant.assets.androidNotificationIcon,
         color: variant.assets.androidNotificationColor,
-        mode: APP_VARIANT === "development" ? "development" : "production",
         // Direct push sends silent widget refreshes; a Personal Team cannot sign push at all.
+        enableRemoteNotifications: !isIosPersonalTeamBuild,
         enableBackgroundRemoteNotifications: !isIosPersonalTeamBuild,
       },
     ],
@@ -450,7 +455,7 @@ const config: ExpoConfig = {
       {
         photosPermission: false,
         // `false` makes this plugin add RECORD_AUDIO to blockedPermissions, breaking Android dictation.
-        microphonePermission: "Allow T3 Code to use your microphone for voice input.",
+        microphonePermission: "Allow PseudoCode to use your microphone for voice input.",
       },
     ],
     [

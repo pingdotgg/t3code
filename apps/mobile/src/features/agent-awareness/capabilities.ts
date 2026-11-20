@@ -3,7 +3,9 @@ import { Platform } from "react-native";
 import { supportsAndroidAgentNotifications } from "./androidNotifications";
 
 export function supportsAgentAwarenessPush() {
-  return Platform.OS === "android"
-    ? supportsAndroidAgentNotifications()
-    : Platform.OS === "ios" && Constants.expoConfig?.extra?.iosPersonalTeamBuild !== true;
+  return Platform.OS === "android" ? supportsAndroidAgentNotifications() : supportsDirectPush();
+}
+
+export function supportsDirectPush() {
+  return Platform.OS === "ios" && Constants.expoConfig?.extra?.iosPersonalTeamBuild !== true;
 }

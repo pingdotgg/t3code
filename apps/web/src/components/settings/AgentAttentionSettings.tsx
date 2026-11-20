@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react";
 import { useEffect, useState } from "react";
 
 import {
@@ -11,9 +12,11 @@ import { useClientSettings, updateClientSettings } from "../../hooks/useSettings
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 export function AgentAttentionSettings() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const sound = useClientSettings((settings) => settings.agentAttentionSound);
   const notifications = useClientSettings((settings) => settings.agentAttentionNotifications);
   const update = updateClientSettings;
@@ -32,7 +35,7 @@ export function AgentAttentionSettings() {
     setFeedback(null);
     try {
       const shown = showAgentAttentionNotification({
-        title: `${APP_DISPLAY_NAME}: Notification test`,
+        title: gt("{APP_DISPLAY_NAME}: Notification test", { APP_DISPLAY_NAME }),
         body: "You will receive alerts when an agent needs input or approval.",
         tag: "agent-attention:test",
         onClick: () => {},
@@ -84,14 +87,16 @@ export function AgentAttentionSettings() {
   };
 
   return (
-    <SettingsSection id="agent-attention" title="Agent attention">
+    <SettingsSection id="agent-attention" title={gt("Agent attention")}>
       <SettingsRow
         {...searchableSetting("agent-attention-sound")}
-        description="Play a short chime when an agent needs input or approval. Applies to all connected environments on this device while the app is running."
+        description={gt(
+          "Play a short chime when an agent needs input or approval. Applies to all connected environments on this device while the app is running.",
+        )}
         control={
           <div className="flex items-center gap-3">
             <Button variant="outline" size="sm" onClick={previewSound}>
-              Test sound
+              <T>Test sound</T>
             </Button>
             <Switch
               checked={sound}
@@ -99,7 +104,7 @@ export function AgentAttentionSettings() {
                 update({ agentAttentionSound: checked });
                 if (checked) previewSound();
               }}
-              aria-label="Agent attention sound"
+              aria-label={gt("Agent attention sound")}
             />
           </div>
         }
@@ -108,10 +113,16 @@ export function AgentAttentionSettings() {
         {...searchableSetting("agent-attention-notifications")}
         description={
           permission === "unsupported"
-            ? "System alerts require a supported browser on HTTPS or localhost, or the desktop app."
+            ? gt(
+                "System alerts require a supported browser on HTTPS or localhost, or the desktop app.",
+              )
             : permission === "denied"
-              ? "Notifications are blocked. Allow them in your browser or system notification settings."
-              : "Show a system alert for new input and approval requests while this app or browser tab is running. Click an alert to open its thread."
+              ? gt(
+                  "Notifications are blocked. Allow them in your browser or system notification settings.",
+                )
+              : gt(
+                  "Show a system alert for new input and approval requests while this app or browser tab is running. Click an alert to open its thread.",
+                )
         }
         control={
           <div className="flex items-center gap-3">
@@ -121,7 +132,7 @@ export function AgentAttentionSettings() {
               disabled={permission !== "granted"}
               onClick={previewNotification}
             >
-              Test notification
+              <T>Test notification</T>
             </Button>
             <Switch
               checked={notifications && permission === "granted"}
@@ -130,7 +141,7 @@ export function AgentAttentionSettings() {
                 if (checked) void enableNotifications();
                 else update({ agentAttentionNotifications: false });
               }}
-              aria-label="Agent attention notifications"
+              aria-label={gt("Agent attention notifications")}
             />
           </div>
         }

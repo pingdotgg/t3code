@@ -13,7 +13,7 @@ export class ForgejoTransportError extends Schema.TaggedError<ForgejoTransportEr
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
-import { ForgejoCli, type ForgejoCliError, layer as forgejoCliLayer } from "./ForgejoCli.ts";
+import { ForgejoCli, type ForgejoCliError } from "./ForgejoCli.ts";
 
 /** Shared transport for the fork's issue and review operations, using upstream's fj/tea login selection. */
 export class ForgejoTransport extends Context.Service<
@@ -97,6 +97,3 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ForgejoTransport, make);
-
-// Source control drivers now build their CLI privately, so callers outside a driver bring their own.
-export const layerWithCli = layer.pipe(Layer.provide(forgejoCliLayer));

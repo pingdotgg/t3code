@@ -13,19 +13,21 @@ import {
 
 const issue = (overrides: Partial<Parameters<typeof sortIssues>[0][number]> = {}) =>
   ({
-    provider: "forgejo",
+    tracker: "forgejo",
     host: "git.example.org",
     projectId: "00000000-0000-4000-8000-000000000000",
     projectTitle: "web",
-    repository: "acme/web",
-    number: 1,
+    scope: "acme/web",
+    displayKey: "#1",
+    key: "1",
     title: "Cache is never invalidated",
     url: "https://git.example.org/acme/web/issues/1",
     author: { login: "bilal", name: null, avatarUrl: null },
-    state: "open",
+    state: { category: "open", name: "open" },
     createdAt: "2026-06-16T05:00:00Z",
     updatedAt: "2026-06-16T05:00:00Z",
     commentCount: 0,
+    closedAt: null,
     labels: [],
     assignees: [],
     ...overrides,
@@ -34,30 +36,30 @@ const issue = (overrides: Partial<Parameters<typeof sortIssues>[0][number]> = {}
 describe("sortIssues", () => {
   it("puts the most recently changed first", () => {
     const rows = sortIssues([
-      issue({ number: 1, updatedAt: "2026-06-16T05:00:00Z" }),
-      issue({ number: 2, updatedAt: "2026-06-17T05:00:00Z" }),
-      issue({ number: 3, updatedAt: "2026-06-15T05:00:00Z" }),
+      issue({ key: "1", updatedAt: "2026-06-16T05:00:00Z" }),
+      issue({ key: "2", updatedAt: "2026-06-17T05:00:00Z" }),
+      issue({ key: "3", updatedAt: "2026-06-15T05:00:00Z" }),
     ]);
-    expect(rows.map((row) => row.number)).toEqual([2, 1, 3]);
+    expect(rows.map((row) => Number(row.key))).toEqual([2, 1, 3]);
   });
 });
 
 describe("sortIssues orders", () => {
   const rows = [
     issue({
-      number: 1,
+      key: "1",
       createdAt: "2026-06-10T00:00:00Z",
       updatedAt: "2026-06-16T00:00:00Z",
       commentCount: 1,
     }),
     issue({
-      number: 2,
+      key: "2",
       createdAt: "2026-06-01T00:00:00Z",
       updatedAt: "2026-06-17T00:00:00Z",
       commentCount: 0,
     }),
     issue({
-      number: 3,
+      key: "3",
       createdAt: "2026-06-20T00:00:00Z",
       updatedAt: "2026-06-15T00:00:00Z",
       commentCount: 9,
@@ -65,24 +67,24 @@ describe("sortIssues orders", () => {
   ];
 
   it("puts the longest-standing first when asked for oldest", () => {
-    expect(sortIssues(rows, "oldest").map((row) => row.number)).toEqual([2, 1, 3]);
+    expect(sortIssues(rows, "oldest").map((row) => Number(row.key))).toEqual([2, 1, 3]);
   });
 
   it("puts the most discussed first, breaking ties by recency", () => {
-    expect(sortIssues(rows, "comments").map((row) => row.number)).toEqual([3, 1, 2]);
+    expect(sortIssues(rows, "comments").map((row) => Number(row.key))).toEqual([3, 1, 2]);
   });
 });
 
 describe("narrowIssues", () => {
   const rows = [
-    issue({ number: 1, title: "Cache is never invalidated" }),
-    issue({ number: 42, title: "Sign in loops", labels: [{ name: "bug", color: null }] }),
+    issue({ key: "1", title: "Cache is never invalidated" }),
+    issue({ key: "42", title: "Sign in loops", labels: [{ name: "bug", color: null }] }),
   ];
 
   it("matches a title, a label, or the number itself", () => {
-    expect(narrowIssues(rows, "cache").map((row) => row.number)).toEqual([1]);
-    expect(narrowIssues(rows, "bug").map((row) => row.number)).toEqual([42]);
-    expect(narrowIssues(rows, "#42").map((row) => row.number)).toEqual([42]);
+    expect(narrowIssues(rows, "cache").map((row) => Number(row.key))).toEqual([1]);
+    expect(narrowIssues(rows, "bug").map((row) => Number(row.key))).toEqual([42]);
+    expect(narrowIssues(rows, "#42").map((row) => Number(row.key))).toEqual([42]);
   });
 
   it("returns everything for an empty search", () => {
@@ -111,11 +113,11 @@ describe("labelColor", () => {
 
 describe("issueContextForComposer", () => {
   const issue = {
-    number: 12,
+    displayKey: "#12",
     title: "Cache is never invalidated",
     url: "https://git.example.org/acme/web/issues/12",
-    state: "open",
-    repository: "acme/web",
+    state: { category: "open", name: "open" },
+    scope: "acme/web",
     body: "It never clears.",
     comments: [{ author: { login: "octocat" }, body: "Confirmed" }],
   };
@@ -147,19 +149,19 @@ describe("appendIssueContext", () => {
 
 describe("issueBranchName", () => {
   it("leads with the number so branches sort and grep by issue", () => {
-    expect(issueBranchName({ number: 12, title: "Cache is never invalidated" })).toBe(
+    expect(issueBranchName({ key: "12", title: "Cache is never invalidated" })).toBe(
       "issue-12-cache-is-never-invalidated",
     );
   });
 
   it("falls back to the number alone when the title survives sanitising as nothing", () => {
-    expect(issueBranchName({ number: 7, title: "!!!" })).toBe("issue-7");
+    expect(issueBranchName({ key: "7", title: "!!!" })).toBe("issue-7");
   });
 });
 
 describe("issueNumberFromBranch", () => {
   it("reads the issue back out of a branch Start work named", () => {
-    expect(issueNumberFromBranch(issueBranchName({ number: 12, title: "Cache bug" }))).toBe(12);
+    expect(issueNumberFromBranch(issueBranchName({ key: "12", title: "Cache bug" }))).toBe(12);
     expect(issueNumberFromBranch("issue-7")).toBe(7);
   });
 

@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 export const LOCAL_DICTATION_MODEL_IDS = [
   "parakeet-110m",
   "parakeet-v3",
@@ -27,7 +29,7 @@ export const LOCAL_DICTATION_MODELS: ReadonlyArray<LocalDictationModel> = [
   {
     id: "parakeet-110m",
     name: "Fast",
-    summary: "Parakeet 110M. English only.",
+    summary: m(msg("Parakeet 110M. English only.")),
     downloadBytes: 243_000_000,
     minimumMemoryBytes: 3_500_000_000,
     englishOnly: true,
@@ -35,7 +37,7 @@ export const LOCAL_DICTATION_MODELS: ReadonlyArray<LocalDictationModel> = [
   {
     id: "parakeet-v3",
     name: "Balanced",
-    summary: "Parakeet v3. 25 European languages.",
+    summary: m(msg("Parakeet v3. 25 European languages.")),
     downloadBytes: 491_000_000,
     minimumMemoryBytes: 3_500_000_000,
     englishOnly: false,
@@ -43,7 +45,7 @@ export const LOCAL_DICTATION_MODELS: ReadonlyArray<LocalDictationModel> = [
   {
     id: "parakeet-ultra",
     name: "Most accurate",
-    summary: "Parakeet Ultra. 25 European languages.",
+    summary: m(msg("Parakeet Ultra. 25 European languages.")),
     downloadBytes: 637_000_000,
     minimumMemoryBytes: 5_500_000_000,
     englishOnly: false,
@@ -63,7 +65,7 @@ export function localDictationModel(id: LocalDictationModelId): LocalDictationMo
 }
 
 export function dictationModelName(id: DictationModelId): string {
-  return id === "apple" ? "Apple" : localDictationModel(id).name;
+  return id === "apple" ? m(msg("Apple")) : localDictationModel(id).name;
 }
 
 export function deviceCanRun(model: LocalDictationModel, physicalMemoryBytes: number): boolean {

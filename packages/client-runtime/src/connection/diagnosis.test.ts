@@ -1,3 +1,4 @@
+import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
 import {
   RelayEnvironmentEndpointUnavailableError,
   type RelayProtectedError,
@@ -144,6 +145,36 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnose(backoff(failure), "direct")?.moreInfoUrl).toContain(
       "sign-in-account-or-link-problems",
     );
+  });
+
+  it("asks for approval on the host instead of reporting it unreachable", () => {
+    const diagnosis = diagnose(
+      backoff(
+        new ConnectionTransientError({
+          reason: "approval-pending",
+          detail: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+          verificationCode: "K7QM-2XFD",
+          hop: "server",
+          via: "relay",
+          failureCause: "approval_pending",
+        }),
+      ),
+    );
+    expect(diagnosis?.headline).toBe("Mac mini is waiting for someone to approve this device");
+    expect(diagnosis?.steps.join(" ")).toContain("t3 auth connect-device approve K7QM-2XFD");
+  });
+
+  it("tells a host that refused this device's login to sign in again, not to start T3 Code", () => {
+    const failure = mapRemoteEnvironmentError(
+      new EnvironmentAuthInvalidError({
+        code: "auth_invalid",
+        reason: "invalid_credential",
+        traceId: "trace-1",
+      }),
+    );
+    const steps = diagnose(backoff(failure), "direct")?.steps.join(" ");
+    expect(steps).not.toContain("Make sure T3 Code is running");
+    expect(steps).toMatch(/pair|sign in/i);
   });
 
   it("does not report hops as working when the failure names none", () => {

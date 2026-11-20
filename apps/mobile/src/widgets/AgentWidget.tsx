@@ -15,6 +15,16 @@ import type { AgentWidgetSnapshot } from "./agentWidgetSnapshot";
 /** Serialized for WidgetKit, including gallery defaults and layout helpers. */
 export function AgentWidget(props: Partial<AgentWidgetSnapshot>, environment: WidgetEnvironment) {
   "widget";
+  const copy = {
+    caughtUp: "All caught up. Start a task in PseudoCode.",
+    reviewError: "Open thread to review the error",
+    respond: "Tap to respond and keep work moving",
+    connectAgent: "Your tasks, at a glance. Open PseudoCode to connect.",
+    moreActive: "+{extra} more active",
+    tapReview: "Tap to review",
+    tapOpen: "Tap to open",
+    ...props.copy,
+  };
   const activities = props.activities ?? [];
   const first = activities[0];
   const accessory = environment.widgetFamily === "accessoryRectangular";
@@ -167,9 +177,9 @@ export function AgentWidget(props: Partial<AgentWidgetSnapshot>, environment: Wi
             {!accessory && !small && rows.length === 1 ? (
               <Text modifiers={[font({ size: 12 }), foregroundStyle("secondary"), lineLimit(2)]}>
                 {row.phase === "failed"
-                  ? row.detail || "Open thread to review the error"
+                  ? row.detail || copy.reviewError
                   : row.phase.startsWith("waiting")
-                    ? "Tap to respond and keep work moving"
+                    ? copy.respond
                     : row.modelTitle}
               </Text>
             ) : null}
@@ -178,9 +188,7 @@ export function AgentWidget(props: Partial<AgentWidgetSnapshot>, environment: Wi
       ))}
       {activities.length === 0 ? (
         <Text modifiers={[font({ size: 12 }), foregroundStyle("secondary"), lineLimit(3)]}>
-          {props.activities === undefined
-            ? "Your tasks, at a glance. Open PseudoCode to connect."
-            : "All caught up. Start a task in PseudoCode."}
+          {props.activities === undefined ? copy.connectAgent : copy.caughtUp}
         </Text>
       ) : null}
       {!accessory ? <Spacer minLength={0} /> : null}
@@ -190,10 +198,10 @@ export function AgentWidget(props: Partial<AgentWidgetSnapshot>, environment: Wi
             {small
               ? heading
               : extra > 0
-                ? `+${extra} more active`
+                ? copy.moreActive.replace("{extra}", String(extra))
                 : first?.phase === "failed" && rows.length > 1
-                  ? "Tap to review"
-                  : "Tap to open"}
+                  ? copy.tapReview
+                  : copy.tapOpen}
           </Text>
           <Spacer minLength={0} />
           {props.updatedAt && !small ? (

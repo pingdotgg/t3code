@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, type DirectPushStatus } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 
 const mocks = vi.hoisted(() => ({
   requests: [] as Array<{
@@ -33,32 +34,28 @@ const mocks = vi.hoisted(() => ({
   releaseType: 3,
   readReleaseType: vi.fn(),
 }));
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
   createRuntimeCommand: () => ({
-    run: async (_registry: unknown, input: (typeof mocks.requests)[number]) => {
-      mocks.requests.push(input);
-      return {
-        _tag: "Success",
-        value:
-          input.request.action === "unregister"
-            ? null
-            : ({
-                configured: true,
-                bundleId: "test.app",
-                registered: input.request.action === "register",
-                activity: {
-                  title: "Agent activity",
-                  subtitle: "Working",
-                  activeCount: mocks.activeCount,
-                  updatedAt: "2026-09-06T12:00:00Z",
-                  activities: [],
-                },
-              } satisfies DirectPushStatus),
-      };
-    },
+    run: (_registry: unknown, input: (typeof mocks.requests)[number]) =>
+      Effect.sync(() => {
+        mocks.requests.push(input);
+        return input.request.action === "unregister"
+          ? null
+          : ({
+              configured: true,
+              bundleId: "test.app",
+              registered: input.request.action === "register",
+              activity: {
+                title: "Agent activity",
+                subtitle: "Working",
+                activeCount: mocks.activeCount,
+                updatedAt: "2026-09-06T12:00:00Z",
+                activities: [],
+              },
+            } satisfies DirectPushStatus);
+      }),
   }),
-  runInEnvironment: vi.fn(),
-  squashAtomCommandFailure: (error: unknown) => error,
 }));
 vi.mock("@t3tools/client-runtime/rpc", () => ({ requestDirectPush: vi.fn() }));
 vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: {} }));

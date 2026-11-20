@@ -1,3 +1,5 @@
+import { msg, T, useGT } from "gt-react";
+import { m } from "../../i18n/messages";
 import type { ProviderDriverKind } from "@t3tools/contracts";
 import { memo } from "react";
 import { UsersIcon } from "lucide-react";
@@ -29,9 +31,13 @@ function subagentModelTriggerLabel(input: {
   instanceModels: ReadonlyArray<ModelEsque>;
   driverKind: ProviderDriverKind;
 }): string {
-  if (input.value === null) return "Subagents: inherit";
+  if (input.value === null) return m(msg("Subagents: inherit"));
   const match = input.instanceModels.find((option) => option.slug === input.value);
-  return `Subagents: ${match ? getTriggerDisplayModelName(match, input.driverKind) : input.value}`;
+  return m(
+    msg("Subagents: {value}", {
+      value: match ? getTriggerDisplayModelName(match, input.driverKind) : input.value,
+    }),
+  );
 }
 
 /**
@@ -44,7 +50,7 @@ export const SubagentModelMenuContent = memo(function SubagentModelMenuContent(
   return (
     <MenuGroup>
       <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
-        Subagent model
+        <T>Subagent model</T>
       </div>
       <MenuRadioGroup
         value={props.value ?? SUBAGENT_MODEL_INHERIT}
@@ -55,9 +61,11 @@ export const SubagentModelMenuContent = memo(function SubagentModelMenuContent(
       >
         <MenuRadioItem value={SUBAGENT_MODEL_INHERIT} hideIndicator closeOnClick>
           <span className="flex w-full min-w-0 flex-col">
-            <span className="min-w-0 truncate">Inherit</span>
+            <span className="min-w-0 truncate">
+              <T>Inherit</T>
+            </span>
             <span className="max-w-56 text-pretty text-muted-foreground/80 text-xs">
-              Same as the thread: {props.threadModelLabel}
+              <T>Same as the thread:</T> {props.threadModelLabel}
             </span>
           </span>
         </MenuRadioItem>
@@ -93,6 +101,7 @@ export const SubagentModelPicker = memo(function SubagentModelPicker(
     triggerClassName?: string;
   },
 ) {
+  const gt = useGT();
   const size = props.size ?? "sm";
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(props.hidden);
   const label = subagentModelTriggerLabel({
@@ -107,7 +116,7 @@ export const SubagentModelPicker = memo(function SubagentModelPicker(
         render={
           <ComposerControl
             size={size}
-            aria-label="Subagent model"
+            aria-label={gt("Subagent model")}
             data-chat-subagent-model-picker="true"
             className={cn(
               "min-w-0 shrink justify-start overflow-hidden whitespace-nowrap",

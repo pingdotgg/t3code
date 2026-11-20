@@ -51,3 +51,5 @@ node_modules/
 .claude/settings.local.json
 # pnpm content-addressable store; never belongs in the repo.
 .pnpm-store/
+
+/packages/ssh/.ssh-launcher-test-*/

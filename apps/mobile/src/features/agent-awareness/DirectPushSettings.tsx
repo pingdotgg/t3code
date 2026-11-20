@@ -1,55 +1,69 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useGT } from "gt-react-native";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
-import { Alert, Platform, View } from "react-native";
-import * as Notifications from "expo-notifications";
+import { Alert, Linking, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { runtime } from "../../lib/runtime";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
 import { directPushDeliveryAtom, directPushStatusAtom } from "./DirectPushCoordinator";
 import { describeDirectPushDelivery } from "./directRegistration";
-import { supportsAgentAwarenessPush } from "./capabilities";
+import { supportsDirectPush } from "./capabilities";
+import { requestAgentNotificationPermission } from "./notificationPermissions";
 
 export function DirectPushSettings() {
+  const gt = useGT();
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const save = useAtomSet(updateMobilePreferencesAtom);
+  const save = useAtomCommand(saveMobilePreferences);
   const statuses = useAtomValue(directPushStatusAtom);
   const deliveries = useAtomValue(directPushDeliveryAtom);
   const { environments } = useEnvironments();
   const [busy, setBusy] = useState(false);
-  if (Platform.OS !== "ios" || !supportsAgentAwarenessPush()) return null;
+  if (!supportsDirectPush()) return null;
   const loaded = AsyncResult.isSuccess(preferences);
   const enabled = loaded && preferences.value.directPushEnabled === true;
   const liveEnabled = loaded && preferences.value.directLiveActivitiesEnabled !== false;
   return (
-    <SettingsSection title="Apple notifications from my servers">
+    <SettingsSection title={gt("Apple notifications from my servers")}>
       <SettingsSwitchRow
         icon="bell.badge"
-        label="Use my servers"
+        label={gt("Use my servers")}
         value={enabled}
         disabled={!loaded || busy}
-        subtitle="Receive input and approval alerts without a Cloud Connect account. Each server needs Apple notification setup."
+        subtitle={gt(
+          "Receive input and approval alerts without a Cloud Connect account. Each server needs Apple notification setup.",
+        )}
         onValueChange={(value) => {
           setBusy(true);
           void (async () => {
             if (value) {
-              const permission = await Notifications.requestPermissionsAsync({
-                ios: { allowAlert: true, allowSound: true, allowBadge: true },
-              });
-              if (!permission.granted)
+              const permission = await runtime.runPromise(requestAgentNotificationPermission);
+              if (permission.type === "denied") {
                 Alert.alert(
-                  "Notification permission needed",
-                  "Allow notifications in iOS Settings to hear input and approval alerts. Live Activities can still be enabled separately.",
+                  gt("Notification permission needed"),
+                  gt(
+                    "Allow notifications in iOS Settings to hear input and approval alerts. Live Activities can still be enabled separately.",
+                  ),
+                  [
+                    { text: gt("Cancel"), style: "cancel" },
+                    { text: gt("Open Settings"), onPress: () => void Linking.openSettings() },
+                  ],
                 );
+              }
             }
-            save({ directPushEnabled: value });
+            const result = await save({ directPushEnabled: value });
+            if (result._tag === "Failure") {
+              Alert.alert(gt("Could not save notification settings"), gt("Try again."));
+            }
           })()
             .catch(() =>
               Alert.alert(
-                "Could not enable notifications",
-                "Check notification access in iOS Settings.",
+                gt("Could not enable notifications"),
+                gt("Check notification access in iOS Settings."),
               ),
             )
             .finally(() => setBusy(false));
@@ -57,11 +71,13 @@ export function DirectPushSettings() {
       />
       <SettingsSwitchRow
         icon="bolt.circle"
-        label="Live Activities"
+        label={gt("Live Activities")}
         value={enabled && liveEnabled}
         disabled={!enabled}
-        subtitle="Open the app while work is active to show it on the Lock Screen and Dynamic Island."
-        onValueChange={(value) => save({ directLiveActivitiesEnabled: value })}
+        subtitle={gt(
+          "Open the app while work is active to show it on the Lock Screen and Dynamic Island.",
+        )}
+        onValueChange={(value) => void save({ directLiveActivitiesEnabled: value })}
       />
       {enabled ? (
         <View className="gap-2 px-4 pb-4">
@@ -71,7 +87,7 @@ export function DirectPushSettings() {
               <View key={environment.environmentId} className="gap-0.5">
                 <Text className="text-sm text-foreground-muted">
                   {environment.label}:{" "}
-                  {statuses.get(environment.environmentId) ?? "Connect to register this device"}
+                  {statuses.get(environment.environmentId) ?? gt("Connect to register this device")}
                 </Text>
                 {delivery ? (
                   <Text className="text-sm text-foreground-muted">
