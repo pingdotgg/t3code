@@ -99,6 +99,21 @@ from this tree.
   `conn-server-release.yml`. It makes a GitHub Release on `nckrtl/conn` with
   `conn-server-<version>-linux-x64.tar.gz` and its `.sha256`, not marked Latest; Orbit
   downloads it. Conn's `release.yml` takes only `v*.*.*` tags, so neither starts the other.
+- **Not served, by decision** (Nick, 2026-11-20). The Conn Server does not serve these
+  client areas. They stay unregistered, and parity work skips them:
+  - Resource telemetry: `subscribeResourceTelemetry`, the resource and process history and
+    its retry (the Settings › Diagnostics CPU and memory panel). Orbit tracks resources.
+  - The Usage page: `server.getUsageSummary` and `server.refreshUsageRates`.
+  - Session import: `agentSessions.scan` and `agentSessions.import`. No threads are
+    imported, including old T3 server threads when a container switches servers.
+  - Clone from the client: `projectClone.*`. The `/mcp` clone tool stays.
+  - The test-login group of the browser's key menu: `credentials.listForSite` and
+    `credentials.fillForSite`. Vault logins in that menu stay; the desktop fills them itself.
+  - Linear and other standalone trackers: `issueTrackers.*`. GitHub issues stay.
+
+  The Diagnostics panel, the Usage page and the key menu's test-login group may later be
+  removed from Conn itself.
+
 - **Exclusions.** Root Vite+ format, lint and test configs ignore `apps/conn-server/**`,
   `.github/scripts/ci-changes.cjs` treats it and the `conn-server-*` workflows as inert for
   Conn's CI, and `.gitignore` re-includes `apps/conn-server/helpers/sdk-host/build/`. On a
