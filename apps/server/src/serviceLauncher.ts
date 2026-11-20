@@ -88,6 +88,35 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
   args: ["serve"],
 });
 
+function isRegularFile(fd: number): boolean {
+  try {
+    return NodeFS.fstatSync(fd).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Node writes to a regular file synchronously, so a server whose output is the log file freezes
+ * while the filesystem stalls one append. It gets a pipe instead, drained here without backpressure.
+ */
+function appendOutput(source: NodeJS.ReadableStream, fd: number): void {
+  let pending: Array<Buffer> = [];
+  let writing = false;
+  const flush = (): void => {
+    writing = pending.length > 0;
+    if (!writing) return;
+    const chunk = Buffer.concat(pending);
+    pending = [];
+    // Best effort, like the launcher's own diagnostics: a failed append drops that output.
+    NodeFS.write(fd, chunk, flush);
+  };
+  source.on("data", (chunk: Buffer) => {
+    pending.push(chunk);
+    if (!writing) flush();
+  });
+}
+
 /**
  * The unit or launch agent that `t3 service install` wrote. Its program names
  * the runtime that ran the install, and a remote update never replaces it, so
@@ -1179,13 +1208,17 @@ export class Launcher {
       ...(update === undefined ? {} : { update }),
     };
     const spawnArguments = runtimeSpawnArguments(paths);
+    const appendStdout = this.#output === undefined && isRegularFile(1);
+    const appendStderr = this.#output === undefined && isRegularFile(2);
     const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
       env: { ...this.#environment, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
       stdio:
         this.#output === undefined
-          ? ["inherit", "inherit", "inherit", "ipc"]
+          ? ["inherit", appendStdout ? "pipe" : "inherit", appendStderr ? "pipe" : "inherit", "ipc"]
           : ["ignore", this.#output, this.#output, "ipc"],
     });
+    if (child.stdout !== null) appendOutput(child.stdout, 1);
+    if (child.stderr !== null) appendOutput(child.stderr, 2);
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
       child.once("error", onError);
