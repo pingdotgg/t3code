@@ -269,7 +269,6 @@ describe("KeybindingsSettings.logic", () => {
       { ...rows[1]!.binding, whenAst: { type: "identifier", name: "false" } },
     ]);
     expect(disabledRows.map((row) => row.conflicts)).toEqual([[], []]);
-
     expect(
       keybindingConflictLabels(rows, {
         rowId: rows[0]?.id ?? "",

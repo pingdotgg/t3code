@@ -1,3 +1,4 @@
+import { msg } from "gt-react-native";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { mostWorkedRepositories } from "@t3tools/client-runtime/state/threads";
 import {
@@ -6,6 +7,7 @@ import {
   type BoatCloudSession,
   type BoatCloudStatus,
 } from "@t3tools/contracts";
+import { m } from "../../i18n/messages";
 import {
   type BoatApi,
   BoatApiError,
@@ -245,7 +247,7 @@ export async function configurePhoneBoatCloudEnvironment(
   const chosen = appAtomRegistry
     .get(phoneBoatCloudAtom)
     .environments.find((environment) => environment.id === environmentId);
-  if (!chosen) return "Boat has no such environment.";
+  if (!chosen) return m(msg("Boat has no such environment."));
   try {
     await run(
       Effect.gen(function* () {

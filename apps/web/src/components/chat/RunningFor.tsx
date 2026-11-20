@@ -2,6 +2,7 @@ import { tickTextContent } from "~/lib/tickTextContent";
 import { formatRunningFor } from "@t3tools/client-runtime/work-log/presentation";
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { m } from "~/i18n/messages";
 
 /** " for 1m 5s" after a running command's label, ticking without re-rendering the row. */
 export function RunningFor({
@@ -17,7 +18,7 @@ export function RunningFor({
     <span
       className="text-muted-foreground tabular-nums"
       ref={tickTextContent(
-        (nowMs) => ` ${formatRunningFor(toServerClock(environmentId, nowMs) - startMs)}`,
+        (nowMs) => ` ${formatRunningFor(toServerClock(environmentId, nowMs) - startMs, m)}`,
         true,
       )}
     />

@@ -25,7 +25,7 @@ export interface PullRequestListPreferences {
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
   readonly projectEnvironmentId?: EnvironmentId;
-  readonly host?: string;
+  readonly host?: string | undefined;
   readonly q?: string | undefined;
   readonly draft?: "only" | "hide";
   readonly review?: NonNullable<PullRequestListFilters["review"]>;

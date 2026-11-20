@@ -19,20 +19,10 @@ import type {
 } from "@t3tools/contracts";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { surfaceTabTitle } from "../layout/surfaceTabLabels";
-import {
-  CircleDotIcon,
-  FileDiff,
-  Files,
-  Globe2,
-  MessagesSquare,
-  Smartphone,
-  TerminalSquare,
-} from "lucide-react";
+import { FileDiff, Files, Globe2, MessagesSquare, Smartphone, TerminalSquare } from "lucide-react";
 
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
-import { issueStatePresentation } from "~/components/issue/issuePresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
-import { issueEnvironment } from "~/state/issues";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { useThreadPreviewState, type DesktopPreviewOverlay } from "~/previewStateStore";
@@ -48,8 +38,11 @@ import {
   pullRequestEnvironment,
   useSharedPullRequestSummary,
 } from "~/state/pullRequests";
+import { m, type MessageResolver } from "~/i18n/messages";
+import { issueEnvironment } from "~/state/issues";
 import { useEnvironmentQuery } from "~/state/query";
 
+import { IssueGlyph, issueStatePresentation } from "./issue/issuePresentation";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
@@ -68,11 +61,13 @@ export function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
+  resolve: MessageResolver = m,
 ): string {
   return surfaceTabTitle(
     surface,
     surface.kind === "preview" && surface.resourceId ? sessions[surface.resourceId] : null,
     surface.kind === "terminal" ? terminalLabelsById.get(surface.activeTerminalId) : undefined,
+    resolve,
   );
 }
 
@@ -155,12 +150,12 @@ export function SurfaceIcon({
           seed={pullRequestStatusSeed}
         />
       );
+    case "issue":
+      return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "pull-requests":
       return (
         <PullRequestGlyph.link className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
       );
-    case "issue":
-      return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "device":
@@ -172,45 +167,6 @@ export function SurfaceIcon({
         <Smartphone className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
       );
   }
-}
-
-/** The issue's own state mark, from the detail its panel already reads; a plain dot until then. */
-function IssueSurfaceIcon({
-  surface,
-  environmentId,
-}: {
-  surface: Extract<RightPanelSurface, { kind: "issue" }>;
-  environmentId: EnvironmentId | null;
-}) {
-  const resolvedEnvironmentId =
-    (surface.environmentId as EnvironmentId | undefined) ?? environmentId;
-  const detail = useEnvironmentQuery(
-    resolvedEnvironmentId === null
-      ? null
-      : issueEnvironment.detail({
-          environmentId: resolvedEnvironmentId,
-          input: {
-            projectId: surface.projectId as ProjectId,
-            tracker: surface.tracker as IssueTrackerKind,
-            ...(surface.host ? { host: surface.host } : {}),
-            scope: surface.scope,
-            key: surface.key,
-          },
-        }),
-  ).data;
-  if (detail === null) {
-    return (
-      <CircleDotIcon className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
-    );
-  }
-  const presentation = issueStatePresentation(detail.state);
-  return (
-    <presentation.Icon
-      role="img"
-      aria-label={presentation.label}
-      className={cn("size-3.5 shrink-0", presentation.toneClassName)}
-    />
-  );
 }
 
 /** What a side chat tab's dot shows and its title's accessible name says. */
@@ -333,6 +289,36 @@ function PullRequestSurfaceIcon({
     state: status.state,
     isDraft: status.isDraft ?? detail?.isDraft ?? seed?.isDraft ?? false,
   });
+  return <presentation.Icon className={cn("size-3.5 shrink-0", presentation.toneClassName)} />;
+}
+
+function IssueSurfaceIcon({
+  surface,
+  environmentId,
+}: {
+  surface: Extract<RightPanelSurface, { kind: "issue" }>;
+  environmentId: EnvironmentId | null;
+}) {
+  const resolvedEnvironmentId =
+    (surface.environmentId as EnvironmentId | undefined) ?? environmentId;
+  const detail = useEnvironmentQuery(
+    resolvedEnvironmentId === null
+      ? null
+      : issueEnvironment.detail({
+          environmentId: resolvedEnvironmentId,
+          input: {
+            projectId: surface.projectId as ProjectId,
+            tracker: surface.tracker as IssueTrackerKind,
+            ...(surface.host ? { host: surface.host } : {}),
+            scope: surface.scope,
+            key: surface.key,
+          },
+        }),
+  ).data;
+  if (!detail) {
+    return <IssueGlyph.issue className="size-3.5 shrink-0 text-muted-foreground" />;
+  }
+  const presentation = issueStatePresentation(detail.state);
   return <presentation.Icon className={cn("size-3.5 shrink-0", presentation.toneClassName)} />;
 }
 

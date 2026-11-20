@@ -1,3 +1,4 @@
+import { msg, useGT, useMessages } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import type { BoatCloudSetup, BoxdCloudMachine } from "@t3tools/contracts";
 import { useState } from "react";
@@ -18,15 +19,15 @@ import { boxdCloudHoldersAtom } from "./boxdCloud";
 const SETUP_STEPS = ["create-vm", "install-server", "save-snapshot"] as const;
 
 const STEP_LABELS: Record<(typeof SETUP_STEPS)[number], string> = {
-  "create-vm": "Create a machine",
-  "install-server": "Install T3 Code and clone repositories",
-  "save-snapshot": "Save the T3 Code snapshot",
+  "create-vm": msg("Create a machine"),
+  "install-server": msg("Install T3 Code and clone repositories"),
+  "save-snapshot": msg("Save the T3 Code snapshot"),
 };
 
 const MACHINE_STATE_LABELS: Record<BoxdCloudMachine["state"], string> = {
-  running: "Running",
-  asleep: "Asleep",
-  stopped: "Stopped",
+  running: msg("Running", { $context: "machine state" }),
+  asleep: msg("Asleep", { $context: "machine state" }),
+  stopped: msg("Stopped", { $context: "machine state" }),
 };
 
 function stepState(setup: BoatCloudSetup, index: number): StepState {
@@ -46,6 +47,8 @@ function Separated(props: { readonly index: number; readonly children: React.Rea
 
 /** boxd cloud on the Cloud settings screen. A connected machine holds the key, never the phone. */
 export function BoxdCloudSettingsSections() {
+  const gt = useGT();
+  const m = useMessages();
   const holders = useAtomValue(boxdCloudHoldersAtom);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -76,12 +79,12 @@ export function BoxdCloudSettingsSections() {
           <View>
             <ListRowLayout
               leading={<BoxdIcon size={22} colorClassName="accent-icon" />}
-              label={status.account ?? "Connected"}
-              description="Connected"
+              label={status.account ?? gt("Connected")}
+              description={gt("Connected")}
             />
             <View className="px-4 pb-4">
               <Button
-                label="Disconnect"
+                label={gt("Disconnect")}
                 tone="danger"
                 size="compact"
                 onPress={() => void disconnect({ environmentId, input: {} })}
@@ -91,22 +94,22 @@ export function BoxdCloudSettingsSections() {
         ) : (
           <View className="gap-3 p-4">
             <SecretTextInput
-              accessibilityLabel="boxd API key"
-              placeholder="boxd API key"
+              accessibilityLabel={gt("boxd API key")}
+              placeholder={gt("boxd API key")}
               value={apiKey}
               onChangeText={setApiKey}
               editable={!busy}
               onSubmitEditing={(value) => void submitKey(value)}
             />
             <Button
-              label={busy ? "Connecting" : "Connect"}
+              label={busy ? gt("Connecting") : gt("Connect")}
               tone="primary"
               size="compact"
               disabled={busy || apiKey.trim() === ""}
               onPress={() => void submitKey(apiKey)}
             />
             <Button
-              label="Create a key"
+              label={gt("Create a key")}
               tone="text"
               size="compact"
               onPress={() => void Linking.openURL("https://app.boxd.sh/keys")}
@@ -117,17 +120,17 @@ export function BoxdCloudSettingsSections() {
 
       {connected ? (
         <SettingsSection
-          title="boxd setup"
+          title={gt("boxd setup")}
           trailing={
             <Button
               label={
                 setup.status === "running"
-                  ? "Setting up"
+                  ? gt("Setting up")
                   : setup.status === "ready"
-                    ? "Rebuild snapshot"
+                    ? gt("Rebuild snapshot")
                     : setup.status === "failed"
-                      ? "Retry"
-                      : "Set up"
+                      ? gt("Retry")
+                      : gt("Set up")
               }
               tone="text"
               size="compact"
@@ -142,7 +145,7 @@ export function BoxdCloudSettingsSections() {
               <Separated key={step} index={index}>
                 <ListRowLayout
                   leading={<StepGlyph state={state} />}
-                  label={STEP_LABELS[step]}
+                  label={m(STEP_LABELS[step])}
                   description={state === "failed" ? (setup.error ?? undefined) : undefined}
                 />
               </Separated>
@@ -152,7 +155,7 @@ export function BoxdCloudSettingsSections() {
       ) : null}
 
       {connected && status.machines.length > 0 ? (
-        <SettingsSection title="boxd machines">
+        <SettingsSection title={gt("boxd machines")}>
           {status.machines.map((machine, index) => (
             <Separated key={machine.vmId} index={index}>
               <ListRowLayout
@@ -164,7 +167,7 @@ export function BoxdCloudSettingsSections() {
                         .join(", ")
                     : undefined
                 }
-                detail={MACHINE_STATE_LABELS[machine.state]}
+                detail={m(MACHINE_STATE_LABELS[machine.state])}
               />
             </Separated>
           ))}

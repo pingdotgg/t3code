@@ -14,6 +14,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { useAtomSet } from "@effect/atom-react";
 import { Schema } from "effect";
 import { useNavigate } from "@tanstack/react-router";
+import { T, useGT } from "gt-react";
 import { type ReactNode, useId, useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -141,6 +142,7 @@ type FormProps = {
 };
 
 function CreateBotForm(props: FormProps) {
+  const gt = useGT();
   const { environments } = useEnvironments();
   // A Boat cloud VM stops when its threads go idle, so it cannot host a bot.
   const machines = environments.filter(
@@ -160,7 +162,9 @@ function CreateBotForm(props: FormProps) {
   const connected = machines.some((machine) => machine.environmentId === environmentId);
   const machinePicker =
     machines.length === 0 ? (
-      <p className="text-body text-muted-foreground">No connected computers</p>
+      <p className="text-body text-muted-foreground">
+        <T>No connected computers</T>
+      </p>
     ) : (
       <Select
         value={environmentId ?? ""}
@@ -168,7 +172,7 @@ function CreateBotForm(props: FormProps) {
         items={machines.map((machine) => ({ value: machine.environmentId, label: machine.label }))}
       >
         <SelectTrigger>
-          <SelectValue placeholder="Disconnected" />
+          <SelectValue placeholder={gt("Disconnected")} />
         </SelectTrigger>
         <SelectPopup>
           {machines.map((machine) => (
@@ -214,6 +218,7 @@ function MachineBotForm({
   onAvatarChange: (avatar: AvatarChoice) => void;
   machinePicker: ReactNode;
 }) {
+  const gt = useGT();
   const id = useId();
   const navigate = useNavigate();
   const setSidebarMode = useAtomSet(sidebarModeAtom);
@@ -264,8 +269,8 @@ function MachineBotForm({
       if (isBotError(error)) setCommandId(CommandId.make(randomUUID()));
       toastManager.add({
         type: "error",
-        title: "Could not create bot",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: gt("Could not create bot"),
+        description: error instanceof Error ? error.message : gt("An error occurred."),
       });
       return;
     }
@@ -292,25 +297,33 @@ function MachineBotForm({
       </div>
       <BotAvatarPicker shape={avatar.shape} color={avatar.color} onChange={onAvatarChange} />
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${id}-name`}>Name</Label>
+        <Label htmlFor={`${id}-name`}>
+          <T>Name</T>
+        </Label>
         <Input
           id={`${id}-name`}
           autoFocus
           maxLength={BOT_NAME_MAX_LENGTH}
-          placeholder="Scout"
+          placeholder={gt("Scout", { $context: "example bot name" })}
           value={name}
           onChange={(event) => onNameChange(event.target.value)}
         />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label>Computer</Label>
+        <Label>
+          <T>Computer</T>
+        </Label>
         {machinePicker}
       </div>
       {environmentId !== null ? (
         <div className="flex flex-col gap-1.5">
-          <Label>Model</Label>
+          <Label>
+            <T>Model</T>
+          </Label>
           {model === null ? (
-            <p className="text-body text-muted-foreground">No providers on this computer</p>
+            <p className="text-body text-muted-foreground">
+              <T>No providers on this computer</T>
+            </p>
           ) : (
             <ProviderModelPicker
               environmentId={environmentId}
@@ -349,11 +362,11 @@ function MachineBotForm({
     <>
       {onCancel ? (
         <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
-          Cancel
+          <T>Cancel</T>
         </Button>
       ) : null}
       <Button type="submit" disabled={!canSubmit}>
-        {pending ? "Creating" : "Create"}
+        {pending ? gt("Creating") : gt("Create")}
       </Button>
     </>
   );
@@ -369,14 +382,18 @@ function MachineBotForm({
       {layout === "dialog" ? (
         <>
           <DialogHeader>
-            <DialogTitle>New bot</DialogTitle>
+            <DialogTitle>
+              <T>New bot</T>
+            </DialogTitle>
           </DialogHeader>
           <DialogPanel>{fields}</DialogPanel>
           <DialogFooter>{actions}</DialogFooter>
         </>
       ) : (
         <div className="flex flex-col gap-6 p-6">
-          <h1 className="text-title">Create your first bot</h1>
+          <h1 className="text-title">
+            <T>Create your first bot</T>
+          </h1>
           {fields}
           <div className="flex justify-end gap-2">{actions}</div>
         </div>

@@ -17,6 +17,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
+import { T, useGT } from "gt-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useLayoutPageLocation } from "../../layout/pageNavigation";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
@@ -214,12 +215,17 @@ export function SettingsSearchTarget({
 export const SETTINGS_PICKER_TRIGGER_CLASSNAME = "min-w-0 max-w-full shrink-0 sm:max-w-72";
 
 export function PolicyTooltip({ children }: { readonly children: string }) {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
         delay={200}
         render={
-          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            aria-label={gt("Background policy details")}
+          >
             <InfoIcon className="size-3.5" />
           </Button>
         }
@@ -237,10 +243,6 @@ interface SettingsSectionLock {
 }
 
 const SettingsSectionLockContext = createContext<SettingsSectionLock | null>(null);
-
-const ENVIRONMENT_WIDE_MESSAGE = "Environment-wide setting. Select an environment to change it.";
-const ENVIRONMENT_WIDE_SECTION_MESSAGE =
-  "Environment-wide settings. Select an environment to change them.";
 
 /**
  * At a project scope, a section whose rows all apply to the whole
@@ -287,22 +289,26 @@ export function SettingsSection({
   variant?: "grouped" | "plain";
   children: ReactNode;
 }) {
+  const gt = useGT();
   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
   const lock = useSettingsSectionLock();
+  const environmentWideSectionMessage = gt(
+    "Environment-wide settings. Select an environment to change them.",
+  );
   const lockIndicator = lock.locked ? (
     <Tooltip>
       <TooltipTrigger
         render={
           <span
             tabIndex={0}
-            aria-label={ENVIRONMENT_WIDE_SECTION_MESSAGE}
+            aria-label={environmentWideSectionMessage}
             className="inline-flex size-5 items-center justify-center rounded-badge text-dim-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
         }
       >
         <LockIcon aria-hidden className="size-3" />
       </TooltipTrigger>
-      <TooltipPopup side="top">{ENVIRONMENT_WIDE_SECTION_MESSAGE}</TooltipPopup>
+      <TooltipPopup side="top">{environmentWideSectionMessage}</TooltipPopup>
     </Tooltip>
   ) : null;
 
@@ -451,6 +457,7 @@ export function SettingsRow({
   managed?: string | undefined;
   children?: ReactNode;
 }) {
+  const gt = useGT();
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const rowRef = useRef<HTMLDivElement | null>(null);
   const attachRow = (node: HTMLDivElement | null) => {
@@ -521,8 +528,8 @@ export function SettingsRow({
     source === "environment" && context?.scope.environmentIds.length === 1
       ? (context.environments.find(
           (environment) => environment.environmentId === context.scope.environmentIds[0],
-        )?.label ?? "environment")
-      : "environment";
+        )?.label ?? null)
+      : null;
   const environmentSettingsById = new Map(
     (context?.connectedEnvironments ?? []).flatMap((environment) =>
       environment.serverConfig
@@ -538,8 +545,12 @@ export function SettingsRow({
     managed !== undefined ? null : isProjectScope && scopedKeys.length > 0 ? (
       source === "project" || source === "mixed" ? (
         <SettingResetButton
-          label={typeof title === "string" ? title : "override"}
-          tooltip="Reset to inherited value"
+          ariaLabel={
+            typeof title === "string"
+              ? gt("Reset {title} to default", { title })
+              : gt("Reset override to default")
+          }
+          tooltip={gt("Reset to inherited value")}
           onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
         />
       ) : null
@@ -566,30 +577,38 @@ export function SettingsRow({
       <TooltipPopup side="top">{message}</TooltipPopup>
     </Tooltip>
   );
+  const lackingPermissionMessage = () => {
+    const environments = context
+      ? context.connectedEnvironments
+          .filter((target) => !writableIds.has(target.environmentId))
+          .map((target) => target.label)
+          .join(", ")
+      : primaryEnvironment?.label;
+    return environments
+      ? gt("This connection lacks permission to change settings on {environments}.", {
+          environments,
+        })
+      : context
+        ? gt("This connection lacks permission to change settings on the selected environment.")
+        : gt("This connection lacks permission to change settings on the primary environment.");
+  };
   const renderedControl =
     managed !== undefined && control
       ? inertControl(managed)
       : managedBy !== undefined && control
-        ? inertControl(`Managed by ${managedBy}.`)
+        ? inertControl(gt("Managed by {organization}.", { organization: managedBy }))
         : unavailable && control
           ? inertControl(
               !canWriteSettings
-                ? `This connection lacks permission to change settings on ${
-                    context
-                      ? context.connectedEnvironments
-                          .filter((target) => !writableIds.has(target.environmentId))
-                          .map((target) => target.label)
-                          .join(", ") || "the selected environment"
-                      : (primaryEnvironment?.label ?? "the primary environment")
-                  }.`
+                ? lackingPermissionMessage()
                 : context
-                  ? "Reconnect the selected environment to change this setting."
+                  ? gt("Reconnect the selected environment to change this setting.")
                   : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
             )
           : environmentWide && control && !sectionLocked
-            ? inertControl(ENVIRONMENT_WIDE_MESSAGE)
+            ? inertControl(gt("Environment-wide setting. Select an environment to change it."))
             : deviceReadOnly && control
-              ? inertControl("Saved on this device. Select All projects to change it.")
+              ? inertControl(gt("Saved on this device. Select All projects to change it."))
               : control;
   const customized =
     context !== null &&
@@ -603,16 +622,22 @@ export function SettingsRow({
       }),
     );
   const inheritance: { state: SettingInheritanceState; summary: string } = mixed
-    ? { state: "mixed", summary: "Mixed across selected environments" }
+    ? { state: "mixed", summary: gt("Mixed across selected environments") }
     : source === "project"
-      ? { state: "overridden", summary: "Overridden for this project" }
+      ? { state: "overridden", summary: gt("Overridden for this project") }
       : source === "t3.json"
-        ? { state: "inherited", summary: "Inherited from the repository's t3.json" }
+        ? { state: "inherited", summary: gt("Inherited from the repository's t3.json") }
         : source === "environment" && scopedKeys.length > 0
-          ? { state: "inherited", summary: `Inherited from ${inheritedFrom}` }
+          ? {
+              state: "inherited",
+              summary:
+                inheritedFrom === null
+                  ? gt("Inherited from environment")
+                  : gt("Inherited from {environment}", { environment: inheritedFrom }),
+            }
           : customized
-            ? { state: "environment", summary: "Set on the environment" }
-            : { state: "default", summary: "Built-in default" };
+            ? { state: "environment", summary: gt("Set on the environment") }
+            : { state: "default", summary: gt("Built-in default") };
   // The indicator shows only where a value was set somewhere: a project or
   // environment value, t3.json, a mixed selection, or projects overriding it.
   // A row on its built-in default, or inheriting one, stays quiet.
@@ -770,16 +795,17 @@ export function SettingsRowTile({ children }: { children: ReactNode }) {
  * row's inheritance popover footer it renders as the labeled action.
  */
 export function SettingResetButton({
-  label,
-  tooltip = "Reset to default",
+  ariaLabel,
+  tooltip,
   disabled = false,
   onClick,
 }: {
-  label: string;
+  ariaLabel: string;
   tooltip?: string;
   disabled?: boolean;
   onClick: () => void;
 }) {
+  const gt = useGT();
   const placement = useContext(SettingResetPlacementContext);
   const focusRow = useContext(SettingsRowFocusContext);
   if (placement === "popover") {
@@ -787,7 +813,7 @@ export function SettingResetButton({
       <Button
         size="xs"
         variant="secondary"
-        aria-label={`Reset ${label}: ${tooltip}`}
+        aria-label={ariaLabel}
         disabled={disabled}
         onClick={(event) => {
           event.stopPropagation();
@@ -796,7 +822,7 @@ export function SettingResetButton({
         }}
       >
         <RotateCcwIcon aria-hidden />
-        {tooltip}
+        {tooltip ?? gt("Reset to default")}
       </Button>
     );
   }
@@ -807,7 +833,7 @@ export function SettingResetButton({
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={`Reset ${label} to default`}
+            aria-label={ariaLabel}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
@@ -818,7 +844,7 @@ export function SettingResetButton({
           </Button>
         }
       />
-      <TooltipPopup side="top">{tooltip}</TooltipPopup>
+      <TooltipPopup side="top">{tooltip ?? gt("Reset to default")}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -867,7 +893,7 @@ export function SettingsNoMatches({
       <SearchIcon aria-hidden className="size-4 text-dim-foreground" />
       <p className="text-body text-muted-foreground">{children}</p>
       <Button size="xs" variant="ghost" onClick={onClear}>
-        Clear search
+        <T>Clear search</T>
       </Button>
     </div>
   );

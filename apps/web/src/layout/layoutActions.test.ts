@@ -14,6 +14,8 @@ vi.mock(import("../state/entities"), async (original) => ({
       : null) as never,
 }));
 
+import { useClosedViewStore } from "../closedViewStore";
+import { planNextReopen, reopenClosedView } from "../reopenClosedView";
 import { closeLayoutTabByUser, closeOtherLayoutTabsByUser } from "./layoutActions";
 import {
   createLayoutState,
@@ -54,7 +56,8 @@ function setup(contents: ReadonlyArray<LayoutTabContent>) {
         .getState()
         .layout.workspaces.flatMap((workspace) => workspace.columns)
         .flatMap((column) => column.panes)
-        .flatMap((pane) => pane.tabs.map((tab) => tab.content)),
+        .flatMap((pane) => pane.tabs.map((tab) => tab.content))
+        .filter((content) => content.kind === "chat"),
     [Symbol.dispose]: () => {
       unsubscribe();
       useLayoutStore.setState({ layout: original });
@@ -100,6 +103,37 @@ describe("closeLayoutTabByUser", () => {
       expect(layout.chats()).toEqual(contents.filter((content) => content !== subagent));
     },
   );
+});
+
+describe("reopening a closed list page", () => {
+  it.each([
+    { kind: "issues", href: "/issues?status=closed" },
+    { kind: "pull-requests", href: "/pull-requests?state=merged" },
+  ] as const)("puts the $kind tab back where it was, with its URL", async (content) => {
+    using layout = setup([other, content, parent]);
+    useClosedViewStore.setState({ entries: [] });
+    const page = findLayoutTab(useLayoutStore.getState().layout, (tab) => tab.content === content)!;
+    closeLayoutTabByUser(page.tab.id);
+    expect(layout.tabOf(content)).toBeUndefined();
+    const { restore } = planNextReopen(useClosedViewStore.getState().entries, () => ({
+      environmentKnown: true,
+      catalogReady: true,
+      ownerExists: true,
+      sideChatExists: true,
+      shellLive: true,
+      panel: { isOpen: false, activeSurfaceId: null, surfaces: [] },
+    }));
+    expect(
+      await reopenClosedView(restore!, { openPreview: vi.fn(), workspaceAvailable: true }),
+    ).toBe(true);
+    const reopened = findLayoutTab(
+      useLayoutStore.getState().layout,
+      (tab) => tab.content.kind === content.kind,
+    )!;
+    expect(reopened.tab.content).toEqual(content);
+    expect([reopened.pane.id, reopened.tabIndex]).toEqual([page.pane.id, page.tabIndex]);
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(reopened.tab.id);
+  });
 });
 
 describe("runInNewLayoutTab", () => {

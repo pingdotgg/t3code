@@ -1,22 +1,33 @@
+import { T, useMessages } from "gt-react";
 import { AppWindowIcon, AtSignIcon, Columns2Icon, Layers2Icon, Rows2Icon } from "lucide-react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-import { PANE_TAB_CLASS } from "../components/PaneNotch";
+import { PANE_TAB_SHAPE_CLASS } from "../components/PaneNotch";
+import { ThreadSurfaceTabIcon } from "../components/SurfaceTabIcon";
+import { useThreadContextDragGhost } from "../components/chat/threadContextDrag";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn } from "../lib/utils";
 import {
   LAYOUT_DROP_CHROME_HEIGHT,
+  layoutDragContent,
   layoutDropLabel,
   useLayoutDragState,
+  type LayoutDragContentSource,
   type LayoutDragPane,
   type LayoutDragRect,
   type LayoutDragState,
   type LayoutDropTarget,
 } from "./layoutDrag";
-import { findLayoutTab, type LayoutTab } from "./layoutModel";
+import {
+  findLayoutPane,
+  findLayoutTab,
+  isBlankLayoutWorkspace,
+  type LayoutTab,
+} from "./layoutModel";
 import { useLayoutStore } from "./layoutStore";
 import { useLayoutTabLabel } from "./PaneTabs";
+import { surfaceTabTitle } from "./surfaceTabLabels";
 
 /** Pen C4fxiA: drop zones sit 8px inside the pane, 7.5px each side of its middle. */
 const ZONE_INSET = 8;
@@ -90,10 +101,9 @@ function targetZone(state: LayoutDragState, target: LayoutDropTarget): Box | nul
 function intoTabs(state: LayoutDragState, target: LayoutDropTarget) {
   if (target.kind !== "into") return null;
   const tabs = state.panes.find((pane) => pane.paneId === target.paneId)?.tabs ?? [];
-  const sourceTabId = state.source.kind === "tab" ? state.source.tabId : null;
   return {
-    tabs: tabs.filter((tab) => tab.id !== sourceTabId),
-    reorder: tabs.some((tab) => tab.id === sourceTabId),
+    tabs: tabs.filter((tab) => tab.id !== state.sourceTabId),
+    reorder: tabs.some((tab) => tab.id === state.sourceTabId),
     index: target.index,
   };
 }
@@ -235,19 +245,54 @@ function DraggedTabGhost({ tabId, point }: { tabId: string; point: { x: number; 
     (state) => findLayoutTab(state.layout, (candidate) => candidate.id === tabId)?.tab ?? null,
   );
   if (!tab) return null;
-  return <DraggedTabGhostBody tab={tab} point={point} />;
+  return (
+    <DraggedTabGhostBody point={point}>
+      <LayoutTabGhostLabel tab={tab} />
+    </DraggedTabGhostBody>
+  );
 }
 
-function DraggedTabGhostBody({ tab, point }: { tab: LayoutTab; point: { x: number; y: number } }) {
-  const label = useLayoutTabLabel(tab);
+function DraggedTabGhostBody({
+  point,
+  children,
+}: {
+  point: { x: number; y: number };
+  children: ReactNode;
+}) {
   return (
     <div
-      className={cn(PANE_TAB_CLASS, "absolute left-0 top-0 surface-popover")}
+      className={cn(PANE_TAB_SHAPE_CLASS, "absolute left-0 top-0 surface-popover")}
       style={{ transform: `translate(${point.x - 24}px, ${point.y - 14}px) rotate(-2deg)` }}
     >
-      {label.icon}
-      <span className="min-w-0 truncate">{label.title}</span>
+      {children}
     </div>
+  );
+}
+
+function GhostLabel({ icon, title }: { icon: ReactNode; title: string }) {
+  return (
+    <>
+      {icon}
+      <span className="min-w-0 truncate">{title}</span>
+    </>
+  );
+}
+
+function LayoutTabGhostLabel({ tab }: { tab: LayoutTab }) {
+  const label = useLayoutTabLabel(tab);
+  return <GhostLabel icon={label.icon} title={label.title} />;
+}
+
+function DraggedContentLabel({ source }: { source: LayoutDragContentSource }) {
+  const messages = useMessages();
+  if (source.kind !== "surface" || source.surface.kind === "thread-terminal") {
+    return <LayoutTabGhostLabel tab={{ id: "dragged", content: layoutDragContent(source) }} />;
+  }
+  return (
+    <GhostLabel
+      icon={<ThreadSurfaceTabIcon threadRef={source.threadRef} surface={source.surface} />}
+      title={surfaceTabTitle(source.surface, null, undefined, messages)}
+    />
   );
 }
 
@@ -275,9 +320,22 @@ function DropPill({ x, y, children }: { x: number; y: number; children: ReactNod
 /** A window overlay keeps webviews and iframes from swallowing layout drags. */
 export function LayoutDropZones() {
   const state = useLayoutDragState();
+  const fillsBlank = useLayoutStore(({ layout }) => {
+    if (state?.target?.kind !== "into") return false;
+    const found = findLayoutPane(layout, state.target.paneId);
+    if (!found || !isBlankLayoutWorkspace(found.workspace)) return false;
+    const { source } = state;
+    if (source.kind === "new-tab") return false;
+    return (
+      source.kind !== "tab" ||
+      findLayoutTab(layout, (tab) => tab.id === source.tabId)?.tab.content.kind !== "launcher"
+    );
+  });
+  const threadGhost = useThreadContextDragGhost();
+  const messages = useMessages();
   if (!state) return null;
   const zone = state.target ? targetZone(state, state.target) : null;
-  const into = state.target ? intoTabs(state, state.target) : null;
+  const into = state.target && !fillsBlank ? intoTabs(state, state.target) : null;
   return createPortal(
     <div
       data-layout-drag-overlay=""
@@ -299,12 +357,16 @@ export function LayoutDropZones() {
         </div>
         {state.source.kind === "tab" ? (
           <DraggedTabGhost tabId={state.source.tabId} point={state.point} />
-        ) : null}
+        ) : state.source.kind === "thread" && threadGhost ? null : (
+          <DraggedTabGhostBody point={state.point}>
+            <DraggedContentLabel source={state.source} />
+          </DraggedTabGhostBody>
+        )}
         {into ? <InsertionMarker tabs={into.tabs} index={into.index} /> : null}
         {zone && state.target ? (
           <DropPill x={zone.left + zone.width / 2} y={zone.top + zone.height / 2}>
             <PillIcon target={state.target} />
-            {layoutDropLabel(state.target, into?.reorder ?? false)}
+            {layoutDropLabel(state.target, into?.reorder ?? false, messages)}
           </DropPill>
         ) : null}
         {state.composer ? (
@@ -313,7 +375,7 @@ export function LayoutDropZones() {
             y={state.composer.top - MENTION_PILL_LIFT}
           >
             <AtSignIcon aria-hidden className="size-3.25 shrink-0" />
-            Mention thread
+            <T>Mention thread</T>
           </DropPill>
         ) : null}
       </div>

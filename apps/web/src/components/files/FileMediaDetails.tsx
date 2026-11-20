@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { FolderOpenIcon, MessageSquarePlusIcon } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -21,6 +22,7 @@ export function FileMediaDetails(props: {
   readonly relativePath: string;
   readonly metadata: ReadonlyArray<string>;
 }) {
+  const gt = useGT();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(props.environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -51,7 +53,7 @@ export function FileMediaDetails(props: {
           onClick={() => addFileMentionToChat(composerRef, props.relativePath)}
         >
           <MessageSquarePlusIcon aria-hidden />
-          Add to chat
+          {gt("Add to chat")}
         </Button>
       ) : null}
       {revealLabel !== undefined ? (
@@ -73,7 +75,7 @@ export function FileMediaDetails(props: {
             }
           >
             <FolderOpenIcon aria-hidden />
-            Reveal
+            {gt("Reveal", { $context: "verb, shows the file in the file manager" })}
           </TooltipTrigger>
           <TooltipPopup>{revealLabel}</TooltipPopup>
         </Tooltip>

@@ -8,8 +8,10 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { msg, T, useGT } from "gt-react";
 import { BotOffIcon, CircleAlertIcon, KeyRoundIcon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
@@ -97,7 +99,11 @@ export function hasProviderSetup(status: ServerProvider): boolean {
   );
 }
 
-export function getProviderStatusMessage(status: ServerProvider): string {
+/** Components pass `useMessages()` so the message follows a language switch. */
+export function getProviderStatusMessage(
+  status: ServerProvider,
+  resolve: MessageResolver = m,
+): string {
   if (
     status.auth.status !== "unauthenticated" &&
     status.compatibilityAdvisory?.status === "broken" &&
@@ -108,21 +114,25 @@ export function getProviderStatusMessage(status: ServerProvider): string {
   if (status.message) return status.message;
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   if (!status.installed && hasProviderSetup(status)) {
-    return `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on this environment.`;
+    return resolve(
+      msg("Open provider setup to install {provider} on this environment.", {
+        provider: formatProviderDriverKindLabel(status.driver),
+      }),
+    );
   }
   if (status.auth.status === "unauthenticated") {
     if (hasProviderSetup(status)) {
       return status.driver === "antigravity"
-        ? "Open provider setup to sign in with Google."
-        : "Open provider setup to sign in.";
+        ? resolve(msg("Open provider setup to sign in with Google."))
+        : resolve(msg("Open provider setup to sign in."));
     }
-    return "Sign in via the CLI to authenticate again.";
+    return resolve(msg("Sign in via the CLI to authenticate again."));
   }
   return status.status === "ready"
-    ? "No models are available for this provider."
+    ? resolve(msg("No models are available for this provider."))
     : status.status === "error"
-      ? `${providerName} provider is unavailable.`
-      : `${providerName} provider has limited availability.`;
+      ? resolve(msg("{provider} provider is unavailable.", { provider: providerName }))
+      : resolve(msg("{provider} provider has limited availability.", { provider: providerName }));
 }
 
 /**
@@ -136,6 +146,7 @@ export function providerStatusBannerItem({
   onOpenProviderSetup,
   onOpenTerminal,
   status,
+  resolve = m,
 }: {
   environmentId: EnvironmentId;
   onDismiss: () => void;
@@ -143,6 +154,7 @@ export function providerStatusBannerItem({
   /** Offered for a signed-out provider whose sign-in runs in its CLI. */
   onOpenTerminal?: () => void;
   status: ServerProvider | null;
+  resolve?: MessageResolver;
 }): ComposerBannerStackItem | null {
   const bannerKey = getProviderStatusBannerKey(status);
   if (!status || bannerKey === null) {
@@ -158,15 +170,27 @@ export function providerStatusBannerItem({
     status.auth.status !== "unauthenticated" &&
     status.models.length === 0;
   const title = isUnauthenticated
-    ? `${providerName} signed out`
+    ? resolve(msg("{provider} signed out", { provider: providerName }))
     : incompatible
-      ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
+      ? incompatible.status === "broken"
+        ? resolve(
+            msg("{provider} {version} is known to be broken", {
+              provider: providerName,
+              version: status.version ?? "",
+            }),
+          )
+        : resolve(
+            msg("{provider} {version} is unsupported", {
+              provider: providerName,
+              version: status.version ?? "",
+            }),
+          )
       : hasNoModels
-        ? `${providerName} has no models`
+        ? resolve(msg("{provider} has no models", { provider: providerName }))
         : status.status === "error"
-          ? `${providerName} unavailable`
-          : `${providerName} limited`;
-  const message = incompatible?.message ?? getProviderStatusMessage(status);
+          ? resolve(msg("{provider} unavailable", { provider: providerName }))
+          : resolve(msg("{provider} limited", { provider: providerName }));
+  const message = incompatible?.message ?? getProviderStatusMessage(status, resolve);
   const isWarning =
     isUnauthenticated ||
     hasNoModels ||
@@ -193,11 +217,11 @@ export function providerStatusBannerItem({
       <>
         {openSetup ? (
           <Button size="xs" variant="secondary" onClick={() => openSetup(instanceId)}>
-            Provider setup
+            <T>Provider setup</T>
           </Button>
         ) : isUnauthenticated && onOpenTerminal ? (
           <Button size="xs" variant="secondary" onClick={onOpenTerminal}>
-            Open terminal
+            <T>Open terminal</T>
           </Button>
         ) : null}
         <ProviderStatusRefreshButton
@@ -208,7 +232,14 @@ export function providerStatusBannerItem({
         />
       </>
     ),
-    dismissLabel: `Dismiss ${providerName} provider ${status.status}`,
+    dismissLabel:
+      status.status === "error"
+        ? resolve(msg("Dismiss {provider} provider error", { provider: providerName }))
+        : status.status === "warning"
+          ? resolve(msg("Dismiss {provider} provider warning", { provider: providerName }))
+          : status.status === "ready"
+            ? resolve(msg("Dismiss {provider} provider ready", { provider: providerName }))
+            : resolve(msg("Dismiss {provider} provider disabled", { provider: providerName })),
     onDismiss,
   };
 }
@@ -222,6 +253,7 @@ function ProviderStatusRefreshButton({
   instanceId: ProviderInstanceId;
   providerName: string;
 }) {
+  const gt = useGT();
   const canRefresh = useAtomValue(serverEnvironment.refreshProviders.permissionAtom(environmentId));
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     label: "Refresh provider status",
@@ -238,14 +270,14 @@ function ProviderStatusRefreshButton({
   };
   return (
     <Button
-      aria-label={`Refresh ${providerName} provider status`}
+      aria-label={gt("Refresh {provider} provider status", { provider: providerName })}
       disabled={!canRefresh || isRefreshing}
       onClick={() => void refresh()}
       size="xs"
       variant="secondary"
     >
       <RefreshIcon />
-      {isRefreshing ? "Refreshing..." : "Refresh"}
+      {isRefreshing ? gt("Refreshing...") : gt("Refresh")}
     </Button>
   );
 }

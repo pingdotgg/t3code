@@ -5,9 +5,11 @@ import type {
   PullRequestReactionContent,
   PullRequestRef,
 } from "@t3tools/contracts";
+import { msg, useGT, useLocale, useMessages } from "gt-react";
 import { SmilePlusIcon } from "lucide-react";
 import { useState } from "react";
 
+import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
@@ -40,6 +42,9 @@ export function ReactionBar({
   readonly onReact: (content: PullRequestReactionContent, reacted: boolean) => Promise<boolean>;
   readonly className?: string | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
+  const locale = useLocale();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pending, setPending] = useState<{
     readonly signature: string;
@@ -60,7 +65,7 @@ export function ReactionBar({
       next.delete(content);
       return { signature: current.signature, values: next };
     });
-    toastManager.add({ type: "error", title: "The reaction could not be saved" });
+    toastManager.add({ type: "error", title: m(msg("The reaction could not be saved")) });
   };
 
   if (shown.length === 0 && !canReact) return null;
@@ -75,7 +80,11 @@ export function ReactionBar({
                 size="xs-pill"
                 variant={reaction.viewerHasReacted ? "secondary" : "pill"}
                 aria-pressed={reaction.viewerHasReacted}
-                aria-label={`${pullRequestReactionName(reaction.content)}, ${reaction.count}`}
+                aria-label={gt("{reaction}, {count}", {
+                  reaction: pullRequestReactionName(reaction.content, messages),
+                  count: reaction.count,
+                  $context: "reaction button: reaction name and how many people used it",
+                })}
                 disabled={!canReact}
                 onClick={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
               />
@@ -84,14 +93,16 @@ export function ReactionBar({
             <span aria-hidden>{pullRequestReactionEmoji(reaction.content)}</span>
             <span className="tabular-nums">{reaction.count}</span>
           </TooltipTrigger>
-          <TooltipPopup side="top">{pullRequestReactionTooltip(reaction)}</TooltipPopup>
+          <TooltipPopup side="top">
+            {pullRequestReactionTooltip(reaction, messages, locale)}
+          </TooltipPopup>
         </Tooltip>
       ))}
 
       {canReact ? (
         <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
           <PopoverTrigger
-            render={<Button size="icon-xs-pill" variant="pill" aria-label="Add a reaction" />}
+            render={<Button size="icon-xs-pill" variant="pill" aria-label={gt("Add a reaction")} />}
           >
             <SmilePlusIcon aria-hidden className="size-3.5" />
           </PopoverTrigger>
@@ -106,7 +117,7 @@ export function ReactionBar({
                     size="icon-sm"
                     variant={reacted ? "secondary" : "ghost"}
                     aria-pressed={reacted}
-                    aria-label={pullRequestReactionName(content)}
+                    aria-label={pullRequestReactionName(content, messages)}
                     onClick={() => {
                       setPickerOpen(false);
                       void toggle(content, !reacted);

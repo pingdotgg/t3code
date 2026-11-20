@@ -21,7 +21,7 @@ export const ko: Messages = {
   home: {
     title: "T3 Code | 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인",
     description: "T3 Code. 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인.",
-    heroTitle: ["코딩 에이전트용", "오픈 소스", "컨트롤 플레인."],
+    heroTitle: ["코딩 에이전트를 위한", "오픈 소스", "컨트롤 플레인."],
     heroSub:
       "Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok을 한 화면에서 오케스트레이션하세요. 구독은 쓰던 그대로. 통째로 포크하세요.",
     downloadForMac: "macOS용 다운로드",
@@ -31,14 +31,15 @@ export const ko: Messages = {
     downloadForAndroid: "Android용 다운로드",
     sourceLink: "코드 훔쳐 가기(합법적으로)",
     alsoOnPhone: "휴대폰에서도:",
-    screenshotAlt: "하나의 스레드에서 Claude, Codex, Muse, Gemini 서브에이전트를 실행 중인 T3 Code",
-    endorsementsTitle: "{users}명이 넘는 개발자가 참고 쓰는 중",
+    screenshotAlt:
+      "스레드 목록 옆에 Claude 스레드를 연 T3 Code. 고정된 세부 정보 카드에 브랜치, 변경 사항, 검사를 통과한 연결된 풀 리퀘스트, 사용 한도, 컨텍스트, 자동화, 포크가 표시됩니다",
+    endorsementsTitle: "{users}명이 넘는 개발자가 나쁘지 않다고 합니다",
     endorsementsSub: "몇몇은 트윗까지 했습니다.",
     endorsementsLabel: "개발자 추천",
     readPost: "X에서 {handle}님의 게시물 읽기",
     harnessTitle: "쓰던 구독 그대로",
     harnessBody:
-      "T3 Code는 토큰을 되팔지 않습니다. 이미 쓰고 있는 계정으로 Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok을 연결하세요. 오케스트레이션은 저희가, 요금제는 그대로.",
+      "T3 Code는 토큰을 재판매하지 않습니다. 이미 쓰고 있는 계정으로 Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok을 연결하세요. 오케스트레이션은 저희가, 요금제는 그대로.",
     googleSignIn: "Google 로그인",
     harnessPoints: [
       "키 재판매 없음. 사용량 한도 없음.",
@@ -70,9 +71,9 @@ export const ko: Messages = {
     stars: "스타 {stars}",
     forkOnGithub: "GitHub에서 포크",
     browseSource: "소스 보기",
-    ctaTitle: "에이전트를 터미널에만 두기엔 아깝습니다.",
+    ctaTitle: "에이전트에게 터미널보다 나은 작업 공간을.",
     ctaSub:
-      "T3 Code는 무료이고, 오픈 소스이며, 빠릅니다. 설치하고, 이미 구독 중인 서비스를 연결한 뒤, 에이전트에게 일을 맡기세요.",
+      "T3 Code는 무료이고, 오픈 소스이며, 빠릅니다. 설치하고 이미 쓰고 있는 에이전트를 연결하면 바로 일을 시작합니다.",
     otherPlatforms: "다른 플랫폼",
   },
   download: {
@@ -84,6 +85,8 @@ export const ko: Messages = {
     channelLabel: "릴리스 채널",
     stable: "안정판",
     nightly: "Nightly",
+    nightlyTagline:
+      "새 변경 사항을 안정판보다 먼저 만나 보세요. 다듬어지지 않은 부분이 있을 수 있습니다.",
     intelNote: "Intel Mac을 쓰시나요? {link}.",
     intelLink: "x64 빌드 다운로드",
     armNote: "ARM을 쓰시나요? arm64 {deb} 또는 {appimage}를 다운로드하세요.",
@@ -91,7 +94,7 @@ export const ko: Messages = {
     iphoneIpad: "iPhone & iPad",
     terminal: "터미널",
     tryOnce: "설치 없이 한 번 실행해 보려면:",
-    allBuilds: "모든 빌드는 {link}에 있습니다",
+    allBuilds: "모든 빌드: {link}",
     releasesPage: "GitHub 릴리스 페이지",
     builtAgo: "{age} 빌드됨",
     releasesFallback: "릴리스",

@@ -15,8 +15,9 @@ import { holdEndCornerWhileSliding } from "../motion/paneMotion";
  * tooltips keep working in Electron. The focus ring is inset because the tab
  * sits on the pane edge, where the pane clip would cut an outer ring.
  */
-export const PANE_TAB_CLASS =
-  "inline-flex h-7 min-w-0 max-w-80 items-center gap-1.75 rounded-control surface-pane-tab px-2.5 text-control text-strong-foreground outline-none [-webkit-app-region:no-drag] focus-visible:inset-ring-2 focus-visible:inset-ring-ring";
+export const PANE_TAB_SHAPE_CLASS =
+  "inline-flex h-7 min-w-0 max-w-80 items-center gap-1.75 rounded-control px-2.5 text-control text-strong-foreground outline-none [-webkit-app-region:no-drag] focus-visible:inset-ring-2 focus-visible:inset-ring-ring";
+export const PANE_TAB_CLASS = `${PANE_TAB_SHAPE_CLASS} surface-pane-tab`;
 
 export const PANE_TAB_TITLE_CLASS = "max-w-68 truncate";
 /** The connected pane tabs widen it to the active title's, so activating a tab moves nothing. */

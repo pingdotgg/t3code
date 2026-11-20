@@ -1,6 +1,6 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
-import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
+import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import {
   issueAssigneeHeld,
   issueAssigneesAfterPicks,
@@ -11,8 +11,7 @@ import {
   noIssuePicks,
 } from "@t3tools/client-runtime/issue-selection";
 import { isSelected, toggleSelection } from "@t3tools/client-runtime/pull-request-selection";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { AuthOrchestrationOperateScope, threadIssueKeysEqual } from "@t3tools/contracts";
+import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   IssueAssigneeCandidate,
@@ -29,124 +28,63 @@ import type {
 } from "@t3tools/contracts";
 import {
   CheckIcon,
-  ChevronDownIcon,
   ExternalLinkIcon,
-  Link2Icon,
-  Link2OffIcon,
+  MoreHorizontalIcon,
   TagIcon,
   UserPlusIcon,
-  UsersIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { useContext, useState, type ReactNode } from "react";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { m } from "~/i18n/messages";
+import { readLocalApi } from "~/localApi";
 import { issueEnvironment, refreshIssueLists } from "~/state/issues";
-import { useProjects, useThreadShell } from "~/state/entities";
+import { useProjects } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
-import { useEnvironmentScope } from "~/state/session";
-import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
-import { Button, ContentButton, InlineButton } from "../ui/button";
-import { Input } from "../ui/input";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { cn } from "~/lib/utils";
-import { PullRequestMetaRow, PullRequestSection } from "../pullRequest/PullRequestSummaryTab";
-import { toastManager } from "../ui/toast";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { cn } from "~/lib/utils";
+import { PULL_REQUEST_ROW_CLASS } from "../pullRequest/PullRequestListRow";
+import {
+  PAGE_ROW_CLASS,
+  PAGE_ROW_HOVER_CLASS,
+  PAGE_ROW_PRESS_CLASS,
+} from "../pullRequest/PullRequestRow";
+import {
+  PullRequestSection,
+  WorkItemCommentCard,
+  WorkItemCommentIdentity,
+} from "../pullRequest/PullRequestSummaryTab";
+import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "../pullRequest/PullRequestCandidatePicker";
 import { PullRequestCommentBody } from "../pullRequest/PullRequestCommentBody";
-import { PullRequestDetailTitleRow } from "../pullRequest/PullRequestDetailLayout";
+import { WorkItemDetailCrumbs } from "../pullRequest/PullRequestDetailCrumbs";
 import { PullRequestEditButton } from "../pullRequest/PullRequestEditButton";
-import { PullRequestMarkdown } from "../pullRequest/PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "../pullRequest/PullRequestMarkdownEditor";
+import { PullRequestReviewEntry } from "../pullRequest/PullRequestQuietEntries";
+import { WorkItemTitleEditor } from "../pullRequest/PullRequestTitleEditor";
+import { WorkItemFacts } from "../workItem/WorkItemFacts";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
 import { pullRequestLabelColor } from "../pullRequest/pullRequestList.logic";
 import {
   PullRequestActorLabel,
   PullRequestLabelChip,
-  PullRequestMetaLine,
   PullRequestStateGlyph,
 } from "../pullRequest/pullRequestPresentation";
 import { IssueCommentComposer } from "./IssueCommentComposer";
 import { IssueDetailGhost } from "./IssueDetailGhost";
+import { IssueThreadLinks } from "./IssueThreadLinks";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
-import { issueTrackerPresentation, issueStatePresentation } from "./issuePresentation";
-
-/**
- * Links or unlinks the issue to the thread it is shown beside. Dispatches the orchestration
- * command directly, as pull request linking does.
- */
-function IssueThreadLinkButton({
-  environmentId,
-  reference,
-  issue,
-  threadRef,
-}: {
-  environmentId: EnvironmentId;
-  reference: IssueRef;
-  issue: Pick<IssueDetail, "url" | "displayKey" | "title">;
-  threadRef: ScopedThreadRef;
-}) {
-  const thread = useThreadShell(threadRef.environmentId === environmentId ? threadRef : null);
-  const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const link = useAtomCommand(threadEnvironment.linkIssue, { reportFailure: false });
-  const unlink = useAtomCommand(threadEnvironment.unlinkIssue, { reportFailure: false });
-  const [pending, setPending] = useState(false);
-  if (thread === null || !canOperate) return null;
-  const key = { ...reference, host: reference.host ?? "" };
-  const linked = (thread.issues ?? []).some((existing) => threadIssueKeysEqual(existing, key));
-  const toggle = async () => {
-    if (pending || reference.host === undefined) return;
-    setPending(true);
-    const result = await (linked
-      ? unlink({ environmentId, input: { threadId: threadRef.threadId, ...key } })
-      : link({
-          environmentId,
-          input: {
-            threadId: threadRef.threadId,
-            ...key,
-            url: issue.url,
-            displayKey: issue.displayKey,
-            title: issue.title,
-            source: "manual",
-          },
-        }));
-    setPending(false);
-    if (result._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: linked ? "Could not unlink the issue" : "Could not link the issue",
-        description: readableFailure(squashAtomCommandFailure(result), "The server refused it."),
-      });
-    }
-  };
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={linked ? "Unlink from thread" : "Link to thread"}
-            aria-pressed={linked}
-            disabled={pending || reference.host === undefined}
-            onClick={() => void toggle()}
-          />
-        }
-      >
-        {linked ? (
-          <Link2OffIcon aria-hidden className="size-3.5" />
-        ) : (
-          <Link2Icon aria-hidden className="size-3.5" />
-        )}
-      </TooltipTrigger>
-      <TooltipPopup>{linked ? "Unlink from this thread" : "Link to this thread"}</TooltipPopup>
-    </Tooltip>
-  );
-}
+import { IssueGlyph, issueTrackerPresentation, issueStatePresentation } from "./issuePresentation";
 
 function IssueReactionBar({
   reactions,
@@ -188,13 +126,16 @@ function IssueLabelPicker({
   detail,
   allowed,
   disabledReason,
+  text,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
   detail: IssueDetail;
   allowed: boolean;
   disabledReason: string;
+  text?: string | undefined;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [picks, setPicks] = useState(noIssuePicks<IssueLabelCandidate>);
@@ -235,15 +176,19 @@ function IssueLabelPicker({
       setPicks((latest) => issuePicksAfterFailedWrite(latest, sent));
       toastManager.add({
         type: "error",
-        title: "Could not change labels",
-        description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
+        title: m(msg("Could not change labels")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The tracker refused it.")),
+        ),
       });
     });
   };
   return (
     <PullRequestCandidatePicker
       icon={<TagIcon className="size-3.5" />}
-      label="Change labels"
+      label={gt("Change labels")}
+      text={text}
       popupWidth="labels"
       allowed={allowed}
       disabledReason={disabledReason}
@@ -251,15 +196,15 @@ function IssueLabelPicker({
       onOpenChange={onOpenChange}
       query={query}
       onQueryChange={setQuery}
-      searchLabel="Search labels"
+      searchLabel={gt("Search labels")}
       isPending={candidatesQuery.isPending && candidatesQuery.data === null}
       error={candidatesQuery.data === null ? candidatesQuery.error : null}
       candidates={candidates}
-      emptyLabel="This tracker has no labels."
-      noMatchLabel="No label matches that."
-      errorLabel="The labels could not be read."
+      emptyLabel={gt("This tracker has no labels.")}
+      noMatchLabel={gt("No label matches that.")}
+      errorLabel={gt("The labels could not be read.")}
       truncated={candidatesQuery.data?.truncated === true}
-      truncatedLabel="More labels exist than are listed here."
+      truncatedLabel={gt("More labels exist than are listed here.")}
       candidateKey={(candidate) => candidate.name}
       onSelect={(candidate) =>
         setPicks({
@@ -277,14 +222,19 @@ function IssueLabelPicker({
               className="size-2 shrink-0 rounded-full bg-muted-foreground"
               {...(dot ? { style: { backgroundColor: dot } } : {})}
             />
-            <span className="min-w-0 flex-1 truncate">
-              {candidate.name}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{candidate.name}</span>
               {candidate.description ? (
-                <span className="ml-1.5 text-muted-foreground">{candidate.description}</span>
+                <span className="block truncate text-muted-foreground">
+                  {candidate.description}
+                </span>
               ) : null}
             </span>
             {isSelected(draft, candidate.name, applied.has(candidate.name)) ? (
-              <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
+              <CheckIcon
+                aria-label={gt("Applied", { $context: "label is applied to the issue" })}
+                className="size-3.5 shrink-0"
+              />
             ) : null}
           </>
         );
@@ -299,13 +249,16 @@ function IssueAssigneePicker({
   detail,
   allowed,
   disabledReason,
+  text,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
   detail: IssueDetail;
   allowed: boolean;
   disabledReason: string;
+  text?: string | undefined;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [picks, setPicks] = useState(noIssuePicks<IssueAssigneeCandidate>);
@@ -345,15 +298,19 @@ function IssueAssigneePicker({
       setPicks((latest) => issuePicksAfterFailedWrite(latest, sent));
       toastManager.add({
         type: "error",
-        title: "Could not change assignees",
-        description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
+        title: m(msg("Could not change assignees")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The tracker refused it.")),
+        ),
       });
     });
   };
   return (
     <PullRequestCandidatePicker
       icon={<UserPlusIcon className="size-3.5" />}
-      label="Change assignees"
+      label={gt("Change assignees")}
+      text={text}
       popupWidth="reviewers"
       allowed={allowed}
       disabledReason={disabledReason}
@@ -361,15 +318,15 @@ function IssueAssigneePicker({
       onOpenChange={onOpenChange}
       query={query}
       onQueryChange={setQuery}
-      searchLabel="Search people"
+      searchLabel={gt("Search people")}
       isPending={candidatesQuery.isPending && candidatesQuery.data === null}
       error={candidatesQuery.data === null ? candidatesQuery.error : null}
       candidates={candidates}
-      emptyLabel="Nobody can be assigned here."
-      noMatchLabel="Nobody matches that."
-      errorLabel="The people could not be read."
+      emptyLabel={gt("Nobody can be assigned here.")}
+      noMatchLabel={gt("Nobody matches that.")}
+      errorLabel={gt("The people could not be read.")}
       truncated={candidatesQuery.data?.truncated === true}
-      truncatedLabel="More people exist than are listed here."
+      truncatedLabel={gt("More people exist than are listed here.")}
       candidateKey={(candidate) => candidate.id}
       onSelect={(candidate) =>
         setPicks({
@@ -387,7 +344,10 @@ function IssueAssigneePicker({
         <>
           <PullRequestActorLabel actor={candidate} tooltip={false} className="min-w-0 flex-1" />
           {isSelected(draft, candidate.id, issueAssigneeHeld(detail, candidate)) ? (
-            <CheckIcon aria-label="Assigned" className="size-3.5 shrink-0" />
+            <CheckIcon
+              aria-label={gt("Assigned", { $context: "person is assigned to the issue" })}
+              className="size-3.5 shrink-0"
+            />
           ) : null}
         </>
       )}
@@ -413,26 +373,33 @@ function LinkedPullRequestRow({
     <>
       <PullRequestStateGlyph state={link.state} isDraft={link.isDraft} />
       <span className="min-w-0 flex-1 truncate text-body">{link.title}</span>
-      <PullRequestMetaLine className="shrink-0 text-meta text-muted-foreground">
-        {link.closesIssue ? <span>Closes this issue</span> : null}
+      <span className="flex min-w-0 items-center gap-x-2.5 shrink-0 text-meta text-muted-foreground">
+        {link.closesIssue ? (
+          <span>
+            <T>Closes this issue</T>
+          </span>
+        ) : null}
         <span className="tabular-nums">
           {link.repository.toLowerCase() === scope.toLowerCase() ? "" : link.repository}#
           {link.number}
         </span>
-      </PullRequestMetaLine>
+      </span>
     </>
   );
+  const className = cn(
+    PULL_REQUEST_ROW_CLASS,
+    PAGE_ROW_CLASS,
+    PAGE_ROW_HOVER_CLASS,
+    PAGE_ROW_PRESS_CLASS,
+  );
   return onSelect ? (
-    <ContentButton variant="inset-row-multiline" onClick={onSelect}>
+    <button type="button" className={className} onClick={onSelect}>
       {body}
-    </ContentButton>
+    </button>
   ) : (
-    <ContentButton
-      variant="inset-row-multiline"
-      render={<a href={link.url} target="_blank" rel="noopener noreferrer" />}
-    >
+    <a href={link.url} target="_blank" rel="noopener noreferrer" className={className}>
       {body}
-    </ContentButton>
+    </a>
   );
 }
 
@@ -441,6 +408,8 @@ export function IssueDetailPanel({
   reference,
   threadRef = null,
   listEntry = null,
+  onBack,
+  backLabel,
   onSelectPullRequest,
 }: {
   environmentId: EnvironmentId;
@@ -448,12 +417,20 @@ export function IssueDetailPanel({
   /** The list row this issue was opened from, shown until the detail arrives. */
   listEntry?: IssueListEntry | null;
   threadRef?: ScopedThreadRef | null;
+  /** Shown where the issue fills a pane too narrow for the list beside it. */
+  onBack?: (() => void) | undefined;
+  /** Says where back goes; the issues list by default. */
+  backLabel?: string | undefined;
   /** Opens a linked change request beside this one; absent, the link goes to the host. */
   onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
 }) {
-  const detailQuery = useEnvironmentQuery(
-    issueEnvironment.detail({ environmentId, input: reference }),
-  );
+  const gt = useGT();
+  const messages = useMessages();
+  const detailAtom = issueEnvironment.detail({ environmentId, input: reference });
+  const detailQuery = useEnvironmentQuery(detailAtom);
+  const registry = useContext(RegistryContext);
+  const [pager] = useState(() => createIssueCommentPager(detailAtom));
+  const { comments, nextCursor, loadingOlder, canLoadOlder } = useAtomValue(pager.view);
   const detail = detailQuery.data;
   const canWrite = useAtomValue(issueEnvironment.comment.permissionAtom(environmentId));
   const projects = useProjects();
@@ -461,17 +438,11 @@ export function IssueDetailPanel({
     projects.find((p) => p.environmentId === environmentId && p.id === reference.projectId)
       ?.workspaceRoot ?? "";
 
-  const [older, setOlder] = useState<{
-    readonly seed: string | null;
-    readonly comments: ReadonlyArray<IssueComment>;
-    readonly cursor: string | null;
-  } | null>(null);
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
-  const [loadingOlder, setLoadingOlder] = useState(false);
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
-  const [editing, setEditing] = useState<"title" | "body" | null>(null);
-  const [titleDraft, setTitleDraft] = useState("");
+  const [editingBody, setEditingBody] = useState(false);
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [changingState, setChangingState] = useState(false);
 
@@ -479,7 +450,8 @@ export function IssueDetailPanel({
     if (detailQuery.error !== null && !detailQuery.isPending) {
       return (
         <PullRequestsUnavailableState
-          title="Could not load this issue"
+          icon={IssueGlyph.issue}
+          title={gt("Could not load this issue")}
           error={detailQuery.error}
           onRetry={detailQuery.refresh}
         />
@@ -488,16 +460,12 @@ export function IssueDetailPanel({
     return <IssueDetailGhost seed={listEntry} />;
   }
 
-  // Older pages are tied to the cursor the detail was read with; a refreshed detail starts over.
-  const olderComments = older?.seed === detail.commentsCursor ? older.comments : [];
-  const nextCursor = older?.seed === detail.commentsCursor ? older.cursor : detail.commentsCursor;
-  const comments = prependIssueComments(detail.comments, olderComments);
   const timeline: ReadonlyArray<TimelineItem> = [
     ...comments.map((c): TimelineItem => ({ kind: "comment", at: c.createdAt, comment: c })),
     ...detail.events.map((e): TimelineItem => ({ kind: "event", at: e.createdAt, event: e })),
   ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 
-  const access = issueWriteAccess(detail, canWrite);
+  const access = issueWriteAccess(detail, canWrite, messages);
   const { blocked } = access;
   const canComment = access.comment;
   const canEdit = access.edit;
@@ -507,24 +475,21 @@ export function IssueDetailPanel({
   const otherStates = access.states;
   const tracker = issueTrackerPresentation(detail.tracker);
   const currentState = issueStatePresentation(detail.state);
+  const sourceControl = sourceControlClients.find(detail.tracker);
+  const profileUrl = (actor: { readonly login: string } | null) =>
+    actor && sourceControl ? sourceControl.authorProfileUrl(actor.login, detail.url) : null;
+  const openOnHostText = gt("Open {issue} on {provider}", {
+    issue: detail.displayKey,
+    provider: tracker.providerName,
+  });
 
   const loadOlder = async () => {
-    if (nextCursor === null || loadingOlder) return;
-    setLoadingOlder(true);
-    const result = await loadComments({
-      environmentId,
-      input: { ...reference, cursor: nextCursor },
-    });
-    setLoadingOlder(false);
-    if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Older comments could not be read" });
-      return;
+    const failure = await pager.loadOlder(registry, (cursor) =>
+      loadComments({ environmentId, input: { ...reference, cursor } }),
+    );
+    if (failure) {
+      toastManager.add({ type: "error", title: m(msg("Older comments could not be read")) });
     }
-    setOlder({
-      seed: detail.commentsCursor,
-      comments: prependIssueComments(olderComments, result.value.comments),
-      cursor: result.value.nextCursor,
-    });
   };
 
   const save = async (patch: { title?: string; body?: string }) => {
@@ -534,13 +499,17 @@ export function IssueDetailPanel({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: "The issue could not be updated",
-        description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
+        title: m(msg("The issue could not be updated")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The tracker refused it.")),
+        ),
       });
       return;
     }
     refreshIssueLists(environmentId);
-    setEditing(null);
+    if (patch.title !== undefined) setTitleDraft(null);
+    if (patch.body !== undefined) setEditingBody(false);
   };
 
   const moveTo = async (state: string) => {
@@ -554,264 +523,313 @@ export function IssueDetailPanel({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: "The state could not be changed",
-        description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
+        title: m(msg("The state could not be changed")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The tracker refused it.")),
+        ),
       });
       return;
     }
     refreshIssueLists(environmentId);
   };
 
-  const currentStateIcon = (
-    <currentState.Icon
-      aria-hidden
-      className={cn("size-3.5 shrink-0", currentState.toneClassName)}
-    />
-  );
-  const stateControl: ReactNode =
-    otherStates.length > 0 ? (
-      <Menu>
-        <MenuTrigger
+  // Plain open reads as an open pull request does, with no badge after the key; a workflow
+  // tracker's own open states, such as "In Review", still say which.
+  const stateBadge: ReactNode =
+    detail.state.category === "open" && detail.state.name.toLowerCase() === "open" ? null : (
+      <Badge
+        size="status"
+        variant={
+          detail.state.category === "open"
+            ? "success"
+            : detail.state.closeReason !== undefined && detail.state.closeReason !== "completed"
+              ? "secondary"
+              : "merged"
+        }
+      >
+        <currentState.Icon aria-hidden />
+        <span className="@max-sm/pr-header:sr-only">{currentState.label}</span>
+      </Badge>
+    );
+  const actionsLabel = gt("Actions");
+  // Moving the issue lives in the actions menu, where a pull request's close and reopen do.
+  const actionsMenu = (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
           render={
-            <Button
-              size="xs"
-              variant="secondary"
-              aria-label={`Issue state, ${currentState.label}`}
-              disabled={changingState}
-            />
+            <MenuTrigger
+              render={<Button aria-label={actionsLabel} size="icon-xs" variant="ghost-muted" />}
+            >
+              {detailQuery.isPending || changingState ? (
+                <RefreshIcon refreshing size="md" />
+              ) : (
+                <MoreHorizontalIcon className="size-4" />
+              )}
+            </MenuTrigger>
+          }
+        />
+        <TooltipPopup>{actionsLabel}</TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="end" side="bottom">
+        <MenuItem
+          disabled={detailQuery.isPending}
+          onClick={() =>
+            void pager.refresh(registry, () =>
+              executeAtomQuery(registry, detailAtom, { refresh: true, reportFailure: false }),
+            )
           }
         >
-          {currentStateIcon}
-          {currentState.label}
-          <ChevronDownIcon aria-hidden className="size-3" />
-        </MenuTrigger>
-        <MenuPopup align="end">
-          {otherStates.map((state) => {
-            const presentation = issueStatePresentation(state);
-            return (
-              <MenuItem key={state.name} onClick={() => void moveTo(state.name)}>
-                <presentation.Icon
-                  aria-hidden
-                  className={cn("size-3.5 shrink-0", presentation.toneClassName)}
-                />
-                {state.name}
-              </MenuItem>
-            );
-          })}
-        </MenuPopup>
-      </Menu>
-    ) : (
-      <span className="flex shrink-0 items-center gap-1">
-        {currentStateIcon}
-        {currentState.label}
-      </span>
-    );
+          <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
+          <T context="verb, menu item">Refresh</T>
+        </MenuItem>
+        {otherStates.length > 0 ? <MenuSeparator /> : null}
+        {otherStates.map((state) => {
+          const presentation = issueStatePresentation(state);
+          return (
+            <MenuItem
+              key={state.name}
+              disabled={changingState}
+              onClick={() => void moveTo(state.name)}
+            >
+              <presentation.Icon
+                aria-hidden
+                className={cn("size-3.5 shrink-0", presentation.toneClassName)}
+              />
+              {state.name}
+            </MenuItem>
+          );
+        })}
+        <MenuSeparator />
+        <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}>
+          <ExternalLinkIcon className="size-3.5" />
+          {openOnHostText}
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <div
+      className="relative flex h-[calc(100%+var(--surface-top-inset,0px))] min-h-0 w-full flex-col bg-(--code-surface) pt-under-header"
+      data-surface-reaches-under-header=""
+    >
+      <div className="@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2">
+        <WorkItemDetailCrumbs
+          subject={{
+            url: detail.url,
+            scope: detail.scope,
+            scopeUrl: null,
+            keyLabel: detail.displayKey,
+            keyAriaLabel: openOnHostText,
+            openLabel: openOnHostText,
+          }}
+          toneClassName={currentState.toneClassName}
+          openOnHostText={openOnHostText}
+          badge={stateBadge}
+          {...(onBack
+            ? {
+                back: {
+                  onBack,
+                  label: backLabel ?? gt("Back to issues"),
+                  tooltip: backLabel ?? gt("Back to issues"),
+                },
+              }
+            : {})}
+        />
+        <div className="mt-2 mr-3 flex h-6 shrink-0 select-none items-center justify-end gap-1">
+          <IssueThreadLinks
+            key={`${environmentId}:${detail.url}`}
+            environmentId={environmentId}
+            reference={{ ...reference, host: reference.host ?? detail.host }}
+            issue={detail}
+            threadRef={threadRef}
+          />
+          {actionsMenu}
+        </div>
+        <div className="col-span-2 flex min-w-0 flex-col gap-1.5 px-4 pt-1.5 pb-2.5">
+          <WorkItemTitleEditor
+            title={detail.title}
+            canEdit={canEdit}
+            draft={titleDraft}
+            onDraftChange={setTitleDraft}
+            saving={saving}
+            label={gt("Issue title")}
+            onSave={(next) => {
+              const title = next.trim();
+              if (title.length > 0 && title !== detail.title) void save({ title });
+              else setTitleDraft(null);
+            }}
+          />
+          <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
+            <PullRequestActorLabel actor={detail.author} profileUrl={profileUrl(detail.author)} />
+            <span className="shrink-0">
+              <T>
+                opened <Var>{formatRelativeTimeLabel(detail.createdAt, undefined, messages)}</Var>
+              </T>
+            </span>
+            {detail.closedAt ? (
+              <span className="shrink-0">
+                <T>
+                  closed <Var>{formatRelativeTimeLabel(detail.closedAt, undefined, messages)}</Var>
+                </T>
+              </span>
+            ) : null}
+            {detail.writable ? null : (
+              <span className="shrink-0">
+                <T>Read-only</T>
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
       <div
         className={cn(
           "min-h-0 flex-1 overflow-y-auto",
-          // Room for the floating composer, so the last comment can scroll clear of it.
-          detail.capabilities.comment && "pb-32",
+          // Room for the floating comment button, so the last comment can scroll clear of it.
+          detail.capabilities.comment && "pb-16",
         )}
         data-pull-request-summary-scroll
       >
-        <div className="px-4 pb-1">
-          <PullRequestDetailTitleRow className="h-7 gap-1 text-meta">
-            <span className="min-w-0 truncate text-muted-foreground">{detail.scope}</span>
-            <InlineButton
-              className={cn("shrink-0", currentState.toneClassName)}
-              aria-label={`Open ${detail.displayKey} on ${tracker.providerName}`}
-              render={<a href={detail.url} target="_blank" rel="noopener noreferrer" />}
-            >
-              {detail.displayKey}
-              <ExternalLinkIcon aria-hidden className="size-2.5" />
-            </InlineButton>
-            <span className="flex-1" />
-            {stateControl}
-            {threadRef ? (
-              <IssueThreadLinkButton
-                environmentId={environmentId}
-                reference={{ ...reference, host: reference.host ?? detail.host }}
-                issue={detail}
-                threadRef={threadRef}
-              />
-            ) : null}
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label="Refresh issue"
-              disabled={detailQuery.isPending}
-              onClick={() => {
-                // Older pages are cached under the cursor, which a refresh can hand back unchanged.
-                setOlder(null);
-                detailQuery.refresh();
-              }}
-            >
-              <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
-            </Button>
-          </PullRequestDetailTitleRow>
-
-          {editing === "title" ? (
-            <form
-              className="mt-1 flex items-center gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const next = titleDraft.trim();
-                if (next.length > 0 && next !== detail.title) void save({ title: next });
-                else setEditing(null);
-              }}
-            >
-              <Input
-                autoFocus
-                aria-label="Issue title"
-                value={titleDraft}
-                disabled={saving}
-                onChange={(event) => setTitleDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") setEditing(null);
-                }}
-              />
-              <Button type="submit" size="sm" disabled={saving}>
-                Save
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                disabled={saving}
-                onClick={() => setEditing(null)}
-              >
-                Cancel
-              </Button>
-            </form>
-          ) : (
-            <PullRequestDetailTitleRow className="group mt-1 gap-1">
-              <h2 className="min-w-0 flex-1 text-label leading-snug">{detail.title}</h2>
-              {canEdit ? (
-                <PullRequestEditButton
-                  aria-label="Edit title"
-                  onClick={() => {
-                    setTitleDraft(detail.title);
-                    setEditing("title");
-                  }}
-                />
-              ) : null}
-            </PullRequestDetailTitleRow>
-          )}
-
-          <PullRequestMetaLine className="mt-2 min-h-5 text-meta text-muted-foreground">
-            <PullRequestActorLabel actor={detail.author} />
-            <span>opened {formatRelativeTimeLabel(detail.createdAt)}</span>
-            {detail.closedAt ? (
-              <span>closed {formatRelativeTimeLabel(detail.closedAt)}</span>
-            ) : null}
-            {detail.writable ? null : <span>Read-only</span>}
-          </PullRequestMetaLine>
-
-          <div className="mt-4 space-y-2">
-            <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
-              <span className="flex min-w-0 flex-wrap items-center gap-1">
-                {detail.labels.length === 0 ? (
-                  <span className="text-muted-foreground">None</span>
-                ) : (
-                  detail.labels.map((label) => (
-                    <PullRequestLabelChip
-                      key={label.name}
-                      label={label}
-                      size="default"
-                      className="max-w-48"
-                    />
-                  ))
-                )}
-                {detail.capabilities.labels ? (
-                  <IssueLabelPicker
-                    environmentId={environmentId}
-                    reference={reference}
-                    detail={detail}
-                    allowed={canLabel}
-                    disabledReason={
-                      blocked ?? "Changing labels needs triage access on this tracker."
-                    }
-                  />
-                ) : null}
-              </span>
-            </PullRequestMetaRow>
-            <PullRequestMetaRow icon={<UsersIcon className="size-3.5" />} label="Assignees">
-              <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                {detail.assignees.length === 0 ? (
-                  <span className="text-muted-foreground">None</span>
-                ) : (
-                  detail.assignees.map((actor) => (
-                    <PullRequestActorLabel key={actor.login} actor={actor} />
-                  ))
-                )}
-                {detail.capabilities.assignees ? (
-                  <IssueAssigneePicker
-                    environmentId={environmentId}
-                    reference={reference}
-                    detail={detail}
-                    allowed={canAssign}
-                    disabledReason={
-                      blocked ?? "Changing assignees needs triage access on this tracker."
-                    }
-                  />
-                ) : null}
-              </span>
-            </PullRequestMetaRow>
+        {detailQuery.error !== null && !detailQuery.isPending ? (
+          <div className="px-4 pb-2">
+            <Alert variant="error">
+              <AlertTitle>{gt("Could not refresh this issue")}</AlertTitle>
+              <AlertDescription>{detailQuery.error}</AlertDescription>
+            </Alert>
           </div>
-        </div>
+        ) : null}
 
         <PullRequestSection
           key={`description:${detail.url}`}
-          title="Description"
+          title={gt("Description")}
           keepMounted
+          // With none yet, the description's reaction control waits in its heading instead of
+          // taking a row of its own; the first reaction moves it under the text with its chips.
           actions={
-            canEdit && editing !== "body" ? (
-              <PullRequestEditButton
-                aria-label="Edit description"
-                onClick={() => setEditing("body")}
-              />
-            ) : null
-          }
-        >
-          <div className="flex flex-col gap-2">
-            {editing === "body" ? (
-              <PullRequestMarkdownEditor
-                value={detail.body}
-                cwd={cwd}
-                environmentId={environmentId}
-                threadRef={threadRef}
-                label="Description"
-                completionScope={null}
-                saving={saving}
-                allowEmpty
-                onSave={(next) => void save({ body: next })}
-                onCancel={() => setEditing(null)}
-              />
-            ) : (
-              <PullRequestMarkdown
-                text={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
-                cwd={cwd}
-                environmentId={environmentId}
-                threadRef={threadRef}
-              />
-            )}
-            {detail.reactions !== undefined ? (
+            detail.reactions !== undefined && detail.reactions.length === 0 && canReact ? (
               <IssueReactionBar
                 reactions={detail.reactions}
                 canReact={canReact}
                 environmentId={environmentId}
                 reference={reference}
               />
-            ) : null}
+            ) : undefined
+          }
+        >
+          <div className="group">
+            {editingBody ? (
+              <PullRequestMarkdownEditor
+                value={detail.body}
+                cwd={cwd}
+                environmentId={environmentId}
+                threadRef={threadRef}
+                label={gt("Description")}
+                completionScope={null}
+                saving={saving}
+                allowEmpty
+                onSave={(next) => void save({ body: next })}
+                onCancel={() => setEditingBody(false)}
+              />
+            ) : (
+              <div className="flex items-start gap-1">
+                <PullRequestCommentBody
+                  key={detail.url}
+                  variant="description"
+                  className="min-w-0 flex-1"
+                  text={
+                    detail.body.trim().length > 0 ? detail.body : gt("_No description provided._")
+                  }
+                  cwd={cwd}
+                  environmentId={environmentId}
+                  threadRef={threadRef}
+                />
+                {canEdit ? (
+                  <PullRequestEditButton
+                    aria-label={gt("Edit description")}
+                    onClick={() => setEditingBody(true)}
+                  />
+                ) : null}
+              </div>
+            )}
           </div>
+          {detail.reactions !== undefined && detail.reactions.length > 0 ? (
+            <div className="mt-2 flex">
+              <IssueReactionBar
+                reactions={detail.reactions}
+                canReact={canReact}
+                environmentId={environmentId}
+                reference={reference}
+              />
+            </div>
+          ) : null}
+          <WorkItemFacts
+            facts={[
+              detail.labels.length > 0 || detail.capabilities.labels
+                ? {
+                    name: gt("Labels"),
+                    values: detail.labels.map((label) => ({
+                      key: label.name,
+                      node: (
+                        <PullRequestLabelChip
+                          label={label}
+                          size="default"
+                          className="max-w-48"
+                          focusable
+                        />
+                      ),
+                    })),
+                    control: canLabel ? (
+                      <IssueLabelPicker
+                        environmentId={environmentId}
+                        reference={reference}
+                        detail={detail}
+                        allowed={canLabel}
+                        disabledReason={
+                          blocked ?? gt("Changing labels needs triage access on this tracker.")
+                        }
+                        text={detail.labels.length === 0 ? gt("Add labels") : undefined}
+                      />
+                    ) : undefined,
+                    emptyText: <T>No labels</T>,
+                  }
+                : null,
+              detail.assignees.length > 0 || detail.capabilities.assignees
+                ? {
+                    name: gt("Assignees"),
+                    people: true,
+                    values: detail.assignees.map((actor) => ({
+                      key: actor.login,
+                      node: <PullRequestActorLabel actor={actor} profileUrl={profileUrl(actor)} />,
+                    })),
+                    control: canAssign ? (
+                      <IssueAssigneePicker
+                        environmentId={environmentId}
+                        reference={reference}
+                        detail={detail}
+                        allowed={canAssign}
+                        disabledReason={
+                          blocked ?? gt("Changing assignees needs triage access on this tracker.")
+                        }
+                        text={detail.assignees.length === 0 ? gt("Add assignees") : undefined}
+                      />
+                    ) : undefined,
+                    emptyText: <T>No one assigned</T>,
+                  }
+                : null,
+            ]}
+          />
         </PullRequestSection>
 
         {detail.linkedPullRequests.length > 0 ? (
-          <PullRequestSection key={`linked:${detail.url}`} title="Linked pull requests">
-            <div className="flex flex-col gap-1">
+          <PullRequestSection
+            key={`linked:${detail.url}`}
+            title={gt("Linked pull requests")}
+            count={detail.linkedPullRequests.length}
+          >
+            <div className="-mx-3 flex flex-col">
               {detail.linkedPullRequests.map((link) => (
                 <LinkedPullRequestRow
                   key={`${link.repository}#${link.number}`}
@@ -836,69 +854,73 @@ export function IssueDetailPanel({
 
         <PullRequestSection
           key={`activity:${detail.url}`}
-          title={detail.commentCount > 0 ? `Activity (${detail.commentCount})` : "Activity"}
+          title={gt("Activity")}
+          {...(detail.commentCount > 0 ? { count: detail.commentCount } : {})}
         >
           <div className="flex flex-col gap-3">
             {nextCursor !== null ? (
               <Button
-                size="sm"
-                variant="secondary"
+                size="xs"
+                variant="ghost"
                 className="self-start"
-                disabled={loadingOlder}
+                disabled={!canLoadOlder}
                 onClick={() => void loadOlder()}
               >
-                {loadingOlder ? "Loading…" : "Load older comments"}
+                {loadingOlder ? <T>Loading…</T> : <T>Load older comments</T>}
               </Button>
             ) : null}
             {timeline.length === 0 ? (
-              <p className="text-body text-muted-foreground">Nothing has happened here yet.</p>
+              <p className="py-2 text-meta text-muted-foreground">
+                <T>Nothing has happened here yet.</T>
+              </p>
             ) : null}
             {timeline.map((item) =>
               item.kind === "comment" ? (
-                <article
+                <WorkItemCommentCard
                   key={`c:${item.comment.id}`}
-                  className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
+                  header={
+                    <WorkItemCommentIdentity
+                      actor={item.comment.author}
+                      profileUrl={profileUrl(item.comment.author)}
+                      createdAt={item.comment.createdAt}
+                      url={item.comment.url}
+                    />
+                  }
+                  reactions={
+                    item.comment.reactions !== undefined ? (
+                      <IssueReactionBar
+                        reactions={item.comment.reactions}
+                        canReact={canReact}
+                        subjectId={item.comment.id}
+                        environmentId={environmentId}
+                        reference={reference}
+                      />
+                    ) : null
+                  }
                 >
-                  <PullRequestMetaLine className="text-meta text-muted-foreground">
-                    <PullRequestActorLabel actor={item.comment.author} />
-                    {item.comment.url ? (
-                      <InlineButton
-                        tone="muted"
-                        render={
-                          <a href={item.comment.url} target="_blank" rel="noopener noreferrer" />
-                        }
-                      >
-                        {formatRelativeTimeLabel(item.comment.createdAt)}
-                      </InlineButton>
-                    ) : (
-                      <span>{formatRelativeTimeLabel(item.comment.createdAt)}</span>
-                    )}
-                  </PullRequestMetaLine>
                   <PullRequestCommentBody
+                    className="mt-2 px-3"
                     text={item.comment.body}
                     cwd={cwd}
                     environmentId={environmentId}
                     threadRef={threadRef}
                   />
-                  {item.comment.reactions !== undefined ? (
-                    <IssueReactionBar
-                      reactions={item.comment.reactions}
-                      canReact={canReact}
-                      subjectId={item.comment.id}
-                      environmentId={environmentId}
-                      reference={reference}
-                    />
-                  ) : null}
-                </article>
+                </WorkItemCommentCard>
               ) : (
-                <PullRequestMetaLine
-                  key={`e:${item.event.id}`}
-                  className="px-1 text-meta text-muted-foreground"
-                >
-                  <PullRequestActorLabel actor={item.event.actor} />
-                  <span>{issueEventSentence(item.event)}</span>
-                  <span>{formatRelativeTimeLabel(item.event.createdAt)}</span>
-                </PullRequestMetaLine>
+                <div key={`e:${item.event.id}`} className="-my-1.5">
+                  <PullRequestReviewEntry
+                    actor={item.event.actor}
+                    profileUrl={profileUrl(item.event.actor)}
+                    createdAt={item.event.createdAt}
+                    url={null}
+                    outcome={null}
+                    stateLabel={issueEventSentence(item.event, messages)}
+                    preview={null}
+                    icon={<IssueGlyph.issue aria-hidden className="size-3.5 text-dim-foreground" />}
+                  >
+                    {null}
+                  </PullRequestReviewEntry>
+                </div>
               ),
             )}
           </div>
@@ -906,11 +928,13 @@ export function IssueDetailPanel({
       </div>
 
       {detail.capabilities.comment ? (
-        <IssueCommentComposer
-          environmentId={environmentId}
-          reference={reference}
-          blocked={canComment ? null : (blocked ?? "You cannot comment here.")}
-        />
+        <div className="absolute right-4 bottom-4 z-20">
+          <IssueCommentComposer
+            environmentId={environmentId}
+            reference={reference}
+            blocked={canComment ? null : (blocked ?? gt("You cannot comment here."))}
+          />
+        </div>
       ) : null}
     </div>
   );

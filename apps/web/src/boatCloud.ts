@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type AtomCommandResult,
@@ -128,7 +130,7 @@ export function boatCloudReady(status: BoatCloudStatus | null) {
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]) {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "An error occurred.";
+  return error instanceof Error ? error.message : m(msg("An error occurred."));
 }
 
 function reportFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
@@ -201,7 +203,7 @@ async function attach(session: BoatCloudSession): Promise<string | null> {
       predicate: (ids) => ids.includes(session.environmentId),
       timeoutMs: RECONNECT_TIMEOUT_MS,
     });
-    return reconnected ? null : "Could not reconnect to the VM.";
+    return reconnected ? null : m(msg("Could not reconnect to the VM."));
   }
   const paired = await runAtomCommand(
     appAtomRegistry,
@@ -502,7 +504,7 @@ function wakeBoatCloudMachine(input: {
       { label: serverEnvironment.wakeBoatCloud.label, reportFailure: false, reportDefect: true },
     );
     if (woken._tag === "Failure") {
-      reportFailure("Could not wake the Boat cloud machine", woken);
+      reportFailure(m(msg("Could not wake the Boat cloud machine")), woken);
       return false;
     }
     updateWake(environmentId, markAcquired);
@@ -512,7 +514,7 @@ function wakeBoatCloudMachine(input: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not reconnect to Boat cloud",
+          title: m(msg("Could not reconnect to Boat cloud")),
           description: attachFailure,
         }),
       );
@@ -537,8 +539,8 @@ function wakeBoatCloudMachine(input: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not reconnect to Boat cloud",
-          description: "The machine is on, but this client did not reach it in time.",
+          title: m(msg("Could not reconnect to Boat cloud")),
+          description: m(msg("The machine is on, but this client did not reach it in time.")),
         }),
       );
     }

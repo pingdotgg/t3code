@@ -1,7 +1,9 @@
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
+import { T, useGT } from "gt-react";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { XIcon } from "lucide-react";
 import { Button } from "../ui/button";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import { MenuGroupLabel } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -21,28 +23,34 @@ export function PullRequestStackHeader({
   stale?: boolean;
   onClose?: (() => void) | undefined;
 }) {
+  const gt = useGT();
   return (
     <MenuGroupLabel>
       <div className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-2 text-foreground">
           <PullRequestGlyph.stack aria-hidden className="size-3.5 shrink-0" />
-          <span>Stack</span>
+          <span>
+            <T context="noun, a stack of pull requests">Stack</T>
+          </span>
           <span className="truncate text-meta text-muted-foreground">
             {size === undefined
               ? `#${number}`
-              : `${size} ${size === 1 ? terminology.singular : terminology.plural}`}
+              : gt(
+                  "{count, plural, one {{count} {term, select, mr {merge request} cr {change request} other {pull request}}} other {{count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}}}",
+                  { count: size, term: changeRequestTermKind(terminology) },
+                )}
           </span>
         </span>
         {notice ? (
           <Tooltip>
             <TooltipTrigger render={<span role="status" className="text-meta" />}>
-              {stale ? "May be stale" : "Refreshing…"}
+              {stale ? gt("May be stale") : gt("Refreshing…")}
             </TooltipTrigger>
             <TooltipPopup>{notice}</TooltipPopup>
           </Tooltip>
         ) : null}
         {onClose ? (
-          <Button variant="bare" size="icon-xs" aria-label="Close stack" onClick={onClose}>
+          <Button variant="bare" size="icon-xs" aria-label={gt("Close stack")} onClick={onClose}>
             <XIcon />
           </Button>
         ) : null}

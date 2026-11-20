@@ -3,10 +3,9 @@ import type { Messages } from "./en";
 export const ja: Messages = {
   layout: {
     defaultTitle: "T3 Code",
-    defaultDescription:
-      "T3 Code。コーディングエージェントのためのオープンソースのコントロールプレーン。",
+    defaultDescription: "T3 Code。オープンソースのコーディングエージェント制御プレーン。",
     socialImageAlt:
-      "T3 Code：コーディングエージェントのためのオープンソースのコントロールプレーン。Claude Code、Codex、Cursor、OpenCode、Grok、Antigravity に対応。",
+      "T3 Code：オープンソースのコーディングエージェント制御プレーン。Claude Code、Codex、Cursor、OpenCode、Grok、Antigravity に対応。",
     homeLabel: "T3 Code ホーム",
     download: "ダウンロード",
     starsLabel: "GitHub で T3 Code にスターを付ける（{stars} スター）",
@@ -20,9 +19,9 @@ export const ja: Messages = {
     security: "セキュリティ",
   },
   home: {
-    title: "T3 Code | コーディングエージェントのためのオープンソースのコントロールプレーン",
-    description: "T3 Code。コーディングエージェントのためのオープンソースのコントロールプレーン。",
-    heroTitle: ["コーディングエージェントの", "オープンソース", "コントロールプレーン。"],
+    title: "T3 Code | オープンソースのコーディングエージェント制御プレーン",
+    description: "T3 Code。オープンソースのコーディングエージェント制御プレーン。",
+    heroTitle: ["オープンソースの", "コーディングエージェント", "制御プレーン。"],
     heroSub:
       "Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok をひとつの画面からオーケストレーション。サブスクリプションは手持ちのものをそのまま。まるごとフォークも自由です。",
     downloadForMac: "macOS 版をダウンロード",
@@ -33,17 +32,17 @@ export const ja: Messages = {
     sourceLink: "コードを盗もう（合法的に）",
     alsoOnPhone: "スマホでも使えます：",
     screenshotAlt:
-      "ひとつのスレッドで Claude、Codex、Muse、Gemini のサブエージェントを動かす T3 Code",
-    endorsementsTitle: "{users} 人以上の開発者が我慢して使っています",
-    endorsementsSub: "ツイートまでしてくれた人もいます。",
+      "スレッド一覧の横で Claude のスレッドを開いた T3 Code。ドッキングされた詳細カードに、ブランチ、変更、チェックを通過したリンク済みのプルリクエスト、使用量の上限、コンテキスト、オートメーション、フォークが表示されています",
+    endorsementsTitle: "{users}人以上の開発者たちが「悪くない」と言っています",
+    endorsementsSub: "温かいツイートまでいただいています。",
     endorsementsLabel: "開発者の声",
     readPost: "X で {handle} の投稿を読む",
     harnessTitle: "サブスクは持ち込みで",
     harnessBody:
-      "T3 Code はトークンを転売しません。Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok を、すでに持っている認証情報でつなぐだけ。オーケストレーションは私たちに任せて、プランは今のままで。",
+      "T3 Code はトークンの上乗せ販売を行いません。すでにお持ちの認証情報で、Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok をつなぐだけ。T3 Code は制御プレーンのみを提供。プランは今のままで。",
     googleSignIn: "Google でサインイン",
     harnessPoints: [
-      "キーの転売なし。使用量の上限なし。",
+      "キーの再販なし。使用量の上限なし。",
       "スレッドの途中でモデルを切り替え。",
       "対応エージェントは毎週追加。",
     ],
@@ -75,9 +74,9 @@ export const ja: Messages = {
     stars: "{stars} スター",
     forkOnGithub: "GitHub でフォーク",
     browseSource: "ソースを見る",
-    ctaTitle: "あなたのエージェントに、ターミナルだけではもったいない。",
+    ctaTitle: "あなたのエージェントに、ターミナルよりふさわしい場所を。",
     ctaSub:
-      "T3 Code は無料、オープンソース、そして高速。インストールして、契約中のツールをつなぐだけ。あとはエージェントにおまかせ。",
+      "T3 Code は無料、オープンソースで、高速です。インストールしたら、お使いのハーネスをつなぐだけ。すぐに仕事に取り掛かれます。",
     otherPlatforms: "ほかのプラットフォーム",
   },
   download: {
@@ -89,6 +88,7 @@ export const ja: Messages = {
     channelLabel: "リリースチャンネル",
     stable: "安定版",
     nightly: "Nightly",
+    nightlyTagline: "新しい変更を、安定版より先にいち早く。荒削りな部分もあります。",
     intelNote: "Intel Mac をお使いですか？　{link}。",
     intelLink: "x64 版をダウンロード",
     armNote: "ARM をお使いですか？　arm64 版の {deb} または {appimage} をダウンロード。",
@@ -96,7 +96,7 @@ export const ja: Messages = {
     iphoneIpad: "iPhone と iPad",
     terminal: "ターミナル",
     tryOnce: "インストールせずに試すなら：",
-    allBuilds: "すべてのビルドは {link} にあります",
+    allBuilds: "すべてのビルド：{link}",
     releasesPage: "GitHub のリリースページ",
     builtAgo: "{age}にビルド",
     releasesFallback: "リリース",

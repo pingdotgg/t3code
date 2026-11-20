@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
+import { msg, useGT, useMessages } from "gt-react";
 import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { useAtomValue } from "@effect/atom-react";
@@ -17,6 +18,7 @@ import {
   ChartNoAxesColumnIcon,
   GitForkIcon,
   PanelRightIcon,
+  PlusIcon,
   SettingsIcon,
   SquareDashedIcon,
   SquarePenIcon,
@@ -46,10 +48,11 @@ import { previewBridge } from "../components/preview/previewBridge";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 
 import { ProjectFavicon } from "../components/ProjectFavicon";
-import { ContentButton } from "../components/ui/button";
+import { Button, ContentButton } from "../components/ui/button";
 import { cn } from "../lib/utils";
 import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
 import { PANE_GHOST_TAB_TITLE_CLASS, PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
+import { IssueGlyph } from "../components/issue/issuePresentation";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { ThreadSurfaceTabIcon } from "../components/SurfaceTabIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
@@ -62,6 +65,7 @@ import {
 import { contextMenuShortcutFields, shortcutLabelForCommand } from "../keybindings";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
+import { m, type MessageResolver } from "../i18n/messages";
 import { isElectron } from "../env";
 import { textDirection } from "../textDirection";
 import { buildThreadRouteParams } from "../threadRoutes";
@@ -80,9 +84,16 @@ import {
   THREAD_TERMINAL_SURFACE_ID,
   type LayoutState,
   type LayoutTab,
+  canCloseLayoutTab,
 } from "./layoutModel";
-import { closeLayoutTabByUser, closeOtherLayoutTabsByUser, splitLayoutTab } from "./layoutActions";
-import { beginLayoutTabDrag } from "./layoutDrag";
+import {
+  closeLayoutTabByUser,
+  closeOtherLayoutTabsByUser,
+  createLayoutNewTabContent,
+  openLayoutNewTab,
+  splitLayoutTab,
+} from "./layoutActions";
+import { beginLayoutContentDrag, beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
@@ -102,6 +113,12 @@ const EMPTY_TABS: readonly LayoutTab[] = [];
 interface PaneStrip {
   readonly strip: HTMLDivElement;
   readonly join: HTMLSpanElement;
+  /** The landed tab's foot, painted beside the strip with the bar (index.css, [data-pane-join-foot]). */
+  readonly foot: HTMLElement;
+  /** The strip's left in its notch, where the foot is placed. */
+  footOffset: number | null;
+  /** The notch whose bar draws the foot now. */
+  footNotch: HTMLElement | null;
   /** Where the joined shape sits or is heading, in the strip's scrolled content. */
   shown: { tabId: string | null; x: number; w: number } | null;
   /** The tab whose label reads as joined: the shape's, once it has landed there. */
@@ -110,6 +127,11 @@ interface PaneStrip {
   slide: Animation | null;
   /** The holding header's panel animation duration, for a slide begun on a press. */
   motionMs: number;
+  readonly litProperties: readonly [start: string, end: string];
+  lit: { host: HTMLElement; offset: number; width: number } | null;
+  width: number;
+  scrollLeft: number;
+  restoreScroll: boolean;
 }
 
 const paneStrips = new Map<string, PaneStrip>();
@@ -117,6 +139,7 @@ const paneStrips = new Map<string, PaneStrip>();
 const stripPlacers = new WeakMap<HTMLElement, (motionMs: number) => void>();
 const stripEntries = new WeakMap<HTMLElement, PaneStrip>();
 const pendingPlacements = new Map<HTMLElement, number>();
+const pendingReveals = new WeakSet<HTMLElement>();
 let placementFrame: number | null = null;
 
 /**
@@ -137,6 +160,8 @@ function schedulePlacement(strip: HTMLElement, motionMs: number): void {
 const PANE_JOIN_RADIUS_PX = 10;
 const PANE_JOIN_EAR_PX = 10;
 const PANE_JOIN_TAIL_PX = 36;
+/** The middle's unscaled width (index.css). Scaling a 1px layer at a fractional zoom multiplied its rounding by the tab's width. */
+const PANE_JOIN_MIDDLE_PX = 256;
 /** The strip's edge fade (index.css), which the revealed tab's ears stay clear of. */
 const PANE_STRIP_FADE_PX = 24;
 
@@ -158,7 +183,7 @@ function joinCap(side: "l" | "r"): HTMLElement {
   return cap;
 }
 
-function createPaneStrip(): PaneStrip {
+function createPaneStrip(role?: "panel"): PaneStrip {
   const strip = document.createElement("div");
   strip.dataset.layoutTabStrip = "";
   strip.className =
@@ -173,7 +198,28 @@ function createPaneStrip(): PaneStrip {
   body.append(joinCap("l"), joinPiece("data-jm"), joinCap("r"));
   join.append(body);
   strip.append(join);
-  const entry: PaneStrip = { strip, join, shown: null, joinedId: null, slide: null, motionMs: 0 };
+  const foot = document.createElement("i");
+  foot.dataset.paneJoinFoot = "";
+  foot.setAttribute("aria-hidden", "true");
+  const entry: PaneStrip = {
+    strip,
+    join,
+    foot,
+    footOffset: null,
+    footNotch: null,
+    shown: null,
+    joinedId: null,
+    slide: null,
+    motionMs: 0,
+    litProperties:
+      role === "panel"
+        ? ["--pane-lit-panel-start", "--pane-lit-panel-end"]
+        : ["--pane-lit-start", "--pane-lit-end"],
+    lit: null,
+    width: 0,
+    scrollLeft: 0,
+    restoreScroll: false,
+  };
   stripEntries.set(strip, entry);
   strip.addEventListener(
     "wheel",
@@ -192,7 +238,14 @@ function createPaneStrip(): PaneStrip {
     },
     { passive: false },
   );
-  strip.addEventListener("scroll", () => markStripOverflow(strip), { passive: true });
+  strip.addEventListener(
+    "scroll",
+    () => {
+      if (!entry.restoreScroll) entry.scrollLeft = strip.scrollLeft;
+      markStripOverflow(strip);
+    },
+    { passive: true },
+  );
   // The shape leaves on the press, before the switch's render: a click lands
   // on its release, after the incoming chat has been laid out.
   strip.addEventListener("pointerdown", (event) => slideOnPress(entry, event));
@@ -201,7 +254,10 @@ function createPaneStrip(): PaneStrip {
   // Not observeResize: no React state changes, and its flushSync would force the
   // incoming chat's pending render into the tab switch's task.
   // oxlint-disable-next-line t3code/no-raw-resize-observer -- Places a DOM node only; see above.
-  const resize = new ResizeObserver(() => {
+  const resize = new ResizeObserver((entries) => {
+    if (entries.some((resized) => resized.target === strip) && activeTabInView(entry)) {
+      pendingReveals.add(strip);
+    }
     stripPlacers.get(strip)?.(0);
     markStripOverflow(strip);
   });
@@ -220,16 +276,26 @@ function createPaneStrip(): PaneStrip {
 /** How much of the strip is scrolled out at each end, for its edge fade. */
 function markStripOverflow(strip: HTMLElement): void {
   const row = strip.closest("[data-pane-header]");
-  const overflow = strip.scrollWidth > strip.clientWidth;
+  const { scrollLeft, scrollWidth, clientWidth } = strip;
+  const overflow = scrollWidth > clientWidth;
   if (row && row.hasAttribute("data-tab-row-overflow") !== overflow) {
     row.toggleAttribute("data-tab-row-overflow", overflow);
   }
-  const end = strip.scrollWidth - strip.clientWidth - strip.scrollLeft;
-  strip.style.setProperty("--strip-overflow-start", `${Math.max(0, strip.scrollLeft)}px`);
+  const end = scrollWidth - clientWidth - scrollLeft;
+  strip.style.setProperty("--strip-overflow-start", `${Math.max(0, scrollLeft)}px`);
   strip.style.setProperty("--strip-overflow-end", `${Math.max(0, end)}px`);
   strip.style.setProperty("--strip-overflowing-end", end > 0.5 ? "1" : "0");
+  strip.style.setProperty("--strip-overflowing-start", scrollLeft > 0.5 ? "1" : "0");
   const entry = stripEntries.get(strip);
-  if (entry) markJoinAtStart(entry);
+  if (!entry) return;
+  entry.width = clientWidth;
+  markJoinAtStart(entry);
+  markPaneLit(entry, scrollLeft);
+}
+
+function activeTabInView({ strip, shown, width }: PaneStrip): boolean {
+  if (shown === null || width === 0) return true;
+  return shown.x + shown.w > strip.scrollLeft && shown.x < strip.scrollLeft + width;
 }
 
 /**
@@ -243,11 +309,25 @@ function markJoinAtStart(entry: PaneStrip): void {
   if (!row) return;
   const atStart =
     shown !== null &&
-    shown.x <= PANE_JOIN_EAR_PX + 1 &&
-    strip.scrollLeft < 1 &&
+    shown.x - strip.scrollLeft <= PANE_JOIN_EAR_PX + 1 &&
+    shown.x + shown.w - strip.scrollLeft >= PANE_JOIN_EAR_PX + 14 &&
     stripAtPaneEdge(strip, row);
   if (row.hasAttribute("data-pane-join-start") !== atStart) {
     row.toggleAttribute("data-pane-join-start", atStart);
+    markPaneJoinedAtStart(row.closest<HTMLElement>("[data-layout-tab-id]"));
+  }
+}
+
+/**
+ * Mirrors "a header in this pane is joined at its start" onto the pane, for
+ * its start cut (index.css). A `:has()` there restyled the whole pane on
+ * every DOM change inside it, such as each streamed chunk.
+ */
+function markPaneJoinedAtStart(pane: HTMLElement | null): void {
+  if (!pane) return;
+  const joined = pane.querySelector("[data-pane-join-start]") !== null;
+  if (pane.hasAttribute("data-pane-joined-start") !== joined) {
+    pane.toggleAttribute("data-pane-joined-start", joined);
   }
 }
 
@@ -255,13 +335,92 @@ function markJoinAtStart(entry: PaneStrip): void {
 function stripAtPaneEdge(strip: HTMLElement, row: HTMLElement | null): boolean {
   const notch = strip.closest<HTMLElement>('[data-pane-notch=""]');
   if (!notch || !row) return false;
-  return Math.abs(notch.getBoundingClientRect().left - row.getBoundingClientRect().left) < 1;
+  const style = getComputedStyle(row);
+  if (style.getPropertyValue("--pane-titlebar-inset").trim() === "1") return false;
+  const lead = notch.getBoundingClientRect().left - row.getBoundingClientRect().left;
+  return Math.abs(lead - Number.parseFloat(style.paddingLeft)) < 1;
 }
 
-function paneStripFor(key: string): PaneStrip {
+function measurePaneLit(entry: PaneStrip): void {
+  const notch = entry.strip.closest<HTMLElement>('[data-pane-notch=""]');
+  entry.footOffset =
+    notch && notch.offsetWidth > 0
+      ? (entry.strip.getBoundingClientRect().left - notch.getBoundingClientRect().left) /
+        (notch.getBoundingClientRect().width / notch.offsetWidth)
+      : null;
+  const host = entry.strip.closest<HTMLElement>("[data-layout-pane-id]");
+  if (entry.lit && entry.lit.host !== host) {
+    clearPaneLit(entry);
+    entry.lit = null;
+  }
+  if (!host) return;
+  const hostBox = host.getBoundingClientRect();
+  const scale = host.offsetWidth > 0 ? hostBox.width / host.offsetWidth : 0;
+  if (scale <= 0) return;
+  entry.lit = {
+    host,
+    offset: (entry.strip.getBoundingClientRect().left - hostBox.left) / scale,
+    width: entry.strip.clientWidth,
+  };
+}
+
+/**
+ * The landed tab's foot is drawn with the bar (index.css, data-pane-join-footed)
+ * while the whole tab is clear of the strip's edge fades. A sliding or faded
+ * tab draws its own foot.
+ */
+function markJoinFoot(entry: PaneStrip, scrollLeft: number): void {
+  const { shown, strip, footOffset } = entry;
+  const notch = strip.closest<HTMLElement>('[data-pane-notch=""]');
+  const left = shown ? shown.x - scrollLeft - PANE_JOIN_EAR_PX : 0;
+  const right = shown ? left + shown.w + 2 * PANE_JOIN_EAR_PX : 0;
+  const overflowEnd = strip.scrollWidth - strip.clientWidth - scrollLeft;
+  const footed =
+    notch !== null &&
+    shown !== null &&
+    footOffset !== null &&
+    entry.slide === null &&
+    !entry.join.hidden &&
+    left >= (scrollLeft > 0.5 ? PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX : 0) &&
+    right <= entry.width - (overflowEnd > 0.5 ? PANE_JOIN_TAIL_PX + PANE_STRIP_FADE_PX : 0);
+  if (entry.footNotch && entry.footNotch !== (footed ? notch : null)) {
+    entry.footNotch.removeAttribute("data-pane-join-footed");
+  }
+  entry.footNotch = footed ? notch : null;
+  if (!footed) return;
+  notch.style.setProperty("--pane-join-foot-x", `${footOffset + left}px`);
+  notch.style.setProperty("--pane-join-foot-w", `${right - left}px`);
+  notch.setAttribute("data-pane-join-footed", "");
+}
+
+function markPaneLit(entry: PaneStrip, scrollLeft: number): void {
+  markJoinFoot(entry, scrollLeft);
+  const { lit, shown } = entry;
+  if (!lit) return;
+  const start = shown ? Math.max(0, shown.x - scrollLeft - PANE_JOIN_EAR_PX) : 0;
+  const end = shown ? Math.min(lit.width, shown.x + shown.w - scrollLeft + PANE_JOIN_EAR_PX) : 0;
+  if (entry.join.hidden || end <= start) {
+    clearPaneLit(entry);
+    return;
+  }
+  const [startProperty, endProperty] = entry.litProperties;
+  setPaneLitProperty(lit.host, startProperty, `${Math.round(lit.offset + start)}px`);
+  setPaneLitProperty(lit.host, endProperty, `${Math.round(lit.offset + end)}px`);
+}
+
+function setPaneLitProperty(host: HTMLElement, property: string, value: string): void {
+  if (host.style.getPropertyValue(property) !== value) host.style.setProperty(property, value);
+}
+
+function clearPaneLit(entry: PaneStrip): void {
+  if (!entry.lit) return;
+  for (const property of entry.litProperties) entry.lit.host.style.removeProperty(property);
+}
+
+function paneStripFor(key: string, role?: "panel"): PaneStrip {
   let entry = paneStrips.get(key);
   if (!entry) {
-    entry = createPaneStrip();
+    entry = createPaneStrip(role);
     paneStrips.set(key, entry);
   }
   return entry;
@@ -275,13 +434,27 @@ function holdPaneStrip(
 ): void {
   stripPlacers.set(entry.strip, place);
   entry.motionMs = motionMs;
+  pendingReveals.add(entry.strip);
   schedulePlacement(entry.strip, motionMs);
+}
+
+function attachPaneStrip(entry: PaneStrip, slot: HTMLElement): void {
+  if (!entry.strip.isConnected) entry.restoreScroll = true;
+  if (entry.strip.parentNode !== slot) moveInto(slot, entry.strip);
+  if (entry.foot.parentNode !== slot) moveInto(slot, entry.foot);
+}
+
+function restorePaneStripScroll(entry: PaneStrip): void {
+  if (!entry.restoreScroll) return;
+  entry.restoreScroll = false;
+  entry.strip.scrollLeft = entry.scrollLeft;
 }
 
 /** Forget a pane's strip once no header holds it, after the commit that may hand it on. */
 function releasePaneStrip(key: string, entry: PaneStrip): void {
   queueMicrotask(() => {
     if (entry.strip.isConnected || paneStrips.get(key) !== entry) return;
+    clearPaneLit(entry);
     setWheelScroller(entry.strip, null);
     paneStrips.delete(key);
   });
@@ -350,13 +523,16 @@ function moveJoin(
   const was = entry.shown;
   // Already heading there (a slide begun on the press): let it land.
   if (entry.slide && was?.tabId === to.tabId && was.x === to.x && was.w === to.w) return;
+  measurePaneLit(entry);
   entry.shown = to;
   join.hidden = false;
-  const middle = (width: number) => Math.max(0, width - 2 * PANE_JOIN_RADIUS_PX);
+  const middle = (width: number) =>
+    Math.max(0, width - 2 * PANE_JOIN_RADIUS_PX) / PANE_JOIN_MIDDLE_PX;
   join.style.setProperty("--jx", `${to.x}px`);
   join.style.setProperty("--jw", `${to.w}px`);
   join.style.setProperty("--jm", String(middle(to.w)));
   markJoinAtStart(entry);
+  markPaneLit(entry, entry.strip.scrollLeft);
   const land = () => {
     entry.slide = null;
     entry.joinedId = to.tabId;
@@ -393,8 +569,8 @@ function moveJoin(
   );
   const slide = piece("[data-jm]")?.animate(
     [
-      { translate: `${from.x + r}px 0`, scale: `${middle(from.w) / Math.max(1, middle(to.w))} 1` },
-      { translate: `${to.x + r}px 0`, scale: "1 1" },
+      { translate: `${from.x + r}px 0`, scale: `${middle(from.w)} 1` },
+      { translate: `${to.x + r}px 0`, scale: `${middle(to.w)} 1` },
     ],
     timing,
   );
@@ -403,6 +579,7 @@ function moveJoin(
     return;
   }
   entry.slide = slide;
+  markJoinFoot(entry, entry.strip.scrollLeft);
   void slide.finished.then(
     () => {
       if (entry.slide === slide) land();
@@ -422,6 +599,8 @@ function placePaneJoin(entry: PaneStrip, tabId: string | null, motionMs: number)
     entry.joinedId = null;
     markJoinedLabel(entry);
     markJoinAtStart(entry);
+    clearPaneLit(entry);
+    markJoinFoot(entry, strip.scrollLeft);
     return;
   }
   const box = stripBoxOf(strip, active);
@@ -457,9 +636,9 @@ function slideOnPress(entry: PaneStrip, event: PointerEvent): void {
 }
 
 /** Reveal the active tab in a strip wider than its pane, keeping the joined tab's ears inside. */
-function revealPaneTab(strip: HTMLElement, tabId: string | null): void {
+function revealPaneTab(strip: HTMLElement, tabId: string | null): number | null {
   const tab = findStripTab(strip, tabId);
-  if (!tab) return;
+  if (!tab) return null;
   const bounds = strip.getBoundingClientRect();
   const rect = tab.getBoundingClientRect();
   // Room for the joined tab's ears inside the strip's clip, and at the end for
@@ -469,12 +648,34 @@ function revealPaneTab(strip: HTMLElement, tabId: string | null): void {
     ? PANE_JOIN_EAR_PX
     : 0;
   const start = bounds.left + clipped + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX;
-  const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX;
+  const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX - PANE_STRIP_FADE_PX;
   // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
-  if (rect.width > end - start && tab.dataset.layoutTabReveal === "end")
-    strip.scrollLeft += rect.right - end;
-  else if (rect.left < start) strip.scrollLeft -= start - rect.left;
-  else if (rect.right > end) strip.scrollLeft += rect.right - end;
+  if (rect.width > end - start && tab.dataset.layoutTabReveal === "end") return rect.right - end;
+  if (rect.left < start) return rect.left - start;
+  if (rect.right > end) return rect.right - end;
+  return 0;
+}
+
+function scrollWithSlide(entry: PaneStrip, left: number): void {
+  const { strip, slide } = entry;
+  const from = strip.scrollLeft;
+  const to = Math.min(Math.max(0, left), strip.scrollWidth - strip.clientWidth);
+  const start = slide?.effect?.getComputedTiming().progress;
+  if (!slide || start == null || start >= 1) {
+    strip.scrollLeft = to;
+    return;
+  }
+  let written = from;
+  const follow = () => {
+    if (Math.abs(strip.scrollLeft - written) > 1) return;
+    const progress =
+      slide.playState === "finished" ? 1 : slide.effect?.getComputedTiming().progress;
+    if (progress == null) return;
+    written = from + ((to - from) * (progress - start)) / (1 - start);
+    strip.scrollLeft = written;
+    if (progress < 1) requestAnimationFrame(follow);
+  };
+  requestAnimationFrame(follow);
 }
 
 /**
@@ -492,7 +693,7 @@ export function LayoutPaneTabStrip({
   const { tabId, paneId, visible } = useLayoutPane();
   const key = paneId === null ? null : role ? `${paneId}:${role}` : paneId;
   const [own] = useState(() => (key === null ? createPaneStrip() : null));
-  const entry = own ?? paneStripFor(key!);
+  const entry = own ?? paneStripFor(key!, role);
   const holds = own !== null || visible;
   const motionMs = usePaneJoinMotionMs();
   const slotRef = useRef<HTMLSpanElement>(null);
@@ -514,27 +715,40 @@ export function LayoutPaneTabStrip({
       showStripLayer(layer, slot, false);
       return;
     }
-    if (strip.parentNode !== slot) moveInto(slot, strip);
+    attachPaneStrip(entry, slot);
     showStripLayer(layer, strip, true);
     const place = (motion: number) => {
-      revealPaneTab(strip, tabId);
+      restorePaneStripScroll(entry);
+      const reveal = pendingReveals.has(strip) ? revealPaneTab(strip, tabId) : null;
+      if (reveal !== null) pendingReveals.delete(strip);
       placePaneJoin(entry, tabId, motion);
+      if (reveal) scrollWithSlide(entry, strip.scrollLeft + reveal);
     };
     holdPaneStrip(entry, place, motionMs);
     const row = strip.closest<HTMLElement>("[data-pane-header]");
+    const pane = row?.closest<HTMLElement>("[data-layout-tab-id]") ?? null;
     const wheel = (event: WheelEvent) => scrollTabStripFromRow(event, strip);
     row?.addEventListener("wheel", wheel, { passive: false });
     markStripOverflow(strip);
     // The collapsed sidebar's inset moves the strip off the pane's edge
     // without resizing it; the row's content box tracks that inset.
-    // oxlint-disable-next-line t3code/no-raw-resize-observer -- Marks a DOM attribute only, as the strip's own observer does.
-    const inset = new ResizeObserver(() => markJoinAtStart(entry));
+    // oxlint-disable-next-line t3code/no-raw-resize-observer -- Marks DOM attributes and styles only, as the strip's own observer does.
+    const inset = new ResizeObserver(() => {
+      measurePaneLit(entry);
+      markJoinAtStart(entry);
+      markPaneLit(entry, strip.scrollLeft);
+    });
     if (row) inset.observe(row);
+    const notch = strip.closest('[data-pane-notch=""]');
+    if (notch) inset.observe(notch, { box: "border-box" });
     return () => {
       inset.disconnect();
       row?.removeEventListener("wheel", wheel);
       row?.removeAttribute("data-tab-row-overflow");
-      row?.removeAttribute("data-pane-join-start");
+      if (row?.hasAttribute("data-pane-join-start")) {
+        row.removeAttribute("data-pane-join-start");
+        markPaneJoinedAtStart(pane);
+      }
     };
   }, [entry, holds, layer, motionMs, tabId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Take this header's tabs out of the pane's strip, and drop the strip once its last header lets go of it.
@@ -609,7 +823,7 @@ export type LayoutTabMenuId =
   | "layout:close-tab"
   | "layout:close-other-tabs";
 
-/** Layout actions for a tab's context menu (pen lLm7Y 3). Every tab can close. */
+/** Layout actions for a tab's context menu (pen lLm7Y 3). */
 export function buildLayoutTabMenuItems(
   layout: LayoutState,
   tabId: string,
@@ -625,32 +839,40 @@ export function buildLayoutTabMenuItems(
   const hasSiblings = location.pane.tabs.length > 1;
   const items: ContextMenuItem<LayoutTabMenuId>[] = [
     ...(isLayoutGhostTab(location.tab)
-      ? [{ id: "layout:keep", label: "Keep open", icon: "pin" } as const]
+      ? [{ id: "layout:keep", label: m(msg("Keep open")), icon: "pin" } as const]
       : []),
     {
       id: "layout:split-right",
-      label: "Split right",
+      label: m(msg("Split right")),
       icon: "panel-right",
       ...keys("layout.splitRight"),
     },
     {
       id: "layout:split-down",
-      label: "Split down",
+      label: m(msg("Split down")),
       icon: "panel-bottom",
       ...keys("layout.splitDown"),
     },
   ];
   if (hasSiblings || paneCount > 1) {
-    items.push({ id: "layout:new-column", label: "Move to a new column", icon: "columns-2" });
+    items.push({
+      id: "layout:new-column",
+      label: m(msg("Move to a new column")),
+      icon: "columns-2",
+    });
   }
   if (isScrollingWorkspacesEnabled() && countLayoutTabs(layout) > 1) {
-    items.push({ id: "layout:new-workspace", label: "Move to a new workspace", icon: "layers-2" });
+    items.push({
+      id: "layout:new-workspace",
+      label: m(msg("Move to a new workspace")),
+      icon: "layers-2",
+    });
   }
   if (paneCount > 1) {
     const filled = useLayoutStore.getState().maximizedTabId === tabId;
     items.push({
       id: "layout:fill",
-      label: filled ? "Show every pane" : "Fill the window",
+      label: filled ? m(msg("Show every pane")) : m(msg("Fill the window")),
       icon: "maximize",
       ...keys("layout.fill"),
     });
@@ -658,20 +880,22 @@ export function buildLayoutTabMenuItems(
   if (location.tab.content.kind === "chat" && location.tab.content.target.kind === "server") {
     items.push({
       id: "layout:copy-link",
-      label: "Copy link",
+      label: m(msg("Copy link")),
       icon: "link",
       separatorBefore: true,
     });
   }
-  items.push({
-    id: "layout:close-tab",
-    label: "Close",
-    icon: "x",
-    ...keys("tab.close"),
-    separatorBefore: !items.some((item) => item.id === "layout:copy-link"),
-  });
+  if (canCloseLayoutTab(layout, tabId)) {
+    items.push({
+      id: "layout:close-tab",
+      label: m(msg("Close")),
+      icon: "x",
+      ...keys("tab.close"),
+      separatorBefore: !items.some((item) => item.id === "layout:copy-link"),
+    });
+  }
   if (hasSiblings) {
-    items.push({ id: "layout:close-other-tabs", label: "Close others", icon: "copy-x" });
+    items.push({ id: "layout:close-other-tabs", label: m(msg("Close others")), icon: "copy-x" });
   }
   return items;
 }
@@ -726,9 +950,11 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
     case "layout:copy-link": {
       const link = threadLinkFor(location.tab);
       if (!link) return;
-      void writeTextToClipboard(link, "thread link").catch(() =>
-        toastManager.add({ type: "error", title: "Could not copy the link" }),
-      );
+      void writeTextToClipboard(link, {
+        target: "thread link",
+        unavailableMessage: msg("Clipboard API is unavailable while copying link."),
+        failureMessage: msg("Failed to copy link to the clipboard."),
+      }).catch(() => toastManager.add({ type: "error", title: m(msg("Could not copy the link")) }));
       return;
     }
     case "layout:close-tab":
@@ -747,13 +973,16 @@ type SurfaceTabMenuId = "rename" | "copy-path" | "toggle-mute";
  * resolve while the preview manager's createTab is still in flight, and muting
  * then fails with a PreviewTabNotFoundError nothing surfaces to the user.
  */
-export function tabMuteMenuItem(input: {
-  overlay: DesktopPreviewOverlay | null;
-  canResolveRuntimeTabId: boolean;
-}): { label: string; disabled: boolean } {
+export function tabMuteMenuItem(
+  input: {
+    overlay: DesktopPreviewOverlay | null;
+    canResolveRuntimeTabId: boolean;
+  },
+  resolve: MessageResolver = m,
+): { label: string; disabled: boolean } {
   const muted = input.overlay?.audioMuted ?? false;
   return {
-    label: muted ? "Unmute tab" : "Mute tab",
+    label: muted ? resolve(msg("Unmute tab")) : resolve(msg("Mute tab")),
     disabled: input.overlay === null || !input.canResolveRuntimeTabId,
   };
 }
@@ -795,9 +1024,9 @@ function surfaceTabMenu(tab: LayoutTab | undefined): {
       ? (previewState.sessions[surface.resourceId]?.tabId ?? null)
       : null;
   const overlay = previewTabId ? (previewState.desktopByTabId[previewTabId] ?? null) : null;
-  if (surface?.kind === "device") items.push({ id: "rename", label: "Rename" });
+  if (surface?.kind === "device") items.push({ id: "rename", label: m(msg("Rename")) });
   if (surface?.kind === "file" && surface.attachment === undefined) {
-    items.push({ id: "copy-path", label: "Copy path" });
+    items.push({ id: "copy-path", label: m(msg("Copy path")) });
   }
   if (surface?.kind === "preview") {
     items.push({
@@ -893,6 +1122,7 @@ export const LAYOUT_TAB_ICON_CLASS = "contents [visibility:var(--tab-icon-visibi
  * `LAYOUT_TAB_ICON_CLASS`.
  */
 export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: string }) {
+  const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut = shortcutLabelForCommand(keybindings, "tab.close");
   return (
@@ -902,7 +1132,7 @@ export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: s
           <ContentButton
             variant="tab-close"
             type="button"
-            aria-label={`Close ${title}`}
+            aria-label={gt("Close {title}", { title })}
             className="absolute start-2.25 top-1/2 -translate-y-1/2"
             data-tab-close=""
             onClick={() => closeLayoutTabByUser(tabId)}
@@ -911,7 +1141,45 @@ export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: s
       >
         <XIcon aria-hidden className="size-3" />
       </TooltipTrigger>
-      <TooltipPopup side="bottom">Close tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {shortcut ? gt("Close tab ({shortcut})", { shortcut }) : gt("Close tab")}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+export function LayoutNewTabButton({ tabId }: { tabId: string | null }) {
+  const gt = useGT();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const shortcut = shortcutLabelForCommand(keybindings, "tab.new");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="bare"
+            size="icon-xs"
+            data-pane-notch-add=""
+            data-layout-new-tab=""
+            aria-label={gt("New tab")}
+            onPointerDown={(event) =>
+              beginLayoutContentDrag(event, {
+                kind: "new-tab",
+                content: createLayoutNewTabContent(tabId),
+              })
+            }
+            onClick={() => {
+              if (tabId !== null) useLayoutStore.getState().focusTab(tabId);
+              openLayoutNewTab();
+            }}
+          />
+        }
+      >
+        <PlusIcon />
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">
+        {shortcut ? gt("New tab ({shortcut})", { shortcut }) : gt("New tab")}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -1004,6 +1272,7 @@ function LayoutPaneTabButton({
   parentLink: boolean;
   onOpenMenu: (position: { x: number; y: number }) => void;
 }) {
+  const gt = useGT();
   const label = useLayoutTabLabel(tab);
   const focusTab = () => {
     useLayoutStore.getState().focusTab(tab.id);
@@ -1027,7 +1296,9 @@ function LayoutPaneTabButton({
               variant="tab"
               type="button"
               data-layout-pane-tab={tab.id}
-              aria-label={parentLink ? `Back to parent thread: ${label.title}` : undefined}
+              aria-label={
+                parentLink ? gt("Open parent thread: {title}", { title: label.title }) : undefined
+              }
               onClick={focusTab}
               onDoubleClick={() => useLayoutStore.getState().keepTab(tab.id)}
               onAuxClick={(event) => closeLayoutTabOnMiddleClick(event, tab.id)}
@@ -1058,7 +1329,7 @@ function LayoutPaneTabButton({
           )}
         </TooltipTrigger>
         <TooltipPopup side="bottom" className="whitespace-pre-line">
-          {parentLink ? `${label.title}\nParent thread` : label.tooltip}
+          {parentLink ? `${label.title}\n${gt("Parent thread")}` : label.tooltip}
         </TooltipPopup>
       </Tooltip>
       {/* A back link has no close button; middle click and its menu still close the tab. */}
@@ -1072,6 +1343,8 @@ export function useLayoutTabLabel(tab: LayoutTab): {
   title: string;
   tooltip: string;
 } {
+  const gt = useGT();
+  const messages = useMessages();
   const target = tab.content.kind === "chat" ? tab.content.target : null;
   const threadRef =
     target?.kind === "server"
@@ -1141,16 +1414,20 @@ export function useLayoutTabLabel(tab: LayoutTab): {
   if (isLayoutPageContent(tab.content)) {
     const title =
       tab.content.kind === "settings"
-        ? "Settings"
+        ? gt("Settings")
         : tab.content.kind === "usage"
-          ? "Usage"
-          : "Pull requests";
+          ? gt("Usage")
+          : tab.content.kind === "issues"
+            ? gt("Issues", { $context: "sidebar link to the list of issues" })
+            : gt("Pull requests");
     const Icon =
       tab.content.kind === "settings"
         ? SettingsIcon
         : tab.content.kind === "usage"
           ? ChartNoAxesColumnIcon
-          : PullRequestGlyph.pullRequest;
+          : tab.content.kind === "issues"
+            ? IssueGlyph.issue
+            : PullRequestGlyph.pullRequest;
     return {
       icon: <Icon aria-hidden className="size-3.5 shrink-0" />,
       title,
@@ -1160,8 +1437,8 @@ export function useLayoutTabLabel(tab: LayoutTab): {
   if (tab.content.kind === "launcher") {
     return {
       icon: <SquareDashedIcon aria-hidden className="size-3.5 shrink-0" />,
-      title: "New tab",
-      tooltip: "New tab",
+      title: gt("New tab"),
+      tooltip: gt("New tab"),
     };
   }
   if (tab.content.kind === "surface") {
@@ -1169,7 +1446,7 @@ export function useLayoutTabLabel(tab: LayoutTab): {
     const threadTerminal = tab.content.surfaceId === THREAD_TERMINAL_SURFACE_ID;
     const threadTitle =
       thread?.title ??
-      (surfaceDraft ? "New thread" : null) ??
+      (surfaceDraft ? gt("New thread") : null) ??
       (threadless
         ? (project?.title ??
           (isThreadlessHomeRef(surfaceThreadRef) &&
@@ -1179,10 +1456,11 @@ export function useLayoutTabLabel(tab: LayoutTab): {
             : null))
         : null);
     const title = surface
-      ? (sideChat?.title ?? surfaceTabTitle(surface, preview, terminal?.state.summary?.label))
+      ? (sideChat?.title ??
+        surfaceTabTitle(surface, preview, terminal?.state.summary?.label, messages))
       : terminalRef
-        ? terminalTabTitle(activeTerminalId, terminal?.state.summary?.label)
-        : "Surface";
+        ? terminalTabTitle(activeTerminalId, terminal?.state.summary?.label, messages)
+        : gt("Surface", { $context: "a side panel tab with no known kind" });
     const root =
       thread?.worktreePath ?? surfaceDraft?.worktreePath ?? project?.workspaceRoot ?? home;
     const path =
@@ -1196,17 +1474,18 @@ export function useLayoutTabLabel(tab: LayoutTab): {
         ? preview.navStatus.url
         : surface?.kind === "preview" && surface.resourceId
           ? surface.url
-          : surface?.kind === "pull-request"
-            ? surface.url
+          : surface?.kind === "pull-request" || surface?.kind === "issue"
+            ? (surface.url ?? null)
             : null;
     const status =
       terminalRef || surface?.kind === "terminal"
         ? terminalRunning
-          ? "Process running"
+          ? gt("Process running")
           : terminal && resolveTerminalActivityStatus(terminal.state) === "failed"
-            ? "Last command failed"
-            : "Idle"
+            ? gt("Last command failed")
+            : gt("Idle", { $context: "terminal status" })
         : null;
+    const browserLabel = gt("Browser");
     return {
       icon: threadTerminal ? (
         <SquareTerminal aria-hidden className="size-3.5 shrink-0" />
@@ -1219,7 +1498,7 @@ export function useLayoutTabLabel(tab: LayoutTab): {
       tooltip: [
         title,
         terminal?.state.summary?.label,
-        surface?.kind === "preview" && title !== "Browser" ? "Browser" : null,
+        surface?.kind === "preview" && title !== browserLabel ? browserLabel : null,
         threadTitle,
         path,
         url,
@@ -1229,10 +1508,14 @@ export function useLayoutTabLabel(tab: LayoutTab): {
         .join("\n"),
     };
   }
-  const title = thread?.title ?? "New thread";
+  const title = thread?.title ?? gt("New thread");
   const lineageIcon = <GitForkIcon aria-hidden className="size-3.5 shrink-0" />;
   if (tab.ghostOf) {
-    return { icon: lineageIcon, title, tooltip: ghostTabTooltip(title, ghostParent?.title) };
+    return {
+      icon: lineageIcon,
+      title,
+      tooltip: ghostTabTooltip(title, ghostParent?.title, messages),
+    };
   }
   // A subagent opened any other way (a thread mention, a kept tab) keeps the same icon.
   const icon =
@@ -1247,13 +1530,21 @@ export function useLayoutTabLabel(tab: LayoutTab): {
   return {
     icon,
     title,
-    tooltip: isLayoutGhostTab(tab) ? ghostTabTooltip(tooltip, undefined) : tooltip,
+    tooltip: isLayoutGhostTab(tab) ? ghostTabTooltip(tooltip, undefined, messages) : tooltip,
   };
 }
 
 /** A ghost tab names the thread it was opened from, if any, and how to keep it. */
-export function ghostTabTooltip(title: string, parentTitle: string | undefined): string {
-  return [title, parentTitle ? `Opened from ${parentTitle}` : null, "Double-click to keep open"]
+export function ghostTabTooltip(
+  title: string,
+  parentTitle: string | undefined,
+  resolve: MessageResolver = m,
+): string {
+  return [
+    title,
+    parentTitle ? resolve(msg("Opened from {title}", { title: parentTitle })) : null,
+    resolve(msg("Double-click to keep open")),
+  ]
     .filter(Boolean)
     .join("\n");
 }

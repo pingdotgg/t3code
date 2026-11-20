@@ -309,6 +309,7 @@ it("preserves keyboard activation of a file-options button", async () => {
       theme="dark"
       onOpenInPanel={vi.fn()}
       resolveDragPath={async () => "/work/readme.md"}
+      resolvePanelPath={(path) => path}
       resolveCopyPaths={async () => ({ relativePath: "readme.md", fullPath: "/work/readme.md" })}
       openInEditorMenuLabel="Open in editor"
     />,

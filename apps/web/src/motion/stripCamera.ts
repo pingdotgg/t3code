@@ -1,6 +1,12 @@
 /** Move the native scroller to its target immediately, then animate the stage back to rest; caret
  * measurements must see the final camera position. */
-import { MotionAnimation, playMotion, toDevicePixel, type MotionRun } from "./animation";
+import {
+  FINE_STEP_MS,
+  MotionAnimation,
+  playMotion,
+  toDevicePixel,
+  type MotionRun,
+} from "./animation";
 
 let current: { scroller: HTMLElement; run: MotionRun } | null = null;
 
@@ -44,38 +50,46 @@ export function endUserStripScroll(): void {
   userScrollAt = Number.NEGATIVE_INFINITY;
 }
 
-/** Spring the camera from where it shows now to `target` (a scrollLeft), keeping its velocity. */
-export function moveStripCamera(scroller: HTMLElement, stage: HTMLElement, target: number): void {
+/**
+ * Spring the camera from where it shows now to `target` (a scrollLeft). With `carryOn` (a focus key,
+ * whose layout does not change), a move in flight carries on in this frame at the speed it had.
+ */
+export function moveStripCamera(
+  scroller: HTMLElement,
+  stage: HTMLElement,
+  target: number,
+  { carryOn = false }: { carryOn?: boolean } = {},
+): void {
   claimStripScroll(scroller);
   userScrollAt = Number.NEGATIVE_INFINITY;
-  let from = scroller.scrollLeft;
-  let velocity = 0;
-  if (current) {
-    from = current.run.value();
-    velocity = current.run.velocity();
-    current.run.cancel();
-    current = null;
-  }
+  const running = current?.scroller === scroller ? current : null;
+  const from = current ? current.run.value() : scroller.scrollLeft;
+  const velocity = running && carryOn ? running.run.velocity() : 0;
+  const previous = current;
+  current = null;
   // On a whole device pixel, where the compositor and layout agree.
   scroller.scrollLeft = toDevicePixel(target);
   // The browser clamps a scroll past the strip's end.
   const landed = scroller.scrollLeft;
   const motion = MotionAnimation.start("horizontal-view-movement", from, landed, velocity);
   let finished = false;
-  const run = playMotion(
-    stage,
-    motion,
-    (camera) => ({ transform: `translateX(${toDevicePixel(landed - camera)}px)` }),
-    () => {
-      finished = true;
-      current = null;
-    },
+  const keyframe = (camera: number) => ({
+    transform: `translateX(${toDevicePixel(landed - camera)}px)`,
+  });
+  const onFinish = () => {
+    finished = true;
+    current = null;
+  };
+  // Retargeted in place, the running animation goes on from this frame; a new
+  // one would hold the camera still for a frame on every key repeat.
+  let run = running && carryOn ? running.run.retarget(motion, keyframe, onFinish) : null;
+  if (!run) {
+    previous?.run.cancel();
     // Starts on the frame that first shows the new layout, with the panes'
     // own slides: a keypress whose commit takes a few frames would
     // otherwise land mid-move, skipping the start and out of step with them.
-    undefined,
-    true,
-  );
+    run = playMotion(stage, motion, keyframe, onFinish, undefined, FINE_STEP_MS);
+  }
   if (!finished) current = { scroller, run };
 }
 

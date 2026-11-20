@@ -3,9 +3,9 @@ import type { Messages } from "./en";
 export const de: Messages = {
   layout: {
     defaultTitle: "T3 Code",
-    defaultDescription: "T3 Code. Die Open-Source-Steuerzentrale für Coding-Agents.",
+    defaultDescription: "T3 Code. Die Open-Source-Steuerzentrale für Coding-Agenten.",
     socialImageAlt:
-      "T3 Code: die Open-Source-Steuerzentrale für Coding-Agents, mit Claude Code, Codex, Cursor, OpenCode, Grok und Antigravity.",
+      "T3 Code: die Open-Source-Steuerzentrale für Coding-Agenten, mit Claude Code, Codex, Cursor, OpenCode, Grok und Antigravity.",
     homeLabel: "Startseite von T3 Code",
     download: "Download",
     starsLabel: "T3 Code auf GitHub einen Stern geben, {stars} Sterne",
@@ -19,9 +19,9 @@ export const de: Messages = {
     security: "Sicherheit",
   },
   home: {
-    title: "T3 Code | Die Open-Source-Steuerzentrale für Coding-Agents",
-    description: "T3 Code. Die Open-Source-Steuerzentrale für Coding-Agents.",
-    heroTitle: ["Die Open-Source-", "Steuerzentrale", "für Coding-Agents."],
+    title: "T3 Code | Die Open-Source-Steuerzentrale für Coding-Agenten",
+    description: "T3 Code. Die Open-Source-Steuerzentrale für Coding-Agenten.",
+    heroTitle: ["Die Open-Source-", "Steuerzentrale", "für Coding-Agenten."],
     heroSub:
       "Steuere Claude Code, Codex, Antigravity, OpenCode, Cursor und Grok von einer Oberfläche aus. Nutze dein eigenes Abo. Forke das ganze Ding.",
     downloadForMac: "Für macOS herunterladen",
@@ -31,9 +31,10 @@ export const de: Messages = {
     downloadForAndroid: "Für Android herunterladen",
     sourceLink: "Klau unseren Code (legal)",
     alsoOnPhone: "Auch auf deinem Handy:",
-    screenshotAlt: "T3 Code führt Subagents von Claude, Codex, Muse und Gemini in einem Thread aus",
+    screenshotAlt:
+      "T3 Code mit der Thread-Liste neben einem offenen Claude-Thread, dessen angedockte Detailkarte Branch, Änderungen, den verknüpften Pull Request mit bestandenen Checks, Nutzungslimits, Kontext, eine Automatisierung und einen Fork zeigt",
     endorsementsTitle: "Toleriert von über {users} Devs",
-    endorsementsSub: "Manche haben sogar darüber getwittert.",
+    endorsementsSub: "Ein paar haben sogar Nettes getwittert.",
     endorsementsLabel: "Stimmen von Entwicklern",
     readPost: "Beitrag von {handle} auf X lesen",
     harnessTitle: "Bring dein eigenes Abo mit",
@@ -43,7 +44,7 @@ export const de: Messages = {
     harnessPoints: [
       "Keine weiterverkauften Keys. Keine Kontingentgrenzen.",
       "Modell mitten im Thread wechseln.",
-      "Jede Woche neue Agents.",
+      "Jede Woche neue Agenten.",
     ],
     gitVisualLabel:
       "Illustration des Git-Workflows in T3 Code: Diff prüfen, Änderungen committen und pushen, Pull Request öffnen.",
@@ -54,7 +55,7 @@ export const de: Messages = {
     commitPush: "Commit & Push",
     gitTitle: "Ein Klick für Commit, Push und PR.",
     gitBody:
-      "Jeder Agent-Thread schreibt in seinen eigenen Branch. Wenn alles passt, öffnet ein Klick den PR auf GitHub, mit generiertem Titel, Beschreibung und Changelog. Kein Terminal-Gefrickel nötig.",
+      "Jeder Agenten-Thread schreibt in seinen eigenen Branch. Wenn alles passt, öffnet ein Klick den PR auf GitHub, mit generiertem Titel, Beschreibung und Changelog. Kein Terminal-Gefrickel nötig.",
     gitPoints: [
       "Automatisch generierte PR-Titel und -Beschreibungen",
       "Inline-Diff-Review vor dem Push",
@@ -73,9 +74,9 @@ export const de: Messages = {
     stars: "{stars} Sterne",
     forkOnGithub: "Auf GitHub forken",
     browseSource: "Quellcode ansehen",
-    ctaTitle: "Deine Agents verdienen Besseres als ein Terminal.",
+    ctaTitle: "Deine Agenten verdienen Besseres als ein Terminal.",
     ctaSub:
-      "T3 Code ist kostenlos, Open Source und schnell. Installier es, verbinde das Abo, für das du schon zahlst, und lass deine Agents loslegen.",
+      "T3 Code ist kostenlos, Open Source und schnell. Installier es, verbinde die Agenten, für die du schon zahlst, und lass sie direkt loslegen.",
     otherPlatforms: "Andere Plattformen",
   },
   download: {
@@ -87,6 +88,8 @@ export const de: Messages = {
     channelLabel: "Release-Kanal",
     stable: "Stable",
     nightly: "Nightly",
+    nightlyTagline:
+      "Neue Änderungen, sobald sie landen, noch vor Stable. Rechne mit Ecken und Kanten.",
     intelNote: "Mac mit Intel-Chip? {link}.",
     intelLink: "Lade den x64-Build herunter",
     armNote: "Auf ARM? Lade das {deb} oder {appimage} für arm64 herunter.",

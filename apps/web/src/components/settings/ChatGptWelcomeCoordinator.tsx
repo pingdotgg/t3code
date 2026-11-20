@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
+import { T, Var } from "gt-react";
 import { useRef, useState } from "react";
 import { environmentPresentations } from "../../state/presentation";
 import { OpenAI } from "../Icons";
@@ -66,20 +67,26 @@ export function ChatGptWelcomeCoordinator() {
         <DialogHeader>
           <OpenAI aria-hidden className="mb-3 size-8 text-strong-foreground" />
           <div className="flex min-w-0 flex-col gap-1.5">
-            <DialogTitle>Your ChatGPT plan is connected</DialogTitle>
+            <DialogTitle>
+              <T>Your ChatGPT plan is connected</T>
+            </DialogTitle>
             <DialogDescription>
-              Your ChatGPT plan covers eligible Codex usage. Manage shared usage and credit settings
-              in ChatGPT.
+              <T>
+                Your ChatGPT plan covers eligible Codex usage. Manage shared usage and credit
+                settings in ChatGPT.
+              </T>
             </DialogDescription>
             <p className="min-w-0 wrap-anywhere text-meta text-dim-foreground">
-              {next?.providerName} on {next?.environmentLabel}
+              <T>
+                <Var>{next?.providerName}</Var> on <Var>{next?.environmentLabel}</Var>
+              </T>
             </p>
           </div>
         </DialogHeader>
         <DialogFooter className="sm:items-center">
           <ChatGptUsageButton size="default" variant="secondary" className="sm:mr-auto" />
           <Button ref={continueRef} onClick={dismiss}>
-            Continue
+            <T>Continue</T>
           </Button>
         </DialogFooter>
       </DialogPopup>

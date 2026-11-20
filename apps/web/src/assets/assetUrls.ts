@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type AssetUrlState as RuntimeAssetUrlState,
@@ -11,6 +12,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 
+import { m } from "~/i18n/messages";
 import { assetEnvironment } from "~/state/assets";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { usePreparedConnection } from "~/state/session";
@@ -31,7 +33,10 @@ export function useAssetUrlState(
   resource: AssetResource | null,
   revision?: string | null,
 ): AssetUrlState {
-  const blocked = blockedAssetUrlState(resource, useFilesystemReadAccess(environmentId));
+  const blocked = blockedAssetUrlState(
+    resource,
+    useFilesystemReadAccess(environmentId, useMessages()),
+  );
   const preparedConnection = usePreparedConnection(environmentId);
   const result = useAtomValue(
     blocked !== null || environmentId === null || resource === null
@@ -63,7 +68,7 @@ export function saveBlobAsFile(blob: Blob, fileName: string) {
 
 export async function saveUrlAsFile(url: string, fileName: string) {
   const response = await fetch(url);
-  if (!response.ok) throw new Error("The file could not be loaded. Try again.");
+  if (!response.ok) throw new Error(m(msg("The file could not be loaded. Try again.")));
   saveBlobAsFile(await response.blob(), fileName);
 }
 

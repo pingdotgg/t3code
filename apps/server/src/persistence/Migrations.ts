@@ -106,7 +106,11 @@ import Migration0095 from "./Migrations/095_TurnItemInlineWorkOutput.ts";
 import Migration0096 from "./Migrations/096_RepairStaleTitleRegeneration.ts";
 import Migration0097 from "./Migrations/097_IssueTrackerBindings.ts";
 import Migration0098 from "./Migrations/098_ActiveShellIndexIndexes.ts";
-import Migration0099 from "./Migrations/099_ProjectionProjectBot.ts";
+import Migration0099 from "./Migrations/099_BackgroundRecoveryIndexes.ts";
+import Migration0100 from "./Migrations/100_TurnStartReadIndexes.ts";
+import Migration0101 from "./Migrations/101_DelegatedTaskReadIndexes.ts";
+import Migration0102 from "./Migrations/102_ThreadItemCounts.ts";
+import Migration0103 from "./Migrations/103_ProjectionProjectBot.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -208,7 +212,11 @@ const migrationEntries = [
   [96, "RepairStaleTitleRegeneration", Migration0096],
   [97, "IssueTrackerBindings", Migration0097],
   [98, "ActiveShellIndexIndexes", Migration0098],
-  [99, "ProjectionProjectBot", Migration0099],
+  [99, "BackgroundRecoveryIndexes", Migration0099],
+  [100, "TurnStartReadIndexes", Migration0100],
+  [101, "DelegatedTaskReadIndexes", Migration0101],
+  [102, "ThreadItemCounts", Migration0102],
+  [103, "ProjectionProjectBot", Migration0103],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -267,9 +275,9 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
   });
 });
 
-// Bot builds recorded ProjectionProjectBot as 78, 80, 81, 82, 86 or 92 before upstream claimed those
-// ids. Its migration is idempotent, so forget the old record and let upstream's migrations and 99 run.
-const LEGACY_PROJECT_BOT_MIGRATION_IDS: ReadonlyArray<number> = [78, 80, 81, 82, 86, 92];
+// Bot builds recorded ProjectionProjectBot as 78, 80, 81, 82, 86, 92 or 99 before upstream claimed those
+// ids. Its migration is idempotent, so forget the old record and let upstream's migrations and 103 run.
+const LEGACY_PROJECT_BOT_MIGRATION_IDS: ReadonlyArray<number> = [78, 80, 81, 82, 86, 92, 99];
 
 /** The history as startup's bot reconciliation leaves it, for the read-only preflight. */
 export function withoutLegacyProjectBotMigration(
@@ -330,7 +338,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
   const previewMigrations = includesV2 && hasPending ? yield* reconcileV2PreviewMigration() : [];
   if (includesV2) {
-    // A legacy bot record always leaves 99 pending, so a settled database skips this write.
+    // A legacy bot record always leaves 103 pending, so a settled database skips this write.
     if (hasPending) yield* reconcileProjectBotMigration();
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }

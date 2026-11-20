@@ -31,8 +31,9 @@ export const ru: Messages = {
     downloadForAndroid: "Скачать для Android",
     sourceLink: "Украдите наш код (легально)",
     alsoOnPhone: "Есть и для телефона:",
-    screenshotAlt: "T3 Code запускает субагентов Claude, Codex, Muse и Gemini в одном треде",
-    endorsementsTitle: "Нас терпят более {users} разработчиков",
+    screenshotAlt:
+      "T3 Code со списком тредов рядом с открытым тредом Claude, в закреплённой карточке деталей которого видны ветка, изменения, связанный пул-реквест с пройденными проверками, лимиты использования, контекст, автоматизация и форк",
+    endorsementsTitle: "Более {users} разработчиков не против",
     endorsementsSub: "Некоторые даже написали об этом в X.",
     endorsementsLabel: "Отзывы разработчиков",
     readPost: "Читать пост {handle} в X",
@@ -72,7 +73,7 @@ export const ru: Messages = {
     browseSource: "Исходный код",
     ctaTitle: "Ваши агенты заслуживают лучшего, чем терминал.",
     ctaSub:
-      "T3 Code бесплатный, открытый и быстрый. Установите его, подключите подписку, за которую уже платите, и дайте агентам поработать.",
+      "T3 Code бесплатный, открытый и быстрый. Установите его, подключите провайдера, которому уже платите, и агенты сразу возьмутся за дело.",
     otherPlatforms: "Другие платформы",
   },
   download: {
@@ -84,10 +85,11 @@ export const ru: Messages = {
     channelLabel: "Канал релизов",
     stable: "Стабильный",
     nightly: "Nightly",
+    nightlyTagline: "Новые изменения сразу, раньше стабильной версии. Возможны шероховатости.",
     intelNote: "Mac на Intel? {link}.",
     intelLink: "Скачайте сборку x64",
     armNote: "На ARM? Скачайте {deb} или {appimage} для arm64.",
-    mobile: "Телефон",
+    mobile: "Мобильные приложения",
     iphoneIpad: "iPhone и iPad",
     terminal: "Терминал",
     tryOnce: "Или попробуйте без установки:",

@@ -7,6 +7,8 @@ import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 
 import { resolveThreadCurrentPullRequestLink } from "./threadPullRequests.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export interface ThreadReferenceCopyTarget {
   readonly kind: "pull-request" | "thread";
@@ -29,6 +31,7 @@ export function threadChipCopyTarget(
   threadRef: ScopedThreadRef,
   title: string,
   hostedAppUrl?: string,
+  resolve: MFunctionType = mFallback,
 ): ThreadReferenceCopyTarget {
   const record = threadContextRecord(threadRef, title);
   return {
@@ -37,38 +40,45 @@ export function threadChipCopyTarget(
     description: record.title,
     fragment: { version: 1, source: { environmentId: threadRef.environmentId }, records: [record] },
     clipboardTarget: "thread",
-    successTitle: "Thread copied",
-    failureTitle: "Failed to copy thread",
+    successTitle: resolve(msg("Thread copied")),
+    failureTitle: resolve(msg("Failed to copy thread")),
   };
 }
 
-export function resolveThreadReferenceCopyTarget(input: {
-  readonly threadRef: ScopedThreadRef;
-  readonly title: string;
-  /** Undefined means no PR panel; null means its URL is not available yet. */
-  readonly openPanelPullRequestUrl?: string | null | undefined;
-  readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
-  readonly linkedPullRequestUrl?: string | null;
-  readonly hostedAppUrl?: string;
-}): ThreadReferenceCopyTarget | null {
+export function resolveThreadReferenceCopyTarget(
+  input: {
+    readonly threadRef: ScopedThreadRef;
+    readonly title: string;
+    /** Undefined means no PR panel; null means its URL is not available yet. */
+    readonly openPanelPullRequestUrl?: string | null | undefined;
+    readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+    readonly linkedPullRequestUrl?: string | null;
+    readonly hostedAppUrl?: string;
+  },
+  resolve: MFunctionType = mFallback,
+): ThreadReferenceCopyTarget | null {
   if (input.openPanelPullRequestUrl === null) return null;
   const pullRequestUrl =
     input.openPanelPullRequestUrl ??
     resolveThreadCurrentPullRequestLink(input.pullRequests ?? [])?.url ??
     input.linkedPullRequestUrl;
   return pullRequestUrl
-    ? pullRequestCopyTarget(pullRequestUrl)
-    : threadChipCopyTarget(input.threadRef, input.title, input.hostedAppUrl);
+    ? pullRequestCopyTarget(pullRequestUrl, "PR", resolve)
+    : threadChipCopyTarget(input.threadRef, input.title, input.hostedAppUrl, resolve);
 }
 
 /** `shortLabel` is the forge's name for it: "PR", or "MR" on GitLab. */
-export function pullRequestCopyTarget(url: string, shortLabel = "PR"): ThreadReferenceCopyTarget {
+export function pullRequestCopyTarget(
+  url: string,
+  shortLabel = "PR",
+  resolve: MFunctionType = mFallback,
+): ThreadReferenceCopyTarget {
   return {
     kind: "pull-request",
     value: url,
     description: url,
     clipboardTarget: "pull request link",
-    successTitle: `${shortLabel} link copied`,
-    failureTitle: `Failed to copy ${shortLabel} link`,
+    successTitle: resolve(msg("{shortLabel} link copied", { shortLabel })),
+    failureTitle: resolve(msg("Failed to copy {shortLabel} link", { shortLabel })),
   };
 }

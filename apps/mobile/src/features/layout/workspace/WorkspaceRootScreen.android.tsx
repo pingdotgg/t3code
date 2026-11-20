@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useAndroidFloatingTabs } from "../../settings/appearance/AppearancePreferencesProvider";
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
@@ -34,6 +35,7 @@ export function WorkspaceRootScreen() {
 }
 
 function WorkspaceRoot() {
+  const gt = useGT();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const workspace = useWorkspaceTabs()!;
@@ -94,11 +96,14 @@ function WorkspaceRoot() {
                     layout.usesSplitView ? (
                       <>
                         <NativeStackScreenOptions options={{ headerShown: false }} />
-                        <AppBar embedded title="Bots" />
+                        <AppBar
+                          embedded
+                          title={gt("Bots", { $context: "screen title, list of bots" })}
+                        />
                         <View className="flex-1 items-center justify-center px-10">
                           <EmptyState
-                            title="Select a bot"
-                            detail="Choose a bot from the sidebar."
+                            title={gt("Select a bot")}
+                            detail={gt("Choose a bot from the sidebar.")}
                             variant="plain"
                           />
                         </View>
@@ -107,9 +112,13 @@ function WorkspaceRoot() {
                       <>
                         <AppBar
                           embedded
-                          title="Bots"
+                          title={gt("Bots", { $context: "screen title, list of bots" })}
                           actions={[
-                            { accessibilityLabel: "New bot", icon: "plus", onPress: openNewBot },
+                            {
+                              accessibilityLabel: gt("New bot"),
+                              icon: "plus",
+                              onPress: openNewBot,
+                            },
                           ]}
                         />
                         <ScreenContent>
@@ -120,7 +129,14 @@ function WorkspaceRoot() {
                   ) : layout.usesSplitView ? (
                     <>
                       <NativeStackScreenOptions options={{ headerShown: false }} />
-                      <AppBar embedded title={tab === "issues" ? "Issues" : "Pull requests"} />
+                      <AppBar
+                        embedded
+                        title={
+                          tab === "issues"
+                            ? gt("Issues", { $context: "screen title, list of issues" })
+                            : gt("Pull requests")
+                        }
+                      />
                       <WorkspaceEmptyDetail tab={tab} />
                     </>
                   ) : tab === "issues" ? (

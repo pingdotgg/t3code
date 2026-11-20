@@ -1,5 +1,6 @@
 import type { BoatCloudSetup, BoatCloudSetupStep, BoxdCloudMachine } from "@t3tools/contracts";
 import { CheckIcon, CircleDotIcon, CircleIcon, XIcon } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { type FormEvent, useState } from "react";
 
 import { boatCloudSnapshotRepositories } from "../../boatCloud";
@@ -11,23 +12,23 @@ import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
 import { SecretInput } from "./SecretInput";
 import { SettingsNote, SettingsRow, SettingsRowTile, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const SETUP_STEPS = ["create-vm", "install-server", "save-snapshot"] as const;
 
 const STEP_LABELS: Record<(typeof SETUP_STEPS)[number], string> = {
-  "create-vm": "Create a machine",
-  "install-server": "Install T3 Code and clone repositories",
-  "save-snapshot": "Save the T3 Code snapshot",
+  "create-vm": msg("Create a machine"),
+  "install-server": msg("Install T3 Code and clone repositories"),
+  "save-snapshot": msg("Save the T3 Code snapshot"),
 };
 
 const MACHINE_STATE: Record<
   BoxdCloudMachine["state"],
   { readonly label: string; readonly variant: "success" | "info" | "unavailable" }
 > = {
-  running: { label: "Running", variant: "success" },
-  asleep: { label: "Asleep", variant: "info" },
-  stopped: { label: "Stopped", variant: "unavailable" },
+  running: { label: msg("Running", { $context: "VM state" }), variant: "success" },
+  asleep: { label: msg("Asleep", { $context: "VM state" }), variant: "info" },
+  stopped: { label: msg("Stopped", { $context: "VM state" }), variant: "unavailable" },
 };
 
 type StepState = "done" | "active" | "failed" | "pending";
@@ -53,6 +54,9 @@ function StepIcon({ state }: { readonly state: StepState }) {
 
 /** boxd cloud on the Cloud settings page. This machine holds the key and hands out machines. */
 export function BoxdCloudSettingsSections() {
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
+  const m = useMessages();
   const { holderEnvironmentId, status } = usePrimaryBoxdCloudStatus();
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -88,12 +92,12 @@ export function BoxdCloudSettingsSections() {
         <SettingsRow
           title={
             connected ? (
-              <span className="wrap-anywhere">{status.account ?? "Connected"}</span>
+              <span className="wrap-anywhere">{status.account ?? gt("Connected")}</span>
             ) : (
-              "API key"
+              gt("API key")
             )
           }
-          description={connected ? "Connected" : undefined}
+          description={connected ? gt("Connected") : undefined}
           leading={
             <SettingsRowTile>
               <BoxdIcon />
@@ -105,20 +109,20 @@ export function BoxdCloudSettingsSections() {
                 variant="destructive-outline"
                 onClick={() => void disconnect({ environmentId: holderEnvironmentId, input: {} })}
               >
-                Disconnect
+                <T>Disconnect</T>
               </Button>
             ) : (
               <form className="flex w-full min-w-0 gap-2 sm:w-80" onSubmit={onSubmit}>
                 <SecretInput
-                  aria-label="boxd API key"
-                  placeholder="boxd API key"
+                  aria-label={gt("boxd API key")}
+                  placeholder={gt("boxd API key")}
                   value={apiKey}
                   disabled={busy}
                   maxLength={512}
                   onChange={(event) => setApiKey(event.target.value)}
                 />
                 <Button type="submit" disabled={busy || apiKey.trim() === ""}>
-                  {busy ? "Connecting" : "Connect"}
+                  {busy ? gt("Connecting") : gt("Connect")}
                 </Button>
               </form>
             )
@@ -126,14 +130,16 @@ export function BoxdCloudSettingsSections() {
         />
         {connected ? null : (
           <SettingsNote>
-            Create a key at{" "}
-            <InlineButton
-              tone="link"
-              render={<a href="https://app.boxd.sh/keys" target="_blank" rel="noreferrer" />}
-            >
-              app.boxd.sh/keys
-            </InlineButton>
-            .
+            <T>
+              Create a key at{" "}
+              <InlineButton
+                tone="link"
+                render={<a href="https://app.boxd.sh/keys" target="_blank" rel="noreferrer" />}
+              >
+                <Var>{"app.boxd.sh/keys"}</Var>
+              </InlineButton>
+              .
+            </T>
           </SettingsNote>
         )}
       </SettingsSection>
@@ -141,7 +147,7 @@ export function BoxdCloudSettingsSections() {
       {connected ? (
         <SettingsSection
           id="boxd-cloud-setup"
-          title="boxd setup"
+          title={gt("boxd setup")}
           headerAction={
             <Button
               variant="secondary"
@@ -150,12 +156,12 @@ export function BoxdCloudSettingsSections() {
               onClick={() => void setUp()}
             >
               {setup.status === "running"
-                ? "Setting up"
+                ? gt("Setting up")
                 : setup.status === "ready"
-                  ? "Rebuild snapshot"
+                  ? gt("Rebuild snapshot")
                   : setup.status === "failed"
-                    ? "Retry"
-                    : "Set up"}
+                    ? gt("Retry")
+                    : gt("Set up")}
             </Button>
           }
         >
@@ -164,7 +170,7 @@ export function BoxdCloudSettingsSections() {
             return (
               <SettingsRow
                 key={step}
-                title={STEP_LABELS[step]}
+                title={m(STEP_LABELS[step])}
                 leading={<StepIcon state={state} />}
                 description={state === "failed" ? (setup.error ?? undefined) : undefined}
               />
@@ -174,7 +180,7 @@ export function BoxdCloudSettingsSections() {
       ) : null}
 
       {connected && status.machines.length > 0 ? (
-        <SettingsSection id="boxd-cloud-machines" title="boxd machines">
+        <SettingsSection id="boxd-cloud-machines" title={gt("boxd machines")}>
           {status.machines.map((machine) => {
             const state = MACHINE_STATE[machine.state];
             return (
@@ -188,7 +194,7 @@ export function BoxdCloudSettingsSections() {
                         .join(", ")
                     : undefined
                 }
-                control={<Badge variant={state.variant}>{state.label}</Badge>}
+                control={<Badge variant={state.variant}>{m(state.label)}</Badge>}
               />
             );
           })}

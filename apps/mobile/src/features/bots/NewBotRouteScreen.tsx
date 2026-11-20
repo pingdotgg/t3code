@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -52,15 +53,18 @@ export function NewBotRouteScreen() {
   const machines = useBotMachines();
   const machine =
     machines.find((entry) => entry.environmentId === draft.environmentId) ?? machines[0] ?? null;
+  const gt = useGT();
   return (
-    <SettingsScreen title="New bot">
+    <SettingsScreen title={gt("New bot")}>
       {machine ? (
         <NewBotForm
           environmentId={machine.environmentId}
           environmentLabel={machine.environmentLabel}
         />
       ) : (
-        <Text className="p-5 text-base text-foreground-muted">Connect a machine first.</Text>
+        <Text className="p-5 text-base text-foreground-muted">
+          <T>Connect a machine first.</T>
+        </Text>
       )}
     </SettingsScreen>
   );
@@ -70,6 +74,7 @@ function NewBotForm(props: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
 }) {
+  const gt = useGT();
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const draft = useAtomValue(botDraftAtom);
@@ -86,7 +91,7 @@ function NewBotForm(props: {
         option.selection.model === selection.model,
     )?.label ??
     selection?.model ??
-    "No models available";
+    gt("No models available");
   const canCreate = useAtomValue(serverEnvironment.createBot.permissionAtom(props.environmentId));
   const createBot = useAtomCommand(serverEnvironment.createBot, {
     label: "bot create",
@@ -116,8 +121,8 @@ function NewBotForm(props: {
         if (isAtomCommandInterrupted(result)) return;
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
-          "Couldn't create bot",
-          error instanceof Error ? error.message : "An error occurred.",
+          gt("Couldn't create bot"),
+          error instanceof Error ? error.message : gt("An error occurred."),
         );
         return;
       }
@@ -146,13 +151,15 @@ function NewBotForm(props: {
       </View>
       <SettingsSection>
         <View className="gap-2 p-4">
-          <Text className="text-sm font-t3-medium text-foreground-muted">Name</Text>
+          <Text className="text-sm font-t3-medium text-foreground-muted">
+            <T>Name</T>
+          </Text>
           <AppTextInput
-            accessibilityLabel="Bot name"
+            accessibilityLabel={gt("Bot name")}
             className="min-h-11 rounded-xl border-continuous bg-card px-3 text-base text-foreground"
             value={draft.name}
             maxLength={BOT_NAME_MAX_LENGTH}
-            placeholder="Research helper"
+            placeholder={gt("Research helper")}
             autoFocus
             editable={!saving}
             returnKeyType="done"
@@ -161,7 +168,7 @@ function NewBotForm(props: {
           />
         </View>
       </SettingsSection>
-      <SettingsSection title="Avatar">
+      <SettingsSection title={gt("Avatar")}>
         <BotAvatarPicker
           shape={draft.shape}
           color={draft.color}
@@ -185,11 +192,13 @@ function NewBotForm(props: {
         >
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Machine, ${props.environmentLabel}`}
+            accessibilityLabel={gt("Machine, {machine}", { machine: props.environmentLabel })}
             disabled={saving}
             className="min-h-14 flex-row items-center gap-3 border-b border-border-subtle bg-grouped-card px-4 py-3 active:opacity-70"
           >
-            <Text className="text-base text-foreground">Machine</Text>
+            <Text className="text-base text-foreground">
+              <T>Machine</T>
+            </Text>
             <Text className="flex-1 text-right text-base text-foreground-muted" numberOfLines={1}>
               {props.environmentLabel}
             </Text>
@@ -202,14 +211,14 @@ function NewBotForm(props: {
           </Pressable>
         </Menu>
         <ListRow
-          label="Model"
+          label={gt("Model")}
           detail={modelLabel}
           disabled={saving || models.length === 0}
           onPress={() => navigation.navigate("BotModel", { environmentId: props.environmentId })}
         />
       </SettingsSection>
       <Button
-        label={saving ? "Creating..." : "Create bot"}
+        label={saving ? gt("Creating...") : gt("Create bot")}
         tone="primary"
         fullWidth
         disabled={!ready}

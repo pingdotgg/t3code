@@ -6,7 +6,8 @@ import type {
   WorktreeSetupSnapshot,
   WorktreeSetupStage,
 } from "@t3tools/contracts";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
+import { msg, T, useGT, useMessages } from "gt-react";
 import {
   BrainIcon,
   CloudIcon,
@@ -22,6 +23,7 @@ import { useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { InlineButton } from "~/components/ui/button";
 import { useNowSecond } from "~/hooks/useNowSecond";
+import type { MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { ActivityShimmerOverlay } from "./TimelineRowParts";
@@ -29,10 +31,10 @@ import { failedToolIconClassName } from "./TimelineToolActivityIcon";
 import { formatWorkingTimer } from "./TimelineWorkGroupRows.logic";
 import { WORK_LOG_OUTPUT_CLASS_NAME, WorkLogDetails, WorkLogRow } from "./WorkLog";
 
-function elapsed(startedAt: string | null, endMs: number): string | null {
+function elapsed(startedAt: string | null, endMs: number, resolve: MessageResolver): string | null {
   if (!startedAt) return null;
   const ms = endMs - Date.parse(startedAt);
-  return Number.isFinite(ms) ? formatDuration(Math.max(0, ms)) : null;
+  return Number.isFinite(ms) ? formatDuration(Math.max(0, ms), resolve) : null;
 }
 
 /**
@@ -60,9 +62,10 @@ function Elapsed({
   endedAt: string | null;
   environmentId: EnvironmentId | undefined;
 }) {
+  const m = useMessages();
   if (!startedAt) return null;
   const text = endedAt ? (
-    elapsed(startedAt, Date.parse(endedAt))
+    elapsed(startedAt, Date.parse(endedAt), m)
   ) : (
     <LiveElapsed startedAt={startedAt} environmentId={environmentId} />
   );
@@ -84,24 +87,75 @@ const stopped = (stage: WorktreeSetupStage, snapshot: WorktreeSetupSnapshot) =>
   stage.startedAt !== null &&
   stage.endedAt === snapshot.endedAt;
 
-function stageLabel(stage: WorktreeSetupStage, snapshot: WorktreeSetupSnapshot): string {
-  if (stopped(stage, snapshot)) {
-    const running = stageLabel({ ...stage, status: "running" }, snapshot);
-    return `Stopped ${running.charAt(0).toLowerCase()}${running.slice(1)}`;
-  }
-  const tense = stage.status === "running" ? 0 : stage.status === "failed" ? 2 : 1;
-  const script = snapshot.setupScript?.name ?? "setup script";
+function stageLabel(
+  stage: WorktreeSetupStage,
+  snapshot: WorktreeSetupSnapshot,
+  resolve: MessageResolver,
+): string {
+  const tense = stopped(stage, snapshot)
+    ? "stopped"
+    : stage.status === "running"
+      ? "running"
+      : stage.status === "failed"
+        ? "failed"
+        : "done";
+  const baseRef = snapshot.baseRef;
+  const branch = snapshot.branch;
+  const script = snapshot.setupScript?.name;
   switch (stage.id) {
     case "fetch":
-      return `${["Fetching", "Fetched", "Couldn't fetch"][tense]} ${snapshot.baseRef ?? "base branch"}`;
+      return baseRef
+        ? resolve(
+            msg(
+              "{tense, select, running {Fetching {ref}} failed {Couldn't fetch {ref}} stopped {Stopped fetching {ref}} other {Fetched {ref}}}",
+              { tense, ref: baseRef },
+            ),
+          )
+        : resolve(
+            msg(
+              "{tense, select, running {Fetching base branch} failed {Couldn't fetch base branch} stopped {Stopped fetching base branch} other {Fetched base branch}}",
+              { tense },
+            ),
+          );
     case "checkout":
-      return `${["Checking out", "Checked out", "Couldn't check out"][tense]} ${snapshot.branch ?? "files"}`;
+      return branch
+        ? resolve(
+            msg(
+              "{tense, select, running {Checking out {branch}} failed {Couldn't check out {branch}} stopped {Stopped checking out {branch}} other {Checked out {branch}}}",
+              { tense, branch },
+            ),
+          )
+        : resolve(
+            msg(
+              "{tense, select, running {Checking out files} failed {Couldn't check out files} stopped {Stopped checking out files} other {Checked out files}}",
+              { tense },
+            ),
+          );
     case "submodules":
-      return `${["Initializing", "Initialized", "Couldn't initialize"][tense]} submodules`;
+      return resolve(
+        msg(
+          "{tense, select, running {Initializing submodules} failed {Couldn't initialize submodules} stopped {Stopped initializing submodules} other {Initialized submodules}}",
+          { tense },
+        ),
+      );
     case "setup-script":
-      return `${["Running", "Ran", "Failed"][tense]} ${script}`;
+      return script
+        ? resolve(
+            msg(
+              "{tense, select, running {Running {script}} failed {Failed {script}} stopped {Stopped running {script}} other {Ran {script}}}",
+              { tense, script },
+            ),
+          )
+        : resolve(
+            msg(
+              "{tense, select, running {Running setup script} failed {Failed setup script} stopped {Stopped running setup script} other {Ran setup script}}",
+              { tense },
+            ),
+          );
     case "agent":
-      return "Starting agent";
+      return tense === "stopped"
+        ? resolve(msg("Stopped starting agent"))
+        : resolve(msg("Starting agent"));
   }
 }
 
@@ -185,6 +239,7 @@ function SettledRow({
   "data-worktree-setup-stage"?: string;
   "data-worktree-setup-status"?: string;
 }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(false);
   const details =
     children ?? (body ? <pre className={WORK_LOG_OUTPUT_CLASS_NAME}>{body}</pre> : null);
@@ -193,7 +248,7 @@ function SettledRow({
     ? {
         role: "button" as const,
         tabIndex: 0 as const,
-        "aria-label": failed ? `${label}, setup step failed` : label,
+        "aria-label": failed ? gt("{label}, setup step failed", { label }) : label,
         "aria-expanded": expanded,
         onClick: toggle,
         onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
@@ -256,8 +311,9 @@ function StageRow({
   snapshot: WorktreeSetupSnapshot;
   onOpenTerminal: (() => void) | null;
 }) {
+  const m = useMessages();
   const icon = STAGE_ICONS[stage.id];
-  const label = stageLabel(stage, snapshot);
+  const label = stageLabel(stage, snapshot, m);
   const terminal =
     stage.id === "setup-script" && onOpenTerminal ? (
       <InlineButton
@@ -268,7 +324,7 @@ function StageRow({
         }}
         onKeyDown={(event) => event.stopPropagation()}
       >
-        Open terminal
+        <T>Open terminal</T>
       </InlineButton>
     ) : null;
   if (stage.status === "running" && snapshot.phase === "running") {
@@ -337,12 +393,13 @@ export function WorktreeSetupRows({
   startingLabel?: string | null;
   onOpenTerminal: (() => void) | null;
 }) {
+  const gt = useGT();
   const stages = snapshot.stages.filter((stage) => shownStage(stage, snapshot));
   const clean = snapshot.phase === "done" && !stages.some((stage) => stage.status === "failed");
   const agent = snapshot.stages.find((stage) => stage.id === "agent");
   const starting =
     snapshot.phase === "running" || snapshot.phase === "done"
-      ? (startingLabel ?? (agent?.status === "running" ? "Starting agent" : null))
+      ? (startingLabel ?? (agent?.status === "running" ? gt("Starting agent") : null))
       : null;
   const stageRows = stages.map((stage) => (
     <StageRow
@@ -355,7 +412,7 @@ export function WorktreeSetupRows({
   ));
   return (
     <section
-      aria-label="Worktree setup"
+      aria-label={gt("Worktree setup")}
       data-worktree-setup-phase={snapshot.phase}
       className="flex min-w-0 flex-col gap-1"
     >
@@ -363,7 +420,11 @@ export function WorktreeSetupRows({
         <SettledRow
           data-worktree-setup-stage="summary"
           icon={FolderGit2Icon}
-          label={snapshot.branch ? `Set up worktree ${snapshot.branch}` : "Set up worktree"}
+          label={
+            snapshot.branch
+              ? gt("Set up worktree {branch}", { branch: snapshot.branch })
+              : gt("Set up worktree")
+          }
           trailing={
             <Elapsed
               startedAt={snapshot.startedAt}
@@ -404,38 +465,59 @@ const BOAT_CLOUD_STEP_ICONS = {
 
 /** Running, done and failed labels per step. */
 const BOAT_CLOUD_STEP_LABELS = {
-  machine: ["Starting a VM", "Started a VM", "Couldn't start a VM"],
+  machine: [msg("Starting a VM"), msg("Started a VM"), msg("Couldn't start a VM")],
   server: [
-    "Starting T3 Code on the VM",
-    "Started T3 Code on the VM",
-    "Couldn't start T3 Code on the VM",
+    msg("Starting T3 Code on the VM"),
+    msg("Started T3 Code on the VM"),
+    msg("Couldn't start T3 Code on the VM"),
   ],
-  repository: ["Checking out", "Checked out", "Couldn't check out"],
-  connect: ["Connecting to the VM", "Connected to the VM", "Couldn't connect to the VM"],
-  project: ["Opening the project", "Opened the project", "Couldn't open the project"],
-  thread: ["Starting agent", "Started agent", "Couldn't start agent"],
+  repository: [
+    msg("Checking out {repository}"),
+    msg("Checked out {repository}"),
+    msg("Couldn't check out {repository}"),
+  ],
+  connect: [
+    msg("Connecting to the VM"),
+    msg("Connected to the VM"),
+    msg("Couldn't connect to the VM"),
+  ],
+  project: [
+    msg("Opening the project"),
+    msg("Opened the project"),
+    msg("Couldn't open the project"),
+  ],
+  thread: [msg("Starting agent"), msg("Started agent"), msg("Couldn't start agent")],
 } satisfies Record<BoatCloudStartStep, readonly [string, string, string]>;
 
-const WAKING_MACHINE_LABELS = ["Waking the VM", "Woke the VM", "Couldn't wake the VM"] as const;
+const WAKING_MACHINE_LABELS = [
+  msg("Waking the VM"),
+  msg("Woke the VM"),
+  msg("Couldn't wake the VM"),
+] as const;
 
 function boatCloudStepLabel(
   entry: BoatCloudStepProgress,
   repository: string | null,
   waking: boolean,
+  resolve: MessageResolver,
 ): string {
   const [running, done, failed] =
     waking && entry.step === "machine" ? WAKING_MACHINE_LABELS : BOAT_CLOUD_STEP_LABELS[entry.step];
   const label = entry.state === "failed" ? failed : entry.state === "done" ? done : running;
-  return entry.step === "repository" ? `${label} ${repository ?? "the repository"}` : label;
+  return entry.step === "repository"
+    ? resolve(label, { repository: repository ?? resolve(msg("the repository")) })
+    : resolve(label);
 }
 
 /** The Boat cloud steps still left when the first message was sent, as setup rows that appear as they start. */
 export function BoatCloudStartRows({ steps, repository, waking = false }: BoatCloudStartRowsState) {
+  const gt = useGT();
+  const m = useMessages();
   return (
-    <section aria-label="Boat cloud start" className="flex min-w-0 flex-col gap-1">
+    <section aria-label={gt("Boat cloud start")} className="flex min-w-0 flex-col gap-1">
       {steps.map((entry) => {
         const icon = BOAT_CLOUD_STEP_ICONS[entry.step];
-        const label = boatCloudStepLabel(entry, repository, waking);
+        const label = boatCloudStepLabel(entry, repository, waking, m);
         return entry.state === "active" ? (
           <div key={entry.step} data-boat-cloud-step={entry.step}>
             <LiveStageRow icon={icon} label={label} />

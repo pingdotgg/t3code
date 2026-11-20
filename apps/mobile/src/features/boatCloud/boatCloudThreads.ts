@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { createBoatCloudThreadListAtoms } from "@t3tools/client-runtime/state/threads";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -6,7 +6,8 @@ import { useEffect } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const MAX_REMEMBERED = 500;
 const NONE: ReadonlyArray<ScopedThreadRef> = [];
@@ -35,7 +36,7 @@ export function useRememberOpenedBoatCloudThread(ref: ScopedThreadRef | null): v
       : boatCloudThreadList.onBoatCloudAtom(environmentId),
   );
   const loaded = useAtomValue(preferencesLoadedAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the visit in stored preferences, outside React
   useEffect(() => {
     if (!onBoatCloud || !loaded || environmentId === null || threadId === null) return;
@@ -45,7 +46,7 @@ export function useRememberOpenedBoatCloudThread(ref: ScopedThreadRef | null): v
     ) {
       return;
     }
-    savePreferences({
+    void savePreferences({
       boatCloudOpenedThreads: [...opened, { environmentId, threadId }].slice(-MAX_REMEMBERED),
     });
   }, [onBoatCloud, loaded, environmentId, threadId, savePreferences]);

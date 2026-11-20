@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
 import { cn } from "~/lib/utils";
+import { useMessages } from "gt-react";
 
 /** A line of thread state for the end of the timeline. */
 export interface ThreadNowItem {
@@ -59,10 +60,11 @@ function ThreadNowLine({
 }
 
 function ThreadSyncLine({ phase }: { readonly phase: ThreadSyncPhase }) {
+  const m = useMessages();
   return (
     <div className={lineClassName} role="status" data-composer-sync-status={phase}>
       <RefreshCwIcon aria-hidden />
-      <span className="truncate">{threadSyncLabel(phase)}</span>
+      <span className="truncate">{threadSyncLabel(phase, m)}</span>
     </div>
   );
 }

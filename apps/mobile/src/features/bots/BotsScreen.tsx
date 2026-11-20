@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import type { BotSummary } from "@t3tools/client-runtime/state/bots";
 import { LegendList } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
@@ -39,6 +40,7 @@ const BotListRow = memo(function BotListRow(props: {
   readonly sidebar: boolean;
   readonly onSelect: (bot: BotSummary) => void;
 }) {
+  const gt = useGT();
   const { bot, selected, sidebar } = props;
   const foreground = selected
     ? selectedThreadRowColors.foregroundClassName
@@ -66,11 +68,11 @@ const BotListRow = memo(function BotListRow(props: {
         </View>
         <View className="flex-row items-center gap-2">
           <Text className={cn("flex-1 text-sm", muted)} numberOfLines={1}>
-            {bot.working ? "Working..." : (bot.preview ?? "No messages yet")}
+            {bot.working ? gt("Working...") : (bot.preview ?? gt("No messages yet"))}
           </Text>
           {bot.unread ? (
             <View
-              accessibilityLabel="Unread"
+              accessibilityLabel={gt("Unread")}
               className="size-2.5 rounded-full bg-primary"
               accessible
             />
@@ -81,7 +83,7 @@ const BotListRow = memo(function BotListRow(props: {
   );
   return (
     <RowPressable
-      accessibilityLabel={bot.unread ? `${bot.name}, unread reply` : bot.name}
+      accessibilityLabel={bot.unread ? gt("{name}, unread reply", { name: bot.name }) : bot.name}
       accessibilityRole="button"
       accessibilityState={{ selected }}
       className={sidebar ? (selected ? "bg-thread-selected" : "bg-drawer") : "bg-screen"}
@@ -103,12 +105,15 @@ const BotListRow = memo(function BotListRow(props: {
 });
 
 function BotsEmpty(props: { readonly onNewBot: () => void }) {
+  const gt = useGT();
   return (
     <View className="items-center gap-4 px-8 py-16">
-      <Text className="text-center text-base text-foreground-muted">No bots yet.</Text>
+      <Text className="text-center text-base text-foreground-muted">
+        <T>No bots yet.</T>
+      </Text>
       {/* Button sizes to its label with self-start, so this wrapper centers it. */}
       <View>
-        <Button label="New bot" icon="plus" tone="primary" onPress={props.onNewBot} />
+        <Button label={gt("New bot")} icon="plus" tone="primary" onPress={props.onNewBot} />
       </View>
     </View>
   );

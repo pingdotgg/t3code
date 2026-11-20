@@ -15,10 +15,12 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { DownloadIcon, FolderIcon, FolderOpenIcon, ImageIcon, Trash2Icon } from "lucide-react";
+import { msg, T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { saveUrlAsFile, useAssetUrlRefresh } from "~/assets/assetUrls";
 import { useTheme } from "~/hooks/useTheme";
+import { m } from "~/i18n/messages";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { useEnvironmentProviders } from "../../state/environments";
 import { useQuietThreadShell, useThreadShell } from "../../state/entities";
@@ -47,7 +49,7 @@ function reportFailure(title: string, result: Parameters<typeof squashAtomComman
   toastManager.add({
     type: "error",
     title,
-    description: error instanceof Error ? error.message : "An error occurred.",
+    description: error instanceof Error ? error.message : m(msg("An error occurred.")),
   });
 }
 
@@ -78,6 +80,7 @@ function AvatarEditor({
   bot: ProjectBot;
   threadRef: ScopedThreadRef;
 }) {
+  const gt = useGT();
   const updateBot = useOrchestrationCommand(serverEnvironment.updateBot, { reportFailure: false });
   const generateAvatar = useOrchestrationCommand(serverEnvironment.generateBotAvatar, {
     reportFailure: false,
@@ -110,7 +113,7 @@ function AvatarEditor({
     });
     if (result._tag !== "Failure") return;
     if (save === latestSave.current) setPending(null);
-    reportFailure("Could not update avatar", result);
+    reportFailure(gt("Could not update avatar"), result);
   };
 
   const generate = async () => {
@@ -121,7 +124,7 @@ function AvatarEditor({
       input: { projectId: project.id, ...(trimmed ? { prompt: trimmed } : {}) },
     });
     setGenerating(false);
-    if (result._tag === "Failure") reportFailure("Could not generate avatar", result);
+    if (result._tag === "Failure") reportFailure(gt("Could not generate avatar"), result);
   };
 
   return (
@@ -130,7 +133,7 @@ function AvatarEditor({
         render={
           <button
             type="button"
-            aria-label="Change avatar"
+            aria-label={gt("Change avatar")}
             // oxlint-disable-next-line t3code/no-styled-raw-controls -- The avatar is the control; no Button variant frames a round image.
             className="cursor-pointer rounded-full outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
           />
@@ -156,8 +159,8 @@ function AvatarEditor({
             >
               <Input
                 size="sm"
-                aria-label="Avatar idea"
-                placeholder={`Avatar for ${project.title}`}
+                aria-label={gt("Avatar idea")}
+                placeholder={gt("Avatar for {name}", { name: project.title })}
                 value={prompt}
                 maxLength={500}
                 disabled={generating}
@@ -165,7 +168,7 @@ function AvatarEditor({
               />
               <Button type="submit" size="sm" variant="secondary" disabled={generating}>
                 <ImageIcon />
-                {generating ? "Generating" : "Generate"}
+                {generating ? gt("Generating") : gt("Generate")}
               </Button>
             </form>
           ) : null}
@@ -176,7 +179,7 @@ function AvatarEditor({
               disabled={generating}
               onClick={() => void saveAvatar({ shape, color, imagePath: null })}
             >
-              Use shape instead
+              <T>Use shape instead</T>
             </Button>
           ) : null}
         </div>
@@ -186,6 +189,7 @@ function AvatarEditor({
 }
 
 function BotName({ project }: { project: EnvironmentProject }) {
+  const gt = useGT();
   const updateBot = useOrchestrationCommand(serverEnvironment.updateBot, { reportFailure: false });
   const [draft, setDraft] = useState<string | null>(null);
   const commit = async () => {
@@ -196,7 +200,7 @@ function BotName({ project }: { project: EnvironmentProject }) {
       environmentId: project.environmentId,
       input: { projectId: project.id, name },
     });
-    if (result._tag === "Failure") reportFailure("Could not rename bot", result);
+    if (result._tag === "Failure") reportFailure(gt("Could not rename bot"), result);
   };
   if (draft === null) {
     return (
@@ -214,7 +218,7 @@ function BotName({ project }: { project: EnvironmentProject }) {
     <Input
       size="sm"
       autoFocus
-      aria-label="Bot name"
+      aria-label={gt("Bot name")}
       maxLength={BOT_NAME_MAX_LENGTH}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
@@ -311,6 +315,7 @@ function ArtifactFile({
   name,
   ...props
 }: ArtifactFolderProps & { path: string; name: string }) {
+  const gt = useGT();
   const { resolvedTheme } = useTheme();
   const [saving, setSaving] = useState(false);
   const prepareDownload = useAssetUrlRefresh(props.project.environmentId, {
@@ -325,13 +330,17 @@ function ArtifactFile({
     try {
       const url = await prepareDownload();
       if (url) await saveUrlAsFile(url, name);
-      else failure = "Reconnect to the computer and try again.";
+      else failure = gt("Reconnect to the computer and try again.");
     } catch (cause) {
-      failure = (cause instanceof Error && cause.message) || "Try again.";
+      failure = (cause instanceof Error && cause.message) || gt("Try again.");
     }
     setSaving(false);
     if (failure) {
-      toastManager.add({ type: "error", title: "Could not download file", description: failure });
+      toastManager.add({
+        type: "error",
+        title: gt("Could not download file"),
+        description: failure,
+      });
     }
   };
   return (
@@ -349,7 +358,7 @@ function ArtifactFile({
         <Button
           size="icon-xs"
           variant="ghost-muted"
-          aria-label={`Download ${name}`}
+          aria-label={gt("Download {name}", { name })}
           disabled={saving}
           onClick={() => void download()}
         >
@@ -394,13 +403,14 @@ function BotArtifacts({
   project: EnvironmentProject;
   threadRef: ScopedThreadRef;
 }) {
+  const gt = useGT();
   const runCompletedAt = useQuietThreadShell(threadRef)?.latestRun?.completedAt ?? null;
   const props = { project, threadRef, directoryPath: "artifacts", depth: 0, runCompletedAt };
   const { entries, loading } = useArtifactEntries(props);
   if (entries.length === 0) {
     return (
       <p className="px-2.5 py-2 text-body text-muted-foreground">
-        {loading ? "Loading" : "No artifacts yet"}
+        {loading ? gt("Loading") : gt("No artifacts yet")}
       </p>
     );
   }
@@ -408,6 +418,7 @@ function BotArtifacts({
 }
 
 function BotComputer({ project }: { project: EnvironmentProject }) {
+  const gt = useGT();
   const navigate = useNavigate();
   const { presentation } = useEnvironmentPresentation(project.environmentId);
   const deleteBot = useOrchestrationCommand(serverEnvironment.deleteBot, { reportFailure: false });
@@ -419,15 +430,18 @@ function BotComputer({ project }: { project: EnvironmentProject }) {
       input: { projectId: project.id },
     });
     if (result._tag === "Failure") {
-      reportFailure("Could not delete bot", result);
+      reportFailure(gt("Could not delete bot"), result);
       return;
     }
     setConfirming(false);
     void navigate({ to: "/bots" });
   };
   const rows: Array<[string, string]> = [
-    ["Computer", presentation?.entry.target.label ?? "Unknown"],
-    ["Status", presentation?.connection.phase === "connected" ? "Connected" : "Offline"],
+    [gt("Computer"), presentation?.entry.target.label ?? gt("Unknown")],
+    [
+      gt("Status"),
+      presentation?.connection.phase === "connected" ? gt("Connected") : gt("Offline"),
+    ],
   ];
   return (
     <div className="flex flex-col gap-4 px-2.5 py-1">
@@ -447,7 +461,7 @@ function BotComputer({ project }: { project: EnvironmentProject }) {
           onClick={() => setConfirming(true)}
         >
           <Trash2Icon />
-          Delete bot
+          <T>Delete bot</T>
         </Button>
       </div>
       <DeleteBotDialog
@@ -470,6 +484,7 @@ export function BotDetails({
   bot: ProjectBot;
   threadRef: ScopedThreadRef;
 }) {
+  const gt = useGT();
   const [tab, setTab] = useState<BotTab>("details");
   return (
     <>
@@ -481,7 +496,7 @@ export function BotDetails({
       </div>
       <div className="px-4 pb-2">
         <ToggleGroup
-          aria-label="Bot details"
+          aria-label={gt("Bot details")}
           className="w-full *:flex-1"
           value={[tab]}
           onValueChange={(next) => {
@@ -489,36 +504,44 @@ export function BotDetails({
             if (value === "details" || value === "artifacts" || value === "computer") setTab(value);
           }}
         >
-          <Toggle value="details">Details</Toggle>
-          <Toggle value="artifacts">Artifacts</Toggle>
-          <Toggle value="computer">Computer</Toggle>
+          <Toggle value="details">
+            <T>Details</T>
+          </Toggle>
+          <Toggle value="artifacts">
+            <T>Artifacts</T>
+          </Toggle>
+          <Toggle value="computer">
+            <T>Computer</T>
+          </Toggle>
         </ToggleGroup>
       </div>
       {tab === "details" ? (
         <>
-          <ThreadDetailsSection title="Description">
+          <ThreadDetailsSection title={gt("Description")}>
             <p className="px-2.5 text-body whitespace-pre-wrap text-foreground">
               {bot.description ?? (
-                <span className="text-muted-foreground">Written after your first chat</span>
+                <span className="text-muted-foreground">
+                  <T>Written after your first chat</T>
+                </span>
               )}
             </p>
           </ThreadDetailsSection>
-          <ThreadDetailsSection title="Model">
+          <ThreadDetailsSection title={gt("Model")}>
             <BotModel threadRef={threadRef} />
           </ThreadDetailsSection>
           <ThreadAutomationsPanel
             environmentId={threadRef.environmentId}
             threadId={threadRef.threadId}
-            title="Routines"
-            emptyText="No routines yet"
+            title={gt("Routines")}
+            emptyText={gt("No routines yet")}
           />
         </>
       ) : tab === "artifacts" ? (
-        <ThreadDetailsSection title="Artifacts" variant="workspace">
+        <ThreadDetailsSection title={gt("Artifacts")} variant="workspace">
           <BotArtifacts project={project} threadRef={threadRef} />
         </ThreadDetailsSection>
       ) : (
-        <ThreadDetailsSection title="Computer" variant="workspace">
+        <ThreadDetailsSection title={gt("Computer")} variant="workspace">
           <BotComputer project={project} />
         </ThreadDetailsSection>
       )}

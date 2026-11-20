@@ -1,3 +1,4 @@
+import { msg } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionCatalogDisplayUrl } from "@t3tools/client-runtime/connection";
 import {
@@ -19,6 +20,7 @@ import {
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { m } from "../../i18n/messages";
 import { environmentCatalog } from "../../connection/catalog";
 import { connectPairingCode } from "../../connection/onboarding";
 import { uuidv4 } from "../../lib/uuid";
@@ -81,7 +83,7 @@ export function useBoxdCloudStarter(preferredEnvironmentId: EnvironmentId | null
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "An error occurred.";
+  return error instanceof Error ? error.message : m(msg("An error occurred."));
 }
 
 function waitFor<T>(
@@ -242,7 +244,8 @@ export async function prepareBoxdCloudProject(input: {
     return { project, worktree: session.worktree ?? null };
   } catch (error) {
     if (!steps.some((entry) => entry.state === "failed")) set(current, { state: "failed" });
-    if (error !== cancelled) Dialog.alert("Could not start on boxd cloud", errorMessage(error));
+    if (error !== cancelled)
+      Dialog.alert(m(msg("Could not start on boxd cloud")), errorMessage(error));
     return null;
   } finally {
     stopWatching();

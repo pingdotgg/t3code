@@ -2,6 +2,7 @@ import type { BotSummary } from "@t3tools/client-runtime/state/bots";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { PlusIcon, SearchIcon } from "lucide-react";
+import { useGT } from "gt-react";
 import { memo, useState } from "react";
 
 import { isElectron } from "../../env";
@@ -24,6 +25,7 @@ const BotRow = memo(function BotRow({
   active: boolean;
   onOpen: (bot: BotSummary) => void;
 }) {
+  const gt = useGT();
   return (
     <li className="list-none">
       <button
@@ -45,11 +47,11 @@ const BotRow = memo(function BotRow({
               bot.unread ? "text-sidebar-foreground" : "text-sidebar-muted-foreground",
             )}
           >
-            {bot.working ? "Working" : (bot.preview ?? "No messages yet")}
+            {bot.working ? gt("Working") : (bot.preview ?? gt("No messages yet"))}
           </span>
         </span>
         {bot.unread ? (
-          <span aria-label="Unread" className="size-2 shrink-0 rounded-full bg-primary" />
+          <span aria-label={gt("Unread")} className="size-2 shrink-0 rounded-full bg-primary" />
         ) : null}
       </button>
     </li>
@@ -57,6 +59,7 @@ const BotRow = memo(function BotRow({
 });
 
 export default function BotsSidebar() {
+  const gt = useGT();
   const bots = useAtomValue(botListAtom);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -92,8 +95,8 @@ export default function BotsSidebar() {
                 <InputGroupInput
                   nativeInput
                   type="search"
-                  aria-label="Search bots"
-                  placeholder="Search"
+                  aria-label={gt("Search bots")}
+                  placeholder={gt("Search")}
                   value={query}
                   onChange={(event) => setQuery(event.currentTarget.value)}
                   onKeyDown={(event) => {
@@ -101,7 +104,7 @@ export default function BotsSidebar() {
                   }}
                 />
               </InputGroup>
-              <SidebarHeaderIconButton label="New bot" onClick={() => setCreating(true)}>
+              <SidebarHeaderIconButton label={gt("New bot")} onClick={() => setCreating(true)}>
                 <PlusIcon />
               </SidebarHeaderIconButton>
             </div>
@@ -111,7 +114,7 @@ export default function BotsSidebar() {
         <SidebarGroup>
           {visibleBots.length === 0 ? (
             <p className="px-2 py-6 text-center text-caption text-muted-foreground/60">
-              {bots.length === 0 ? "No bots yet" : "No matching bots"}
+              {bots.length === 0 ? gt("No bots yet") : gt("No matching bots")}
             </p>
           ) : (
             <ul className="flex flex-col gap-0.5">

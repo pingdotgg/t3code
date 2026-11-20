@@ -2,6 +2,7 @@ import { WorkerPoolContext, useWorkerPool } from "@pierre/diffs/react";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import * as Schema from "effect/Schema";
+import { T } from "gt-react";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { getRenderedAppearance, subscribeRenderedAppearance } from "../hooks/useTheme";
 import { resolveDiffThemeName } from "../lib/diffRendering";
@@ -130,7 +131,7 @@ function DiffWorkerReady({ failed, children }: { failed: boolean; children?: Rea
       role="status"
       className="flex min-h-0 flex-1 items-center justify-center p-4 text-meta text-muted-foreground"
     >
-      Loading code...
+      <T>Loading code...</T>
     </div>
   );
 }

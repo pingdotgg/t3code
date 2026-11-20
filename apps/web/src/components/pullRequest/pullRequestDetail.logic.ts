@@ -47,13 +47,16 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
 
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
-  merge: "Merge",
-  squash: "Squash and merge",
-  rebase: "Rebase and merge",
-  "fast-forward": "Fast-forward merge",
+  merge: msg("Merge"),
+  squash: msg("Squash and merge"),
+  rebase: msg("Rebase and merge"),
+  "fast-forward": msg("Fast-forward merge"),
 };
 
 export function allowsSinglePullRequestMerge(input: {
@@ -247,18 +250,18 @@ export function threadPullRequestPanelTarget(thread: {
   return legacy ?? thread.branchPullRequest ?? null;
 }
 
-export function pullRequestHandoffLabels(inThisThread: boolean) {
+export function pullRequestHandoffLabels(inThisThread: boolean, resolve: MessageResolver = m) {
   // Beside a composer a remark's Fix shares its header with Add to chat.
   return inThisThread
     ? {
-        fixFinding: "Fix",
-        fixCheck: "Fix in this thread",
-        fixFindings: "Fix findings in this thread",
+        fixFinding: resolve(msg("Fix", { $context: "verb, fix a review finding" })),
+        fixCheck: resolve(msg("Fix in this thread")),
+        fixFindings: resolve(msg("Fix findings in this thread")),
       }
     : {
-        fixFinding: "Fix in a thread",
-        fixCheck: "Fix",
-        fixFindings: "Fix findings in a thread",
+        fixFinding: resolve(msg("Fix in a thread")),
+        fixCheck: resolve(msg("Fix", { $context: "verb, fix a review finding" })),
+        fixFindings: resolve(msg("Fix findings in a thread")),
       };
 }
 
@@ -329,8 +332,11 @@ export function classifyPullRequestChecks(
   return "passing";
 }
 
-export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) {
-  if (checks.length === 0) return ["No checks reported"];
+export function describePullRequestChecks(
+  checks: ReadonlyArray<PullRequestCheck>,
+  resolve: MessageResolver = m,
+) {
+  if (checks.length === 0) return [resolve(msg("No checks reported"))];
   const failed = checks.filter(
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
@@ -338,12 +344,19 @@ export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck
   const actionRequired = checks.filter((check) => check.status === "action-required").length;
   const passed = checks.filter((check) => check.status === "success").length;
   const parts: string[] = [];
-  if (failed > 0) parts.push(`${failed} of ${checks.length} failing`);
-  if (actionRequired > 0) parts.push(`${actionRequired} of ${checks.length} awaiting action`);
-  if (pending > 0) parts.push(`${pending} of ${checks.length} running`);
+  const total = checks.length;
+  if (failed > 0) parts.push(resolve(msg("{failed} of {total} failing", { failed, total })));
+  if (actionRequired > 0) {
+    parts.push(
+      resolve(msg("{actionRequired} of {total} awaiting action", { actionRequired, total })),
+    );
+  }
+  if (pending > 0) parts.push(resolve(msg("{pending} of {total} running", { pending, total })));
   if (parts.length === 0) {
     return [
-      passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`,
+      passed === total
+        ? resolve(msg("All checks passed"))
+        : resolve(msg("{passed} of {total} passing", { passed, total })),
     ];
   }
   return parts;
@@ -934,20 +947,26 @@ function reviewThreadText(thread: PullRequestReviewThread): string {
     .trim();
 }
 
+/** A thread's line, marked when it is numbered as in the base branch, the diff's left side. */
+function reviewThreadLine(thread: PullRequestReviewThread): string | null {
+  return thread.line === null ? null : `${thread.line}${thread.side === "left" ? " (before)" : ""}`;
+}
+
 function reviewThreadContext(
   thread: PullRequestReviewThread,
   pullRequestNumber: number,
 ): ReviewCommentContext {
   const lineIndex = Math.max(0, (thread.line ?? 1) - 1);
+  const line = reviewThreadLine(thread);
   return {
     id: `pull-request-finding:${thread.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
     sectionTitle: `PR #${pullRequestNumber} review`,
     filePath: thread.path,
     startIndex: lineIndex,
     endIndex: lineIndex,
-    rangeLabel:
-      thread.line === null ? "file" : `L${thread.line}${thread.side === "left" ? " (before)" : ""}`,
+    rangeLabel: line === null ? "file" : `L${line}`,
     // Strip bot bookkeeping comments before bounding finding text.
     text: bounded(reviewThreadText(thread)),
     diff: "",
@@ -958,8 +977,10 @@ function reviewThreadContext(
 // A task added to an existing thread's composer has no checkout prepared for it.
 function checkoutInstruction(inThisThread: boolean | undefined): string {
   return inThisThread
-    ? "Work on its branch, switching to it or checking it out first if this workspace is not on it"
-    : "Work in the prepared checkout";
+    ? // oxlint-disable-next-line t3code/no-untranslated-copy -- agent prompt
+      "Work on its branch, switching to it or checking it out first if this workspace is not on it"
+    : // oxlint-disable-next-line t3code/no-untranslated-copy -- agent prompt
+      "Work in the prepared checkout";
 }
 
 // The attached pull request chip names the title, URL and branches.
@@ -1217,6 +1238,7 @@ function pullRequestContextComment(
     // Use URLs because repositories can share pull request numbers.
     id: `pull-request-context:${input.url}`,
     sectionId: `pull-request:${input.number}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
     sectionTitle: `PR #${input.number}`,
     filePath: `PR #${input.number}`,
     startIndex: 0,
@@ -1296,6 +1318,7 @@ export function buildPullRequestCommentContext(
   return {
     id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
     sectionTitle: `PR #${pullRequestNumber} conversation`,
     // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
     filePath: comment.path ?? `@${author}`,
@@ -1347,8 +1370,9 @@ function reviewLineComments(
       if (body === null || !pullRequestAnchorMatchesUrl(anchor.anchor, lineComment.reviewUrl)) {
         return [];
       }
-      const line = thread.line === null ? "" : ` line ${thread.line}`;
-      return [`${lineComment.author?.login ?? "ghost"} on \`${thread.path}\`${line}: ${body}`];
+      const line = reviewThreadLine(thread);
+      const at = line === null ? "" : ` line ${line}`;
+      return [`${lineComment.author?.login ?? "ghost"} on \`${thread.path}\`${at}: ${body}`];
     }),
   );
   // Threads or their replies can be partly loaded; then an empty match proves nothing.
@@ -1470,6 +1494,7 @@ export function buildAskAboutGuideStopHandoff(input: {
       {
         id: `pull-request-guide-stop:${input.url}:${stop.index}`,
         sectionId: `pull-request:${input.number}`,
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
         sectionTitle: `PR #${input.number} review guide`,
         filePath: `Guide stop ${stop.index + 1}`,
         startIndex: 0,
@@ -1533,7 +1558,7 @@ export function checkoutFailureDescription(failure: unknown): string {
     : failure;
   return readableFailure(
     description,
-    "Check that the branch still exists and is not checked out elsewhere, then try again.",
+    m(msg("Check that the branch still exists and is not checked out elsewhere, then try again.")),
   );
 }
 

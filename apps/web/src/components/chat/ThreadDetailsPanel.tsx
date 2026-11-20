@@ -18,12 +18,13 @@ import {
   type BranchToolbarHandle,
   type CloudEnvironmentOption,
 } from "../BranchToolbar";
-import BaseGitActionsControl from "../GitActionsControl";
+import GitActionsControl from "../GitActionsControl";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
-import { memo, useImperativeHandle, useRef, useState, type ComponentProps, type Ref } from "react";
+import { T, useGT } from "gt-react";
+import { useImperativeHandle, useRef, useState, type ComponentProps, type Ref } from "react";
 import { flushSync } from "react-dom";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
@@ -46,8 +47,6 @@ import { SlidersHorizontalIcon } from "lucide-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { Menu, MenuItemLabel, MenuPopup } from "../ui/menu";
 import { BotDetails } from "../bots/BotDetails";
-
-const GitActionsControl = memo(BaseGitActionsControl);
 
 type DetailsControl = "branch" | "composer.host" | "composer.workspace";
 
@@ -113,6 +112,7 @@ interface ThreadDetailsPanelProps extends Pick<
 
 export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
+  const gt = useGT();
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
   const workspaceSectionRef = useRef<HTMLElement>(null);
   // A popover card mounts its content after opening, so the control waits for its focus request.
@@ -254,7 +254,7 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
               {Object.values(show).some(Boolean) || visible.usage || visible.context ? (
                 <section
                   ref={workspaceSectionRef}
-                  aria-label="Workspace"
+                  aria-label={gt("Workspace")}
                   data-thread-details-card
                   className="surface-tray rounded-pane p-1"
                 >
@@ -391,7 +391,9 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                   }}
                 >
                   <SlidersHorizontalIcon aria-hidden />
-                  <MenuItemLabel>Choose what to show</MenuItemLabel>
+                  <MenuItemLabel>
+                    <T>Choose what to show</T>
+                  </MenuItemLabel>
                 </ThreadDetailsControl>
               </div>
             </div>

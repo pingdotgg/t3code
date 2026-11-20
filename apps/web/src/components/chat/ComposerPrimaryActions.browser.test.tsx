@@ -46,8 +46,13 @@ function setup() {
   } satisfies ComponentProps<typeof ComposerPrimaryActions>;
 }
 
+const pressEscape = (element: Element) =>
+  act(() => {
+    element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+
 it.each([false, true])(
-  "keeps dictation finish, cancel and turn stop separate (running: %s)",
+  "dictates in the mic's own slot, leaving the pill and the turn's stop alone (running: %s)",
   async (running) => {
     const props = setup();
     const onStop = vi.fn();
@@ -62,7 +67,6 @@ it.each([false, true])(
         isRunning={running}
         canInterrupt={running}
         voiceInputActive={phase !== "idle"}
-        hasSendableContent={phase !== "idle"}
         renderSpeechAction={(inPill) => (
           <ComposerSpeechButton
             inPill={inPill}
@@ -74,7 +78,12 @@ it.each([false, true])(
         )}
       />
     );
+    const pillButtons = () =>
+      [...screen.container.querySelectorAll("[data-composer-send-pill] button")].map(
+        (button) => button.getBoundingClientRect().x,
+      );
     await using screen = await render(controls("idle"));
+    const restingButtons = pillButtons();
     await act(() =>
       (
         screen.getByRole("button", { name: "Start voice input" }).element() as HTMLButtonElement
@@ -82,24 +91,16 @@ it.each([false, true])(
     );
     expect(onStart).toHaveBeenCalledOnce();
     await screen.rerender(controls("recording"));
-    expect(screen.container.querySelectorAll('[aria-label="Finish voice input"]')).toHaveLength(1);
-    expect(screen.container.querySelector('[aria-label="Stop voice input"]')).toBeNull();
-    await act(() =>
-      (
-        screen.getByRole("button", { name: "Finish voice input" }).element() as HTMLButtonElement
-      ).click(),
-    );
+    const mic = screen.getByRole("button", { name: "Finish voice input" }).element();
+    expect(mic).toHaveAttribute("aria-pressed", "true");
+    expect(screen.container.querySelector('[aria-label="Cancel voice input"]')).toBeNull();
+    await act(() => (mic as HTMLButtonElement).click());
     expect(onStop).toHaveBeenCalledOnce();
     expect(props.onInterrupt).not.toHaveBeenCalled();
     for (const phase of ["recording", "preparing", "transcribing", "post-processing"] as const) {
       await screen.rerender(controls(phase));
-      expect(screen.container.querySelector('[aria-label^="Compact 436k"]')).toBeNull();
-      expect(screen.container.querySelectorAll("[data-composer-send-pill]")).toHaveLength(1);
-      await act(() =>
-        (
-          screen.getByRole("button", { name: "Cancel voice input" }).element() as HTMLButtonElement
-        ).click(),
-      );
+      expect(pillButtons()).toEqual(restingButtons);
+      await pressEscape(screen.container.querySelector("[data-voice-phase]")!);
       if (phase === "preparing" || phase === "transcribing") {
         expect(
           screen
@@ -130,12 +131,10 @@ it.each([false, true])(
         ).click(),
       );
       expect(props.onInterrupt).toHaveBeenCalledOnce();
+      expect(onStop).toHaveBeenCalledOnce();
       await expect
         .element(screen.getByRole("button", { name: "Stopping", exact: true }))
         .toBeDisabled();
-      await expect
-        .element(screen.getByRole("button", { name: "Cancel voice input" }))
-        .toBeEnabled();
     }
   },
 );
@@ -169,18 +168,10 @@ it("dictates in a text field in place of its mic without moving the buttons besi
   const restingX = save.getBoundingClientRect().x;
   await screen.rerender(field("recording"));
   expect(save.getBoundingClientRect().x).toBe(restingX);
-  expect(screen.container.querySelector('[role="status"]')).toBeNull();
-  expect(screen.container.querySelectorAll('[aria-label="Cancel voice input"]')).toHaveLength(1);
-  await act(() =>
-    (
-      screen.getByRole("button", { name: "Finish voice input" }).element() as HTMLButtonElement
-    ).click(),
-  );
-  await act(() =>
-    (
-      screen.getByRole("button", { name: "Cancel voice input" }).element() as HTMLButtonElement
-    ).click(),
-  );
+  expect(screen.container.querySelector('[aria-label="Cancel voice input"]')).toBeNull();
+  const mic = screen.getByRole("button", { name: "Finish voice input" }).element();
+  await act(() => (mic as HTMLButtonElement).click());
+  await pressEscape(mic);
   expect(onStop).toHaveBeenCalledOnce();
   expect(onCancel).toHaveBeenCalledOnce();
 });

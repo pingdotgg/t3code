@@ -32,9 +32,10 @@ export const es: Messages = {
     downloadForAndroid: "Descargar para Android",
     sourceLink: "Roba nuestro código (legalmente)",
     alsoOnPhone: "También en tu teléfono:",
-    screenshotAlt: "T3 Code ejecutando subagentes de Claude, Codex, Muse y Gemini en un mismo hilo",
+    screenshotAlt:
+      "T3 Code con la lista de hilos junto a un hilo de Claude abierto, cuya tarjeta de detalles acoplada muestra su rama, los cambios, la pull request vinculada con los checks superados, los límites de uso, el contexto, una automatización y un fork",
     endorsementsTitle: "Tolerado por más de {users} desarrolladores",
-    endorsementsSub: "Algunos hasta tuitearon al respecto.",
+    endorsementsSub: "Algunos hasta tuitearon cosas buenas.",
     endorsementsLabel: "Opiniones de desarrolladores",
     readPost: "Leer la publicación de {handle} en X",
     harnessTitle: "Trae tu propia suscripción",
@@ -42,7 +43,7 @@ export const es: Messages = {
       "T3 Code no revende tokens. Conecta Claude Code, Codex, Antigravity, OpenCode, Cursor o Grok con las credenciales que ya tienes. Nosotros los orquestamos, tú conservas tu plan.",
     googleSignIn: "Inicio de sesión con Google",
     harnessPoints: [
-      "Sin reventa de claves. Sin límites de cuota.",
+      "Sin venta de claves. Sin límites de cuota.",
       "Cambia de modelo a mitad del hilo.",
       "Nuevas integraciones cada semana.",
     ],
@@ -85,6 +86,8 @@ export const es: Messages = {
     channelLabel: "Canal de versiones",
     stable: "Estable",
     nightly: "Nightly",
+    nightlyTagline:
+      "Los cambios nuevos en cuanto llegan, antes que en Estable. Puede tener fallos.",
     intelNote: "¿Tienes un Mac con Intel? {link}.",
     intelLink: "Descarga la versión x64",
     armNote: "¿Usas ARM? Descarga el {deb} o el {appimage} para arm64.",

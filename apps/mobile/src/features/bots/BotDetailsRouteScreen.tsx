@@ -1,3 +1,4 @@
+import { msg, T, useGT } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -24,6 +25,7 @@ import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
+import { m } from "../../i18n/messages";
 import { ListRow } from "../../components/ui/ListRow";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
@@ -50,7 +52,7 @@ type BotProject = EnvironmentProject & { readonly bot: ProjectBot };
 function alertFailure<A, E>(title: string, result: AtomCommandResult<A, E>) {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
   const error = squashAtomCommandFailure(result);
-  Dialog.alert(title, error instanceof Error ? error.message : "An error occurred.");
+  Dialog.alert(title, error instanceof Error ? error.message : m(msg("An error occurred.")));
 }
 
 export function BotDetailsRouteScreen({
@@ -58,12 +60,15 @@ export function BotDetailsRouteScreen({
 }: StaticScreenProps<{ readonly environmentId: EnvironmentId; readonly projectId: ProjectId }>) {
   const project = useBotProject(route.params.environmentId, route.params.projectId);
   const bot = project?.bot;
+  const gt = useGT();
   return (
-    <SettingsScreen title="Bot">
+    <SettingsScreen title={gt("Bot", { $context: "screen title, details of one bot" })}>
       {project && bot ? (
         <BotDetails project={{ ...project, bot }} />
       ) : (
-        <Text className="p-5 text-base text-foreground-muted">This bot no longer exists.</Text>
+        <Text className="p-5 text-base text-foreground-muted">
+          <T>This bot no longer exists.</T>
+        </Text>
       )}
     </SettingsScreen>
   );
@@ -110,6 +115,7 @@ function sameAvatar(left: ProjectBot["avatar"], right: ProjectBot["avatar"]) {
 
 function BotAvatarSection(props: { readonly project: BotProject }) {
   const { project } = props;
+  const gt = useGT();
   const updateBot = useAtomCommand(serverEnvironment.updateBot, {
     label: "bot avatar update",
     reportFailure: false,
@@ -151,7 +157,7 @@ function BotAvatarSection(props: { readonly project: BotProject }) {
       input: { projectId: project.id, avatar: { ...next, imagePath: null } },
     }).then((result) => {
       if (result._tag === "Failure" && save === latestSave.current) setPending(null);
-      alertFailure("Couldn't update avatar", result);
+      alertFailure(gt("Couldn't update avatar"), result);
     });
   };
   const generate = () => {
@@ -163,7 +169,7 @@ function BotAvatarSection(props: { readonly project: BotProject }) {
     }).then((result) => {
       setGenerating(false);
       if (result._tag === "Failure") {
-        alertFailure("Couldn't generate image", result);
+        alertFailure(gt("Couldn't generate image"), result);
         return;
       }
       void updateBot({
@@ -172,28 +178,28 @@ function BotAvatarSection(props: { readonly project: BotProject }) {
           projectId: project.id,
           avatar: { shape, color, imagePath: result.value.imagePath },
         },
-      }).then((update) => alertFailure("Couldn't update avatar", update));
+      }).then((update) => alertFailure(gt("Couldn't update avatar"), update));
     });
   };
 
   return (
-    <SettingsSection title="Avatar">
+    <SettingsSection title={gt("Avatar")}>
       <BotAvatarPicker shape={shape} color={color} disabled={!canUpdate} onChange={saveAvatar} />
       {codexReady && canGenerate ? (
         <View className="gap-3 px-4 pb-4">
           <AppTextInput
-            accessibilityLabel="Avatar idea"
+            accessibilityLabel={gt("Avatar idea")}
             className="min-h-11 rounded-xl border-continuous bg-card px-3 text-base text-foreground"
             value={prompt}
             maxLength={500}
-            placeholder={`Avatar for ${project.title}`}
+            placeholder={gt("Avatar for {name}", { name: project.title })}
             editable={!generating && canUpdate}
             returnKeyType="go"
             onChangeText={setPrompt}
             onSubmitEditing={generate}
           />
           <Button
-            label={generating ? "Generating image..." : "Generate image"}
+            label={generating ? gt("Generating image...") : gt("Generate image")}
             icon="photo"
             disabled={generating || !canUpdate}
             onPress={generate}
@@ -206,6 +212,7 @@ function BotAvatarSection(props: { readonly project: BotProject }) {
 
 function BotProfileSection(props: { readonly project: BotProject }) {
   const { project } = props;
+  const gt = useGT();
   const updateBot = useAtomCommand(serverEnvironment.updateBot, {
     label: "bot profile update",
     reportFailure: false,
@@ -229,37 +236,41 @@ function BotProfileSection(props: { readonly project: BotProject }) {
       },
     }).then((result) => {
       setSaving(false);
-      alertFailure("Couldn't save bot", result);
+      alertFailure(gt("Couldn't save bot"), result);
     });
   };
 
   return (
-    <SettingsSection title="Profile">
+    <SettingsSection title={gt("Profile")}>
       <View className="gap-3 p-4">
-        <Text className="text-sm font-t3-medium text-foreground-muted">Name</Text>
+        <Text className="text-sm font-t3-medium text-foreground-muted">
+          <T>Name</T>
+        </Text>
         <AppTextInput
-          accessibilityLabel="Bot name"
+          accessibilityLabel={gt("Bot name")}
           className="min-h-11 rounded-xl border-continuous bg-card px-3 text-base text-foreground"
           value={name}
           maxLength={BOT_NAME_MAX_LENGTH}
           editable={canUpdate && !saving}
           onChangeText={setName}
         />
-        <Text className="text-sm font-t3-medium text-foreground-muted">Description</Text>
+        <Text className="text-sm font-t3-medium text-foreground-muted">
+          <T>Description</T>
+        </Text>
         <AppTextInput
-          accessibilityLabel="Bot description"
+          accessibilityLabel={gt("Bot description")}
           className="min-h-24 rounded-xl border-continuous bg-card px-3 py-2 text-base text-foreground"
           value={description}
           maxLength={BOT_DESCRIPTION_MAX_LENGTH}
           multiline
           textAlignVertical="top"
-          placeholder="What this bot is for"
+          placeholder={gt("What this bot is for")}
           editable={canUpdate && !saving}
           onChangeText={setDescription}
         />
         {changed ? (
           <Button
-            label={saving ? "Saving..." : "Save"}
+            label={saving ? gt("Saving...") : gt("Save")}
             tone="primary"
             disabled={saving || nextName.length === 0}
             onPress={save}
@@ -272,6 +283,7 @@ function BotProfileSection(props: { readonly project: BotProject }) {
 
 function BotArtifactsSection(props: { readonly project: BotProject }) {
   const { project } = props;
+  const gt = useGT();
   const navigation = useNavigation();
   const query = useEnvironmentQuery(
     projectEnvironment.listEntries({
@@ -283,9 +295,12 @@ function BotArtifactsSection(props: { readonly project: BotProject }) {
     (entry) => entry.kind === "file" && entry.path.startsWith(`${ARTIFACTS_DIRECTORY}/`),
   );
   return (
-    <SettingsSection title="Artifacts">
+    <SettingsSection title={gt("Artifacts")}>
       {files.length === 0 ? (
-        <ListRowLayout label={query.isPending ? "Loading..." : "No artifacts yet"} disabled />
+        <ListRowLayout
+          label={query.isPending ? gt("Loading...") : gt("No artifacts yet")}
+          disabled
+        />
       ) : (
         files.map((file) => (
           <ListRow
@@ -308,6 +323,7 @@ function BotArtifactsSection(props: { readonly project: BotProject }) {
 
 function BotRoutinesSection(props: { readonly project: BotProject }) {
   const { project } = props;
+  const gt = useGT();
   const query = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId: project.environmentId, input: {} }),
   );
@@ -322,9 +338,12 @@ function BotRoutinesSection(props: { readonly project: BotProject }) {
     (task) => task.threadId === project.bot.threadId,
   );
   return (
-    <SettingsSection title="Routines">
+    <SettingsSection title={gt("Routines")}>
       {routines.length === 0 ? (
-        <ListRowLayout label={query.isPending ? "Loading..." : "No routines yet"} disabled />
+        <ListRowLayout
+          label={query.isPending ? gt("Loading...") : gt("No routines yet")}
+          disabled
+        />
       ) : (
         routines.map((task) => (
           <ListToggleRow
@@ -337,7 +356,7 @@ function BotRoutinesSection(props: { readonly project: BotProject }) {
               void setEnabled({
                 environmentId: project.environmentId,
                 input: { id: task.id, enabled },
-              }).then((result) => alertFailure("Couldn't update routine", result))
+              }).then((result) => alertFailure(gt("Couldn't update routine"), result))
             }
           />
         ))
@@ -347,18 +366,20 @@ function BotRoutinesSection(props: { readonly project: BotProject }) {
 }
 
 function BotComputerSection(props: { readonly project: BotProject }) {
+  const gt = useGT();
   const environment = useWorkspaceEnvironments().find(
     (entry) => entry.environmentId === props.project.environmentId,
   );
   return (
-    <SettingsSection title="Computer">
-      <ListRowLayout label={environment?.environmentLabel ?? "Unknown machine"} />
+    <SettingsSection title={gt("Computer")}>
+      <ListRowLayout label={environment?.environmentLabel ?? gt("Unknown machine")} />
     </SettingsSection>
   );
 }
 
 function BotDeleteSection(props: { readonly project: BotProject }) {
   const { project } = props;
+  const gt = useGT();
   const selectTab = useSelectWorkspaceTab();
   const canDelete = useAtomValue(serverEnvironment.deleteBot.permissionAtom(project.environmentId));
   const deleteBot = useAtomCommand(serverEnvironment.deleteBot, {
@@ -368,14 +389,17 @@ function BotDeleteSection(props: { readonly project: BotProject }) {
   const [deleting, setDeleting] = useState(false);
   const confirmDelete = () =>
     Dialog.prompt({
-      title: `Delete ${project.title}?`,
-      message: `Its chat and routines stop for good. Files in its folder stay on disk. Type ${project.title} to confirm.`,
+      title: gt("Delete {name}?", { name: project.title }),
+      message: gt(
+        "Its chat and routines stop for good. Files in its folder stay on disk. Type {name} to confirm.",
+        { name: project.title },
+      ),
       placeholder: project.title,
       initialValue: "",
-      confirmText: "Delete",
+      confirmText: gt("Delete"),
       onConfirm: (typed) => {
         if (typed.trim() !== project.title) {
-          Dialog.alert("Name didn't match", "The bot was not deleted.");
+          Dialog.alert(gt("Name didn't match"), gt("The bot was not deleted."));
           return;
         }
         setDeleting(true);
@@ -385,7 +409,7 @@ function BotDeleteSection(props: { readonly project: BotProject }) {
         }).then((result) => {
           setDeleting(false);
           if (result._tag === "Failure") {
-            alertFailure("Couldn't delete bot", result);
+            alertFailure(gt("Couldn't delete bot"), result);
             return;
           }
           selectTab("bots");
@@ -394,7 +418,7 @@ function BotDeleteSection(props: { readonly project: BotProject }) {
     });
   return (
     <Button
-      label={deleting ? "Deleting..." : "Delete bot"}
+      label={deleting ? gt("Deleting...") : gt("Delete bot")}
       tone="danger"
       fullWidth
       disabled={!canDelete || deleting}

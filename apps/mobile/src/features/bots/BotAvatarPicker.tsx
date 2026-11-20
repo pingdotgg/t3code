@@ -1,3 +1,4 @@
+import { T } from "gt-react-native";
 import { BOT_AVATAR_COLOR_HEX } from "@t3tools/client-runtime/bot-avatar";
 import {
   BOT_AVATAR_COLORS,
@@ -20,7 +21,9 @@ export function BotAvatarPicker(props: {
 }) {
   return (
     <View className="gap-4 p-4">
-      <Text className="text-sm font-t3-medium text-foreground-muted">Shape</Text>
+      <Text className="text-sm font-t3-medium text-foreground-muted">
+        <T>Shape</T>
+      </Text>
       <View className="flex-row flex-wrap gap-2">
         {BOT_AVATAR_SHAPES.map((shape) => (
           <Pressable
@@ -43,7 +46,9 @@ export function BotAvatarPicker(props: {
           </Pressable>
         ))}
       </View>
-      <Text className="text-sm font-t3-medium text-foreground-muted">Color</Text>
+      <Text className="text-sm font-t3-medium text-foreground-muted">
+        <T>Color</T>
+      </Text>
       <View className="flex-row flex-wrap gap-2">
         {BOT_AVATAR_COLORS.map((color) => (
           <Pressable

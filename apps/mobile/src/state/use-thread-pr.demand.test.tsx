@@ -45,6 +45,7 @@ vi.mock("react-native", () => ({
     },
   },
 }));
+vi.mock("../features/boatCloud/boatCloudThreads", () => ({ boatCloudThreadList: {} }));
 vi.mock("../connection/runtime", async () => {
   const { Atom } = await import("effect/reactivity");
   const Layer = await import("effect/Layer");

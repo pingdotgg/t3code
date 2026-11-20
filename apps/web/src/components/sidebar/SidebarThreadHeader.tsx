@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   type ComponentProps,
@@ -46,12 +47,13 @@ export function SidebarThreadHeader({
   activeSearchResultIndex,
   onClearSearch,
 }: SidebarThreadHeaderProps) {
+  const gt = useGT();
   const resultsVisible = isSearching && searchResultCount > 0;
   // Shrinking results can remove the active option; never leave aria-activedescendant pointing at it.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
   const newThreadLabel = newThreadShortcutLabel
-    ? `New thread (${newThreadShortcutLabel})`
-    : "New thread";
+    ? gt("New thread ({shortcut})", { shortcut: newThreadShortcutLabel })
+    : gt("New thread");
 
   return (
     <div className="flex items-center gap-1">
@@ -71,8 +73,8 @@ export function SidebarThreadHeader({
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
           onKeyDown={onSearchKeyDown}
-          placeholder="Search"
-          aria-label="Search threads"
+          placeholder={gt("Search", { $context: "search field placeholder" })}
+          aria-label={gt("Search threads")}
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={resultsVisible}
@@ -92,7 +94,7 @@ export function SidebarThreadHeader({
               size="icon-micro"
               variant="ghost-muted"
               className="me-0.5"
-              aria-label="Clear thread search"
+              aria-label={gt("Clear thread search")}
               onClick={() => {
                 onClearSearch();
                 searchInputRef.current?.focus();
@@ -106,11 +108,11 @@ export function SidebarThreadHeader({
       {/* Three 28px controls with 4px gaps (pen s8qVFu). */}
       <div className="flex shrink-0 items-center gap-1">
         {hasProjects ? projectScope : null}
-        <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
+        <SidebarHeaderIconButton label={gt("Add project")} onClick={onNewProject}>
           <FolderPlusIcon />
         </SidebarHeaderIconButton>
         <SidebarHeaderIconButton
-          label="New thread"
+          label={gt("New thread")}
           tooltip={newThreadLabel}
           disabled={newThreadDisabled}
           onClick={onNewThread}

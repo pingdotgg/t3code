@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useGT } from "gt-react";
 
 import { boatCloudStartProgressAtom, clearBoatCloudStartProgress } from "../../boatCloud";
 import { stepsLeftAtSend } from "../../boatCloudStart.logic";
@@ -23,6 +24,7 @@ export function useBoatCloudStartBanner(
   threadRows: BoatCloudStartRowsState | null;
   sentAt: string | null;
 } {
+  const gt = useGT();
   const progress = useAtomValue(boatCloudStartProgressAtom(draftId ?? ""));
   if (
     draftId === null ||
@@ -43,9 +45,9 @@ export function useBoatCloudStartBanner(
       group: "environment",
       variant: "error",
       icon: boxd ? <BoxdIcon aria-hidden /> : <BoatIcon aria-hidden />,
-      title: boxd ? "Could not start on boxd cloud" : "Could not start on Boat cloud",
+      title: boxd ? gt("Could not start on boxd cloud") : gt("Could not start on Boat cloud"),
       description: progress.error,
-      dismissLabel: "Dismiss",
+      dismissLabel: gt("Dismiss"),
       onDismiss: () => clearBoatCloudStartProgress(draftId),
     },
     threadRows,

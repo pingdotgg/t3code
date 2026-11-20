@@ -1,5 +1,6 @@
 import { cn } from "../../lib/utils";
 import { formatWorkspaceRelativeDetail, formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { useGT } from "gt-react";
 import { ShieldIcon } from "lucide-react";
 import { use, useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -51,6 +52,7 @@ export function ComposerApprovalPanel({
   isResponding: boolean;
   onRespond: (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>;
 }) {
+  const gt = useGT();
   const backgroundThread = use(BackgroundThreadContext);
   const paneFocusedRef = useLayoutPaneFocusedRef();
   const showShortcutHints = useSyncExternalStore(subscribeApprovalFocus, approvalKeysAvailable);
@@ -94,10 +96,10 @@ export function ComposerApprovalPanel({
   }, [canRespond, primary, decline, backgroundThread, paneFocusedRef]);
   const title =
     approval.requestKind === "command"
-      ? "Command approval"
+      ? gt("Command approval")
       : approval.requestKind === "file-change"
-        ? "File change approval"
-        : "Permission approval";
+        ? gt("File change approval")
+        : gt("Permission approval");
   return (
     <Collapsible
       open={expanded}
@@ -115,7 +117,7 @@ export function ComposerApprovalPanel({
             <ComposerBanner.ToggleIcon expanded={expanded} />
             <ComposerBanner.Dismiss
               render={<span role="button" tabIndex={0} />}
-              aria-label="Cancel approval"
+              aria-label={gt("Cancel approval")}
               disabled={disabled || isResponding}
               onClick={(event) => {
                 event.preventDefault();

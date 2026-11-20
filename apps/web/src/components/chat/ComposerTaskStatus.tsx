@@ -1,4 +1,5 @@
 import type { OrchestrationV2PlanStep } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { CheckCircle2Icon, CircleIcon, ListTodoIcon } from "lucide-react";
 import { useState } from "react";
 import { cn } from "~/lib/utils";
@@ -7,6 +8,7 @@ import { ComposerBanner } from "./ComposerBanner";
 import { ComposerRequestCard } from "./ComposerRequestCard";
 
 export function ComposerTaskStatus({ steps }: { steps: ReadonlyArray<OrchestrationV2PlanStep> }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(false);
   if (!steps.length) return null;
   const completed = steps.filter((step) => step.status === "completed").length;
@@ -20,7 +22,7 @@ export function ComposerTaskStatus({ steps }: { steps: ReadonlyArray<Orchestrati
       <ComposerRequestCard.Header
         render={<CollapsibleTrigger render={<button type="button" />} />}
         icon={<ListTodoIcon />}
-        title="Tasks"
+        title={gt("Tasks", { $context: "heading of the agent's task list" })}
         sub={expanded ? null : current?.text}
         trailing={
           <>
@@ -69,9 +71,12 @@ export function ComposerTaskStatus({ steps }: { steps: ReadonlyArray<Orchestrati
               <span className="min-w-0 flex-1 truncate">{step.text}</span>
               <span className="text-dim-foreground tabular-nums">
                 {step.status === "running"
-                  ? "now"
+                  ? gt("now", { $context: "task step that is running" })
                   : step.durationMs !== undefined
-                    ? `${Math.round(step.durationMs / 1000)}s`
+                    ? gt("{seconds}s", {
+                        seconds: Math.round(step.durationMs / 1000),
+                        $context: "elapsed time, seconds",
+                      })
                     : null}
               </span>
             </li>

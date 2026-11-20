@@ -9,6 +9,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { CheckIcon, CircleDotIcon, CircleIcon, XIcon } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { type FormEvent, useState } from "react";
 
 import {
@@ -34,30 +35,30 @@ import {
   SettingsRowTile,
   SettingsSection,
 } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const STEP_LABELS: Record<BoatCloudSetupStep, string> = {
-  "create-vm": "Create a VM",
-  "install-server": "Install T3 Code and clone repositories",
-  "copy-skills": "Copy this machine's skills",
-  "save-snapshot": "Save the T3 Code snapshot",
+  "create-vm": msg("Create a VM"),
+  "install-server": msg("Install T3 Code and clone repositories"),
+  "copy-skills": msg("Copy this machine's skills"),
+  "save-snapshot": msg("Save the T3 Code snapshot"),
 };
 
 const MACHINE_STATE: Record<
   BoatCloudMachine["state"],
   { readonly label: string; readonly variant: "success" | "info" | "unavailable" | "warning" }
 > = {
-  running: { label: "Running", variant: "success" },
-  starting: { label: "Starting", variant: "info" },
-  stopped: { label: "Stopped", variant: "unavailable" },
-  gone: { label: "Saved copy", variant: "warning" },
+  running: { label: msg("Running", { $context: "VM state" }), variant: "success" },
+  starting: { label: msg("Starting", { $context: "VM state" }), variant: "info" },
+  stopped: { label: msg("Stopped", { $context: "VM state" }), variant: "unavailable" },
+  gone: { label: msg("Saved copy", { $context: "VM state" }), variant: "warning" },
 };
 
 const ACCESS_LABELS: Record<keyof BoatCloudEnvironmentAccess, string> = {
-  passGithub: "GitHub access",
-  passSandboxCredentials: "Boat credentials",
-  passSecrets: "Secrets",
-  passAgentsCredentials: "Agent sign-ins",
+  passGithub: msg("GitHub access"),
+  passSandboxCredentials: msg("Boat credentials"),
+  passSecrets: msg("Secrets"),
+  passAgentsCredentials: msg("Agent sign-ins"),
 };
 const ACCESS_KEYS = Object.keys(ACCESS_LABELS) as ReadonlyArray<keyof BoatCloudEnvironmentAccess>;
 
@@ -100,16 +101,17 @@ function KeyHolderRow({
   readonly environment: EnvironmentPresentation;
   readonly state: BoatCloudStatus | "unsupported" | null | undefined;
 }) {
+  const gt = useGT();
   return (
     <SettingsRow
       title={environment.label}
       control={
         state === "unsupported" ? (
-          <Badge variant="warning">Needs update</Badge>
+          <Badge variant="warning">{gt("Needs update")}</Badge>
         ) : state?.connected ? (
-          <Badge variant="success">Enabled</Badge>
+          <Badge variant="success">{gt("Enabled")}</Badge>
         ) : (
-          <Badge variant="unavailable">Not enabled</Badge>
+          <Badge variant="unavailable">{gt("Not enabled")}</Badge>
         )
       }
     />
@@ -123,6 +125,7 @@ function ApiKeyForm({
   readonly holders: ReadonlyArray<EnvironmentPresentation>;
   readonly setupEnvironmentId: EnvironmentId | null;
 }) {
+  const gt = useGT();
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const connect = useAtomCommand(serverEnvironment.connectBoatCloud, "Connect Boat");
@@ -153,15 +156,15 @@ function ApiKeyForm({
   return (
     <form className="flex w-full min-w-0 gap-2 sm:w-80" onSubmit={onSubmit}>
       <SecretInput
-        aria-label="Boat API key"
-        placeholder="Boat API key"
+        aria-label={gt("Boat API key")}
+        placeholder={gt("Boat API key")}
         value={apiKey}
         disabled={busy}
         maxLength={512}
         onChange={(event) => setApiKey(event.target.value)}
       />
       <Button type="submit" disabled={busy || apiKey.trim() === "" || holders.length === 0}>
-        {busy ? "Connecting" : "Connect"}
+        {busy ? gt("Connecting") : gt("Connect")}
       </Button>
     </form>
   );
@@ -175,6 +178,8 @@ function EnvironmentSection({
   readonly status: BoatCloudStatus;
   readonly holders: ReadonlyArray<EnvironmentPresentation>;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const configure = useAtomCommand(
     serverEnvironment.configureBoatCloudEnvironment,
     "Change the Boat environment",
@@ -196,13 +201,13 @@ function EnvironmentSection({
     setBusy(false);
   };
   return (
-    <SettingsSection id="boat-cloud-environment" title="Environment">
+    <SettingsSection id="boat-cloud-environment" title={gt("Environment")}>
       {status.environmentsError !== null ? (
         <SettingsNote>{status.environmentsError}</SettingsNote>
       ) : (
         <>
           <SettingsRow
-            title="Environment"
+            title={gt("Environment")}
             control={
               <Select
                 value={selected?.id ?? null}
@@ -214,16 +219,17 @@ function EnvironmentSection({
                   variant="well"
                   size="compact"
                   className="w-full sm:w-56"
-                  aria-label="Boat environment"
+                  aria-label={gt("Boat environment")}
                   disabled={busy}
                 >
-                  <SelectValue>{selected?.name ?? "Choose"}</SelectValue>
+                  <SelectValue>{selected?.name ?? gt("Choose")}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   {status.environments.map((environment) => (
                     <SelectItem key={environment.id} value={environment.id}>
-                      {environment.name}
-                      {environment.isDefault ? " (default)" : ""}
+                      {environment.isDefault
+                        ? gt("{name} (default)", { name: environment.name })
+                        : environment.name}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -234,10 +240,10 @@ function EnvironmentSection({
             ? ACCESS_KEYS.map((key) => (
                 <SettingsRow
                   key={key}
-                  title={ACCESS_LABELS[key]}
+                  title={m(ACCESS_LABELS[key])}
                   control={
                     <Switch
-                      aria-label={ACCESS_LABELS[key]}
+                      aria-label={m(ACCESS_LABELS[key])}
                       checked={selected[key]}
                       disabled={busy}
                       onCheckedChange={(checked) =>
@@ -255,7 +261,7 @@ function EnvironmentSection({
               ))
             : null}
           <SettingsNote>
-            New VMs start on this environment and keep it. Running VMs keep theirs.
+            <T>New VMs start on this environment and keep it. Running VMs keep theirs.</T>
           </SettingsNote>
         </>
       )}
@@ -264,6 +270,9 @@ function EnvironmentSection({
 }
 
 export function BoatCloudSettingsPanel() {
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
+  const m = useMessages();
   const { holderEnvironmentId, status } = usePrimaryBoatCloudStatus();
   const vmEnvironmentIds = new Set(
     (status?.machines ?? []).flatMap((machine) =>
@@ -290,18 +299,19 @@ export function BoatCloudSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection
         {...searchableSetting("boat-cloud")}
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- Product name.
         title="Boat"
         icon={<BoatIcon aria-hidden className="size-4" />}
       >
         <SettingsRow
           title={
             connected ? (
-              <span className="wrap-anywhere">{status.account ?? "Connected"}</span>
+              <span className="wrap-anywhere">{status.account ?? gt("Connected")}</span>
             ) : (
-              "API key"
+              gt("API key")
             )
           }
-          description={connected ? "Connected" : undefined}
+          description={connected ? gt("Connected") : undefined}
           leading={
             <SettingsRowTile>
               <BoatIcon />
@@ -317,7 +327,7 @@ export function BoatCloudSettingsPanel() {
                   }
                 }}
               >
-                Disconnect
+                <T>Disconnect</T>
               </Button>
             ) : status ? (
               <ApiKeyForm holders={holders} setupEnvironmentId={holderEnvironmentId} />
@@ -326,15 +336,20 @@ export function BoatCloudSettingsPanel() {
         />
         {status && !connected ? (
           <SettingsNote>
-            The key needs{" "}
-            {BOAT_CLOUD_REQUIRED_SCOPES.map((scope, index) => (
-              <span key={scope}>
-                <Text variant="caption" mono tone="muted">
-                  {scope}
-                </Text>
-                {index < BOAT_CLOUD_REQUIRED_SCOPES.length - 1 ? ", " : "."}
-              </span>
-            ))}
+            <T>
+              The key needs{" "}
+              <Var>
+                {BOAT_CLOUD_REQUIRED_SCOPES.map((scope, index) => (
+                  <span key={scope}>
+                    <Text variant="caption" mono tone="muted">
+                      {scope}
+                    </Text>
+                    {index < BOAT_CLOUD_REQUIRED_SCOPES.length - 1 ? ", " : ""}
+                  </span>
+                ))}
+              </Var>
+              .
+            </T>
           </SettingsNote>
         ) : null}
       </SettingsSection>
@@ -344,7 +359,7 @@ export function BoatCloudSettingsPanel() {
       {connected && setup ? (
         <SettingsSection
           id="boat-cloud-setup"
-          title="Setup"
+          title={gt("Setup")}
           headerAction={
             <Button
               variant="secondary"
@@ -359,12 +374,12 @@ export function BoatCloudSettingsPanel() {
               }}
             >
               {setup.status === "running"
-                ? "Setting up"
+                ? gt("Setting up")
                 : setup.status === "ready"
-                  ? "Rebuild snapshot"
+                  ? gt("Rebuild snapshot")
                   : setup.status === "failed"
-                    ? "Retry"
-                    : "Set up"}
+                    ? gt("Retry")
+                    : gt("Set up")}
             </Button>
           }
         >
@@ -373,7 +388,7 @@ export function BoatCloudSettingsPanel() {
             return (
               <SettingsRow
                 key={step}
-                title={STEP_LABELS[step]}
+                title={m(STEP_LABELS[step])}
                 leading={<StepIcon state={state} />}
                 description={state === "failed" ? (setup.error ?? undefined) : undefined}
               />
@@ -383,7 +398,7 @@ export function BoatCloudSettingsPanel() {
       ) : null}
 
       {connected ? (
-        <SettingsSection id="boat-cloud-key-holders" title="Enabled on">
+        <SettingsSection id="boat-cloud-key-holders" title={gt("Enabled on")}>
           {machines.map((machine) => (
             <KeyHolderRow
               key={machine.environmentId}
@@ -393,7 +408,7 @@ export function BoatCloudSettingsPanel() {
           ))}
           {missingKey.length > 0 ? (
             <SettingsRow
-              title="Enable on the others"
+              title={gt("Enable on the others")}
               control={<ApiKeyForm holders={missingKey} setupEnvironmentId={null} />}
             />
           ) : null}
@@ -401,7 +416,7 @@ export function BoatCloudSettingsPanel() {
       ) : null}
 
       {connected && status.machines.length > 0 ? (
-        <SettingsSection id="boat-cloud-machines" title="VMs">
+        <SettingsSection id="boat-cloud-machines" title={gt("VMs")}>
           {status.machines.map((machine) => {
             const state = MACHINE_STATE[machine.state];
             return (
@@ -415,7 +430,7 @@ export function BoatCloudSettingsPanel() {
                         .join(", ")
                     : undefined
                 }
-                control={<Badge variant={state.variant}>{state.label}</Badge>}
+                control={<Badge variant={state.variant}>{m(state.label)}</Badge>}
               />
             );
           })}

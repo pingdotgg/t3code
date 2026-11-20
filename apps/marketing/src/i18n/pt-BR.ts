@@ -32,7 +32,7 @@ export const ptBR: Messages = {
     sourceLink: "Roube nosso código (legalmente)",
     alsoOnPhone: "Também no seu celular:",
     screenshotAlt:
-      "T3 Code executando subagentes do Claude, Codex, Muse e Gemini em uma mesma thread",
+      "T3 Code com a lista de threads ao lado de uma thread do Claude aberta, cujo cartão de detalhes encaixado mostra a branch, as alterações, o pull request vinculado com os checks aprovados, os limites de uso, o contexto, uma automação e um fork",
     endorsementsTitle: "Tolerado por mais de {users} devs",
     endorsementsSub: "Alguns até tuitaram sobre isso.",
     endorsementsLabel: "Depoimentos de desenvolvedores",
@@ -59,7 +59,7 @@ export const ptBR: Messages = {
     gitPoints: [
       "Títulos e descrições de PR gerados automaticamente",
       "Revisão do diff inline antes do push",
-      "PRs em rascunho, stacks de PRs e amend",
+      "PRs em rascunho, stacks de PRs e atualização de PRs",
       "Funciona com a sua autenticação atual do GitHub",
     ],
     openTitle: "Se não gostar de algo, faça um fork.",
@@ -76,7 +76,7 @@ export const ptBR: Messages = {
     browseSource: "Ver o código",
     ctaTitle: "Seus agentes merecem mais do que um terminal.",
     ctaSub:
-      "O T3 Code é gratuito, open source e rápido. Instale, conecte a assinatura que você já tem e deixe seus agentes trabalharem.",
+      "O T3 Code é gratuito, open source e rápido. Instale, conecte o provedor que você já paga para usar e coloque seus agentes para trabalhar.",
     otherPlatforms: "Outras plataformas",
   },
   download: {
@@ -88,6 +88,7 @@ export const ptBR: Messages = {
     channelLabel: "Canal de versões",
     stable: "Estável",
     nightly: "Nightly",
+    nightlyTagline: "As novidades assim que chegam, antes do Estável. Pode ter arestas a aparar.",
     intelNote: "Tem um Mac com Intel? {link}.",
     intelLink: "Baixe a versão x64",
     armNote: "Usa ARM? Baixe o {deb} ou o {appimage} para arm64.",

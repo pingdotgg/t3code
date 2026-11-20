@@ -4,6 +4,7 @@ import { page, userEvent, type Locator } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
+import * as atomCommands from "../../state/use-atom-command";
 
 vi.mock(import("../../state/session"), async (original) => ({
   ...(await original()),
@@ -20,7 +21,7 @@ function setup() {
 
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: (() => runCommand) as never,
+  useAtomCommand: vi.fn(() => runCommand) as never,
 }));
 vi.mock(import("./SettingsScopeContext"), async (original) => ({
   ...(await original()),
@@ -124,46 +125,47 @@ describe("Esc in a shortcut recorder", () => {
 });
 
 it("unassigns a default shortcut and restores its condition when one is assigned again", async () => {
-  setup();
-  runCommand.mockImplementation(async () => ({ _tag: "Success", value: [] }));
-  await using screen = await render(<KeybindingsSettingsPanel />);
-  const search = screen.getByRole("searchbox", { name: "Search keybindings" });
+  const mutate = vi.fn(async () => ({ _tag: "Success", value: [] }));
+  await vi.mocked(atomCommands.useAtomCommand).withImplementation(
+    () => mutate as never,
+    async () => {
+      await using screen = await render(<KeybindingsSettingsPanel />);
 
-  await search.fill("Toggle sidebar");
-  await screen.getByRole("button", { name: "Actions for Toggle sidebar" }).click();
-  await screen.getByRole("menuitem", { name: "Unassign" }).click();
-  expect(runCommand).toHaveBeenLastCalledWith({
-    environmentId: "env",
-    input: {
-      command: "sidebar.toggle",
-      key: "mod+b",
-      when: "false",
-      replace: { command: "sidebar.toggle", key: "mod+b" },
+      await screen.getByRole("button", { name: "Actions for Toggle sidebar" }).click();
+      await screen.getByRole("menuitem", { name: "Unassign" }).click();
+      expect(mutate).toHaveBeenLastCalledWith({
+        environmentId: "env",
+        input: {
+          command: "sidebar.toggle",
+          key: "mod+b",
+          when: "false",
+          replace: { command: "sidebar.toggle", key: "mod+b" },
+        },
+      });
+
+      const unassigned = screen.getByRole("button", {
+        name: "Edit shortcut for Start in background: Unassigned",
+      });
+      const save = screen.getByRole("button", { name: "Save" });
+      await unassigned.click();
+      await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+      await expect.element(save).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+      await expect.element(save).not.toBeInTheDocument();
+
+      await unassigned.click();
+      await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+      await save.click();
+      expect(mutate).toHaveBeenLastCalledWith({
+        environmentId: "env",
+        input: expect.objectContaining({
+          command: "composer.sendBackground",
+          when: "composerFocus && draftThreadRoute",
+          replace: { command: "composer.sendBackground", key: "mod+alt+enter", when: "false" },
+        }),
+      });
     },
-  });
-
-  await search.fill("Start in background");
-  const unassigned = screen.getByRole("button", {
-    name: "Edit shortcut for Start in background: Unassigned",
-  });
-  const save = screen.getByRole("button", { name: "Save" });
-  await unassigned.click();
-  await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
-  await expect.element(save).toBeVisible();
-  await userEvent.keyboard("{Escape}");
-  await expect.element(save).not.toBeInTheDocument();
-
-  await unassigned.click();
-  await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
-  await save.click();
-  expect(runCommand).toHaveBeenLastCalledWith({
-    environmentId: "env",
-    input: expect.objectContaining({
-      command: "composer.sendBackground",
-      when: "composerFocus && draftThreadRoute",
-      replace: { command: "composer.sendBackground", key: "mod+alt+enter", when: "false" },
-    }),
-  });
+  );
 });
 
 it("Esc in the keybindings search clears the query without closing Settings", async () => {

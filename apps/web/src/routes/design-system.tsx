@@ -1,4 +1,5 @@
 import { Outlet, createFileRoute, notFound, redirect } from "@tanstack/react-router";
+import { T, useGT } from "gt-react";
 
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../components/WorkspaceBreadcrumb";
@@ -21,13 +22,14 @@ export const Route = createFileRoute("/design-system")({
 });
 
 function DesignSystemLayout() {
+  const gt = useGT();
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron}>
-          <WorkspaceBreadcrumb ariaLabel="Design system breadcrumb">
+          <WorkspaceBreadcrumb ariaLabel={gt("Design system breadcrumb")}>
             <WorkspaceBreadcrumbItem current className="truncate">
-              Design system
+              <T>Design system</T>
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         </WorkspacePageHeader>

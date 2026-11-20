@@ -1,4 +1,5 @@
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 import {
   useClientSettings,
@@ -11,13 +12,13 @@ import { Switch } from "../ui/switch";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { SettingsNote } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const preferences = [
-  { value: 100, label: "Prefer" },
-  { value: 50, label: "Normal" },
-  { value: 25, label: "Less often" },
-  { value: 0, label: "Manual only" },
+  { value: 100, label: msg("Prefer") },
+  { value: 50, label: msg("Normal", { $context: "load balancing preference" }) },
+  { value: 25, label: msg("Less often") },
+  { value: 0, label: msg("Manual only") },
 ] as const;
 
 type LoadPreference = (typeof preferences)[number]["value"];
@@ -33,11 +34,15 @@ export function LoadBalancingSettings({
 }: {
   environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
+  const searchableSetting = useSearchableSetting();
   const settings = useClientSettings((current) => ({
     loadBalancingEnabled: current.loadBalancingEnabled,
     loadBalancingWeights: current.loadBalancingWeights,
   }));
   const settingsHydrated = useClientSettingsHydrated();
+  const gt = useGT();
+  const m = useMessages();
+  const items = preferences.map((entry) => ({ ...entry, label: m(entry.label) }));
 
   if (environments.length < 2) return null;
 
@@ -46,10 +51,14 @@ export function LoadBalancingSettings({
     <FoldedSettingsSection
       id={id}
       title={title}
-      summary={settings.loadBalancingEnabled ? "On" : "Off"}
+      summary={
+        settings.loadBalancingEnabled
+          ? gt("On", { $context: "load balancing is turned on" })
+          : gt("Off", { $context: "load balancing is turned off" })
+      }
       control={
         <Switch
-          aria-label="Automatically balance load"
+          aria-label={gt("Automatically balance load")}
           checked={settings.loadBalancingEnabled}
           disabled={!settingsHydrated}
           onCheckedChange={(loadBalancingEnabled) => updateClientSettings({ loadBalancingEnabled })}
@@ -57,8 +66,10 @@ export function LoadBalancingSettings({
       }
     >
       <SettingsNote>
-        New threads in shared projects start on the machine with the most free CPU and memory,
-        weighted by each machine's preference.
+        <T>
+          New threads in shared projects start on the machine with the most free CPU and memory,
+          weighted by each machine's preference.
+        </T>
       </SettingsNote>
       {environments.map((environment) => (
         <EnvironmentRow
@@ -68,7 +79,7 @@ export function LoadBalancingSettings({
           subtitle={<EnvironmentTransportLabel environment={environment} />}
         >
           <Select
-            items={preferences}
+            items={items}
             value={loadPreferenceForWeight(
               settings.loadBalancingWeights[environment.environmentId],
             )}
@@ -87,12 +98,12 @@ export function LoadBalancingSettings({
               variant="well"
               size="compact"
               className="w-32"
-              aria-label={`${environment.label} load preference`}
+              aria-label={gt("{environment} load preference", { environment: environment.label })}
             >
               <SelectValue />
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              {preferences.map(({ value, label }) => (
+              {items.map(({ value, label }) => (
                 <SelectItem key={value} value={value}>
                   {label}
                 </SelectItem>

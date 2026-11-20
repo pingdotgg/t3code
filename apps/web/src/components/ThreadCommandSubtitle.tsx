@@ -1,4 +1,5 @@
 import type { ProviderDriverKind } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -24,12 +25,13 @@ export function ThreadCommandSubtitle(props: {
   variant?: ThreadCommandSubtitleVariant;
   className?: string;
 }) {
-  const label = props.projectTitle?.trim() || props.branch?.trim() || "Thread";
+  const gt = useGT();
+  const label = props.projectTitle?.trim() || props.branch?.trim() || gt("Thread");
   const details = [
     props.environmentLabel,
     props.branch,
     props.providerDisplayName,
-    props.isCurrent ? "Current thread" : null,
+    props.isCurrent ? gt("Current thread") : null,
   ].filter((part) => part && part !== label);
   return (
     <Tooltip>

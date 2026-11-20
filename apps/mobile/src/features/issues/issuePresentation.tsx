@@ -6,10 +6,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { IssueDetail, IssueLabel, IssueState } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { msg, useMessages } from "gt-react-native";
 import { View } from "react-native";
 
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { issueEnvironment } from "../../state/issues";
 import { ENVIRONMENT_REQUEST_INTERRUPTED } from "../../state/query";
 import { pullRequestLabelColor } from "../pull-requests/pullRequestList";
@@ -49,27 +51,31 @@ export function issueStatus(state: IssueState): {
 
 /** What this device may do to the issue, and the first thing in the way when it may not. */
 export function useIssueAccess(params: IssueParams, detail: IssueDetail | null | undefined) {
+  const messages = useMessages();
   const connected = usePullRequestConnected(params.environmentId);
   const canWrite = useAtomValue(
     issueEnvironment.update.permissionAtom(issueTarget(params).environmentId),
   );
   if (!detail) return null;
-  const access = issueWriteAccess(detail, connected && canWrite);
+  const access = issueWriteAccess(detail, connected && canWrite, messages);
   return {
     ...access,
     blocked: connected
       ? canWrite
         ? access.blocked
-        : "This device isn't allowed to change source control on this environment."
-      : "Reconnect to make changes.",
+        : messages(msg("This device isn't allowed to change source control on this environment."))
+      : messages(msg("Reconnect to make changes.")),
   };
 }
 
-export function issueCommandError(result: AsyncResult.AsyncResult<unknown, unknown>) {
+export function issueCommandError(
+  result: AsyncResult.AsyncResult<unknown, unknown>,
+  resolve: MessageResolver = m,
+) {
   if (!AsyncResult.isFailure(result)) return null;
-  if (isAtomCommandInterrupted(result)) return ENVIRONMENT_REQUEST_INTERRUPTED;
+  if (isAtomCommandInterrupted(result)) return resolve(ENVIRONMENT_REQUEST_INTERRUPTED);
   const cause = squashAtomCommandFailure(result);
-  return cause instanceof Error ? cause.message : "The tracker refused it.";
+  return cause instanceof Error ? cause.message : resolve(msg("The tracker refused it."));
 }
 
 export function IssueLabelPill({ label }: { readonly label: IssueLabel }) {

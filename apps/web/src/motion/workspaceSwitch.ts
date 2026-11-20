@@ -8,13 +8,15 @@ import {
   type LayoutPaneSlot,
   type LayoutState,
   type LayoutWorkspace,
+  isBlankLayoutWorkspace,
 } from "../layout/layoutModel";
 import { getLayoutBehavior } from "../layout/layoutBehavior";
 import { setLayoutFocusAnticipation, useLayoutStore } from "../layout/layoutStore";
-import { isMacPlatform } from "../lib/utils";
 import { MotionAnimation, playMotion, type MotionRun } from "./animation";
 import {
   isDiscreteWheel,
+  layoutChordHeld,
+  listenLayoutWheel,
   rubberBandClamp,
   rubberBandClampDerivative,
   SwipeTracker,
@@ -88,6 +90,8 @@ let stream: WheelStream | null = null;
  */
 let closed: WheelStream | null = null;
 let streamTimer: number | null = null;
+/** Re-reads whether the root's wheel listener must stay cancelable (an owned stream goes on). */
+let refreshWheelListener = () => {};
 let lastStep = Number.NEGATIVE_INFINITY;
 /**
  * The last trackpad delta a swipe took, and whether it was momentum. A
@@ -245,9 +249,11 @@ function directionOf(previous: LayoutState, next: LayoutState, fromId: string, t
 }
 
 function vacatedBy(previous: LayoutState, next: LayoutState, id: string): boolean {
-  const columns = (layout: LayoutState) =>
-    layout.workspaces.find((workspace) => workspace.id === id)?.columns.length ?? 0;
-  return columns(previous) > 0 && columns(next) === 0;
+  const filled = (layout: LayoutState) => {
+    const workspace = layout.workspaces.find((candidate) => candidate.id === id);
+    return workspace !== undefined && !isBlankLayoutWorkspace(workspace);
+  };
+  return filled(previous) && !filled(next);
 }
 
 /** Focus moved to another workspace by anything but a swipe: spring there. */
@@ -371,17 +377,12 @@ function stepWorkspace(direction: 1 | -1, time: number): void {
   if (next) useLayoutStore.getState().focusWorkspace(next.id);
 }
 
-function layoutModifierHeld(event: WheelEvent): boolean {
-  return isMacPlatform(navigator.platform)
-    ? event.metaKey && event.altKey
-    : event.ctrlKey && event.altKey;
-}
-
 function closeStream(time: number): void {
   if (streamTimer !== null) window.clearTimeout(streamTimer);
   streamTimer = null;
   closed = stream;
   stream = null;
+  refreshWheelListener();
   if (gesture) endGesture(time);
 }
 
@@ -406,7 +407,7 @@ function onWheel(event: WheelEvent): void {
     stream = {
       // Only Mod+scroll owns the workspace (pen ZlxmK). Content edges and
       // momentum never grant ownership, even after a gap splits the stream.
-      owned: vertical && layoutModifierHeld(event),
+      owned: vertical && layoutChordHeld(event),
       last: time,
       discrete: isDiscreteWheel(event),
       tail: new WheelTail(),
@@ -414,6 +415,8 @@ function onWheel(event: WheelEvent): void {
     };
   }
   stream.last = time;
+  // A stream reopened from `closed` may be an owned one.
+  refreshWheelListener();
   // Unowned streams have no gesture to settle. Their idle gap is checked on
   // the next event, without scheduling a timer for every native scroll tick.
   // A content scroll's tail still counts, so a stall that splits it cannot
@@ -474,9 +477,9 @@ function anticipateFocus(_from: LayoutState, to: LayoutState): boolean {
   const left = Math.round(slot.rect.left * stripPx);
   const right = left + Math.round(slot.rect.width * stripPx);
   const viewLeft = scroller.scrollLeft;
-  if (left < viewLeft - 1) moveStripCamera(scroller, stage, left);
+  if (left < viewLeft - 1) moveStripCamera(scroller, stage, left, { carryOn: true });
   else if (right > viewLeft + width + 1)
-    moveStripCamera(scroller, stage, Math.min(left, right - width));
+    moveStripCamera(scroller, stage, Math.min(left, right - width), { carryOn: true });
   // Already in view, the camera stays: nothing to paint ahead of React, so
   // the focus lands at once instead of a frame later.
   else return false;
@@ -501,12 +504,19 @@ export function attachWorkspaceSwitch(next: SwitchHost): () => void {
     onFocusedWorkspaceChange(previous.layout, state.layout);
   });
   const stopAnticipating = setLayoutFocusAnticipation(anticipateFocus);
-  next.root.addEventListener("wheel", onWheel, { passive: false, capture: true });
+  // Cancelable only while the chord is held or its stream goes on, so content scrolls on the
+  // compositor the rest of the time; content streams are still watched for their tails.
+  const wheel = listenLayoutWheel(next.root, onWheel, {
+    capture: true,
+    keep: () => stream?.owned === true,
+  });
+  refreshWheelListener = wheel.refresh;
   return () => {
     window.cancelAnimationFrame(frame);
     unsubscribe();
     stopAnticipating();
-    next.root.removeEventListener("wheel", onWheel, true);
+    wheel.stop();
+    refreshWheelListener = () => {};
     finishWorkspaceSwitch();
     if (host === next) host = null;
   };

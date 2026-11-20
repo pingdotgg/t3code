@@ -34,6 +34,7 @@ vi.mock("expo-constants", () => ({
 }));
 vi.mock("expo/internal/bundle-origin", () => ({ getBundleOrigin: () => null }));
 vi.mock("expo-linking", () => import(expoLinking.createURL));
+vi.mock("../../../state/bots", () => ({ isBotThread: () => false }));
 vi.mock("../../../persistence/imperative", () => ({
   loadPreferences: async () => ({
     workspaceSelections: { threads: { environmentId: ENVIRONMENT_ID, threadId: MCP_THREAD_ID } },

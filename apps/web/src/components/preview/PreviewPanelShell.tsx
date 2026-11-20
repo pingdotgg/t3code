@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import {
   type CSSProperties,
   type FocusEvent,
@@ -87,7 +88,8 @@ function returnFocus(
 function PreviewPanelShellFrame(
   props: PreviewPanelShellProps & { inlineSize: PreviewPanelInlineSize },
 ) {
-  const panelArea = workspaceAreaProps("panel", 4, props.workspaceLabel ?? "Workspace panel");
+  const gt = useGT();
+  const panelArea = workspaceAreaProps("panel", 4, props.workspaceLabel ?? gt("Workspace panel"));
   const isInline = props.mode === "inline";
   const pane = isInline && props.pane === true;
   const collapsible = isInline && props.open !== undefined;

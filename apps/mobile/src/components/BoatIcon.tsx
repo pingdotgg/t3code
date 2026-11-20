@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import Svg, { Path } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
@@ -5,9 +6,10 @@ const ThemedPath = withUniwind(Path);
 
 /** The boat.dev mark. */
 export function BoatIcon(props: { readonly size: number; readonly colorClassName: string }) {
+  const gt = useGT();
   return (
     <Svg
-      accessibilityLabel="Boat"
+      accessibilityLabel={gt("Boat")}
       width={props.size}
       height={(props.size * 463) / 498}
       viewBox="0 0 498 463"

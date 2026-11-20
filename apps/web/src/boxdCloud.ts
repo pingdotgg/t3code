@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -78,7 +80,7 @@ export function boxdCloudReady(status: BoxdCloudStatus | null) {
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]) {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "An error occurred.";
+  return error instanceof Error ? error.message : m(msg("An error occurred."));
 }
 
 function updateProgress(
@@ -123,7 +125,7 @@ async function attach(session: BoatCloudSession): Promise<string | null> {
       predicate: (ids) => ids.includes(session.environmentId),
       timeoutMs: RECONNECT_TIMEOUT_MS,
     });
-    return reconnected ? null : "Could not reconnect to the machine.";
+    return reconnected ? null : m(msg("Could not reconnect to the machine."));
   }
   const paired = await runAtomCommand(
     appAtomRegistry,

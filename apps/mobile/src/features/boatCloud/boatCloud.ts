@@ -1,3 +1,4 @@
+import { msg } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
@@ -31,6 +32,7 @@ import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { connectedEnvironmentIdsAtom, environmentPresentations } from "../../state/presentation";
 import { environmentProjects } from "../../state/projects";
+import { m } from "../../i18n/messages";
 import { serverEnvironment } from "../../state/server";
 import { boxdCloudMachinesAtom } from "../boxdCloud/boxdCloud";
 import {
@@ -145,7 +147,7 @@ export function useBoatCloudProviderDrivers(preferredEnvironmentId: EnvironmentI
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "An error occurred.";
+  return error instanceof Error ? error.message : m(msg("An error occurred."));
 }
 
 /** Paired VMs as the holder takes them, so it skips their pairing code. */
@@ -383,7 +385,8 @@ export async function prepareBoatCloudProject(input: {
     if (!steps.some((entry) => entry.state === "failed")) {
       set(current, { state: "failed" });
     }
-    if (error !== cancelled) Dialog.alert("Could not start on Boat cloud", errorMessage(error));
+    if (error !== cancelled)
+      Dialog.alert(m(msg("Could not start on Boat cloud")), errorMessage(error));
     return null;
   } finally {
     for (const stop of stops) stop();
@@ -425,7 +428,7 @@ function wakeBoatCloudMachine(environmentId: EnvironmentId, httpBaseUrl: string)
       if (woken._tag === "Failure") {
         if (!isAtomCommandInterrupted(woken)) {
           Dialog.alert(
-            "Could not wake the Boat cloud machine",
+            m(msg("Could not wake the Boat cloud machine")),
             errorMessage(squashAtomCommandFailure(woken)),
           );
         }
@@ -433,13 +436,13 @@ function wakeBoatCloudMachine(environmentId: EnvironmentId, httpBaseUrl: string)
       }
       // A restored VM has a new address, so pair again rather than wait for the old one.
       await attach(woken.value).catch((error: unknown) =>
-        Dialog.alert("Could not reconnect to Boat cloud", errorMessage(error)),
+        Dialog.alert(m(msg("Could not reconnect to Boat cloud")), errorMessage(error)),
       );
       return;
     }
     if (!phoneHasKey) return;
     await wakeOnPhone(httpBaseUrl).catch((error: unknown) =>
-      Dialog.alert("Could not wake the Boat cloud machine", errorMessage(error)),
+      Dialog.alert(m(msg("Could not wake the Boat cloud machine")), errorMessage(error)),
     );
   })().finally(() => {
     wakesInFlight.delete(environmentId);

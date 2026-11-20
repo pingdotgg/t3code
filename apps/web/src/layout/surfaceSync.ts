@@ -6,6 +6,7 @@ import { useEffect } from "react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
 import {
+  ISSUES_PANEL_REF,
   PULL_REQUESTS_PANEL_REF,
   selectThreadRightPanelState,
   useRightPanelStore,
@@ -36,13 +37,18 @@ import {
 } from "./layoutModel";
 import { readableLayoutColumnShare, useLayoutStore, wasLayoutSavedBeforeLoad } from "./layoutStore";
 
-const PULL_REQUESTS_PANEL_KEY = scopedThreadKey(PULL_REQUESTS_PANEL_REF);
+// The pull request and issue lists keep their panels under sentinel refs, not threads.
+const LIST_PANEL_KEYS: ReadonlySet<string> = new Set([
+  scopedThreadKey(PULL_REQUESTS_PANEL_REF),
+  scopedThreadKey(ISSUES_PANEL_REF),
+]);
 
 /** Where the next surfaces a thread opens go, set right before opening them. */
 export type LayoutSurfacePlacement =
   | { kind: "beside" }
   | { kind: "below" }
   | { kind: "pane"; paneId: string; index?: number; replaceTabId?: string }
+  | Extract<LayoutTabDestination, { kind: "split" }>
   | { kind: "column"; workspaceId: string; index: number }
   | { kind: "workspace"; workspaceId: string };
 
@@ -244,6 +250,8 @@ function placeSurfaceTabs(
         ...(pending.index === undefined ? {} : { index: pending.index }),
       };
     }
+  } else if (pending?.kind === "split") {
+    if (findLayoutPane(layout, pending.paneId)) placement = pending;
   } else if (pending?.kind === "column") {
     if (layout.workspaces.some((workspace) => workspace.id === pending.workspaceId)) {
       placement = pending;
@@ -343,9 +351,11 @@ function syncThreadSurfaces(
     return;
   }
   const ids = new Set<string>(after.surfaces.map((surface) => surface.id));
-  closeTabs(
-    tabs.filter((location) => !ids.has(surfaceIdOf(location.tab) ?? "")).map((l) => l.tab.id),
-  );
+  const gone = tabs
+    .filter((location) => !ids.has(surfaceIdOf(location.tab) ?? ""))
+    .map((location) => location.tab.id);
+  const placesFirst = pendingPlacements.has(scopedThreadKey(threadRef));
+  if (!placesFirst) closeTabs(gone);
   const placed = new Set(tabs.map((location) => surfaceIdOf(location.tab)));
   const missing = after.surfaces.filter((surface) => !placed.has(surface.id));
   const focus = opened.byUser && !opened.closing;
@@ -365,8 +375,9 @@ function syncThreadSurfaces(
       focus: focus && active !== undefined,
       terminal: false,
     });
+    if (placesFirst) closeTabs(gone);
     if (active && focus) return;
-  }
+  } else if (placesFirst) closeTabs(gone);
   // A user's open or pick of a surface that already has a tab shows it.
   if (focus && missing.length === 0) dropPanelPlacement(threadRef);
   if (focus && after.activeSurfaceId !== null) {
@@ -546,7 +557,7 @@ function reconcileOnLoad() {
   closeTabs(gone);
   // Open where the layout shows them; hidden where it does not.
   for (const [key, state] of Object.entries(useRightPanelStore.getState().byThreadKey)) {
-    if (key === PULL_REQUESTS_PANEL_KEY || legacySurfaceThreadKeys.has(key)) continue;
+    if (LIST_PANEL_KEYS.has(key) || legacySurfaceThreadKeys.has(key)) continue;
     const threadRef = parseScopedThreadKey(key);
     if (!threadRef) continue;
     const shown = threadKeys.has(key);
@@ -554,7 +565,7 @@ function reconcileOnLoad() {
   }
   // A shown thread's surface added just before a reload whose layout save never landed.
   for (const key of threadKeys) {
-    const threadRef = key === PULL_REQUESTS_PANEL_KEY ? null : parseScopedThreadKey(key);
+    const threadRef = LIST_PANEL_KEYS.has(key) ? null : parseScopedThreadKey(key);
     if (threadRef) placeMissingSurfaceTabs(threadRef, false);
   }
   const terminals = useTerminalUiStateStore.getState();
@@ -650,7 +661,7 @@ function start(): () => void {
         ...Object.keys(previous.byThreadKey),
       ]);
       for (const key of keys) {
-        if (key === PULL_REQUESTS_PANEL_KEY) continue;
+        if (LIST_PANEL_KEYS.has(key)) continue;
         const before = previous.byThreadKey[key] ?? EMPTY_THREAD_STATE;
         const after = state.byThreadKey[key] ?? EMPTY_THREAD_STATE;
         if (before === after) continue;

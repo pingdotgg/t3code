@@ -8,6 +8,7 @@ import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
 import type { ReviewSectionItem } from "./reviewModel";
 import { useReviewHeaderPresentation } from "./useReviewHeaderPresentation";
+import { T, useGT } from "gt-react-native";
 import { type Ref, type ReactElement, useImperativeHandle, useRef, useState } from "react";
 import { Pressable, ScrollView, type NativeSyntheticEvent, StyleSheet, View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
@@ -69,6 +70,7 @@ function ReviewHeader(
   const { toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const presentation = useReviewHeaderPresentation(props);
+  const gt = useGT();
   const sectionAction = (section: ReviewSectionItem | null, title: string): AppBarMenuItem => ({
     id: section ? `section:${section.id}` : `unavailable:${title}`,
     title,
@@ -84,14 +86,14 @@ function ReviewHeader(
       subtitle={presentation.subtitle}
       onBack={props.onReturnToThread}
       hideBottomBorder
-      backInSplitView={{ accessibilityLabel: "Back to chat", icon: "chevron.left" }}
+      backInSplitView={{ accessibilityLabel: gt("Back to chat"), icon: "chevron.left" }}
       actions={
         props.showChangedFilesToggle
           ? [
               {
                 accessibilityLabel: panes.auxiliaryPaneVisible
-                  ? "Hide changed files"
-                  : "Show changed files",
+                  ? gt("Hide changed files")
+                  : gt("Show changed files"),
                 icon: "sidebar.right",
                 selected: panes.auxiliaryPaneVisible,
                 onPress: toggleAuxiliaryPane,
@@ -104,23 +106,29 @@ function ReviewHeader(
         ...(props.showSectionToolbar
           ? [
               {
-                title: "Select diff",
+                title: gt("Select diff"),
                 icon: presentation.menuIcon,
                 items: [
                   {
                     id: "sections",
                     inline: true,
                     items: [
-                      sectionAction(props.sectionMenu.branchChanges, "Changes"),
-                      sectionAction(props.sectionMenu.workingTree, "Uncommitted"),
-                      sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
+                      sectionAction(
+                        props.sectionMenu.branchChanges,
+                        gt("Changes", { $context: "diff section: branch changes" }),
+                      ),
+                      sectionAction(
+                        props.sectionMenu.workingTree,
+                        gt("Uncommitted", { $context: "diff section: working tree" }),
+                      ),
+                      sectionAction(props.sectionMenu.latestTurn, gt("Latest turn")),
                     ],
                   },
                   ...(props.sectionMenu.turns.length > 0
                     ? [
                         {
                           id: "turns",
-                          title: "Turn",
+                          title: gt("Turn", { $context: "agent turn, diff section menu" }),
                           items: props.sectionMenu.turns.map((section) => ({
                             id: `section:${section.id}`,
                             title: section.title,
@@ -146,7 +154,9 @@ const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 const ReviewNotice = function ReviewNotice(props: { readonly notice: string }) {
   return (
     <ContentBand tone="warning">
-      <Text className="text-xs font-t3-bold text-warning-foreground">Partial diff</Text>
+      <Text className="text-xs font-t3-bold text-warning-foreground">
+        <T>Partial diff</T>
+      </Text>
       <Text className="text-xs leading-normal text-warning-foreground">{props.notice}</Text>
     </ContentBand>
   );
@@ -301,6 +311,7 @@ function ReviewFileNavigator({ files, sectionId, onSelectFile, ref }: ReviewFile
     setFileSelection({ sectionId, fileId });
     onSelectFile(fileId);
   };
+  const gt = useGT();
 
   const renderFile = ({ item }: { readonly item: ReviewNavigatorFile }) => (
     <ReviewFileNavigatorRow
@@ -313,8 +324,10 @@ function ReviewFileNavigator({ files, sectionId, onSelectFile, ref }: ReviewFile
   return (
     <SheetPane>
       <AppBar
-        title="Changed files"
-        subtitle={`${files.length} ${files.length === 1 ? "file" : "files"}`}
+        title={gt("Changed files")}
+        subtitle={gt("{count, plural, one {{count} file} other {{count} files}}", {
+          count: files.length,
+        })}
         hideBottomBorder
       />
       <ScreenContent insetHorizontal>
@@ -341,6 +354,7 @@ type ReviewSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
+  const gt = useGT();
   const reduceMotion = useReduceMotionEnabled();
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const { panes } = useWorkspacePaneState();
@@ -552,7 +566,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
     if (error) {
       children.push(
         <ContentBand key="review-error">
-          <Text className="text-sm font-t3-bold text-foreground">Review unavailable</Text>
+          <Text className="text-sm font-t3-bold text-foreground">
+            <T>Review unavailable</T>
+          </Text>
           <Text className="text-xs leading-normal text-foreground-muted">{error}</Text>
         </ContentBand>,
       );
@@ -572,12 +588,14 @@ export function ReviewSheet(props: ReviewSheetProps) {
     headerDiffSummary.additions,
     headerDiffSummary.deletions,
     pendingReviewCommentCount > 0
-      ? `${pendingReviewCommentCount} comment${pendingReviewCommentCount === 1 ? "" : "s"}`
+      ? gt("{count, plural, one {{count} comment} other {{count} comments}}", {
+          count: pendingReviewCommentCount,
+        })
       : null,
   ]
     .filter(Boolean)
     .join(" · ");
-  const headerTitleText = selectedSection?.title ?? "Review changes";
+  const headerTitleText = selectedSection?.title ?? gt("Review changes");
 
   return (
     <>
@@ -608,7 +626,10 @@ export function ReviewSheet(props: ReviewSheetProps) {
           {showConnectionNotice ? (
             <View className="flex-1" style={{ paddingTop: topContentInset }}>
               <EnvironmentConnectionNotice
-                environmentLabel={environment.presentation?.entry.target.label ?? "Environment"}
+                environmentLabel={
+                  environment.presentation?.entry.target.label ??
+                  gt("Environment", { $context: "fallback name for a server" })
+                }
                 connection={
                   environment.presentation?.connection ?? {
                     phase: "available",
@@ -616,7 +637,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     traceId: null,
                   }
                 }
-                resourceName="review"
+                resource="review"
                 onRetry={handleRetryEnvironment}
               />
             </View>
@@ -695,16 +716,18 @@ export function ReviewSheet(props: ReviewSheetProps) {
               {!selectedSection ? (
                 error ? null : (
                   <ContentStatus
-                    title="No review diffs"
-                    detail="This thread has no ready turn diffs and the worktree diff is empty."
+                    title={gt("No review diffs")}
+                    detail={gt(
+                      "This thread has no ready turn diffs and the worktree diff is empty.",
+                    )}
                   />
                 )
               ) : selectedSection.isLoading && selectedSection.diff === null ? (
-                <ContentStatus loading detail="Loading diff…" />
+                <ContentStatus loading detail={gt("Loading diff…")} />
               ) : parsedDiff.kind === "empty" ? (
                 <ContentStatus
-                  title="No changes"
-                  detail={selectedSection.subtitle ?? "This diff is empty."}
+                  title={gt("No changes")}
+                  detail={selectedSection.subtitle ?? gt("This diff is empty.")}
                 />
               ) : parsedDiff.kind === "raw" ? (
                 <ContentBand spacing="roomy">
@@ -720,7 +743,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
               ) : parsedDiff.kind === "files" ? (
                 <ContentBand spacing="roomy">
                   <Text className="text-xs leading-normal text-foreground-muted">
-                    Native diff view unavailable. Showing the raw patch.
+                    <T>Native diff view unavailable. Showing the raw patch.</T>
                   </Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
                     <Text selectable className="font-mono text-xs leading-relaxed text-foreground">

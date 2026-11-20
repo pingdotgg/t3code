@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useAndroidFloatingTabs } from "../../settings/appearance/AppearancePreferencesProvider";
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
@@ -25,6 +26,7 @@ import { WorkspaceAppBarScope } from "../../../components/ui/WorkspaceAppBar.and
 
 /** The Home route in the sidebar column: the selected tab's list. */
 export function AndroidWorkspaceSidebar() {
+  const gt = useGT();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const workspace = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
@@ -56,8 +58,10 @@ export function AndroidWorkspaceSidebar() {
               <View className="flex-1 bg-header">
                 <AppBar
                   embedded
-                  title="Bots"
-                  actions={[{ accessibilityLabel: "New bot", icon: "plus", onPress: openNewBot }]}
+                  title={gt("Bots", { $context: "screen title, list of bots" })}
+                  actions={[
+                    { accessibilityLabel: gt("New bot"), icon: "plus", onPress: openNewBot },
+                  ]}
                 />
                 <ScreenContent insetHorizontal>
                   <BotsScreen sidebar />

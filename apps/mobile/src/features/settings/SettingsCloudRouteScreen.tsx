@@ -1,3 +1,4 @@
+import { msg, useGT, useMessages } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import {
   BOAT_CLOUD_REQUIRED_SCOPES,
@@ -41,25 +42,25 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
 const STEP_LABELS: Record<BoatCloudSetupStep, string> = {
-  "create-vm": "Create a VM",
-  "install-server": "Install T3 Code and clone repositories",
-  "copy-skills": "Copy this machine's skills",
-  "save-snapshot": "Save the T3 Code snapshot",
+  "create-vm": msg("Create a VM"),
+  "install-server": msg("Install T3 Code and clone repositories"),
+  "copy-skills": msg("Copy this machine's skills"),
+  "save-snapshot": msg("Save the T3 Code snapshot"),
 };
 
 const ACCESS_LABELS: Record<keyof BoatCloudEnvironmentAccess, string> = {
-  passGithub: "GitHub access",
-  passSandboxCredentials: "Boat credentials",
-  passSecrets: "Secrets",
-  passAgentsCredentials: "Agent sign-ins",
+  passGithub: msg("GitHub access"),
+  passSandboxCredentials: msg("Boat credentials"),
+  passSecrets: msg("Secrets"),
+  passAgentsCredentials: msg("Agent sign-ins"),
 };
 const ACCESS_KEYS = Object.keys(ACCESS_LABELS) as ReadonlyArray<keyof BoatCloudEnvironmentAccess>;
 
 const MACHINE_STATE_LABELS: Record<BoatCloudMachine["state"], string> = {
-  running: "Running",
-  starting: "Starting",
-  stopped: "Stopped",
-  gone: "Saved copy",
+  running: msg("Running", { $context: "machine state" }),
+  starting: msg("Starting", { $context: "machine state" }),
+  stopped: msg("Stopped", { $context: "machine state" }),
+  gone: msg("Saved copy", { $context: "machine state" }),
 };
 
 function stepState(setup: BoatCloudSetup, index: number): StepState {
@@ -78,6 +79,8 @@ function Separated(props: { readonly index: number; readonly children: React.Rea
 }
 
 export function SettingsCloudRouteScreen() {
+  const gt = useGT();
+  const messages = useMessages();
   const insets = useSafeAreaInsets();
   const holders = useAtomValue(boatCloudHoldersAtom);
   const outdated = useAtomValue(boatCloudOutdatedMachinesAtom);
@@ -199,7 +202,7 @@ export function SettingsCloudRouteScreen() {
           }),
         ),
     ]);
-    if (phoneError) Dialog.alert("Could not change this phone's Boat environment", phoneError);
+    if (phoneError) Dialog.alert(gt("Could not change this phone's Boat environment"), phoneError);
     setEnvironmentBusy(false);
   };
 
@@ -215,7 +218,7 @@ export function SettingsCloudRouteScreen() {
   };
 
   return (
-    <SettingsScreen title="Cloud">
+    <SettingsScreen title={gt("Cloud", { $context: "settings page title, cloud agent machines" })}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
@@ -225,36 +228,42 @@ export function SettingsCloudRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <SettingsSection
-          title="Boat"
+          title={gt("Boat")}
           footer={
             connected
               ? undefined
-              : (keyError ?? `The key needs ${BOAT_CLOUD_REQUIRED_SCOPES.join(", ")}.`)
+              : (keyError ??
+                gt("The key needs {scopes}.", { scopes: BOAT_CLOUD_REQUIRED_SCOPES.join(", ") }))
           }
         >
           {connected ? (
             <View>
               <ListRowLayout
                 leading={<BoatIcon size={22} colorClassName="accent-icon" />}
-                label={status.account ?? "Connected"}
-                description="Connected"
+                label={status.account ?? gt("Connected")}
+                description={gt("Connected")}
               />
               <View className="px-4 pb-4">
-                <Button label="Disconnect" tone="danger" size="compact" onPress={disconnectAll} />
+                <Button
+                  label={gt("Disconnect")}
+                  tone="danger"
+                  size="compact"
+                  onPress={disconnectAll}
+                />
               </View>
             </View>
           ) : (
             <View className="gap-3 p-4">
               <SecretTextInput
-                accessibilityLabel="Boat API key"
-                placeholder="Boat API key"
+                accessibilityLabel={gt("Boat API key")}
+                placeholder={gt("Boat API key")}
                 value={apiKey}
                 onChangeText={setApiKey}
                 editable={!busy}
                 onSubmitEditing={(value) => void submitKey(value)}
               />
               <Button
-                label={busy ? "Connecting" : "Connect"}
+                label={busy ? gt("Connecting") : gt("Connect")}
                 tone="primary"
                 size="compact"
                 disabled={busy || apiKey.trim() === ""}
@@ -266,17 +275,17 @@ export function SettingsCloudRouteScreen() {
 
         {connected && setup ? (
           <SettingsSection
-            title="Setup"
+            title={gt("Setup")}
             trailing={
               <Button
                 label={
                   setup.status === "running"
-                    ? "Setting up"
+                    ? gt("Setting up")
                     : setup.status === "ready"
-                      ? "Rebuild snapshot"
+                      ? gt("Rebuild snapshot")
                       : setup.status === "failed"
-                        ? "Retry"
-                        : "Set up"
+                        ? gt("Retry")
+                        : gt("Set up")
                 }
                 tone="text"
                 size="compact"
@@ -291,7 +300,7 @@ export function SettingsCloudRouteScreen() {
                 <Separated key={step} index={index}>
                   <ListRowLayout
                     leading={<StepGlyph state={state} />}
-                    label={STEP_LABELS[step]}
+                    label={messages(STEP_LABELS[step])}
                     description={state === "failed" ? (setup.error ?? undefined) : undefined}
                   />
                 </Separated>
@@ -302,16 +311,20 @@ export function SettingsCloudRouteScreen() {
 
         {connected ? (
           <SettingsSection
-            title="Environment"
+            title={gt("Environment")}
             footer={
               status.environmentsError ??
-              "New VMs start on this environment and keep it. Running VMs keep theirs."
+              gt("New VMs start on this environment and keep it. Running VMs keep theirs.")
             }
           >
             {status.environments.map((environment, index) => (
               <ListChoiceRow
                 key={environment.id}
-                label={environment.isDefault ? `${environment.name} (default)` : environment.name}
+                label={
+                  environment.isDefault
+                    ? gt("{name} (default)", { name: environment.name })
+                    : environment.name
+                }
                 selected={environment.id === selectedEnvironment?.id}
                 separated={index > 0}
                 disabled={environmentBusy}
@@ -326,7 +339,7 @@ export function SettingsCloudRouteScreen() {
               ? ACCESS_KEYS.map((key) => (
                   <Separated key={key} index={1}>
                     <SettingsSwitchRow
-                      label={ACCESS_LABELS[key]}
+                      label={messages(ACCESS_LABELS[key])}
                       value={selectedEnvironment[key]}
                       disabled={environmentBusy}
                       onValueChange={(value) =>
@@ -346,29 +359,29 @@ export function SettingsCloudRouteScreen() {
         ) : null}
 
         {connected ? (
-          <SettingsSection title="Enabled on">
+          <SettingsSection title={gt("Enabled on")}>
             <ListRowLayout
-              label="This phone"
-              detail={phone.connected ? "Enabled" : "Not enabled"}
+              label={gt("This phone")}
+              detail={phone.connected ? gt("Enabled") : gt("Not enabled")}
             />
             {holders.map((holder) => (
               <Separated key={holder.environmentId} index={1}>
                 <ListRowLayout
                   label={labelOf(holder.environmentId)}
-                  detail={holder.status.connected ? "Enabled" : "Not enabled"}
+                  detail={holder.status.connected ? gt("Enabled") : gt("Not enabled")}
                 />
               </Separated>
             ))}
             {outdated.map((environmentId) => (
               <Separated key={environmentId} index={1}>
-                <ListRowLayout label={labelOf(environmentId)} detail="Needs update" />
+                <ListRowLayout label={labelOf(environmentId)} detail={gt("Needs update")} />
               </Separated>
             ))}
             {phone.connected && missingKey.length > 0 ? (
               <Separated index={1}>
                 <View className="p-4">
                   <Button
-                    label="Enable on the others"
+                    label={gt("Enable on the others")}
                     size="compact"
                     disabled={busy}
                     onPress={() => void enableOthers()}
@@ -380,7 +393,7 @@ export function SettingsCloudRouteScreen() {
         ) : null}
 
         {connected && machines.length > 0 ? (
-          <SettingsSection title="VMs">
+          <SettingsSection title={gt("VMs")}>
             {machines.map((machine, index) => (
               <Separated key={machine.sandboxId} index={index}>
                 <ListRowLayout
@@ -392,7 +405,7 @@ export function SettingsCloudRouteScreen() {
                           .join(", ")
                       : undefined
                   }
-                  detail={MACHINE_STATE_LABELS[machine.state]}
+                  detail={messages(MACHINE_STATE_LABELS[machine.state])}
                 />
               </Separated>
             ))}

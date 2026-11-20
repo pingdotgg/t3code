@@ -1,3 +1,4 @@
+import { T, useGT, Var } from "gt-react";
 import { useId, useState } from "react";
 
 import {
@@ -25,6 +26,7 @@ export function DeleteBotDialog({
   onOpenChange: (open: boolean) => void;
   onDelete: () => Promise<void>;
 }) {
+  const gt = useGT();
   const id = useId();
   const [typed, setTyped] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -45,9 +47,9 @@ export function DeleteBotDialog({
     >
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
+          <AlertDialogTitle>{gt("Delete {name}?", { name })}</AlertDialogTitle>
           <AlertDialogDescription>
-            Its chat and routines stop for good. Files in its folder stay on disk.
+            <T>Its chat and routines stop for good. Files in its folder stay on disk.</T>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <form
@@ -58,9 +60,13 @@ export function DeleteBotDialog({
           }}
         >
           <Label htmlFor={`${id}-name`}>
-            <span>
-              Type <span className="text-label text-foreground">{name}</span> to confirm
-            </span>
+            <T>
+              Type{" "}
+              <span className="text-label text-foreground">
+                <Var>{name}</Var>
+              </span>{" "}
+              to confirm
+            </T>
           </Label>
           <Input
             id={`${id}-name`}
@@ -73,9 +79,11 @@ export function DeleteBotDialog({
           />
         </form>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="secondary" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="secondary" />}>
+            <T>Cancel</T>
+          </AlertDialogClose>
           <Button variant="destructive" disabled={!matches || deleting} onClick={confirm}>
-            {deleting ? "Deleting" : "Delete bot"}
+            {deleting ? gt("Deleting") : gt("Delete bot")}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

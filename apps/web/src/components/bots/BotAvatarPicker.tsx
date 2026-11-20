@@ -6,6 +6,8 @@ import {
   type BotAvatarShape,
 } from "@t3tools/contracts";
 
+import { useGT } from "gt-react";
+
 import { cn } from "../../lib/utils";
 import { BotAvatarShape as BotAvatarShapeGlyph } from "./BotAvatar";
 
@@ -20,9 +22,14 @@ export function BotAvatarPicker({
   disabled?: boolean;
   onChange: (next: { shape: BotAvatarShape; color: BotAvatarColor }) => void;
 }) {
+  const gt = useGT();
   return (
     <div className="flex flex-col gap-3">
-      <div role="group" aria-label="Shape" className="grid grid-cols-7 gap-1.5">
+      <div
+        role="group"
+        aria-label={gt("Shape", { $context: "bot avatar shape picker" })}
+        className="grid grid-cols-7 gap-1.5"
+      >
         {BOT_AVATAR_SHAPES.map((option) => (
           <button
             key={option}
@@ -43,7 +50,7 @@ export function BotAvatarPicker({
       </div>
       <div
         role="group"
-        aria-label="Color"
+        aria-label={gt("Color", { $context: "bot avatar color picker" })}
         // Fills one row where it fits, and wraps instead of shrinking swatches below 24px.
         className="grid grid-cols-[repeat(auto-fit,minmax(1.5rem,1fr))] gap-1.5"
       >

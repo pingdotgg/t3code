@@ -40,19 +40,23 @@ export const PIERRE_TREE_UNSAFE_CSS = `
       color-mix(in srgb, var(--trees-item-git-status-color) 45%, var(--color-white))
     );
   }
-  /* Folders get a folder glyph after the chevron; Pierre only draws icons for files. */
+  /* Folders get a folder glyph after the chevron; Pierre only draws icons for files. File icons
+     step into that glyph's column, so every depth has one chevron, icon and name column. */
   button[data-item-type='folder'] > [data-item-section='content'] {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--trees-item-row-gap);
+  }
+  button[data-item-type='file'] > [data-item-section='icon'] {
+    margin-inline-start: calc(var(--trees-icon-width) + var(--trees-item-row-gap));
   }
   button[data-item-type='folder'] > [data-item-section='content']::before {
     content: '';
     flex-shrink: 0;
-    width: 14px;
+    width: var(--trees-icon-width);
     height: 14px;
     background-color: var(--muted-foreground);
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E") center / 14px no-repeat;
   }
   button[data-item-type='folder'][aria-expanded='true'] > [data-item-section='content']::before {
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2'/%3E%3C/svg%3E");
