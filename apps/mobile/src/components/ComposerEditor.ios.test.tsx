@@ -121,11 +121,12 @@ vi.mock("./AssistantCitationSheet", () => ({ AssistantCitationSheet: () => null 
 vi.mock("../features/threads/useOpenLinkedThread", () => ({ useOpenLinkedThread: () => vi.fn() }));
 vi.mock("../state/peerLinks", () => ({ useLinkedEnvironments: () => [] }));
 vi.mock("../state/model-mentions", () => ({ useModelMentions: () => [] }));
+vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => () => {} }));
 vi.mock("../state/preferences", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     mobilePreferencesAtom: Atom.make({ _tag: "Initial" }),
-    updateMobilePreferencesAtom: Atom.make(null),
+    saveMobilePreferences: {},
   };
 });
 vi.mock("../lib/composerContextClipboard", () => ({ importComposerContextClipboard: vi.fn() }));

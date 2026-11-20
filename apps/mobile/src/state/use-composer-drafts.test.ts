@@ -22,6 +22,7 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ThreadShell,
@@ -32,6 +33,7 @@ import { onTestFinished, vi } from "vite-plus/test";
 
 import { buildIncomingShareDraft } from "../features/sharing/incoming-share-model";
 import { composerContextSendBlockReason } from "../lib/composerContext";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 
 const composerDraftFileMocks = vi.hoisted(() => {
   let document = JSON.stringify({ schemaVersion: 1, drafts: {} });
@@ -178,6 +180,11 @@ import {
 import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
 import { threadOutboxManager } from "./thread-outbox";
+import {
+  citeInComposerDraft,
+  finishComposerCitation,
+  pendingComposerCitation,
+} from "./composerCitations";
 import {
   appendComposerDraftAttachments,
   captureComposerDraftInsertion,
@@ -805,6 +812,39 @@ describe("mobile composer drafts", () => {
     write.resolve();
     await pending;
     expect(getComposerDraftSnapshot(key).text).toBe("keep newly typed text pasted");
+  });
+
+  it("cites at the caret with spaces only where the chip touches text, and opens its editor", () => {
+    const key = "environment-1:cite";
+    const citation = {
+      version: 1 as const,
+      environmentId: EnvironmentId.make("environment-1"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("message"),
+      text: "quoted",
+      start: 0,
+      end: 6,
+      prefix: "",
+      suffix: "",
+    };
+    const source = serializeAssistantCitation(citation);
+    setComposerDraftText(key, "See this");
+    rememberComposerDraftSelection(key, "See this", { start: 3, end: 3 });
+    expect(citeInComposerDraft(key, citation)).toBe(true);
+    expect(getComposerDraftSnapshot(key).text).toBe(`See ${source} this`);
+    expect(pendingComposerCitation(key)).toEqual({
+      draftKey: key,
+      source,
+      start: 4,
+      insertedSpaces: { before: true, after: false },
+    });
+    finishComposerCitation(key);
+
+    const long = "a".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 4);
+    setComposerDraftText(key, long);
+    expect(citeInComposerDraft(key, citation)).toBe(false);
+    expect(getComposerDraftSnapshot(key).text).toBe(long);
+    expect(pendingComposerCitation(key)).toBeNull();
   });
 
   it("keeps a pending paste before text typed at its caret, and the caret after that text", async () => {

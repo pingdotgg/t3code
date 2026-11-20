@@ -10,7 +10,7 @@ import { modelMentionSettings } from "@t3tools/shared/model";
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT } from "gt-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -20,6 +20,11 @@ import {
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
 import { AssistantCitationSheet } from "./AssistantCitationSheet";
+import {
+  finishComposerCitation,
+  pendingComposerCitation,
+  subscribeComposerCitation,
+} from "../state/composerCitations";
 import { ComposerEditor as NativeComposerEditor } from "../native/T3ComposerEditor";
 import type { ComposerEditorProps as NativeComposerEditorProps } from "../native/T3ComposerEditor";
 import {
@@ -100,6 +105,50 @@ export function ComposerEditor({
   const [selected, setSelected] = useState<{ source: string; start: number; end: number } | null>(
     null,
   );
+  const requestedCitation = useSyncExternalStore(subscribeComposerCitation, () =>
+    pendingComposerCitation(draftKey ?? null),
+  );
+  const [pressedCitation, setPressedCitation] = useState<{
+    source: string;
+    start: number;
+  } | null>(null);
+  const openCitation =
+    requestedCitation ?? (pressedCitation && { ...pressedCitation, insertedSpaces: null });
+  const citation =
+    openCitation && props.value.startsWith(openCitation.source, openCitation.start)
+      ? collectAssistantCitations(openCitation.source)[0]?.citation
+      : undefined;
+  const citationEditable = !props.readOnly && props.editable !== false;
+  const closeCitation = () => {
+    setPressedCitation(null);
+    if (draftKey) finishComposerCitation(draftKey);
+  };
+  const citationReplacement = (next: string, removeInsertedSpaces = false) => {
+    if (!openCitation) return null;
+    let start = openCitation.start;
+    let end = start + openCitation.source.length;
+    const spaces = removeInsertedSpaces ? openCitation.insertedSpaces : null;
+    if (spaces?.before && props.value[start - 1] === " ") start -= 1;
+    if (spaces?.after && props.value[end] === " ") end += 1;
+    const text = props.value.slice(0, start) + next + props.value.slice(end);
+    const caret = start + next.length + (next && props.value[end] === " " ? 1 : 0);
+    return { text, caret };
+  };
+  const replaceCitation = (next: string, removeInsertedSpaces = false) => {
+    const replacement = citationReplacement(next, removeInsertedSpaces);
+    if (!replacement) return;
+    const selection = { start: replacement.caret, end: replacement.caret };
+    if (draftKey) rememberComposerDraftSelection(draftKey, replacement.text, selection);
+    changeText(replacement.text);
+    props.onSelectionChange?.(selection);
+    closeCitation();
+  };
+  const commentedCitation = (comment: string) =>
+    citation && serializeAssistantCitation(withAssistantCitationComment(citation, comment));
+  const saveCitationComment = (comment: string) => {
+    const next = commentedCitation(comment);
+    if (next) replaceCitation(next);
+  };
   const linkedEnvironments = useLinkedEnvironments(environmentId ?? null);
   const models = useModelMentions(environmentId ?? draft.project?.environmentId, props.value);
   const savePreferences = useAtomCommand(saveMobilePreferences);
@@ -217,9 +266,6 @@ export function ComposerEditor({
   const selectedReference = selected
     ? collectComposerContextReferences(selected.source)[0]
     : undefined;
-  const selectedCitation = selected
-    ? collectAssistantCitations(selected.source)[0]?.citation
-    : undefined;
   const selectedSkillName = selected?.source.match(/^\p{Sc}(.+)$/u)?.[1];
   const selectedSkill = selectedSkillName
     ? props.skills?.find((skill) => skill.name === selectedSkillName)
@@ -237,30 +283,6 @@ export function ComposerEditor({
             props.onSelectionChange?.({ start: selected.start, end: selected.start });
           }
           setSelected(null);
-        };
-  const commentSelectedCitation =
-    props.readOnly || props.editable === false || !selected || !selectedCitation
-      ? undefined
-      : (comment: string) => {
-          if (props.value.slice(selected.start, selected.end) !== selected.source) return;
-          const next = serializeAssistantCitation(
-            withAssistantCitationComment(selectedCitation, comment),
-          );
-          const text =
-            props.value.slice(0, selected.start) + next + props.value.slice(selected.end);
-          if (!assistantCitationDraftWithinLimit(text)) {
-            Dialog.alert(
-              gt("Could not update quote"),
-              gt(
-                "This comment would make the message too long to send. Shorten the comment or draft.",
-              ),
-            );
-            return;
-          }
-          const cursor = selected.start + next.length;
-          if (draftKey)
-            rememberComposerDraftSelection(draftKey, text, { start: cursor, end: cursor });
-          changeText(text);
         };
   return (
     <>
@@ -280,6 +302,10 @@ export function ComposerEditor({
         onContextPress={(selection) => {
           if (chipsInert) {
             onInertChipPress?.();
+            return;
+          }
+          if (collectAssistantCitations(selection.source)[0]?.source === selection.source) {
+            setPressedCitation({ source: selection.source, start: selection.start });
             return;
           }
           const path = composerMentionPath(selection.source, draft.context);
@@ -322,24 +348,38 @@ export function ComposerEditor({
           <T>Copying context…</T>
         </Text>
       ) : null}
-      {selectedCitation ? (
+      {citation ? (
         <AssistantCitationSheet
-          citation={selectedCitation}
-          onClose={() => setSelected(null)}
-          onRemove={removeSelected}
-          onCommentChange={commentSelectedCitation}
-          canChangeComment={
-            selected && commentSelectedCitation
-              ? (comment) =>
-                  assistantCitationDraftWithinLimit(
-                    props.value.slice(0, selected.start) +
-                      serializeAssistantCitation(
-                        withAssistantCitationComment(selectedCitation, comment),
-                      ) +
-                      props.value.slice(selected.end),
-                  )
-              : undefined
-          }
+          key={openCitation?.source}
+          citation={citation}
+          {...(citationEditable
+            ? {
+                editor: {
+                  fresh: (openCitation?.insertedSpaces ?? null) !== null,
+                  canSave: (comment: string) => {
+                    const next = commentedCitation(comment);
+                    const replacement = next ? citationReplacement(next) : null;
+                    return (
+                      replacement !== null && assistantCitationDraftWithinLimit(replacement.text)
+                    );
+                  },
+                  onSave: saveCitationComment,
+                  ...(props.onSubmit && !importing
+                    ? {
+                        onSaveAndSend: (comment: string) => {
+                          saveCitationComment(comment);
+                          requestAnimationFrame(() => props.onSubmit?.(false));
+                        },
+                      }
+                    : {}),
+                  onRemove: () => replaceCitation("", true),
+                },
+              }
+            : {})}
+          onClose={(comment) => {
+            if (comment === null) closeCitation();
+            else saveCitationComment(comment);
+          }}
         />
       ) : null}
       {openModel ? (

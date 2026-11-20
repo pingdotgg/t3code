@@ -131,14 +131,8 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
-import {
-  captureComposerDraftInsertion,
-  getComposerDraftSnapshot,
-  setFreshSessionPending,
-  insertComposerDraftText,
-} from "../../state/use-composer-drafts";
-import { assistantCitationDraftWithinLimit } from "../../lib/composerContext";
-import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { getComposerDraftSnapshot, setFreshSessionPending } from "../../state/use-composer-drafts";
+import { citeInComposerDraft } from "../../state/composerCitations";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import {
   ANDROID_READING_MAX_WIDTH,
@@ -1442,11 +1436,7 @@ function ThreadDetailBody(
     );
   const handleCiteAssistantText = (citation: AssistantCitation) => {
     if (!canCiteAssistantText || props.composerDraftKey === null) return;
-    const target = captureComposerDraftInsertion(props.composerDraftKey);
-    const prefix = target.start > 0 && !/\s/.test(target.text[target.start - 1]!) ? " " : "";
-    const value = `${prefix}${serializeAssistantCitation(citation)} `;
-    const text = target.text.slice(0, target.start) + value + target.text.slice(target.end);
-    if (!assistantCitationDraftWithinLimit(text)) {
+    if (!citeInComposerDraft(props.composerDraftKey, citation)) {
       Dialog.alert(
         gt("Could not add quote"),
         gt(
@@ -1455,8 +1445,7 @@ function ThreadDetailBody(
       );
       return;
     }
-    insertComposerDraftText(props.composerDraftKey, value, target);
-    composerEditorRef.current?.focus();
+    void Haptics.selectionAsync();
   };
 
   const handleUseArtifactTemplate = (template: CodexArtifactTemplate) => {
