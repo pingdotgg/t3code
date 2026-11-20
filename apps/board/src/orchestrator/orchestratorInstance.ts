@@ -5,6 +5,8 @@ import {
   type ProviderInstanceMutation,
   type ServerSettings,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 const PREFIX = "board-orchestrator-";
 
@@ -50,11 +52,17 @@ const instanceAt = (
     ? providerInstances[ProviderInstanceId.make(instanceId)]
     : undefined;
 
-const configOf = (instance: ProviderInstanceConfig | undefined): Record<string, unknown> => {
-  const config = instance?.config;
-  // SAFETY: the driver's config is a plain object of its settings, and only its keys are read here.
-  return config !== null && typeof config === "object" ? (config as Record<string, unknown>) : {};
-};
+const InstanceConfig = Schema.StructWithRest(
+  Schema.Struct({ launchArgs: Schema.optional(Schema.String) }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
+const decodeConfig = Schema.decodeUnknownOption(InstanceConfig);
+
+const configOf = (instance: ProviderInstanceConfig | undefined) =>
+  Option.getOrThrowWith(
+    decodeConfig(instance?.config ?? {}),
+    () => new Error("The instance's config could not be read, so it cannot be copied."),
+  );
 
 /**
  * Copies the picked instance's binary, home, environment, and own launch arguments into one
@@ -75,12 +83,11 @@ export function planOrchestratorInstance(input: {
   }
   const source = instanceAt(providerInstances, base.instanceId);
   const sourceConfig = configOf(source);
-  const own =
-    typeof sourceConfig["launchArgs"] === "string" ? sourceConfig["launchArgs"].trim() : "";
+  const own = sourceConfig.launchArgs?.trim() ?? "";
   const launchArgs = own === "" ? args : `${own} ${args}`;
 
   const existing = instanceAt(providerInstances, instanceId);
-  if (existing?.enabled !== false && configOf(existing)["launchArgs"] === launchArgs) {
+  if (existing?.enabled !== false && configOf(existing).launchArgs === launchArgs) {
     return { instanceId, mutation: null };
   }
   const instance: ProviderInstanceConfig = {

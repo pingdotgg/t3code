@@ -19,14 +19,15 @@ export interface BriefInput extends BoardFacts {
   readonly roles?: ReadonlyArray<ResolvedRole>;
 }
 
-function targetText(role: ResolvedRole): string {
-  const { target } = role;
-  if (target === null) return "omit";
-  const instance =
-    target.providerInstanceId === undefined
-      ? ""
-      : `"providerInstanceId":"${target.providerInstanceId}",`;
-  return `\`{${instance}"model":"${target.model}","options":{"effort":"${target.effort}"}}\``;
+function targetText({ target }: ResolvedRole): string {
+  const parts = [
+    ...(target.providerInstanceId === undefined
+      ? []
+      : [`"providerInstanceId":"${target.providerInstanceId}"`]),
+    ...(target.model === undefined ? [] : [`"model":"${target.model}"`]),
+    ...(target.effort === undefined ? [] : [`"options":{"effort":"${target.effort}"}`]),
+  ];
+  return `\`{${parts.join(",")}}\``;
 }
 
 function rolesTable(roles: ReadonlyArray<ResolvedRole>): string {
