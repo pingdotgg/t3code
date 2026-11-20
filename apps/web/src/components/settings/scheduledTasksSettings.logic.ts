@@ -129,7 +129,7 @@ export interface DraftState {
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
-  /** The thread the form opened with; an unchanged destination is left out of the save. */
+  /** The thread the form opened with, so a save can tell a cleared destination from an unbound one. */
   readonly savedThreadId: string;
   readonly threadMode: ScheduledTaskThreadMode;
   readonly workspaceMode: WorkspaceMode;

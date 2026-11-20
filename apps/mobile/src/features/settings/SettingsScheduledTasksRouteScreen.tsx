@@ -883,7 +883,8 @@ function TaskForm({
       modelSelection: withImplicitFastModeSelection(draft.modelSelection, config?.providers ?? []),
       schedule,
       enabled: draft.enabled,
-      ...(draft.threadId === (draft.task?.threadId ?? null) ? {} : { threadId: draft.threadId }),
+      threadId: draft.threadId,
+      ...(draft.threadId === null && draft.task?.threadId != null ? { unbindThread: true } : {}),
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
       workspaceStrategy:
         draft.workspace === "root"
