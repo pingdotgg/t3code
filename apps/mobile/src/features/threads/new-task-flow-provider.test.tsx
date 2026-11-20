@@ -393,6 +393,7 @@ const playbookPrompt = (machine: string) =>
 /** A triage draft on machine one's No project home; machine two opens its own. */
 async function renderTriageDraft(screen: ReturnType<typeof setup>) {
   mocks.serverConfig.mockReturnValue({
+    environment: { capabilities: {} },
     scratchWorkspaceRoot: "/a",
     providers: [],
     settings: DEFAULT_SERVER_SETTINGS,

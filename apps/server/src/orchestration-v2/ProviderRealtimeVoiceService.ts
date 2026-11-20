@@ -103,6 +103,7 @@ export const layer: Layer.Layer<
         return yield* fail(threadId, "Send a message in this conversation before starting voice.");
       // Only a turn delivers handoffs; voice would start without history a turn still owes it.
       // Handoffs stay `ready` after delivery, so a settled target run counts as delivered.
+      const localProviderThreadIds = new Set(records.providerThreads.map((thread) => thread.id));
       if (
         records.contextHandoffs.some((handoff) => {
           if (handoff.status !== "ready" || handoff.toProviderThreadId !== providerThread.id)
@@ -118,7 +119,12 @@ export const layer: Layer.Layer<
           return (
             target === undefined ||
             !SETTLED_RUN_STATUSES.has(target.status) ||
-            isContextHandoffRedeliverable(handoff, records.runs, records.messages)
+            isContextHandoffRedeliverable(
+              handoff,
+              records.runs,
+              records.messages,
+              localProviderThreadIds,
+            )
           );
         })
       )

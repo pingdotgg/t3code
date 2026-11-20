@@ -8,6 +8,7 @@ import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { withMessageSenderNote } from "@t3tools/contracts";
 
 import { isOrchestrationV2MessageHistoryItem } from "@t3tools/shared/orchestrationV2Timeline";
 import * as Config from "effect/Config";
@@ -146,6 +147,8 @@ export function historicalMessage(
       role = item.content.role;
       break;
     case "user_message":
+      text = withMessageSenderNote(item, item.text);
+      break;
     case "assistant_message":
       text = item.text;
       break;

@@ -26,8 +26,10 @@ import * as SessionOptimizerAttachments from "@t3tools/provider-core/server/sess
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityAppendsSystemPrompt,
+  antigravityPermissionDisposition,
   antigravityPermissionMode,
   antigravityRuntimeModeForSessionMode,
+  antigravitySteersWithPrompt,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
@@ -36,11 +38,13 @@ import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
+  readAntigravityChildrenAtWork,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
+  antigravityCommandOutlivesPrompt,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
@@ -75,11 +79,17 @@ const AntigravityProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
+/** Thread variables reach the driver here; `makeAntigravityAcpRuntime` never reads them. */
+export type AntigravityAdapterV2RuntimeInput = Omit<
+  AntigravityAcpRuntimeInput,
+  "spawn" | "childProcessSpawner"
+> & { readonly processEnvironment?: NodeJS.ProcessEnv };
+
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly selfInvocation: SelfInvocation;
   readonly makeRuntime: (
-    input: AntigravityAdapterRuntimeInput,
+    input: AntigravityAdapterV2RuntimeInput,
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError | ProviderSetupError,
@@ -99,12 +109,6 @@ export interface AntigravityAdapterV2Options {
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
 }
-
-export type AntigravityAdapterRuntimeInput = Omit<
-  AntigravityAcpRuntimeInput,
-  "spawn" | "childProcessSpawner"
-> &
-  Pick<AcpAdapterV2RuntimeInput, "processEnvironment">;
 
 /**
  * Native subagent tools report no child session ids, so children stay read-only.
@@ -161,7 +165,6 @@ export function makeAntigravityAcpAdapterFlavor(
             ...((yield* t3AgentInstructionsEnabled(options.host))
               ? { sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS }
               : {}),
-            additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -228,21 +231,12 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
-    buildAttachmentPrompt: ({
-      text,
-      attachments,
-      resolveAttachmentPath,
-      promptCapabilities,
-      agentVersion,
-      currentModel,
-    }) =>
+    buildAttachmentPrompt: ({ text, attachments, resolveAttachmentPath, promptCapabilities }) =>
       buildAntigravityPrompt({
         input: text,
         attachments,
         resolveAttachmentPath,
         promptCapabilities,
-        agentVersion,
-        currentModel,
       }).pipe(
         Effect.map((blocks) => (text.trim() ? blocks.slice(1) : blocks)),
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
@@ -250,6 +244,18 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
+    // A finished background command or timer wakes the agent with no prompt open: it streams a
+    // reply and asks for permissions, and no prompt response ever ends that reply.
+    enablePostSettleContinuation: true,
+    deferFinalizeForBackgroundWork: true,
+    wakeOnDetachedRequest: true,
+    replyEndsWithUsageUpdate: true,
+    toolOutlivesPrompt: antigravityCommandOutlivesPrompt,
+    // session/cancel ends the agent's running commands, so only Stop sends it once the prompt
+    // has ended. A message sent while a command runs leaves the command alone.
+    preserveRuntimeOnSettledInterrupt: true,
+    // `agy acp` reads a prompt sent mid-turn as a steer; cancel-and-restart killed its subagents.
+    steersWithPrompt: antigravitySteersWithPrompt,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
@@ -275,6 +281,7 @@ export function makeAntigravityAcpAdapterFlavor(
           request,
         }),
     },
+    permissionDisposition: antigravityPermissionDisposition,
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);
@@ -287,12 +294,11 @@ export function makeAntigravityAcpAdapterFlavor(
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
-    // ACP 1.3.0 treats /compact as ordinary model input.
-    supportsCompaction: false,
+    compactViaAdvertisedCommand: true,
     requiresSignIn: isAntigravitySignInRequiredError,
+    checksVersionAtHandshake: true,
     // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
     promptInactivityTimeout: "15 minutes",
-    // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
     ...(profileDirectory === undefined
@@ -300,6 +306,12 @@ export function makeAntigravityAcpAdapterFlavor(
       : {
           watchPromptOutcome: (sessionId: string) =>
             watchAntigravityPromptOutcome(profileDirectory, sessionId),
+          subagentsOutlivingPrompt: ({ sessionId, nativeTaskIds }) =>
+            readAntigravityChildrenAtWork({
+              profileDirectory,
+              rootSessionId: sessionId,
+              toolCallIds: nativeTaskIds,
+            }),
         }),
   };
 }

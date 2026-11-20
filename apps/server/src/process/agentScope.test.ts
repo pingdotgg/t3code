@@ -21,7 +21,7 @@ import * as ProviderProcesses from "./providerProcesses.ts";
 import { classifyScope, make, ownedAgentSlice, type ScopeState } from "./agentScope.ts";
 
 const GiB = 1024 ** 3;
-const memory = vi.hoisted(() => ({ total: 16 * 1024 ** 3 }));
+const memory = vi.hoisted(() => ({ total: 16 * 1024 ** 3, swapKb: 2 * 1024 ** 2 }));
 vi.mock("node:os", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:os")>()),
   totalmem: () => memory.total,
@@ -133,7 +133,9 @@ const withFakeSystemd = <A, E>(
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,
         readFileString: (path, encoding) =>
-          fileSystem.readFileString(path.replace("/sys/fs/cgroup", cgroupRoot), encoding),
+          path === "/proc/meminfo"
+            ? Effect.sync(() => `MemTotal:       16384 kB\nSwapTotal:      ${memory.swapKb} kB\n`)
+            : fileSystem.readFileString(path.replace("/sys/fs/cgroup", cgroupRoot), encoding),
         writeFileString: (path, data, options) =>
           fileSystem.writeFileString(path.replace("/sys/fs/cgroup", cgroupRoot), data, options),
       }),
@@ -331,8 +333,9 @@ describe("AgentScope service", () => {
     ),
   );
 
-  it.effect("follows a live memory change at the next launch", () => {
+  it.effect("follows a live memory or swap change at the next launch", () => {
     memory.total = 16 * GiB;
+    memory.swapKb = 2 * 1024 ** 2;
     return withFakeSystemd(({ scope, calls, failingVerbs }) =>
       Effect.gen(function* () {
         const launch = scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
@@ -361,6 +364,12 @@ describe("AgentScope service", () => {
           grown,
           grown,
         ]);
+
+        // Without swap, MemoryHigh only throttles; MemoryMax must OOM-kill the runaway.
+        memory.swapKb = 0;
+        yield* launch;
+        expect(memoryLimits().at(-1)).toEqual(["MemoryHigh=infinity", `MemoryMax=${18 * GiB}`]);
+        memory.swapKb = 2 * 1024 ** 2;
       }),
     );
   });

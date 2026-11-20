@@ -265,8 +265,16 @@ const mergeProviderModels = (
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
   const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
+  const unavailableSubProviders = new Set(
+    provider.subProviders?.flatMap((subProvider) =>
+      subProvider.unavailableReason === undefined ? [] : [subProvider.name],
+    ),
+  );
   const retainablePreviousModels = previousModels.filter(
-    (model) => !model.isCustom && !updateRequiredSlugs.has(model.slug),
+    (model) =>
+      !model.isCustom &&
+      !updateRequiredSlugs.has(model.slug) &&
+      !unavailableSubProviders.has(model.subProvider ?? ""),
   );
 
   if (shouldRetainMissingModels && nextModels.length === 0 && retainablePreviousModels.length > 0) {
@@ -313,6 +321,23 @@ const carrySavedAntigravityAccount = (
   return { auth: previousProvider.auth, status };
 };
 
+/** One failed check after a ready one is often transient, so its retained catalog stays offered. */
+const retainsReadyCatalog = (
+  previousProvider: ServerProvider,
+  nextProvider: ServerProvider,
+  status: ServerProvider["status"],
+  models: ServerProvider["models"],
+): boolean =>
+  nextProvider.enabled &&
+  nextProvider.installed &&
+  (status === "error" || status === "warning") &&
+  nextProvider.auth.status !== "unauthenticated" &&
+  models.length > 0 &&
+  (previousProvider.status === "ready" ||
+    // Usage and metadata updates republish the same check.
+    (previousProvider.modelsRetained === true &&
+      previousProvider.checkedAt === nextProvider.checkedAt));
+
 export const mergeProviderSnapshot = (
   previousProvider: ServerProvider | undefined,
   nextProvider: ServerProvider,
@@ -330,15 +355,33 @@ export const mergeProviderSnapshot = (
         ...snapshot,
         modelsPending: true,
       }));
+  const nextWorkspaceSnapshots = nextProvider.workspaceSnapshots;
+  // A provider reports only folders its own sessions saw, so registry scans of other folders stay.
+  const workspaceSnapshots =
+    nextWorkspaceSnapshots === undefined ||
+    !nextProvider.enabled ||
+    nextProvider.auth.status === "unauthenticated" ||
+    (!nextProvider.installed && nextProvider.status === "error")
+      ? (nextWorkspaceSnapshots ?? previousWorkspaceSnapshots)
+      : [
+          ...(previousWorkspaceSnapshots ?? []).filter(
+            ({ cwd }) => !nextWorkspaceSnapshots.some((snapshot) => snapshot.cwd === cwd),
+          ),
+          ...nextWorkspaceSnapshots,
+        ].slice(-MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER);
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
     models,
-    ...(nextProvider.workspaceSnapshots !== undefined
-      ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
-      : previousWorkspaceSnapshots !== undefined
-        ? { workspaceSnapshots: previousWorkspaceSnapshots }
-        : {}),
+    ...(retainsReadyCatalog(
+      previousProvider,
+      nextProvider,
+      savedAccount?.status ?? nextProvider.status,
+      models,
+    )
+      ? { modelsRetained: true }
+      : {}),
+    ...(workspaceSnapshots === undefined ? {} : { workspaceSnapshots }),
     ...(nextProvider.workspaceRescannedAt === undefined &&
     previousProvider.workspaceRescannedAt !== undefined
       ? { workspaceRescannedAt: previousProvider.workspaceRescannedAt }

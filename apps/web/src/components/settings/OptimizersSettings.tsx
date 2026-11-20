@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_HEADROOM_PROXY_URL } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { CheckCircle2Icon, CircleAlertIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -36,10 +37,10 @@ import {
 const INSTALL_LINKS: Readonly<
   Record<OptimizerId, { readonly label: string; readonly href: string }>
 > = {
-  rtk: { label: "Install RTK", href: "https://github.com/rtk-ai/rtk" },
-  headroom: { label: "Get Headroom", href: "https://extraheadroom.com" },
+  rtk: { label: msg("Install RTK"), href: "https://github.com/rtk-ai/rtk" },
+  headroom: { label: msg("Get Headroom"), href: "https://extraheadroom.com" },
   cbm: {
-    label: "Install CBM",
+    label: msg("Install CBM"),
     href: "https://github.com/DeusData/codebase-memory-mcp",
   },
 };
@@ -57,22 +58,25 @@ const OPTIMIZER_META: Readonly<
 > = {
   rtk: {
     label: "RTK",
-    description: "Runs as a CLI wrapper inside supported provider sessions.",
-    mode: "CLI wrapper",
-    supportedProviders:
+    description: msg("Runs as a CLI wrapper inside supported provider sessions."),
+    mode: msg("CLI wrapper"),
+    supportedProviders: msg(
       "Claude Code (hook and session instructions) and Codex (session instructions)",
+    ),
   },
   headroom: {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Optimizer name
     label: "Headroom",
-    description: "Routes supported new sessions through the configured proxy. Start it here.",
-    mode: "Session routing",
-    supportedProviders: "First-party Claude Code and Codex sessions",
+    description: msg("Routes supported new sessions through the configured proxy. Start it here."),
+    mode: msg("Session routing"),
+    supportedProviders: msg("First-party Claude Code and Codex sessions"),
   },
   cbm: {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Optimizer name
     label: "Codebase Memory",
-    description: "Runs as a stdio MCP server inside supported provider sessions.",
-    mode: "stdio MCP",
-    supportedProviders: "Claude Code, Codex, Grok, Cursor, Antigravity, and managed OpenCode",
+    description: msg("Runs as a stdio MCP server inside supported provider sessions."),
+    mode: msg("stdio MCP"),
+    supportedProviders: msg("Claude Code, Codex, Grok, Cursor, Antigravity, and managed OpenCode"),
   },
 };
 
@@ -85,23 +89,23 @@ function formatTokens(value: number): string {
 function savingsIntervalLabel(interval: OptimizerSavingsInterval): string {
   switch (interval) {
     case "hour":
-      return "Hourly";
+      return msg("Hourly");
     case "day":
-      return "Daily";
+      return msg("Daily");
     case "week":
-      return "Weekly";
+      return msg("Weekly");
     case "month":
-      return "Monthly";
+      return msg("Monthly");
   }
 }
 
 function statusLabel(status: OptimizerStatus | undefined): string {
-  if (!status) return "Waiting for probe";
-  if (!status.installed) return "Not installed";
+  if (!status) return msg("Waiting for probe");
+  if (!status.installed) return msg("Not installed");
   if (status.id === "headroom") {
-    return status.running === true ? "Running" : "Installed · not running";
+    return status.running === true ? msg("Running") : msg("Installed · not running");
   }
-  return "Installed";
+  return msg("Installed");
 }
 
 function statusTone(status: OptimizerStatus | undefined): "success" | "warning" | "secondary" {
@@ -118,20 +122,22 @@ function StatusIcon({ status }: { readonly status: OptimizerStatus | undefined }
 }
 
 function ProviderCompatibilityRow({ id }: { readonly id: OptimizerId }) {
+  const gt = useGT();
+  const m = useMessages();
   const meta = OPTIMIZER_META[id];
   const unsupported =
     id === "rtk"
-      ? "Cursor, Grok, all OpenCode modes, Antigravity, and Pi are not supported"
+      ? gt("Cursor, Grok, all OpenCode modes, Antigravity, and Pi are not supported")
       : id === "cbm"
-        ? "Managed OpenCode is supported; external OpenCode and Pi are not supported in v1"
-        : "Other providers are not routed through Headroom by T3";
+        ? gt("Managed OpenCode is supported; external OpenCode and Pi are not supported in v1")
+        : gt("Other providers are not routed through Headroom by T3");
 
   return (
     <SettingsRow
       title={meta.label}
-      description={meta.supportedProviders}
+      description={m(meta.supportedProviders)}
       status={unsupported}
-      control={<Badge variant="outline">{meta.mode}</Badge>}
+      control={<Badge variant="outline">{m(meta.mode)}</Badge>}
     />
   );
 }
@@ -149,6 +155,8 @@ function OptimizerStatusRows({
   readonly startingHeadroom: boolean;
   readonly headroomStartError: string | null;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const statusById = new Map(snapshot?.optimizers.map((status) => [status.id, status]) ?? []);
 
   return (
@@ -166,10 +174,10 @@ function OptimizerStatusRows({
                 {meta.label}
               </span>
             }
-            description={meta.description}
+            description={m(meta.description)}
             status={
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <Badge variant={statusTone(status)}>{statusLabel(status)}</Badge>
+                <Badge variant={statusTone(status)}>{m(statusLabel(status))}</Badge>
                 {status?.version ? <span>{`v${status.version}`}</span> : null}
                 {status?.detail ? <span>{status.detail}</span> : null}
                 {id === "headroom" && headroomStartError ? (
@@ -186,11 +194,13 @@ function OptimizerStatusRows({
                   variant="outline"
                   disabled={startingHeadroom || !canStartHeadroom}
                   title={
-                    canStartHeadroom ? undefined : "Environment maintenance permission is required."
+                    canStartHeadroom
+                      ? undefined
+                      : gt("Environment maintenance permission is required.")
                   }
                   onClick={onStartHeadroom}
                 >
-                  {startingHeadroom ? "Starting…" : "Start"}
+                  {startingHeadroom ? gt("Starting…") : gt("Start")}
                 </Button>
               ) : status?.installed ? null : (
                 <a
@@ -199,7 +209,7 @@ function OptimizerStatusRows({
                   target="_blank"
                   rel="noreferrer"
                 >
-                  {installLink.label}
+                  {m(installLink.label)}
                   <ExternalLinkIcon aria-hidden className="size-3" />
                 </a>
               )
@@ -218,19 +228,22 @@ function SavingsRows({
   readonly snapshot: OptimizerStatusSnapshot | null;
   readonly environmentConnected?: boolean;
 }) {
+  const gt = useGT();
   if (!environmentConnected) {
     return (
       <SettingsRow
-        title="Savings unavailable"
-        description="Reconnect this environment to inspect its host-local counters."
+        title={gt("Savings unavailable")}
+        description={gt("Reconnect this environment to inspect its host-local counters.")}
       />
     );
   }
   if (snapshot === null || snapshot.savings.length === 0) {
     return (
       <SettingsRow
-        title="No savings reported yet"
-        description="Savings appear after the selected environment has processed optimizer-aware work."
+        title={gt("No savings reported yet")}
+        description={gt(
+          "Savings appear after the selected environment has processed optimizer-aware work.",
+        )}
       />
     );
   }
@@ -240,10 +253,21 @@ function SavingsRows({
       {snapshot.savings.map((saving) => (
         <SettingsRow
           key={`${saving.source}:${saving.window}`}
-          title={`${OPTIMIZER_META[saving.source].label} · ${saving.window === "all-time" ? "All time" : "This session"}`}
-          description="Environment-level savings. These counters are not scoped to this project."
+          title={
+            saving.window === "all-time"
+              ? gt("{optimizer} · All time", { optimizer: OPTIMIZER_META[saving.source].label })
+              : gt("{optimizer} · This session", { optimizer: OPTIMIZER_META[saving.source].label })
+          }
+          description={gt(
+            "Environment-level savings. These counters are not scoped to this project.",
+          )}
           control={
-            <span className="text-sm tabular-nums">{formatTokens(saving.tokensSaved)} tokens</span>
+            <span className="text-sm tabular-nums">
+              {gt("{count, plural, one {{formatted} token} other {{formatted} tokens}}", {
+                count: saving.tokensSaved,
+                formatted: formatTokens(saving.tokensSaved),
+              })}
+            </span>
           }
         />
       ))}
@@ -258,11 +282,13 @@ function SavingsHistoryRows({
   readonly snapshot: OptimizerStatusSnapshot | null;
   readonly environmentConnected?: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   if (!environmentConnected) {
     return (
       <SettingsRow
-        title="Savings history unavailable"
-        description="Reconnect this environment to inspect its host-local history."
+        title={gt("Savings history unavailable")}
+        description={gt("Reconnect this environment to inspect its host-local history.")}
       />
     );
   }
@@ -270,8 +296,10 @@ function SavingsHistoryRows({
   if (history.length === 0) {
     return (
       <SettingsRow
-        title="No savings history yet"
-        description="Headroom history appears after the selected environment records optimizer-aware work."
+        title={gt("No savings history yet")}
+        description={gt(
+          "Headroom history appears after the selected environment records optimizer-aware work.",
+        )}
       />
     );
   }
@@ -284,10 +312,19 @@ function SavingsHistoryRows({
         .map((point) => (
           <SettingsRow
             key={`${point.interval}:${point.timestamp}`}
-            title={`Headroom · ${savingsIntervalLabel(point.interval)}`}
-            description={`${new Date(point.timestamp).toLocaleString()} · Environment-level history`}
+            title={gt("Headroom · {interval}", {
+              interval: m(savingsIntervalLabel(point.interval)),
+            })}
+            description={gt("{date} · Environment-level history", {
+              date: new Date(point.timestamp).toLocaleString(),
+            })}
             control={
-              <span className="text-sm tabular-nums">{formatTokens(point.tokensSaved)} tokens</span>
+              <span className="text-sm tabular-nums">
+                {gt("{count, plural, one {{formatted} token} other {{formatted} tokens}}", {
+                  count: point.tokensSaved,
+                  formatted: formatTokens(point.tokensSaved),
+                })}
+              </span>
             }
           />
         ))}
@@ -302,6 +339,7 @@ function CbmIndexRow({
   readonly projectId: ProjectId | null;
   readonly snapshot: OptimizerStatusSnapshot | null;
 }) {
+  const gt = useGT();
   const index =
     projectId === null
       ? null
@@ -310,29 +348,35 @@ function CbmIndexRow({
   if (projectId === null) {
     return (
       <SettingsRow
-        title="CBM index"
-        description="Choose a project to inspect its codebase-memory index."
-        status="No project selected"
+        title={gt("CBM index")}
+        description={gt("Choose a project to inspect its codebase-memory index.")}
+        status={gt("No project selected")}
       />
     );
   }
 
   const stateLabel = index
     ? index.state === "ready"
-      ? "Ready"
+      ? gt("Ready", { $context: "CBM index status" })
       : index.state === "indexing"
-        ? "Indexing"
-        : "Degraded"
-    : "Not indexed";
+        ? gt("Indexing")
+        : gt("Degraded")
+    : gt("Not indexed");
   const counts =
     index?.nodeCount !== undefined || index?.edgeCount !== undefined
-      ? `${index.nodeCount ?? 0} nodes · ${index.edgeCount ?? 0} edges`
+      ? gt(
+          "{nodes, plural, one {{nodes} node} other {{nodes} nodes}} · {edges, plural, one {{edges} edge} other {{edges} edges}}",
+          {
+            nodes: index.nodeCount ?? 0,
+            edges: index.edgeCount ?? 0,
+          },
+        )
       : undefined;
 
   return (
     <SettingsRow
-      title="CBM index"
-      description="The index is scoped to this project. T3 does not delete CBM data."
+      title={gt("CBM index")}
+      description={gt("The index is scoped to this project. T3 does not delete CBM data.")}
       status={
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Badge
@@ -353,8 +397,8 @@ function CbmIndexRow({
       control={
         <span className="text-xs text-muted-foreground">
           {index
-            ? `Checked ${new Date(index.checkedAt).toLocaleTimeString()}`
-            : "No index reported"}
+            ? gt("Checked {time}", { time: new Date(index.checkedAt).toLocaleTimeString() })
+            : gt("No index reported")}
         </span>
       }
     />
@@ -372,6 +416,7 @@ function HeadroomProxySettingsRow({
   readonly proxyUrl: string;
   readonly onSaved: () => void;
 }) {
+  const gt = useGT();
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -402,7 +447,7 @@ function HeadroomProxySettingsRow({
     } else if (!isAtomCommandInterrupted(result)) {
       const failure = squashAtomCommandFailure(result);
       setError(
-        failure instanceof Error ? failure.message : "Headroom proxy URL could not be saved.",
+        failure instanceof Error ? failure.message : gt("Headroom proxy URL could not be saved."),
       );
     }
   };
@@ -418,13 +463,15 @@ function HeadroomProxySettingsRow({
 
   return (
     <SettingsRow
-      title="Headroom proxy URL"
-      description="Loopback base origin of this environment's Headroom proxy, such as http://127.0.0.1:8787 (no /v1). Start an installed proxy from Status. T3 does not install Headroom or change provider config."
+      title={gt("Headroom proxy URL")}
+      description={gt(
+        "Loopback base origin of this environment's Headroom proxy, such as http://127.0.0.1:8787 (no /v1). Start an installed proxy from Status. T3 does not install Headroom or change provider config.",
+      )}
       status={error ? <span className="text-destructive">{error}</span> : undefined}
       resetAction={
         proxyUrl !== DEFAULT_HEADROOM_PROXY_URL ? (
           <SettingResetButton
-            label="Headroom proxy URL"
+            ariaLabel={gt("Reset Headroom proxy URL")}
             disabled={saving || !environmentConnected}
             onClick={reset}
           />
@@ -436,7 +483,7 @@ function HeadroomProxySettingsRow({
           className="w-full sm:w-64"
           value={draft ?? proxyUrl}
           disabled={saving || !environmentConnected}
-          aria-label="Headroom proxy URL"
+          aria-label={gt("Headroom proxy URL")}
           aria-invalid={error ? true : undefined}
           placeholder={DEFAULT_HEADROOM_PROXY_URL}
           autoCapitalize="none"
@@ -466,6 +513,7 @@ function OptimizerEnvironmentSettings({
 }: {
   readonly environmentId: EnvironmentId;
 }) {
+  const gt = useGT();
   const environment = useEnvironments().environments.find(
     (candidate) => candidate.environmentId === environmentId,
   );
@@ -522,7 +570,7 @@ function OptimizerEnvironmentSettings({
     } else if (!isAtomCommandInterrupted(result)) {
       const failure = squashAtomCommandFailure(result);
       setHeadroomStartError(
-        failure instanceof Error ? failure.message : "Headroom could not be started.",
+        failure instanceof Error ? failure.message : gt("Headroom could not be started."),
       );
     }
   };
@@ -570,40 +618,40 @@ function OptimizerEnvironmentSettings({
     <>
       <SettingsSection
         id="optimizer-status"
-        title="Status"
+        title={gt("Status")}
         headerAction={
           <Button
             size="xs"
             variant="outline"
             disabled={statusQuery.isPending || !environmentConnected}
-            aria-label="Refresh optimizer status"
+            aria-label={gt("Refresh optimizer status")}
             onClick={statusQuery.refresh}
           >
             <RefreshCwIcon className="size-3.5" />
-            {statusQuery.isPending ? "Checking…" : "Refresh"}
+            {statusQuery.isPending ? gt("Checking…") : gt("Refresh")}
           </Button>
         }
       >
         {!environmentConnected ? (
           <SettingsRow
-            title="Environment not connected"
-            description="Reconnect this environment to probe its host-local optimizer tools."
-            status={environment?.connection.phase ?? "Unavailable"}
+            title={gt("Environment not connected")}
+            description={gt("Reconnect this environment to probe its host-local optimizer tools.")}
+            status={environment?.connection.phase ?? gt("Unavailable")}
           />
         ) : statusQuery.error ? (
           <SettingsRow
-            title="Could not check optimizer status"
+            title={gt("Could not check optimizer status")}
             description={statusQuery.error}
             control={
               <Button size="sm" variant="outline" onClick={statusQuery.refresh}>
-                Try again
+                <T>Try again</T>
               </Button>
             }
           />
         ) : statusQuery.isPending && statusQuery.data === null ? (
           <SettingsRow
-            title="Checking this environment…"
-            description="The probe will finish shortly."
+            title={gt("Checking this environment…")}
+            description={gt("The probe will finish shortly.")}
           />
         ) : (
           <OptimizerStatusRows
@@ -616,28 +664,28 @@ function OptimizerEnvironmentSettings({
         )}
       </SettingsSection>
 
-      <SettingsSection id="optimizer-savings" title="Savings">
+      <SettingsSection id="optimizer-savings" title={gt("Savings")}>
         <SavingsRows snapshot={statusQuery.data} environmentConnected={environmentConnected} />
       </SettingsSection>
 
-      <SettingsSection id="optimizer-savings-history" title="Savings history">
+      <SettingsSection id="optimizer-savings-history" title={gt("Savings history")}>
         <SavingsHistoryRows
           snapshot={statusQuery.data}
           environmentConnected={environmentConnected}
         />
       </SettingsSection>
 
-      <SettingsSection id="optimizer-project" title="Project attachments">
+      <SettingsSection id="optimizer-project" title={gt("Project attachments")}>
         {environmentProjects.length === 0 ? (
           <SettingsRow
-            title="No projects on this environment"
-            description="Add a project before choosing optimizer attachments."
+            title={gt("No projects on this environment")}
+            description={gt("Add a project before choosing optimizer attachments.")}
           />
         ) : (
           <>
             <SettingsRow
-              title="Project"
-              description="Optimizer status and attachments below are scoped to this project."
+              title={gt("Project")}
+              description={gt("Optimizer status and attachments below are scoped to this project.")}
               control={
                 <Select
                   value={selectedProjectId ?? ""}
@@ -649,9 +697,9 @@ function OptimizerEnvironmentSettings({
                   <SelectTrigger
                     size="sm"
                     className="max-w-full sm:w-64"
-                    aria-label="Optimizer project"
+                    aria-label={gt("Optimizer project")}
                   >
-                    <SelectValue>{selectedProject?.title ?? "Choose a project"}</SelectValue>
+                    <SelectValue>{selectedProject?.title ?? gt("Choose a project")}</SelectValue>
                   </SelectTrigger>
                   <SelectPopup align="end" alignItemWithTrigger={false}>
                     {environmentProjects.map((project) => (
@@ -669,19 +717,27 @@ function OptimizerEnvironmentSettings({
                 title={OPTIMIZER_META[id].label}
                 description={
                   id === "headroom"
-                    ? "Routes supported new sessions through the configured Headroom proxy. T3 starts it from Status when requested."
+                    ? gt(
+                        "Routes supported new sessions through the configured Headroom proxy. T3 starts it from Status when requested.",
+                      )
                     : id === "cbm"
-                      ? "Starts CBM as a stdio MCP server inside each supported provider session."
-                      : "Starts RTK's CLI wrapper inside each supported provider session."
+                      ? gt(
+                          "Starts CBM as a stdio MCP server inside each supported provider session.",
+                        )
+                      : gt("Starts RTK's CLI wrapper inside each supported provider session.")
                 }
                 status={
-                  selectedProjectSettings?.[id] === true ? "Enabled for the next session" : "Off"
+                  selectedProjectSettings?.[id] === true
+                    ? gt("Enabled for the next session")
+                    : gt("Off")
                 }
                 control={
                   <Switch
                     checked={selectedProjectSettings?.[id] === true}
                     disabled={savingProject || selectedProjectId === null || !environmentConnected}
-                    aria-label={`Enable ${OPTIMIZER_META[id].label} for project`}
+                    aria-label={gt("Enable {optimizer} for project", {
+                      optimizer: OPTIMIZER_META[id].label,
+                    })}
                     onCheckedChange={(enabled) => void saveProjectOptimizer(id, enabled)}
                   />
                 }
@@ -692,13 +748,13 @@ function OptimizerEnvironmentSettings({
         )}
       </SettingsSection>
 
-      <SettingsSection id="optimizer-compatibility" title="Provider compatibility">
+      <SettingsSection id="optimizer-compatibility" title={gt("Provider compatibility")}>
         {OPTIMIZER_ORDER.map((id) => (
           <ProviderCompatibilityRow key={id} id={id} />
         ))}
       </SettingsSection>
 
-      <SettingsSection id="optimizer-configuration" title="Configuration">
+      <SettingsSection id="optimizer-configuration" title={gt("Configuration")}>
         <HeadroomProxySettingsRow
           key={environmentId}
           environmentId={environmentId}
@@ -707,12 +763,14 @@ function OptimizerEnvironmentSettings({
           onSaved={statusQuery.refresh}
         />
         <SettingsRow
-          title="CBM binary path"
-          description="Use a custom codebase-memory-mcp executable when it is not on PATH. Leave blank to use codebase-memory-mcp."
+          title={gt("CBM binary path")}
+          description={gt(
+            "Use a custom codebase-memory-mcp executable when it is not on PATH. Leave blank to use codebase-memory-mcp.",
+          )}
           resetAction={
             cbmBinaryPath !== "codebase-memory-mcp" ? (
               <SettingResetButton
-                label="CBM binary path"
+                ariaLabel={gt("Reset CBM binary path")}
                 disabled={savingBinary || !environmentConnected}
                 onClick={resetBinaryPath}
               />
@@ -724,7 +782,7 @@ function OptimizerEnvironmentSettings({
               className="w-full sm:w-64"
               value={binaryDraft ?? cbmBinaryPath}
               disabled={savingBinary || !environmentConnected}
-              aria-label="CBM binary path"
+              aria-label={gt("CBM binary path")}
               onChange={(event) => setBinaryDraft(event.currentTarget.value)}
               onBlur={commitBinaryPath}
               onKeyDown={(event) => {
@@ -763,13 +821,14 @@ export function OptimizerEnvironmentRow({
   readonly ariaLabel: string;
   readonly selection: ReturnType<typeof useOptimizerEnvironmentSelection>;
 }) {
+  const gt = useGT();
   const { environments, selectedEnvironmentId, setEnvironmentSelection } = selection;
   const selectedEnvironment = environments.find(
     (environment) => environment.environmentId === selectedEnvironmentId,
   );
   return (
     <SettingsRow
-      title="Environment"
+      title={gt("Environment")}
       description={description}
       control={
         environments.length > 0 ? (
@@ -783,7 +842,7 @@ export function OptimizerEnvironmentRow({
             }}
           >
             <SelectTrigger size="sm" className="max-w-full sm:w-64" aria-label={ariaLabel}>
-              <SelectValue>{selectedEnvironment?.label ?? "Choose an environment"}</SelectValue>
+              <SelectValue>{selectedEnvironment?.label ?? gt("Choose an environment")}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {environments.map((environment) => (
@@ -801,7 +860,9 @@ export function OptimizerEnvironmentRow({
             </SelectPopup>
           </Select>
         ) : (
-          <span className="text-sm text-muted-foreground">No environments connected</span>
+          <span className="text-sm text-muted-foreground">
+            <T>No environments connected</T>
+          </span>
         )
       }
     />
@@ -809,23 +870,28 @@ export function OptimizerEnvironmentRow({
 }
 
 export function OptimizersSettingsPanel() {
+  const gt = useGT();
   const selection = useOptimizerEnvironmentSelection();
   const { selectedEnvironmentId } = selection;
 
   return (
     <SettingsPageContainer width="wide">
-      <SettingsSection id="optimizers" title="Optimizers">
+      <SettingsSection id="optimizers" title={gt("Optimizers")}>
         <OptimizerEnvironmentRow
-          description="Status, savings, and project attachments below belong to this environment."
-          ariaLabel="Optimizer environment"
+          description={gt(
+            "Status, savings, and project attachments below belong to this environment.",
+          )}
+          ariaLabel={gt("Optimizer environment")}
           selection={selection}
         />
       </SettingsSection>
       {selectedEnvironmentId === null ? (
-        <SettingsSection id="optimizer-empty" title="Optimizer status">
+        <SettingsSection id="optimizer-empty" title={gt("Optimizer status")}>
           <SettingsRow
-            title="Connect an environment"
-            description="Optimizer status lives on a T3 server. Connect an environment to inspect its host-local tools."
+            title={gt("Connect an environment")}
+            description={gt(
+              "Optimizer status lives on a T3 server. Connect an environment to inspect its host-local tools.",
+            )}
           />
         </SettingsSection>
       ) : (

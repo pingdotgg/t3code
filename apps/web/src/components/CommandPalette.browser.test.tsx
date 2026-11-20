@@ -1,5 +1,6 @@
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -11,10 +12,12 @@ import { removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
+import { RealtimeVoiceProvider } from "./voice/RealtimeVoiceProvider";
 
 const entities = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<Project>,
   threads: [] as ReadonlyArray<Thread>,
+  activeThread: undefined as Thread | undefined,
   delegatedUnderParent: new Set<string>() as ReadonlySet<string>,
   handleNewThread: vi.fn(async () => undefined),
 }));
@@ -38,6 +41,7 @@ vi.mock("../hooks/useHandleNewThread", async (original) => {
     ...actual,
     useHandleNewThread: () => ({
       ...actual.useHandleNewThread(),
+      activeThread: entities.activeThread,
       handleNewThread: entities.handleNewThread,
     }),
   };
@@ -56,6 +60,7 @@ function setup(state: Partial<typeof entities> = {}) {
   useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
   entities.projects = state.projects ?? [];
   entities.threads = state.threads ?? [];
+  entities.activeThread = state.activeThread;
   entities.delegatedUnderParent = state.delegatedUnderParent ?? new Set();
   entities.handleNewThread.mockClear();
 }
@@ -74,6 +79,14 @@ function makeProject(title: string): Project {
   };
 }
 
+function renderPalette(children?: ReactNode) {
+  return render(
+    <RealtimeVoiceProvider returnToOwner={() => undefined}>
+      <CommandPalette>{children}</CommandPalette>
+    </RealtimeVoiceProvider>,
+  );
+}
+
 describe("CommandPalette open intents", () => {
   it("drags a searched thread into the current composer without navigating", async () => {
     const environmentId = EnvironmentId.make("remote");
@@ -82,18 +95,16 @@ describe("CommandPalette open intents", () => {
       threads: [makeThreadFixture({ environmentId, id: threadId, title: "Drag this thread" })],
     });
     const onDrop = vi.fn();
-    await using screen = await render(
-      <CommandPalette>
-        <div
-          data-thread-context-drop="true"
-          ref={(node) => {
-            node?.addEventListener("t3-thread-context-drop", onDrop);
-          }}
-          style={{ position: "fixed", bottom: 0, width: 300, height: 100 }}
-        >
-          Composer
-        </div>
-      </CommandPalette>,
+    await using screen = await renderPalette(
+      <div
+        data-thread-context-drop="true"
+        ref={(node) => {
+          node?.addEventListener("t3-thread-context-drop", onDrop);
+        }}
+        style={{ position: "fixed", bottom: 0, width: 300, height: 100 }}
+      >
+        Composer
+      </div>,
     );
     const pathname = screen.router?.state.location.pathname;
     openCommandPalette({ query: "Drag this thread" });
@@ -129,7 +140,7 @@ describe("CommandPalette open intents", () => {
 
   it("opens New thread in... with focus in the search input, not the Back button", async () => {
     setup();
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await using _screen = await renderPalette();
 
     openCommandPalette({ open: "new-thread-in" });
 
@@ -152,13 +163,14 @@ describe("CommandPalette open intents", () => {
     setup({
       projects: [project("acme", "Acme"), project("beta", "Beta"), project("gamma", "Gamma")],
     });
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await using _screen = await renderPalette();
 
     openCommandPalette({});
     await expect
       .element(page.getByPlaceholder("Search commands, projects, and threads..."))
       .toHaveFocus();
-    await userEvent.keyboard("{ArrowDown}");
+    // The voice keyword action precedes the thread shortcuts in the fork.
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}");
     await expect
       .element(page.getByRole("option", { name: /^New thread in\.\.\./ }))
       .toHaveAttribute("data-highlighted");
@@ -171,7 +183,7 @@ describe("CommandPalette open intents", () => {
 
   it("opens a search intent with its query in the focused input", async () => {
     setup();
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await using _screen = await renderPalette();
 
     openCommandPalette({ query: "acme" });
 
@@ -240,7 +252,7 @@ describe("CommandPalette open intents", () => {
         }),
       ],
     });
-    await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await using screen = await renderPalette();
 
     openCommandPalette({ query: "Acme" });
     await page.getByRole("option", { name: /Acme/ }).first().click();
@@ -248,10 +260,49 @@ describe("CommandPalette open intents", () => {
     await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/local/parent"));
   });
 
+  it("starts a thread in an open copy when the current project's copy is archived", async () => {
+    const repositoryIdentity = {
+      canonicalKey: "github.com/example/acme",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/example/acme.git",
+      },
+    };
+    const archived = {
+      ...makeProject("acme"),
+      repositoryIdentity,
+      archivedAt: "2026-03-02T00:00:00.000Z",
+    };
+    const open = {
+      ...makeProject("acme"),
+      environmentId: EnvironmentId.make("remote"),
+      repositoryIdentity,
+    };
+    setup({
+      projects: [archived, open],
+      activeThread: makeThreadFixture({
+        environmentId: archived.environmentId,
+        projectId: archived.id,
+      }),
+    });
+    await using _screen = await renderPalette();
+
+    openCommandPalette({ open: "new-thread-in" });
+    await page.getByRole("option", { name: /acme/i }).click();
+
+    await vi.waitFor(() =>
+      expect(entities.handleNewThread).toHaveBeenCalledWith({
+        environmentId: open.environmentId,
+        projectId: open.id,
+      }),
+    );
+  });
+
   it("numbers filtered New thread in... rows from 1 and jumps to them", async () => {
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     setup({ projects: [makeProject("server"), makeProject("lima")] });
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await using _screen = await renderPalette();
 
     openCommandPalette({ open: "new-thread-in" });
     await userEvent.fill(page.getByPlaceholder("Search..."), "li");

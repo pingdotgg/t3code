@@ -26,7 +26,14 @@ export const isContextHandoffRedeliverable = (
   handoff: OrchestrationV2ContextHandoff,
   runs: ReadonlyArray<OrchestrationV2Run>,
   messages: ReadonlyArray<OrchestrationV2ConversationMessage>,
+  localProviderThreadIds: ReadonlySet<OrchestrationV2ProviderThread["id"]>,
 ) =>
+  // A fresh summary replaces delivered local history. Previously transferred history still retries.
+  !(
+    (handoff.delivery?.status === "injected" || handoff.delivery?.status === "inline") &&
+    handoff.fromProviderThreadIds.length > 0 &&
+    handoff.fromProviderThreadIds.every((id) => localProviderThreadIds.has(id))
+  ) &&
   runs.some(
     (source) =>
       source.id === handoff.targetRunId &&

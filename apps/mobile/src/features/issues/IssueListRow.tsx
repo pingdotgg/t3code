@@ -1,4 +1,5 @@
 import type { EnvironmentIssueEntry } from "@t3tools/client-runtime/issue-list";
+import { useGT } from "gt-react-native";
 import { memo } from "react";
 import { Pressable, View } from "react-native";
 
@@ -21,6 +22,7 @@ export const IssueListRow = memo(function IssueListRow(props: {
   readonly selected: boolean;
   readonly sidebar: boolean;
 }) {
+  const gt = useGT();
   const { item } = props;
   const foreground = props.selected
     ? selectedThreadRowColors.foregroundClassName
@@ -38,7 +40,20 @@ export const IssueListRow = memo(function IssueListRow(props: {
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ selected: props.selected }}
-        accessibilityLabel={`Issue ${item.displayKey}, ${item.title}, ${status.label}, by ${item.author?.login ?? "unknown author"}${item.labels.length ? `, ${item.labels.map((label) => label.name).join(", ")}` : ""}${item.commentCount ? `, ${item.commentCount} comments` : ""}`}
+        accessibilityLabel={[
+          gt("Issue {key}", { key: item.displayKey }),
+          item.title,
+          status.label,
+          gt("by {author}", { author: item.author?.login ?? gt("unknown author") }),
+          item.labels.length ? item.labels.map((label) => label.name).join(", ") : null,
+          item.commentCount
+            ? gt("{count, plural, other {{count} comments}}", {
+                count: item.commentCount,
+              })
+            : null,
+        ]
+          .filter(Boolean)
+          .join(", ")}
         onPress={() => props.onSelect(item)}
         style={props.sidebar ? THREAD_LIST_V2_SIDEBAR_ROW_STYLE : undefined}
         className={cn(

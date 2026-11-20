@@ -1,10 +1,13 @@
+import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
 import {
-  managedRuntimeModeDenial,
   resolveCompletionAudio,
   type CompletionAudioMode,
   type ManagedPolicySummary,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   readonly mode: RuntimeMode;
@@ -13,23 +16,23 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: "approval-required",
-    label: "Supervised",
-    description: "Ask before commands and file changes.",
+    label: msg("Supervised"),
+    description: msg("Ask before commands and file changes."),
   },
   {
     mode: "auto-accept-edits",
-    label: "Auto-accept edits",
-    description: "Auto-approve edits, ask before other actions.",
+    label: msg("Auto-accept edits"),
+    description: msg("Auto-approve edits, ask before other actions."),
   },
   {
     mode: "auto",
-    label: "Auto",
-    description: "Supported providers approve routine actions; others still ask.",
+    label: msg("Auto"),
+    description: msg("Supported providers approve routine actions; others still ask."),
   },
   {
     mode: "full-access",
-    label: "Full access",
-    description: "Allow commands and edits without prompts.",
+    label: msg("Full access"),
+    description: msg("Allow commands and edits without prompts."),
   },
 ];
 
@@ -53,10 +56,11 @@ export type RuntimeModeChoice = (typeof RUNTIME_MODE_CHOICES)[number] & {
 export function withManagedRuntimeModeLimits(
   choices: ReadonlyArray<RuntimeModeChoice>,
   policies: ReadonlyArray<ManagedPolicySummary | undefined>,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<RuntimeModeChoice> {
   return choices.map((choice) => {
     const reason = policies
-      .map((policy) => managedRuntimeModeDenial(policy, choice.mode))
+      .map((policy) => managedRuntimeModeDenial(policy, choice.mode, resolve))
       .find((denial) => denial !== undefined);
     return reason === undefined ? choice : { ...choice, disabledReason: reason };
   });
@@ -92,9 +96,13 @@ export const COMPLETION_AUDIO_CHOICES: ReadonlyArray<{
   readonly label: string;
   readonly description: string;
 }> = [
-  { mode: "off", label: "Off", description: "No completion audio." },
-  { mode: "voice", label: "Voice", description: "Use configured provider-owned completion hooks." },
-  { mode: "sound", label: "Sound", description: "Sound plays on web and desktop." },
+  { mode: "off", label: msg("Off"), description: msg("No completion audio.") },
+  {
+    mode: "voice",
+    label: msg("Voice"),
+    description: msg("Use configured provider-owned completion hooks."),
+  },
+  { mode: "sound", label: msg("Sound"), description: msg("Sound plays on web and desktop.") },
 ];
 
 export function threadCompletionAudioForDisplay(

@@ -1,7 +1,10 @@
 import { type CompletionAudioMode, readStoredCompletionAudio } from "@t3tools/contracts";
 import { ActiveNewTaskContext } from "../../state/active-new-task";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { msg, useMessages } from "gt-react-native";
 import { resolveUsageFallbackModelSelection } from "@t3tools/shared/usageLimits";
 import { useNowMinuteMs } from "../../lib/clock";
+import { m, type MessageResolver } from "../../i18n/messages";
 import * as Dialog from "../../components/ui/Dialog";
 import React, { useRef, useState } from "react";
 
@@ -112,21 +115,24 @@ import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/works
 
 type WorkspaceMode = "local" | "worktree";
 
-export function branchBadgeLabel(input: {
-  readonly branch: VcsRef;
-  readonly project: EnvironmentProject | null;
-}): string | null {
+export function branchBadgeLabel(
+  input: {
+    readonly branch: VcsRef;
+    readonly project: EnvironmentProject | null;
+  },
+  resolve: MessageResolver = m,
+): string | null {
   if (input.branch.current) {
-    return "current";
+    return resolve(msg("current", { $context: "branch badge, the checked-out branch" }));
   }
   if (input.branch.worktreePath && input.branch.worktreePath !== input.project?.workspaceRoot) {
-    return "worktree";
+    return resolve(msg("worktree", { $context: "branch badge, checked out in another worktree" }));
   }
   if (input.branch.isRemote) {
-    return "remote";
+    return resolve(msg("remote", { $context: "branch badge, a remote-tracking branch" }));
   }
   if (input.branch.isDefault) {
-    return "default";
+    return resolve(msg("default", { $context: "branch badge, the repository default branch" }));
   }
   return null;
 }
@@ -233,16 +239,20 @@ export function NewTaskFlowProvider(
   }>,
 ) {
   const projects = useProjects();
+  const messages = useMessages();
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
 
   const projectScopes = sortHomeProjectScopes({
-    scopes: buildHomeProjectScopes({
-      projects,
-      environmentId: null,
-      projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
-    }),
+    scopes: buildHomeProjectScopes(
+      {
+        projects,
+        environmentId: null,
+        projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
+      },
+      messages,
+    ),
     threads,
     pendingTasks: [],
     projectSortOrder: "updated_at",
@@ -661,12 +671,11 @@ export function NewTaskFlowProvider(
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not switch machine",
-        error instanceof Error
-          ? error.message
-          : triage?._tag === "Failure"
-            ? "The server could not prepare triage."
-            : "The folder for threads without a project could not be created.",
+        m(msg("Could not switch machine")),
+        errorDisplayMessage(error, m) ??
+          (triage?._tag === "Failure"
+            ? m(msg("The server could not prepare triage."))
+            : m(msg("The folder for threads without a project could not be created."))),
       );
     }
     return false;

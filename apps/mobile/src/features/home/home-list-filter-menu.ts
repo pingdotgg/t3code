@@ -2,7 +2,10 @@ import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
+import { msg } from "gt-react-native";
+
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
+import { m, type MessageResolver } from "../../i18n/messages";
 import type { WorkspaceEnvironment } from "../../state/workspaceModel";
 
 /** Same choices and labels as the web sidebar's "Sort threads" picker. */
@@ -10,8 +13,8 @@ export const THREAD_SORT_OPTIONS: ReadonlyArray<{
   readonly value: SidebarThreadSortOrder;
   readonly label: string;
 }> = [
-  { value: "created_at", label: "Manual" },
-  { value: "updated_at", label: "Last updated" },
+  { value: "created_at", label: msg("Manual", { $context: "thread sort order" }) },
+  { value: "updated_at", label: msg("Last updated", { $context: "thread sort order" }) },
 ];
 
 export interface HomeListFilterMenuEnvironment {
@@ -37,25 +40,28 @@ export interface HomeListFilterMenuProject {
   readonly label: string;
 }
 
-export function buildHomeListFilterMenuItems(props: {
-  readonly environments: ReadonlyArray<HomeListFilterMenuEnvironment>;
-  readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
-  readonly selectedEnvironmentId: EnvironmentId | null;
-  readonly selectedProjectKey: string | null;
-  readonly threadSortOrder: SidebarThreadSortOrder;
-  readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
-  readonly onProjectChange: (projectKey: string | null) => void;
-  readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
-}): AppBarMenuItem[] {
+export function buildHomeListFilterMenuItems(
+  props: {
+    readonly environments: ReadonlyArray<HomeListFilterMenuEnvironment>;
+    readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
+    readonly selectedEnvironmentId: EnvironmentId | null;
+    readonly selectedProjectKey: string | null;
+    readonly threadSortOrder: SidebarThreadSortOrder;
+    readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
+    readonly onProjectChange: (projectKey: string | null) => void;
+    readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
+  },
+  resolve: MessageResolver = m,
+): AppBarMenuItem[] {
   const items: AppBarMenuItem[] = [
     {
       id: "environment",
-      title: "Environment",
+      title: resolve(msg("Environment", { $context: "filter menu heading" })),
       items: [
         {
           id: "environment:all",
-          title: "All environments",
-          subtitle: "Show threads from every environment",
+          title: resolve(msg("All environments")),
+          subtitle: resolve(msg("Show threads from every environment")),
           selected: props.selectedEnvironmentId === null,
           onPress: () => props.onEnvironmentChange(null),
         },
@@ -72,12 +78,12 @@ export function buildHomeListFilterMenuItems(props: {
   if (props.projects.length > 0) {
     items.push({
       id: "project",
-      title: "Project",
+      title: resolve(msg("Project", { $context: "filter menu heading" })),
       items: [
         {
           id: "project:all",
-          title: "All projects",
-          subtitle: "Show threads from every project",
+          title: resolve(msg("All projects")),
+          subtitle: resolve(msg("Show threads from every project")),
           selected: props.selectedProjectKey === null,
           onPress: () => props.onProjectChange(null),
         },
@@ -93,10 +99,10 @@ export function buildHomeListFilterMenuItems(props: {
 
   items.push({
     id: "thread-sort",
-    title: "Sort threads",
+    title: resolve(msg("Sort threads")),
     items: THREAD_SORT_OPTIONS.map((option) => ({
       id: `thread-sort:${option.value}`,
-      title: option.label,
+      title: resolve(option.label),
       selected: props.threadSortOrder === option.value,
       onPress: () => props.onThreadSortOrderChange(option.value),
     })),

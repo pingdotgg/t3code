@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import { CompletionAudioMode, readStoredCompletionAudio } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
   EnvironmentId as EnvironmentIdSchema,
   ModelSelection as ModelSelectionSchema,
@@ -1196,7 +1198,8 @@ export async function archiveCloudComposerDrafts(
   knownEnvironmentIds: Iterable<EnvironmentId>,
 ): Promise<void> {
   await waitForComposerDraftsLoaded();
-  if (!(await threadOutboxManager.load())) throw new Error("Could not preserve queued messages.");
+  if (!(await threadOutboxManager.load()))
+    throw new Error(m(msg("Could not preserve queued messages.")));
   await flushThreadOutbox();
   const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
   const owner = accountId ?? cloud.accountId;
@@ -1326,7 +1329,8 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
   const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
   const saved = cloud.signedOut[accountId];
   if (saved) {
-    if (!(await threadOutboxManager.load())) throw new Error("Could not restore queued messages.");
+    if (!(await threadOutboxManager.load()))
+      throw new Error(m(msg("Could not restore queued messages.")));
     for (const message of saved.queuedMessages) {
       const alreadyQueued = Object.values(
         appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
@@ -2092,13 +2096,15 @@ export function retargetNewTaskDraft(
   });
 }
 
-/** Retargets a saved draft once drafts load; an absent one is not created. */
+/** Retargets a saved draft after loading. Returns false if absent or cancelled before the write. */
 export async function retargetSavedNewTaskDraft(
   draftKey: string,
   project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+  signal?: AbortSignal,
 ): Promise<boolean> {
   await waitForComposerDraftsLoaded();
-  if (appAtomRegistry.get(composerDraftsAtom)[draftKey] === undefined) return false;
+  if (signal?.aborted || appAtomRegistry.get(composerDraftsAtom)[draftKey] === undefined)
+    return false;
   retargetNewTaskDraft(draftKey, project);
   return true;
 }

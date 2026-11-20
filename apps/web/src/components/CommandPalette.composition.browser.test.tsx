@@ -5,8 +5,17 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
+import { RealtimeVoiceProvider } from "./voice/RealtimeVoiceProvider";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
+
+function renderPalette() {
+  return render(
+    <RealtimeVoiceProvider returnToOwner={() => undefined}>
+      <CommandPalette>{null}</CommandPalette>
+    </RealtimeVoiceProvider>,
+  );
+}
 
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
@@ -137,7 +146,7 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
     { isComposing: false, keyCode: 229 },
   ])("keeps Enter in the input during composition: %j", async (composition) => {
     setup();
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await using _screen = await renderPalette();
     await act(() => openCommandPalette({ open: "add-project" }));
     await page.getByText(step === "folder" ? "Local folder" : "Git URL", { exact: true }).click();
     const input = () => page.getByRole("combobox");
@@ -194,7 +203,7 @@ it.each([
   "tells screen readers how to submit the $step step",
   async ({ source, keys, deniedScope, description }) => {
     setup(deniedScope);
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await using _screen = await renderPalette();
     await act(() => openCommandPalette({ open: "add-project" }));
     await page.getByText(source, { exact: true }).click();
     if (keys) await userEvent.keyboard(keys);
@@ -204,7 +213,7 @@ it.each([
 
 it("keeps the caret in place when an edit briefly makes the folder path not a path", async () => {
   setup();
-  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await using _screen = await renderPalette();
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText("Local folder", { exact: true }).click();
   const input = () => page.getByRole("combobox");
@@ -221,7 +230,7 @@ it.each([
   { flow: "Git URL", value: "https://github.com/pingdotgg/t3code.git", submit: "Continue (Enter)" },
   { flow: "New project", value: "demo-tab-order", submit: /^Create \(/ },
 ])("moves focus from the $flow input to its enabled submit button on Tab", async (step) => {
-  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await using _screen = await renderPalette();
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText(step.flow, { exact: true }).click();
   const input = page.getByRole("combobox");
@@ -234,7 +243,7 @@ it.each([
 
 it("tells screen readers whether a new project will be published", async () => {
   setup(undefined, githubAvailable);
-  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await using _screen = await renderPalette();
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText("New project", { exact: true }).click();
   await page.getByRole("combobox").fill("demo-project");

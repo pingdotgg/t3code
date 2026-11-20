@@ -5,13 +5,17 @@ import {
   ThreadId,
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   type PullRequestCapabilities,
-  type PullRequestChecks,
   type PullRequestDetail,
   type PullRequestListEntry,
   PullRequestOperationError,
   type PullRequestListResult,
   PullRequestUnavailableError,
   type OrchestrationProjectShell,
+  type PullRequestActionInput,
+  type PullRequestDiffResult,
+  type PullRequestSubmitReviewInput,
+  type PullRequestActivity,
+  type PullRequestListInput,
   type PullRequestRef,
   type PullRequestReviewGuideResult,
   type ThreadPullRequestLink,
@@ -20,6 +24,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -27,6 +32,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
 
+import * as GitManager from "../../../git/GitManager.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import {
   type PullRequestTestThread,
@@ -156,17 +162,8 @@ interface HarnessOptions {
     PullRequestReviewGuideResult & { started: boolean },
     PullRequestOperationError
   >;
-  readonly service?: {
-    readonly list?: (
-      input: Parameters<PullRequestService.PullRequestService["Service"]["list"]>[0],
-    ) => Effect.Effect<PullRequestListResult, PullRequestService.PullRequestError>;
-    readonly detail?: (
-      input: PullRequestRef,
-    ) => Effect.Effect<PullRequestDetail, PullRequestService.PullRequestError>;
-    readonly checks?: (
-      input: PullRequestRef,
-    ) => Effect.Effect<PullRequestChecks | null, PullRequestService.PullRequestError>;
-  };
+  readonly pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
+  readonly git?: Partial<GitManager.GitManager["Service"]>;
 }
 
 const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
@@ -326,21 +323,25 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
         ),
     }),
     Layer.mock(PullRequestService.PullRequestService)({
+      ...options.pullRequests,
       list: (input) =>
         Ref.update(serviceCalls, (seen) => [...seen, `list`]).pipe(
-          Effect.andThen(options.service?.list?.(input) ?? Effect.succeed(EMPTY_PULL_REQUEST_LIST)),
+          Effect.andThen(
+            options.pullRequests?.list?.(input) ?? Effect.succeed(EMPTY_PULL_REQUEST_LIST),
+          ),
         ),
       detail: (input) =>
         Ref.update(serviceCalls, (seen) => [...seen, `detail`]).pipe(
           Effect.andThen(
-            options.service?.detail?.(input) ?? Effect.succeed(makePullRequestDetail()),
+            options.pullRequests?.detail?.(input) ?? Effect.succeed(makePullRequestDetail()),
           ),
         ),
       checks: (input) =>
         Ref.update(serviceCalls, (seen) => [...seen, `checks`]).pipe(
-          Effect.andThen(options.service?.checks?.(input) ?? Effect.succeed(null)),
+          Effect.andThen(options.pullRequests?.checks?.(input) ?? Effect.succeed(null)),
         ),
     }),
+    Layer.mock(GitManager.GitManager)(options.git ?? {}),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
     McpToolAccessTestkit.liveThreadsLayer,
   );
@@ -936,7 +937,7 @@ describe("pull request observation tools", () => {
     Effect.gen(function* () {
       const batch = Array.from({ length: 30 }, (_, index) => makeListEntry(index + 1));
       const harness = yield* makeHarness({
-        service: {
+        pullRequests: {
           // The service applies `limit` per repository read, so two repositories yield 60 rows.
           list: () =>
             Effect.succeed({
@@ -962,7 +963,7 @@ describe("pull request observation tools", () => {
         message: "The host could not be read.",
       }));
       const harness = yield* makeHarness({
-        service: {
+        pullRequests: {
           list: () => Effect.succeed({ ...EMPTY_PULL_REQUEST_LIST, errors }),
         },
       });
@@ -977,7 +978,7 @@ describe("pull request observation tools", () => {
     () =>
       Effect.gen(function* () {
         const harness = yield* makeHarness({
-          service: {
+          pullRequests: {
             checks: () =>
               Effect.succeed({
                 observedAt: 2000,
@@ -1023,7 +1024,7 @@ describe("pull request observation tools", () => {
   it.effect("keeps a failed checks read visible instead of equating it with no checks", () =>
     Effect.gen(function* () {
       const failing = yield* makeHarness({
-        service: {
+        pullRequests: {
           checks: () =>
             Effect.fail(
               new PullRequestOperationError({
@@ -1039,7 +1040,7 @@ describe("pull request observation tools", () => {
         "Pull request operation getChangeRequestChecks failed: The host rate-limited the checks read.",
       );
 
-      const clean = yield* makeHarness({ service: { checks: () => Effect.succeed(null) } });
+      const clean = yield* makeHarness({ pullRequests: { checks: () => Effect.succeed(null) } });
       const none = yield* clean.call("t3_pull_request_read", READ_TARGET);
       expect(none.checks).toBeNull();
       expect(none.checksError).toBeNull();
@@ -1066,7 +1067,10 @@ describe("pull request observation tools", () => {
         }),
         id: ProjectId.make("project-gitlab"),
       };
-      const gitlabHarness = yield* makeHarness({ project: gitlab, service: { detail: capture } });
+      const gitlabHarness = yield* makeHarness({
+        project: gitlab,
+        pullRequests: { detail: capture },
+      });
       yield* gitlabHarness.call("t3_pull_request_read", {
         projectId: gitlab.id,
         repository: "group/sub/project",
@@ -1092,7 +1096,7 @@ describe("pull request observation tools", () => {
         }),
         id: ProjectId.make("project-gitcafe"),
       };
-      const cafeHarness = yield* makeHarness({ project: cafe, service: { detail: capture } });
+      const cafeHarness = yield* makeHarness({ project: cafe, pullRequests: { detail: capture } });
       yield* cafeHarness.call("t3_pull_request_read", {
         projectId: cafe.id,
         host: "git.cafe",
@@ -1112,7 +1116,7 @@ describe("pull request observation tools", () => {
     Effect.gen(function* () {
       let read = 0;
       const harness = yield* makeHarness({
-        service: {
+        pullRequests: {
           detail: () => {
             read += 1;
             return Effect.succeed(
@@ -1133,7 +1137,7 @@ describe("pull request observation tools", () => {
   it.effect("lists pull requests for a read-only client", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
-        service: {
+        pullRequests: {
           list: () =>
             Effect.succeed({
               ...EMPTY_PULL_REQUEST_LIST,
@@ -1203,7 +1207,7 @@ describe("pull request observation tools", () => {
   it.effect("keeps unsupported hosts and null checks visible", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
-        service: {
+        pullRequests: {
           detail: () =>
             Effect.fail(
               new PullRequestUnavailableError({
@@ -1217,7 +1221,7 @@ describe("pull request observation tools", () => {
       expect(error.message).toBe("Install the GitHub CLI and sign in.");
 
       const unlisted = yield* makeHarness({
-        service: {
+        pullRequests: {
           list: () =>
             Effect.succeed({
               ...EMPTY_PULL_REQUEST_LIST,
@@ -1258,7 +1262,7 @@ describe("pull request observation tools", () => {
         },
       ]);
 
-      const noChecks = yield* makeHarness({ service: { checks: () => Effect.succeed(null) } });
+      const noChecks = yield* makeHarness({ pullRequests: { checks: () => Effect.succeed(null) } });
       expect((yield* noChecks.call("t3_pull_request_read", READ_TARGET)).checks).toBeNull();
     }),
   );
@@ -1272,7 +1276,7 @@ describe("pull request observation tools", () => {
         url: null,
       }));
       const harness = yield* makeHarness({
-        service: {
+        pullRequests: {
           detail: () => Effect.succeed(makePullRequestDetail({ body: "x".repeat(5000) })),
           checks: () => Effect.succeed({ observedAt: 2000, state: "open", checks: longChecks }),
         },
@@ -1290,7 +1294,7 @@ describe("pull request observation tools", () => {
     Effect.gen(function* () {
       let receivedLimit: number | undefined;
       const harness = yield* makeHarness({
-        service: {
+        pullRequests: {
           list: (input) => {
             receivedLimit = input.limit;
             return Effect.succeed({ ...EMPTY_PULL_REQUEST_LIST, truncated: true });
@@ -1323,7 +1327,7 @@ describe("pull request observation tools", () => {
     Effect.gen(function* () {
       const secret = "INTERNAL token=super-secret url=https://user:token@host.test";
       const harness = yield* makeHarness({
-        service: {
+        pullRequests: {
           detail: () =>
             Effect.fail(
               new PullRequestOperationError({
@@ -1344,6 +1348,516 @@ describe("pull request observation tools", () => {
         "Pull request operation getChangeRequest failed: The host refused the read.",
       );
       expect(JSON.stringify(error)).not.toContain("super-secret");
+    }),
+  );
+});
+
+describe("source control tools", () => {
+  const branchThread = {
+    ...makeThread([]),
+    worktreePath: "/workspace/worktree",
+    branchPullRequest: {
+      projectId: PROJECT_ID,
+      repository: "t3tools/t3code",
+      number: 42,
+      url: "https://github.com/t3tools/t3code/pull/42",
+    },
+  };
+  const detail = {
+    title: "Add tools",
+    body: "Adds tools.",
+    state: "open",
+    isDraft: false,
+    author: null,
+    headBranch: "tools",
+    baseBranch: "main",
+    headSha: "abc123",
+    mergeability: "mergeable",
+    additions: 1,
+    deletions: 0,
+    changedFiles: 1,
+    labels: [],
+    reviewers: [],
+    checks: [{ name: "CI", status: "success", description: null, url: null }],
+  } as unknown as PullRequestDetail;
+  const reviewThread = (id: string, isResolved: boolean) => ({
+    id,
+    path: "a.ts",
+    line: 1,
+    side: "right" as const,
+    isResolved,
+    isOutdated: false,
+    comments: [],
+  });
+  const activity: PullRequestActivity = {
+    comments: [],
+    commentCount: 0,
+    commentsTruncated: false,
+    reviewThreads: [reviewThread("open-thread", false), reviewThread("done-thread", true)],
+    commits: [],
+  };
+
+  it.effect("reads the thread's branch PR, only the sections asked, without resolved threads", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.succeed(activity),
+        },
+      });
+      const result = yield* harness.call("pull_request_read", {
+        sections: ["summary", "conversation"],
+      });
+      expect(asked).toEqual([
+        {
+          projectId: PROJECT_ID,
+          host: "github.com",
+          repository: "t3tools/t3code",
+          number: 42,
+          allowStale: false,
+        },
+      ]);
+      expect(result.summary?.headSha).toBe("abc123");
+      expect(result.checks).toBeUndefined();
+      expect(result.conversation?.reviewThreads.map((thread) => thread.id)).toEqual([
+        "open-thread",
+      ]);
+      expect(result.conversation?.hiddenResolvedThreads).toBe(1);
+    }),
+  );
+
+  it.effect("pages a long conversation and the PR list through the cursors they return", () =>
+    Effect.gen(function* () {
+      const comment = (body: string) =>
+        ({ id: body.slice(0, 8), author: null, body, createdAt: "2026-11-01T00:00:00Z" }) as never;
+      const long = (id: string) => ({
+        ...reviewThread(id, false),
+        comments: [comment("x".repeat(20_000))],
+      });
+      const listed: Array<PullRequestListInput> = [];
+      let firstResolved = false;
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          activity: () =>
+            Effect.sync(() => ({
+              ...activity,
+              reviewThreads: [
+                {
+                  ...long("first"),
+                  isResolved: firstResolved,
+                  nextCommentsCursor: "later",
+                },
+                long("second"),
+                reviewThread("done-thread", true),
+              ],
+            })),
+          threadComments: (input) =>
+            Effect.succeed(
+              input.cursor === "later"
+                ? { comments: [comment("reply")], nextCursor: null }
+                : { comments: [], nextCursor: null },
+            ),
+          list: (input) =>
+            Effect.sync(() => listed.push(input)).pipe(
+              Effect.as({
+                viewers: {},
+                providers: [],
+                entries: [],
+                errors: [],
+                truncated: input.cursors === undefined,
+                nextCursors: input.cursors === undefined ? { "t3tools/t3code": "page-2" } : {},
+              }),
+            ),
+        },
+      });
+      const first = yield* harness.call("pull_request_read", { sections: ["conversation"] });
+      expect(first.conversation?.reviewThreads).toMatchObject([
+        { id: "first", moreComments: false, comments: [{}, { body: "reply" }] },
+      ]);
+      const cursor = first.conversation?.nextCursor;
+      expect(cursor).toEqual(expect.any(String));
+      // The agent resolves what it read; the next page still starts at the next thread.
+      firstResolved = true;
+      const second = yield* harness.call("pull_request_read", { cursor: cursor! });
+      expect(second.summary).toBeUndefined();
+      expect(second.conversation?.reviewThreads.map((thread) => thread.id)).toEqual(["second"]);
+      expect(second.conversation?.nextCursor).toBeNull();
+      // A cursor past the current end finishes instead of repeating an empty page.
+      const stale = Base64Url.encode(
+        JSON.stringify({ threads: 99, comments: 99, includeResolved: false }),
+      );
+      const past = yield* harness.call("pull_request_read", { cursor: stale });
+      expect(past.conversation).toMatchObject({ reviewThreads: [], nextCursor: null });
+
+      const page = yield* harness.call("pull_request_list", {});
+      yield* harness.call("pull_request_list", { cursor: page.nextCursor! });
+      expect(listed.map((input) => input.cursors)).toEqual([
+        undefined,
+        { "t3tools/t3code": "page-2" },
+      ]);
+      const invalid = yield* harness
+        .call("pull_request_read", { cursor: "not-a-cursor" })
+        .pipe(Effect.flip);
+      expect(invalid._tag).toBe("PullRequestCursorInvalidError");
+    }),
+  );
+
+  it.effect("asks for a number when the thread's branch has no PR", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const error = yield* harness.call("pull_request_read", {}).pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestBranchHasNoneError");
+    }),
+  );
+
+  it.effect("reads the PR this thread opened before status sync reports it", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const opened = (headBranch: string) =>
+        makeHarness({
+          thread: { ...makeThread([makeLink(43, { source: "created" })]), branch: "tools" },
+          pullRequests: {
+            summary: () => Effect.succeed({ state: "open", headBranch } as never),
+            detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          },
+        });
+      const harness = yield* opened("tools");
+      yield* harness.call("pull_request_read", { sections: ["summary"] });
+      expect(asked).toMatchObject([{ number: 43 }]);
+
+      // Before sync, the host says which branch it came from; another branch's is not this one.
+      const moved = yield* opened("old");
+      const unsynced = yield* moved.call("pull_request_read", {}).pipe(Effect.flip);
+      expect(unsynced._tag).toBe("PullRequestBranchHasNoneError");
+
+      // After a switch to another branch, the PR opened from the old one is not the branch's.
+      const switched = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(43, { source: "created", headBranch: "old" })]),
+          branch: "new",
+        },
+      });
+      const error = yield* switched
+        .call("pull_request_update", { title: "New title" })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestBranchHasNoneError");
+    }),
+  );
+
+  it.effect("merges pinned to the head the agent checked", () =>
+    Effect.gen(function* () {
+      const actions: Array<PullRequestActionInput> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          runAction: (input) => Effect.sync(() => void actions.push(input)),
+          summary: () => Effect.succeed({ state: "open" } as never),
+        },
+      });
+      const result = yield* harness.call("pull_request_merge", {
+        expectedHeadSha: "abc123",
+        method: "squash",
+        auto: true,
+      });
+      expect(result).toMatchObject({ number: 42, state: "open" });
+      expect(actions).toMatchObject([
+        {
+          number: 42,
+          action: "enable-auto-merge",
+          expectedHeadSha: "abc123",
+          mergeMethod: "squash",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("a stack merge pins every open layer up to the PR", () =>
+    Effect.gen(function* () {
+      const actions: Array<PullRequestActionInput> = [];
+      let lowerHead: string | undefined = "bbb";
+      const layer = (number: number, state: "open" | "merged", headSha: string | undefined) => ({
+        number,
+        state,
+        ...(headSha === undefined ? {} : { headSha }),
+        headBranch: `layer-${number}`,
+      });
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          stack: (_input, options) =>
+            options?.bypassCache !== true
+              ? Effect.die("a merge must not pin heads from the cache")
+              : Effect.succeed({
+                  id: "stack-1",
+                  number: 7,
+                  url: "https://github.com/acme/app/stacks/7",
+                  base: "main",
+                  layers: [
+                    layer(40, "merged", "aaa"),
+                    layer(41, "open", lowerHead),
+                    layer(42, "open", "stale"),
+                    layer(43, "open", "ddd"),
+                  ],
+                }),
+          runAction: (input) => Effect.sync(() => void actions.push(input)),
+          summary: () => Effect.succeed({ state: "merged" } as never),
+        },
+      });
+      yield* harness.call("pull_request_merge", { expectedHeadSha: "ccc", stack: true });
+      expect(actions).toMatchObject([
+        {
+          number: 42,
+          action: "merge",
+          stackNumber: 7,
+          expectedStackHeads: [
+            { number: 41, headSha: "bbb" },
+            { number: 42, headSha: "ccc" },
+          ],
+        },
+      ]);
+      lowerHead = undefined;
+      const unpinned = yield* harness
+        .call("pull_request_merge", { expectedHeadSha: "ccc", stack: true })
+        .pipe(Effect.flip);
+      expect(unpinned._tag).toBe("PullRequestForgeError");
+      expect(actions).toHaveLength(1);
+    }),
+  );
+
+  it.effect("re-running checks reopens a watch that saw its checks finish", () =>
+    Effect.gen(function* () {
+      const watch = {
+        startedAt: "2026-08-20T00:00:00.000Z",
+        headSha: "abc123",
+        failedChecks: ["test"],
+        passed: false,
+        passedChecks: [],
+        remarksThrough: "2026-08-20T00:00:00.000Z",
+        remarkIds: [],
+        conflicting: false,
+        wakes: 0,
+      };
+      const rerun = (checksPending: boolean | undefined, reran: boolean) =>
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({
+            thread: {
+              ...branchThread,
+              pullRequests: [
+                makeLink(42, {
+                  watch: checksPending === undefined ? watch : { ...watch, checksPending },
+                }),
+              ],
+            },
+            pullRequests: {
+              rerunChecks: () => Effect.succeed([{ name: "test", rerun: reran, detail: null }]),
+            },
+          });
+          yield* harness.call("ci_rerun", {});
+          return yield* Ref.get(harness.commands);
+        });
+      expect(yield* rerun(false, true)).toMatchObject([
+        { type: "thread.pull-request-watch.checks-reopen", threadId: THREAD_ID },
+      ]);
+      // Nothing re-ran, or the watch has no answer to clear.
+      expect(yield* rerun(false, false)).toEqual([]);
+      expect(yield* rerun(undefined, true)).toEqual([]);
+    }),
+  );
+
+  it.effect("opens a PR from the thread's worktree and links it even if dismissed", () =>
+    Effect.gen(function* () {
+      const opened: Array<{ readonly cwd: string; readonly draft: boolean | undefined }> = [];
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(43, { source: "stack-dismissed" })]),
+          worktreePath: "/workspace/worktree",
+        },
+        git: {
+          createPullRequest: (input) =>
+            Effect.sync(() => opened.push({ cwd: input.cwd, draft: input.draft })).pipe(
+              Effect.as({
+                status: "created" as const,
+                url: "https://github.com/t3tools/t3code/pull/43",
+                number: 43,
+                baseBranch: "main",
+                headBranch: "tools",
+                title: input.title,
+              }),
+            ),
+        },
+      });
+      const result = yield* harness.call("pull_request_create", {
+        title: "Add tools",
+        body: "Adds tools.",
+        draft: true,
+      });
+      expect(result).toMatchObject({ number: 43, created: true });
+      expect(opened).toEqual([{ cwd: "/workspace/worktree", draft: true }]);
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", number: 43, source: "created" },
+      ]);
+    }),
+  );
+
+  it.effect("replies to and resolves a review thread, and refuses resolving without one", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          replyToThread: (input) => Effect.sync(() => calls.push(`reply ${input.threadId}`)),
+          setThreadResolution: (input) =>
+            input.threadId === "locked-thread"
+              ? Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "setThreadResolution",
+                    detail: "Locked.",
+                  }),
+                )
+              : Effect.sync(() => void calls.push(`resolve ${input.threadId} ${input.resolved}`)),
+        },
+      });
+      const result = yield* harness.call("pull_request_respond", {
+        reviewThreadId: "open-thread",
+        body: "Fixed.",
+        resolved: true,
+      });
+      expect(result).toMatchObject({ replied: true, resolved: true });
+      expect(calls).toEqual(["reply open-thread", "resolve open-thread true"]);
+      const partial = yield* harness
+        .call("pull_request_respond", {
+          reviewThreadId: "locked-thread",
+          body: "Fixed.",
+          resolved: true,
+        })
+        .pipe(Effect.flip);
+      expect(partial.message).toContain("The reply was posted");
+      const error = yield* harness
+        .call("pull_request_respond", { body: "Done", resolved: true })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestNothingToDoError");
+    }),
+  );
+
+  it.effect("places review comments by the diff page that shows their line", () =>
+    Effect.gen(function* () {
+      const reviews: Array<PullRequestSubmitReviewInput> = [];
+      const pages: Record<string, PullRequestDiffResult> = {
+        first: {
+          patch:
+            "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,2 @@\n-old\n+new\n same\n",
+          truncated: false,
+          nextCursor: "second",
+        },
+        second: {
+          patch:
+            "diff --git a/b.ts b/b.ts\n--- a/b.ts\n+++ b/b.ts\n@@ -9,1 +9,2 @@\n kept\n+added\n",
+          truncated: false,
+          nextCursor: null,
+        },
+      };
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          diff: (input) => Effect.succeed(pages[input.cursor ?? "first"]!),
+          submitReview: (input) => Effect.sync(() => void reviews.push(input)),
+        },
+      });
+      yield* harness.call("pull_request_review", {
+        verdict: "request-changes",
+        body: "Two things.",
+        comments: [
+          { path: "b.ts", line: 10, startLine: 9, body: "Why?" },
+          { path: "a.ts", line: 1, side: "old", body: "Keep this." },
+        ],
+      });
+      expect(reviews).toMatchObject([
+        {
+          number: 42,
+          verdict: "request-changes",
+          body: "Two things.",
+          comments: [
+            {
+              path: "b.ts",
+              position: { kind: "added", newLine: 10 },
+              startPosition: { kind: "context", oldLine: 9, newLine: 9, side: "right" },
+            },
+            { path: "a.ts", position: { kind: "deleted", oldLine: 1 } },
+          ],
+        },
+      ]);
+
+      // A line the diff never shows fails before anything is posted.
+      const error = yield* harness
+        .call("pull_request_review", {
+          verdict: "comment",
+          comments: [{ path: "a.ts", line: 40, body: "Here?" }],
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("a.ts line 40 (new side) is not in this PR's diff");
+      expect(reviews).toHaveLength(1);
+    }),
+  );
+
+  it.effect("updates labels, requests reviewers by login, and closes the PR", () =>
+    Effect.gen(function* () {
+      const calls: Array<unknown> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          setLabels: (input) =>
+            Effect.sync(() => void calls.push(["labels", input.labels, input.applied])),
+          reviewerCandidates: (input) =>
+            Effect.succeed({
+              candidates: [
+                {
+                  id: "MDQ6VXNlcjE=",
+                  kind: "user",
+                  login: input.query === "Octo" ? "octo" : "x",
+                  name: null,
+                  avatarUrl: null,
+                  isRequested: false,
+                },
+                {
+                  id: "core",
+                  kind: "team",
+                  login: "acme/core",
+                  name: null,
+                  avatarUrl: null,
+                  isRequested: false,
+                },
+              ],
+            } as never),
+          requestReviewers: (input) =>
+            Effect.sync(() => void calls.push(["reviewers", input.reviewers])),
+          runAction: (input) => Effect.sync(() => void calls.push(["action", input.action])),
+        },
+      });
+      yield* harness.call("pull_request_update", {
+        addLabels: ["bug"],
+        removeLabels: ["wip"],
+        requestReviewers: ["Octo", "acme/core"],
+        state: "closed",
+      });
+      expect(calls).toEqual([
+        ["labels", ["bug"], true],
+        ["labels", ["wip"], false],
+        [
+          "reviewers",
+          [
+            { id: "MDQ6VXNlcjE=", kind: "user" },
+            { id: "core", kind: "team" },
+          ],
+        ],
+        ["action", "close"],
+      ]);
+      const unknown = yield* harness
+        .call("pull_request_update", { requestReviewers: ["nobody"] })
+        .pipe(Effect.flip);
+      expect(unknown.message).toContain("No reviewer named nobody");
     }),
   );
 });

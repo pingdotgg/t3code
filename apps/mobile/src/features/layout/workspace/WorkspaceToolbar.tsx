@@ -1,3 +1,4 @@
+import { msg, useGT, useMessages } from "gt-react-native";
 import { useActiveNewTask } from "../../../state/active-new-task";
 import { Toolbar } from "../../../components/ui/Toolbar";
 import { useFocusEffect, useIsFocused, useNavigationState } from "@react-navigation/native";
@@ -23,16 +24,18 @@ import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
 import { useWorkspaceCompose } from "./useWorkspaceCompose";
 
 const SEARCH_LABELS = {
-  threads: "Search threads",
-  pullRequests: "Search pull requests",
-  issues: "Search issues",
-  settings: "Search settings",
+  threads: msg("Search threads"),
+  pullRequests: msg("Search pull requests"),
+  issues: msg("Search issues"),
+  settings: msg("Search settings"),
 } as const;
 
 export function WorkspaceToolbar(props: {
   readonly onNewTask: () => void;
   readonly sidebar?: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const workspace = useWorkspaceTabs()!;
   const activeNewTask = useActiveNewTask();
   const deviceType = useDeviceType();
@@ -53,7 +56,7 @@ export function WorkspaceToolbar(props: {
   // The Settings list takes the selected tab's place, so search follows it.
   const selectedTab = workspace.settingsOpen ? "settings" : workspace.state.selectedTab;
   const tab = workspace.state.tabs[selectedTab];
-  const searchLabel = SEARCH_LABELS[selectedTab === "usage" ? "threads" : selectedTab];
+  const searchLabel = m(SEARCH_LABELS[selectedTab === "usage" ? "threads" : selectedTab]);
   const { isTabActive: isListTabActive } = workspace;
   // A retained tab slot stays mounted while another is shown.
   const isTabActive = (tab: typeof selectedTab) =>
@@ -135,7 +138,7 @@ export function WorkspaceToolbar(props: {
   const searchButton = foldedSearch ? (
     <Toolbar.Button
       identifier="workspace-search"
-      accessibilityLabel={searchVisible ? "Close search" : searchLabel}
+      accessibilityLabel={searchVisible ? gt("Close search") : searchLabel}
       icon={searchVisible ? "xmark" : "magnifyingglass"}
       onPress={searchVisible ? () => searchRef.current?.cancelSearch() : focusSearch}
       separateBackground

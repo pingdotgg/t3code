@@ -8,6 +8,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { Button } from "../ui/button";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import {
@@ -19,7 +20,7 @@ import {
 } from "../../threadNotifications";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow, SettingResetButton } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
   useUpdateScopedSettings,
@@ -32,6 +33,9 @@ export function NotificationSettings() {
     (environment) =>
       environment.serverConfig?.environment.capabilities.completionNotifications === true,
   );
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
+  const m = useMessages();
   const mode = useScopedSettings((settings) => settings.notificationMode);
   const updateSettings = useUpdateScopedSettings();
   const [permissionMessage, setPermissionMessage] = useState<string | null>(null);
@@ -43,8 +47,12 @@ export function NotificationSettings() {
       description={
         permissionMessage ??
         (hasCompletionControls
-          ? "Written system alerts and sounds for input, approval, failures and review guides on this device. Completion audio is controlled separately below; older hosts keep this device setting."
-          : "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open.")
+          ? gt(
+              "Written system alerts and sounds for input, approval, failures and review guides on this device. Completion audio is controlled separately below; older hosts keep this device setting.",
+            )
+          : gt(
+              "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open.",
+            ))
       }
       control={
         <Select
@@ -63,7 +71,9 @@ export function NotificationSettings() {
             if (hasDesktopNotifications(value)) {
               if (typeof Notification === "undefined" || !window.isSecureContext) {
                 setPermissionMessage(
-                  "Notifications need a supported browser over HTTPS, or the desktop app. Sound only is still available.",
+                  gt(
+                    "Notifications need a supported browser over HTTPS, or the desktop app. Sound only is still available.",
+                  ),
                 );
                 return;
               }
@@ -72,13 +82,17 @@ export function NotificationSettings() {
               setRequesting(false);
               if (permission._tag === "Failure") {
                 setPermissionMessage(
-                  "Notifications are unavailable in this browser. Sound only is still available.",
+                  gt(
+                    "Notifications are unavailable in this browser. Sound only is still available.",
+                  ),
                 );
                 return;
               }
               if (permission.value !== "granted") {
                 setPermissionMessage(
-                  "Allow notifications in your browser or system settings, then choose this option again. Sound only is still available.",
+                  gt(
+                    "Allow notifications in your browser or system settings, then choose this option again. Sound only is still available.",
+                  ),
                 );
                 return;
               }
@@ -86,13 +100,17 @@ export function NotificationSettings() {
             updateSettings({ notificationMode: value });
           }}
         >
-          <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Thread notifications">
-            <SelectValue>{NOTIFICATION_MODE_LABELS[mode]}</SelectValue>
+          <SelectTrigger
+            size="sm"
+            className="w-full sm:w-56"
+            aria-label={gt("Thread notifications")}
+          >
+            <SelectValue>{m(NOTIFICATION_MODE_LABELS[mode])}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {Object.entries(NOTIFICATION_MODE_LABELS).map(([value, label]) => (
               <SelectItem key={value} hideIndicator value={value}>
-                {label}
+                {m(label)}
               </SelectItem>
             ))}
           </SelectPopup>
@@ -108,6 +126,8 @@ const completionAudioPermissions = environmentAtomList(
 );
 
 export function CompletionAudioSettings() {
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
   const { scope, environments, connectedEnvironments } = useSettingsScope();
   const updateSettings = useUpdateScopedSettings();
   const canWrite = useScopedSettingsWriteAllowed();
@@ -165,14 +185,16 @@ export function CompletionAudioSettings() {
         mixed={mixedDefault}
         status={
           supported.length !== connectedEnvironments.length
-            ? "Update unsupported selected environments before changing defaults."
+            ? gt("Update unsupported selected environments before changing defaults.")
             : undefined
         }
-        description="Applies to future top-level threads; subagents and forks start Off. Voice uses provider hooks and cannot cancel speech already started. Sound plays on web and desktop."
+        description={gt(
+          "Applies to future top-level threads; subagents and forks start Off. Voice uses provider hooks and cannot cancel speech already started. Sound plays on web and desktop.",
+        )}
         resetAction={
           mixedDefault || settings.defaultMode !== "off" ? (
             <SettingResetButton
-              label="completion audio for new threads"
+              ariaLabel={gt("Reset completion audio for new threads to default")}
               disabled={settingsDisabled}
               onClick={() => updateSettings({ completionAudio: { defaultMode: "off" } })}
             />
@@ -187,21 +209,21 @@ export function CompletionAudioSettings() {
                 updateSettings({ completionAudio: { defaultMode } });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Completion audio for new threads">
+            <SelectTrigger size="sm" aria-label={gt("Completion audio for new threads")}>
               <SelectValue>
                 {mixedDefault
-                  ? "Mixed"
+                  ? gt("Mixed")
                   : settings.defaultMode === "voice"
-                    ? "Voice"
+                    ? gt("Voice")
                     : settings.defaultMode === "sound"
-                      ? "Sound"
-                      : "Off"}
+                      ? gt("Sound")
+                      : gt("Off")}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value="off">Off</SelectItem>
-              <SelectItem value="voice">Voice</SelectItem>
-              <SelectItem value="sound">Sound</SelectItem>
+              <SelectItem value="off">{gt("Off")}</SelectItem>
+              <SelectItem value="voice">{gt("Voice")}</SelectItem>
+              <SelectItem value="sound">{gt("Sound")}</SelectItem>
             </SelectPopup>
           </Select>
         }
@@ -213,7 +235,9 @@ export function CompletionAudioSettings() {
         mixed={mixedTone}
         description={
           previewError ??
-          "Bundled tone for threads set to Sound. Preview plays only on this device and does not change a preference."
+          gt(
+            "Bundled tone for threads set to Sound. Preview plays only on this device and does not change a preference.",
+          )
         }
         control={
           <div className="flex items-center gap-2">
@@ -225,14 +249,18 @@ export function CompletionAudioSettings() {
                   updateSettings({ completionAudio: { tone } });
               }}
             >
-              <SelectTrigger size="sm" aria-label="Completion sound">
+              <SelectTrigger size="sm" aria-label={gt("Completion sound")}>
                 <SelectValue>
-                  {mixedTone ? "Mixed" : settings.tone === "completion" ? "Chime" : "Alert"}
+                  {mixedTone
+                    ? gt("Mixed")
+                    : settings.tone === "completion"
+                      ? gt("Chime")
+                      : gt("Alert")}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="completion">Chime</SelectItem>
-                <SelectItem value="input">Alert</SelectItem>
+                <SelectItem value="completion">{gt("Chime")}</SelectItem>
+                <SelectItem value="input">{gt("Alert")}</SelectItem>
               </SelectPopup>
             </Select>
             <Button
@@ -247,29 +275,31 @@ export function CompletionAudioSettings() {
                     setPreviewing(false);
                     if (!played)
                       setPreviewError(
-                        "Couldn't play the preview. Click anywhere in the app, then try again.",
+                        gt("Couldn't play the preview. Click anywhere in the app, then try again."),
                       );
                   },
                   () => {
                     setPreviewing(false);
                     setPreviewError(
-                      "Couldn't play the preview. Click anywhere in the app, then try again.",
+                      gt("Couldn't play the preview. Click anywhere in the app, then try again."),
                     );
                   },
                 );
               }}
             >
-              {previewing ? "Playing…" : "Preview"}
+              {previewing ? gt("Playing…") : gt("Preview")}
             </Button>
           </div>
         }
       />
       <SettingsRow
-        title="Completion sound volume"
+        title={gt("Completion sound volume")}
         serverScoped
         settingKeys={["completionAudio"]}
         mixed={mixedVolume}
-        description="Applies to completion tones, not provider-owned voice. Saves when you release the slider or an arrow key."
+        description={gt(
+          "Applies to completion tones, not provider-owned voice. Saves when you release the slider or an arrow key.",
+        )}
         control={
           <div className="flex items-center gap-2">
             <input
@@ -278,7 +308,7 @@ export function CompletionAudioSettings() {
               max={100}
               value={volume}
               disabled={settingsDisabled}
-              aria-label="Completion sound volume"
+              aria-label={gt("Completion sound volume")}
               onChange={(event) =>
                 setDraftVolume({
                   scopeKey: volumeScopeKey,
@@ -290,7 +320,7 @@ export function CompletionAudioSettings() {
               onPointerCancel={() => setDraftVolume(null)}
             />
             <output className="text-xs tabular-nums">
-              {mixedVolume && editedVolume === null ? "Mixed" : `${volume}%`}
+              {mixedVolume && editedVolume === null ? gt("Mixed") : `${volume}%`}
             </output>
           </div>
         }
@@ -299,15 +329,16 @@ export function CompletionAudioSettings() {
         {...searchableSetting("completion-audio-bulk-off")}
         status={
           projectScope
-            ? "Choose an environment scope to turn off existing threads."
+            ? gt("Choose an environment scope to turn off existing threads.")
             : !canBulk
-              ? "This connection lacks permission to operate threads on selected environments."
+              ? gt("This connection lacks permission to operate threads on selected environments.")
               : undefined
         }
         description={
           <span>
-            Includes existing archived threads and subagents across all providers. Does not change
-            the default for future threads or guarantee immediate cancellation of external hooks.
+            {gt(
+              "Includes existing archived threads and subagents across all providers. Does not change the default for future threads or guarantee immediate cancellation of external hooks.",
+            )}
             {results.map((line) => (
               <span className="block" key={line}>
                 {line}
@@ -328,9 +359,10 @@ export function CompletionAudioSettings() {
                   (environment) =>
                     !supported.some((entry) => entry.environmentId === environment.environmentId),
                 )
-                .map(
-                  (environment) =>
-                    `${settingsScopeEnvironmentLabel(environment, environments)}: not changed (offline or unsupported).`,
+                .map((environment) =>
+                  gt("{environment}: not changed (offline or unsupported).", {
+                    environment: settingsScopeEnvironmentLabel(environment, environments),
+                  }),
                 );
               for (const environment of supported) {
                 const label = settingsScopeEnvironmentLabel(environment, environments);
@@ -340,7 +372,10 @@ export function CompletionAudioSettings() {
                 });
                 if (result._tag !== "Success") {
                   lines.push(
-                    `${label}: could not turn off existing threads. Retry after checking the connection and permissions.`,
+                    gt(
+                      "{environment}: could not turn off existing threads. Retry after checking the connection and permissions.",
+                      { environment: label },
+                    ),
                   );
                   continue;
                 }
@@ -348,15 +383,45 @@ export function CompletionAudioSettings() {
                 const superseded = report.failed.filter(
                   (failure) => failure.reason === "superseded",
                 ).length;
-                lines.push(
-                  `${label}: ${report.turnedOff} turned off, ${report.alreadyOff} already off${report.failedCount > 0 ? `, ${report.failedCount} failed or changed after the request` : ""}.${!report.complete ? " Incomplete." : ""}${superseded > 0 ? ` ${superseded} reported later choices were preserved.` : ""}${report.failuresTruncated ? ` Failure details were truncated to ${report.failed.length} of ${report.failedCount} targets.` : ""}`,
-                );
+                const counts = {
+                  environment: label,
+                  turnedOff: report.turnedOff,
+                  alreadyOff: report.alreadyOff,
+                };
+                const details = [
+                  report.failedCount > 0
+                    ? gt(
+                        "{environment}: {turnedOff} turned off, {alreadyOff} already off, {count} failed or changed after the request.",
+                        { ...counts, count: report.failedCount },
+                      )
+                    : gt(
+                        "{environment}: {turnedOff} turned off, {alreadyOff} already off.",
+                        counts,
+                      ),
+                ];
+                if (!report.complete) details.push(gt("Incomplete."));
+                if (superseded > 0) {
+                  details.push(
+                    gt("{count} reported later choices were preserved.", {
+                      count: superseded,
+                    }),
+                  );
+                }
+                if (report.failuresTruncated) {
+                  details.push(
+                    gt("Failure details were truncated to {shown} of {count} targets.", {
+                      shown: report.failed.length,
+                      count: report.failedCount,
+                    }),
+                  );
+                }
+                lines.push(details.join(" "));
               }
               setResults(lines);
               setPending(false);
             }}
           >
-            {pending ? "Turning off…" : "Turn off existing threads"}
+            {pending ? gt("Turning off…") : gt("Turn off existing threads")}
           </Button>
         }
       />

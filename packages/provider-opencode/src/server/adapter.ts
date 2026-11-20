@@ -30,6 +30,7 @@ import {
   type OrchestrationV2TurnItem,
   type PlanId,
   ProviderDriverKind,
+  ProviderSetupError,
   type ProviderInstanceId,
   type ProviderRequestKind,
   type ProviderSessionId,
@@ -54,6 +55,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { brokenVersionDetail } from "@t3tools/provider-core/server/compatibility";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -140,6 +142,7 @@ const OpenCodeProviderCapabilitiesV2 = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: true,
     supportsActiveSteering: true,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
@@ -1042,6 +1045,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: OPENCODE_PROVIDER,
+    checksVersionAtHandshake: true,
     getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
       return Effect.succeed(OpenCodeProviderCapabilitiesV2);
     }),
@@ -1064,6 +1068,18 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             input.runtimePolicy.voiceNotifications,
           ),
         });
+        const broken = brokenVersionDetail({
+          name: "OpenCode",
+          version: connection.version,
+          advisory: yield* host.compatibility(OPENCODE_PROVIDER, connection.version),
+        });
+        if (broken !== undefined) {
+          return yield* new ProviderSetupError({
+            instanceId: options.instanceId,
+            operation: "runtime",
+            detail: broken,
+          });
+        }
         const client = runtime.createOpenCodeSdkClient({
           baseUrl: connection.url,
           directory: cwd,
@@ -2646,6 +2662,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               updatedAt: now,
             },
           });
+          // The pre-compaction step would otherwise settle the turn as its newest usage.
+          turn.usage.lastStep = null;
+          if (state.providerThread.contextUsage !== null) {
+            yield* updateProviderThread(state, { contextUsage: null });
+          }
         });
 
         const handleMessageUpdated = Effect.fnUntraced(function* (

@@ -3,6 +3,7 @@ import {
   AuthSettingsWriteScope,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { View } from "react-native";
 
@@ -28,6 +29,8 @@ import {
 import { useSettingsWriter } from "./useSettingsWriter";
 
 export function CompletionAudioSettingsRows() {
+  const gt = useGT();
+  const m = useMessages();
   const { selectedTargets, selectedIds, selectedProjectKey } = useSettingsEnvironmentFilter();
   const { environments } = useEnvironments();
   const targets = selectedTargets.filter(
@@ -100,25 +103,29 @@ export function CompletionAudioSettingsRows() {
     );
   };
   return (
-    <SettingsSection title="Completion audio">
+    <SettingsSection title={gt("Completion audio")}>
       <Text className="px-4 py-3 text-sm text-foreground-muted">
-        Default for future top-level threads. Subagents and forks start Off. Sound plays on web and
-        desktop. Voice uses provider-owned hooks and may not stop speech already started.
-        {projectSelected ? " Choose an environment scope to edit these settings." : ""}
+        {gt("Default for future top-level threads. Subagents and forks start Off.")}{" "}
+        <T>
+          Sound plays on web and desktop. Voice uses provider-owned hooks and may not stop speech
+          already started.
+        </T>
+        {projectSelected ? ` ${gt("Choose an environment scope to edit these settings.")}` : ""}
         {!canWrite && !projectSelected
-          ? " Settings-write permission is required on every selected capable environment."
+          ? ` ${gt("Settings-write permission is required on every selected capable environment.")}`
           : ""}
       </Text>
       {skipped.length > 0 ? (
         <Text className="px-4 pb-3 text-sm text-foreground-muted">
-          Not changed: {skipped.map((environment) => environment.label).join(", ")} (offline or
-          unsupported).
+          {gt("Not changed: {environments} (offline or unsupported).", {
+            environments: skipped.map((environment) => environment.label).join(", "),
+          })}
         </Text>
       ) : null}
       {COMPLETION_AUDIO_CHOICES.map((choice, index) => (
         <ListChoiceRow
           key={choice.mode}
-          label={`New threads: ${choice.label}`}
+          label={gt("New threads: {mode}", { mode: m(choice.label) })}
           selected={defaultMode === choice.mode}
           disabled={disabled}
           separated={index > 0}
@@ -127,19 +134,19 @@ export function CompletionAudioSettingsRows() {
       ))}
       {defaultMode !== "off" ? (
         <ListActionRow
-          label="Reset new threads to Off"
+          label={gt("Reset new threads to Off")}
           disabled={disabled}
           onPress={() => patch({ defaultMode: "off" })}
         />
       ) : null}
       <ListChoiceRow
-        label="Sound: Chime"
+        label={gt("Sound: Chime")}
         selected={tone === "completion"}
         disabled={disabled}
         onPress={() => patch({ tone: "completion" })}
       />
       <ListChoiceRow
-        label="Sound: Alert"
+        label={gt("Sound: Alert")}
         selected={tone === "input"}
         disabled={disabled}
         separated
@@ -147,10 +154,10 @@ export function CompletionAudioSettingsRows() {
       />
       <View className="flex-row items-center justify-between gap-4 px-4 py-4 android:min-h-14 android:py-3">
         <Text className="flex-1 text-lg text-foreground android:text-base">
-          Volume{volume === null ? " (mixed)" : ""}
+          {volume === null ? gt("Volume (mixed)") : gt("Volume")}
         </Text>
         <NumberField
-          label="Completion sound volume"
+          label={gt("Completion sound volume")}
           min={0}
           max={100}
           value={Math.round((volume ?? audio.volume) * 100)}
@@ -160,11 +167,13 @@ export function CompletionAudioSettingsRows() {
         />
       </View>
       <ListActionRow
-        label="Turn off existing thread audio"
+        label={gt("Turn off existing thread audio")}
         description={
           operable.size === 0
-            ? "This connection cannot operate threads on selected environments. The future default is separate."
-            : "Includes archived threads and subagents. Does not change the future default."
+            ? gt(
+                "This connection cannot operate threads on selected environments. The future default is separate.",
+              )
+            : gt("Includes archived threads and subagents. Does not change the future default.")
         }
         loading={runningBulk}
         disabled={projectSelected || operable.size === 0}
@@ -175,7 +184,11 @@ export function CompletionAudioSettingsRows() {
           const lines: string[] = [];
           for (const environment of selected) {
             if (!targets.some((target) => target.environmentId === environment.environmentId)) {
-              lines.push(`${environment.label}: not changed (offline or unsupported).`);
+              lines.push(
+                gt("{environment}: not changed (offline or unsupported).", {
+                  environment: environment.label,
+                }),
+              );
               continue;
             }
             if (
@@ -183,7 +196,11 @@ export function CompletionAudioSettingsRows() {
                 serverEnvironment.bulkOffCompletionAudio.permissionAtom(environment.environmentId),
               )
             ) {
-              lines.push(`${environment.label}: not changed (permission denied).`);
+              lines.push(
+                gt("{environment}: not changed (permission denied).", {
+                  environment: environment.label,
+                }),
+              );
               continue;
             }
             const result = await bulkOff({
@@ -192,7 +209,12 @@ export function CompletionAudioSettingsRows() {
             });
             if (result._tag !== "Success") {
               lines.push(
-                `${environment.label}: could not turn off existing thread audio. Check the connection and permissions.`,
+                gt(
+                  "{environment}: could not turn off existing thread audio. Check the connection and permissions.",
+                  {
+                    environment: environment.label,
+                  },
+                ),
               );
               continue;
             }
@@ -200,15 +222,42 @@ export function CompletionAudioSettingsRows() {
             const superseded = report.failed.filter(
               (failure) => failure.reason === "superseded",
             ).length;
+            const counts = {
+              environment: environment.label,
+              turnedOff: report.turnedOff,
+              alreadyOff: report.alreadyOff,
+            };
             lines.push(
-              `${environment.label}: ${report.turnedOff} turned off, ${report.alreadyOff} already off${report.failedCount > 0 ? `, ${report.failedCount} failed or changed after the request` : ""}.${!report.complete ? " Incomplete." : ""}${superseded ? ` ${superseded} reported later choices were preserved.` : ""}${report.failuresTruncated ? ` Failure details were limited to ${report.failed.length} of ${report.failedCount} targets.` : ""}`,
+              [
+                report.failedCount > 0
+                  ? gt(
+                      "{environment}: {turnedOff} turned off, {alreadyOff} already off, {failedCount} failed or changed after the request.",
+                      {
+                        ...counts,
+                        failedCount: report.failedCount,
+                      },
+                    )
+                  : gt("{environment}: {turnedOff} turned off, {alreadyOff} already off.", counts),
+                !report.complete ? gt("Incomplete.") : null,
+                superseded
+                  ? gt("{count} reported later choices were preserved.", { count: superseded })
+                  : null,
+                report.failuresTruncated
+                  ? gt("Failure details were limited to {shown} of {total} targets.", {
+                      shown: report.failed.length,
+                      total: report.failedCount,
+                    })
+                  : null,
+              ]
+                .filter((line) => line !== null)
+                .join(" "),
             );
           }
           bulkInFlight.current = false;
           setRunningBulk(false);
           Dialog.alert(
-            "Existing thread completion audio",
-            lines.join("\n\n") || "No selected environments were changed.",
+            gt("Existing thread completion audio"),
+            lines.join("\n\n") || gt("No selected environments were changed."),
           );
         }}
       />

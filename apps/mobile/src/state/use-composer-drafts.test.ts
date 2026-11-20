@@ -2053,6 +2053,14 @@ describe("mobile composer drafts", () => {
     appAtomRegistry.set(composerDraftsAtom, {});
     resetComposerDraftsLoadState();
 
+    composerDraftFileMocks.blockRead();
+    const controller = new AbortController();
+    const cancelled = retargetSavedNewTaskDraft(key, to, controller.signal);
+    controller.abort();
+    composerDraftFileMocks.releaseRead();
+    await expect(cancelled).resolves.toBe(false);
+    expect(getComposerDraftSnapshot(key).project).toMatchObject(from);
+
     await expect(retargetSavedNewTaskDraft(key, to)).resolves.toBe(true);
     expect(getComposerDraftSnapshot(key)).toMatchObject({
       text: "kept through a cold start",

@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type AssetUrlState as RuntimeAssetUrlState,
@@ -41,7 +42,10 @@ export function useAssetUrlState(
   resource: AssetResource | null,
   revision?: string | null,
 ): AssetUrlState {
-  const blocked = blockedAssetUrlState(resource, useFilesystemReadAccess(environmentId));
+  const blocked = blockedAssetUrlState(
+    resource,
+    useFilesystemReadAccess(environmentId, useMessages()),
+  );
   const preparedConnection = usePreparedConnection(environmentId);
   const refresh = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
