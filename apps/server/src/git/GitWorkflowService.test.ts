@@ -474,6 +474,9 @@ describe("GitWorkflowService", () => {
       Effect.provide(
         GitWorkflowService.layer.pipe(
           Layer.provide(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
+          Layer.provide(Layer.mock(JjWorkflow.JjWorkflow)({})),
+          Layer.provide(Layer.mock(ServerSettingsService)({})),
+          Layer.provideMerge(NodeServices.layer),
           Layer.provide(Layer.mock(GitManager.GitManager)({})),
           Layer.provide(
             Layer.mock(GitVcsDriver.GitVcsDriver)({

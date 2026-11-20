@@ -375,12 +375,14 @@ it.effect("backs off only baseline retries after repeated workspace capture time
         Layer.mergeAll(
           IdAllocator.layer,
           Layer.mock(CheckpointStore.CheckpointStore)({
-            isGitRepository: () => Effect.succeed(true),
+            supportsCheckpoints: () => Effect.succeed(true),
             hasCheckpointRef: () => Effect.succeed(false),
             captureCheckpoint: () =>
               Effect.suspend(() => {
                 attempts++;
-                return healthy ? Effect.void : Effect.fail(nonTimeoutFailure ? failure : timeout);
+                return healthy
+                  ? Effect.succeed({ exclusions: [] })
+                  : Effect.fail(nonTimeoutFailure ? failure : timeout);
               }),
           }),
         ),

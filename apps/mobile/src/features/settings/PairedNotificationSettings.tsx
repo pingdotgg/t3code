@@ -1,3 +1,5 @@
+import { T, useGT } from "gt-react-native";
+import * as Cause from "effect/Cause";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useState, type JSX } from "react";
@@ -27,6 +29,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsRow } from "./components/SettingsRow";
 
 export function PairedNotificationSettings(): JSX.Element | null {
+  const gt = useGT();
   const preferences = useAtomValue(mobilePreferencesAtom);
   const save = useAtomCommand(saveMobilePreferences, { reportFailure: false });
   const statuses = useAtomValue(pairedNotificationStatusesAtom);
@@ -57,6 +60,8 @@ export function PairedNotificationSettings(): JSX.Element | null {
             [connection.environmentId]: { registrationId, enabled },
           },
         }),
+      }).then((saved) => {
+        if (saved._tag === "Failure") throw Cause.squash(saved.cause);
       });
       preferenceSaved = true;
       if (!enabled)
@@ -79,15 +84,17 @@ export function PairedNotificationSettings(): JSX.Element | null {
       }
       if (!enabled && preferenceSaved) {
         Dialog.alert(
-          "Notifications are off on this phone",
-          "Couldn't remove the server subscription yet. It will retry when this environment is reachable.",
+          gt("Notifications are off on this phone"),
+          gt(
+            "Couldn't remove the server subscription yet. It will retry when this environment is reachable.",
+          ),
         );
       } else {
         Dialog.alert(
-          "Couldn't update notifications",
+          gt("Couldn't update notifications"),
           error instanceof Error
             ? error.message
-            : "Could not update this device's notification registration.",
+            : gt("Could not update this device's notification registration."),
         );
       }
     }
@@ -95,19 +102,23 @@ export function PairedNotificationSettings(): JSX.Element | null {
   }
 
   return (
-    <SettingsSection title="Paired environments">
+    <SettingsSection title={gt("Paired environments")}>
       <Text className="text-sm text-foreground-muted">
-        Get rich agent alerts and ongoing activity directly from your servers, without T3 Connect.
-        Notification content is encrypted for this phone before it reaches Google.
+        <T>
+          Get rich agent alerts and ongoing activity directly from your servers, without T3 Connect.
+          Notification content is encrypted for this phone before it reaches Google.
+        </T>
       </Text>
       {!supported ? (
         <Text className="text-sm text-foreground-muted">
-          Install a newer Android build with Firebase configured to enable paired notifications.
+          <T>
+            Install a newer Android build with Firebase configured to enable paired notifications.
+          </T>
         </Text>
       ) : null}
       {connections.length === 0 ? (
         <Text className="text-sm text-foreground-muted">
-          Pair an environment to enable its notifications.
+          <T>Pair an environment to enable its notifications.</T>
         </Text>
       ) : null}
       {connections.map((connection) => (
@@ -117,10 +128,10 @@ export function PairedNotificationSettings(): JSX.Element | null {
           label={connection.environmentLabel}
           subtitle={
             pending.has(connection.environmentId)
-              ? "Updating…"
+              ? gt("Updating…")
               : registrations[connection.environmentId]?.enabled
-                ? (statuses[connection.environmentId]?.message ?? "Checking registration…")
-                : "Off"
+                ? (statuses[connection.environmentId]?.message ?? gt("Checking registration…"))
+                : gt("Off")
           }
           disabled={
             !supported ||
@@ -137,17 +148,20 @@ export function PairedNotificationSettings(): JSX.Element | null {
       {supported && connections.length > 0 ? (
         <SettingsSwitchRow
           icon="bolt.circle"
-          label="Ongoing Agent Activity"
-          subtitle="Show activity cards for enabled environments. This device preference also applies to T3 Connect."
+          label={gt("Ongoing Agent Activity")}
+          subtitle={gt(
+            "Show activity cards for enabled environments. This device preference also applies to T3 Connect.",
+          )}
           disabled={!AsyncResult.isSuccess(preferences)}
           value={
             AsyncResult.isSuccess(preferences) && preferences.value.liveActivitiesEnabled !== false
           }
           onValueChange={(enabled) => {
-            void save({ liveActivitiesEnabled: enabled }).catch(() => {
+            void save({ liveActivitiesEnabled: enabled }).then((saved) => {
+              if (saved._tag === "Success") return;
               Dialog.alert(
-                "Couldn't update activity",
-                "Try changing the activity preference again.",
+                gt("Couldn't update activity"),
+                gt("Try changing the activity preference again."),
               );
             });
           }}
@@ -156,12 +170,12 @@ export function PairedNotificationSettings(): JSX.Element | null {
       {supported && supportsAndroidLiveUpdateSettings() ? (
         <SettingsRow
           icon="bolt.circle"
-          label="Live Update Settings"
+          label={gt("Live Update Settings")}
           onPress={() => {
             void openAndroidLiveUpdateSettings().catch(() => {
               Dialog.alert(
-                "Couldn't open Settings",
-                "Open T3 Code's notification settings in Android Settings.",
+                gt("Couldn't open Settings"),
+                gt("Open T3 Code's notification settings in Android Settings."),
               );
             });
           }}
