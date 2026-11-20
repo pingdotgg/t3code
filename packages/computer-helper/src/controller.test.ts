@@ -14,6 +14,7 @@ import {
   siteNamed,
   soundKey,
   unquotedTabName,
+  without,
 } from "./controller.ts";
 import type {
   Authorize,
@@ -209,6 +210,13 @@ const SKOOL_REPLIES = (): Answers[] => [
   { next: choice("press_enter") },
   { next: choice("done") },
 ];
+
+it("hides typed text in any case, and where a described value cut it short", () => {
+  const secret = `sk-live-${"7".repeat(64)}`;
+  const described = `textbox “Token” containing “${secret.slice(0, 60)}…”, then ${secret.toUpperCase()}`;
+  const hidden = without(described, secret);
+  expect(hidden).toBe("textbox “Token” containing “[typed text]”, then [typed text]");
+});
 
 describe("ComputerUse", () => {
   it("opens the Skool tab, finds Mark in Messages, types the note, and sends it, each action granted by the server first", async () => {

@@ -57,7 +57,6 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ComputerApprovals from "./ComputerApprovals.ts";
 import {
-  actionAuditFields,
   APPROVAL_REQUEST_AUDIT_EVENT,
   APPROVAL_SKIPPED_AUDIT_EVENT,
   approvalAuditFields,
@@ -252,7 +251,7 @@ const hostView = (host: Host): ComputerHostView => ({
 });
 
 /** The helper's keys for clicking a listed control; every other choice is one of its built-in moves. */
-const CONTROL_CHOICE = /^c\d+$/;
+const CONTROL_CHOICE = /^[cta]\d+$/;
 
 /**
  * The questions as a snapshot carries them, within `MAX_VIEW_DECISION_BYTES` of JSON: at most
@@ -270,19 +269,32 @@ function boundedQuestions(aliased: AliasedQuestions): ComputerQuestions {
         : { type: "choice", instructions, criteria: {} };
   }
   let size = utf8Bytes(JSON.stringify(bounded));
+  // Built-in moves first, then controls, one choice from each question in turn, so no question spends the
+  // budget before the others get any.
   for (const builtIn of [true, false]) {
-    for (const [id, question] of asked) {
-      const into = bounded[id];
-      if (question.type !== "choice" || into?.type !== "choice") continue;
-      const criteria = into.criteria as Record<string, string>;
-      for (const [choice, line] of Object.entries(question.criteria)) {
-        const original = aliased.choices.get(id)?.get(choice) ?? choice;
-        if (CONTROL_CHOICE.test(original) === builtIn) continue;
+    const queues = asked.flatMap(([id, question]) => {
+      if (question.type !== "choice") return [];
+      const pending = Object.entries(question.criteria).filter(
+        ([choice]) =>
+          CONTROL_CHOICE.test(aliased.choices.get(id)?.get(choice) ?? choice) !== builtIn,
+      );
+      return [{ id, pending }];
+    });
+    const full = new Set<string>();
+    for (let index = 0; queues.some((queue) => index < queue.pending.length); index += 1) {
+      for (const { id, pending } of queues) {
+        const entry = pending[index];
+        const into = bounded[id];
+        if (entry === undefined || full.has(id) || into?.type !== "choice") continue;
+        const [choice, line] = entry;
         const shown = capBytes(line, MAX_STEP_BYTES);
         // `"key":"line",` as JSON writes it.
         const cost = utf8Bytes(JSON.stringify(choice)) + utf8Bytes(JSON.stringify(shown)) + 2;
-        if (size + cost > MAX_VIEW_DECISION_BYTES) break;
-        criteria[choice] = shown;
+        if (size + cost > MAX_VIEW_DECISION_BYTES) {
+          full.add(id);
+          continue;
+        }
+        (into.criteria as Record<string, string>)[choice] = shown;
         size += cost;
       }
     }
@@ -352,17 +364,27 @@ const ECHOED_VALUE = / containing “([^”]*)”/g;
 
 const holds = (value: string, typed: string) => value.toLowerCase().includes(typed.toLowerCase());
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** An echoed value that holds the text, or the start of it cut short with "…" as the helper clips values. */
+function echoes(echoed: string, typed: string): boolean {
+  if (holds(echoed, typed)) return true;
+  const cut = echoed.endsWith("…") ? echoed.slice(0, -1) : "";
+  return cut !== "" && typed.toLowerCase().startsWith(cut.toLowerCase());
+}
+
 /**
  * The typed text kept out of a line the helper wrote: a field value that holds it is left out, and text long
- * enough to tell apart is replaced wherever else it appears. Labels are otherwise kept, so a "No" button stays
- * "No" when the task types "No".
+ * enough to tell apart is replaced wherever else it appears, in any case. Labels are otherwise kept, so a "No"
+ * button stays "No" when the task types "No".
  */
 function hideTyped(value: string, typed: string | null): string {
   if (typed === null || typed === "") return value;
   const unechoed = value.replace(ECHOED_VALUE, (whole, echoed: string) =>
-    holds(echoed, typed) ? "" : whole,
+    echoes(echoed, typed) ? "" : whole,
   );
-  return typed.length >= MIN_HIDDEN ? unechoed.split(typed).join(TYPED_TEXT) : unechoed;
+  if (typed.length < MIN_HIDDEN) return unechoed;
+  return unechoed.replace(new RegExp(escapeRegExp(typed), "gi"), TYPED_TEXT);
 }
 
 /**
@@ -378,23 +400,37 @@ function hideEchoed(value: string, typed: string | null, alreadyTyped: boolean):
 
 /** How a goal refers to the task's `text` without writing it. */
 const TEXT_REFERENCE = "{text}";
-/** A goal's parts: the agent's words, a quoted control label, and references to the prepared text. */
-const GOAL_PARTS = /(\{text\}|“[^”]*”|"[^"]*")/;
+/** A quoted span in a goal: a control label as the agent copied it. */
+const QUOTED = /“[^”]*”|"[^"]*"/g;
+
+/** Short text standing alone, not inside a longer word. */
+const standsAlone = (value: string, typed: string) =>
+  new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(typed)}(?![\\p{L}\\p{N}])`, "iu").test(value);
 
 /**
- * A goal as anyone but the helper reads it. A `{text}` reference reads as the typed-text marker, a quoted label
- * is kept as written, and the agent's own words have the typed text replaced when it is long enough to tell
- * apart. Nothing is matched against a label or against shorter text.
+ * Why a goal cannot carry this text, or null. Short text cannot be told apart from ordinary words, so it may
+ * appear only inside a quoted label, and only when the goal refers to the text itself as `{text}`.
+ */
+function goalRefusal(goal: string, typed: string | undefined): string | null {
+  if (typed === undefined || typed === "") {
+    return goal.includes(TEXT_REFERENCE)
+      ? `The goal refers to ${TEXT_REFERENCE}, but no text was given.`
+      : null;
+  }
+  if (typed.length >= MIN_HIDDEN) return null;
+  const outside = goal.includes(TEXT_REFERENCE) ? goal.replace(QUOTED, "") : goal;
+  return standsAlone(outside, typed)
+    ? `Write ${TEXT_REFERENCE} where the goal needs the text to type, and quote a control label that matches it.`
+    : null;
+}
+
+/**
+ * A goal as anyone but the helper reads it: every `{text}` reads as the typed-text marker, and text long
+ * enough to tell apart is replaced everywhere, quoted or not. Short text was refused anywhere but a quoted
+ * label (see `goalRefusal`).
  */
 function shownGoal(goal: string, typed: string | null): string {
-  return goal
-    .split(GOAL_PARTS)
-    .map((part, index) => {
-      if (index % 2 === 0)
-        return typed !== null && typed.length >= MIN_HIDDEN ? hideTyped(part, typed) : part;
-      return part === TEXT_REFERENCE ? TYPED_TEXT : part;
-    })
-    .join("");
+  return hideTyped(goal.split(TEXT_REFERENCE).join(TYPED_TEXT), typed);
 }
 
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).byteLength;
@@ -476,6 +512,10 @@ function unaliasAnswers<A extends object>(
   return restored;
 }
 
+/** The alias a key was shown under, from an alias → key map. */
+const shownKey = (aliases: ReadonlyMap<string, string> | undefined, key: string) =>
+  [...(aliases ?? [])].find(([, original]) => original === key)?.[0] ?? TYPED_TEXT;
+
 /**
  * The only state a decision provider is sent: known fields, capped, and the typed text kept out of all of
  * them. Anything else a host puts in its state stays here.
@@ -543,7 +583,7 @@ function readerBinding(
   alreadyTyped: boolean,
 ): ComputerApprovalBinding {
   const { text: _text, ...action } = binding.action;
-  const hidden = (field: "label" | "name" | "fieldLabel" | "why" | "url") => {
+  const hidden = (field: "label" | "name" | "fieldLabel" | "why" | "url" | "path") => {
     const value = action[field];
     if (value === undefined) return {};
     return {
@@ -552,6 +592,7 @@ function readerBinding(
   };
   return {
     ...binding,
+    app: hideTyped(binding.app, typed),
     title: hideEchoed(binding.title, typed, alreadyTyped),
     url: hideEchoed(binding.url, typed, alreadyTyped),
     why: hideTyped(binding.why, typed),
@@ -562,9 +603,38 @@ function readerBinding(
       ...hidden("fieldLabel"),
       ...hidden("why"),
       ...hidden("url"),
+      ...hidden("path"),
     },
   };
 }
+
+/** A binding as its audit line keeps it: redacted as a reader sees it, the typed text only as a digest. */
+const auditBinding = (binding: ComputerApprovalBinding, task: Task) => {
+  const redacted = readerBinding(binding, task.text, task.typed);
+  const text = binding.action.text;
+  return approvalAuditFields({
+    ...redacted,
+    action: { ...redacted.action, ...(text === undefined ? {} : { text }) },
+  });
+};
+
+/** An action as its audit line keeps it, redacted the same way. */
+const auditAction = (action: ComputerApprovalBinding["action"], task: Task) =>
+  auditBinding(
+    {
+      hostId: "",
+      taskId: task.id,
+      step: 0,
+      app: "",
+      title: "",
+      url: "",
+      action,
+      why: "",
+      goal: "",
+      requester: "",
+    },
+    task,
+  ).action;
 
 /** A running task without its steps, screen text and questions: what a snapshot keeps when it must. */
 const compactTask = (task: ComputerTaskView): ComputerTaskView => {
@@ -1030,9 +1100,9 @@ const make = Effect.gen(function* () {
     yield* record("task.end", {
       taskId: input.taskId,
       status: input.status,
-      reason: ended.task.reason,
+      reason: hideTyped(ended.task.reason, ended.task.text),
       steps: ended.task.steps.length,
-      surface: ended.task.surface,
+      surface: hideEchoed(ended.task.surface, ended.task.text, ended.task.typed),
       ms: ended.task.endedAtMs === null ? 0 : ended.task.endedAtMs - ended.task.startedAtMs,
       waitedMs: ended.task.waitedMs,
     });
@@ -1316,7 +1386,7 @@ const make = Effect.gen(function* () {
       }
       yield* record(APPROVAL_REQUEST_AUDIT_EVENT, {
         approvalId: approval.id,
-        ...approvalAuditFields(binding),
+        ...auditBinding(binding, task),
       });
       const woken = yield* Deferred.await(wake).pipe(
         Effect.timeoutOrElse({
@@ -1365,7 +1435,7 @@ const make = Effect.gen(function* () {
       requester: input.task.requester,
     };
     if (mode === "skip") {
-      yield* record(APPROVAL_SKIPPED_AUDIT_EVENT, approvalAuditFields(binding));
+      yield* record(APPROVAL_SKIPPED_AUDIT_EVENT, auditBinding(binding, input.task));
       return "approved" as const;
     }
     const outcome = yield* waitForTap(input.task, binding);
@@ -1514,12 +1584,8 @@ const make = Effect.gen(function* () {
       if (goal.length === 0 || goal.length > MAX_GOAL) {
         return yield* failure("refused", `A goal is required, and at most ${MAX_GOAL} characters.`);
       }
-      if (goal.includes(TEXT_REFERENCE) && (input.text === undefined || input.text === "")) {
-        return yield* failure(
-          "refused",
-          `The goal refers to ${TEXT_REFERENCE}, but no text was given.`,
-        );
-      }
+      const refusal = goalRefusal(goal, input.text);
+      if (refusal !== null) return yield* failure("refused", refusal);
       return yield* begin({ ...input, goal });
     },
   );
@@ -1676,10 +1742,18 @@ const make = Effect.gen(function* () {
       taskId: task.id,
       decisionId: pending.id,
       by: input.answeredBy,
+      // Under the ids and keys the planner was shown, which never name the typed text.
       answers: Object.entries(converted).map(([id, answer]) => ({
-        id,
+        id: shownKey(pending.shown.ids, id),
         type: answer.type,
-        ...(answer.type === "choice" ? { choice: answer.choice } : {}),
+        ...(answer.type === "choice"
+          ? {
+              choice: shownKey(
+                pending.shown.choices.get(shownKey(pending.shown.ids, id)),
+                answer.choice,
+              ),
+            }
+          : {}),
         probability: answer.probability,
       })),
     });
@@ -1694,7 +1768,8 @@ const make = Effect.gen(function* () {
     readonly hostId: ComputerHostId;
     readonly taskId: ComputerTaskId;
     readonly kind: "decide" | "authorize";
-    readonly screenText: string;
+    /** The screen text a decision records, read from the task as reserved. */
+    readonly screenText: (task: Task) => string;
     readonly nowMs: number;
   }) =>
     Ref.modify(stateRef, (state): readonly [StepReservation, ServiceState] => {
@@ -1719,7 +1794,7 @@ const make = Effect.gen(function* () {
               ...task,
               stepInFlight: true,
               decided: task.decided + 1,
-              screenText: input.screenText,
+              screenText: input.screenText(task),
             }
           : { ...task, stepInFlight: true, authorized: task.authorized + 1, screenText: "" };
       return [{ _tag: "reserved", task: reserved }, replaceTask(state, reserved)];
@@ -1766,13 +1841,12 @@ const make = Effect.gen(function* () {
     if (host === undefined) {
       return yield* failure("no_host", NO_COMPUTER, { hostId: input.hostId });
     }
-    const known = taskIn(state, input.taskId);
-    const outbound = known === undefined ? null : outboundState(input.state, known);
+    // Reserved first, so the state sent is built from the task as reserved: no `type` grant lands in between.
     const reserved = yield* reserveStep({
       hostId: host.id,
       taskId: input.taskId,
       kind: "decide",
-      screenText: outbound?.screen.visibleText ?? "",
+      screenText: (task) => outboundState(input.state, task).screen.visibleText,
       nowMs: yield* Clock.currentTimeMillis,
     });
     switch (reserved._tag) {
@@ -1797,7 +1871,7 @@ const make = Effect.gen(function* () {
         return yield* decideStep(
           reserved.task,
           input.questions,
-          outbound ?? outboundState(input.state, reserved.task),
+          outboundState(input.state, reserved.task),
         ).pipe(Effect.ensuring(releaseStep(reserved.task.id)));
     }
   });
@@ -1828,7 +1902,7 @@ const make = Effect.gen(function* () {
       taskId: task.id,
       step: input.step,
       ...fields,
-      action: actionAuditFields(input.action),
+      action: auditAction(input.action, task),
     }).pipe(Effect.forkIn(serviceScope));
     return { ok: true, grant: kind } as const;
   });
@@ -1863,7 +1937,7 @@ const make = Effect.gen(function* () {
     };
     // The real pointer is the person's to lend, whatever the approvals setting.
     if (mode === "skip" && input.action.kind !== "pointer") {
-      yield* record(APPROVAL_SKIPPED_AUDIT_EVENT, approvalAuditFields(binding));
+      yield* record(APPROVAL_SKIPPED_AUDIT_EVENT, auditBinding(binding, task));
       return yield* grant(task, input, "approved", { approved: true, skipped: true });
     }
     const outcome = yield* waitForTap(task, binding);
@@ -1889,7 +1963,7 @@ const make = Effect.gen(function* () {
       hostId: host.id,
       taskId: input.taskId,
       kind: "authorize",
-      screenText: "",
+      screenText: () => "",
       nowMs,
     });
     switch (reserved._tag) {
@@ -1936,7 +2010,7 @@ const make = Effect.gen(function* () {
           taskId: task.id,
           kind: input.event.kind,
           mode: input.event.mode,
-          how: clip(input.event.how),
+          how: hideTyped(clip(input.event.how), task.text),
         });
         return;
       }
@@ -1953,7 +2027,7 @@ const make = Effect.gen(function* () {
               })),
             ] as const,
         );
-        yield* record("task.progress", { taskId: task.id, step: text });
+        yield* record("task.progress", { taskId: task.id, step: hideTyped(text, task.text) });
         return;
       }
       yield* finishTask({

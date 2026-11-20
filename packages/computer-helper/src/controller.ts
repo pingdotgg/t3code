@@ -170,10 +170,17 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
 const HIDDEN = "[typed text]";
 const MIN_HIDDEN = 3;
 /** `value` with the task's typed text replaced wherever it appears: that text only ever leaves in the type action's own binding. */
-function without<T>(value: T, secret: string | null): T {
+export function without<T>(value: T, secret: string | null): T {
   if (!secret || secret.length < MIN_HIDDEN) return value;
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // `clip` cuts a described value or label, so its cut forms are hidden too; case can differ in an echo.
+  const forms = [
+    secret,
+    ...[90, 60].filter((max) => secret.length > max).map((max) => `${secret.slice(0, max)}…`),
+  ];
+  const pattern = new RegExp(forms.map(escape).join("|"), "gi");
   const walk = (node: unknown): unknown => {
-    if (typeof node === "string") return node.split(secret).join(HIDDEN);
+    if (typeof node === "string") return node.replace(pattern, HIDDEN);
     if (Array.isArray(node)) return node.map(walk);
     if (node && typeof node === "object")
       return Object.fromEntries(Object.entries(node).map(([key, entry]) => [key, walk(entry)]));
@@ -280,7 +287,12 @@ export class ComputerUse {
         ms: this.now() - run.started,
         waited_ms: run.waited,
       });
-      return { status, reason: without(reason, run.secret), steps: run.steps, surface: where };
+      return {
+        status,
+        reason: without(reason, run.secret),
+        steps: run.steps,
+        surface: without(where, run.secret),
+      };
     };
     try {
       this.checkpoint(run);
@@ -406,7 +418,12 @@ export class ComputerUse {
         status,
         ms: this.now() - run.started,
       });
-      return { status, reason: without(reason, run.secret), steps: run.steps, surface: where };
+      return {
+        status,
+        reason: without(reason, run.secret),
+        steps: run.steps,
+        surface: without(where, run.secret),
+      };
     };
     try {
       this.checkpoint(run);

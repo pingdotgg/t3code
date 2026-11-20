@@ -59,8 +59,10 @@ click on an untrusted surface, since a `tab`, `row` or `textbox` can still send.
 chooses the next step, and the server sends it an allowlisted, capped state,
 never what the host put there beyond it. The goal goes with it as the agent's
 words: it refers to the task's `text` as `{text}`, which everyone but the helper
-reads as a marker. Quoted labels in it are never matched against the text, so a
-task typing "OK" can still click the "OK" button. Only that `text` is ever typed
+reads as a marker. Text of three characters or more is replaced in the goal
+wherever it appears, in any case. Shorter text may appear only in a quoted label
+of a goal that uses `{text}`, so a task typing "OK" can still click the "OK"
+button; anywhere else the goal is refused. Only that `text` is ever typed
 (without one, only the exact address the helper's navigation parser reads from
 the goal). It is kept out of the decision endpoint, read-only snapshots, logs,
 errors and the audit file. A field value the helper echoes (`containing “…”`) is

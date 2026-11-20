@@ -1683,3 +1683,202 @@ it.effect("an approval's page title is capped", () =>
     assert.strictEqual(approval.binding.title.length, 400);
   }).pipe(Effect.provide(layerTest())),
 );
+
+it.effect(
+  "a goal never carries the typed text: quoted, upper-cased, cut short, or short and alone",
+  () => {
+    const sent: Array<{ readonly state: unknown; readonly questions: unknown }> = [];
+    return Effect.gen(function* () {
+      const service = yield* ComputerService.ComputerService;
+      const host = yield* startHost();
+      const secret = `sk-live-${"7".repeat(64)}`;
+      const quoted = yield* startUse({ goal: `Type "${secret}" into "{text}" box`, text: secret });
+      yield* host.decide({
+        taskId: quoted.taskId,
+        state: {
+          screen: { app: "Vault", title: "Keys", visibleText: `Saved ${secret.toUpperCase()}` },
+        },
+        questions: {
+          next: {
+            type: "choice",
+            instructions: "What next?",
+            criteria: { c0: `Click the textbox “Token” containing “${secret.slice(0, 60)}…”` },
+          },
+        },
+      });
+      assert.strictEqual(
+        (yield* taskOf(quoted.taskId))?.goal,
+        'Type "[typed text]" into "[typed text]" box',
+      );
+      assert.notInclude(JSON.stringify(sent).toLowerCase(), secret.slice(0, 20));
+      yield* service.stop({ by: "web" });
+
+      for (const [goal, text] of [
+        ["type 42 into the PIN box", "42"],
+        ["say a. to Dana", "a."],
+        ['click "OK" to confirm', "ok"],
+      ] as const) {
+        assert.strictEqual(
+          (yield* startUse({ goal, text }).pipe(Effect.flip)).reason,
+          "refused",
+          goal,
+        );
+      }
+    }).pipe(Effect.provide(layerTest({ decider: asking(sent) })));
+  },
+);
+
+it.effect("the audit file never holds the typed text", () =>
+  Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const audit = yield* ComputerAudit.ComputerAudit;
+    const host = yield* startHost();
+    const secret = "hunter2-rides-again";
+    const task = yield* startUse({ goal: "reply with {text}", text: secret });
+
+    // The planner answers a question whose key names the text.
+    const decided = yield* host
+      .decide({
+        taskId: task.taskId,
+        questions: {
+          [`type ${secret}`]: {
+            type: "choice",
+            instructions: "What next?",
+            criteria: { [secret]: `Type ${secret}` },
+          },
+        },
+      })
+      .pipe(Effect.forkScoped);
+    const decision = yield* waitForDecision(task.taskId);
+    const shown = (yield* service.status(null)).tasks[0]?.pendingDecision?.questions ?? {};
+    const [id, question] = Object.entries(shown)[0] ?? [];
+    const choice = question?.type === "choice" ? Object.keys(question.criteria)[0] : undefined;
+    yield* service.answerDecision({
+      taskId: task.taskId,
+      decisionId: decision.id,
+      answers: { [id ?? ""]: { choice: choice ?? "", confidence: "high" } },
+      answeredBy: "agent: test",
+    });
+    yield* Fiber.join(decided);
+
+    const say = (event: Parameters<typeof service.hostEvent>[0]["event"]) =>
+      service.hostEvent({ hostId: host.hostId, owner: host.owner, taskId: task.taskId, event });
+    yield* say({ type: "step", text: `typed ${secret} into Reply` });
+    yield* say({ type: "acted", kind: "type", mode: "background", how: `set value ${secret}` });
+    yield* host.authorize({
+      taskId: task.taskId,
+      step: 1,
+      action: { kind: "type", ref: "r1", role: "textbox", label: `Search ${secret}`, text: secret },
+    });
+    const tap = yield* service
+      .hostAuthorize({
+        hostId: host.hostId,
+        owner: host.owner,
+        taskId: task.taskId,
+        step: 2,
+        observation: {
+          app: "Messages",
+          title: `Draft: ${secret}`,
+          url: `https://x.test/?q=${secret}`,
+        },
+        action: click(`Send ${secret}`),
+      })
+      .pipe(Effect.forkScoped);
+    const approval = yield* waitForApproval(task.taskId);
+    yield* service.respondToApproval({ approvalId: approval.id, approve: true, decidedBy: "web" });
+    yield* Fiber.join(tap);
+    yield* say({
+      type: "finished",
+      status: "done",
+      reason: `Sent ${secret}`,
+      steps: [],
+      surface: `Messages: ${secret}`,
+    });
+
+    const lines = JSON.stringify(yield* audit.tail(100));
+    for (const event of [
+      "decision.answer",
+      "task.progress",
+      "act",
+      "grant",
+      "approval.request",
+      "task.end",
+    ]) {
+      assert.include(lines, `"event":"${event}"`, event);
+    }
+    assert.notInclude(lines, secret);
+  }).pipe(Effect.provide(layerTest())),
+);
+
+it.effect("a skipped approval's audit line never holds the typed text", () =>
+  Effect.gen(function* () {
+    const audit = yield* ComputerAudit.ComputerAudit;
+    const host = yield* startHost();
+    const secret = "hunter2-rides-again";
+    const task = yield* startUse({ goal: "reply with {text}", text: secret });
+    yield* host.authorize({ taskId: task.taskId, step: 1, action: click(`Send ${secret}`) });
+    const lines = JSON.stringify(yield* audit.tail(50));
+    assert.include(lines, '"event":"approval_skipped"');
+    assert.notInclude(lines, secret);
+  }).pipe(Effect.provide(layerTest({ settings: { computerApprovals: "skip" } }))),
+);
+
+it.effect("a reader's approval hides the typed text in its app and file path", () =>
+  Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const host = yield* startHost();
+    const secret = "hunter2-rides-again";
+    const task = yield* startUse({ goal: "attach {text}", text: secret });
+    yield* service
+      .hostAuthorize({
+        hostId: host.hostId,
+        owner: host.owner,
+        taskId: task.taskId,
+        step: 1,
+        observation: { app: `Files ${secret}`, title: "Open" },
+        action: { kind: "pointer", why: "no action", path: `/home/user/${secret}.txt` },
+      })
+      .pipe(Effect.forkScoped);
+    yield* waitForApproval(task.taskId);
+    const reader = yield* Stream.runHead(yield* service.subscribe({ revealTypedText: false }));
+    assert.notInclude(JSON.stringify(reader), secret);
+  }).pipe(Effect.provide(layerTest())),
+);
+
+it.effect(
+  "a snapshot shares its budget across questions, and tab and app keys count as controls",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* ComputerService.ComputerService;
+      const host = yield* startHost();
+      const task = yield* startUse();
+      const many = (prefix: string) =>
+        Object.fromEntries(
+          Array.from({ length: 200 }, (_, index) => [`${prefix}${index}`, "x".repeat(380)]),
+        );
+      yield* host
+        .decide({
+          taskId: task.taskId,
+          questions: {
+            next: {
+              type: "choice",
+              instructions: "What next?",
+              criteria: { ...many("c"), stuck: "None" },
+            },
+            tab: { type: "choice", instructions: "Which tab?", criteria: many("t") },
+            type_into: { type: "choice", instructions: "Which box?", criteria: many("a") },
+          },
+        })
+        .pipe(Effect.forkScoped);
+      yield* waitForDecision(task.taskId);
+      const shown = (yield* service.status(null)).tasks[0]?.pendingDecision?.questions ?? {};
+      const counts = Object.values(shown).map((question) =>
+        question.type === "choice" ? Object.keys(question.criteria).length : 0,
+      );
+      // `stuck` is the only built-in move; every question still gets a share of the controls.
+      assert.isTrue(
+        counts.every((count) => count > 10),
+        JSON.stringify(counts),
+      );
+    }).pipe(Effect.provide(layerTest())),
+);
