@@ -96,6 +96,7 @@ import {
   DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  MenuRadioItemIndicator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -888,18 +889,27 @@ export default function DiffPanel({
           <DropdownMenuContent align="start">
             <DropdownMenuRadioGroup value={selectedScopeValue} onValueChange={selectScopeValue}>
               <DropdownMenuRadioItem value="branch" closeOnClick>
-                <span>
-                  <T>Changes</T>
+                <span className="flex items-center justify-between gap-2">
+                  <span>
+                    <T>Changes</T>
+                  </span>
+                  <MenuRadioItemIndicator />
                 </span>
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="unstaged" closeOnClick>
-                <span>
-                  <T>Uncommitted</T>
+                <span className="flex items-center justify-between gap-2">
+                  <span>
+                    <T>Uncommitted</T>
+                  </span>
+                  <MenuRadioItemIndicator />
                 </span>
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="latest" closeOnClick>
-                <span>
-                  <T>Latest turn</T>
+                <span className="flex items-center justify-between gap-2">
+                  <span>
+                    <T>Latest turn</T>
+                  </span>
+                  <MenuRadioItemIndicator />
                 </span>
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
@@ -926,6 +936,7 @@ export default function DiffPanel({
                           <span className="ml-auto text-xs tabular-nums text-muted-foreground">
                             {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                           </span>
+                          <MenuRadioItemIndicator />
                         </span>
                       </DropdownMenuRadioItem>
                     );
