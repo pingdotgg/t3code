@@ -80,6 +80,9 @@ pub struct McpConfig {
     /// The server's GitHub pull request panel; without it the watch and guide tools answer
     /// as T3 does when no host can be read.
     pub pull_requests: Option<PullRequestHost>,
+    /// `sourceControl.cloneRepository` (`SourceControlRepositoryService`), for
+    /// `t3_project_clone`; without it the tool answers that the operation could not run.
+    pub clone_repository: Option<MethodHost>,
 }
 
 /// Reads and patches the server settings (`ServerSettingsService`).
@@ -104,6 +107,10 @@ impl std::fmt::Debug for SettingsPort {
 /// One call into the server's pull request panel: `(operation, input)` to the result, or the
 /// contract failure (`PullRequestUnavailableError`, `PullRequestOperationError`, ...). The
 /// operations are `watchSummary`, `locateProject` and `reviewGuide`.
+/// One server method: its contract input, and its result or contract error.
+pub type MethodHost =
+    Arc<dyn Fn(Value) -> conn_engine::BoxFuture<'static, Result<Value, Value>> + Send + Sync>;
+
 pub type PullRequestHost = Arc<
     dyn Fn(&'static str, Value) -> conn_engine::BoxFuture<'static, Result<Value, Value>>
         + Send

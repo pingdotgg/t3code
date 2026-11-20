@@ -1385,9 +1385,11 @@ impl Tx<'_> {
             .transpose()
     }
 
-    /// The project row that owns `workspace_root`, deleted or not.
+    /// The project row that owns `workspace_root`, deleted or not. Rows an older version stored
+    /// unnormalized (`/work/repo/.`) are found by their normalized folder, a live one first.
     pub(crate) fn project_by_root(&self, workspace_root: &str) -> StoreResult<Option<Value>> {
-        self.tx
+        let exact = self
+            .tx
             .query_row(
                 "SELECT body FROM projects WHERE workspace_root = ?1",
                 [workspace_root],
@@ -1396,7 +1398,28 @@ impl Tx<'_> {
             .optional()
             .map_err(err)?
             .map(parse)
-            .transpose()
+            .transpose()?;
+        if exact.as_ref().is_some_and(|p| p["deletedAt"].is_null()) {
+            return Ok(exact);
+        }
+        let wanted = crate::projects::normalize_workspace_root(workspace_root);
+        let mut statement = self.tx.prepare("SELECT body FROM projects").map_err(err)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(err)?;
+        let mut deleted = None;
+        for row in rows {
+            let project = parse(row.map_err(err)?)?;
+            let root = project["workspaceRoot"].as_str().unwrap_or_default();
+            if crate::projects::normalize_workspace_root(root) != wanted {
+                continue;
+            }
+            if project["deletedAt"].is_null() {
+                return Ok(Some(project));
+            }
+            deleted.get_or_insert(project);
+        }
+        Ok(exact.or(deleted))
     }
 
     /// Writes a project row and its shell change: `project.updated`, or `project.removed`

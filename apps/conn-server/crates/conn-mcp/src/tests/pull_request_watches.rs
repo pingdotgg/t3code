@@ -46,6 +46,7 @@ fn with_host(base: Fixture, state: &'static str) -> Fixture {
         peers: None,
         settings: None,
         pull_requests: Some(host(state)),
+        clone_repository: None,
         secrets: None,
         test_logins: None,
         engine: config.engine.clone(),

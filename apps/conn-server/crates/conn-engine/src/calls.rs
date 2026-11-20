@@ -196,6 +196,17 @@ pub(crate) async fn call(inner: Arc<Inner>, method: String, input: Value) -> Cal
             .project_create_from_thread(input)
             .await
             .map_err(dispatch_error),
+        // Not an RPC method (so not in METHODS): `/mcp` asks whether a folder is the scratch
+        // project's before deleting it (`ManagedProjectFolders.isScratchProject`).
+        "projects.isScratchRoot" => {
+            let root = input["workspaceRoot"].as_str().unwrap_or_default();
+            let scratch = inner.home.join("scratch");
+            // `path.resolve` on both: compared by components, without reading the disk.
+            let normalize = crate::projects::normalize_workspace_root;
+            Ok(json!(
+                !root.is_empty() && normalize(root) == normalize(&scratch.to_string_lossy())
+            ))
+        }
         other => Err(EngineError::Internal(format!(
             "this engine does not support {other}"
         ))),

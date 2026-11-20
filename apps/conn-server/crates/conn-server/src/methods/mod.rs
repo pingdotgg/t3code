@@ -25,7 +25,7 @@ pub(crate) mod pull_requests;
 mod scheduled;
 mod secrets;
 pub mod server;
-mod source_control;
+pub(crate) mod source_control;
 pub mod terminal;
 mod test_logins;
 mod text_generation;

@@ -75,6 +75,30 @@ were unregistered. `pull_request_create` is not served yet (it needs `GitManager
   (`replyWithSummary`); no merged-PR event after a confirmed merge (link sync reads it on its
   next sweep); node ids are read each time (T3 caches 1,000); GitHub only.
 
+## Project tools (2026-11-20)
+
+Agents can add, change, remove and clone projects through `/mcp`: `t3_project_create`,
+`t3_project_update`, `t3_project_delete`, `t3_project_clone`
+(`conn-mcp/src/tools/projects.rs`, T3's `project/handlers.ts`). Before, they were unregistered.
+
+- **On the engine's own calls:** a folder registers with `projects.mutate`
+  (`project.create`, id from the `mcp:` command id); no folder makes a repository from the
+  title (`projects.createNew`, with `commitError`); update and delete use `projects.mutate`.
+  Errors are worded as T3's `projectFailure`. The scratch project is refused, as
+  `isScratchProject` (a new engine call, `projects.isScratchRoot`, compares its folder). A
+  clone runs the server's `sourceControl.cloneRepository` (`McpConfig::clone_repository`).
+- **Access as T3's `writesEnvironment`:** full access; linked work may create and clone, not
+  update or delete. Returned projects drop the engine's `hasCustomTitle`.
+- **Changed:** a missing folder without `createWorkspaceRootIfMissing` is a
+  `ProjectOperationError` (T3 fails to normalize the folder), not `ProjectInvalidError`.
+- **Proof:** `parity.mjs`: 10 new calls on both servers (a registered folder, title-only with
+  scripts, a missing folder, a new folder, rename, delete, refusals, a failed clone, bad
+  input); values compared where they are not ids or paths. `cargo test -p conn-mcp
+  project_writes`: create, conflict, rename, delete, the scratch refusal.
+- **Known differences:** a clone keeps the server's clone timeout (T3 sets none for agents);
+  `projectClone.*` (the UI's tracked clone) is not served; T3's `ProjectCloneTracker.discard`
+  on delete has nothing to discard here.
+
 ## Review guide writing (2026-11-19)
 
 `pullRequests.generateReviewGuide` and `write_pull_request_guides` write a PR's review guide

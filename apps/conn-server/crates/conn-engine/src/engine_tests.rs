@@ -1129,6 +1129,26 @@ async fn clients_add_rename_and_remove_projects() {
     .await
     .unwrap();
     assert_eq!(retry["id"], "project:new");
+    // Another spelling of the same folder is the same folder (`normalizeWorkspaceRoot`).
+    let dotted = call(
+        &engine,
+        "projects.mutate",
+        json!({"type": "project.create", "commandId": "p3", "projectId": "project:dotted",
+               "title": "Repo", "workspaceRoot": format!("{root}/./")}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(dotted["cause"]["_tag"], "ProjectConflictError");
+    // An update cannot point a project at a folder that is not there.
+    let missing = call(
+        &engine,
+        "projects.mutate",
+        json!({"type": "project.update", "commandId": "u-missing", "projectId": "project:new",
+               "workspaceRoot": format!("{root}-missing")}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(missing["cause"]["_tag"], "ProjectOperationError");
 
     let renamed = call(
         &engine,

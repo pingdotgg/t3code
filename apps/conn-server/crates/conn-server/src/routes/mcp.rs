@@ -87,6 +87,7 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
         settings: Some(settings_port(environment.clone())),
         devices: deps.devices.clone(),
         pull_requests: crate::methods::pull_requests::mcp_host(deps),
+        clone_repository: Some(crate::methods::source_control::clone_host(deps)),
     }))
 }
 

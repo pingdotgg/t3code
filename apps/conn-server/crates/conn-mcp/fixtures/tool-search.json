@@ -33,14 +33,14 @@
       "names": [
         "t3_project_list",
         "t3_project_read",
+        "t3_project_create",
+        "t3_project_update",
+        "t3_project_delete",
+        "t3_project_clone",
         "preview_cdp_endpoint",
         "annotations_list",
         "list_scheduled_tasks",
-        "create_threads",
-        "t3_thread_list",
-        "t3_thread_search",
-        "t3_thread_transfer",
-        "t3_thread_launch"
+        "create_threads"
       ]
     },
     {

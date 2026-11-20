@@ -89,6 +89,7 @@ fn fixture_with_provider(
         peers,
         settings: None,
         pull_requests: None,
+        clone_repository: None,
         test_logins: Some(conn_features::test_logins::TestLogins::new(&dir)),
         secrets: Some(conn_features::secrets::SecretRequests::new(
             &dir,
@@ -1803,6 +1804,7 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
         peers: None,
         settings: None,
         pull_requests: None,
+        clone_repository: None,
         secrets: config.secrets.clone(),
         test_logins: base.service.config.test_logins.clone(),
         engine,
@@ -3568,6 +3570,68 @@ fn forge_tools_are_hidden_only_without_a_forge() {
     let listed = catalog::list_for(&agent, true, false);
     assert!(!listed.contains("\"name\":\"ci_logs\""));
     assert!(catalog::list_for(&agent, true, true).contains("\"name\":\"ci_logs\""));
+}
+
+/// `t3_project_create`, `t3_project_update` and `t3_project_delete` on the engine; the scratch
+/// project is refused as T3's `isScratchProject` refuses it.
+#[tokio::test(flavor = "current_thread")]
+async fn project_writes_create_update_delete_and_keep_scratch() {
+    let f = fixture("project-writes");
+    let mut c = Client::open(&f.service, client(true)).await;
+    let root = f.dir.join("made");
+    let made = c
+        .ok(
+            "t3_project_create",
+            json!({"title": "Made", "workspaceRoot": root, "createWorkspaceRootIfMissing": true}),
+        )
+        .await;
+    assert!(root.is_dir());
+    assert!(made.get("hasCustomTitle").is_none());
+    let id = made["id"].as_str().unwrap().to_owned();
+    assert!(
+        id.starts_with("mcp:"),
+        "the command id names the project: {id}"
+    );
+    let (code, message) = c
+        .failure(
+            "t3_project_create",
+            json!({"title": "Again", "workspaceRoot": root}),
+        )
+        .await;
+    assert_eq!(
+        (code.as_str(), message.as_str()),
+        (
+            "invalid_request",
+            "The workspace is already registered to a project."
+        )
+    );
+    let renamed = c
+        .ok(
+            "t3_project_update",
+            json!({"projectId": id, "title": "Renamed"}),
+        )
+        .await;
+    assert_eq!(renamed["title"], "Renamed");
+    let deleted = c.ok("t3_project_delete", json!({"projectId": id})).await;
+    assert!(!deleted["deletedAt"].is_null());
+    let scratch = f
+        .service
+        .config
+        .engine
+        .call("projects.ensureScratch", json!({}))
+        .await
+        .unwrap();
+    let (code, message) = c
+        .failure(
+            "t3_project_delete",
+            json!({"projectId": scratch["projectId"]}),
+        )
+        .await;
+    assert_eq!(code, "invalid_request");
+    assert!(
+        message.starts_with("\"No project\" is the built-in scratch project"),
+        "{message}"
+    );
 }
 
 /// `t3_thread_transfer`: a fork of a finished run, its transfer in `status` on the fork, and

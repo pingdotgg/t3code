@@ -170,9 +170,9 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_project_read` | served | reads | | |
 | `t3_environment_read` | served | reads | | |
 | `create_threads` | served | actsAsCaller | top-level creation and parent timeline, with receipt replay | O |
-| `t3_project_create` | not served | writesEnvironment | nothing new: the engine's `projects.createNew` / `projects.mutate` | |
-| `t3_project_update` | not served | writesEnvironment | nothing new: `projects.mutate` | |
-| `t3_project_delete` | not served | writesEnvironment | nothing new: `projects.mutate` | |
+| `t3_project_create` | served | writesEnvironment | nothing new: the engine's `projects.createNew` / `projects.mutate` | |
+| `t3_project_update` | served | writesEnvironment | nothing new: `projects.mutate` | |
+| `t3_project_delete` | served | writesEnvironment | nothing new: `projects.mutate` | |
 | `t3_worktree_status` | served | readsAsCaller | thread binding and project defaults | |
 | `t3_worktree_list` | served | reads (needs the `worktree` capability) | shared git refs, with project-root fallback for removed worktrees | |
 | `t3_attachment_prepare_upload` | served | writes | shared client upload store; caller owns pending uploads | |
@@ -226,7 +226,7 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_environment_unlink` | served (peer links) | writesEnvironment |  |  |
 | `t3_theme_read` | not served | reads | server: themes | |
 | `t3_theme_set` | not served | writesEnvironment | server: themes | |
-| `t3_project_clone` | not served | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
+| `t3_project_clone` | served (without `projectClone.*` tracking) | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
 
 ## Linked environments
 

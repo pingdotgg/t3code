@@ -15,6 +15,10 @@ t3_pending_request
 t3_thread_launch
 t3_project_list
 t3_project_read
+t3_project_create
+t3_project_update
+t3_project_delete
+t3_project_clone
 t3_environment_read
 send_to_user
 t3_thread_organize

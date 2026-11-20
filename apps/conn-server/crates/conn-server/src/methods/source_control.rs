@@ -52,9 +52,9 @@ impl HostInputs {
     }
 }
 
-pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
+fn host_inputs(deps: &Deps) -> HostInputs {
     let environment = deps.environment.clone();
-    let inputs = HostInputs {
+    HostInputs {
         cwd: Arc::from(
             environment
                 .as_ref()
@@ -62,7 +62,28 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         ),
         home: std::env::var_os("HOME").map(|h| Arc::from(PathBuf::from(h))),
         environment,
-    };
+    }
+}
+
+/// `sourceControl.cloneRepository` for `t3_project_clone` (`conn_mcp::McpConfig`).
+pub(crate) fn clone_host(deps: &Deps) -> conn_mcp::MethodHost {
+    let inputs = host_inputs(deps);
+    Arc::new(move |input: Value| {
+        let host = inputs.clone();
+        Box::pin(async move {
+            let input: SourceControlCloneRepositoryInput = conn_contract::from_json(input)
+                .map_err(|e| serde_json::json!({"_tag": "SourceControlRepositoryError", "detail": e.to_string()}))?;
+            let call = RepositoryCall::new(&host);
+            repository::clone(&call.hosts(&host), call.service(&host), &input)
+                .await
+                .map(|result| conn_contract::to_json(&result))
+                .map_err(|e| conn_contract::to_json(&e.to_contract()))
+        }) as conn_engine::BoxFuture<'static, Result<Value, Value>>
+    })
+}
+
+pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
+    let inputs = host_inputs(deps);
 
     let host = inputs.clone();
     table.unary("server.discoverSourceControl", move |_, _: Value| {

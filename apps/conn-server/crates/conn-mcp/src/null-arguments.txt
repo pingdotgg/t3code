@@ -1,2 +1,7 @@
+t3_project_create defaultModelSelection
+t3_project_update defaultModelSelection
+t3_project_update projectIcon
+t3_project_update faviconPath
+t3_project_update defaultThreadEnvMode
 t3_queue beforeRunId
 t3_environment_preferences_update defaultThreadEnvMode

@@ -16,6 +16,8 @@ fn project(row: &Value) -> Value {
         for (key, value) in row {
             out.insert(key.clone(), value.clone());
         }
+        // The engine's own record of a renamed title; `Project` has no such field.
+        out.remove("hasCustomTitle");
     }
     out
 }
@@ -294,6 +296,166 @@ pub(super) fn default_model_selection(cx: &Cx<'_>) -> Option<Value> {
             let model = p["models"][0]["slug"].as_str()?.to_owned();
             Some(json!({"instanceId": p["instanceId"], "model": model}))
         })
+}
+
+// ---- t3_project_create, t3_project_update, t3_project_delete, t3_project_clone ----------
+// (`apps/server/src/mcp/toolkits/project/handlers.ts`), on the engine's `projects.*` calls.
+
+/// `unavailable`: a failure the caller cannot act on.
+fn unavailable() -> super::ToolError {
+    fail(
+        "orchestration_error",
+        "The operation could not be completed.",
+    )
+}
+
+/// `projectFailure`: a `ProjectMutationError`'s cause, as the toolkit words it.
+fn project_failure(error: conn_engine::EngineError<Value>) -> super::ToolError {
+    let conn_engine::EngineError::Rejected(error) = error else {
+        return unavailable();
+    };
+    let cause = &error["cause"];
+    match cause["_tag"].as_str() {
+        Some("ProjectInvalidError") => fail(
+            "invalid_request",
+            cause["message"].as_str().unwrap_or_default().to_owned(),
+        ),
+        Some("ProjectNotFoundError") => fail("invalid_request", "The project was not found."),
+        Some("ProjectConflictError") => fail(
+            "invalid_request",
+            "The workspace is already registered to a project.",
+        ),
+        Some("ProjectNotEmptyError") => fail(
+            "invalid_request",
+            "The project is not empty; force=true is required to delete it.",
+        ),
+        _ => unavailable(),
+    }
+}
+
+/// `newCommandId`.
+fn command_id() -> String {
+    format!("mcp:{}", conn_support::uuid_v4())
+}
+
+impl super::Cx<'_> {
+    async fn mutate_project(&self, input: Value) -> ToolResult {
+        self.engine()
+            .call("projects.mutate", input)
+            .await
+            .map(|row| project(&row))
+            .map_err(project_failure)
+    }
+}
+
+pub(super) async fn create(cx: &super::Cx<'_>, args: &Args) -> ToolResult {
+    // Linked work may bring the repository it works in; a registered folder is still refused.
+    cx.environment_writer_from_links().await?;
+    let Some(root) = args.get("workspaceRoot") else {
+        // Only updates record model defaults; refuse defaults creation would drop.
+        if [
+            "scripts",
+            "createWorkspaceRootIfMissing",
+            "defaultModelSelection",
+        ]
+        .iter()
+        .any(|key| args.contains_key(*key))
+        {
+            return Err(fail(
+                "invalid_request",
+                "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with t3_project_update.",
+            ));
+        }
+        let created = cx
+            .engine()
+            .call(
+                "projects.createNew",
+                json!({"name": args.get("title").cloned().unwrap_or(Value::Null)}),
+            )
+            .await
+            .map_err(|error| match error {
+                conn_engine::EngineError::Rejected(error) => fail(
+                    "orchestration_error",
+                    error["message"].as_str().unwrap_or_default().to_owned(),
+                ),
+                conn_engine::EngineError::Internal(_) => unavailable(),
+            })?;
+        let shell = cx.shell().await.map_err(|_| unavailable())?;
+        let mut row = shell["projects"]
+            .as_array()
+            .and_then(|p| p.iter().find(|p| p["id"] == created["projectId"]))
+            .map(project)
+            .ok_or_else(unavailable)?;
+        if let Some(error) = created.get("commitError").filter(|e| e.is_string()) {
+            row["commitError"] = error.clone();
+        }
+        return Ok(row);
+    };
+    let id = command_id();
+    let mut input = args.clone();
+    input.remove("environmentId");
+    input.insert("workspaceRoot".into(), root.clone());
+    input.insert("type".into(), json!("project.create"));
+    input.insert("commandId".into(), json!(id));
+    input.insert("projectId".into(), json!(id));
+    cx.mutate_project(Value::Object(input)).await
+}
+
+pub(super) async fn update(cx: &super::Cx<'_>, args: &Args) -> ToolResult {
+    cx.environment_writer().await?;
+    let mut input = args.clone();
+    input.remove("environmentId");
+    input.insert("type".into(), json!("project.update"));
+    input.insert("commandId".into(), json!(command_id()));
+    cx.mutate_project(Value::Object(input)).await
+}
+
+pub(super) async fn delete(cx: &super::Cx<'_>, args: &Args) -> ToolResult {
+    cx.environment_writer().await?;
+    let id = str_arg(args, "projectId").unwrap_or_default();
+    let shell = cx.shell().await.map_err(|_| unavailable())?;
+    let root = shell["projects"]
+        .as_array()
+        .and_then(|p| p.iter().find(|p| p["id"] == id && p["deletedAt"].is_null()))
+        .map(|p| p["workspaceRoot"].clone());
+    if let Some(root) = root {
+        let scratch = cx
+            .engine()
+            .call("projects.isScratchRoot", json!({"workspaceRoot": root}))
+            .await
+            .unwrap_or(Value::Bool(false));
+        if scratch == true {
+            return Err(fail(
+                "invalid_request",
+                "\"No project\" is the built-in scratch project and cannot be deleted through MCP. The user can remove it in Settings.",
+            ));
+        }
+    }
+    let mut input = json!({"type": "project.delete", "commandId": command_id(), "projectId": id});
+    if let Some(force) = args.get("force") {
+        input["force"] = force.clone();
+    }
+    cx.mutate_project(input).await
+}
+
+pub(super) async fn clone(cx: &super::Cx<'_>, args: &Args) -> ToolResult {
+    // An existing destination is never adopted, so linked work may clone.
+    cx.environment_writer_from_links().await?;
+    let Some(host) = cx.config().clone_repository.clone() else {
+        return Err(unavailable());
+    };
+    let mut input = args.clone();
+    input.remove("environmentId");
+    host(Value::Object(input)).await.map_err(|error| {
+        fail(
+            "orchestration_error",
+            error["detail"]
+                .as_str()
+                .or_else(|| error["message"].as_str())
+                .unwrap_or("The operation could not be completed.")
+                .to_owned(),
+        )
+    })
 }
 
 #[cfg(test)]
