@@ -12,17 +12,21 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { beforeEach } from "vite-plus/test";
+import { buildProviderOptionSelectionsFromDescriptors } from "@t3tools/shared/model";
 import { settingsSecretLiteral } from "@t3tools/contracts";
 
 import { OpenCodeSettings } from "../settings.ts";
+import type { ProviderCompatibilityLookup } from "@t3tools/provider-core/server/compatibility";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
+  makeOpenCode2ModelLoader,
   type OpenCode2Model,
   type OpenCode2Workspace,
 } from "./status.ts";
@@ -504,6 +508,7 @@ const checkProvider = Effect.fn("checkProvider")(function* (
     ReadonlyArray<OpenCode2Model>,
     OpenCodeRuntime.OpenCodeRuntimeError
   > = Effect.succeed([]),
+  compatibility?: ProviderCompatibilityLookup,
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -517,9 +522,14 @@ const checkProvider = Effect.fn("checkProvider")(function* (
         Effect.provideService(HttpClient.HttpClient, server),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
       );
-      return yield* checkOpenCodeProviderStatus(settings, cwd, probe, openCode2Models).pipe(
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-      );
+      return yield* checkOpenCodeProviderStatus(
+        settings,
+        cwd,
+        probe,
+        openCode2Models,
+        environment,
+        compatibility,
+      ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner));
     }),
   );
 });
@@ -673,6 +683,10 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         variantDescriptor.options.find((option) => option.isDefault === true)?.id,
         "medium",
       );
+      NodeAssert.equal(
+        variantDescriptor.options.find((option) => option.id === "xhigh")?.label,
+        "Extra High",
+      );
       const agentDescriptor = model.capabilities?.optionDescriptors?.find(
         (descriptor) => descriptor.id === "agent" && descriptor.type === "select",
       );
@@ -681,6 +695,52 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         agentDescriptor.options.find((option) => option.isDefault === true)?.id,
         "build",
       );
+    }),
+  );
+
+  it.effect("keeps Agent without inventing Reasoning for models with no variants", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["opencode"],
+          all: [
+            {
+              id: "opencode",
+              name: "OpenCode Zen",
+              models: {
+                "big-pickle": { id: "big-pickle", name: "Big Pickle", variants: {} },
+                "glm-5": { id: "glm-5", name: "GLM-5" },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [
+          { name: "build", hidden: false, mode: "primary" },
+          { name: "plan", hidden: false, mode: "primary" },
+        ],
+      };
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+      for (const slug of ["opencode/big-pickle", "opencode/glm-5"]) {
+        const model = snapshot.models.find((entry) => entry.slug === slug);
+        NodeAssert.ok(model);
+        const descriptors = model.capabilities?.optionDescriptors;
+        NodeAssert.deepEqual(descriptors, [
+          {
+            id: "agent",
+            label: "Agent",
+            type: "select",
+            options: [
+              { id: "build", label: "Build", isDefault: true },
+              { id: "plan", label: "Plan" },
+            ],
+            currentValue: "build",
+          },
+        ]);
+        NodeAssert.deepEqual(buildProviderOptionSelectionsFromDescriptors(descriptors), [
+          { id: "agent", value: "build" },
+        ]);
+      }
     }),
   );
 
@@ -752,37 +812,35 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
   );
 
   it.effect("reports the upgraded CLI without restarting a borrowed OpenCode server", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const settings = makeOpenCodeSettings();
-        const owner = yield* OpenCodeServerOwner.make({
-          binaryPath: settings.binaryPath,
-          directory: process.cwd(),
-        });
-        yield* owner.withServer(() =>
-          Effect.gen(function* () {
-            runtimeMock.state.versionStdout = "opencode 1.14.20\n";
-            const snapshot = yield* checkOpenCodeProviderStatus(
-              settings,
-              process.cwd(),
-              probeOpenCodeRuntime(settings).pipe(
-                Effect.provideService(
-                  HttpClient.HttpClient,
-                  replayOpenCodeServer(OPENCODE_1_RESPONSES, settings.serverPassword),
-                ),
-                Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
+    Effect.gen(function* () {
+      const settings = makeOpenCodeSettings();
+      const owner = yield* OpenCodeServerOwner.make({
+        binaryPath: settings.binaryPath,
+        directory: process.cwd(),
+      });
+      yield* owner.withServer(() =>
+        Effect.gen(function* () {
+          runtimeMock.state.versionStdout = "opencode 1.14.20\n";
+          const snapshot = yield* checkOpenCodeProviderStatus(
+            settings,
+            process.cwd(),
+            probeOpenCodeRuntime(settings).pipe(
+              Effect.provideService(
+                HttpClient.HttpClient,
+                replayOpenCodeServer(OPENCODE_1_RESPONSES, settings.serverPassword),
               ),
-              Effect.succeed([]),
-            ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, owner));
+              Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
+            ),
+            Effect.succeed([]),
+          ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, owner));
 
-            NodeAssert.equal(snapshot.version, "1.14.19");
-            NodeAssert.equal(snapshot.installedVersion, "1.14.20");
-            NodeAssert.equal(runtimeMock.state.startCalls, 1);
-            NodeAssert.equal(runtimeMock.state.closeCalls, 0);
-          }),
-        );
-      }),
-    ),
+          NodeAssert.equal(snapshot.version, "1.14.19");
+          NodeAssert.equal(snapshot.installedVersion, "1.14.20");
+          NodeAssert.equal(runtimeMock.state.startCalls, 1);
+          NodeAssert.equal(runtimeMock.state.closeCalls, 0);
+        }),
+      );
+    }),
   );
 
   it.effect("lists a local OpenCode 2 binary's models in Full access only, never via 1.x", () =>
@@ -799,7 +857,13 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             providerID: "opencode",
             id: "space-bunny-free",
             name: "Space Bunny Free",
-            variants: [{ id: "low" }, { id: "medium" }, { id: "high" }],
+            variants: [{ id: "low" }, { id: "medium" }, { id: "high" }, { id: "xhigh" }],
+          },
+          {
+            providerID: "opencode-go",
+            id: "deepseek-v4.1-flash",
+            name: "DeepSeek V4.1 Flash",
+            variants: [{ id: "low" }, { id: "high" }, { id: "max" }],
           },
         ]),
       );
@@ -820,13 +884,31 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
       );
       NodeAssert.deepEqual(
         snapshot.models.map((model) => model.slug),
-        ["opencode/big-pickle", "opencode/space-bunny-free"],
+        ["opencode/big-pickle", "opencode-go/deepseek-v4.1-flash", "opencode/space-bunny-free"],
       );
       const variant = snapshot.models.find((model) => model.slug === "opencode/space-bunny-free")
         ?.capabilities?.optionDescriptors?.[0];
       NodeAssert.deepEqual(
         variant?.type === "select" ? variant.options.map((option) => option.id) : [],
-        ["low", "medium", "high"],
+        ["low", "medium", "high", "xhigh"],
+      );
+      NodeAssert.equal(
+        variant?.type === "select"
+          ? variant.options.find((option) => option.id === "xhigh")?.label
+          : undefined,
+        "Extra High",
+      );
+      const goVariant = snapshot.models.find(
+        (model) => model.slug === "opencode-go/deepseek-v4.1-flash",
+      )?.capabilities?.optionDescriptors?.[0];
+      const goVariantIds =
+        goVariant?.type === "select" ? goVariant.options.map((option) => option.id) : [];
+      NodeAssert.deepEqual(goVariantIds, ["low", "high", "max"]);
+      NodeAssert.ok(
+        goVariant?.type === "select" &&
+          goVariant.currentValue !== undefined &&
+          goVariantIds.includes(goVariant.currentValue),
+        "an OpenCode Go model gets a default reasoning variant it lists",
       );
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
     }),
@@ -1028,18 +1110,39 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
     }),
   );
 
-  it.effect("rejects an unsupported server before loading inventory", () =>
+  it.effect("reports a version the policy rates broken before loading inventory", () =>
     Effect.gen(function* () {
-      runtimeMock.state.connectionError = new Error(
-        "OpenCode v1.14.18 is too old. Upgrade to v1.14.19 or newer.",
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        () =>
+          Effect.succeed({
+            status: "broken",
+            message: null,
+            recommendedVersion: null,
+            recommendedRange: ">=2.0.18",
+          }),
       );
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.match(snapshot.message ?? "", /OpenCode 1\.14\.19 does not work/);
+      NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
+    }),
+  );
+
+  it.effect("reports a failed server connection before loading inventory", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.connectionError = new Error("OpenCode server refused the connection.");
       const snapshot = yield* checkProvider(
         makeOpenCodeSettings({ serverUrl: "http://127.0.0.1:9999" }),
       );
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.models.length, 0);
-      NodeAssert.match(snapshot.message ?? "", /v1\.14\.18 is too old/);
+      NodeAssert.match(snapshot.message ?? "", /refused the connection/);
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
     }),
   );
@@ -1066,17 +1169,67 @@ const scanned: OpenCode2Workspace = {
   ],
 };
 
-it.effect("reads a fresh OpenCode 2 directory again once its scan has ended", () =>
+it.effect(
+  "reads a loaded OpenCode 2 directory listing no commands again once its scan has ended",
+  () =>
+    Effect.gen(function* () {
+      const reads: Array<OpenCode2Workspace> = [{ commands: [], skills: [] }, scanned];
+      const scanEnded = yield* Deferred.make<void>();
+      const load = yield* loadOpenCode2Workspace(
+        Effect.sync(() => reads.shift()!),
+        Deferred.await(scanEnded),
+        Effect.succeed(true),
+      ).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      NodeAssert.equal(reads.length, 1);
+      yield* Deferred.succeed(scanEnded, undefined);
+      NodeAssert.deepEqual(yield* Fiber.join(load), scanned);
+    }),
+);
+
+it.effect("waits for the scan of a cold OpenCode 2 directory that first lists only built-ins", () =>
   Effect.gen(function* () {
-    const reads: Array<OpenCode2Workspace> = [{ commands: [], skills: [] }, scanned];
-    const scanEnded = yield* Deferred.make<void>();
-    const load = yield* loadOpenCode2Workspace(
-      Effect.sync(() => reads.shift()!),
-      Deferred.await(scanEnded),
-    ).pipe(Effect.forkChild);
-    yield* Effect.yieldNow;
-    NodeAssert.equal(reads.length, 1);
-    yield* Deferred.succeed(scanEnded, undefined);
-    NodeAssert.deepEqual(yield* Fiber.join(load), scanned);
+    const calls: Array<string> = [];
+    const reads: Array<OpenCode2Workspace> = [
+      { commands: builtinCommands, skills: builtinSkills },
+      scanned,
+    ];
+    const workspace = yield* loadOpenCode2Workspace(
+      Effect.sync(() => (calls.push("read"), reads.shift()!)),
+      Effect.sync(() => void calls.push("scanned")),
+      Effect.sync(() => (calls.push("loaded"), false)),
+    );
+    NodeAssert.deepEqual(workspace, scanned);
+    NodeAssert.deepEqual(calls, ["loaded", "read", "scanned", "read"]);
+  }),
+);
+
+it.effect("reads an already loaded OpenCode 2 directory once without waiting for a scan", () =>
+  Effect.gen(function* () {
+    const calls: Array<string> = [];
+    const workspace = yield* loadOpenCode2Workspace(
+      Effect.sync(() => (calls.push("read"), scanned)),
+      Effect.sync(() => void calls.push("scanned")),
+      Effect.succeed(true),
+    );
+    NodeAssert.deepEqual(workspace, scanned);
+    NodeAssert.deepEqual(calls, ["read"]);
+  }),
+);
+
+it.effect("lists a catalog whose cold server start outlasts the settle budget", () =>
+  Effect.gen(function* () {
+    const catalog: ReadonlyArray<OpenCode2Model> = [
+      { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
+    ];
+    let reads = 0;
+    // The loader's read includes spawning the server; a loaded host can take 6s to start it.
+    const read = Effect.suspend(() =>
+      reads++ === 0 ? Effect.sleep("6 seconds").pipe(Effect.as(catalog)) : Effect.succeed(catalog),
+    );
+    const load = yield* makeOpenCode2ModelLoader(read);
+    const fiber = yield* Effect.forkChild(load);
+    yield* TestClock.adjust("10 seconds");
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), catalog);
   }),
 );

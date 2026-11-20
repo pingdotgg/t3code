@@ -1,14 +1,18 @@
-import { ASSISTANT_CITATION_CONTEXT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
+import { type AssistantCitation } from "@t3tools/contracts";
 
 import { mathWrapperOf } from "../markdown-clipboard";
 
-export type AssistantTextSelector = {
-  readonly text: string;
-  readonly start: number;
-  readonly end: number;
-  readonly prefix: string;
-  readonly suffix: string;
-};
+export {
+  createAssistantTextSelector,
+  findAssistantCitationText,
+} from "@t3tools/shared/assistantCitations";
+import {
+  createAssistantTextSelector,
+  findAssistantCitationText,
+  splitsSurrogatePair,
+  type AssistantTextSelector,
+} from "@t3tools/shared/assistantCitations";
+export type { AssistantTextSelector } from "@t3tools/shared/assistantCitations";
 
 export type AssistantCitationSourceAnchor = {
   source: HTMLElement;
@@ -38,87 +42,6 @@ const CONTROL_SELECTOR = "button, input, textarea, select, [role=button], [conte
 const EXCLUDED_SELECTOR = `${CONTROL_SELECTOR}, [hidden], [aria-hidden=true], script, style, template, noscript, svg`;
 const BLOCK_SELECTOR =
   "address, article, aside, blockquote, dd, div, dl, dt, figcaption, figure, footer, h1, h2, h3, h4, h5, h6, header, hr, li, main, nav, ol, p, pre, section, table, td, th, tr, ul";
-
-function normalizeWhitespace(text: string): string {
-  return text.replace(/\s+/g, " ");
-}
-
-function splitsSurrogatePair(text: string, offset: number): boolean {
-  const before = text.charCodeAt(offset - 1);
-  const after = text.charCodeAt(offset);
-  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
-}
-
-export function createAssistantTextSelector(
-  text: string,
-  rawStart: number,
-  rawEnd: number,
-): AssistantTextSelector | null {
-  const quote = text.slice(rawStart, rawEnd);
-  if (quote.trim().length === 0) return null;
-
-  const normalized = normalizeWhitespace(text);
-  let start = normalizeWhitespace(text.slice(0, rawStart)).length;
-  if (rawStart > 0 && /\s/.test(text[rawStart - 1]!) && /\s/.test(text[rawStart]!)) {
-    start -= 1;
-  }
-  const end = normalizeWhitespace(text.slice(0, rawEnd)).length;
-  let prefixStart = Math.max(0, start - ASSISTANT_CITATION_CONTEXT_LENGTH);
-  let suffixEnd = Math.min(normalized.length, end + ASSISTANT_CITATION_CONTEXT_LENGTH);
-  // A split pair becomes a replacement character when the context enters a URL.
-  if (splitsSurrogatePair(normalized, prefixStart)) prefixStart += 1;
-  if (splitsSurrogatePair(normalized, suffixEnd)) suffixEnd -= 1;
-  return {
-    text: quote,
-    start,
-    end,
-    prefix: normalized.slice(prefixStart, start),
-    suffix: normalized.slice(end, suffixEnd),
-  };
-}
-
-/** Offsets use normalized UTF-16 units. Saved offsets may drift, so they cannot break context ties. */
-export function findAssistantCitationText(
-  text: string,
-  selector: AssistantTextSelector,
-): { start: number; end: number } | null {
-  const normalized = normalizeWhitespace(text);
-  const quote = normalizeWhitespace(selector.text);
-  if (quote.trim().length === 0) return null;
-
-  const prefix = normalizeWhitespace(selector.prefix);
-  const suffix = normalizeWhitespace(selector.suffix);
-  const matchesContext = (start: number, end: number) =>
-    normalized.slice(Math.max(0, start - prefix.length), start) === prefix &&
-    normalized.slice(end, end + suffix.length) === suffix;
-
-  let match =
-    Number.isSafeInteger(selector.start) &&
-    Number.isSafeInteger(selector.end) &&
-    selector.start >= 0 &&
-    selector.end - selector.start === quote.length &&
-    normalized.slice(selector.start, selector.end) === quote &&
-    matchesContext(selector.start, selector.end)
-      ? { start: selector.start, end: selector.end }
-      : null;
-  let onlyQuote: { start: number; end: number } | null = null;
-  let quoteCount = 0;
-
-  for (
-    let start = normalized.indexOf(quote);
-    start !== -1;
-    start = normalized.indexOf(quote, start + 1)
-  ) {
-    const end = start + quote.length;
-    quoteCount += 1;
-    onlyQuote = { start, end };
-    if (!matchesContext(start, end)) continue;
-    if (match !== null && match.start !== start) return null;
-    match = { start, end };
-  }
-
-  return match ?? (quoteCount === 1 ? onlyQuote : null);
-}
 
 /** A text node, or a whole rendered formula standing for its TeX. */
 type TextChunk = { node: Text | Element; start: number; end: number };
@@ -246,6 +169,23 @@ export function captureAssistantTextSelection(
   if (rawStart === null) return null;
   const selector = createAssistantTextSelector(stream.text, rawStart, rawEnd);
   return selector === null ? null : { source, selector, range };
+}
+
+/** How much of a response a reply carries: enough to recognise it, not to resend it. */
+const RESPONSE_OPENING_LENGTH = 300;
+
+/** The opening of a response. Falls back to the raw text when the source is virtualized away or
+ * renders no text, as in an image-only response. */
+export function captureAssistantMessageOpening(
+  source: HTMLElement | null,
+  fallbackText: string,
+): AssistantTextSelector | null {
+  const rendered = source ? readAssistantText(source).text : "";
+  const text = rendered.trim() ? rendered : fallbackText;
+  const rawStart = text.length - text.trimStart().length;
+  let rawEnd = Math.min(text.trimEnd().length, rawStart + RESPONSE_OPENING_LENGTH);
+  if (splitsSurrogatePair(text, rawEnd)) rawEnd -= 1;
+  return createAssistantTextSelector(text, rawStart, rawEnd);
 }
 
 function rawTextOffset(text: string, normalizedOffset: number): number {
