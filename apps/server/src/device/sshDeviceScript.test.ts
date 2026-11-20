@@ -7,6 +7,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
+import { DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
@@ -234,6 +235,80 @@ it.effect("keeps a daemon record its missing agent CLI cannot stop", () =>
         expect((await start(exited)).stderr).toContain("Android SDK was not found");
         await expect(NodeFSP.access(daemonFile)).rejects.toThrow();
       } finally {
+        await NodeFSP.rm(home, { recursive: true, force: true });
+      }
+    });
+  }),
+);
+
+it.effect.each([
+  {
+    name: "prepends -gpu host before user overrides on macOS Android hosts",
+    platform: "darwin" as const,
+    extra: "-gpu swiftshader_indirect",
+    expected: "-gpu host -gpu swiftshader_indirect",
+  },
+  {
+    name: "does not force -gpu host on Linux Android hosts",
+    platform: "linux" as const,
+    extra: "-gpu swiftshader_indirect",
+    expected: "-gpu swiftshader_indirect",
+  },
+])("$name", ({ platform, extra, expected }) =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    yield* Effect.promise(async () => {
+      const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-gpu-"));
+      const hubFile = NodePath.join(home, ".t3/device/hosts/owner/hub.json");
+      try {
+        const sdk = NodePath.join(home, "sdk");
+        await completeSdk(sdk);
+        const capture = NodePath.join(home, "hub-extra-args.txt");
+        const hubDir = NodePath.join(
+          home,
+          `.t3/device/tools/expo-device-hub@${DEVICE_HUB_VERSION}`,
+        );
+        const hubEntry = NodePath.join(hubDir, "node_modules/expo-device-hub/dist/server/cli.mjs");
+        await NodeFSP.mkdir(NodePath.dirname(hubEntry), { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(hubDir, ".install-complete"), DEVICE_HUB_VERSION);
+        await NodeFSP.writeFile(
+          hubEntry,
+          `import * as fs from "node:fs";
+import * as http from "node:http";
+fs.writeFileSync(${JSON.stringify(capture)}, process.env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS ?? "");
+const port = Number(process.argv[process.argv.indexOf("--port") + 1]);
+const server = http.createServer((_req, res) => {
+  res.setHeader("connection", "close");
+  res.end("ok");
+});
+server.listen(port, "127.0.0.1");
+process.on("SIGTERM", () => process.exit(0));
+`,
+        );
+        const result = NodeChildProcess.spawnSync(process.execPath, [], {
+          input:
+            `Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });\n` +
+            remoteDeviceScript("owner", "start"),
+          env: {
+            HOME: home,
+            ANDROID_HOME: sdk,
+            EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: extra,
+            PATH: `${NodePath.dirname(process.execPath)}:/usr/bin:/bin`,
+          },
+          encoding: "utf8",
+        });
+        expect(result.stderr).toBe("");
+        expect(result.status).toBe(0);
+        expect(await NodeFSP.readFile(capture, "utf8")).toBe(expected);
+        const hub = JSON.parse(await NodeFSP.readFile(hubFile, "utf8")) as {
+          emulatorExtraArgs?: string;
+        };
+        expect(hub.emulatorExtraArgs).toBe(expected);
+      } finally {
+        try {
+          const hub = JSON.parse(await NodeFSP.readFile(hubFile, "utf8")) as { pid?: number };
+          if (hub.pid) process.kill(hub.pid, "SIGTERM");
+        } catch {}
         await NodeFSP.rm(home, { recursive: true, force: true });
       }
     });

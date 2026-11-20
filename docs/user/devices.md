@@ -43,9 +43,11 @@ devices and iOS do not need ffmpeg.
 
 On macOS and Windows hosts, T3 Code starts Android emulators with `-gpu host`
 so headless rendering uses the host GPU instead of falling back to software
-rendering. Set `EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS` on the host (for example
-`-gpu swiftshader_indirect` or `-gpu auto`) and restart the environment server
-to override the GPU mode.
+rendering. To override the GPU mode, set `EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS`
+on the host (for example `-gpu swiftshader_indirect` or `-gpu auto`), restart
+the environment server (or turn device support off and on for SSH devices), and
+power off and start any already-running emulator so it launches with the new
+setting.
 
 The screen is interactive: click and drag to touch, type while the screen is
 focused, and use the toolbar for Home, Back, and Recents on Android, rotate on
