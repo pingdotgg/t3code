@@ -25,6 +25,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as ServerConfig from "../config.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import type { ProjectionTimelinePageOptions } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
@@ -60,6 +61,7 @@ interface Seen {
   readonly clones: ReadonlyArray<SourceControlCloneRepositoryInput>;
   /** Commands dispatched and delegated-task stops, as `<type> <threadId>`. */
   readonly stops: ReadonlyArray<string>;
+  readonly timelineReads: ReadonlyArray<ProjectionTimelinePageOptions>;
 }
 const nothingSeen: Seen = {
   sends: [],
@@ -68,6 +70,7 @@ const nothingSeen: Seen = {
   projects: [],
   clones: [],
   stops: [],
+  timelineReads: [],
 };
 
 /** The box user's own thread, which no link started. */
@@ -96,6 +99,12 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
     getThreadShell: shellOf,
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
+    getRunCount: () => Effect.succeed(1),
+    getTimelinePage: (_threadId, options) =>
+      Ref.update(seen, (current) => ({
+        ...current,
+        timelineReads: [...current.timelineReads, options],
+      })).pipe(Effect.as({ items: [], totalItems: 0 } as never)),
     listProjectThreads: () => linked.pipe(Effect.map((shell) => [shell] as never)),
     getShellSnapshot: () => linked.pipe(Effect.map((shell) => ({ threads: [shell] }) as never)),
     sendToThread: (input) =>
@@ -394,6 +403,16 @@ it.effect("an agent here works on a linked environment's threads within its own 
           { environmentId: box.environmentId, label: "Box", status: "reachable", access: "auto" },
         ],
       });
+
+      // An agent's cursorless read there gets the newest page, as it does here.
+      yield* a.call("thread:laptop-full", "t3_thread_read", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+        limit: 35,
+      });
+      expect((yield* Ref.get(seen)).timelineReads).toMatchObject([
+        { beforePosition: expect.any(Number), limit: 35 },
+      ]);
 
       const threads = yield* a.call("thread:laptop-full", "t3_thread_list", {
         environmentId: box.environmentId,
