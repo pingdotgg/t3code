@@ -170,8 +170,13 @@ export type OrchestratorMcpTerminalDelegatedTaskStatus =
 
 // Waits return before common MCP client deadlines; callers wait again with the returned handle.
 export const ORCHESTRATOR_MCP_MAX_WAIT_TIMEOUT_MS = 45_000;
+// A custom filter adds no `maximum` to the tool schema, which counts against the agent context budget.
 const OrchestratorMcpWaitTimeoutMs = Schema.Finite.check(
-  Schema.isLessThanOrEqualTo(ORCHESTRATOR_MCP_MAX_WAIT_TIMEOUT_MS),
+  Schema.makeFilter(
+    (timeoutMs) =>
+      timeoutMs <= ORCHESTRATOR_MCP_MAX_WAIT_TIMEOUT_MS ||
+      `timeoutMs is at most ${ORCHESTRATOR_MCP_MAX_WAIT_TIMEOUT_MS}; wait again with the returned handle.`,
+  ),
 );
 
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
@@ -586,9 +591,7 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   runId: Schema.optional(RunId),
-  timeoutMs: Schema.optional(OrchestratorMcpWaitTimeoutMs).annotate({
-    description: "At most 45 s.",
-  }),
+  timeoutMs: Schema.optional(OrchestratorMcpWaitTimeoutMs),
   untilDelegatedWorkSettled: Schema.optional(
     Schema.Boolean.annotate({
       description:
