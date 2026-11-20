@@ -10,13 +10,16 @@ export function resolvePullRequestDetailChecks(
     detail.observedAt !== undefined && checks.observedAt !== undefined
       ? checks.observedAt >= detail.observedAt
       : checksAreNewer;
-  return newer
-    ? {
-        ...detail,
-        state: detail.state === "merged" ? "merged" : checks.state,
-        checks: checks.checks,
-      }
-    : detail;
+  if (!newer) return detail;
+  // The checks read answered what the detail could not, so checks are no longer unavailable.
+  const { unavailable, ...answered } = detail;
+  const stillUnavailable = unavailable?.filter((part) => part !== "checks") ?? [];
+  return {
+    ...answered,
+    ...(stillUnavailable.length === 0 ? {} : { unavailable: stillUnavailable }),
+    state: detail.state === "merged" ? "merged" : checks.state,
+    checks: checks.checks,
+  };
 }
 
 /** Checks still running are worth a tighter poll than a settled head. */

@@ -190,7 +190,11 @@ export function PullRequestChecksRow(props: RowProps) {
             })}
           {!props.pr.checks.length ? (
             <Text className="px-4 py-3 text-xs text-foreground-muted">
-              <T>No checks reported.</T>
+              {props.pr.unavailable?.includes("checks") ? (
+                gt("Checks unavailable")
+              ) : (
+                <T>No checks reported.</T>
+              )}
             </Text>
           ) : null}
           <PullRequestCardRow

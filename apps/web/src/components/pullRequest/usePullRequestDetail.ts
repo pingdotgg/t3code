@@ -23,6 +23,7 @@ import {
 } from "~/state/pullRequests";
 import {
   readPullRequestDetailSnapshot,
+  fillUnavailablePullRequestDetail,
   resolveDisplayedPullRequestDetail,
 } from "./pullRequestDetail.logic";
 
@@ -70,8 +71,35 @@ export function usePullRequestDetail(
       ? pullRequestEnvironment.checks({ environmentId, input: reference })
       : null,
   );
+  // A reading with unavailable parts never becomes the cache: the cache is what fills them.
+  const completeDetail = detailQuery.data?.unavailable === undefined ? detailQuery.data : null;
+  const [cachedDetail, setCachedDetail] = useState(() =>
+    readPullRequestDetailSnapshot(
+      typeof window === "undefined" ? undefined : window.localStorage,
+      environmentId,
+      reference,
+    ),
+  );
+  const [cachedDetailKey, setCachedDetailKey] = useState(scopeKey);
+  if (cachedDetailKey !== scopeKey) {
+    setCachedDetailKey(scopeKey);
+    setCachedDetail(
+      completeDetail ??
+        readPullRequestDetailSnapshot(
+          typeof window === "undefined" ? undefined : window.localStorage,
+          environmentId,
+          reference,
+        ),
+    );
+  } else if (completeDetail !== null && completeDetail !== cachedDetail) {
+    setCachedDetail(completeDetail);
+  }
   const liveDetail = resolvePullRequestDetailChecks(
-    detailQuery.data,
+    fillUnavailablePullRequestDetail({
+      answer: detailQuery.data,
+      cached: cachedDetail,
+      reference,
+    }),
     checksQuery.data,
     checksQuery.dataUpdatedAt >= detailQuery.dataUpdatedAt,
   );
@@ -86,27 +114,6 @@ export function usePullRequestDetail(
     key: `workspace-pr-checks:${environmentId}:${reference.projectId}:${reference.host}:${reference.repository}:${reference.number}`,
     checks: liveDetail?.checks ?? [],
   });
-  const [cachedDetail, setCachedDetail] = useState(() =>
-    readPullRequestDetailSnapshot(
-      typeof window === "undefined" ? undefined : window.localStorage,
-      environmentId,
-      reference,
-    ),
-  );
-  const [cachedDetailKey, setCachedDetailKey] = useState(scopeKey);
-  if (cachedDetailKey !== scopeKey) {
-    setCachedDetailKey(scopeKey);
-    setCachedDetail(
-      detailQuery.data ??
-        readPullRequestDetailSnapshot(
-          typeof window === "undefined" ? undefined : window.localStorage,
-          environmentId,
-          reference,
-        ),
-    );
-  } else if (detailQuery.data !== null && detailQuery.data !== cachedDetail) {
-    setCachedDetail(detailQuery.data);
-  }
   const observedSummary = useSharedPullRequestSummary(environmentId, reference);
   const pendingEdits = useAtomValue(pullRequestPendingEditsFor(environmentId, reference));
   const activity = activityQuery.data;

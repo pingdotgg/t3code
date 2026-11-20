@@ -16,6 +16,7 @@ import {
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   GitCommandError,
   PullRequestDetail,
+  pullRequestDetailWithKnownParts,
   PullRequestOperationError,
   type PullRequestAction,
   type PullRequestActor,
@@ -1704,7 +1705,8 @@ export function writePullRequestDetailSnapshot(
   reference: PullRequestDetailSnapshotRef,
   detail: PullRequestDetail,
 ): void {
-  if (!storage) return;
+  // A reading with unavailable parts holds placeholders, which must not replace a complete one.
+  if (!storage || detail.unavailable !== undefined) return;
   try {
     const key = pullRequestDetailSnapshotKey(environmentId, reference);
     const recent = readPullRequestDetailSnapshotIndex(storage).filter((entry) => entry !== key);
@@ -1715,6 +1717,19 @@ export function writePullRequestDetailSnapshot(
     storage.setItem(PULL_REQUEST_DETAIL_SNAPSHOT_INDEX_KEY, JSON.stringify(recent));
     storage.setItem(key, JSON.stringify(detail));
   } catch {}
+}
+
+/** A rate-limited answer keeps the parts its host left out from this pull request's snapshot. */
+export function fillUnavailablePullRequestDetail(input: {
+  readonly answer: PullRequestDetail | null;
+  readonly cached: PullRequestDetail | null;
+  readonly reference: PullRequestDetailSnapshotRef;
+}): PullRequestDetail | null {
+  if (input.answer === null || input.answer.unavailable === undefined) return input.answer;
+  return pullRequestDetailWithKnownParts(
+    input.answer,
+    resolveDisplayedPullRequestDetail({ ...input, live: null }),
+  );
 }
 
 export function resolveDisplayedPullRequestDetail(input: {

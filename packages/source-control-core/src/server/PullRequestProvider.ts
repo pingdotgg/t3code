@@ -13,6 +13,7 @@ import type {
   PullRequestChecksState,
   PullRequestCheck,
   PullRequestChecks,
+  PullRequestDetailPart,
   PullRequestComment,
   PullRequestFileViewed,
   PullRequestCommit,
@@ -270,6 +271,8 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly mergeCapabilities: PullRequestMergeCapabilities;
   readonly viewerPermissions: PullRequestViewerPermissions;
+  /** Parts a rate-limited host did not answer; their fields hold placeholders, not readings. */
+  readonly unavailable?: ReadonlyArray<PullRequestDetailPart>;
   readonly baseComparison?: PullRequestBaseComparison;
   readonly behindBy?: number;
   readonly autoMergeEnabled?: boolean;

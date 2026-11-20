@@ -100,5 +100,10 @@ describe("mobile overview check status", () => {
     expect(
       pullRequestChecksSummary({ checks: [check("success"), check("cancelled")] }),
     ).toMatchObject({ title: "1 check failing", tint: "accent-danger-foreground" });
+    // Checks the host did not answer are not reported as none.
+    expect(pullRequestChecksSummary({ checks: [], unavailable: ["checks"] }).title).toBe(
+      "Checks unavailable",
+    );
+    expect(pullRequestChecksSummary({ checks: [] }).title).toBe("No checks reported");
   });
 });

@@ -615,6 +615,9 @@ const make = Effect.gen(function* () {
           }
         : {}),
       ...(Option.isSome(detail) && wants("checks") ? { checks: detail.value.checks } : {}),
+      ...(Option.isSome(detail) && detail.value.unavailable !== undefined
+        ? { unavailable: detail.value.unavailable }
+        : {}),
       ...(Option.isSome(activity) && Option.isSome(page)
         ? {
             conversation: {
