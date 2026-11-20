@@ -9,6 +9,7 @@ import {
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
   mediaKindFromPath,
+  modelPreviewKind,
   officePreviewKind,
 } from "./filePreview.ts";
 
@@ -64,6 +65,24 @@ describe("workspace file previews", () => {
       );
     },
   );
+  it.each([
+    ["stl", "model/stl"],
+    ["3mf", "model/3mf"],
+    ["glb", "model/gltf-binary"],
+  ])("previews %s models through signed host assets", (extension, mimeType) => {
+    const name = `parts/bracket.${extension.toUpperCase()}`;
+    expect(modelPreviewKind({ name })).toBe(extension);
+    for (const genericMime of ["", "application/octet-stream", "text/plain"]) {
+      expect(filePreviewKind({ name, mimeType: genericMime })).toBe("model");
+    }
+    expect(filePreviewKind({ name: "download", mimeType })).toBe("model");
+    expect(modelPreviewKind({ name: "download", mimeType })).toBe(extension);
+    // Mobile has no model viewer, so it keeps the generic fallback.
+    expect(filePreviewKind({ name }, { richDocuments: false })).toBe("unsupported");
+    expect(isWorkspacePreviewEntryPath(name)).toBe(true);
+    expect(isWorkspacePreviewEntryPath(`${name}?download=1`)).toBe(false);
+    expect(hostPreviewMimeTypeFromExtension(`.${extension}`)).toBe(mimeType);
+  });
   it.each([
     [
       "quarterly-report.DOCX",
@@ -188,6 +207,11 @@ describe("attachment preview classification", () => {
     ["archive.zip", "application/zip", "archive"],
     ["misleading.json", "application/pdf", "pdf"],
     ["misleading.pdf", "application/zip", "archive"],
+    ["download", "application/vnd.ms-pki.stl", "model"],
+    ["download", "model/x.stl-ascii", "model"],
+    ["download", "application/vnd.ms-package.3dmanufacturing-3dmodel+xml", "model"],
+    ["scene.gltf", "", "unsupported"],
+    ["part.stl", "application/pdf", "pdf"],
   ])("classifies %s (%s) as %s", (name, mimeType, expected) => {
     expect(filePreviewKind({ name, mimeType })).toBe(expected);
   });
