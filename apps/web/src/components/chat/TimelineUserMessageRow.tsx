@@ -600,7 +600,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     plainText
       .split(/\r?\n/)
       .find((line) => line.trim().length > 0)
-      ?.trim() ?? "";
+      ?.trim()
+      // Mentioned macOS paths can be NFD; compose them like the chips in the body.
+      .normalize("NFC") ?? "";
   const mediaCopyRecords = mediaOnly
     ? resolvedContext.records.flatMap((record) => {
         const known = asKnownContextRecord(record);
