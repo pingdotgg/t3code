@@ -34,7 +34,11 @@ import {
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
-import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
+import {
+  providerOptionDescriptors,
+  refuseAgentModePick,
+  resolveRuntimeMode,
+} from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
@@ -396,6 +400,17 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             : runtimeMode;
         if (!replaying) {
           const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+          yield* refuseAgentModePick({
+            callerRuntimeMode: context.limits.runtimeMode,
+            picked: input.modelSelection?.options,
+            descriptors: providerOptionDescriptors(
+              providers.find((provider) => provider.instanceId === modelSelection.instanceId),
+            ),
+            held:
+              caller?.modelSelection.instanceId === modelSelection.instanceId
+                ? caller.modelSelection.options
+                : undefined,
+          });
           startedRuntimeMode = yield* resolveRuntimeMode(startedRuntimeMode, input.runtimeMode, {
             modelSelection,
             supportedRuntimeModes: providers.find(
