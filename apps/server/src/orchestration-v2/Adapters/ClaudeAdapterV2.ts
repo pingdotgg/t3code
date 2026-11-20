@@ -9394,6 +9394,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // stopped turn settles as interrupted when its process closes.
         const settleHeldResult = Effect.fnUntraced(function* (context: ActiveClaudeTurnContext) {
           if (
+            context.steersClosed ||
             context.pendingSteers.size > 0 ||
             context.heldResult === undefined ||
             (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
