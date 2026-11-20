@@ -820,6 +820,7 @@ export const make = Effect.gen(function* () {
           "gitcafe.list.state": input.state,
           "gitcafe.list.query": Boolean(input.query?.trim()),
           "gitcafe.list.involvement": input.involvement ?? "none",
+          "gitcafe.list.author_discovery_pages": 0,
         });
         const annotateOutcome = (pages: number, rows: number, truncated: boolean) =>
           Effect.annotateCurrentSpan({
@@ -863,7 +864,6 @@ export const make = Effect.gen(function* () {
         yield* Effect.annotateCurrentSpan({
           "gitcafe.list.actor_narrowed": actorId !== undefined,
           "gitcafe.list.author_discovery": unresolvedAuthor !== null,
-          "gitcafe.list.author_discovery_pages": 0,
         });
         const readPage = Effect.fn("readPage")(function (rows: number, after: string | null) {
           const query = new URLSearchParams({ limit: String(rows), sort: "newest" });
