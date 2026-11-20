@@ -34,20 +34,16 @@ test(
       const openPopup = browser
         .locator('[data-slot="dialog-popup"][data-open]')
         .getByRole("heading", "Create pairing link", { exact: true });
-      const dismissed = !(await openPopup.isVisible());
-      if (dismissed) {
-        await dialog.waitFor({ state: "hidden" });
-        await open.tap();
-        await dialog.waitFor();
-      }
+      await dialog.waitFor({ state: "hidden" });
+      await open.tap();
+      await openPopup.waitFor();
 
       release.resolve();
       await authorizedClients.getByText(label, { exact: true }).waitFor();
       await app.screenshot("after-first-link-finishes");
-      expect(
-        !dismissed || (await openPopup.isVisible()),
-        "The reopened Create link dialog remains open",
-      ).toBe(true);
+      expect(await openPopup.isVisible(), "The reopened Create link dialog remains open").toBe(
+        true,
+      );
     } finally {
       release.resolve();
       await browser.unroute(pairingToken);
