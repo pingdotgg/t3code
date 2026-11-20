@@ -31,6 +31,10 @@
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"
     },
+    "./composerInlineSuggestion": {
+      "types": "./src/composerInlineSuggestion.ts",
+      "default": "./src/composerInlineSuggestion.ts"
+    },
     "./saved-views": {
       "types": "./src/savedViews.ts",
       "default": "./src/savedViews.ts"
