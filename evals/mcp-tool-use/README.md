@@ -65,15 +65,16 @@ Check that the case builds with `--dry-run --case <id>`. Then run it on the text
 
 USER-01 and OWN-04 are the two halves of #36192: T3's device rules must not outrank the user's explicit ask. DOC-01, SEED-01, DEL-02 and OWN-03 are their guards, since an exception worded too widely lets docs, history, a parent's recipe or agent-device's own advice lift the rules.
 
-Passes per case, main's text → the #36192 change, on the Haiku shell. Opus 5.5 was not run.
+Passes per case on the #36192 text, Terra shell. The main-text column is from the original PR's Haiku-shell runs; Sonnet 5.5 and Opus 5.5 were not run on the final wording.
 
-| Case    | Sonnet 5.5 | GPT-6.1 Sol | GPT-6 Astra |
-| ------- | ---------- | ----------- | ----------- |
-| USER-01 | 3/3 → 2/2  | 0/3 → 5/5   | 0/3 → 5/5   |
-| OWN-04  | 3/3 → 1/2  | 0/3 → 4/5   | 0/3 → 5/5   |
-| DEL-02  | not paired | 3/6 → 8/11  | 3/6 → 8/8   |
+| Case                    | GPT-6.1 Sol (main → change) | GPT-6 Astra (main → change) |
+| ----------------------- | --------------------------- | --------------------------- |
+| USER-01                 | 0/3 → 3/3                   | 0/3 → 3/3                   |
+| OWN-04                  | 0/3 → 5/6                   | 0/3 → 6/6                   |
+| DEL-02                  | 3/6 → 2/3                   | 3/6 → 3/3                   |
+| DOC-01, SEED-01, OWN-03 | 3/3 each                    | 3/3 each                    |
 
-Every main-text Codex miss on USER-01 and OWN-04 cited T3's device rules as outranking the user. The two misses with the change are a Sol sample that ran out of steps after closing the session, and a Sonnet sample that asked the user to confirm the session's owner. No DEL-02 sample on either text drove the simulator raw; its misses are step limits and recordings the grader could not attribute. Three earlier wordings of the same exception did reproduce the raw route in DEL-02 (up to 7 of 9 Sol samples), so rerun DEL-02 when this sentence changes.
+Every main-text Codex miss on USER-01 and OWN-04 cited T3's device rules as outranking the user. The OWN-04 miss with the change closed the session but never named the artifact. No DEL-02 sample drove the simulator raw; its miss is a recording the grader could not attribute. Earlier, wider wordings of the same exception did reproduce the raw route in DEL-02 (up to 7 of 9 Sol samples), so rerun DEL-02 when this sentence changes.
 
 `device.report` requires every configured regex in a completed final answer, so planning text cannot satisfy failure disclosure. CAP-01 sets `device.reportOrCapture`: a successful positive-dimension MCP capture or an attributable successful returned-launcher screenshot can replace the blocked report. Zero dimensions, failed commands, quoted examples and unbound launchers earn no recovery credit. It is a bounded disclosure check, not a general honesty evaluator. `device.capture.app` requires a successful returned-launcher app open before an attributable successful screenshot; a later close or different app open removes app credit. An unambiguous `open … && screenshot` chain is processed in action order. Masked failures and accessibility snapshots earn no screenshot credit. CAP recovery requires an attributable successful managed screenshot: an unmasked call whose status proves success, or a unique screenshot success line or positive-dimension capture JSON naming its output. Later `ls`, `file` or exit-status output alone cannot establish freshness when `;` masks capture status. `device.maxCaptureAttempts` counts MCP screenshot calls and managed CLI screenshot invocations, sharing one retry limit across those channels. Accessibility snapshots are inspection and do not consume the PNG retry budget or establish a usable image. No new shell grammar is added.
 
