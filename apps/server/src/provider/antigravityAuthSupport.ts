@@ -72,7 +72,6 @@ const removedEnvironmentKeys = new Set([
   "AGY_ACP_ENABLE_OAUTH",
   "GEMINI_HOME",
   "AGY_ACP_FORCE_FILE_STORAGE",
-  "ANTIGRAVITY_HARNESS_PATH",
   "BROWSER",
   "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE",
@@ -457,10 +456,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 });
 
 export function buildAntigravityAcpSpawnInput(input: {
-  readonly installation: {
-    readonly executablePath: string;
-    readonly harnessPath: string | null;
-  };
+  readonly installation: { readonly executablePath: string };
   readonly profile: AntigravityProfile;
   readonly cwd: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
@@ -469,32 +465,21 @@ export function buildAntigravityAcpSpawnInput(input: {
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
-    // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand.
-    // The harness can survive a failed local agent and return end_turn; its native
-    // logs are the failure signal, so the transport must receive them.
-    args:
-      input.installation.harnessPath === null
-        ? [
-            "acp",
-            "--gemini-dir",
-            input.profile.geminiHome,
-            "--app-data-dir",
-            // The CLI joins this beneath gemini-dir, including when the value is absolute.
-            "antigravity-acp",
-          ]
-        : [...(input.profile.platform === "linux" ? ["--uid="] : []), "--alsologtostderr"],
+    args: [
+      "acp",
+      "--gemini-dir",
+      input.profile.geminiHome,
+      "--app-data-dir",
+      // The CLI joins this beneath gemini-dir, including when the value is absolute.
+      "antigravity-acp",
+    ],
     cwd: input.cwd,
-    env: {
-      ...antigravityEnvironment(
-        input.profile,
-        input.baseEnv ?? process.env,
-        input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
-        input.runtimeTempDirectory,
-      ),
-      ...(input.installation.harnessPath === null
-        ? {}
-        : { ANTIGRAVITY_HARNESS_PATH: input.installation.harnessPath }),
-    },
+    env: antigravityEnvironment(
+      input.profile,
+      input.baseEnv ?? process.env,
+      input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
+      input.runtimeTempDirectory,
+    ),
     extendEnv: false,
   };
 }
@@ -636,10 +621,6 @@ export function makeAntigravityStdoutTransform(
     });
 }
 
-// glog records from the managed harness after which its ACP process can no longer run a turn.
-const ANTIGRAVITY_HARNESS_FAILURE_LOG =
-  /^[IWEF]\d{4} \d{2}:\d{2}:\d{2}\.\d+ +\d+ (?:local_connection\.py:\d+\] harness stderr: Agent run failed:|server\.py:\d+\] (?:Failed to rebuild agent for session |Agent connection lost for session ))/;
-
 export function makeAntigravityStderrHandler(
   input: {
     readonly onAuthorizationUrl?: (
@@ -648,18 +629,10 @@ export function makeAntigravityStderrHandler(
   } = {},
 ) {
   let pending = "";
-  // Untraced: with native logs on stderr this runs for every harness log line.
+  // Untraced: this runs for every stderr line.
   const handleLine = Effect.fnUntraced(function* (line: string) {
     const message = line.endsWith("\r") ? line.slice(0, -1) : line;
     if (message.length > maxBrowserHelperLineLength) return;
-    if (ANTIGRAVITY_HARNESS_FAILURE_LOG.test(message)) {
-      return yield* new AcpErrors.AcpTransportError({
-        method: "session/prompt",
-        detail:
-          "Antigravity's local agent connection failed. Send a follow-up to resume with a fresh process.",
-        cause: undefined,
-      });
-    }
     const url = message.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX)
       ? Effect.succeed(message.slice(ANTIGRAVITY_AUTH_STDOUT_PREFIX.length))
       : message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
