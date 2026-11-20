@@ -1,17 +1,51 @@
+import type { ThreadId, TurnItemId } from "@t3tools/contracts";
+
+export type StepKind = "command" | "read" | "edit" | "search" | "agent" | "tool";
+
+/** Where the engine keeps the output of a call it left out of the thread, which the work log fetches on open. */
+export interface OutputRef {
+  readonly threadId: ThreadId;
+  readonly itemId: TurnItemId;
+  readonly revision: string;
+}
+
 export interface ToolStep {
   readonly id: string;
   readonly label: string;
   readonly running: boolean;
   readonly failed: boolean;
+  readonly family: StepKind;
+  /** What the call was given: the shell command, the agent's prompt, or a tool's input as JSON. */
+  readonly input: string | null;
+  readonly exitCode: number | null;
+  /** The file an edit changed, with its line counts. */
+  readonly file: {
+    readonly name: string;
+    /** Absent when the engine did not count the lines. */
+    readonly additions: number | null;
+    readonly deletions: number | null;
+  } | null;
+  /** What the call printed, or why a failed edit failed, when the engine sent it with the item. */
+  readonly output: string | null;
+  readonly outputRef: OutputRef | null;
 }
 
 export type TimelineRow =
-  | { readonly kind: "user"; readonly id: string; readonly text: string }
+  | {
+      readonly kind: "user";
+      readonly id: string;
+      readonly text: string;
+      /** When the thread recorded the message, in epoch milliseconds. */
+      readonly at: number | null;
+    }
   | {
       readonly kind: "assistant";
       readonly id: string;
       readonly text: string;
       readonly streaming: boolean;
+      readonly at: number | null;
+      /** When the reply's turn began, for the elapsed time of one still running. */
+      readonly turnStartedAt: number | null;
     }
   | { readonly kind: "work"; readonly id: string; readonly steps: ReadonlyArray<ToolStep> }
   | {
@@ -35,6 +69,7 @@ export type ChatItem =
       readonly kind: "assistant";
       readonly id: string;
       readonly messageId: string;
+      readonly runId: string | null;
       readonly text: string;
       readonly textOmitted: boolean;
       readonly streaming: boolean;
@@ -49,16 +84,25 @@ export type ChatItem =
 
 /** The parts of a thread that the chat reads. */
 export interface TimelineSource {
-  readonly runs: ReadonlyArray<{ readonly id: string; readonly status: string }>;
-  readonly messages: ReadonlyArray<{ readonly id: string; readonly text: string }>;
+  readonly runs: ReadonlyArray<{
+    readonly id: string;
+    readonly status: string;
+    readonly startedAt: number | null;
+  }>;
+  readonly messages: ReadonlyArray<{
+    readonly id: string;
+    readonly text: string;
+    readonly createdAt: number;
+  }>;
   readonly items: ReadonlyArray<ChatItem>;
 }
 
 const LIVE_RUN = ["preparing", "queued", "starting", "running", "waiting"];
 
 /** Whether the thread's latest run is still going, which is when Stop replaces Send. */
-export const isRunLive = (projection: Pick<TimelineSource, "runs">): boolean =>
-  LIVE_RUN.includes(projection.runs.at(-1)?.status ?? "");
+export const isRunLive = (projection: {
+  readonly runs: ReadonlyArray<{ readonly status: string }>;
+}): boolean => LIVE_RUN.includes(projection.runs.at(-1)?.status ?? "");
 
 /**
  * The thread as chat rows: the user's messages, the orchestrator's replies, and each stretch of tool
@@ -70,6 +114,9 @@ export function timelineRows(projection: TimelineSource): ReadonlyArray<Timeline
     item.textOmitted
       ? (projection.messages.find((message) => message.id === item.messageId)?.text ?? "")
       : item.text;
+
+  const createdAt = (item: { messageId: string }) =>
+    projection.messages.find((message) => message.id === item.messageId)?.createdAt ?? null;
 
   const rows: TimelineRow[] = [];
   for (const item of projection.items) {
@@ -83,12 +130,19 @@ export function timelineRows(projection: TimelineSource): ReadonlyArray<Timeline
         break;
       }
       case "user":
-        rows.push({ kind: "user", id: item.id, text: textOf(item) });
+        rows.push({ kind: "user", id: item.id, text: textOf(item), at: createdAt(item) });
         break;
       case "assistant": {
         const text = textOf(item);
         if (text !== "" || item.streaming) {
-          rows.push({ kind: "assistant", id: item.id, text, streaming: item.streaming });
+          rows.push({
+            kind: "assistant",
+            id: item.id,
+            text,
+            streaming: item.streaming,
+            at: createdAt(item),
+            turnStartedAt: projection.runs.find((run) => run.id === item.runId)?.startedAt ?? null,
+          });
         }
         break;
       }

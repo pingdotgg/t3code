@@ -49,7 +49,7 @@ export function AgentLog({
       {projection === null && failure === null && <p className="text-faint">Reading the thread</p>}
       {projection !== null && rows.length === 0 && <p className="text-faint">Nothing yet</p>}
       {rows.map((row) => (
-        <TimelineRowView key={row.id} row={row} brief={false} />
+        <TimelineRowView key={row.id} row={row} brief={false} environmentId={environmentId} />
       ))}
     </div>
   );

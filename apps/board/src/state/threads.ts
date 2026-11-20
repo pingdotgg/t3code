@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { interruptThreadTurn, startThreadTurn } from "@t3tools/client-runtime/operations";
+import { createOrchestrationEnvironmentAtoms } from "@t3tools/client-runtime/state/orchestration";
 import { createEnvironmentCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   createEnvironmentThreadStateAtoms,
@@ -23,6 +24,9 @@ export const interruptTurn = createEnvironmentCommand(connectionAtomRuntime, {
 
 /** A thread's live state, which the engine streams while the thread is mounted. */
 export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
+
+/** One turn item as the engine holds it, with the command output and the diff that the thread's own copy leaves out. */
+export const turnItemAtom = createOrchestrationEnvironmentAtoms(connectionAtomRuntime).turnItem;
 
 const NO_THREAD = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)).pipe(
   Atom.withLabel("board-thread:none"),

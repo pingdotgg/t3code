@@ -1,19 +1,33 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { type ChatItem, isRunLive, timelineRows } from "./timeline";
+import { type ChatItem, isRunLive, timelineRows, type ToolStep } from "./timeline";
 
 const source = (
   items: ReadonlyArray<ChatItem>,
-  runs: ReadonlyArray<{ id: string; status: string }> = [],
-  messages: ReadonlyArray<{ id: string; text: string }> = [],
-) => ({ runs, messages, items });
+  runs: ReadonlyArray<{ id: string; status: string; startedAt?: number | null }> = [],
+  messages: ReadonlyArray<{ id: string; text: string; createdAt?: number }> = [],
+) => ({
+  runs: runs.map((run) => ({ startedAt: null, ...run })),
+  messages: messages.map((message) => ({ createdAt: 0, ...message })),
+  items,
+});
 
-const tool = (id: string, label: string, running = false): ChatItem => ({
-  kind: "tool",
+const step = (id: string, label: string, running = false): ToolStep => ({
   id,
   label,
   running,
   failed: false,
+  family: "tool",
+  input: null,
+  exitCode: null,
+  file: null,
+  output: null,
+  outputRef: null,
+});
+
+const tool = (id: string, label: string, running = false): ChatItem => ({
+  kind: "tool",
+  ...step(id, label, running),
 });
 
 describe("the chat rows of a thread", () => {
@@ -25,7 +39,9 @@ describe("the chat rows of a thread", () => {
         [{ id: "m1", text: "You are this board's orchestrator" }],
       ),
     );
-    expect(rows).toEqual([{ kind: "user", id: "i1", text: "You are this board's orchestrator" }]);
+    expect(rows).toEqual([
+      { kind: "user", id: "i1", text: "You are this board's orchestrator", at: 0 },
+    ]);
   });
 
   it("Given tool calls between two replies, when the rows are built, then each stretch folds into one work row", () => {
@@ -35,6 +51,7 @@ describe("the chat rows of a thread", () => {
           kind: "assistant",
           id: "a1",
           messageId: "m1",
+          runId: null,
           text: "Planning.",
           textOmitted: false,
           streaming: false,
@@ -45,6 +62,7 @@ describe("the chat rows of a thread", () => {
           kind: "assistant",
           id: "a2",
           messageId: "m2",
+          runId: null,
           text: "Done.",
           textOmitted: false,
           streaming: true,
@@ -55,10 +73,7 @@ describe("the chat rows of a thread", () => {
     expect(rows[1]).toEqual({
       kind: "work",
       id: "t1",
-      steps: [
-        { id: "t1", label: "delegate_task", running: false, failed: false },
-        { id: "t2", label: "$ ls .agentboard", running: true, failed: false },
-      ],
+      steps: [step("t1", "delegate_task"), step("t2", "$ ls .agentboard", true)],
     });
   });
 
@@ -69,13 +84,46 @@ describe("the chat rows of a thread", () => {
           kind: "assistant",
           id: "a1",
           messageId: "m1",
+          runId: null,
           text: "",
           textOmitted: false,
           streaming: true,
         },
       ]),
     );
-    expect(rows).toEqual([{ kind: "assistant", id: "a1", text: "", streaming: true }]);
+    expect(rows).toEqual([
+      { kind: "assistant", id: "a1", text: "", streaming: true, at: null, turnStartedAt: null },
+    ]);
+  });
+
+  it("Given a reply the thread timestamped in a run that started, when the rows are built, then the row carries the message time and the turn start", () => {
+    const rows = timelineRows(
+      source(
+        [
+          {
+            kind: "assistant",
+            id: "a1",
+            messageId: "m1",
+            runId: "r1",
+            text: "Working.",
+            textOmitted: false,
+            streaming: true,
+          },
+        ],
+        [{ id: "r1", status: "running", startedAt: 1_000 }],
+        [{ id: "m1", text: "Working.", createdAt: 2_500 }],
+      ),
+    );
+    expect(rows).toEqual([
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "Working.",
+        streaming: true,
+        at: 2_500,
+        turnStartedAt: 1_000,
+      },
+    ]);
   });
 
   it("Given an empty reply that has finished, when the rows are built, then it is dropped", () => {
@@ -85,6 +133,7 @@ describe("the chat rows of a thread", () => {
           kind: "assistant",
           id: "a1",
           messageId: "m1",
+          runId: null,
           text: "",
           textOmitted: false,
           streaming: false,
@@ -114,7 +163,7 @@ describe("whether a run is live", () => {
     ["completed", false],
     ["interrupted", false],
   ])("Given a latest run that is %s, when it is read, then live is %s", (status, live) => {
-    expect(isRunLive({ runs: [{ id: "r1", status }] })).toBe(live);
+    expect(isRunLive({ runs: [{ status }] })).toBe(live);
   });
 
   it("Given no run, when it is read, then it is not live", () => {

@@ -20,10 +20,10 @@ module.exports = {
     {
       name: "board-reaches-t3-through-contracts",
       comment:
-        "apps/board reaches T3 only through @t3tools/contracts and @t3tools/client-runtime subpaths.",
+        "apps/board reaches T3 only through @t3tools/contracts, @t3tools/client-runtime, and @t3tools/shared subpaths.",
       severity: "error",
       from: { path: "^apps/board/" },
-      to: { path: "^packages/", pathNot: "^packages/(contracts|client-runtime)/" },
+      to: { path: "^packages/", pathNot: "^packages/(contracts|client-runtime|shared)/" },
     },
     {
       name: "packages-not-apps",
