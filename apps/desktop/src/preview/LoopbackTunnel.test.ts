@@ -508,6 +508,8 @@ it.effect("closes connections beyond a forward's limit without tunnelling them",
           const socket = NodeNet.connect(forward.localPort, "127.0.0.1");
           socket.on("close", () => resolve(true));
           socket.on("data", () => resolve(false));
+          // fork: macos-tests. macOS surfaces the refused connection as ECONNRESET before close.
+          socket.on("error", () => {});
           socket.write(Uint8Array.of(2));
         }),
     );

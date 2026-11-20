@@ -81,3 +81,4 @@ Releases are built from `main` on the Mac Mini; installed fork apps download eac
 | `apps/web/src/components/chat/ChatComposer.tsx`                           | questions-button: renders the `/q` button beside attach and sends it through the composer's submit path               |
 | `apps/web/src/i18n/translations/`                                         | fork copy keys, generated: on conflict take upstream and rerun `vp run i18n:generate` in `apps/web`                   |
 | `apps/mobile/src/i18n/translations/`                                      | fork copy keys, generated: on conflict take upstream and rerun `vp run i18n:generate` in `apps/mobile`                |
+| `apps/desktop/src/preview/LoopbackTunnel.test.ts`                         | macos-tests: the over-limit socket handles ECONNRESET, which macOS raises before close                                |
