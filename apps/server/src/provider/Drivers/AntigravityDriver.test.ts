@@ -380,7 +380,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       updateChecks: false,
       expected: { status: "unknown", latestVersion: null, canUpdate: true },
     },
-  ] as const)("reports an update for $name", ({ source, latest, updateChecks, expected }) =>
+  ] as const)("advises on updating $name", ({ source, latest, updateChecks, expected }) =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ updateChecks });
       h.controls.selected = { ...h.first, source };

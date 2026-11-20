@@ -26,7 +26,6 @@ export type ProviderUpdateCandidate = ServerProvider & {
 export type ProviderSettingsUpdateCandidate = ServerProvider & {
   readonly versionAdvisory: NonNullable<ServerProvider["versionAdvisory"]> & {
     readonly canUpdate: true;
-    readonly updateCommand: string;
   };
 };
 
@@ -162,8 +161,7 @@ export function isProviderSettingsUpdateCandidate(
     provider.compatibilityAdvisory?.latestVersionStatus !== "broken" &&
     provider.compatibilityAdvisory?.latestVersionStatus !== "unsupported" &&
     provider.versionAdvisory?.status === "behind_latest" &&
-    provider.versionAdvisory.canUpdate === true &&
-    provider.versionAdvisory.updateCommand !== null
+    provider.versionAdvisory.canUpdate === true
   );
 }
 
@@ -180,7 +178,8 @@ export function hasOneClickUpdateProviderCandidate(
     return false;
   }
 
-  // A runtime the server installs itself, such as Antigravity's, updates with no command (null).
+  // A runtime the server installs itself, such as Antigravity's, updates with no command (null),
+  // so `canUpdate` alone says the server can run the update.
   const updateCommands = new Set<string | null>();
   for (const provider of driverProviders) {
     if (!isProviderUpdateCandidate(provider)) {

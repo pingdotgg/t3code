@@ -130,7 +130,7 @@ describe("provider update launch notification logic", () => {
     ).toBe(true);
   });
 
-  it("offers one-click updates for a runtime the server installs, which has no command", () => {
+  it("offers updates for a runtime the server installs, which has no command", () => {
     const managed = updateCandidate({ driver: driver("antigravity"), updateCommand: null });
     const ownExecutable = provider({
       driver: driver("antigravity"),
@@ -147,7 +147,9 @@ describe("provider update launch notification logic", () => {
     });
 
     expect(canOneClickUpdateProviderCandidate(managed, [managed, ownExecutable])).toBe(true);
+    expect(isProviderSettingsUpdateCandidate(managed)).toBe(true);
     expect(canOneClickUpdateProviderCandidate(manualOnly, [manualOnly])).toBe(false);
+    expect(isProviderSettingsUpdateCandidate(manualOnly)).toBe(false);
   });
 
   it("keeps the inline update action available while a provider update is already running", () => {
