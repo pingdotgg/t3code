@@ -276,7 +276,7 @@ it.effect("takes a hub's reset for an unreset usage_limit, then refreshes the sn
       },
     };
     const lookups: ProviderInstanceId[] = [];
-    const hubLookups: Array<[string, string, string | null]> = [];
+    const hubLookups: Array<[string, string | undefined, string | null]> = [];
     const instances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
       getInstance: (id) =>
         Effect.sync(() => {
@@ -341,9 +341,9 @@ it.effect("takes a hub's reset for an unreset usage_limit, then refreshes the sn
     }).pipe(
       Effect.provide(makeLayerTest(layerTestEventSink, instances)),
       Effect.provideService(UsageLimitResetFallback, {
-        resetAt: (driver, endpoint, model) =>
+        resetAt: (driver, auth, model) =>
           Effect.sync(() => {
-            hubLookups.push([driver, endpoint, model]);
+            hubLookups.push([driver, auth.endpoint, model]);
             return "2026-11-13T18:00:00.000Z";
           }),
       }),

@@ -396,7 +396,11 @@ it.effect("the reset fallback refreshes its hub, and a stalled hub cannot hold t
     });
     const lookup = UsageLimitSources.UsageLimitResetFallback.pipe(
       Effect.flatMap((fallback) =>
-        fallback.resetAt(ProviderDriverKind.make("claudeAgent"), origin, null, "/team"),
+        fallback.resetAt(
+          ProviderDriverKind.make("claudeAgent"),
+          { status: "authenticated", endpoint: origin, endpointPath: "/team" },
+          null,
+        ),
       ),
       Effect.provide(
         UsageLimitSources.layerResetFallback.pipe(

@@ -124,9 +124,15 @@ function routesToNativeOpenai(config: unknown): boolean {
 export function codexCustomEndpoint(config: unknown) {
   const baseUrl = codexRouteBaseUrl(config);
   const url = baseUrl ? URL.parse(baseUrl) : null;
-  return url && /^https?:$/.test(url.protocol) && !routesToNativeOpenai(config)
-    ? { endpoint: url.origin, endpointPath: url.pathname }
-    : undefined;
+  if (!url || !/^https?:$/.test(url.protocol) || routesToNativeOpenai(config)) return undefined;
+  const pathWithoutVersion = url.pathname.replace(/\/v1\/*$/, "");
+  return {
+    endpoint: url.origin,
+    endpointPath: url.pathname,
+    ...(pathWithoutVersion !== url.pathname
+      ? { endpointPathWithoutApiVersion: pathWithoutVersion || "/" }
+      : {}),
+  };
 }
 
 // A stored login does not mean this provider's traffic spends that login's quota.

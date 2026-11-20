@@ -1771,7 +1771,7 @@ describe("instance usage limits", () => {
     ["one hub account", [hub([hubAccount("a", 30)])], [30, 10]],
     ["the pool of hub accounts", [hub([hubAccount("a", 30), hubAccount("b", 70)])], [50, 10]],
     [
-      "each account once across hubs on one origin",
+      "each account once across registrations of one hub",
       [
         hub([hubAccount("a", 30)]),
         hub(
@@ -1786,7 +1786,6 @@ describe("instance usage limits", () => {
           ],
           {
             id: UsageLimitSourceId.make("hub-2"),
-            endpoint: `${hubOrigin}/second`,
           },
         ),
       ],
@@ -1811,12 +1810,15 @@ describe("instance usage limits", () => {
   });
 
   it.each([
-    ["root", "/v1", hubOrigin],
-    ["a reverse proxy path", "/second/v1/", `${hubOrigin}/second`],
+    ["root", "/v1", "/", hubOrigin],
+    ["a reverse proxy path", "/second/v1/", "/second", `${hubOrigin}/second`],
   ])(
     "selects the hub for %s even when another hub shares its origin",
-    (_, endpointPath, endpoint) => {
-      const selected = { ...routed, auth: { ...routed.auth, endpointPath } };
+    (_, endpointPath, endpointPathWithoutApiVersion, endpoint) => {
+      const selected = {
+        ...routed,
+        auth: { ...routed.auth, endpointPath, endpointPathWithoutApiVersion },
+      };
       const limits = limitsOf(selected, [
         hub([hubAccount("a", endpoint === hubOrigin ? 100 : 0)]),
         hub([hubAccount("b", endpoint === hubOrigin ? 0 : 100)], {
@@ -1827,6 +1829,58 @@ describe("instance usage limits", () => {
       expect(limits?.windows[0]?.usedPercent).toBe(100);
     },
   );
+
+  it("keeps the instance's own state when cached Claude auth matches multiple hub mounts", () => {
+    const claude = { ...routed, driver: ProviderDriverKind.make("claudeAgent") };
+    expect(
+      limitsOf(claude, [
+        hub([hubAccount("exhausted", 100, { driver: claude.driver })]),
+        hub([hubAccount("unused", 0, { driver: claude.driver })], {
+          id: UsageLimitSourceId.make("hub-2"),
+          endpoint: `${hubOrigin}/second`,
+        }),
+      ]),
+    ).toEqual(unsupported);
+  });
+
+  it("uses a literal Codex /v1 mount only when the same URL cannot also name a root hub", () => {
+    const selected = {
+      ...routed,
+      auth: { ...routed.auth, endpointPath: "/v1", endpointPathWithoutApiVersion: "/" },
+    };
+    const versionMount = hub([hubAccount("exhausted", 100)], {
+      endpoint: `${hubOrigin}/v1`,
+    });
+    const rootMount = hub([hubAccount("unused", 0)], {
+      id: UsageLimitSourceId.make("hub-2"),
+    });
+    expect(limitsOf(selected, [versionMount, rootMount])).toEqual(unsupported);
+    expect(limitsOf(selected, [versionMount])?.windows[0]?.usedPercent).toBe(100);
+  });
+
+  it.each([
+    ["http://127.0.0.1:8317", 33],
+    ["https://hub.example.com", 50],
+  ])("uses the same auth file identity as Usage at %s", (origin, remaining) => {
+    const selected = { ...routed, auth: { ...routed.auth, endpoint: origin } };
+    const authFile = hubAccount("spent.json", 100, { email: undefined });
+    const sources = [
+      { ...hub([authFile, hubAccount("unused", 0)]), origin, endpoint: origin },
+      { ...hub([authFile]), id: UsageLimitSourceId.make("hub-2"), origin, endpoint: origin },
+    ];
+    const presentations = new Map([
+      [
+        EnvironmentId.make("local"),
+        {
+          entry: { target: { label: "Local" } },
+          serverConfig: { providers: [], usageLimitSources: sources },
+        },
+      ],
+    ]);
+    const [pool] = collectLimitPools(collectLimitAccounts(presentations), now);
+    expect(displayLimitWindows(pool!).map(remainingPercent)).toEqual([remaining, 90]);
+    expect(limitsOf(selected, sources)?.windows.map(remainingPercent)).toEqual([remaining, 90]);
+  });
 
   it("pools separate workspaces for the same Codex email", () => {
     const email = "same@example.com";

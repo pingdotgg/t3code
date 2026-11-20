@@ -335,10 +335,16 @@ it("reports native quota only for an OpenAI login on a native route", () => {
   assert.deepStrictEqual(codexCustomEndpoint(hub), {
     endpoint: "https://hub.example.com",
     endpointPath: "/team/v1",
+    endpointPathWithoutApiVersion: "/team",
   });
-  assert.deepStrictEqual(codexCustomEndpoint({ openai_base_url: "http://127.0.0.1:8317/v1" }), {
+  assert.deepStrictEqual(codexCustomEndpoint({ openai_base_url: "http://127.0.0.1:8317/v1/" }), {
     endpoint: "http://127.0.0.1:8317",
-    endpointPath: "/v1",
+    endpointPath: "/v1/",
+    endpointPathWithoutApiVersion: "/",
+  });
+  assert.deepStrictEqual(codexCustomEndpoint({ openai_base_url: "https://hub.example.com/team" }), {
+    endpoint: "https://hub.example.com",
+    endpointPath: "/team",
   });
   assert.strictEqual(codexCustomEndpoint({ openai_base_url: "https://chatgpt.com/x" }), undefined);
   assert.strictEqual(codexCustomEndpoint({}), undefined);

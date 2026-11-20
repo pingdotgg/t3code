@@ -678,9 +678,8 @@ export const layer: Layer.Layer<
                       (instance) => instance?.snapshot.getSnapshot ?? Effect.undefined,
                     ))?.auth
                   : undefined;
-              const endpoint = auth?.endpoint;
               const hubResetAt =
-                endpoint === undefined
+                auth?.endpoint === undefined
                   ? null
                   : yield* Effect.gen(function* () {
                       // The failing run's model, which may differ from a selection changed mid-turn.
@@ -697,12 +696,7 @@ export const layer: Layer.Layer<
                     }).pipe(
                       Effect.orElseSucceed(() => null),
                       Effect.flatMap((model) =>
-                        usageLimitResets.resetAt(
-                          input.event.driver,
-                          endpoint,
-                          model,
-                          auth?.endpointPath,
-                        ),
+                        usageLimitResets.resetAt(input.event.driver, auth, model),
                       ),
                     );
               const failure = hubResetAt === null ? reported : { ...reported, resetAt: hubResetAt };

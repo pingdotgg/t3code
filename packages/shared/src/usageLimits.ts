@@ -11,6 +11,7 @@ import {
   isProviderAvailable,
   PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
+  type ServerProviderAuth,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshot,
@@ -262,23 +263,32 @@ const hubAccountName = (account: { readonly id: string }) => account.id.replace(
 
 export function hubUsageSources(
   sources: UsageLimitSourceSnapshots,
-  driver: ServerProvider["driver"],
-  endpoint: string | undefined,
-  endpointPath: string | undefined,
+  {
+    endpoint,
+    endpointPath,
+    endpointPathWithoutApiVersion,
+  }: Pick<ServerProviderAuth, "endpoint" | "endpointPath" | "endpointPathWithoutApiVersion">,
 ): UsageLimitSourceSnapshots {
   if (!endpoint) return [];
-  const path = endpointPath?.replace(/\/+$/, "");
-  // Codex includes the OpenAI API's /v1 prefix in its base URL.
-  const base = driver === "codex" ? path?.replace(/\/v1$/, "") : path;
-  return sources.filter(
-    (source) =>
-      source.origin === endpoint &&
-      (base === undefined || (source.endpoint ?? source.origin) === `${endpoint}${base}`),
-  );
+  const exact =
+    endpointPath === undefined ? undefined : endpoint + endpointPath.replace(/\/+$/, "");
+  const alternate =
+    endpointPathWithoutApiVersion === undefined
+      ? undefined
+      : endpoint + endpointPathWithoutApiVersion.replace(/\/+$/, "");
+  const matches = sources.filter((source) => {
+    if (source.origin !== endpoint) return false;
+    const mount = source.endpoint ?? source.origin;
+    return exact === undefined || mount === exact || mount === alternate;
+  });
+  // Cached auth can lack a path, and a version suffix can itself be a literal mount.
+  return new Set(matches.map((source) => source.endpoint ?? source.origin)).size === 1
+    ? matches
+    : [];
 }
 
 // Source ids are environment-local, so only a remote endpoint names the same hub across environments.
-function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnapshot): string {
+function hubIdentity(source: UsageLimitSourceSnapshot, environmentId?: EnvironmentId): string {
   // The server supplies canonical endpoints; native URL polyfills can misparse IPv6 hosts.
   const endpoint = source.endpoint;
   const host = endpoint?.match(/^https?:\/\/(\[[\da-f:.]+\]|[^:/?#@]+)(?::\d+)?(?:\/|$)/)?.[1];
@@ -288,7 +298,12 @@ function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnaps
     isWildcardHost(host) ||
     // Each machine resolves these to itself too; shared host classification leaves them out.
     /\.localhost\.*$|^\[::ffff:(?:127\.|7f[\da-f]{2}:)/i.test(host);
-  return endpoint && !local ? endpoint : `${environmentId}:${source.id}`;
+  if (endpoint && !local) return endpoint;
+  return environmentId === undefined ? source.id : `${environmentId}:${source.id}`;
+}
+
+function hubAccountFileKey(hub: string, account: UsageLimitSourceSnapshot["accounts"][number]) {
+  return `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
 }
 
 export interface LimitAccount {
@@ -419,8 +434,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         if (limitsNotice(account.usageLimits) !== null) continue;
         const resolved = resolveKey(account);
         // A resolved account already has an identity; its public key must stay distinct from others'.
-        const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);
-        const key = `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
+        const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(source, environmentId);
+        const key = hubAccountFileKey(hub, account);
         merge(resolved ?? key, {
           key,
           driver: account.driver,
@@ -995,8 +1010,7 @@ export function instanceUsageLimits(
 ): ServerProviderUsageLimits | undefined {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected) return undefined;
-  const { endpoint, endpointPath } = selected.auth;
-  const hubs = hubUsageSources(sources, selected.driver, endpoint, endpointPath);
+  const hubs = hubUsageSources(sources, selected.auth);
   const reports = hubs.flatMap((source) =>
     source.accounts
       .filter((account) => account.driver === selected.driver)
@@ -1006,7 +1020,7 @@ export function instanceUsageLimits(
   const hubAccounts = new Map<string, UsageLimitSourceSnapshot["accounts"][number]>();
   for (const { source, account } of reports) {
     if (limitsNotice(account.usageLimits) !== null) continue;
-    const key = resolveKey(account) ?? `${source.id}:${account.id}:${account.workspaceId ?? ""}`;
+    const key = resolveKey(account) ?? hubAccountFileKey(hubIdentity(source), account);
     const previous = hubAccounts.get(key);
     if (
       !previous ||

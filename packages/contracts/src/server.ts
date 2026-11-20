@@ -74,6 +74,8 @@ export const ServerProviderAuth = Schema.Struct({
   endpoint: Schema.optional(TrimmedNonEmptyString),
   /** Path of the custom API base URL. A slash denotes the root path. */
   endpointPath: Schema.optional(TrimmedNonEmptyString),
+  /** Alternative hub mount when the API base URL ends in a provider API version. */
+  endpointPathWithoutApiVersion: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
