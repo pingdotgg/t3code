@@ -42,8 +42,8 @@ function concat(runs: ReadonlyArray<Run>): Run {
 function trim(run: Run): Run {
   let start = 0;
   let end = run.text.length;
-  while (start < end && SPACE.test(run.text[start] ?? "")) start++;
-  while (end > start && SPACE.test(run.text[end - 1] ?? "")) end--;
+  while (start < end && SPACE.test(run.text.charAt(start))) start++;
+  while (end > start && SPACE.test(run.text.charAt(end - 1))) end--;
   return { text: run.text.slice(start, end), sources: run.sources.slice(start, end) };
 }
 
@@ -87,7 +87,7 @@ export function readAloudSpeech(markdown: string, skipCodeBlocks: boolean): Read
       const lineEnd = newline === -1 ? run.text.length : newline;
       const line: Run = { text: "", sources: [] };
       for (let index = lineStart; index < lineEnd; index++) {
-        const character = run.text[index] ?? "";
+        const character = run.text.charAt(index);
         const space = SPACE.test(character);
         if (space && line.text.endsWith(" ")) continue;
         line.text += space ? " " : character;
@@ -166,10 +166,10 @@ export function splitReadAloudText(text: string, limit = 3500) {
 /** The whitespace-delimited word of `text` that holds `index`, such as a speech boundary. */
 export function spokenWordAt(text: string, index: number) {
   let start = Math.max(0, Math.min(index, text.length));
-  while (start < text.length && SPACE.test(text[start] ?? "")) start++;
+  while (start < text.length && SPACE.test(text.charAt(start))) start++;
   let end = start;
-  while (start > 0 && !SPACE.test(text[start - 1] ?? "")) start--;
-  while (end < text.length && !SPACE.test(text[end] ?? "")) end++;
+  while (start > 0 && !SPACE.test(text.charAt(start - 1))) start--;
+  while (end < text.length && !SPACE.test(text.charAt(end))) end++;
   return { start, end };
 }
 
