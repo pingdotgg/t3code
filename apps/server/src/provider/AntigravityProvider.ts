@@ -167,7 +167,6 @@ interface AntigravityProviderOptions {
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
   readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
-  readonly clearUsage?: Effect.Effect<void>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   readonly auth?: { readonly type: string; readonly label: string };
 }
@@ -268,10 +267,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       { onlyIfMissing: true, startImmediately: false },
     );
   });
-  const resetUsage = Effect.gen(function* () {
-    yield* FiberHandle.clear(usageRead);
-    if (options.clearUsage) yield* options.clearUsage;
-  });
+  const resetUsage = FiberHandle.clear(usageRead);
 
   const checkProvider = Effect.fn("checkAntigravityProvider")(function* () {
     if (!settings.enabled) return yield* getSnapshot;

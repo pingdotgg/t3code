@@ -65,10 +65,11 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     summaryStatus?: number;
     /** Per-host summary statuses; hosts not listed fall back to `summaryStatus`. */
     summaryStatusByHost?: Record<string, number>;
-    tokenStatus?: number;
+    /** Leaves an acp_token.json with this refresh token, as a pre-1.5 runtime did. */
     refreshToken?: string;
     userId?: string;
     userInfoAt?: number;
+    /** The CLI has no sign-in. */
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
     keyringSecret?: string;
@@ -81,17 +82,28 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const profileDirectory = yield* fs.makeTempDirectoryScoped();
   yield* fs.makeDirectory(path.join(profileDirectory, "antigravity-acp"));
   const tokenPath = path.join(profileDirectory, "antigravity-acp", "acp_token.json");
-  const writeToken = (refreshToken: string) =>
-    fs.writeFileString(
+  if (options.refreshToken !== undefined) {
+    yield* fs.writeFileString(
       tokenPath,
       JSON.stringify({
         client_id: "client-id",
         client_secret: "client-secret",
-        refresh_token: refreshToken,
+        refresh_token: options.refreshToken,
         project_id: "project-id",
       }),
     );
-  if (!options.missingToken) yield* writeToken(options.refreshToken ?? "refresh-a");
+  }
+  const keyringSecret =
+    options.keyringSecret ??
+    (options.missingToken
+      ? undefined
+      : JSON.stringify({
+          token: {
+            access_token: "access-token",
+            refresh_token: "refresh-a",
+            expiry: "2099-01-01T00:00:00Z",
+          },
+        }));
   const requests: Array<{ url: string; body: string }> = [];
   const http = HttpClient.make((request, url, _signal, fiber) =>
     Effect.sync(() => {
@@ -100,16 +112,6 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
       const body =
         request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
       requests.push({ url: request.url, body });
-      if (request.url.endsWith("/token")) {
-        expect(new URLSearchParams(body).get("grant_type")).toBe("refresh_token");
-        return HttpClientResponse.fromWeb(
-          request,
-          Response.json(
-            { access_token: "access-token", expires_in: 3600 },
-            { status: options.tokenStatus ?? 200 },
-          ),
-        );
-      }
       expect(request.headers.authorization).toBe("Bearer access-token");
       if (request.url.endsWith("/userinfo")) {
         return HttpClientResponse.fromWeb(
@@ -119,7 +121,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual(options.missingToken ? {} : { project: "project-id" });
+      expect(JSON.parse(body)).toEqual({});
       expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
       return HttpClientResponse.fromWeb(
         request,
@@ -140,9 +142,9 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const usage = yield* makeAntigravityUsageProbe({
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
-    ...(options.nativeKeyring ? {} : { readKeyringSecret: Effect.succeed(options.keyringSecret) }),
+    ...(options.nativeKeyring ? {} : { readKeyringSecret: Effect.succeed(keyringSecret) }),
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
-  return { ...usage, requests, writeToken, tokenPath };
+  return { ...usage, requests, tokenPath };
 });
 
 describe("Antigravity subscription limits", () => {
@@ -448,7 +450,6 @@ describe("Antigravity subscription limits", () => {
       expect(byId.get("3p-5h")).toMatchObject({ kind: "session", windowDurationMins: 300 });
       expect(byId.get("3p-5h")?.usedPercent).toBeCloseTo(56);
       yield* probe;
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(1);
       expect(
         requests.filter((request) => request.url.endsWith(":retrieveUserQuotaSummary")),
       ).toHaveLength(4);
@@ -568,29 +569,19 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("re-reads changed credentials and clears cached access after sign-out", () =>
-    Effect.gen(function* () {
-      const { probe, clear, requests, writeToken, tokenPath } = yield* fixture();
-      const first = yield* probe;
-      yield* writeToken("refresh-b");
-      const second = yield* probe;
-      expect(second.credentialFingerprint).not.toBe(first.credentialFingerprint);
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(2);
-      yield* (yield* FileSystem.FileSystem).remove(tokenPath);
-      expect((yield* probe).unavailable?.reason).toBe("unsupported");
-      yield* writeToken("refresh-b");
-      yield* probe;
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(3);
-      yield* clear;
-      yield* probe;
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(4);
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-  );
-
   it.effect("names one Google account the same way from every sign-in", () =>
     Effect.gen(function* () {
       const read = (refreshToken: string, userId: string) =>
-        fixture({ refreshToken, userId }).pipe(Effect.flatMap((usage) => usage.probe));
+        fixture({
+          userId,
+          keyringSecret: JSON.stringify({
+            token: {
+              access_token: "access-token",
+              refresh_token: refreshToken,
+              expiry: "2099-01-01T00:00:00Z",
+            },
+          }),
+        }).pipe(Effect.flatMap((usage) => usage.probe));
       const machineA = yield* read("refresh-a", "google-user-1");
       const machineB = yield* read("refresh-b", "google-user-1");
       const otherAccount = yield* read("refresh-c", "google-user-2");
@@ -650,16 +641,6 @@ describe("Antigravity subscription limits", () => {
           windowDurationMins: 300,
         },
       ]);
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-  );
-
-  it.effect("returns a safe failure when OAuth refresh fails", () =>
-    Effect.gen(function* () {
-      const { probe } = yield* fixture({ tokenStatus: 401 });
-      const limits = yield* probe;
-      expect(limits.windows).toEqual([]);
-      expect(limits.unavailable?.reason).toBe("probeFailed");
-      expect(JSON.stringify(limits)).not.toMatch(/client-secret|refresh-a|access-token/);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -782,7 +763,12 @@ describe("Antigravity subscription limits", () => {
 
   it.effect("does not make network requests for API keys or missing sign-ins", () =>
     Effect.gen(function* () {
-      for (const options of [{ authMethod: "gemini-api-key" as const }, { missingToken: true }]) {
+      for (const options of [
+        { authMethod: "gemini-api-key" as const },
+        { missingToken: true },
+        // A leftover acp_token.json belongs to an older runtime or another account.
+        { missingToken: true, refreshToken: "stale-refresh" },
+      ]) {
         const { probe, requests } = yield* fixture(options);
         expect((yield* probe).unavailable?.reason).toBe("unsupported");
         expect(requests).toEqual([]);
