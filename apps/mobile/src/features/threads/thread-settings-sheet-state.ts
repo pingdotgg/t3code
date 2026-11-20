@@ -9,6 +9,18 @@ import type {
   RuntimeMode,
 } from "@t3tools/contracts";
 
+export function filterPendingOptionSelections(
+  pending: ReadonlyArray<ProviderOptionSelection>,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+): ReadonlyArray<ProviderOptionSelection> {
+  return pending.filter(({ id, value }) => {
+    const descriptor = descriptors.find((entry) => entry.id === id);
+    return descriptor?.type === "boolean"
+      ? typeof value === "boolean"
+      : descriptor?.options.some((option) => option.id === value) === true;
+  });
+}
+
 export function mergePendingOptionSelections(
   latest: ReadonlyArray<ProviderOptionSelection> | undefined,
   pending: ReadonlyArray<ProviderOptionSelection>,
@@ -34,6 +46,7 @@ export function selectedProviderRuntimeModes(
 export type PendingPromptEdit = {
   readonly draftKey: string | null;
   readonly basePrompt: string;
+  readonly optionId: string;
   readonly value: string;
 };
 

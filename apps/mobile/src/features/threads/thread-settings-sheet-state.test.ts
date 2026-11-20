@@ -13,6 +13,7 @@ import {
 } from "../../state/use-model-option-memory";
 import {
   canCommitPendingModel,
+  filterPendingOptionSelections,
   mergePendingOptionSelections,
   overlayPendingOptionDescriptors,
   partitionThreadSettingsDescriptors,
@@ -96,10 +97,29 @@ describe("thread settings sheet state", () => {
   });
 
   it("does not apply a staged prompt edit to a replacement draft with identical text", () => {
-    const pending = { draftKey: "queue", basePrompt: "Ultrathink: hello", value: "hello" };
+    const pending = {
+      draftKey: "queue",
+      basePrompt: "Ultrathink: hello",
+      optionId: "effort",
+      value: "hello",
+    };
     expect(resolvePendingPrompt(pending, "queue", "Ultrathink: hello")).toBe("hello");
     expect(resolvePendingPrompt(pending, "thread", "Ultrathink: hello")).toBeNull();
     expect(resolvePendingPrompt(pending, "queue", "Ultrathink: new text")).toBeNull();
+  });
+
+  it("discards staged options that the refreshed model catalog no longer offers", () => {
+    const descriptors = modelOption("gpt-next").capabilities?.optionDescriptors ?? [];
+    expect(
+      filterPendingOptionSelections(
+        [
+          { id: "effort", value: "max" },
+          { id: "ultracode", value: true },
+          { id: "serviceTier", value: "priority" },
+        ],
+        descriptors,
+      ),
+    ).toEqual([{ id: "serviceTier", value: "priority" }]);
   });
 
   it("preserves the legacy Ultracode toggle when staging a reasoning edit", () => {

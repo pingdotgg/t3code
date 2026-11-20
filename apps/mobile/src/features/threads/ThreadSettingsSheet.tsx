@@ -119,6 +119,7 @@ import {
 import {
   canCommitPendingModel,
   favoritesFirst,
+  filterPendingOptionSelections,
   mergePendingOptionSelections,
   modelFavoriteKey,
   modelMatchesCatalogQuery,
@@ -543,17 +544,21 @@ function ThreadSettingsSessionProvider(
     : null;
   const activePendingOptions =
     pendingOptions !== null && pendingOptions.modelKey === selectedModelKey
-      ? pendingOptions.options
+      ? filterPendingOptionSelections(pendingOptions.options, props.optionDescriptors)
       : null;
-  const activePendingPrompt = resolvePendingPrompt(pendingPrompt, promptDraftKey, props.prompt);
+  const activePendingPrompt =
+    pendingPrompt !== null &&
+    (pendingModel !== null || activePendingOptions?.some(({ id }) => id === pendingPrompt.optionId))
+      ? resolvePendingPrompt(pendingPrompt, promptDraftKey, props.prompt)
+      : null;
   const mergedOptions =
-    activePendingOptions === null
-      ? null
-      : mergePendingOptionSelections(
+    activePendingOptions !== null && activePendingOptions.length > 0
+      ? mergePendingOptionSelections(
           props.selectedModel?.options,
           activePendingOptions,
           props.optionDescriptors,
-        );
+        )
+      : null;
   const displayedPrompt = activePendingPrompt ?? props.prompt;
   const defaultProviderFilter = resolveDefaultProviderFilter({
     providerGroups,
@@ -654,6 +659,7 @@ function ThreadSettingsSessionProvider(
         setPendingPrompt({
           draftKey: promptDraftKey,
           basePrompt: props.prompt,
+          optionId: id,
           value: change.prompt,
         });
       }
