@@ -2339,6 +2339,7 @@
   "1354df9fb7278843": "Watch an iOS Simulator or Android Emulator.",
   "4bcfa3b976a421cf": "Side chat",
   "fdcd9643e2e63b15": "Ask a side question while this thread keeps working.",
+  "1944f04b75ddf26d": "Thread on {label}",
   "314cfeebf191ba0d": "needs approval",
   "4e5b7363441a3831": "needs input",
   "97af4e74a5f95e5e": "running",
@@ -3596,7 +3597,6 @@
   ],
   "000b0df227182d39": "Another address…",
   "009e2ca841fdc1ef": "this environment",
-  "1944f04b75ddf26d": "Thread on {label}",
   "c8e6ea4d6313e912": "Long text, cut short here.",
   "59fb6d9ab29a1513": [
     "Read-only · on ",

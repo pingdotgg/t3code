@@ -37,6 +37,7 @@ import {
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadShell,
+  type ScopedThreadRef,
   type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -285,8 +286,8 @@ function currentSubagent<Agent extends RuntimeSubagent>(
  */
 function RemoteSubagentRow(props: {
   readonly agent: RemoteSubagent;
-  /** The environment whose thread delegated the task, which holds the link. */
-  readonly viaEnvironmentId: EnvironmentId;
+  /** The thread that delegated the task; its environment holds the link and its panel shows the read. */
+  readonly parentRef: ScopedThreadRef;
   readonly provider: ServerProvider | undefined;
   readonly anyInstanceBadge: boolean;
 }) {
@@ -299,7 +300,7 @@ function RemoteSubagentRow(props: {
     title: props.agent.title ?? gt("Subagent"),
     isSubagent: true,
   });
-  const opener = useLinkedThreadOpener(props.viaEnvironmentId, remoteChild, title);
+  const opener = useLinkedThreadOpener(props.parentRef, remoteChild, title);
   return (
     <li className="group relative flex h-8 items-center rounded-lg">
       <Tooltip>
@@ -1072,7 +1073,7 @@ export function ThreadRelationshipsPanel(props: {
                     <RemoteSubagentRow
                       key={row.remote.id}
                       agent={row.remote}
-                      viaEnvironmentId={props.environmentId}
+                      parentRef={ref}
                       // Its provider instance belongs to the environment it runs in.
                       provider={providersByEnvironment
                         .get(row.remote.remoteChild.environmentId)

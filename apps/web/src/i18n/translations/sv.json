@@ -2339,6 +2339,7 @@
   "1354df9fb7278843": "Titta på en iOS-simulator eller Android-emulator.",
   "4bcfa3b976a421cf": "Sidochatt",
   "fdcd9643e2e63b15": "Ställ en sidofråga medan tråden fortsätter arbeta.",
+  "1944f04b75ddf26d": "Tråd på {label}",
   "314cfeebf191ba0d": "behöver godkännande",
   "4e5b7363441a3831": "behöver input",
   "97af4e74a5f95e5e": "körs",
@@ -3596,7 +3597,6 @@
   ],
   "000b0df227182d39": "En annan adress…",
   "009e2ca841fdc1ef": "den här miljön",
-  "1944f04b75ddf26d": "Tråd på {label}",
   "c8e6ea4d6313e912": "Lång text, avkortad här.",
   "59fb6d9ab29a1513": [
     "Skrivskyddad · på ",

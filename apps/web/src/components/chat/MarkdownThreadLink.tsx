@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useGT, useMessages } from "gt-react";
 import { MessagesSquareIcon } from "lucide-react";
 import {
@@ -13,7 +13,7 @@ import { resolveLinkedThreadOpen } from "@t3tools/client-runtime/linked-thread";
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useThreadRefs, useThreadShell } from "../../state/entities";
 import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../../state/environments";
-import { useOpenLinkedThread } from "../../state/linkedThreadView";
+import { useRightPanelStore } from "../../rightPanelStore";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
@@ -25,11 +25,14 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 /** `label` is the link's written text; an autolink has none. */
 export function MarkdownThreadLink(props: {
   readonly environmentId: EnvironmentId;
+  /** The thread the link is written in; a linked environment's thread opens in its right panel. */
+  readonly threadRef?: ScopedThreadRef | undefined;
   readonly link: ThreadLink;
   readonly label: string | null;
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const panelRef = props.threadRef;
   const candidates = threadLinkCandidates(props.link, props.environmentId);
   const writtenRef = candidates[0]!;
   const written = useThreadShell(writtenRef);
@@ -41,8 +44,10 @@ export function MarkdownThreadLink(props: {
   const linkedLabel = useLinkedEnvironments(
     connected || writtenRef.environmentId === props.environmentId ? null : props.environmentId,
   ).get(writtenRef.environmentId);
-  // A shell cached from an earlier connection does not make the thread open there now.
+  // A shell cached from an earlier connection does not make the thread open there now. Outside a
+  // thread there is no panel to read it in, so the link behaves as it does without one.
   const linked =
+    panelRef !== undefined &&
     resolveLinkedThreadOpen({
       environmentId: writtenRef.environmentId,
       viaEnvironmentId: props.environmentId,
@@ -77,7 +82,6 @@ export function MarkdownThreadLink(props: {
     : null;
   const remote = useThreadShell(remoteRef);
   const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
-  const openLinked = useOpenLinkedThread();
   if (linked && linkedLabel !== undefined) {
     const knownTitle = props.label ?? written?.title ?? null;
     const title = knownTitle ?? gt("Thread on {label}", { label: linkedLabel });
@@ -91,7 +95,7 @@ export function MarkdownThreadLink(props: {
                 <button
                   type="button"
                   onClick={() =>
-                    openLinked({
+                    useRightPanelStore.getState().openLinkedThread(panelRef, {
                       viaEnvironmentId: props.environmentId,
                       ...writtenRef,
                       label: linkedLabel,

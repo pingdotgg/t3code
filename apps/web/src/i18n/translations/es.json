@@ -2339,6 +2339,7 @@
   "1354df9fb7278843": "Mira un simulador de iOS o un emulador de Android.",
   "4bcfa3b976a421cf": "Chat lateral",
   "fdcd9643e2e63b15": "Haz una pregunta aparte mientras este hilo sigue trabajando.",
+  "1944f04b75ddf26d": "Hilo en {label}",
   "314cfeebf191ba0d": "necesita aprobación",
   "4e5b7363441a3831": "necesita respuesta",
   "97af4e74a5f95e5e": "en curso",
@@ -3596,7 +3597,6 @@
   ],
   "000b0df227182d39": "Otra dirección…",
   "009e2ca841fdc1ef": "este entorno",
-  "1944f04b75ddf26d": "Hilo en {label}",
   "c8e6ea4d6313e912": "Texto largo, recortado aquí.",
   "59fb6d9ab29a1513": [
     "Solo lectura · en ",

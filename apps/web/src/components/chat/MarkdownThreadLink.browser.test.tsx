@@ -1,11 +1,17 @@
 import { RegistryContext } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
+import { linkedThreadSurface } from "../../linkedThreadSurface";
+import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { MarkdownThreadLink } from "./MarkdownThreadLink";
+
+const HERE = scopeThreadRef(EnvironmentId.make("environment"), ThreadId.make("here"));
+const panel = () => selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, HERE);
 
 const state = vi.hoisted(() => ({
   reply: null as unknown,
@@ -13,7 +19,6 @@ const state = vi.hoisted(() => ({
   cached: null as unknown,
   linked: new Map<string, string>(),
   connected: [] as Array<string>,
-  openedLinked: [] as Array<unknown>,
 }));
 vi.mock(import("../../state/entities"), () => ({
   useThreadShell: ((ref: { environmentId: string } | null) =>
@@ -41,11 +46,6 @@ vi.mock(import("../../state/peerLinks"), () => ({
   useLinkedEnvironments: ((environmentId: string | null) =>
     environmentId === null ? new Map() : state.linked) as never,
 }));
-vi.mock(import("../../state/linkedThreadView"), () => ({
-  useOpenLinkedThread: () => (target) => {
-    state.openedLinked.push(target);
-  },
-}));
 vi.mock(import("../ProjectFavicon"), () => ({
   ProjectFavicon: () => (
     <span role="img" aria-label="Essays project icon">
@@ -68,7 +68,7 @@ function setup() {
   state.linked = new Map();
   state.cached = null;
   state.connected = ["environment", "remote"];
-  state.openedLinked = [];
+  useRightPanelStore.setState({ byThreadKey: {} });
   state.remote = {
     environmentId: EnvironmentId.make("remote"),
     id: ThreadId.make("older-thread"),
@@ -191,13 +191,20 @@ it.for([
   const link = { environmentId: EnvironmentId.make(linkedId), threadId: ThreadId.make("there") };
   await using screen = await render(
     <RegistryContext value={registry}>
-      <MarkdownThreadLink environmentId={environmentId} link={link} label={null} />
+      <MarkdownThreadLink environmentId={environmentId} threadRef={HERE} link={link} label={null} />
     </RegistryContext>,
   );
-  await screen.getByRole("button", { name: "Thread, Thread on fs-17" }).click();
-  expect(state.openedLinked).toEqual([
-    { viaEnvironmentId: environmentId, ...link, label: "fs-17", title: null },
-  ]);
+  const chip = screen.getByRole("button", { name: "Thread, Thread on fs-17" });
+  await chip.click();
+  const surface = linkedThreadSurface({
+    viaEnvironmentId: environmentId,
+    ...link,
+    label: "fs-17",
+    title: null,
+  });
+  expect(panel()).toMatchObject({ isOpen: true, activeSurfaceId: surface.id, surfaces: [surface] });
+  await chip.click();
+  expect(panel().surfaces).toHaveLength(1);
   expect(screen.router?.state.location.pathname).toBe("/");
 });
 
@@ -210,12 +217,17 @@ it("reads through the link when a disconnected machine's thread is only cached h
   const link = { environmentId: EnvironmentId.make("saved-vm"), threadId: ThreadId.make("there") };
   await using screen = await render(
     <RegistryContext value={registry}>
-      <MarkdownThreadLink environmentId={environmentId} link={link} label={null} />
+      <MarkdownThreadLink environmentId={environmentId} threadRef={HERE} link={link} label={null} />
     </RegistryContext>,
   );
   await screen.getByRole("button", { name: "Thread, Cached title" }).click();
-  expect(state.openedLinked).toEqual([
-    { viaEnvironmentId: environmentId, ...link, label: "fs-17", title: "Cached title" },
+  expect(panel().surfaces).toEqual([
+    linkedThreadSurface({
+      viaEnvironmentId: environmentId,
+      ...link,
+      label: "fs-17",
+      title: "Cached title",
+    }),
   ]);
 });
 
@@ -229,11 +241,12 @@ it("opens a linked machine's thread directly once this client is connected to it
     <RegistryContext value={registry}>
       <MarkdownThreadLink
         environmentId={EnvironmentId.make("environment")}
+        threadRef={HERE}
         link={{ environmentId: EnvironmentId.make("saved-vm"), threadId: ThreadId.make("there") }}
         label={null}
       />
     </RegistryContext>,
   );
   await expect.element(screen.getByText("Fix the build")).toBeVisible();
-  expect(state.openedLinked).toEqual([]);
+  await expect.element(screen.getByRole("button")).not.toBeInTheDocument();
 });

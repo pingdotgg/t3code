@@ -2339,6 +2339,7 @@
   "1354df9fb7278843": "Regardez un simulateur iOS ou un émulateur Android.",
   "4bcfa3b976a421cf": "Discussion annexe",
   "fdcd9643e2e63b15": "Posez une question annexe pendant que ce fil continue de travailler.",
+  "1944f04b75ddf26d": "Fil sur {label}",
   "314cfeebf191ba0d": "approbation requise",
   "4e5b7363441a3831": "réponse requise",
   "97af4e74a5f95e5e": "en cours",
@@ -3596,7 +3597,6 @@
   ],
   "000b0df227182d39": "Autre adresse…",
   "009e2ca841fdc1ef": "cet environnement",
-  "1944f04b75ddf26d": "Fil sur {label}",
   "c8e6ea4d6313e912": "Texte long, coupé ici.",
   "59fb6d9ab29a1513": [
     "Lecture seule · sur ",

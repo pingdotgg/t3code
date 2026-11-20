@@ -440,7 +440,8 @@ fails with that reason.
 You can read a thread on a linked machine without connecting this app to it. Open
 a task that was delegated there from the thread's agents, or a thread link that
 points there, and its transcript opens read-only, fetched by the machine you are
-connected to over its link. It follows the thread while it runs.
+connected to over its link. It follows the thread while it runs. On web and
+desktop it opens as a tab in the right panel, beside the thread you are in.
 
 - The view is marked **Read-only** with both machines' names. To reply, approve
   or stop the thread, connect this app to that machine.

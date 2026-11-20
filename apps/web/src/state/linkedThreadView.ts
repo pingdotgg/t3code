@@ -1,4 +1,3 @@
-import { useAtomSet } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   createLinkedThreadSession,
@@ -7,35 +6,25 @@ import {
   resolveLinkedThreadOpen,
 } from "@t3tools/client-runtime/linked-thread";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { Atom } from "effect/reactivity";
 import { useState, useSyncExternalStore } from "react";
 
-import { getDocumentActivity } from "../lib/documentActivity";
+import { useRightPanelStore } from "../rightPanelStore";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useEnvironment } from "./environments";
 import { peerLinkEnvironment, useLinkedEnvironments } from "./peerLinks";
 import { useAtomCommand } from "./use-atom-command";
 
-/** The linked environment's thread the read-only view shows, or none. */
-export const linkedThreadViewAtom = Atom.make<LinkedThreadTarget | null>(null).pipe(
-  Atom.withLabel("linked-thread-view"),
-);
-
-/** Opens a linked environment's thread in the read-only view. */
-export function useOpenLinkedThread(): (target: LinkedThreadTarget) => void {
-  return useAtomSet(linkedThreadViewAtom);
-}
-
 /**
- * How a click opens a thread that a thread in `viaEnvironmentId` says is on a linked environment:
- * in place when this client is connected there itself, else read-only through the link. Once the
- * link is gone a saved environment opens in place, where the client can reconnect to it; with
- * neither, the read-only view says what to link again.
+ * How a click opens a thread that the thread `panelRef` says is on a linked environment: in place
+ * when this client is connected there itself, else as a read-only tab in that thread's right
+ * panel, read through its environment. Once the link is gone a saved environment opens in place,
+ * where the client can reconnect to it; with neither, the tab says what to link again.
  */
 export function useLinkedThreadOpener(
-  viaEnvironmentId: EnvironmentId,
+  panelRef: ScopedThreadRef,
   thread:
     | {
         readonly environmentId: EnvironmentId;
@@ -46,7 +35,7 @@ export function useLinkedThreadOpener(
   title: string | null,
 ): { readonly mode: Exclude<LinkedThreadOpen, "unavailable">; readonly open: () => void } | null {
   const navigate = useNavigate();
-  const openLinked = useOpenLinkedThread();
+  const viaEnvironmentId = panelRef.environmentId;
   const own = useEnvironment(thread?.environmentId ?? null);
   const connected = own?.connection.phase === "connected";
   const links = useLinkedEnvironments(thread === undefined || connected ? null : viaEnvironmentId);
@@ -62,7 +51,13 @@ export function useLinkedThreadOpener(
     mode,
     open: () => {
       if (mode === "linked") {
-        openLinked({ viaEnvironmentId, ...thread, label: own?.label ?? thread.label, title });
+        useRightPanelStore.getState().openLinkedThread(panelRef, {
+          viaEnvironmentId,
+          environmentId: thread.environmentId,
+          threadId: thread.threadId,
+          label: own?.label ?? thread.label,
+          title,
+        });
         return;
       }
       void navigate({
@@ -77,7 +72,16 @@ export function useLinkedThreadOpener(
  * The transcript of `target`, read through the environment that links to it. Reads start when the
  * calling view mounts and stop when it unmounts; key the view by its target.
  */
-export function useLinkedThreadSession(target: LinkedThreadTarget) {
+export function useLinkedThreadSession(
+  target: Pick<LinkedThreadTarget, "viaEnvironmentId" | "environmentId" | "threadId">,
+  options: {
+    /** Whether the view is being looked at; reads wait while it is not. */
+    readonly isActive: () => boolean;
+    /** The thread's own title, each time a read names it. */
+    readonly onTitle: (title: string) => void;
+  },
+) {
+  const onTitle = useStableCallback(options.onTitle);
   const read = useAtomCommand(peerLinkEnvironment.readThread, {
     reportFailure: false,
     reportDefect: false,
@@ -89,15 +93,16 @@ export function useLinkedThreadSession(target: LinkedThreadTarget) {
           environmentId: target.viaEnvironmentId,
           input: { environmentId: target.environmentId, threadId: target.threadId, ...cursor },
         });
-        return result._tag === "Success"
-          ? { ok: true, page: result.value }
-          : { ok: false, error: squashAtomCommandFailure(result) };
+        if (result._tag !== "Success")
+          return { ok: false, error: squashAtomCommandFailure(result) };
+        if (result.value.thread.title) onTitle(result.value.thread.title);
+        return { ok: true, page: result.value };
       },
       schedule: (run, delayMs) => {
         const timer = setTimeout(run, delayMs);
         return () => clearTimeout(timer);
       },
-      isActive: () => getDocumentActivity().visible,
+      isActive: options.isActive,
     }),
   );
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);

@@ -1,20 +1,23 @@
-import { useAtom } from "@effect/atom-react";
 import {
   isLinkedThreadWorking,
   linkedThreadFailure,
   type LinkedThreadItemPresentation,
-  type LinkedThreadTarget,
   presentLinkedThreadItem,
 } from "@t3tools/client-runtime/linked-thread";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { ChevronRightIcon, EyeIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { getDocumentActivity } from "../../lib/documentActivity";
+import { type LinkedThreadSurface, linkedThreadTitle } from "../../linkedThreadSurface";
+import { useRightPanelStore } from "../../rightPanelStore";
 import { useEnvironment } from "../../state/environments";
-import { linkedThreadViewAtom, useLinkedThreadSession } from "../../state/linkedThreadView";
+import { useLinkedThreadSession } from "../../state/linkedThreadView";
 import ChatMarkdown from "../ChatMarkdown";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
-import { Sheet, SheetDescription, SheetHeader, SheetPopup, SheetTitle } from "../ui/sheet";
 import { Spinner } from "../ui/spinner";
 
 function TruncatedNote() {
@@ -61,14 +64,60 @@ function LinkedThreadItem(props: { readonly item: LinkedThreadItemPresentation }
   );
 }
 
-function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
-  const { target } = props;
+/** Names the thread and where it is read from. `actions` sits at the trailing edge. */
+function LinkedThreadHeader(props: {
+  readonly title: string;
+  /** The linked environment the thread is on. */
+  readonly label: string;
+  /** The environment that reads it. */
+  readonly via: string;
+  readonly working: boolean;
+  readonly actions?: ReactNode;
+}) {
+  return (
+    <div className="flex shrink-0 items-start gap-2 border-b border-border px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <h2 className="truncate text-sm font-medium">{props.title}</h2>
+        <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+          <EyeIcon aria-hidden className="size-3.5" />
+          <T>
+            Read-only · on <Var>{props.label}</Var> via <Var>{props.via}</Var>
+          </T>
+          {props.working ? (
+            <span className="text-foreground/80">
+              · <T>Working</T>
+            </span>
+          ) : null}
+        </p>
+      </div>
+      {props.actions}
+    </div>
+  );
+}
+
+/**
+ * A linked environment's thread, read through the environment this client is connected to. The
+ * client never connects to the linked one, so the view only reads. Key it by its surface id.
+ */
+export function LinkedThreadPane(props: {
+  /** The thread whose panel shows the tab. */
+  readonly panelRef: ScopedThreadRef;
+  readonly surface: LinkedThreadSurface;
+  /** Whether the panel is showing; reads wait while it is not. */
+  readonly visible: boolean;
+}) {
+  const { surface, panelRef } = props;
   const gt = useGT();
   const m = useMessages();
-  const via = useEnvironment(target.viaEnvironmentId)?.label ?? gt("this environment");
-  const { state, session } = useLinkedThreadSession(target);
+  const via = useEnvironment(surface.viaEnvironmentId)?.label ?? gt("this environment");
+  const isActive = useStableCallback(() => props.visible && getDocumentActivity().visible);
+  const { state, session } = useLinkedThreadSession(surface, {
+    isActive,
+    onTitle: (title) =>
+      useRightPanelStore.getState().setLinkedThreadTitle(panelRef, surface.id, title),
+  });
   const { transcript } = state;
-  const label = transcript?.label ?? target.label;
+  const label = transcript?.label ?? surface.label;
   const failure = state.error === null ? null : linkedThreadFailure(state.error, { via, label }, m);
   const retry = failure?.retryable ? (
     <AlertAction>
@@ -78,31 +127,18 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
     </AlertAction>
   ) : null;
   return (
-    <>
-      <SheetHeader>
-        <SheetTitle>
-          {/* Clear of the close button in the sheet's corner. */}
-          <span className="block pe-8">
-            {transcript?.thread.title || target.title || gt("Thread on {label}", { label })}
-          </span>
-        </SheetTitle>
-        <SheetDescription>
-          <span className="flex flex-wrap items-center gap-x-1.5">
-            <EyeIcon aria-hidden className="size-3.5" />
-            <T>
-              Read-only · on <Var>{label}</Var> via <Var>{via}</Var>
-            </T>
-            {transcript !== null && isLinkedThreadWorking(transcript) ? (
-              <span className="text-foreground/80">
-                · <T>Working</T>
-              </span>
-            ) : null}
-          </span>
-        </SheetDescription>
-        {/* A "Connect to interact" action belongs here once this client can pair with the linked environment. */}
-      </SheetHeader>
+    <div className="flex h-full min-h-0 flex-col">
+      <LinkedThreadHeader
+        title={linkedThreadTitle(
+          { title: transcript?.thread.title || surface.title },
+          gt("Thread on {label}", { label }),
+        )}
+        label={label}
+        via={via}
+        working={transcript !== null && isLinkedThreadWorking(transcript)}
+      />
       {/* Reversed, so the view opens at the newest item and stays there as items arrive. */}
-      <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto px-6 pb-6">
+      <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto p-3">
         <div className="flex flex-col gap-3">
           {transcript === null ? (
             failure === null ? (
@@ -156,35 +192,6 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
           )}
         </div>
       </div>
-    </>
-  );
-}
-
-/**
- * A linked environment's thread, read through the environment this client is connected to. The
- * client never connects to the linked one, so the view only reads.
- */
-export function LinkedThreadSheet() {
-  const [target, setTarget] = useAtom(linkedThreadViewAtom);
-  return (
-    <Sheet
-      open={target !== null}
-      onOpenChange={(open) => {
-        if (!open) setTarget(null);
-      }}
-    >
-      {/* The header's panel toggles float above sheets, so the sheet starts below them. */}
-      <SheetPopup
-        side="right"
-        className="mt-[calc(var(--workspace-controls-top)+var(--workspace-topbar-height))] w-[min(92vw,44rem)] max-w-none"
-      >
-        {target === null ? null : (
-          <LinkedThreadView
-            key={`${target.viaEnvironmentId}:${target.environmentId}:${target.threadId}`}
-            target={target}
-          />
-        )}
-      </SheetPopup>
-    </Sheet>
+    </div>
   );
 }

@@ -2339,6 +2339,7 @@
   "1354df9fb7278843": "Einen iOS-Simulator oder Android-Emulator ansehen.",
   "4bcfa3b976a421cf": "Nebenchat",
   "fdcd9643e2e63b15": "Stelle eine Nebenfrage, während dieser Thread weiterarbeitet.",
+  "1944f04b75ddf26d": "Thread auf {label}",
   "314cfeebf191ba0d": "Genehmigung nötig",
   "4e5b7363441a3831": "Eingabe nötig",
   "97af4e74a5f95e5e": "läuft",
@@ -3597,7 +3598,6 @@
   ],
   "000b0df227182d39": "Andere Adresse…",
   "009e2ca841fdc1ef": "diese Umgebung",
-  "1944f04b75ddf26d": "Thread auf {label}",
   "c8e6ea4d6313e912": "Langer Text, hier gekürzt.",
   "59fb6d9ab29a1513": [
     "Schreibgeschützt · auf ",

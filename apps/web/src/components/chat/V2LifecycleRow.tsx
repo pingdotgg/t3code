@@ -453,7 +453,7 @@ function SubagentTimelineLink(props: {
   const m = useMessages();
   const threadId = props.threadId;
   // A task in a linked environment opens there, or read-only through this one.
-  const remoteOpener = useLinkedThreadOpener(props.parentRef.environmentId, remote, props.title);
+  const remoteOpener = useLinkedThreadOpener(props.parentRef, remote, props.title);
   const open =
     threadId !== null ? () => props.onOpenThread(threadId) : (remoteOpener?.open ?? null);
   const liveStatus = agent?.status ?? props.status;
