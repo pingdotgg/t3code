@@ -1,4 +1,9 @@
-import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import {
+  StackActions,
+  useIsFocused,
+  useNavigation,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import {
   isLinkedThreadWorking,
   linkedThreadFailure,
@@ -31,11 +36,12 @@ import {
   type ThreadFeedActivity,
   type ThreadFeedEntry,
 } from "../../lib/threadActivity";
-import { useLinkedThreadView } from "../../state/linkedThread";
+import { useConnectLinkedEnvironment, useLinkedThreadView } from "../../state/linkedThread";
 import { peerLinkEnvironment } from "../../state/peerLinks";
 import { useEnvironmentQuery } from "../../state/query";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { ReadOnlyComposerBar } from "./ReadOnlyComposerBar";
+import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
 type LinkedThreadRouteParams = {
   readonly viaEnvironmentId: string;
@@ -290,6 +296,21 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
   // Follows new items only while the reader is already at the end.
   const atEnd = useRef(true);
   const working = projection !== null && isLinkedThreadWorking(projection);
+  const connection = useConnectLinkedEnvironment(target);
+  const connectState = connection.state;
+  const openThread = useOpenLinkedThread();
+  const connect = async () => {
+    const outcome = await connection.connect();
+    if (outcome.type === "unreachable") return;
+    // This sheet closes either way: the thread opens where the app is now connected, or the
+    // add-environment screen takes its place.
+    if (outcome.type === "connected") {
+      navigation.goBack();
+      openThread({ environmentId: target.environmentId, threadId: target.threadId });
+      return;
+    }
+    navigation.dispatch(StackActions.replace("ConnectionsNew", { linked: target.environmentId }));
+  };
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <SheetHeader
@@ -355,7 +376,46 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
           className="gap-2 px-3 pt-1.5"
           style={{ paddingBottom: Math.max(insets.bottom, 10) + 6 }}
         >
-          <LinkedThreadComposer label={label} via={via} working={working} />
+          <LinkedThreadComposer
+            label={label}
+            via={via}
+            working={working}
+            action={
+              <Button
+                tone="secondary"
+                label={gt("Connect to interact")}
+                loading={connectState.phase === "connecting"}
+                onPress={() => void connect()}
+              />
+            }
+            notice={
+              connectState.phase === "connecting" ? (
+                <Text
+                  accessibilityLiveRegion="polite"
+                  className="px-2 text-xs text-foreground-muted"
+                >
+                  {gt("Connecting to {environment}...", { environment: label })}
+                </Text>
+              ) : connectState.phase === "unreachable" ? (
+                <View
+                  accessibilityLiveRegion="polite"
+                  className="gap-1 rounded-2xl border border-danger-border bg-danger px-3.5 py-3"
+                >
+                  <Text className="font-t3-medium text-sm text-danger-foreground">
+                    {gt("{label} is not reachable from this device", {
+                      label: connectState.label,
+                    })}
+                  </Text>
+                  <Text className="text-sm text-danger-foreground">
+                    <T>
+                      Join a network it is on, such as its Tailscale network, and try again. You can
+                      keep reading here.
+                    </T>
+                  </Text>
+                </View>
+              ) : null
+            }
+          />
         </View>
       </ScreenContent>
     </View>

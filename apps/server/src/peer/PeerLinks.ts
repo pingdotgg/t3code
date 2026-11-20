@@ -84,6 +84,9 @@ export interface ResolvedPeerLink {
   readonly capabilities: ExecutionEnvironmentCapabilities;
 }
 
+/** What a link's session is called in the peer's Connections, before this environment's label. */
+export const LINK_CLIENT_NAME_PREFIX = "T3 Code · ";
+
 export const LINKED_ENVIRONMENTS_OFF =
   "Linked environments is off on this machine. Turn it on in Settings → Labs.";
 
@@ -552,7 +555,7 @@ const make = Effect.gen(function* () {
         message: `${peer.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
       });
     }
-    const issued = yield* signIn(primary, input, `T3 Code · ${self.label}`);
+    const issued = yield* signIn(primary, input, `${LINK_CLIENT_NAME_PREFIX}${self.label}`);
     const now = yield* DateTime.now;
     const linked: PeerLink = {
       environmentId: peer.environmentId,

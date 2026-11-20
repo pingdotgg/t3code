@@ -1,13 +1,17 @@
 import { isLinkedThreadWorking, linkedThreadFailure } from "@t3tools/client-runtime/linked-thread";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { T, useGT, useMessages, Var } from "gt-react";
-import { EyeIcon } from "lucide-react";
+import { EyeIcon, PlugIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type LinkedThreadSurface, linkedThreadTitle } from "../../linkedThreadSurface";
 import { useEnvironment } from "../../state/environments";
-import { linkedThreadItemSource, useLinkedThreadView } from "../../state/linkedThreadView";
+import {
+  linkedThreadItemSource,
+  useConnectLinkedEnvironment,
+  useLinkedThreadView,
+} from "../../state/linkedThreadView";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
@@ -18,6 +22,7 @@ import {
   ReadOnlyComposerStatus,
 } from "./ReadOnlyComposerBar";
 import { Spinner } from "../ui/spinner";
+import { toastManager } from "../ui/toast";
 import type { MessagesTimelineHistoryControls } from "./MessagesTimeline";
 import { ReadOnlyThreadTimeline } from "./ReadOnlyThreadTimeline";
 
@@ -86,6 +91,63 @@ export function LinkedThreadPane(props: {
   const [turnItemSource] = useState(() => linkedThreadItemSource(surface));
   const label = surface.label;
   const projection = view?.thread.projection ?? null;
+  const connection = useConnectLinkedEnvironment(panelRef, surface);
+  const connectState = connection.state;
+  const connecting = connectState.phase === "connecting";
+  const connect = async () => {
+    const outcome = await connection.connect();
+    if (outcome.type === "connected") {
+      toastManager.add({
+        type: "success",
+        title: gt("Connected to {label}", { label }),
+        description: gt("This device is paired with it and can use its threads."),
+      });
+    }
+  };
+  const connectNotice: ComposerBannerStackItem | null =
+    connectState.phase === "connecting"
+      ? {
+          id: "connecting",
+          variant: "info",
+          icon: <Spinner size="sm" />,
+          title: gt("Connecting to {label}…", { label }),
+        }
+      : connectState.phase === "unreachable"
+        ? {
+            id: "unreachable",
+            variant: "warning",
+            icon: <PlugIcon />,
+            title: gt("{label} is not reachable from this device", { label: connectState.label }),
+            description: gt(
+              "Join a network it is on, such as its Tailscale network, and try again. You can keep reading here.",
+            ),
+          }
+        : connectState.phase === "manual"
+          ? {
+              id: "manual",
+              variant: "info",
+              icon: <PlugIcon />,
+              title: gt("{label} needs a pairing code", { label: connectState.prefill.label }),
+              description: gt("Create one on it, then add it to this device as an environment."),
+              actions: (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => connection.addWithCode(connectState.prefill)}
+                >
+                  <T>Enter code</T>
+                </Button>
+              ),
+            }
+          : null;
+  const connectAction = (
+    <Button size="sm" variant="outline" disabled={connecting} onClick={() => void connect()}>
+      <PlugIcon aria-hidden />
+      <span className="@max-[320px]/composer-surface:sr-only">
+        <T>Connect to interact</T>
+      </span>
+    </Button>
+  );
   const failure = error === null ? null : linkedThreadFailure(error, { via, label }, m);
   const retryAction = failure?.retryable ? (
     <AlertAction>
@@ -136,7 +198,13 @@ export function LinkedThreadPane(props: {
               </Alert>
             )}
           </div>
-          <LinkedThreadComposer label={label} via={via} working={false} />
+          <LinkedThreadComposer
+            label={label}
+            via={via}
+            working={false}
+            notice={connectNotice}
+            action={connectAction}
+          />
         </>
       ) : (
         <ReadOnlyThreadTimeline
@@ -163,7 +231,13 @@ export function LinkedThreadPane(props: {
                   </Alert>
                 </div>
               )}
-              <LinkedThreadComposer label={label} via={via} working={working} />
+              <LinkedThreadComposer
+                label={label}
+                via={via}
+                working={working}
+                notice={connectNotice}
+                action={connectAction}
+              />
             </>
           )}
         </ReadOnlyThreadTimeline>

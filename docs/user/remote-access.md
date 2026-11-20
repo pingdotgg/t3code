@@ -487,7 +487,16 @@ it opens as a tab in the right panel, beside the thread you are in, and shows
 the same timeline as any other thread.
 
 - The view is marked **Read-only** with both machines' names. To reply, approve
-  or stop the thread, connect this app to that machine.
+  or stop the thread, choose **Connect to interact**. When the link has full
+  access, this app pairs with that machine in one step and opens the thread
+  there; you need permission to manage access on the machine you are connected
+  to. Otherwise the add-environment form opens for that machine and asks for a
+  pairing code you create on it.
+- This app connects to that machine directly, so it must be able to reach one of
+  the addresses the link uses. If it cannot, the view says so and stays
+  read-only. The new connection appears in that machine's **Settings → Sharing &
+  access**, named after this device and the machine it came through, and is
+  revoked there like any other.
 - Files, images and published visuals stay on that machine and do not load
   here. A command's output shows as of when you open its row.
 - If this app is already connected to that machine, the thread opens there as
