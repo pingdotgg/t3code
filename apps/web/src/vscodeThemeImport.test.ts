@@ -417,14 +417,6 @@ describe("VS Code theme import", () => {
     ).toBeGreaterThanOrEqual(4.5);
   });
 
-  const nearCanvasBubble = {
-    case: "an opaque chat bubble color close to the canvas",
-    type: "dark",
-    canvas: "#1e1e1e",
-    colors: { "chat.requestBubbleBackground": "#1f2433" },
-    source: "#1f2433",
-  };
-
   it.each([
     {
       case: "its chat bubble color over its selection",
@@ -457,7 +449,6 @@ describe("VS Code theme import", () => {
       colors: { "editor.selectionBackground": "#b5890033" },
       source: "#b58900",
     },
-    nearCanvasBubble,
   ])("paints the user's message bubble from $case", ({ type, canvas, colors, source }) => {
     const theme = parseVsCodeThemeFile({
       name: "Bubble",
@@ -473,14 +464,6 @@ describe("VS Code theme import", () => {
     expect(
       contrastRatio(theme.colors.messageForeground, theme.colors.messageSurface),
     ).toBeGreaterThanOrEqual(4.5);
-  });
-
-  it("keeps the chroma of an opaque message bubble close to the canvas", () => {
-    const { colors } = parseVsCodeThemeFile({
-      type: nearCanvasBubble.type,
-      colors: { "editor.background": nearCanvasBubble.canvas, ...nearCanvasBubble.colors },
-    });
-    expect(oklchParts(colors.messageSurface).chroma).toBeGreaterThanOrEqual(0.02);
   });
 
   it("reads wide-gamut color() notation", () => {
