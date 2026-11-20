@@ -724,7 +724,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
   it.effect("publishes each limits read, showing a failed read as failed until one recovers", () =>
     Effect.gen(function* () {
       // Read N always gets results[N], however its fiber is scheduled.
-      const results = yield* Effect.forEach([0, 1, 2, 3, 4], () =>
+      const results = yield* Effect.forEach([0, 1, 2, 3, 4, 5], () =>
         Deferred.make<ServerProviderUsageLimits>(),
       );
       const reads = yield* Ref.make(0);
@@ -739,7 +739,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       yield* Deferred.succeed(harness.initialProbe, initializeResult);
       yield* Deferred.await(firstReadStarted);
       // A health check holds the refresh lock, so a refresh issued once the check that republishes
-      // a read has started returns what that check published.
+      // a read has started runs after it; new commands then mark the end of what both published.
       const nextCheck = yield* Ref.make<Deferred.Deferred<void> | undefined>(undefined);
       yield* Ref.set(
         harness.probe,
@@ -754,12 +754,35 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         read: number,
         result: ServerProviderUsageLimits,
       ) {
+        const barrier = `barrier-${read}`;
+        const published = yield* harness.provider.snapshot.streamChanges.pipe(
+          Stream.takeUntil((snapshot) =>
+            snapshot.slashCommands.some((command) => command.name === barrier),
+          ),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
         const republishing = yield* Deferred.make<void>();
         yield* Ref.set(nextCheck, republishing);
         yield* Deferred.succeed(results[read]!, result);
         yield* Deferred.await(republishing);
-        return (yield* harness.provider.snapshot.refresh).usageLimits;
+        const refreshed = (yield* harness.provider.snapshot.refresh).usageLimits;
+        yield* harness.provider.onAvailableCommands([{ name: barrier, description: "Barrier" }]);
+        const checked = Array.from(yield* Fiber.join(published)).slice(0, -1);
+        return {
+          refreshed,
+          published: checked.map((snapshot) => snapshot.usageLimits),
+          current: (yield* harness.provider.snapshot.getSnapshot).usageLimits,
+        };
       });
+      const expectShown = (
+        shown: Effect.Success<ReturnType<typeof finishRead>>,
+        expected: ServerProviderUsageLimits,
+      ) => {
+        expect(shown.refreshed).toEqual(expected);
+        expect(shown.published).toContainEqual(expected);
+        expect(shown.current).toEqual(expected);
+      };
 
       const limits: ServerProviderUsageLimits = {
         checkedAt: "2026-10-09T12:00:00.000Z",
@@ -772,24 +795,32 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           },
         ],
       };
-      expect(yield* finishRead(0, limits)).toEqual(limits);
+      expectShown(yield* finishRead(0, limits), limits);
       const failedRead: ServerProviderUsageLimits = {
         checkedAt: "2026-10-09T12:01:00.000Z",
         windows: [],
         unavailable: { reason: "probeFailed" },
       };
-      expect(yield* finishRead(1, failedRead)).toEqual(failedRead);
+      expectShown(yield* finishRead(1, failedRead), failedRead);
       const recovered: ServerProviderUsageLimits = {
         ...limits,
         checkedAt: "2026-10-09T12:01:30.000Z",
       };
-      expect(yield* finishRead(2, recovered)).toEqual(recovered);
+      expectShown(yield* finishRead(2, recovered), recovered);
+      // A read stamped before the published one, after the clock moved back, does not replace it.
+      expectShown(
+        yield* finishRead(3, {
+          checkedAt: "2026-10-09T12:01:15.000Z",
+          windows: [{ ...limits.windows[0]!, usedPercent: 18 }],
+        }),
+        recovered,
+      );
       const unsupported: ServerProviderUsageLimits = {
         checkedAt: "2026-10-09T12:02:00.000Z",
         windows: [],
         unavailable: { reason: "unsupported" },
       };
-      expect(yield* finishRead(3, unsupported)).toEqual(unsupported);
+      expectShown(yield* finishRead(4, unsupported), unsupported);
     }),
   );
 

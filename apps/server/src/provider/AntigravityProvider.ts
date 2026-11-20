@@ -40,6 +40,7 @@ import {
   isCommandMissingCause,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
+import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
 
 import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
 
@@ -264,7 +265,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             ...state,
             draft: {
               ...state.draft,
-              usageLimits: probed,
+              // A failed read shows as failed, like the managed provider's check publishes it.
+              usageLimits:
+                probed.unavailable?.reason === "probeFailed"
+                  ? probed
+                  : resolveUsageLimitsAfterProbe({ published: state.draft.usageLimits, probed }),
             },
           })),
         ),
