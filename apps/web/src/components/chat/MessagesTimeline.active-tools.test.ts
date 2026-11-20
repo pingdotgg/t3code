@@ -49,3 +49,60 @@ describe("long active tool groups", () => {
     },
   );
 });
+
+describe("liveWorkEntryLabel for command executions without a command string", () => {
+  it.each([
+    {
+      status: "inProgress" as const,
+      active: true,
+      toolTitle: "Ran command",
+      expected: "Running command",
+    },
+    {
+      status: "inProgress" as const,
+      active: true,
+      toolTitle: "Command",
+      expected: "Running command",
+    },
+    {
+      status: "completed" as const,
+      active: false,
+      toolTitle: "Ran command",
+      expected: "Ran command",
+    },
+    {
+      status: "failed" as const,
+      active: false,
+      toolTitle: "Ran command",
+      expected: "Failed command",
+    },
+    {
+      status: "declined" as const,
+      active: false,
+      toolTitle: "Ran command",
+      expected: "Declined command",
+    },
+    {
+      status: "stopped" as const,
+      active: false,
+      toolTitle: "Ran command",
+      expected: "Stopped command",
+    },
+  ])(
+    "renders $expected for $status command with empty input and default title $toolTitle",
+    ({ status, active, toolTitle, expected }) => {
+      const entry = {
+        id: "work-empty-command",
+        createdAt: "2026-10-12T00:00:00Z",
+        label: "Ran command",
+        toolTitle,
+        tone: "tool" as const,
+        itemType: "command_execution" as const,
+        command: "",
+        rawCommand: "",
+        toolLifecycleStatus: status,
+      };
+      expect(liveWorkEntryLabel(entry, undefined, active)).toBe(expected);
+    },
+  );
+});

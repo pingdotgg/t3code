@@ -247,6 +247,33 @@ export function workEntryReadOutput(
   return null;
 }
 
+function genericCommandStatusLabel(
+  status: ReturnType<typeof liveActivityToolStatus>,
+  resolve: MessageResolver,
+) {
+  return resolve(
+    status === "inProgress"
+      ? msg("Running command")
+      : status === "failed"
+        ? msg("Failed command")
+        : status === "declined"
+          ? msg("Declined command")
+          : status === "stopped"
+            ? msg("Stopped command")
+            : msg("Ran command"),
+  );
+}
+
+function isGenericCommandHeading(heading: string, resolve: MessageResolver): boolean {
+  if (!heading) return true;
+  return (
+    heading === "Ran command" ||
+    heading === "Command" ||
+    heading === resolve(msg("Ran command")) ||
+    heading === resolve(msg("Command", { $context: "noun, a shell command tool" }))
+  );
+}
+
 /** Components pass `useMessages()` so the label follows a language switch. */
 export function liveWorkEntryLabel(
   entry: WorkLogEntry,
@@ -271,17 +298,7 @@ export function liveWorkEntryLabel(
   if (command) {
     const program = commandProgramName(command);
     if (program == null) {
-      return resolve(
-        status === "inProgress"
-          ? msg("Running command")
-          : status === "failed"
-            ? msg("Failed command")
-            : status === "declined"
-              ? msg("Declined command")
-              : status === "stopped"
-                ? msg("Stopped command")
-                : msg("Ran command"),
-      );
+      return genericCommandStatusLabel(status, resolve);
     }
     return resolve(
       status === "inProgress"
@@ -294,6 +311,12 @@ export function liveWorkEntryLabel(
               ? msg("Stopped {program}", { program })
               : msg("Ran {program}", { program }),
     );
+  }
+  if (
+    entry.itemType === "command_execution" &&
+    isGenericCommandHeading(normalizeCompactToolLabel(entry.toolTitle || entry.label), resolve)
+  ) {
+    return genericCommandStatusLabel(status, resolve);
   }
   return workEntryDisplayLabel(entry, workspaceRoot, resolve);
 }
