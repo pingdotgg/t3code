@@ -1,3 +1,4 @@
+import { tailscaleServeFailureMessage } from "@t3tools/client-runtime/contract-labels";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { SessionPermissions } from "./SessionPermissions";
 import {
@@ -224,6 +225,10 @@ export function SavedBackendListRow({
     relayHttpBaseUrl: discoveredRelayHttpBaseUrl ?? lastRelayHttpBaseUrl,
     connectedTarget,
   });
+  const tailscaleFailure = tailscaleServeFailureMessage(
+    environment.serverConfig?.tailscaleServeFailure,
+    messages,
+  );
   const machineKind = resolveEnvironmentMachineKind(
     environment.serverConfig ??
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
@@ -340,6 +345,9 @@ export function SavedBackendListRow({
               expanded={diagnosisOpen}
               onToggle={() => setDiagnosisOpen((open) => !open)}
             />
+          ) : null}
+          {enabled && tailscaleFailure ? (
+            <p className="mt-1 max-w-md text-xs text-muted-foreground">{tailscaleFailure}</p>
           ) : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="mt-1 max-w-md">

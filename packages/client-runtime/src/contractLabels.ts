@@ -4,6 +4,7 @@
  */
 import {
   type BrowserImportFailureReason,
+  type TailscaleServeFailure,
   isRuntimeModeAbove,
   managedCapabilityDenial as contractsManagedCapabilityDenial,
   managedUpdatesDenial as contractsManagedUpdatesDenial,
@@ -292,4 +293,23 @@ export function sourceControlInstallHintText(
 ): string {
   const known = INSTALL_HINTS.find((entry) => mFallback(entry) === hint);
   return known === undefined ? hint : resolve(known);
+}
+
+export function tailscaleServeFailureMessage(
+  failure: TailscaleServeFailure | null | undefined,
+  resolve: MFunctionType,
+): string | null {
+  if (failure === undefined || failure === null) return null;
+  return failure === "permission-denied"
+    ? resolve(
+        msg(
+          "Tailscale denied permission to set up HTTPS. On the host, grant the account running T3 Code permission to manage Tailscale (on Linux: {command}), then restart the T3 Code backend.",
+          { command: "sudo tailscale set --operator=<account>" },
+        ),
+      )
+    : resolve(
+        msg(
+          "Tailscale HTTPS setup failed on the host. Check that Tailscale is running and signed in, and that MagicDNS and HTTPS certificates are enabled for the tailnet, then restart the T3 Code backend.",
+        ),
+      );
 }

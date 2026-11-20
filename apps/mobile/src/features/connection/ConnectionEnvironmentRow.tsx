@@ -1,3 +1,4 @@
+import { tailscaleServeFailureMessage } from "@t3tools/client-runtime/contract-labels";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
@@ -82,6 +83,9 @@ export function ConnectionEnvironmentRow(props: {
   const statusLabel = connectionStatusLabel(props.environment, m);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   const hasConnectionFailure = enabled && props.environment.connectionError !== null;
+  const tailscaleFailure = enabled
+    ? tailscaleServeFailureMessage(serverConfig?.tailscaleServeFailure, m)
+    : null;
   const freeze = enabled
     ? hostFreezeNotice(props.environment.environmentLabel, serverConfig?.lastEventLoopStall, m)
     : null;
@@ -175,6 +179,11 @@ export function ConnectionEnvironmentRow(props: {
                   activation="longPress"
                 />
               ) : null}
+            </Text>
+          ) : null}
+          {tailscaleFailure ? (
+            <Text className="text-xs text-warning-foreground" selectable>
+              {tailscaleFailure}
             </Text>
           ) : null}
           {freeze ? (
