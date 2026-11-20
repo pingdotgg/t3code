@@ -4234,6 +4234,15 @@
   "f6f962de62b3e462": "Fråga vad som helst",
   "64338d507e708bef": "Det delade innehållet finns inte längre i inkorgen. Du kan fortsätta redigera utkastet till uppgiften.",
   "c5b11890aa7f406f": "Vad ska vi jobba med?",
+  "39a92e68dd2bf6cc": [
+    "Ditt utkast är sparat på den här enheten. ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " har ingen tillgänglig modell. Installera eller logga in hos en leverantör där för att välja en."
+  ],
   "3a3930717d8d73b4": "Ditt utkast är sparat på den här enheten. Anslut till en miljö för att välja dess första modell.",
   "8b53cd9e9e107f7c": "Lägg till en miljö innan du skapar en uppgift.",
   "b369a312b533f975": "Läser in projekt från den sparade miljön.",
