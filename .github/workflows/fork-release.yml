@@ -32,13 +32,18 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      # Standalone builds refuse T3 Code's scheme, so the fork names its own in a repository variable.
+      # Standalone builds refuse T3 Code's scheme and name, so the fork sets its own in repository variables.
       T3CODE_APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
+      T3CODE_APP_NAME: ${{ vars.T3CODE_APP_NAME }}
     steps:
-      - name: Require the fork's app scheme
+      - name: Require the fork's app scheme and name
         run: |
           [ -n "$T3CODE_APP_SCHEME" ] || {
             echo "::error::Set the repository variable T3CODE_APP_SCHEME to this fork's deep-link scheme: gh variable set T3CODE_APP_SCHEME --body <scheme>"
+            exit 1
+          }
+          [ -n "$T3CODE_APP_NAME" ] || {
+            echo "::error::Set the repository variable T3CODE_APP_NAME to this fork's product name: gh variable set T3CODE_APP_NAME --body '<name>'"
             exit 1
           }
 

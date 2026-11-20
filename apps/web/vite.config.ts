@@ -19,6 +19,7 @@ import {
 } from "@t3tools/shared/devProxy";
 
 import { appSchemeDefine, loadRepoEnv } from "../../scripts/lib/public-config";
+import { rebrandPlugin } from "../../scripts/lib/rebrand";
 import { standaloneBuildDefine } from "../../scripts/lib/standalone-build";
 import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
@@ -318,6 +319,7 @@ export default defineConfig(({ command }) => {
     },
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      rebrandPlugin(repoEnv),
       bootstrapTitlePlugin(),
       devCompressionPlugin(),
       chunkCycleGuardPlugin(),

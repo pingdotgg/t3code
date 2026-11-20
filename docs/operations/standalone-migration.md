@@ -125,8 +125,8 @@ merge threads from two environments. Start the copied installation with another 
 
 ## Publish and update a forked Linux service
 
-Configure the fork's `T3CODE_APP_SCHEME` build value before tagging; use the same scheme for the
-server and client builds. After reviewing and merging a tested commit, push a `vX.Y.Z` tag on that
+Configure the fork's `T3CODE_APP_SCHEME` and `T3CODE_APP_NAME` build values before tagging; use the
+same values for the server and client builds. After reviewing and merging a tested commit, push a `vX.Y.Z` tag on that
 commit. The fork's `fork-release.yml` builds Linux x64 and arm64 CLI archives, smoke-tests them,
 and attaches them with `SHA256SUMS` to a **draft** GitHub Release. Verify the workflow, archive
 names, checksums, and tested commit before publishing the draft. Drafts are invisible to installed
@@ -174,6 +174,9 @@ an upstream release repository. Use the same switch for server builds. A build m
 switch retains the official defaults. Set `T3CODE_APP_SCHEME` to a lower-case scheme owned by the
 fork; a standalone build rejects the official `t3code` scheme. Changing it gives the desktop a new
 browser-storage origin, so keep drafts and saved connections in mind before replacing an older build.
+Set `T3CODE_APP_NAME` to the fork's product name. The build renames "T3 Code" and the brand's other
+"T3 ..." phrases in the bundles, every locale's catalog, and the desktop and mobile packaging; T3
+Connect, T3 Chat, and the license text keep their names.
 
 - **Web:** host the fork's static app at an HTTPS origin you control. Set
   `T3CODE_HOSTED_APP_URL` (also read as `VITE_HOSTED_APP_URL`) in the build and server only when
