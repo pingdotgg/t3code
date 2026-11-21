@@ -144,10 +144,8 @@ mod mac_smoke {
             return 1;
         }
 
-        let profile_dir = std::env::temp_dir().join(format!(
-            "conn-web-smoke-profile-{}",
-            std::process::id()
-        ));
+        let profile_dir =
+            std::env::temp_dir().join(format!("conn-web-smoke-profile-{}", std::process::id()));
         let options = StartOptions {
             remote_debugging_port: None,
             profile_dir: Some(profile_dir.clone()),
@@ -175,11 +173,8 @@ mod mac_smoke {
         // SAFETY: Runs NSApplication on the main thread until `conn_smoke_stop_app` is called.
         unsafe { conn_smoke_run_app() };
 
-        let exit_code = SMOKE.with(|cell| {
-            cell.borrow_mut()
-                .take()
-                .map_or(1, |state| state.exit_code)
-        });
+        let exit_code =
+            SMOKE.with(|cell| cell.borrow_mut().take().map_or(1, |state| state.exit_code));
         let _ = std::fs::remove_dir_all(&profile_dir);
         exit_code
     }

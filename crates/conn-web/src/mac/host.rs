@@ -12,13 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 unsafe extern "C" {
     fn conn_cef_install_app_hooks();
     fn conn_cef_start_message_loop();
-    pub(crate) fn conn_view_set_frame(
-        view: *mut c_void,
-        x: f64,
-        y: f64,
-        width: f64,
-        height: f64,
-    );
+    pub(crate) fn conn_view_set_frame(view: *mut c_void, x: f64, y: f64, width: f64, height: f64);
     pub(crate) fn conn_view_set_hidden(view: *mut c_void, hidden: bool);
     pub(crate) fn conn_view_remove(view: *mut c_void);
     fn conn_main_bundle_identifier() -> *const c_char;
@@ -53,7 +47,11 @@ fn bundle_identifier() -> Option<String> {
     }
     // SAFETY: Non-null return value is a valid NUL-terminated UTF-8 string
     // backed by `NSBundle.mainBundle` for the duration of this copy.
-    Some(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
+    Some(
+        unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 fn path_to_cef_string(path: &std::path::Path) -> CefString {
@@ -72,8 +70,9 @@ pub(crate) fn start(options: StartOptions) -> Result<(), WebError> {
         | WebRuntimeState::Failed(_) => {}
     }
 
-    let archive = archive::current_archive()
-        .ok_or(WebError::Unsupported("CEF is not supported on this platform"))?;
+    let archive = archive::current_archive().ok_or(WebError::Unsupported(
+        "CEF is not supported on this platform",
+    ))?;
     let layout = Layout::new(Layout::default_root()?);
     if !archive::is_installed(&layout, &archive.pin()) {
         return Err(WebError::NotInstalled);
@@ -84,8 +83,10 @@ pub(crate) fn start(options: StartOptions) -> Result<(), WebError> {
     let helper_exe = archive::make_helpers(&layout, &current_exe, &bundle_id)?;
 
     let framework_binary = layout.framework_binary();
-    let binary_cstr = CString::new(framework_binary.to_string_lossy().into_owned())
-        .map_err(|_| WebError::Runtime("CEF framework path contains an interior NUL byte".into()))?;
+    let binary_cstr =
+        CString::new(framework_binary.to_string_lossy().into_owned()).map_err(|_| {
+            WebError::Runtime("CEF framework path contains an interior NUL byte".into())
+        })?;
 
     // SAFETY: `binary_cstr` is a valid NUL-terminated CString alive through the call.
     if unsafe { super::loader_support::cef_load_library(binary_cstr.as_ptr()) } != 1 {

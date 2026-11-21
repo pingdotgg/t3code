@@ -279,11 +279,7 @@ impl BrowserView {
     /// [`WebError::NotRunning`] if the runtime is not running,
     /// [`WebError::InvalidArgument`] if `parent_ns_view` is null, or
     /// [`WebError::Runtime`] if CEF fails to create the browser.
-    pub fn create(
-        parent_ns_view: *mut c_void,
-        bounds: Rect,
-        url: &str,
-    ) -> Result<Self, WebError> {
+    pub fn create(parent_ns_view: *mut c_void, bounds: Rect, url: &str) -> Result<Self, WebError> {
         #[cfg(all(feature = "cef", target_os = "macos"))]
         {
             let inner = mac::view::MacBrowserView::create(parent_ns_view, bounds, url)?;

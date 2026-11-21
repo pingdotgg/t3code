@@ -1,7 +1,7 @@
 //! Blocking HTTP download of the pinned CEF minimal archive over rustls.
 
-use crate::archive::{self, Archive, Layout};
 use crate::WebError;
+use crate::archive::{self, Archive, Layout};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 

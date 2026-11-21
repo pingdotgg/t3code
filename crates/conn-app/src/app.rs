@@ -21,14 +21,12 @@ use crate::theme::{apply_kit_theme, hsla};
 
 actions!(conn_app, [ToggleSidebar, ToggleRightPanel]);
 
-const ALL_RIGHT_PANEL_TABS: [RightPanelTab; 7] = [
+/// The tabs Conn shows in the right panel's header row.
+const ALL_RIGHT_PANEL_TABS: [RightPanelTab; 4] = [
     RightPanelTab::Files,
     RightPanelTab::Diff,
     RightPanelTab::Terminal,
     RightPanelTab::Browser,
-    RightPanelTab::Database,
-    RightPanelTab::Mcp,
-    RightPanelTab::Device,
 ];
 
 /// Registers global shell keyboard shortcuts (`Cmd+B` and `Cmd+Alt+B`).
@@ -58,6 +56,7 @@ pub(crate) struct ConnApp {
     /// Timelines of subscribed threads, by thread id.
     threads: HashMap<String, ThreadState>,
     chat: Entity<crate::chat::ChatView>,
+    right_panel: Entity<crate::panels::RightPanel>,
 }
 
 impl std::fmt::Debug for ConnApp {
@@ -109,6 +108,13 @@ impl ConnApp {
             }
         };
 
+        let right_panel = cx.new(|cx| {
+            let mut panel =
+                crate::panels::RightPanel::new(tokens.clone(), connection.clone(), window, cx);
+            panel.set_embedded(true, cx);
+            panel
+        });
+
         Self {
             tokens,
             geometry: ShellGeometry::default(),
@@ -122,6 +128,7 @@ impl ConnApp {
             status: None,
             threads: HashMap::new(),
             chat,
+            right_panel,
         }
     }
 
@@ -141,6 +148,14 @@ impl ConnApp {
         let timeline = selected.and_then(|id| self.threads.get(id));
         let fallback = selected.map(conn_state::ThreadState::new);
         let thread = timeline.or(fallback.as_ref());
+        let project_id = shell_thread.map(|t| t.project_id.clone());
+        let thread_id = selected.map(str::to_owned);
+        let tab = self.layout.right_panel_tab;
+        let panel_root = root.clone();
+        self.right_panel.update(cx, |panel, cx| {
+            panel.set_context(project_id, panel_root, thread_id, cx);
+            panel.set_tab(tab, cx);
+        });
         self.chat.update(cx, |chat, cx| {
             chat.set_workspace_root(root, cx);
             chat.set_thread(thread, title, cx);
@@ -338,6 +353,7 @@ impl ConnApp {
     ) {
         self.layout.right_panel_tab = tab;
         self.layout.right_panel_open = true;
+        self.sync_chat(cx);
         cx.notify();
     }
 
@@ -354,6 +370,7 @@ impl ConnApp {
             self.layout.right_panel_tab = tab;
             self.layout.right_panel_open = true;
         }
+        self.sync_chat(cx);
         cx.notify();
     }
 
@@ -489,7 +506,6 @@ impl ConnApp {
             .window_control_area(WindowControlArea::Drag)
             .children(tab_items);
 
-        let active_label = right_panel_tab_label(self.layout.right_panel_tab);
         let card = inset_card(
             &self.tokens,
             &self.geometry,
@@ -498,31 +514,7 @@ impl ConnApp {
                 right: false,
             },
         )
-        .items_center()
-        .justify_center()
-        .gap(px(12.0))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(44.0))
-                .rounded(px(12.0))
-                .bg(hsla(self.tokens.shell_tile))
-                .border_1()
-                .border_color(hsla(self.tokens.shell_tile_border))
-                .child(icons::chrome(
-                    icons::right_panel_tab_icon(self.layout.right_panel_tab),
-                    muted,
-                )),
-        )
-        .child(
-            div()
-                .text_size(px(self.geometry.ui_font_size_px))
-                .line_height(px(self.geometry.ui_line_height_px))
-                .text_color(muted)
-                .child(format!("{active_label} panel")),
-        );
+        .child(self.right_panel.clone());
 
         div()
             .flex()
@@ -575,6 +567,8 @@ impl ConnApp {
         apply_kit_theme(&tokens, cx);
         self.chat
             .update(cx, |chat, cx| chat.set_tokens(tokens.clone(), cx));
+        self.right_panel
+            .update(cx, |panel, cx| panel.set_tokens(tokens.clone(), cx));
         self.tokens = tokens;
         cx.notify();
     }

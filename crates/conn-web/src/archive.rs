@@ -563,10 +563,8 @@ mod tests {
 
     #[test]
     fn receive_and_install_roundtrip_with_synthetic_archive() -> Result<(), WebError> {
-        let temp_root = std::env::temp_dir().join(format!(
-            "conn-web-archive-test-{}",
-            std::process::id()
-        ));
+        let temp_root =
+            std::env::temp_dir().join(format!("conn-web-archive-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_root);
         std::fs::create_dir_all(&temp_root)?;
 
@@ -575,8 +573,7 @@ mod tests {
         let payload = b"fake-cef-binary";
         let mut compressed = Vec::new();
         {
-            let encoder =
-                bzip2::write::BzEncoder::new(&mut compressed, bzip2::Compression::fast());
+            let encoder = bzip2::write::BzEncoder::new(&mut compressed, bzip2::Compression::fast());
             let mut tar_builder = tar::Builder::new(encoder);
             let mut header = tar::Header::new_gnu();
             header.set_size(payload.len() as u64);

@@ -34,15 +34,7 @@ const HEADER_HEIGHT_PX: f32 = 44.0;
 const TAB_HEIGHT_PX: f32 = 28.0;
 const TAB_FONT_SIZE_PX: f32 = 14.0;
 const TAB_ICON_SIZE_PX: f32 = 16.0;
-#[expect(
-    dead_code,
-    reason = "used by placeholder_surface once RightPanel is mounted"
-)]
 const UI_TEXT_PX: f32 = 13.0;
-#[expect(
-    dead_code,
-    reason = "used by placeholder_surface once RightPanel is mounted"
-)]
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
 
 const PRIMARY_TABS: [(RightPanelTab, &str, IconName); 4] = [
@@ -57,7 +49,6 @@ const PRIMARY_TABS: [(RightPanelTab, &str, IconName); 4] = [
 ];
 
 /// Right-panel GPUI entity mounted inside Conn's right-panel card.
-#[expect(dead_code, reason = "wired into the shell by the orchestrator")]
 #[expect(
     unreachable_pub,
     reason = "binary crate module; public API for orchestrator wiring"
@@ -72,6 +63,8 @@ pub struct RightPanel {
     diff: Entity<DiffPanel>,
     terminal: Entity<TerminalPanel>,
     browser: Entity<BrowserPanel>,
+    /// False when the shell draws the tab strip in its 44px glass header and the card fill.
+    chrome: bool,
 }
 
 impl fmt::Debug for RightPanel {
@@ -114,7 +107,14 @@ impl RightPanel {
             diff,
             terminal,
             browser,
+            chrome: true,
         }
+    }
+
+    /// Renders only the active surface; the shell owns the tab strip and the card.
+    pub fn set_embedded(&mut self, embedded: bool, cx: &mut Context<'_, Self>) {
+        self.chrome = !embedded;
+        cx.notify();
     }
 
     /// Updates theme tokens across the tab strip and every right-panel surface.
@@ -273,6 +273,11 @@ impl Render for RightPanel {
             }
         };
 
+        if !self.chrome {
+            return v_flex()
+                .size_full()
+                .child(div().flex_1().min_h_0().w_full().child(body));
+        }
         v_flex()
             .size_full()
             .bg(card_bg)
@@ -291,10 +296,6 @@ fn next_primary_tab(current: RightPanelTab) -> RightPanelTab {
     }
 }
 
-#[expect(
-    dead_code,
-    reason = "called by RightPanel::render once mounted in shell"
-)]
 fn placeholder_surface(
     title: &str,
     icon: IconName,
