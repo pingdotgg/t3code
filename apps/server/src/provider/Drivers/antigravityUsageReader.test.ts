@@ -383,6 +383,8 @@ describe("readAntigravityUsage", () => {
             "gemini-3-flash-agent",
             "gemini-3-flash",
             "gemini-default",
+            "gemini-pro-orchestrator-neon",
+            "gemini-4-hydrogen-orchestrator",
           ].entries()) {
             yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
               idx,
@@ -393,6 +395,11 @@ describe("readAntigravityUsage", () => {
               new Uint8Array(protoBytes(9, protoNumber(2, 10 + idx))),
             ]);
           }
+          // Orchestrator (Neon), MODEL_PLACEHOLDER_M537, with no name in the metadata.
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            20,
+            new Uint8Array(protoBytes(9, [...protoNumber(1, 1537), ...protoNumber(2, 30)])),
+          ]);
         }),
       );
       const result = yield* readAntigravityUsage(dir, 0);
@@ -405,6 +412,9 @@ describe("readAntigravityUsage", () => {
           ["gemini-3-flash-agent", "gemini-3.5-flash"],
           ["gemini-3-flash", "gemini-3-flash-preview"],
           ["gemini-default", undefined],
+          ["gemini-pro-orchestrator-neon", "gemini-4-neon"],
+          ["gemini-4-hydrogen-orchestrator", "gemini-4-hydrogen"],
+          ["gemini-pro-orchestrator-neon", "gemini-4-neon"],
         ],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
