@@ -287,6 +287,8 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   const seen = new Map<string, string>();
   /** The last version of each file that loaded, which runs while a newer one does not. */
   const good = new Map<string, ReadonlyArray<WorkflowDefinition>>();
+  /** Files that loaded or went away since, kept apart until the change as a whole is taken. */
+  const pending = new Map<string, ReadonlyArray<WorkflowDefinition> | null>();
   const broken = new Map<string, WorkflowDefinitionProblem>();
   let between: ReadonlyArray<WorkflowDefinitionProblem> = [];
   let retrying = false;
@@ -413,27 +415,36 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       const loaded = yield* load(file, name);
       if (loaded.definitions === undefined) {
         broken.set(name, loaded.problem);
+        pending.delete(name);
         yield* Effect.logWarning("A workflow definitions file was not loaded", loaded.problem);
         continue;
       }
       broken.delete(name);
-      good.set(name, loaded.definitions);
+      pending.set(name, loaded.definitions);
     }
     for (const name of [...seen.keys()].filter((known) => !present.includes(known))) {
       seen.delete(name);
-      good.delete(name);
+      pending.set(name, null);
       broken.delete(name);
       changed = true;
     }
     // Asked again while something stands between files: the runs that held a version may be over.
     if (!changed && between.length === 0) return true;
-    const files = gathered(good);
+    const next = new Map(good);
+    for (const [name, definitions] of pending) {
+      if (definitions === null) next.delete(name);
+      else next.set(name, definitions);
+    }
+    const files = gathered(next);
     between = definitionProblems(files, yield* unfinished);
     if (between.length > 0) {
       yield* Effect.logWarning("Workflow definitions were not changed", { problems: between });
       yield* report;
       return true;
     }
+    good.clear();
+    for (const [name, definitions] of next) good.set(name, definitions);
+    pending.clear();
     const failed = yield* boot(files.flatMap((file) => file.definitions));
     between = failed === null ? [] : [{ message: failed }];
     yield* report;

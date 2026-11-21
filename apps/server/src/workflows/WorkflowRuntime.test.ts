@@ -136,6 +136,21 @@ it.effect(
           (yield* definitions.read).files.map((file) => file.name),
           ["hold.ts"],
         );
+        // The same change made outside the app is refused as a whole: the file still reads as the
+        // version that runs, until it is put back.
+        const told = (wanted: boolean) =>
+          workflows.watch.pipe(
+            Stream.filter((snapshot) => (snapshot.definition?.problem != null) === wanted),
+            Stream.runHead,
+          );
+        yield* fileSystem.writeFileString(at("hold.ts"), greet("hello"));
+        yield* told(true);
+        assert.deepStrictEqual(
+          (yield* definitions.read).files.map((file) => file.workflows),
+          [["hold@1"]],
+        );
+        yield* fileSystem.writeFileString(at("hold.ts"), hold);
+        yield* told(false);
 
         // A new file that passes is there from now on, and what it defines can be started.
         const saved = { changed: true, problems: [] };
