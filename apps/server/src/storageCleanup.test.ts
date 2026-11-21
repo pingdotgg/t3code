@@ -1477,6 +1477,7 @@ describe("subagent worktree ownership", () => {
     "missing-parent",
     "cycle",
     "two-tops",
+    "two-tops-settled",
     "wrong-root",
     "running",
     "pending",
@@ -1530,7 +1531,7 @@ describe("subagent worktree ownership", () => {
               ? ThreadId.make("missing")
               : scenario === "cycle"
                 ? ThreadId.make("child")
-                : scenario === "two-tops"
+                : scenario === "two-tops" || scenario === "two-tops-settled"
                   ? null
                   : root.id,
           rootThreadId:
@@ -1551,7 +1552,10 @@ describe("subagent worktree ownership", () => {
             : scenario === "recent-grace"
               ? at(-30_000)
               : null,
-        settledAt: scenario === "child-settled-only" ? at(-20 * DAY_MS) : null,
+        settledAt:
+          scenario === "child-settled-only" || scenario === "two-tops-settled"
+            ? at(-20 * DAY_MS)
+            : null,
       });
       const grandchild = {
         ...child,
@@ -1575,15 +1579,21 @@ describe("subagent worktree ownership", () => {
           root,
         ]);
       const report = yield* fixture.service.runNow;
-      const removed = ["idle", "grandchild", "isolated-owner", "fork-owner", "side-chat"].includes(
-        scenario,
-      );
+      const removed = [
+        "idle",
+        "grandchild",
+        "isolated-owner",
+        "fork-owner",
+        "side-chat",
+        "two-tops-settled",
+      ].includes(scenario);
       const shared = [
         "unrelated",
         "fork",
         "missing-parent",
         "cycle",
         "two-tops",
+        "two-tops-settled",
         "wrong-root",
       ].includes(scenario);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(!removed);
@@ -1594,21 +1604,70 @@ describe("subagent worktree ownership", () => {
           ? "Settled for 20 days"
           : ["running", "pending", "branchless-running"].includes(scenario)
             ? "Thread is running or has pending work"
-            : shared
-              ? "Shared by 2 threads"
-              : scenario === "null-branch" || scenario === "stale-branch"
-                ? "A subagent thread's branch differs from this worktree's branch"
-                : scenario === "recent-activity"
-                  ? "Settled for 2 of 8 days"
-                  : scenario === "recent-inactive"
-                    ? "Inactive for 2 of 8 days"
-                    : ["recent-grace", "recent-settle", "child-settled-now"].includes(scenario)
-                      ? "Settled moments ago"
-                      : scenario === "branchless"
-                        ? "Thread has no branch"
-                        : "Not settled",
+            : scenario === "null-branch" || scenario === "stale-branch"
+              ? "A subagent thread's branch differs from this worktree's branch"
+              : scenario === "recent-activity"
+                ? "Settled for 2 of 8 days"
+                : scenario === "recent-inactive"
+                  ? "Inactive for 2 of 8 days"
+                  : ["recent-grace", "recent-settle", "child-settled-now"].includes(scenario)
+                    ? "Settled moments ago"
+                    : scenario === "branchless"
+                      ? "Thread has no branch"
+                      : "Not settled",
       });
     }).pipe(Effect.provide(cleanupTestLayer)),
+  );
+
+  it.effect.each(["same-project", "cross-project", "unchanged", "unchanged-one-settled"] as const)(
+    "removes a worktree shared by top-level threads once every one is eligible (%s)",
+    (scenario) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        fixture.setSettings({
+          storageCleanup: {
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            ...(scenario.startsWith("unchanged")
+              ? { worktreeUnchanged: true }
+              : { worktreeAfterDays: 8 }),
+          },
+          ...(scenario === "cross-project"
+            ? {
+                projectSettingsOverrides: {
+                  [ProjectId.make("project-2")]: { worktreeCleanup: { mode: "off" } },
+                },
+              }
+            : {}),
+        });
+        const first = shell({
+          branch: "feature",
+          worktreePath: fixture.worktree,
+          latestRunCompletedAt: at(-20 * DAY_MS),
+          settledAt: scenario.startsWith("unchanged") ? at(-20 * DAY_MS) : null,
+        });
+        const second = shell({
+          ...first,
+          id: ThreadId.make("thread-2"),
+          lineage: { ...first.lineage, rootThreadId: ThreadId.make("thread-2") },
+          latestRunCompletedAt: at(-15 * DAY_MS),
+          settledAt: scenario === "unchanged" ? at(-15 * DAY_MS) : null,
+          ...(scenario === "cross-project" ? { projectId: ProjectId.make("project-2") } : {}),
+        });
+        fixture.setThreads([first, second]);
+        const report = yield* fixture.service.runNow;
+        const kept = scenario === "cross-project" || scenario === "unchanged-one-settled";
+        expect(report.entries[0]).toMatchObject(
+          scenario === "cross-project"
+            ? { outcome: "kept", reason: "Shared by 2 threads" }
+            : scenario === "unchanged-one-settled"
+              ? { outcome: "kept", reason: "Not settled" }
+              : scenario === "unchanged"
+                ? { outcome: "removed", reason: "No commits beyond the project branch" }
+                : { outcome: "removed", reason: "Inactive for 15 days" },
+        );
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(kept);
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("keeps a checkout two top-level threads store through a symlinked parent", () =>
@@ -1623,11 +1682,15 @@ describe("subagent worktree ownership", () => {
       const settled = { branch: "feature", settledAt: at(-20 * DAY_MS) };
       fixture.setThreads([
         shell({ ...settled, worktreePath: fixture.worktree }),
-        shell({ ...settled, id: ThreadId.make("other"), worktreePath: `${linkedParent}/feature` }),
+        shell({
+          branch: "feature",
+          id: ThreadId.make("other"),
+          worktreePath: `${linkedParent}/feature`,
+        }),
       ]);
       const report = yield* fixture.service.runNow;
       expect(report.entries).toEqual([
-        expect.objectContaining({ outcome: "kept", reason: "Shared by 2 threads" }),
+        expect.objectContaining({ outcome: "kept", reason: "Not settled" }),
       ]);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
     }).pipe(Effect.provide(cleanupTestLayer)),
@@ -1644,14 +1707,14 @@ describe("subagent worktree ownership", () => {
       fixture.setThreads([
         shell({ ...settled, worktreePath: fixture.worktree }),
         shell({
-          ...settled,
+          branch: "feature",
           id: ThreadId.make("other"),
           worktreePath: fixture.worktree.toUpperCase(),
         }),
       ]);
       const report = yield* fixture.service.runNow;
       expect(report.entries).toEqual([
-        expect.objectContaining({ outcome: "kept", reason: "Shared by 2 threads" }),
+        expect.objectContaining({ outcome: "kept", reason: "Not settled" }),
       ]);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
     }).pipe(Effect.provide(cleanupTestLayer)),
