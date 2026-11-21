@@ -625,67 +625,64 @@ function normalizeInitializeResponse(
         ? {}
         : { auth: { logout: {} } }),
     },
-    ...(response.authMethods === undefined
-      ? {}
-      : {
-          authMethods: response.authMethods
-            .map((method) => {
-              const record = method as AcpSchemaV2.AuthMethod;
-              const base = {
-                id: record.methodId,
-                name: record.name,
-                ...(record.description === undefined ? {} : { description: record.description }),
-                ...(record._meta === undefined ? {} : { _meta: record._meta }),
-              };
-              if (
-                record.type === "env_var" &&
-                Array.isArray(record.vars) &&
-                record.vars.every(
-                  (variable) =>
-                    typeof variable === "object" &&
-                    variable !== null &&
-                    typeof (variable as { readonly name?: unknown }).name === "string",
-                )
-              ) {
-                return {
-                  ...base,
-                  type: "env_var" as const,
-                  vars: record.vars.map((variable) => {
-                    const value = variable as { readonly name: string; readonly label?: unknown };
-                    return {
-                      name: value.name,
-                      ...(typeof value.label === "string" ? { label: value.label } : {}),
-                    };
-                  }),
-                  ...(typeof record.link === "string" ? { link: record.link } : {}),
-                };
-              }
-              if (record.type === "agent") return { ...base, type: "agent" as const };
-              if (record.type !== "terminal") return undefined;
+    // v2 defines an omitted authMethods list as no authentication, the same as an empty one.
+    authMethods: (response.authMethods ?? [])
+      .map((method) => {
+        const record = method as AcpSchemaV2.AuthMethod;
+        const base = {
+          id: record.methodId,
+          name: record.name,
+          ...(record.description === undefined ? {} : { description: record.description }),
+          ...(record._meta === undefined ? {} : { _meta: record._meta }),
+        };
+        if (
+          record.type === "env_var" &&
+          Array.isArray(record.vars) &&
+          record.vars.every(
+            (variable) =>
+              typeof variable === "object" &&
+              variable !== null &&
+              typeof (variable as { readonly name?: unknown }).name === "string",
+          )
+        ) {
+          return {
+            ...base,
+            type: "env_var" as const,
+            vars: record.vars.map((variable) => {
+              const value = variable as { readonly name: string; readonly label?: unknown };
               return {
-                ...base,
-                type: "terminal" as const,
-                ...(Array.isArray(record.args)
-                  ? {
-                      args: record.args.filter(
-                        (argument): argument is string => typeof argument === "string",
-                      ),
-                    }
-                  : {}),
-                ...(Array.isArray(record.env)
-                  ? {
-                      env: Object.fromEntries(
-                        (record.env as ReadonlyArray<AcpSchemaV2.EnvVariable>).map((variable) => [
-                          variable.name,
-                          variable.value,
-                        ]),
-                      ),
-                    }
-                  : {}),
+                name: value.name,
+                ...(typeof value.label === "string" ? { label: value.label } : {}),
               };
-            })
-            .filter(Predicate.isNotUndefined),
-        }),
+            }),
+            ...(typeof record.link === "string" ? { link: record.link } : {}),
+          };
+        }
+        if (record.type === "agent") return { ...base, type: "agent" as const };
+        if (record.type !== "terminal") return undefined;
+        return {
+          ...base,
+          type: "terminal" as const,
+          ...(Array.isArray(record.args)
+            ? {
+                args: record.args.filter(
+                  (argument): argument is string => typeof argument === "string",
+                ),
+              }
+            : {}),
+          ...(Array.isArray(record.env)
+            ? {
+                env: Object.fromEntries(
+                  (record.env as ReadonlyArray<AcpSchemaV2.EnvVariable>).map((variable) => [
+                    variable.name,
+                    variable.value,
+                  ]),
+                ),
+              }
+            : {}),
+        };
+      })
+      .filter(Predicate.isNotUndefined),
     ...(response._meta === undefined ? {} : { _meta: response._meta }),
   };
 }
