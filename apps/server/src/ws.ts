@@ -6,8 +6,10 @@ import * as Context from "effect/Context";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
+import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -122,6 +124,7 @@ import * as ThreadManagementService from "./orchestration-v2/ThreadManagementSer
 import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
+import * as McpSignIn from "./mcpApps/McpSignIn.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
@@ -1460,6 +1463,7 @@ export const layerWsRpc = (
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
+      const mcpSignIn = yield* McpSignIn.McpSignIn;
       const analytics = yield* AnalyticsService.AnalyticsService;
       const originProps = clientAnalyticsProps;
       const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
@@ -1560,6 +1564,8 @@ export const layerWsRpc = (
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+      const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
+      const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2580,6 +2586,8 @@ export const layerWsRpc = (
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
         [WS_METHODS.mcpAppsUpdateModelContext]: (input) => mcpAppRequests.updateModelContext(input),
         [WS_METHODS.mcpAppsReadResource]: (input) => mcpAppRequests.readResource(input),
+        [WS_METHODS.providerMcpSignInStart]: (input) => mcpSignIn.start(input),
+        [WS_METHODS.providerMcpSignInComplete]: (input) => mcpSignIn.complete(input),
         [WS_METHODS.providerUploadFeedback]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(
@@ -2704,9 +2712,24 @@ export const layerWsRpc = (
         [WS_METHODS.serverReclaimDatabaseSpace]: () => databaseStorage.requestReclaim,
         [WS_METHODS.peerLinksList]: (_input) =>
           peerLinks.list.pipe(Effect.map((links) => ({ links }))),
+        [WS_METHODS.peerLinksNames]: (_input) =>
+          peerLinks.names.pipe(Effect.map((links) => ({ links }))),
         [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),
         [WS_METHODS.peerLinksUnlink]: ({ environmentId }) =>
           peerLinks.unlink(environmentId).pipe(Effect.map((removed) => ({ removed }))),
+        [WS_METHODS.peerLinksSubscribeThread]: (input) => peerThreadRelay.subscribe(input),
+        [WS_METHODS.peerLinksThreadHistoryPage]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(peerThreadRelay.historyPage(input)),
+          ),
+        [WS_METHODS.peerLinksThreadItem]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(peerThreadRelay.item(input)),
+          ),
+        [WS_METHODS.peerLinksPairClient]: (input) =>
+          peerClientPairing.request(input, currentSession),
+        [WS_METHODS.peerLinksPairLink]: (input) =>
+          peerClientPairing.requestForLink(input, currentSession),
         [WS_METHODS.peerLinksAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(peerLinkRequests.answer(input)),
@@ -3618,6 +3641,8 @@ export const layer = Layer.unwrap(
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+    const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
+    const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3718,6 +3743,8 @@ export const layer = Layer.unwrap(
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
+              Layer.provide(Layer.succeed(PeerThreadRelay.PeerThreadRelay, peerThreadRelay)),
+              Layer.provide(Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
