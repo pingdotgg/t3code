@@ -24,6 +24,7 @@ export const layer = Layer.succeed(
     touch: () => Effect.void,
     revokeCredential: () => Effect.void,
     releaseRunBinding: () => Effect.void,
+    syncCapabilities: () => Effect.undefined,
     revokeProviderSession: () => Effect.void,
     revokeThread: () => Effect.void,
     revokeAll: Effect.void,

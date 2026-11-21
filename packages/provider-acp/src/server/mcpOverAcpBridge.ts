@@ -397,6 +397,11 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       if (envelope.error !== undefined) {
         return yield* new AcpMcpOverAcpError({ message: errorMessage(envelope.error) });
       }
+      if (request.method === "initialize" && protocolVersionOf(envelope) === null) {
+        return yield* new AcpMcpOverAcpError({
+          message: "MCP server did not return a valid initialize response.",
+        });
+      }
       return (envelope.result ?? null) as AcpSchema.MessageMcpResponse;
     }),
     notification: Effect.fn("mcpOverAcpBridge.notification")(function* (request) {

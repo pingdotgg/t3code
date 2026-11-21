@@ -39,6 +39,15 @@ export interface McpSessionRegistryShape {
   readonly revokeCredential: (credentialId: string) => Effect.Effect<void>;
   /** For runtimes that cannot take a new credential: the token stays valid but answers for no run. */
   readonly releaseRunBinding: (credentialId: string) => Effect.Effect<void>;
+  /** Syncs dynamic access capabilities on a retained credential (revokes apply across the thread). */
+  readonly syncCapabilities: (
+    credentialId: string,
+    changes: {
+      readonly threadId: ThreadId;
+      readonly grant?: ReadonlyArray<McpInvocationContext.McpCapability>;
+      readonly revoke?: ReadonlyArray<McpInvocationContext.McpCapability>;
+    },
+  ) => Effect.Effect<ReadonlySet<McpInvocationContext.McpCapability> | undefined>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
@@ -259,6 +268,45 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         return { records: next };
       });
     }),
+    syncCapabilities: Effect.fn("McpSessionRegistry.syncCapabilities")(
+      function* (credentialId, changes) {
+        const grant = changes.grant ?? [];
+        const revoke = changes.revoke ?? [];
+        return yield* SynchronizedRef.modify(state, ({ records }) => {
+          let updatedCapabilities: ReadonlySet<McpInvocationContext.McpCapability> | undefined;
+          let next: Map<string, CredentialRecord> | undefined;
+          for (const [tokenHash, record] of records) {
+            const isTarget = record.credentialId === credentialId;
+            const isThreadRevoke =
+              revoke.length > 0 && record.scope.thread.threadId === changes.threadId;
+            if (!isTarget && !isThreadRevoke) continue;
+            const remaining = new Set(record.scope.capabilities);
+            let changed = false;
+            if (isThreadRevoke) {
+              for (const capability of revoke) {
+                if (remaining.delete(capability)) changed = true;
+              }
+            }
+            if (isTarget) {
+              for (const capability of grant) {
+                if (!remaining.has(capability)) {
+                  remaining.add(capability);
+                  changed = true;
+                }
+              }
+              updatedCapabilities = changed ? remaining : record.scope.capabilities;
+            }
+            if (!changed) continue;
+            next ??= new Map(records);
+            next.set(tokenHash, { ...record, scope: { ...record.scope, capabilities: remaining } });
+          }
+          return [
+            updatedCapabilities,
+            next === undefined ? { records } : { records: next },
+          ] as const;
+        });
+      },
+    ),
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
         yield* revokeWhere((record) => record.scope.thread.providerSessionId === providerSessionId);

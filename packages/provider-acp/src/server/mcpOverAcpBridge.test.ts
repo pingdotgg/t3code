@@ -563,8 +563,8 @@ describe("AcpMcpOverAcpBridge", () => {
         .pipe(Effect.flip);
       expect(explicitError.message).toContain("initialize rejected");
       nextInitMode = "malformed";
-      expect(
-        yield* bridge.message({
+      const explicitMalformed = yield* bridge
+        .message({
           connectionId,
           method: "initialize",
           params: {
@@ -572,8 +572,10 @@ describe("AcpMcpOverAcpBridge", () => {
             capabilities: {},
             clientInfo: { name: "acp" },
           },
-        }),
-      ).toBeNull();
+        })
+        .pipe(Effect.flip);
+      expect(explicitMalformed._tag).toBe("AcpMcpOverAcpError");
+      expect(explicitMalformed.message).toContain("valid initialize response");
       const methodsBeforeRecovery = methods.length;
       expect(
         yield* bridge.message({
