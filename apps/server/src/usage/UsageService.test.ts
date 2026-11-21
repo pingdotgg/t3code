@@ -281,6 +281,25 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
 }
 
+type StaleScanSource = {
+  readonly files?: ReadonlyArray<{
+    readonly records: ReadonlyArray<{ totals: { outputTokens: number } }>;
+  }> | null;
+};
+
+function totalOutputTokensFromSources(sources: ReadonlyArray<StaleScanSource>): number {
+  return sources.reduce(
+    (sum, source) =>
+      sum +
+      (source.files ?? []).reduce(
+        (fileSum, file) =>
+          fileSum + file.records.reduce((n, r) => n + r.totals.outputTokens, 0),
+        0,
+      ),
+    0,
+  );
+}
+
 const CURSOR_NOW = Date.parse("2026-08-02T12:00:00Z");
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -1979,6 +1998,78 @@ describe("UsageService", () => {
         ),
         cursor.state.events,
       );
+      yield* accounts.awaitPersisted;
+    }),
+  );
+
+  it.effect("serves stale Cursor history on a plain read while a slow refresh runs", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 }];
+      const context = yield* Layer.build(
+        layerCursorUsageAccounts(
+          Layer.succeed(CursorAccountReader.CursorAccountReader, { read: cursor.read }),
+        ).pipe(
+          Layer.provide(
+            layerService({
+              prefix: "usage-service-cursor-stale-serve",
+              home,
+              settings,
+              platform: "darwin",
+            }),
+          ),
+        ),
+      );
+      const accounts = Context.get(context, CursorUsageAccounts.CursorUsageAccounts);
+      const input = {
+        instances: [
+          {
+            instanceId: ProviderInstanceId.make("cursor"),
+            environment: { CURSOR_API_KEY: "test-key" },
+          },
+        ],
+        windowStartMs: 0,
+        retentionCutoffMs: CURSOR_NOW - 92 * 24 * HOUR_MS,
+        awaitRefresh: false,
+      };
+      // Prime the cache with a completed refresh so a later plain read has history to serve.
+      const primed = yield* accounts.scan({ ...input, awaitRefresh: true });
+      assert.strictEqual(primed[0]?.status, "ok");
+      yield* accounts.awaitPersisted;
+
+      // Make the next account read slow and gated, like a dashboard API slowdown.
+      cursor.state.started = yield* Deferred.make<void>();
+      cursor.state.gate = yield* Deferred.make<void>();
+      cursor.state.calls = [];
+
+      // Advance past the cache TTL so the cache is stale, then read plainly.
+      yield* TestClock.adjust(Duration.minutes(2));
+      const plain = yield* accounts.scan(input);
+      // The stale cache answers immediately: records present, not marked refreshing.
+      assert.isUndefined(plain[0]?.refreshing);
+      assert.strictEqual(plain[0]?.status, "ok");
+      assert.deepStrictEqual(
+        plain[0]?.files?.flatMap((file) =>
+          file.records.map(({ totals }) => totals.outputTokens),
+        ),
+        [7],
+      );
+      // The stale read still starts a background refresh and does not wait for it.
+      yield* Deferred.await(cursor.state.started);
+      assert.deepStrictEqual(cursor.state.calls, [
+        { sinceMs: cursor.state.calls[0]?.sinceMs, untilMs: cursor.state.calls[0]?.untilMs },
+      ]);
+
+      // An awaiting read follows up and picks up the gated refresh's newer event.
+      cursor.state.events.push({ timestampMs: CURSOR_NOW + 60 * 1000, outputTokens: 5 });
+      const awaiting = yield* accounts
+        .scan({ ...input, awaitRefresh: true })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(cursor.state.gate, undefined);
+      const sources = yield* Fiber.join(awaiting);
+      assert.strictEqual(totalOutputTokensFromSources(sources), 12);
       yield* accounts.awaitPersisted;
     }),
   );

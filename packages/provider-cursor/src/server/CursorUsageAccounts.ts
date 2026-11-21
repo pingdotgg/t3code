@@ -217,11 +217,15 @@ const make = Effect.gen(function* () {
     const credentialKey = `api-key:${Hex.encode(yield* digest.digest(Digest.sha256, new TextEncoder().encode(credential.apiKey)))}`;
     const nowMs = yield* Clock.currentTimeMillis;
     const recentFailure = failures.get(credentialKey);
-    let refreshing = false;
-    if (
+    const staleCache = caches.get(credentialKey);
+    // Stale cached history still answers a plain read so the usage page never waits on a slow
+    // account read; only reads that ask for a refresh block on one, and a first-ever read shows
+    // a refreshing source while its cache is being built.
+    const needsRefresh =
       (recentFailure === undefined || nowMs - recentFailure.atMs >= CURSOR_ACCOUNT_TTL_MS) &&
-      !isCursorCacheFresh(caches.get(credentialKey), nowMs, retentionStartMs)
-    ) {
+      !isCursorCacheFresh(caches.get(credentialKey), nowMs, retentionStartMs);
+    let refreshing = false;
+    if (needsRefresh && (staleCache === undefined || awaitRefresh)) {
       const refresh = yield* startRefresh(credential, credentialKey, retentionStartMs);
       if (awaitRefresh) {
         yield* Deferred.await(refresh);
@@ -233,6 +237,9 @@ const make = Effect.gen(function* () {
           yield* Deferred.await(retry);
         }
       } else refreshing = true;
+    } else if (needsRefresh && staleCache !== undefined) {
+      // A plain read with a stale cache still warms the cache in the background.
+      yield* startRefresh(credential, credentialKey, retentionStartMs);
     }
 
     const cache = caches.get(credentialKey);
