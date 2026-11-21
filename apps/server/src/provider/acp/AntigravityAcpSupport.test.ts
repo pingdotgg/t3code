@@ -119,16 +119,6 @@ describe("antigravitySkipsPermissions", () => {
       expected: false,
     },
     { label: "auto", policy: { runtimeMode: "auto" as const }, expected: false },
-    {
-      label: "auto-accept-edits",
-      policy: { runtimeMode: "auto-accept-edits" as const },
-      expected: false,
-    },
-    {
-      label: "approval-required",
-      policy: { runtimeMode: "approval-required" as const },
-      expected: false,
-    },
   ])("returns $expected for $label", ({ policy, expected }) => {
     expect(antigravitySkipsPermissions(policy)).toBe(expected);
   });

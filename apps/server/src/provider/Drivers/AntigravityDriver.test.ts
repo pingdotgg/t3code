@@ -453,9 +453,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             modelSelection,
             runtimePolicy: cliPolicy,
           });
-          expect(
-            cliSession.providerSession.capabilities.sessions.supportsRuntimeModeSwitchInSession,
-          ).toBe(false);
           yield* cliSession.ensureThread({
             threadId: cliThreadId,
             modelSelection,

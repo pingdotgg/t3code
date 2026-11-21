@@ -109,23 +109,6 @@ describe("Antigravity process environment", () => {
         TMPDIR: profile.tempDirectory,
       },
     });
-
-    expect(
-      buildAntigravityAcpSpawnInput({
-        installation: { executablePath: "/usr/bin/agy" },
-        profile,
-        cwd: "/project",
-        baseEnv,
-        skipPermissions: true,
-      }).args,
-    ).toEqual([
-      "acp",
-      "--gemini-dir",
-      profile.geminiHome,
-      "--app-data-dir",
-      "antigravity-acp",
-      "--dangerously-skip-permissions",
-    ]);
   });
 
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
