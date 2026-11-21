@@ -53,6 +53,22 @@ describe("ResetCreditCoordinator", () => {
     }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
   );
 
+  it.effect("shares a read per account until the window passes or a redemption", () =>
+    Effect.gen(function* () {
+      const { redeem, shareRead } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const reads = yield* Ref.make(0);
+      const read = Ref.updateAndGet(reads, (n) => n + 1);
+
+      assert.strictEqual(yield* shareRead("acct", read), 1);
+      assert.strictEqual(yield* shareRead("acct", read), 1);
+      assert.strictEqual(yield* shareRead("other", read), 2);
+      yield* redeem("acct", () => Effect.succeed("reset" as const));
+      assert.strictEqual(yield* shareRead("acct", read), 3);
+      yield* TestClock.adjust("10 seconds");
+      assert.strictEqual(yield* shareRead("acct", read), 4);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
   it.effect("serialises concurrent redemptions on the same account, not per caller", () =>
     Effect.gen(function* () {
       const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
