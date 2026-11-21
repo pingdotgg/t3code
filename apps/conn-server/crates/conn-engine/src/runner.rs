@@ -146,6 +146,10 @@ struct TurnContext {
     provider_thread: Option<Value>,
     /// The source to fork natively, on a fork's first turn.
     fork: Option<crate::fork::NativeFork>,
+    /// The thread's delivered context handoffs, for what the native thread already holds.
+    handoffs: Vec<Value>,
+    /// The handoffs this run's turn delivers (`isPendingForRun`).
+    ready: Vec<Value>,
     /// The run starts a new provider conversation (`freshContext`).
     fresh: bool,
     /// The run goes back to the thread's own conversation past a scheduled fresh run's, so
@@ -626,6 +630,20 @@ impl Inner {
                         None if fresh => None,
                         None => crate::fork::native_fork_input(&tx, &tid)?,
                     };
+                    let all_handoffs = tx.entities(&tid, "contextHandoffs")?;
+                    let mut handoffs = all_handoffs.clone();
+                    // The run's turn delivers these; a compaction or goal turn none.
+                    let ready = if crate::merge_back::defers_history(&message) {
+                        vec![]
+                    } else {
+                        crate::merge_back::pending_for_run(
+                            &all_handoffs,
+                            &tx.entities(&tid, "runs")?,
+                            &tx.entities(&tid, "messages")?,
+                            &run,
+                        )
+                    };
+                    handoffs.retain(|h| h.get("delivery").is_some_and(|d| !d.is_null()));
                     Ok(Some(TurnContext {
                         thread,
                         run,
@@ -633,6 +651,8 @@ impl Inner {
                         cwd,
                         provider_thread,
                         fork,
+                        handoffs,
+                        ready,
                         fresh,
                         leaves_side_conversation,
                     }))
@@ -829,6 +849,8 @@ impl Inner {
             root.clone(),
         );
         let fork_transfer = context.fork.as_ref().map(|f| f.transfer.clone());
+        // The running row, for the handoff delivery after the write below takes its copy.
+        let running_json = provider_thread_json.clone();
         let checkpoint_cwd = self
             .checkpoints
             .as_ref()
@@ -931,6 +953,27 @@ impl Inner {
                 .await;
         }
 
+        let user_text = context.message["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let delivery = self
+            .deliver_handoffs(
+                &live,
+                &context.ready,
+                &context.handoffs,
+                &context.message,
+                &provider_thread,
+                &running_json,
+                thread_id,
+                run_id,
+                &user_text,
+            )
+            .await?;
+        let text = match &delivery {
+            Some(plan) => crate::handoff::with_inline_context(&plan.inline_text(), &user_text),
+            None => user_text,
+        };
         let input = TurnInput {
             // The provider decides from the turn ordinal, as before.
             native_thread_has_turns: None,
@@ -964,10 +1007,7 @@ impl Inner {
                     .as_str()
                     .unwrap_or_default()
                     .into(),
-                text: context.message["text"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
+                text,
                 attachments: from_json(context.message["attachments"].clone()).unwrap_or_default(),
             },
             model_selection,
@@ -984,10 +1024,145 @@ impl Inner {
         }
         // A run the provider asked for (`continuation.requested`) is an agent message with
         // `creationSource: provider`; the provider shows the output it holds for it.
-        live.session
+        let started = live
+            .session
             .start_turn(input)
             .await
-            .map_err(|e| StartError::Failed(e.to_string()))
+            .map_err(|e| StartError::Failed(e.to_string()));
+        // Inline history went with the prompt, or the handoffs wait as they were.
+        if let Some(plan) = delivery {
+            let native = native_thread_id(&running_json);
+            let records = if started.is_ok() {
+                plan.recorded(native.as_deref(), "inline")
+            } else {
+                plan.handoffs.clone()
+            };
+            // After the provider took the prompt, a failed record must not stop the turn.
+            if let Err(error) = self.persist_handoffs(thread_id, run_id, records).await {
+                eprintln!("conn-engine: could not record a context handoff delivery: {error}");
+            }
+        }
+        started
+    }
+
+    /// `deliverContextHandoffs` for this run's ready handoffs: injected into the native
+    /// thread when the provider can, else returned to go inline ahead of the user's text.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the turn start's parts a delivery reads, without a struct of its own"
+    )]
+    async fn deliver_handoffs(
+        &self,
+        live: &Arc<LiveThread>,
+        ready: &[Value],
+        handoffs: &[Value],
+        message: &Value,
+        provider_thread: &ProviderThread,
+        provider_thread_json: &Value,
+        thread_id: &str,
+        run_id: &str,
+        user_text: &str,
+    ) -> Result<Option<crate::handoff::Delivery>, StartError> {
+        if ready.is_empty() {
+            return Ok(None);
+        }
+        // A handoff made before its run had a provider thread now names the run's.
+        let ready: Vec<Value> = ready
+            .iter()
+            .cloned()
+            .map(|mut h| {
+                if crate::merge_back::is_provisional(&h["toProviderThreadId"]) {
+                    h["toProviderThreadId"] = provider_thread_json["id"].clone();
+                }
+                h
+            })
+            .collect();
+        let native = native_thread_id(provider_thread_json);
+        let delivered: Vec<String> = handoffs
+            .iter()
+            .filter(|h| {
+                h["toProviderThreadId"] == provider_thread_json["id"]
+                    && native.is_some()
+                    && h["delivery"]["nativeThreadId"].as_str() == native.as_deref()
+                    && h["delivery"]["status"] != "pending"
+            })
+            .flat_map(|h| {
+                h["delivery"]["itemIds"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .filter_map(|id| id.as_str().map(str::to_owned))
+            .collect();
+        let budget = crate::handoff::budget(
+            crate::handoff::token_cap(
+                std::env::var("T3CODE_CONTEXT_HANDOFF_TOKEN_CAP")
+                    .ok()
+                    .as_deref(),
+            ),
+            user_text,
+            &message["attachments"],
+            &provider_thread_json["contextUsage"],
+            0,
+            None,
+        );
+        let injects = live.session.injects_history();
+        let plan =
+            crate::handoff::plan_delivery(&ready, native.as_deref(), budget, &delivered, injects)
+                .map_err(|e| StartError::Failed(e.message().to_owned()))?;
+        let Some(plan) = plan else {
+            return Ok(None);
+        };
+        // Before the provider hears of it; a record that cannot be written stops the turn.
+        self.persist_handoffs(
+            thread_id,
+            run_id,
+            plan.recorded(native.as_deref(), "pending"),
+        )
+        .await
+        .map_err(|e| StartError::Failed(format!("Could not record the context handoff: {e}")))?;
+        if injects && native.is_some() {
+            let injected = live
+                .session
+                .inject_history(conn_provider::InjectHistoryInput {
+                    provider_thread: provider_thread.clone(),
+                    items: crate::handoff::response_items(&plan.messages, &plan.context),
+                })
+                .await
+                .map_err(|e| StartError::Failed(e.to_string()))?;
+            if injected {
+                self.persist_handoffs(
+                    thread_id,
+                    run_id,
+                    plan.recorded(native.as_deref(), "injected"),
+                )
+                .await
+                .map_err(|e| {
+                    StartError::Failed(format!("Could not record the context handoff: {e}"))
+                })?;
+                return Ok(None);
+            }
+        }
+        Ok(Some(plan))
+    }
+
+    /// Writes handoff records (`context-handoff.updated`).
+    async fn persist_handoffs(
+        &self,
+        thread_id: &str,
+        run_id: &str,
+        handoffs: Vec<Value>,
+    ) -> crate::store::StoreResult<()> {
+        let (tid, rid) = (thread_id.to_owned(), run_id.to_owned());
+        self.write(move |tx| {
+            let now = tx.now().to_owned();
+            for mut handoff in handoffs {
+                handoff["updatedAt"] = json!(now);
+                tx.append(Draft::new(&tid, "context-handoff.updated", handoff).run(Some(&rid)))?;
+            }
+            Ok(())
+        })
+        .await
     }
 
     /// Reads one session's events until it closes. Ends a run the session leaves open.
@@ -2277,4 +2452,11 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
         // Handled before translation.
         ProviderEvent::BackgroundWorkUpdated { .. } => Translated::Ignore,
     }
+}
+
+/// The native thread id of a provider thread row.
+fn native_thread_id(provider_thread: &Value) -> Option<String> {
+    provider_thread["nativeThreadRef"]["nativeId"]
+        .as_str()
+        .map(str::to_owned)
 }

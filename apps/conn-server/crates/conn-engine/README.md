@@ -34,12 +34,12 @@ decode is a defect, not a broken client.
 
 ## dispatchCommand
 
-47 of the 58 command types are handled. The other 11 answer `OrchestrationV2DispatchCommandError`
+50 of the 58 command types are handled. The other 8 answer `OrchestrationV2DispatchCommandError`
 with a reason the client shows (`commands::refusal`).
 
 | Handled                                                                                                                                                             | Refused, and why                                                                             |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `thread.create`, `message.dispatch` (all five dispatch modes), `run.interrupt` (`holdQueue`), `thread.stop`, `runtime-request.respond`, `thread.user-input.dismiss` | `thread.merge_back`: no portable context handoff (needs Codex `thread/inject_items` and Claude `inlineContextLength` in the providers) |
+| `thread.create`, `message.dispatch` (all five dispatch modes), `run.interrupt` (`holdQueue`), `thread.stop`, `runtime-request.respond`, `thread.user-input.dismiss` | (none) |
 | `queued-run.start`, `.cancel`, `.reorder`, `.edit`, `queue.resume`, `queued-message.promote-to-steer`                                                               | (none)                                                                                       |
 | `thread.archive`, `unarchive`, `delete`, `visit`, `mark-unread`, `metadata.update` (`regenerateTitle`), `title.regeneration.complete`                               | `prepared-run.release`, `.progress`, `.fail`, `.retry`: no worktree preparation              |
 | `thread.settle`, `auto-settle`, `unsettle`, `snooze`, `unsnooze`, `auto-settle.set`, `pin`, `unpin`, `pin.reorder`, `active.reorder`, `tag.set`                     | (none)                                                                                       |
@@ -56,7 +56,7 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
 | --- | --- | --- | --- | --- |
 | `checkpoint.rollback` | `Orchestrator.ts` `dispatchCheckpointRollback`, `CheckpointRollbackService.ts`, `CheckpointRestoreSafety.ts` | Puts the workspace back to a checkpoint, marks later runs `rolled_back`, rolls the provider's native thread back | checkpoints, `Session::rollback_thread`, `conn-vcs` restore | yes |
 | `thread.fork` | `ThreadForkService.ts`, `Orchestrator.ts` `dispatchThreadFork` | A new thread from a run of another, with a `fork` context transfer and the provider's native fork | `Session::fork_thread`, `ContextHandoffService.ts` | yes |
-| `thread.merge_back` | `Orchestrator.ts` `dispatchThreadMergeBack`, `ContextHandoffService.ts` | Records a pending `merge_back` context transfer from a fork to its parent; the parent's next message carries the fork's delta | fork, context transfers (no checkpoint) | yes |
+| `thread.merge_back` | `Orchestrator.ts` `dispatchThreadMergeBack`, `ContextHandoffService.ts`, `ContextHandoffDelivery.ts` | Records a pending `merge_back` context transfer from a fork to its parent; the parent's next message carries the fork's delta as a `fork_delta_summary` handoff (`merge_back.rs`, `handoff.rs`), injected (Codex) or inline | fork, context transfers, `Session::inject_history` | yes |
 | `prepared-run.release`, `.progress`, `.fail`, `.retry` | `ThreadLaunchService.ts`, `Orchestrator.ts` `dispatchPreparedRun*`, `ProjectSetupScriptRunner.ts` | A worktree launch's `preparing` run: progress, failure, retry, release to the provider; setup scripts typed into a `setup-<id>` terminal | `conn-terminal` prompt and marker watch, `conn-vcs` worktree | yes |
 | `thread.guest-share.close`, `thread.guest-message.dismiss` | `GuestShareDecider.ts` | Guest sharing | guest share | other |
 | `notification.delivery.accept` | `Orchestrator.ts` `dispatchNotificationAccepted`, `NotificationMailbox.ts` | Marks a background notification delivered to a run | a notification mailbox (not built) | later |

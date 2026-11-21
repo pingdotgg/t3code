@@ -20,6 +20,12 @@
 //
 // `expected-failures.txt` lists the fixture variants that fail today, with the reason. The
 // check fails when an unlisted one fails or a listed one passes.
+//
+// The same file also loads T3's merge-back test (`ThreadMergeBack.integration.test.ts`): its
+// two variants (`thread_merge_back_siblings/<driver>`) run on this engine through the same
+// mock and are judged by that test's assertions. T3's Codex variant fakes `injectHistory`;
+// here the stub answers `thread/inject_items` and this file checks what was injected with
+// the same rules.
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -79,6 +85,8 @@ import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testk
 import { GrokOrchestratorReplayHarness } from "../Adapters/GrokAdapterV2.testkit.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import { itRunsReplayFixtures, runReplayFixture } from "./ProviderReplayFixtures.ts";
+// T3's merge-back test, run on this engine through the mock above.
+import "./ThreadMergeBack.integration.test.ts";
 
 vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
   const original: any = await importOriginal();
@@ -120,7 +128,7 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
         : [],
     );
 
-  const standIn = (driver: string, dir: string, transcript: any, workspace: string, gates: string[]) => {
+  const standIn = (driver: string, dir: string, transcript: any, workspace: string, gates: string[], injectItems = false) => {
     if (driver === "codex") {
       fs.writeFileSync(path.join(dir, "transcript.json"), JSON.stringify(transcript));
       const stubConfig = path.join(dir, "stub-config.json");
@@ -131,6 +139,7 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
           log: path.join(dir, "stub.ndjson"),
           gates,
           gateDir: dir,
+          injectItems,
         }),
       );
       const wrapper = path.join(dir, "codex");
@@ -229,12 +238,14 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
       fs.mkdirSync(path.join(dir, "home"), { recursive: true });
       fs.mkdirSync(path.join(dir, "state"), { recursive: true });
       const steps = scenario.steps ?? [];
+      const mergeBack = scenario.name.startsWith("thread_merge_back_siblings/");
       const provider = standIn(
         harness.driver,
         dir,
         scenario.transcript,
         scenario.runtimePolicyOverride?.cwd,
         gateLabels(steps),
+        mergeBack,
       );
       const create = scenario.commands.find((c: any) => c.type === "thread.create");
       const out = path.join(dir, "result.json");
@@ -259,9 +270,58 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
         });
         child.on("exit", (status) => resolve(status));
       });
-      const raw = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, "utf8")) : { error: "no result (exit " + code + ")" };
+      let raw = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, "utf8")) : { error: "no result (exit " + code + ")" };
+      // T3's Claude harness pins the session id to the recording's (nativeSessionIdFor), and
+      // the merge-back test asserts it. The shim recorded the id this engine chose.
+      const ourSession = path.join(dir, "host-result.json.session-id");
+      const recordedSession = scenario.transcript.metadata?.nativeSessionId;
+      if (mergeBack && harness.driver === "claudeAgent" && fs.existsSync(ourSession) && typeof recordedSession === "string") {
+        const ours = fs.readFileSync(ourSession, "utf8").trim();
+        if (ours !== "") raw = JSON.parse(JSON.stringify(raw).replaceAll(JSON.stringify(ours), JSON.stringify(recordedSession)));
+      }
+      // The merge-back test names runs with T3's ids (IdAllocator derive.run); this engine's
+      // run ids for the scenario's threads go back to that form (the inverse of ourIds).
+      if (mergeBack) {
+        const threads = new Set(scenario.projectionThreadIds ?? []);
+        const theirIds = (value: any): any => {
+          if (typeof value === "string") {
+            const m = /^run:(.+):(\d+)$/.exec(value);
+            return m && threads.has(m[1]) ? "run:thread:" + encodeURIComponent(m[1]) + ":ordinal:" + m[2] : value;
+          }
+          if (Array.isArray(value)) return value.map(theirIds);
+          if (value !== null && typeof value === "object") {
+            return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, theirIds(v)]));
+          }
+          return value;
+        };
+        raw = theirIds(raw);
+      }
       const difference = frameDifference(harness.driver, dir, scenario.transcript);
       if (difference !== null) throw new Error("provider frames differ: " + difference + " [" + dir + "]");
+      if (mergeBack && harness.driver === "codex") {
+        // T3's CodexHistoryReplayHarness.injectHistory: each injection holds exactly one user
+        // message, a fork's prompt, and an assistant message that says "stored".
+        const injected = fs.readFileSync(path.join(dir, "stub.ndjson"), "utf8").split("\n")
+          .filter((line: string) => line !== "").map((line: string) => JSON.parse(line))
+          .filter((entry: any) => entry.kind === "inject");
+        if (injected.length !== 2) throw new Error("conn: expected 2 history injections, got " + injected.length + " [" + dir + "]");
+        // In merge order, all into the source's one native thread.
+        if (new Set(injected.map((entry: any) => entry.frame.params.threadId)).size !== 1) {
+          throw new Error("conn: the injections went to different native threads");
+        }
+        for (const [index, entry] of injected.entries()) {
+          const items = entry.frame.params.items.slice(1);
+          const texts = (role: string) => items.filter((i: any) => i.role === role).map((i: any) => i.content[0].text.split("\n").slice(1).join("\n"));
+          const users = texts("user");
+          const marker = index === 0 ? "first" : "second";
+          if (users.length !== 1 || !users[0].startsWith("Remember the fork-local marker merge-sibling-" + marker + "-")) {
+            throw new Error("conn: injected user history is not one fork prompt: " + JSON.stringify(users));
+          }
+          if (!texts("assistant").some((text: string) => text.includes("stored"))) {
+            throw new Error("conn: injected history has no stored answer");
+          }
+        }
+      }
       if (raw.error) throw new Error("conn driver: " + raw.error + " [" + dir + "]");
       const storedEvents = decodeEvents(raw.storedEvents);
       const projections = new Map(
@@ -307,7 +367,11 @@ const drivers = [...new Set(ORCHESTRATOR_REPLAY_FIXTURES.flatMap((f) => f.provid
 fs.writeFileSync(
   path.join(CONFIG.work, "variants.json"),
   JSON.stringify(
-    ORCHESTRATOR_REPLAY_FIXTURES.flatMap((f) => f.providers.map((p) => f.name + "/" + p.driver)),
+    [
+      ...ORCHESTRATOR_REPLAY_FIXTURES.flatMap((f) => f.providers.map((p) => f.name + "/" + p.driver)),
+      "thread_merge_back_siblings/codex",
+      "thread_merge_back_siblings/claudeAgent",
+    ],
   ),
 );
 
@@ -393,9 +457,15 @@ const report = JSON.parse(NodeFS.readFileSync(reportFile, "utf8"));
 const results = new Map();
 for (const file of report.testResults ?? []) {
   for (const test of file.assertionResults ?? []) {
-    const m = /runs (\S+)\/(\S+) through/.exec(test.title ?? test.fullName ?? "");
-    if (m === null) continue;
+    const title = test.title ?? test.fullName ?? "";
     const message = (test.failureMessages ?? []).join("\n").split("\n")[0] ?? "";
+    const merge = /merges two sibling fork deltas into the original (\S+) thread/.exec(title);
+    if (merge !== null) {
+      results.set(`thread_merge_back_siblings/${merge[1]}`, { status: test.status, message });
+      continue;
+    }
+    const m = /runs (\S+)\/(\S+) through/.exec(title);
+    if (m === null) continue;
     results.set(`${m[1]}/${m[2]}`, { status: test.status, message });
   }
 }

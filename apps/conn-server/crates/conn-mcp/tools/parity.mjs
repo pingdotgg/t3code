@@ -449,6 +449,35 @@ const steps = [
   ["t3_thread_transfer", (c) => ({ threadId: c.forkThreadId, action: "merge_back" })],
   ["t3_thread_transfer", (c) => ({ threadId: c.forkThreadId, action: "merge_back", targetThreadId: "thread:none" })],
   ["t3_thread_transfer", () => ({ threadId: "thread:none", action: "fork" })],
+  // Merge-back reaches the engine: a thread that is not a fork of the target, and a thread
+  // into itself, refused with T3's texts (thread ids differ per server).
+  [
+    "t3_thread_launch",
+    (c) => ({
+      projectId: c.projectId,
+      title: "Parity merge target",
+      modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-5-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceStrategy: { type: "root" },
+      clientRequestId: "parity-merge-target",
+    }),
+    (c, v) => (c.mergeTargetId = v.threadId),
+    { noTurn: true },
+  ],
+  ...[(c) => c.mergeTargetId, (c) => c.idleThreadId].map((target) => [
+    "t3_thread_transfer",
+    (c) => ({ threadId: c.idleThreadId, action: "merge_back", targetThreadId: target(c) }),
+    undefined,
+    { failureText: (text, c) => text.replaceAll(c.idleThreadId, "<source>").replaceAll(c.mergeTargetId, "<target>") },
+  ]),
+  [
+    "t3_thread_transfer",
+    (c) => ({ threadId: c.idleThreadId, action: "merge_back", targetThreadId: c.mergeTargetId, sourcePoint: { type: "run", runId: "run:none" } }),
+    undefined,
+    { failureText: (text, c) => text.replaceAll(c.idleThreadId, "<source>").replaceAll(c.mergeTargetId, "<target>") },
+  ],
+  ["t3_thread_transfer", (c) => ({ threadId: c.mergeTargetId, action: "status" }), undefined, { same: (v) => v.transfers }],
   ["t3_thread_transfer", () => ({ action: "bogus" })],
   ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "bogus" })],
   // t3_queue on the idle thread: an empty queue, then each write on a run that is not queued.
@@ -803,9 +832,13 @@ for (const [tool, input, after, options] of run) {
     continue;
   }
   if (ts.kind === "failure") {
+    // `failureText`: the texts must be equal once each server's own ids are named alike.
+    const texts = options?.failureText === undefined
+      ? [ts.message, rust.message]
+      : [options.failureText(ts.message ?? ts.code ?? "", context[0]), options.failureText(rust.message ?? rust.code ?? "", context[1])];
     report(
-      `${label}: both fail with ${ts.code}${ts.message === rust.message ? "" : `\n       T3:   ${ts.message}\n       Conn: ${rust.message}`}`,
-      !(tool === "t3_workflow_stop" || tool.startsWith("t3_theme_")) || ts.message === rust.message,
+      `${label}: both fail with ${ts.code}${texts[0] === texts[1] ? "" : `\n       T3:   ${texts[0]}\n       Conn: ${texts[1]}`}`,
+      !(tool === "t3_workflow_stop" || tool.startsWith("t3_theme_") || options?.failureText !== undefined) || texts[0] === texts[1],
     );
     continue;
   }

@@ -11,8 +11,8 @@ use std::{
 
 use conn_contract::{ProviderInstanceId, ProviderSessionId, ProviderThread, from_json, to_json};
 use conn_provider::{
-    BoxFuture, Closed, EnsureThreadInput, ForkThreadInput, InterruptInput, McpServer,
-    ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget,
+    BoxFuture, Closed, EnsureThreadInput, ForkThreadInput, InjectHistoryInput, InterruptInput,
+    McpServer, ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget,
     RollbackThreadInput, RuntimeRequestResponse, Session, SteerInput, ThreadSnapshot, TurnInput,
 };
 use conn_provider_support::ids::{self, Env, SystemEnv, iso_from_ms};
@@ -1045,6 +1045,34 @@ impl Session for CodexSession {
                 .await
                 .map(|_| ())
                 .map_err(call_failed("steer_turn"))
+        })
+    }
+
+    fn injects_history(&self) -> bool {
+        true
+    }
+
+    /// `injectHistory`: `thread/inject_items` on the thread's native id. Only an unknown
+    /// method (-32601) is a refusal: it comes before the history changes. Any other failure
+    /// leaves the delivery uncertain.
+    fn inject_history(&self, input: InjectHistoryInput) -> BoxFuture<'_, ProviderResult<bool>> {
+        Box::pin(async move {
+            let Some(native) = native_thread_id(&input.provider_thread) else {
+                return Err(failed("inject_history", "the thread has no native id"));
+            };
+            match self
+                .inner
+                .server
+                .request(
+                    "thread/inject_items",
+                    json!({"threadId": native, "items": input.items}),
+                )
+                .await
+            {
+                Ok(_) => Ok(true),
+                Err(CallError::Rpc(error)) if error.code == -32601 => Ok(false),
+                Err(error) => Err(call_failed("inject_history")(error)),
+            }
         })
     }
 

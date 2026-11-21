@@ -56,13 +56,24 @@ const save = () => {
   fs.renameSync(temp, resultPath);
 };
 
-// T3's sameFrame: deep equality of JSON values.
+// T3's normalizeContextHandoffText: an inline context handoff compares by its header and the
+// user's text; the history between them is `<dynamic-summary>`.
+const handoffText = (value) => {
+  if (!value.startsWith("Context handoff (")) return value;
+  const userMessage = value.indexOf("\n\nUser message:\n");
+  const headerEnd = value.indexOf(":\n");
+  if (headerEnd === -1 || userMessage === -1 || headerEnd >= userMessage) return value;
+  return `${value.slice(0, headerEnd + 2)}<dynamic-summary>${value.slice(userMessage)}`;
+};
+// T3's sameFrame: deep equality of JSON values, after normalizeReplayFrame.
 const canon = (v) =>
   Array.isArray(v)
     ? v.map(canon)
     : v && typeof v === "object"
       ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])]))
-      : v;
+      : typeof v === "string"
+        ? handoffText(v)
+        : v;
 const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
 
 // stableClaudeQueryOptions in ClaudeAdapterV2.testkit.ts.

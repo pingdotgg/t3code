@@ -205,6 +205,20 @@ pub trait Session: Send + Sync {
         unsupported("steer_turn")
     }
 
+    /// Whether [`Session::inject_history`] can add history to a native thread
+    /// (`injectHistory` on T3's session). Without it, the engine sends the history inline,
+    /// ahead of the user's text.
+    fn injects_history(&self) -> bool {
+        false
+    }
+
+    /// `injectHistory`: adds context handoff history to the native thread before a turn.
+    /// `Ok(false)` when the provider turns the request down before it changes the history
+    /// (Codex: an unknown method); the engine then sends the history inline.
+    fn inject_history(&self, _input: InjectHistoryInput) -> BoxFuture<'_, ProviderResult<bool>> {
+        Box::pin(async { Ok(false) })
+    }
+
     /// Stops the running turn. Its `TurnTerminal` reports `interrupted`.
     fn interrupt_turn(&self, input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>>;
 
@@ -338,12 +352,6 @@ pub trait Session: Send + Sync {
     ) -> BoxFuture<'_, ProviderResult<Vec<String>>> {
         unsupported("await_background_tasks")
     }
-
-    /// `injectHistory`: gives the native thread earlier conversation as context. `Ok(false)`
-    /// means the native protocol cannot take it.
-    fn inject_history(&self, _input: InjectHistoryInput) -> BoxFuture<'_, ProviderResult<bool>> {
-        unsupported("inject_history")
-    }
 }
 
 /// One MCP server a session passes to its agent (`McpServerConfig`, HTTP transport).
@@ -433,14 +441,6 @@ pub struct ThreadSnapshot {
     pub provider_turns: Vec<ProviderTurn>,
     pub messages: Vec<ConversationMessage>,
     pub runtime_requests: Vec<RuntimeRequest>,
-}
-
-/// `ProviderAdapterV2HistoricalContext` plus the thread.
-#[derive(Clone, Debug)]
-pub struct InjectHistoryInput {
-    pub provider_thread: ProviderThread,
-    pub messages: Vec<ConversationMessage>,
-    pub context: String,
 }
 
 /// What [`ProviderEvent::ContinuationRequested`] carries (`ProviderContinuationRequest`).
@@ -723,6 +723,14 @@ pub struct SteerInput {
     pub provider_turn_id: ProviderTurnId,
     pub message: TurnMessage,
     pub model_selection: Option<ModelSelection>,
+}
+
+/// `ProviderAdapterV2HistoricalContext` for one native thread: the history items as Codex's
+/// `thread/inject_items` takes them (`historyResponseItems`).
+#[derive(Clone, Debug)]
+pub struct InjectHistoryInput {
+    pub provider_thread: ProviderThread,
+    pub items: serde_json::Value,
 }
 
 /// `ProviderAdapterV2InterruptInput`.

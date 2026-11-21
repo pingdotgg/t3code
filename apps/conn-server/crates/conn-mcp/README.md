@@ -180,7 +180,7 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_thread_send_attachments` | served | writesThreads | canonical references and the engine attachment claims | |
 | `t3_environment_preferences_update` | served (peer links) | writesEnvironment |  |  |
 | `tool_search` | served | readsAsCaller | lists the four direct tools plus searched tools to deferred clients; at most 10 matches and 256 provider sessions | |
-| `t3_thread_transfer` | served (merge-back refused by the engine) | either(reads, writesThreads) | engine: `thread.fork`, `thread.merge_back`, context transfers | |
+| `t3_thread_transfer` | served | either(reads, writesThreads) | engine: `thread.fork`, `thread.merge_back`, context transfers | |
 | `t3_worktree_handoff` | served | actsAsCaller | guarded binding, continuation, session detach and setup terminal | |
 | `t3_workflow_stop` | served | writesThreads | same workflow Stop as the client RPC | |
 | `t3_background_wait` | served (new) | actsAsCaller | | C |

@@ -173,6 +173,7 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
         "delegated_task.request" => crate::families::delegated_task_request,
         "checkpoint.rollback" => crate::rollback::checkpoint_rollback,
         "thread.fork" => crate::fork::thread_fork,
+        "thread.merge_back" => crate::merge_back::thread_merge_back,
         "delegated_task.wake-policy" => crate::families::wake_policy,
         "delegated_task.completion-delivery.acknowledge"
         | "delegated_task.completion-delivery.dispose" => crate::families::completion_delivery,
@@ -183,7 +184,6 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
 /// Why a contract command this engine does not handle is refused. The client shows the text.
 pub(crate) fn refusal(command_type: &str) -> &'static str {
     match command_type {
-        "thread.merge_back" => "Conn Server cannot merge a fork back yet.",
         "prepared-run.release"
         | "prepared-run.progress"
         | "prepared-run.fail"
@@ -485,6 +485,20 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             .node(Some(&root))
             .command(cid)
     };
+    let merge_back = crate::merge_back::consume(
+        tx,
+        &crate::merge_back::RunPlace {
+            thread_id: &c.thread_id,
+            run_id: &run_id,
+            root_node_id: &root,
+            ordinal,
+            provider_thread_id: &provider_thread_id,
+            model_selection: &model,
+            queued,
+            fresh,
+            now: &now,
+        },
+    )?;
 
     let queue_position = match delivery {
         Delivery::Queue { first: true } => {
@@ -530,7 +544,7 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         "startedAt": null,
         "completedAt": null,
         "checkpointId": null,
-        "contextHandoffId": null,
+        "contextHandoffId": merge_back.as_ref().map(|m| m.handoff["id"].clone()),
     });
     if held {
         run["queueHeld"] = json!(true);
@@ -552,6 +566,9 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }
     if let Some(source) = &c.restart_continuation_of_run_id {
         run["restartContinuationOfRunId"] = json!(source);
+    }
+    if let Some(merge_back) = &merge_back {
+        crate::merge_back::append_records(tx, merge_back, &run_id, cid, &c.thread_id)?;
     }
     tx.append(draft("run.created", run))?;
     tx.append(draft(
@@ -600,6 +617,9 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }
     if let Some(sender) = &c.sender_thread_id {
         message["senderThreadId"] = json!(sender);
+    }
+    if let Some(merge_back) = &merge_back {
+        tx.append(draft("turn-item.updated", merge_back.turn_item.clone()))?;
     }
     tx.append(draft("message.updated", message))?;
     let item_id = format!("turn-item:{}", c.message_id);
@@ -755,6 +775,9 @@ fn fresh_context_allowed(
     c: &MessageDispatch,
     thread: &Value,
 ) -> Result<(), CommandError> {
+    if !crate::merge_back::pending(tx, &c.thread_id)?.is_empty() {
+        return reject("Send a message without /clear to apply the merged context first.");
+    }
     if crate::fork::pending_fork(tx, &c.thread_id)?.is_some() {
         return reject("A fresh session can't start while a fork or merge is still being applied.");
     }

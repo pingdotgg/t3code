@@ -1319,7 +1319,7 @@ fn every_contract_command_is_handled_or_refused_with_a_reason() {
             );
         }
     }
-    assert_eq!(handled, 49);
+    assert_eq!(handled, 50);
     assert_eq!(conn_contract::COMMAND_TYPES.len(), 58);
 }
 
@@ -1852,7 +1852,7 @@ async fn thread_lifecycle_commands_reach_the_shell_row() {
     assert_eq!(r["activeProviderThreadId"], Value::Null);
 
     assert!(
-        crate::commands::refusal("thread.merge_back").contains("merge a fork back"),
+        crate::commands::refusal("prepared-run.release").contains("prepare worktrees"),
         "a refused command says why"
     );
 }

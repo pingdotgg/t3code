@@ -21,6 +21,50 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## Merge-back (2026-11-21)
+
+`thread.merge_back` is served, so `t3_thread_transfer` `merge_back` and the client's "Merge
+back" work. Before, the engine refused it ("Conn Server cannot merge a fork back yet.").
+
+- **The command** (`conn-engine/src/merge_back.rs`, T3's `dispatchThreadMergeBack`): T3's
+  checks and texts (a fork of the target, the target idle with an empty queue, no other fork's
+  pending context, a provider-finished source run, a fork transfer), then a pending
+  `merge_back` context transfer on the target; an older one from the same fork is superseded.
+- **The next message** on the target (`dispatchMessage`): refused when it would queue, when
+  forks of two threads are pending, or with `/clear`, with T3's texts. Otherwise the fork's
+  visible items through the source run become a `fork_delta_summary` handoff
+  (`ContextHandoffService.prepareForkDelta`), the transfer is `consumed` with a
+  `fork_delta_context` resolution, the run carries `contextHandoffId`, and a "Merge-back
+  context" item shows before the message.
+- **Delivery** (`runner.rs`, `ContextHandoffDelivery.deliverContextHandoffs`): T3's budget and
+  selection (`conn-engine/src/handoff.rs`, `handoffBudget.ts`). Codex gets the history through
+  `thread/inject_items` (a new `Session::inject_history`; an unknown method falls back to
+  inline); Claude and the other providers get it inline ahead of the user's text. Each step is
+  recorded on the handoff's `delivery` (`pending`, then `injected` or `inline`).
+- **Proof:** T3's own merge-back test (`ThreadMergeBack.integration.test.ts`: two sibling forks
+  merged into the source, then a recall) runs on this engine in `t3-fixture-replay` for Codex
+  and Claude and passes T3's assertions: summaries, transfer statuses and source runs, native
+  ids, visible text; every provider frame matches the recording (Claude's inline prompt with
+  T3's `normalizeContextHandoffText`; Codex's two injections checked as T3's test checks them).
+  Fixture replay 71 of 164 (was 69 of 162). `gen-handoff-cases.mjs` (new check): 81 cases of
+  T3's `historicalMessage`, `selectHistory`, `renderHistory`, `historyResponseItems`,
+  `historyCost`, `handoffBudget`, the token cap, `visibleDeltaRunOrdinals`,
+  `prepareForkDelta` and `deliverContextHandoffs`, equal in `cargo test -p conn-engine
+  handoff`. `client-check`: a fork merged back, then the source's next run, through the
+  client's reducers. `parity.mjs`: merge-backs that reach both engines (not a fork, into
+  itself, an unknown run) with equal texts. `cargo test -p conn-mcp thread_transfer`: a
+  refused, then an accepted merge-back, pending on the source. RPC 198 of 251, `/mcp` 104
+  tools (unchanged).
+- **As T3:** a run that fails, is stopped, or is a `/compact` or `/goal` turn leaves its
+  handoff to the next run (`isPendingForRun`); the `pending` and `injected` records must be
+  written before the turn goes on. A handoff made before its run has a provider thread (a
+  first run, or after a provider switch) names a provisional one until delivery.
+- **Known differences:** the budget does not estimate native context without provider usage
+  (T3 counts the delivered history) and knows no model window; `/goal` is matched by its
+  prefix, not T3's parser; the provider capabilities still say
+  `canConsumeHandoffSummaries: false` (nothing reads them here); a fork's first user message
+  has no `providerThreadId`, so its history line says `provider-thread=none`.
+
 ## `pull_request_create` (2026-11-20)
 
 Agents can open a PR from their thread's pushed branch: `pull_request_create`
@@ -272,12 +316,11 @@ Agents can fill a saved test login into a sign-in form in their browser tab:
 reads both threads and dispatches `thread.merge_back`. Access as T3: `status` reads,
 the others write both threads.
 
-- **Known difference:** the engine still refuses `thread.merge_back` ("Conn Server cannot
-  merge a fork back yet."; it needs T3's `ContextHandoffService`), so `merge_back` fails after
-  T3's own checks.
-- **Proof:** `parity.mjs`: 8 calls on both servers (status, a fork with no stable run,
-  merge-back refusals, missing threads, bad input). `cargo test -p conn-mcp thread_transfer`:
-  a fork of a finished run, its transfer in the fork's `status`, the merge-back refusal.
+- **Merge-back** works since 2026-11-21 (see "Merge-back").
+- **Proof:** `parity.mjs`: 12 calls on both servers (status, a fork with no stable run,
+  merge-back refusals in the tool and in the engine, missing threads, bad input).
+  `cargo test -p conn-mcp thread_transfer`: a fork of a finished run, its transfer in the
+  fork's `status`, a merge-back.
 ## PR forge tools and CI (2026-11-20)
 
 Agents can read, list, update, answer, review and merge a thread's PR, and read and re-run its
@@ -2671,7 +2714,7 @@ T3 Code.
    subagents, …" and "Engine, part 3". Codex passes all 25; buffered delivery is done. Next:
    the replay gate in the ACP stub with `finish_held_run` (4 Grok variants, which also need
    Grok background tasks), Grok subagents, Claude's background wakes.
-5. **Engine.** Merge-back and the portable fork path (both need T3's `ContextHandoffService`);
+5. **Engine.** The portable fork path (merge-back is done, 2026-11-21);
    prepared runs and setup scripts in a `setup-<id>` terminal; bounded thread snapshots and the `/history` and `/bounded`
    routes (a full snapshot of a long thread peaks at about 13 bytes per byte of
    JSON); a workspace strategy for delegated tasks; search details (no NFC normalization, the

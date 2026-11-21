@@ -9,7 +9,7 @@
 //! `consumed` with a `native_fork` resolution.
 //!
 //! Not built: T3's portable path (`portable_context`, a `full_thread_summary` handoff from
-//! `ContextHandoffService.ts`) for a fork to another provider, from an unfinished source run,
+//! `ContextHandoffService.ts`; `handoff.rs` has the parts merge-back uses) for a fork to another provider, from an unfinished source run,
 //! from a busy source, or after a failed native fork. A message that would need it is refused,
 //! and a native fork that fails fails the turn. Side chats that start before the parent's first
 //! turn need the same digest and are refused.
@@ -39,7 +39,11 @@ fn latest_stable_run(runs: &[Value]) -> Option<Value> {
 }
 
 /// `runForSourcePoint`.
-fn run_for_source_point(tx: &Tx<'_>, thread_id: &str, point: &Value) -> StoreResult<Option<Value>> {
+pub(crate) fn run_for_source_point(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    point: &Value,
+) -> StoreResult<Option<Value>> {
     let runs = tx.entities(thread_id, "runs")?;
     Ok(match point["type"].as_str() {
         Some("latest_stable") => latest_stable_run(&runs),
@@ -78,7 +82,7 @@ fn provider_turn_for_run(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResu
 }
 
 /// `contextSourcePointForRun`.
-fn source_point(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<Value> {
+pub(crate) fn source_point(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<Value> {
     let mut point = json!({"threadId": thread_id, "runId": run["id"]});
     if run["checkpointId"].is_string() {
         point["checkpointId"] = run["checkpointId"].clone();

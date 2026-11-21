@@ -3634,8 +3634,9 @@ async fn project_writes_create_update_delete_and_keep_scratch() {
     );
 }
 
-/// `t3_thread_transfer`: a fork of a finished run, its transfer in `status` on the fork, and
-/// the engine's merge-back refusal.
+/// `t3_thread_transfer`: a fork of a finished run, its transfer in `status` on the fork, a
+/// merge-back refused before the fork has a finished run, then one after it, pending on the
+/// source.
 #[tokio::test(flavor = "current_thread")]
 async fn thread_transfer_forks_and_reports_status() {
     let f = fixture("thread-transfer");
@@ -3687,7 +3688,39 @@ async fn thread_transfer_forks_and_reports_status() {
         )
         .await;
     assert_eq!(code, "orchestration_error");
-    assert!(message.contains("merge a fork back"), "{message}");
+    assert!(
+        message.contains("No stable source run was found for merge-back source latest_stable."),
+        "{message}"
+    );
+    let sent = c
+        .ok(
+            "t3_thread_send",
+            json!({"threadId": target, "message": "fork work"}),
+        )
+        .await;
+    c.ok(
+        "t3_thread_wait",
+        json!({"threadId": target, "runId": sent["runId"], "timeoutMs": 10_000}),
+    )
+    .await;
+    let merged = c
+        .ok(
+            "t3_thread_transfer",
+            json!({"threadId": target, "action": "merge_back", "targetThreadId": source,
+                "sourcePoint": {"type": "run", "runId": sent["runId"]}}),
+        )
+        .await;
+    assert_eq!(merged["targetThreadId"], source);
+    let status = c
+        .ok(
+            "t3_thread_transfer",
+            json!({"threadId": source, "action": "status"}),
+        )
+        .await;
+    let transfers = status["transfers"].as_array().unwrap();
+    assert_eq!(transfers.len(), 1, "{status}");
+    assert_eq!(transfers[0]["sourceThreadId"], target);
+    assert_eq!(transfers[0]["status"], "pending");
 }
 
 /// `fill_credential` for an agent: an unknown login, then a saved one with no tab open. Only a

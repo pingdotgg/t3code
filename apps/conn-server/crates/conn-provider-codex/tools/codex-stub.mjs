@@ -30,6 +30,9 @@
 //   for each label in `config.gates`, the stub stops before it emits the first recorded
 //   frame with that label, writes `<gateDir>/gate-<label>.reached` and waits for
 //   `<gateDir>/gate-<label>.release`. Frames the client sends meanwhile wait too.
+// - `config.injectItems`: `thread/inject_items` is answered `{}` and logged as `inject`, not
+//   `extra`. T3's merge-back test fakes its `injectHistory` the same way, so its recording
+//   holds no injection.
 // - Probe mode (`config.probes`, for a whole server such as `idle-diff.mjs`): a provider status
 //   probe's own app-server process is answered from canned replies and moves no cursor. See
 //   `PROBE_REPLIES` below. `config.version` answers `codex --version`.
@@ -238,6 +241,11 @@ const onFrame = (frame) => {
     // waiting on its request timeout.
     log({ kind: "after-exit", frame });
     if (frame.method !== undefined && frame.id !== undefined) send({ id: frame.id, result: {} });
+    return;
+  }
+  if (config.injectItems === true && frame.method === "thread/inject_items" && frame.id !== undefined) {
+    log({ kind: "inject", frame });
+    send({ id: frame.id, result: {} });
     return;
   }
   const kind = kindOf(frame);

@@ -65,9 +65,11 @@ fn scratch_repo(dir: &std::path::Path) -> String {
         .into_owned()
 }
 
-/// Two turns that write files on an engine that takes checkpoints, a rewind, and a fork of the
-/// first turn with one message. Returns the source's items, the fork's items and the shell rows.
-async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, Value) {
+/// Two turns that write files on an engine that takes checkpoints, a rewind, a fork of the
+/// first turn with one message, and that fork merged back into the source, which then sends a
+/// message. Returns the source's items, the fork's items, the shell rows and the source's
+/// items from the merge-back on.
+async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, Value, Vec<Value>) {
     let root = scratch_repo(dir);
     let mut config = EngineConfig::new(dir.join("checkpoints.sqlite"));
     config.projects = vec![ProjectConfig {
@@ -183,7 +185,52 @@ async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, 
     read(&mut fork, &mut fork_items, run_ended).await;
     drain(&mut fork, &mut fork_items).await;
     let shell = engine.shell_snapshot().await.unwrap();
-    (items, fork_items, shell["threads"].clone())
+
+    // The fork's turn merged back into the source, as the client asks (`mergeThreadBack`), and
+    // the source's next message, which takes the fork's delta along.
+    let mut merge_items = vec![];
+    let mut source = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "thread-cp", "requestCompletionMarker": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut source, &mut merge_items, |item| {
+        item["kind"] == "synchronized"
+    })
+    .await;
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "thread.merge_back", "commandId": "cp-merge", "sourceThreadId": "thread-cp-fork",
+                "targetThreadId": "thread-cp", "sourcePoint": {"type": "run", "runId": "run:thread-cp-fork:1"},
+                "createdBy": "user", "creationSource": "web",
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut source, &mut merge_items, |item| {
+        item["event"]["type"] == "context-transfer.created"
+    })
+    .await;
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "message.dispatch", "commandId": "cp-after-merge", "threadId": "thread-cp",
+                "messageId": "message:cp-after-merge", "text": "use the fork's work", "attachments": [],
+                "dispatchMode": {"type": "start_immediately"}, "createdBy": "user", "creationSource": "web",
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut source, &mut merge_items, |item| {
+        run_ended(item) && item["event"]["payload"]["id"] == "run:thread-cp:3"
+    })
+    .await;
+    drain(&mut source, &mut merge_items).await;
+    (items, fork_items, shell["threads"].clone(), merge_items)
 }
 
 /// Reads items until `done` holds for one. A slow runner can pause longer than any quiet
@@ -648,7 +695,8 @@ async fn main() {
     })
     .await;
 
-    let (checkpoint_items, fork_items, checkpoint_shell) = checkpoint_scenario(&dir).await;
+    let (checkpoint_items, fork_items, checkpoint_shell, merge_items) =
+        checkpoint_scenario(&dir).await;
 
     let parent = engine
         .get_thread_projection("thread-1".into())
@@ -693,6 +741,7 @@ async fn main() {
         "createdThreadSnapshot":created_child,
         "checkpointItems": checkpoint_items,
         "forkItems": fork_items,
+        "mergeBackItems": merge_items,
         "checkpointShellThreads": checkpoint_shell,
         "shellItems": shell_items,
         "launch": launch,

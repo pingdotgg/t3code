@@ -26,7 +26,9 @@ mod clock;
 mod commands;
 mod engine;
 mod guard;
+mod handoff;
 mod mcp_apps;
+mod merge_back;
 mod thread_locks;
 
 /// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.

@@ -402,6 +402,52 @@ check("fork: lineage, a native fork, and the relationship graph", () => {
   );
 });
 
+// Merge-back: the fork's turn merged into its source (`mergeThreadBack`), then the source's
+// next message. The pending transfer, its consumption, the handoff and its timeline item,
+// through the client's decoder and reducers.
+check("merge-back: a pending transfer, then the fork's delta in the next run", () => {
+  const items = exported.mergeBackItems;
+  const created = items.find((item) => item.event?.type === "context-transfer.created");
+  assert.ok(created, "the merge-back records a transfer");
+  assert.equal(created.event.payload.type, "merge_back");
+  assert.equal(created.event.payload.status, "pending");
+  assert.equal(created.event.payload.sourcePoint.runId, "run:thread-cp-fork:1");
+  assert.equal(created.event.payload.basePoint.runId, "run:thread-cp:1");
+  const { projection, status } = followThread(items);
+  assert.equal(status, "live");
+  const merges = projection.contextTransfers.filter((t) => t.type === "merge_back");
+  assert.equal(merges.length, 1);
+  const [merge] = merges;
+  assert.equal(merge.status, "consumed");
+  assert.equal(merge.targetRunId, "run:thread-cp:3");
+  assert.equal(merge.resolution.strategy, "fork_delta_context");
+  const [handoff] = projection.contextHandoffs;
+  assert.equal(merge.resolution.contextHandoffId, handoff.id);
+  assert.equal(handoff.strategy, "fork_delta_summary");
+  assert.equal(handoff.targetRunId, "run:thread-cp:3");
+  assert.ok(
+    handoff.summaryText.startsWith(
+      "Merge-back context from forked conversation.\nSource thread: thread-cp-fork\nTarget thread: thread-cp\nCovered fork runs: 1-1\n\nFork delta:\n- User: go on",
+    ),
+    handoff.summaryText,
+  );
+  // The fake provider has no native history injection: the history went inline.
+  assert.equal(handoff.delivery?.status, "inline");
+  const run = projection.runs.find((r) => r.id === "run:thread-cp:3");
+  assert.equal(run.contextHandoffId, handoff.id);
+  assert.equal(run.status, "completed");
+  const visible = projection.visibleTurnItems.map(({ item }) => item);
+  const marker = visible.findIndex((item) => item.type === "handoff");
+  const message = visible.findIndex(
+    (item) => item.type === "user_message" && item.text === "use the fork's work",
+  );
+  assert.ok(marker !== -1 && message === marker + 1, "the merge-back item shows just before the message");
+  assert.equal(visible[marker].title, "Merge-back context");
+  assert.equal(visible[marker].summary, handoff.summaryText);
+  // The history goes to the provider, never into the user's message.
+  assert.ok(!visible.some((item) => item.type === "user_message" && item.text.includes("Context handoff (")));
+});
+
 // Pull request links: T3's GitHub keys, a stack tombstone lifted by hand.
 check("pull requests and issues: link, unlink and relink as T3 writes them", () => {
   const followed = followThread(exported.pullRequestLinkItems);
