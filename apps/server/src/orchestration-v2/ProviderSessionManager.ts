@@ -2783,12 +2783,20 @@ export const layerWithOptions = (
               );
               if (!unloaded) {
                 // A thread that may still be loaded ignores the new config on resume; keep it on the old one.
-                yield* markProviderThreadLoaded({
-                  providerSessionId: input.providerSessionId,
-                  threadId: input.threadId,
-                  providerThreadKey: unloadingKey,
-                  linkedEnvironments: undefined,
-                  mcpCredential: loadedCredential,
+                yield* Ref.update(sessions, (current) => {
+                  const latest = current.get(key);
+                  // A replacement runtime under the same session never loaded this thread.
+                  if (latest?.runtime !== entry.runtime) return current;
+                  return new Map(current).set(key, {
+                    ...latest,
+                    loadedProviderThreadKeyByThread: new Map(
+                      latest.loadedProviderThreadKeyByThread,
+                    ).set(input.threadId, unloadingKey),
+                    loadedMcpCredentialByThread: new Map(latest.loadedMcpCredentialByThread).set(
+                      input.threadId,
+                      loadedCredential,
+                    ),
+                  });
                 });
                 return yield* rollBack("Could not reload the thread to refresh MCP credentials.");
               }

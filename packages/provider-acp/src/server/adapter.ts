@@ -8056,10 +8056,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const activationOptions = acpMcpActivation(mcpContext);
           prepareTerminalEnvironment(mcpContext, sessionId);
           yield* Ref.set(loadingSessionId, sessionId);
+          const agent = installedAgentCapabilities();
           const activated = yield* Effect.gen(function* () {
-            return canLoadSession
+            return agent?.loadSession === true
               ? yield* runtime.loadSession(sessionId, activationOptions)
-              : canResumeSession
+              : agent?.sessionCapabilities?.resume != null
                 ? yield* runtime.resumeSession(sessionId, activationOptions)
                 : yield* new ProviderAdapter.ProviderAdapterProtocolError({
                     driver,
@@ -8083,12 +8084,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (currentMcpContext.authorization === (yield* Ref.get(activeMcpAuthorization))) {
             return false;
           }
-          rememberTerminalEnvironment(sessionId, currentMcpContext);
           if (
             usesMcpOverAcp() &&
             runtimeMcpBridge !== undefined &&
             currentMcpContext.authorization !== undefined
           ) {
+            rememberTerminalEnvironment(sessionId, currentMcpContext);
             runtimeMcpBridge.setAuthorization(currentMcpContext.authorization);
             yield* Ref.set(activeMcpAuthorization, currentMcpContext.authorization);
             return false;
