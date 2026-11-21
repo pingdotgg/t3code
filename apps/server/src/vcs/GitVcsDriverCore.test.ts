@@ -968,8 +968,7 @@ it.effect("resolves a branch's base once while its refs and branch config are un
       spawnedArgs.length = 0;
 
       // Git for Windows' no-op `fetch --dry-run` touches a refs directory without moving a ref.
-      const touched = new Date("2030-01-01T00:00:00Z");
-      NodeFS.utimesSync(`${cwd}/.git/refs/heads`, touched, touched);
+      NodeFS.utimesSync(`${cwd}/.git/refs/heads`, 1_893_456_000, 1_893_456_000);
       yield* driver.statusDetailsLocal(cwd);
       assert.equal(lookups(), 0);
 
