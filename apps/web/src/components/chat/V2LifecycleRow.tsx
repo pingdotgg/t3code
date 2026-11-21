@@ -462,12 +462,17 @@ function SubagentTimelineLink(props: {
     environmentThreadDetails.threadAtom(props.parentRef),
     (thread) => thread?.projection.subagents.find((agent) => agent.id === props.subagentId) ?? null,
   );
-  const remote = props.remote ?? agent?.remoteChild;
+  const remote = agent?.remoteChild ?? props.remote;
+  const remoteThreadId = remote?.threadId;
   const gt = useGT();
   const m = useMessages();
   const threadId = props.threadId;
   // A task in a linked environment opens there, or read-only through this one.
-  const remoteOpener = useLinkedThreadOpener(props.parentRef, remote, props.title);
+  const remoteOpener = useLinkedThreadOpener(
+    props.parentRef,
+    remote?.threadId === undefined ? undefined : { ...remote, threadId: remote.threadId },
+    props.title,
+  );
   const trigger = useSideThreadTrigger();
   const canOpen = use(SideThreadsOpenContext);
   const open = !canOpen
@@ -479,11 +484,17 @@ function SubagentTimelineLink(props: {
   const panel = threadId !== null || remoteOpener?.mode === "linked";
   const liveStatus = agent?.status ?? props.status;
   const status = props.event ? props.event.status : liveStatus;
-  const statusLabel = props.event?.label ?? m(subagentStatusVisual(liveStatus).label);
+  const statusLabel =
+    props.event?.label ??
+    (remote !== undefined &&
+    remoteThreadId === undefined &&
+    !SETTLED_SUBAGENT_STATUSES.has(liveStatus)
+      ? gt("Launching")
+      : m(subagentStatusVisual(liveStatus).label));
   const result = (agent?.result ?? props.result)?.trim();
   const progress = (agent?.progress ?? props.progress)?.trim();
   const settled = SETTLED_SUBAGENT_STATUSES.has(status ?? liveStatus);
-  const rawDetail = settled ? result || progress : progress || result;
+  const rawDetail = remote?.launchError ?? (settled ? result || progress : progress || result);
   const detail = subagentCardDetail(rawDetail);
   const failed = status === "failed";
   const timing = {
@@ -579,7 +590,7 @@ function SubagentTimelineLink(props: {
           model={agent?.model ?? null}
           modelSelection={agent?.modelSelection}
           status={liveStatus}
-          result={agent?.result ?? props.result}
+          result={remote?.launchError ?? agent?.result ?? props.result}
           progress={agent?.progress ?? props.progress}
         />
       </ThreadHoverCardPopup>

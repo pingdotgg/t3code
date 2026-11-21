@@ -12459,6 +12459,8 @@
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
   "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
+  "e29506e15fc49e0d": "Démarrage",
+  "79f9d52cd191db4a": "{status} sur {label}.",
   "d8aaf932f90429c4": "Placer cette commande en tête de la file d’attente ({shortcut})",
   "425ab15036aec8a4": "Placer cette commande en tête de la file d’attente"
 }

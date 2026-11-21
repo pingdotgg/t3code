@@ -46,13 +46,14 @@ export class PeerForwarding extends Context.Service<
   {
     /**
      * Runs `tool` in the linked environment `environmentId` with `params`. A
-     * `t3_thread_wait` goes in pieces short enough to survive any route.
+     * `t3_thread_wait` returns before MCP client and route timeouts.
      */
     readonly call: <T extends Tool.Any>(
       scope: Scope,
       tool: T,
       environmentId: EnvironmentId,
       params: Tool.Parameters<T>,
+      options?: { readonly expectedLinkIdentity: string },
     ) => Effect.Effect<Tool.Success<T>, OrchestratorMcpFailure>;
     /** `t3_thread_read` there. */
     readonly readThread: (
@@ -71,6 +72,7 @@ export class PeerForwarding extends Context.Service<
       scope: Scope,
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadWaitInput,
+      options?: { readonly expectedLinkIdentity: string },
     ) => Effect.Effect<OrchestratorMcpThreadWaitResult, OrchestratorMcpFailure>;
     /** The environments this one links to, as an agent sees them. */
     readonly links: (
@@ -172,6 +174,7 @@ const make = Effect.gen(function* () {
     success: Schema.Top,
     environmentId: EnvironmentId,
     params: unknown,
+    options?: { readonly expectedLinkIdentity: string },
   ) {
     const { caller, limits } = yield* forwardingCaller(scope);
     const encoded = (yield* Schema.encodeUnknownEffect(parameters as Schema.Encoder<unknown>)(
@@ -205,6 +208,7 @@ const make = Effect.gen(function* () {
       limits,
       ...(sender === undefined ? {} : { sender }),
       success: success as Schema.Decoder<A>,
+      ...(options === undefined ? {} : options),
     });
   });
 
@@ -232,7 +236,12 @@ const make = Effect.gen(function* () {
       input,
     );
 
-  const waitForThread: PeerForwarding["Service"]["waitForThread"] = (scope, environmentId, input) =>
+  const waitForThread: PeerForwarding["Service"]["waitForThread"] = (
+    scope,
+    environmentId,
+    input,
+    options,
+  ) =>
     forward<OrchestratorMcpThreadWaitResult>(
       scope,
       "t3_thread_wait",
@@ -246,6 +255,7 @@ const make = Effect.gen(function* () {
           Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
         ),
       },
+      options,
     );
 
   // While the beta is off, agents start nothing over links. Tasks already running there keep
@@ -263,11 +273,19 @@ const make = Effect.gen(function* () {
       : undefined;
   };
 
-  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
+  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params, options) => {
     const forwardTool = (
       args: unknown,
     ): Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure> =>
-      forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, args);
+      forward(
+        scope,
+        tool.name,
+        tool.parametersSchema,
+        tool.successSchema,
+        environmentId,
+        args,
+        options,
+      );
     const newest = newestPageForAgent(scope, tool.name, params);
     const forwarded: Effect.Effect<
       Tool.Success<typeof tool>,
@@ -277,6 +295,7 @@ const make = Effect.gen(function* () {
           scope,
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
+          options,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
       : newest === undefined
         ? forwardTool(params)

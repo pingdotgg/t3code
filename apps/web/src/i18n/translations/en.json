@@ -12468,6 +12468,8 @@
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
   "9e91e9a77b664e4e": "Could not start a review guide",
+  "e29506e15fc49e0d": "Launching",
+  "79f9d52cd191db4a": "{status} on {label}.",
   "d8aaf932f90429c4": "Move this command to the front of the queue ({shortcut})",
   "425ab15036aec8a4": "Move this command to the front of the queue"
 }

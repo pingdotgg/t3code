@@ -61,7 +61,7 @@ export function subagentThreadTarget(
     return { environmentId, threadId: subagent.childThreadId };
   }
   const remote = subagent.remoteChild;
-  if (remote === undefined) return null;
+  if (remote?.threadId === undefined) return null;
   const target = { environmentId: remote.environmentId, threadId: remote.threadId };
   const open = resolveLinkedThreadOpen({
     environmentId: remote.environmentId,
@@ -128,12 +128,19 @@ export function resolveSubagentRowPresentation(
   const live = isActiveSubagentStatus(subagent.status);
   return {
     title: rowTitle(subagent, resolve),
-    detail: subagentDetailPreview(subagent),
-    statusLabel: rowStatusLabel(subagent.status, resolve),
+    detail: subagentDetailPreview({
+      ...subagent,
+      result: subagent.remoteChild?.launchError ?? subagent.result,
+    }),
+    statusLabel:
+      live && subagent.remoteChild !== undefined && subagent.remoteChild.threadId === undefined
+        ? resolve(msg("Launching", { $context: "agent status" }))
+        : rowStatusLabel(subagent.status, resolve),
     tone: rowTone(subagent.status),
     live,
     canOpenThread:
-      subagent.childThreadId !== null || (subagent.remoteChild !== undefined && canOpenRemote),
+      subagent.childThreadId !== null ||
+      (subagent.remoteChild?.threadId !== undefined && canOpenRemote),
     runsOn: subagent.remoteChild?.label ?? null,
   };
 }
