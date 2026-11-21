@@ -790,6 +790,75 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }),
   );
 
+  const countClaudeUsageReads = (instanceCount: number) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixtures = yield* makeTildeProviderFixtures();
+      yield* fs.writeFileString(
+        path.join(fixtures.claudeHomePath, ".credentials.json"),
+        '{"claudeAiOauth":{"accessToken":"fake-token"}}',
+      );
+      yield* fs.writeFileString(
+        path.join(fixtures.claudeHomePath, ".claude.json"),
+        '{"oauthAccount":{"organizationUuid":"fake-org"}}',
+      );
+      let usageReads = 0;
+      const client = HttpClient.make((request) => {
+        if (request.url.endsWith("/api/oauth/usage")) usageReads += 1;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              version: "0.0.0",
+              cedar_ember: {
+                eligible: true,
+                next_grant_id: "grant_a",
+                grants: [{ id: "grant_a", resets_left: 1, usable_now: true }],
+              },
+            }),
+          ),
+        );
+      });
+      const instanceIds = Array.from({ length: instanceCount }, (_, index) =>
+        ProviderInstanceId.make(`claude_${index}`),
+      );
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [ClaudeDriver],
+        configMap: Object.fromEntries(
+          instanceIds.map((instanceId) => [
+            instanceId,
+            {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              enabled: true,
+              config: makeClaudeConfig({
+                enabled: true,
+                binaryPath: fixtures.claudeBinaryPath,
+                homePath: fixtures.claudeHomePath,
+              }),
+            },
+          ]),
+        ),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      const instances = yield* Effect.forEach(instanceIds, (id) => registry.getInstance(id));
+      usageReads = 0;
+      const snapshots = yield* Effect.forEach(instances, (instance) => instance!.snapshot.refresh, {
+        concurrency: "unbounded",
+      });
+      for (const snapshot of snapshots) {
+        expect(snapshot.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
+      }
+      return usageReads;
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest));
+
+  it.live.skipIf(windowsHost)("Claude instances on one home share their reset-credit reads", () =>
+    Effect.gen(function* () {
+      const alone = yield* countClaudeUsageReads(1);
+      expect(alone).toBeGreaterThan(0);
+      expect(yield* countClaudeUsageReads(2)).toBe(alone);
+    }),
+  );
+
   const makeClaudeCacheFixture = Effect.fnUntraced(function* (
     state: "ready" | "signed-out" | "usage-failed",
   ) {
