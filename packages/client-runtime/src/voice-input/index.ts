@@ -40,5 +40,7 @@ export {
   type VoiceStreamingSession,
   type VoiceTranscriber,
   type VoiceTranscriptionErrorCode,
+  type LiveVoiceOptions,
+  type LiveVoiceSession,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";

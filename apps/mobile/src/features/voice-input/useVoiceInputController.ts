@@ -61,13 +61,15 @@ export function useVoiceInputController(input: {
       label: captured.label,
     });
   }, [session]);
-  const state = global.ownerKey === input.ownerKey ? global.state : IDLE_STATE;
+  const ownsVoiceInput = global.ownerKey === input.ownerKey;
+  const state = ownsVoiceInput ? global.state : IDLE_STATE;
   const isBusy = voiceInputBlocksSubmission(state);
   return {
     isAvailable: global.isAvailable && (!global.isBusy || global.ownerKey === input.ownerKey),
     state,
     audioLevels: global.audioLevels,
     elapsedSeconds: global.elapsedSeconds,
+    liveTranscript: ownsVoiceInput ? global.liveTranscript : null,
     isBusy,
     freezesEditor: isBusy,
     blocksSubmission: isBusy,
