@@ -145,3 +145,10 @@ export function SidebarSectionHeader(props: {
     </SortableSidebarMarker>
   );
 }
+
+// With section tabs the tab bar replaces the headers, but they still bound the drag sections.
+export function SidebarSectionBoundary(props: {
+  marker: "working-header" | "snoozed-header" | "settled-header";
+}) {
+  return <SortableSidebarMarker marker={props.marker} className="-mb-px h-0" />;
+}

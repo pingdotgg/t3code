@@ -488,6 +488,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
+    id: "sidebar-section-tabs",
+    title: msg("Section tabs"),
+    to: "/settings/general",
+    searchTerms: [msg("sidebar tabs accordion swipe trackpad snoozed settled working sections")],
+  },
+  {
     id: "boring-sidebar",
     title: msg("Boring sidebar (group by project)"),
     to: "/settings/labs",
