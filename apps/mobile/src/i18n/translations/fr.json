@@ -4294,6 +4294,14 @@
       "v": "v"
     }
   ],
+  "15f32e12fd49533f": "Impossible de poursuivre la connexion. Réessayez.",
+  "54789628a737f557": "Se connecter à {server}",
+  "f8fde2e549c61546": "Adresse de la page ouverte par votre navigateur",
+  "d9f6244b252d11f6": "Terminer la connexion",
+  "8aecbd38f1facf71": "Autorisez l’accès dans votre navigateur. Il ouvre ensuite une page qui peut ne pas se charger : copiez l’adresse de cette page et collez-la ici.",
+  "6e5bcc452add4f9b": "Ouvre la connexion. Appuyez longuement pour copier.",
+  "83be7aade7ff6360": "Connecté",
+  "ec21b232e0eacd4a": "Se connecter",
   "12ba9fa1445f92a2": "Travail des sous-agents",
   "eaa6c91a05d95ce7": "Actualiser",
   "4740c38b2edd194d": "Lecture seule. Ces sous-agents ne peuvent pas recevoir de messages.",
@@ -4896,6 +4904,7 @@
   "bff5692f10fc10b0": "Appuyez longuement pour copier.",
   "7f0f9b1ee42892db": "La sortie n’est plus disponible.",
   "a1984c617f973156": "{preview}, échec de l’appel d’outil",
+  "38574c0d1e49b278": "{preview}, connecté",
   "fd0d04d5a6627f70": "Ouvre le fil de cet agent. Appuyez longuement pour copier.",
   "7ba47e54094ba298": "Touchez deux fois pour masquer tous les détails. Appuyez longuement pour copier.",
   "1862ffb47bf6736c": "Touchez deux fois pour afficher tous les détails. Appuyez longuement pour copier.",
