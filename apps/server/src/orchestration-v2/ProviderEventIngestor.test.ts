@@ -2226,7 +2226,6 @@ layer("ProviderEventIngestorV2", (it) => {
         ...offered,
         archivedAt: now,
         deletedAt: now,
-        activeProviderThreadId: rootEvent.payload.activeProviderThreadId,
         branch: "user/checkout",
       };
       yield* eventSink.write({

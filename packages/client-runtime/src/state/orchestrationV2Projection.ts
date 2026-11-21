@@ -293,6 +293,11 @@ export function applyOrchestrationV2ProjectionEvent(
   const partialTimeline = options?.partialTimeline === true;
   const latestLocalTurnOrdinal = options?.latestLocalTurnOrdinal;
   const base = { ...projection, updatedAt: event.occurredAt };
+  // Matches the server projection: after creation only provider-thread.updated moves the link.
+  const keepProviderLink = (thread: OrchestrationV2ThreadProjection["thread"]) => ({
+    ...thread,
+    activeProviderThreadId: projection.thread.activeProviderThreadId,
+  });
   switch (event.type) {
     case "thread.pull-request-link-updated":
       return {
@@ -300,6 +305,7 @@ export function applyOrchestrationV2ProjectionEvent(
         thread: applyThreadPullRequestLinkUpdate(projection.thread, event.payload),
       };
     case "thread.created":
+      return { ...base, thread: event.payload };
     case "thread.archived":
     case "thread.unarchived":
     case "thread.deleted":
@@ -320,12 +326,12 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.model-selection-updated":
     case "thread.provider-switched":
     case "thread.guest-share-updated":
-      return { ...base, thread: event.payload };
+      return { ...base, thread: keepProviderLink(event.payload) };
     // Visited tracking and tags are not activity: skip the updatedAt bump.
     case "thread.visited":
     case "thread.tags-updated":
     case "thread.marked-unread":
-      return { ...projection, thread: event.payload };
+      return { ...projection, thread: keepProviderLink(event.payload) };
     case "thread.visit-recorded":
       return {
         ...projection,

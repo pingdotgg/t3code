@@ -1043,6 +1043,13 @@ export function applyToProjection(
     updatedAt: event.occurredAt,
   };
 
+  // Only provider-thread.updated moves the active provider link after creation. Other
+  // thread events carry a snapshot planned outside the provider writers' ordering.
+  const keepProviderLink = (thread: OrchestrationV2ThreadProjection["thread"]) => ({
+    ...thread,
+    activeProviderThreadId: projection.thread.activeProviderThreadId,
+  });
+
   switch (event.type) {
     case "thread.pull-request-link-updated":
       return {
@@ -1050,6 +1057,10 @@ export function applyToProjection(
         thread: applyThreadPullRequestLinkUpdate(projection.thread, event.payload),
       };
     case "thread.created":
+      return {
+        ...base,
+        thread: event.payload,
+      };
     case "thread.archived":
     case "thread.unarchived":
     case "thread.deleted":
@@ -1069,7 +1080,7 @@ export function applyToProjection(
     case "thread.guest-share-updated":
       return {
         ...base,
-        thread: event.payload,
+        thread: keepProviderLink(event.payload),
       };
     // Reordering and PR refreshes preserve the orchestrator's activity timestamp.
     case "thread.active-reordered":
@@ -1078,14 +1089,14 @@ export function applyToProjection(
     case "thread.issue-synced":
       return {
         ...base,
-        thread: event.payload,
+        thread: keepProviderLink(event.payload),
         updatedAt: event.payload.updatedAt,
       };
     case "thread.visited":
     case "thread.marked-unread":
       return {
         ...projection,
-        thread: event.payload,
+        thread: keepProviderLink(event.payload),
       };
     case "thread.visit-recorded":
       return {
@@ -2525,6 +2536,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.guest-share-updated": {
               const payloadJson = yield* encodeThreadPayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
+              const ownsProviderLink = event.type === "thread.created" ? 1 : 0;
               yield* sql`
               INSERT INTO orchestration_v2_projection_threads (
                 thread_id,
@@ -2564,12 +2576,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 provider_instance_id = excluded.provider_instance_id,
                 runtime_mode = excluded.runtime_mode,
                 interaction_mode = excluded.interaction_mode,
-                active_provider_thread_id = excluded.active_provider_thread_id,
+                active_provider_thread_id = CASE WHEN ${ownsProviderLink}
+                  THEN excluded.active_provider_thread_id
+                  ELSE orchestration_v2_projection_threads.active_provider_thread_id END,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
                 archived_at = excluded.archived_at,
                 deleted_at = excluded.deleted_at,
-                payload_json = excluded.payload_json
+                payload_json = CASE WHEN ${ownsProviderLink}
+                  THEN excluded.payload_json
+                  ELSE json_set(
+                    excluded.payload_json,
+                    '$.activeProviderThreadId',
+                    orchestration_v2_projection_threads.active_provider_thread_id
+                  ) END
             `;
               break;
             }
