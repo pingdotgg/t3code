@@ -1075,11 +1075,15 @@ dependencies = [
  "gpui-kit",
  "image",
  "markdown",
+ "objc2 0.6.5",
+ "objc2-core-graphics",
+ "objc2-quartz-core 0.3.2",
  "raw-window-handle",
  "rust-embed",
  "serde",
  "serde_json",
  "tokio",
+ "url",
 ]
 
 [[package]]

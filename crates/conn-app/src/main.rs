@@ -1,10 +1,13 @@
 //! Conn native desktop application entry point (GPUI).
 
 mod app;
+#[cfg(feature = "automation")]
+mod automation;
 mod colour_space;
 mod fixture;
 mod header;
 mod icons;
+mod live;
 mod shell;
 mod sidebar;
 mod theme;
@@ -38,7 +41,10 @@ fn main() {
     application.run(|cx| {
         gpui_kit::init(cx);
         colour_space::install(cx);
-        theme::apply_kit_theme(&Tokens::placeholder_dark(), cx);
+        let theme = live::initial_theme();
+        let tokens = Tokens::derive(&theme);
+        theme::apply_kit_theme(&tokens, cx);
+        let server = live::server_config_from_env();
         app::register_keybindings(cx);
 
         let bounds = Bounds::centered(
@@ -51,7 +57,7 @@ fn main() {
             clippy::expect_used,
             reason = "with no main window there is no desktop app to run"
         )]
-        let _ = gpui_kit::open_window(
+        let (window, app) = gpui_kit::open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
@@ -69,8 +75,12 @@ fn main() {
                 ..Default::default()
             },
             cx,
-            |window, cx| cx.new(|cx| ConnApp::new(window, cx)),
+            move |window, cx| cx.new(|cx| ConnApp::new(theme.id, tokens, server, window, cx)),
         )
         .expect("failed to open Conn main window");
+        #[cfg(feature = "automation")]
+        automation::serve(&app, window, cx);
+        #[cfg(not(feature = "automation"))]
+        let _ = (window, app);
     });
 }

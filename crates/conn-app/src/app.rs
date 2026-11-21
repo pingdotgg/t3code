@@ -1,8 +1,9 @@
 //! Root [`ConnApp`] GPUI view holding shell state, layout state, and theme tokens.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use conn_state::{LayoutState, RightPanelTab, ShellState, ThreadActivity};
+use conn_client::{ClientEvent, Connection, ConnectionStatus, ServerConfig};
+use conn_state::{LayoutState, RightPanelTab, ShellState, ThreadActivity, ThreadState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::{
     App, Context, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding,
@@ -47,6 +48,15 @@ pub(crate) struct ConnApp {
     active_workspace: Option<String>,
     collapsed_projects: HashSet<String>,
     focus_handle: FocusHandle,
+    #[cfg_attr(
+        not(feature = "automation"),
+        expect(dead_code, reason = "read by Settings in a later phase")
+    )]
+    theme_id: String,
+    connection: Option<Connection>,
+    status: Option<ConnectionStatus>,
+    /// Timelines of subscribed threads, by thread id.
+    threads: HashMap<String, ThreadState>,
 }
 
 impl std::fmt::Debug for ConnApp {
@@ -61,17 +71,33 @@ impl std::fmt::Debug for ConnApp {
 }
 
 impl ConnApp {
-    /// Creates the root shell initialized with [`Tokens::placeholder_dark`] and
-    /// the built-in demo fixture.
+    /// Creates the root shell. With a server config it connects and streams the live shell;
+    /// without one it shows the built-in demo fixture.
     #[must_use]
-    pub(crate) fn new(_window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
-        let tokens = Tokens::placeholder_dark();
-        let shell = demo_shell_state();
+    pub(crate) fn new(
+        theme_id: String,
+        tokens: Tokens,
+        server: Option<ServerConfig>,
+        _window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
         let mut layout = LayoutState::default();
-        if let Some(first_thread) = shell.threads.first() {
-            layout.selected_project_id = Some(first_thread.project_id.clone());
-            layout.selected_thread_id = Some(first_thread.id.clone());
-        }
+        let (shell, connection) = match server {
+            Some(config) => {
+                let (connection, events) = Connection::start(config, crate::live::RT.handle());
+                connection.subscribe_shell();
+                Self::pump_events(events, cx);
+                (ShellState::default(), Some(connection))
+            }
+            None => {
+                let shell = demo_shell_state();
+                if let Some(first_thread) = shell.threads.first() {
+                    layout.selected_project_id = Some(first_thread.project_id.clone());
+                    layout.selected_thread_id = Some(first_thread.id.clone());
+                }
+                (shell, None)
+            }
+        };
 
         Self {
             tokens,
@@ -81,7 +107,119 @@ impl ConnApp {
             active_workspace: None,
             collapsed_projects: HashSet::new(),
             focus_handle: cx.focus_handle(),
+            theme_id,
+            connection,
+            status: None,
+            threads: HashMap::new(),
         }
+    }
+
+    /// Moves connection events onto the GPUI thread, one batch per wake.
+    fn pump_events(
+        mut events: tokio::sync::mpsc::Receiver<ClientEvent>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            while let Some(first) = events.recv().await {
+                let mut batch = vec![first];
+                while let Ok(more) = events.try_recv() {
+                    batch.push(more);
+                }
+                let alive = this.update(cx, |app, cx| {
+                    for event in batch {
+                        app.apply_event(event);
+                    }
+                    cx.notify();
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn apply_event(&mut self, event: ClientEvent) {
+        match event {
+            ClientEvent::Status(status) => self.status = Some(status),
+            ClientEvent::BearerIssued(_) => {}
+            ClientEvent::Shell(item) => {
+                let change = self.shell.apply(item);
+                if change.snapshot_required
+                    && let Some(connection) = &self.connection
+                {
+                    connection.subscribe_shell();
+                }
+                if self.layout.selected_thread_id.is_none()
+                    && let Some(first) = self.shell.threads.first()
+                {
+                    let (project_id, thread_id) = (first.project_id.clone(), first.id.clone());
+                    self.layout.selected_project_id = Some(project_id);
+                    self.open_thread(thread_id);
+                }
+            }
+            ClientEvent::Thread { thread_id, item } => {
+                self.threads
+                    .entry(thread_id.clone())
+                    .or_insert_with(|| ThreadState::new(thread_id))
+                    .apply(item);
+            }
+            ClientEvent::StreamEnded { .. } => {}
+        }
+    }
+
+    /// Selects `thread_id` and subscribes to its timeline once.
+    fn open_thread(&mut self, thread_id: String) {
+        if let Some(connection) = &self.connection
+            && !self.threads.contains_key(&thread_id)
+        {
+            self.threads
+                .insert(thread_id.clone(), ThreadState::new(thread_id.clone()));
+            connection.subscribe_thread(&thread_id);
+        }
+        self.layout.selected_thread_id = Some(thread_id);
+    }
+
+    /// State read-out for the automation hook.
+    #[cfg(feature = "automation")]
+    pub(crate) fn automation_dump(&self) -> serde_json::Value {
+        let timeline = self.selected_timeline().map(|t| {
+            serde_json::json!({
+                "working": t.working,
+                "synchronized": t.synchronized,
+                "entries": t.entries.iter().map(|e| format!("{e:?}").chars().take(120).collect::<String>()).collect::<Vec<_>>(),
+            })
+        });
+        serde_json::json!({
+            "theme": self.theme_id(),
+            "live": self.connection().is_some(),
+            "status": self.connection_status().map(|s| format!("{s:?}")),
+            "projects": self.shell().projects.iter().map(|p| &p.title).collect::<Vec<_>>(),
+            "threads": self.shell.threads.iter().map(|t| serde_json::json!({"id": t.id, "title": t.title, "activity": format!("{:?}", self.shell.activity(&t.id))})).collect::<Vec<_>>(),
+            "selected": self.layout.selected_thread_id,
+            "sidebarOpen": self.layout.sidebar_open,
+            "rightPanel": self.layout.right_panel_open.then(|| format!("{:?}", self.layout.right_panel_tab)),
+            "timeline": timeline,
+        })
+    }
+
+    /// Selects a thread by id or by title (first match) for the automation hook.
+    #[cfg(feature = "automation")]
+    pub(crate) fn automation_select(
+        &mut self,
+        id: &str,
+        title: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<serde_json::Value, String> {
+        let found = self
+            .shell
+            .threads
+            .iter()
+            .find(|t| (!id.is_empty() && t.id == id) || (!title.is_empty() && t.title == title))
+            .map(|t| t.id.clone())
+            .ok_or_else(|| format!("no thread with id `{id}` or title `{title}`"))?;
+        self.select_thread(found.clone(), cx);
+        Ok(serde_json::json!(found))
     }
 
     /// Selects a thread by id, updating [`LayoutState`] and triggering a repaint.
@@ -92,7 +230,7 @@ impl ConnApp {
     ) {
         let thread_id = thread_id.into();
         let project_id = self.shell.thread(&thread_id).map(|t| t.project_id.clone());
-        self.layout.selected_thread_id = Some(thread_id);
+        self.open_thread(thread_id);
         if project_id.is_some() {
             self.layout.selected_project_id = project_id;
         }
@@ -138,17 +276,6 @@ impl ConnApp {
         cx.notify();
     }
 
-    /// Replaces the active theme tokens and updates `gpui-kit`'s global theme.
-    #[expect(
-        dead_code,
-        reason = "programmatic state hook for theme switching and future automation"
-    )]
-    pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
-        apply_kit_theme(&tokens, cx);
-        self.tokens = tokens;
-        cx.notify();
-    }
-
     /// Replaces the shell snapshot (projects and threads).
     #[expect(
         dead_code,
@@ -183,9 +310,9 @@ impl ConnApp {
     }
 
     /// Current layout state.
-    #[expect(
-        dead_code,
-        reason = "programmatic state reader for future automation and tests"
+    #[cfg_attr(
+        not(feature = "automation"),
+        expect(dead_code, reason = "read by the automation hook")
     )]
     #[must_use]
     pub(crate) fn layout(&self) -> &LayoutState {
@@ -193,9 +320,9 @@ impl ConnApp {
     }
 
     /// Current shell state.
-    #[expect(
-        dead_code,
-        reason = "programmatic state reader for future automation and tests"
+    #[cfg_attr(
+        not(feature = "automation"),
+        expect(dead_code, reason = "read by the automation hook")
     )]
     #[must_use]
     pub(crate) fn shell(&self) -> &ShellState {
@@ -203,9 +330,9 @@ impl ConnApp {
     }
 
     /// Active theme tokens.
-    #[expect(
-        dead_code,
-        reason = "programmatic state reader for future automation and tests"
+    #[cfg_attr(
+        not(feature = "automation"),
+        expect(dead_code, reason = "read by the automation hook")
     )]
     #[must_use]
     pub(crate) fn tokens(&self) -> &Tokens {
@@ -392,6 +519,49 @@ impl ConnApp {
             .flex_shrink_0()
             .child(header)
             .child(card)
+    }
+}
+
+/// Hooks the chat view, Settings, and the command palette call (wired in the next phases).
+#[cfg_attr(
+    not(feature = "automation"),
+    expect(dead_code, reason = "called by views wired in later phases")
+)]
+impl ConnApp {
+    /// The selected thread's timeline, when subscribed.
+    pub(crate) fn selected_timeline(&self) -> Option<&ThreadState> {
+        self.layout
+            .selected_thread_id
+            .as_deref()
+            .and_then(|id| self.threads.get(id))
+    }
+
+    pub(crate) fn connection(&self) -> Option<&Connection> {
+        self.connection.as_ref()
+    }
+
+    pub(crate) fn theme_id(&self) -> &str {
+        &self.theme_id
+    }
+
+    pub(crate) fn connection_status(&self) -> Option<&ConnectionStatus> {
+        self.status.as_ref()
+    }
+
+    /// Switches to a built-in theme by id. Returns false for an unknown id.
+    pub(crate) fn set_theme(&mut self, theme_id: &str, cx: &mut Context<'_, Self>) -> bool {
+        let Some((theme, tokens)) = crate::live::tokens_for(theme_id) else {
+            return false;
+        };
+        self.theme_id = theme.id;
+        self.set_tokens(tokens, cx);
+        true
+    }
+    /// Replaces the active theme tokens and updates `gpui-kit`'s global theme.
+    pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
+        apply_kit_theme(&tokens, cx);
+        self.tokens = tokens;
+        cx.notify();
     }
 }
 

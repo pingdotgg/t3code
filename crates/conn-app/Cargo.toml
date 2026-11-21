@@ -28,6 +28,7 @@ rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+url.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Tag each window's CAMetalLayer as sRGB (`colour_space.rs`), matching
