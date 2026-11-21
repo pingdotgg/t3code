@@ -800,6 +800,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("tails Actions job logs and re-runs a run's failed jobs together", () =>
     Effect.gen(function* () {
+      const BILLING =
+        "The job was not started because your account is locked due to a billing issue.";
       const runOf: Record<string, number> = {
         "11": 10,
         "12": 10,
@@ -836,6 +838,20 @@ layer("GitHubPullRequestApi.layer", (it) => {
               host: "github.com",
               operation: "readCheckLog",
             }),
+          );
+        }
+        // Job 16 never started (billing block): GitHub keeps no log, only an annotation.
+        if (log?.[1] === "16") {
+          return Effect.fail(
+            new GitHubRequestPolicy.GitHubApiNotFoundError({
+              host: "github.com",
+              operation: "readCheckLog",
+            }),
+          );
+        }
+        if (/check-runs\/16\/annotations/.test(call.path)) {
+          return Effect.succeed(
+            output(encodeJson([{ annotation_level: "failure", message: BILLING }])),
           );
         }
         if (log) return Effect.succeed(output("setup\nbuild\nError: boom\n"));
@@ -875,6 +891,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(huge?.log?.length).toBe(32_000);
       expect(huge?.truncated).toBe(true);
       expect(refused._tag).toBe("GitHubApiAuthenticationError");
+      const [unstarted] = yield* api.readCheckLogs({ ...capped, checks: [job(16, 60)] });
+      expect(unstarted?.detail).toContain(BILLING);
 
       const reruns = yield* api.rerunChecks({
         host: "github.com",
