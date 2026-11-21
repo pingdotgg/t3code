@@ -3711,6 +3711,12 @@
       "v": "v"
     }
   ],
+  "0fd6b38d7839f885": "Sesión iniciada en {server}",
+  "54789628a737f557": "Iniciar sesión en {server}",
+  "8aecbd38f1facf71": "Aprueba el acceso en tu navegador. Después abrirá una página que puede no cargar: copia la dirección de esa página y pégala aquí.",
+  "2281dc87b05d4a4c": "Iniciando sesión…",
+  "880d3e6e7ff86899": "Dirección de la página que abrió tu navegador",
+  "e52585cdfcf317cf": "Terminar de iniciar sesión",
   "9cc6288e83305ca3": "No se pudo renderizar el diagrama.",
   "74d986aed0381cb0": "No se pudo cargar el renderizador de diagramas.",
   "d694484d6fea351e": "Expandir diagrama",

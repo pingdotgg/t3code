@@ -3712,6 +3712,12 @@
       "v": "v"
     }
   ],
+  "0fd6b38d7839f885": "Connecté à {server}",
+  "54789628a737f557": "Se connecter à {server}",
+  "8aecbd38f1facf71": "Autorisez l’accès dans votre navigateur. Il ouvre ensuite une page qui peut ne pas se charger : copiez l’adresse de cette page et collez-la ici.",
+  "2281dc87b05d4a4c": "Démarrage de la connexion…",
+  "880d3e6e7ff86899": "Adresse de la page ouverte par votre navigateur",
+  "e52585cdfcf317cf": "Terminer la connexion",
   "9cc6288e83305ca3": "Impossible d’afficher le diagramme.",
   "74d986aed0381cb0": "Le moteur de rendu des diagrammes n’a pas pu se charger.",
   "d694484d6fea351e": "Agrandir le diagramme",
