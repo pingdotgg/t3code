@@ -36,6 +36,9 @@ const DiffPanel = lazy(() => import("../DiffPanel"));
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
+const PrinterPanel = lazy(() =>
+  import("../printer/PrinterPanel").then((module) => ({ default: module.PrinterPanel })),
+);
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
 
 type RightPanelTerminalProps = Omit<
@@ -246,6 +249,18 @@ export function RightPanelSurfaceContent(props: {
               props.onCloseSurface(surface);
               useRightPanelStore.getState().show(threadRef);
             }}
+          />
+        </Suspense>
+      );
+    case "printer":
+      return (
+        <Suspense fallback={null}>
+          <PrinterPanel
+            mode="embedded"
+            threadRef={threadRef}
+            key={surface.id}
+            surface={surface}
+            visible={visible}
           />
         </Suspense>
       );

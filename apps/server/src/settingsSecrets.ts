@@ -4,6 +4,10 @@ import {
   CloudSpeechCredentials,
   CodexSettings,
   EasDeviceHostConfig,
+  HomeAssistantBambuPrinterConfig,
+  MoonrakerPrinterConfig,
+  OctoPrintPrinterConfig,
+  type PrinterConfig,
   type ProviderInstanceConfig,
   type ServerSettings,
   type SettingsSecretValue,
@@ -51,7 +55,25 @@ const textGeneratorSecretFields = secretSettingsFields(TextGeneratorConfig);
 const voiceSecretFields = secretSettingsFields(CloudSpeechCredentials);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
+const printerSecretFieldsByKind = new Map([
+  ["home-assistant-bambu", secretSettingsFields(HomeAssistantBambuPrinterConfig)],
+  ["moonraker", secretSettingsFields(MoonrakerPrinterConfig)],
+  ["octoprint", secretSettingsFields(OctoPrintPrinterConfig)],
+]);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
+
+function printerSecretDestination(printer: PrinterConfig): string {
+  const originOf = (raw: string | undefined) => {
+    if (!raw?.trim()) return "";
+    try {
+      return new URL(raw.trim()).origin;
+    } catch {
+      return raw.trim();
+    }
+  };
+  const webcam = printer.kind === "home-assistant-bambu" ? "" : originOf(printer.webcamUrl);
+  return `${printer.kind}|${originOf(printer.baseUrl)}|${webcam}`;
+}
 
 export interface SettingsSecret {
   readonly secretName: string;
@@ -247,6 +269,17 @@ function mapSecretFieldGroups(
       ) as SimlockDeviceHostConfig,
   );
 
+  const printers = settings.printers.map((printer) => {
+    const destination = encode(printerSecretDestination(printer));
+    return mapFields(
+      printer,
+      printerSecretFieldsByKind.get(printer.kind) ?? [],
+      (field, serverHost) =>
+        `printer-${encode(printer.id)}-${destination}-${encode(field)}` +
+        (serverHost === null ? "" : `-${encode(serverHost)}`),
+    ) as PrinterConfig;
+  });
+
   return {
     ...settings,
     cloudSpeechCredentials: mapFields(
@@ -260,6 +293,7 @@ function mapSecretFieldGroups(
     textGenerators,
     easDeviceHosts,
     simlockDeviceHosts,
+    printers,
   };
 }
 
@@ -295,6 +329,21 @@ export function withoutRemovedSecretProviderReferences(
 
 const gatewayOrigin = (url: string) => (URL.canParse(url) ? new URL(url).origin : url);
 
+const isKeptSecretValue = (token: SettingsSecretValue, savedToken: SettingsSecretValue) =>
+  token === SECRET_REDACTED ||
+  (isSecretReference(token) &&
+    isSecretReference(savedToken) &&
+    token.provider === savedToken.provider &&
+    token.reference === savedToken.reference);
+
+const printerWebcamOrigin = (printer: PrinterConfig) =>
+  printer.kind !== "home-assistant-bambu" && printer.webcamUrl
+    ? gatewayOrigin(printer.webcamUrl)
+    : null;
+
+const printerCredential = (printer: PrinterConfig): SettingsSecretValue =>
+  printer.kind === "home-assistant-bambu" ? printer.accessToken : printer.apiKey;
+
 /**
  * `next` with a Simlock host's kept token cleared when its gateway moved to another origin: a
  * saved token goes only to the gateway it was saved for. A newly entered token stays.
@@ -304,21 +353,44 @@ export function withoutRedirectedSimlockTokens(
   next: ServerSettings,
 ): ServerSettings {
   const saved = new Map(current.simlockDeviceHosts.map((host) => [host.id, host]));
-  const kept = (token: SettingsSecretValue, savedToken: SettingsSecretValue) =>
-    token === SECRET_REDACTED ||
-    (isSecretReference(token) &&
-      isSecretReference(savedToken) &&
-      token.provider === savedToken.provider &&
-      token.reference === savedToken.reference);
   return {
     ...next,
     simlockDeviceHosts: next.simlockDeviceHosts.map((host) => {
       const previous = saved.get(host.id);
       return previous &&
         gatewayOrigin(previous.gatewayUrl) !== gatewayOrigin(host.gatewayUrl) &&
-        kept(host.agentToken, previous.agentToken)
+        isKeptSecretValue(host.agentToken, previous.agentToken)
         ? { ...host, agentToken: "" }
         : host;
+    }),
+  };
+}
+
+/**
+ * `next` with a printer's kept credential cleared when its adapter kind, base URL origin, or
+ * webcam override origin changed: a saved credential goes only to the host it was saved for.
+ */
+export function withoutRedirectedPrinterTokens(
+  current: ServerSettings,
+  next: ServerSettings,
+): ServerSettings {
+  const saved = new Map(current.printers.map((printer) => [printer.id, printer]));
+  return {
+    ...next,
+    printers: next.printers.map((printer) => {
+      const previous = saved.get(printer.id);
+      if (!previous) return printer;
+      const destinationChanged =
+        previous.kind !== printer.kind ||
+        gatewayOrigin(previous.baseUrl) !== gatewayOrigin(printer.baseUrl) ||
+        printerWebcamOrigin(previous) !== printerWebcamOrigin(printer);
+      if (!destinationChanged) return printer;
+      if (!isKeptSecretValue(printerCredential(printer), printerCredential(previous))) {
+        return printer;
+      }
+      return printer.kind === "home-assistant-bambu"
+        ? { ...printer, accessToken: "" }
+        : { ...printer, apiKey: "" };
     }),
   };
 }

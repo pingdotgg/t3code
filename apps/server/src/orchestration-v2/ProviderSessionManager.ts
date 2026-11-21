@@ -483,7 +483,8 @@ export const layerWithOptions = (
           );
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
-          if (Option.isNone(serverSettings)) return { browser: true, device: false };
+          if (Option.isNone(serverSettings))
+            return { browser: true, device: false, printer: false };
           return yield* Effect.gen(function* () {
             const settings = yield* serverSettings.value.getSettings;
             const thread = yield* projectionStore.getThread(threadId);
@@ -494,7 +495,10 @@ export const layerWithOptions = (
             const deviceOverridden = entries.some(
               (entry) => entry.enableAgentDeviceAccess !== undefined,
             );
-            if (browserOverridden || deviceOverridden) {
+            const printerOverridden = entries.some(
+              (entry) => entry.enableAgentPrinterAccess !== undefined,
+            );
+            if (browserOverridden || deviceOverridden || printerOverridden) {
               const project = Option.isSome(projectService)
                 ? yield* projectService.value.getById(thread.projectId)
                 : Option.none();
@@ -505,19 +509,30 @@ export const layerWithOptions = (
                     settings.enableDeviceSupport &&
                     !deviceOverridden &&
                     settings.enableAgentDeviceAccess,
+                  printer:
+                    !printerOverridden &&
+                    ((settings.enablePrinterSupport && settings.enableAgentPrinterAccess) ||
+                      (!settings.enablePrinterSupport && settings.linkedEnvironmentsEnabled)),
                 };
             }
             const effective = resolveProjectSettings(settings, thread.projectId).settings;
+            const projectPrinterOverride =
+              settings.projectSettingsOverrides[thread.projectId]?.enableAgentPrinterAccess;
             return {
               browser: effective.enableAgentBrowserAccess,
               device: settings.enableDeviceSupport && effective.enableAgentDeviceAccess,
+              printer:
+                (settings.enablePrinterSupport && effective.enableAgentPrinterAccess) ||
+                (!settings.enablePrinterSupport &&
+                  settings.linkedEnvironmentsEnabled &&
+                  projectPrinterOverride !== false),
             };
           }).pipe(
             Effect.catch((cause) =>
               Effect.logWarning(
-                "Could not resolve agent access; withholding browser and device tools.",
+                "Could not resolve agent access; withholding browser, device, and printer tools.",
                 { threadId, cause },
-              ).pipe(Effect.as({ browser: false, device: false })),
+              ).pipe(Effect.as({ browser: false, device: false, printer: false })),
             ),
           );
         },
@@ -595,13 +610,17 @@ export const layerWithOptions = (
               threadId,
               Effect.gen(function* () {
                 // Live providers build MCP clients once; reuse credentials across workspace handoffs.
-                const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
-                  yield* agentAccessSettings(threadId);
+                const {
+                  browser: browserToolsAvailable,
+                  device: deviceToolsAvailable,
+                  printer: printerToolsAvailable,
+                } = yield* agentAccessSettings(threadId);
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
                 >(["orchestration", "worktree", "pull-requests", "issues"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
+                if (printerToolsAvailable) capabilities.add("printer");
                 const backgroundWait = yield* registry.get(providerInstanceId).pipe(
                   Effect.flatMap((adapter) => adapter.getCapabilities()),
                   Effect.map((adapter) => adapter.tools.supportsBackgroundWait === true),
@@ -635,6 +654,7 @@ export const layerWithOptions = (
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
+                    resolved.capabilities.has("printer") === printerToolsAvailable &&
                     // A failed capability read cannot tell that the live credential is wrong.
                     (Option.isNone(backgroundWait) ||
                       resolved.capabilities.has("background-wait") === backgroundWait.value) &&

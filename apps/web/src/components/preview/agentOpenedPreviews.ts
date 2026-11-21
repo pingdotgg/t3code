@@ -7,6 +7,7 @@ import type {
   DeviceServiceState,
   EnvironmentId,
   PreviewSessionSnapshot,
+  PrinterServiceState,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -27,6 +28,7 @@ import { useRightPanelStore } from "../../rightPanelStore";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../../rightPanelLayout";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { deviceEnvironment } from "../../state/device";
+import { printerEnvironment } from "../../state/printer";
 import { readEnvironmentSupportsServerBrowser } from "../../state/entities";
 import { environmentSummaries } from "../../state/presentation";
 
@@ -215,10 +217,239 @@ export function floatDeviceSurface(
 
 export function resetDeviceSessionBaselinesForTests(): void {
   deviceSessionBaselines.clear();
+  printerSessionBaselines.clear();
+  disconnectedPrinterSessions.clear();
+  activePrinterSessionOrigins.clear();
+  dismissedCanonicalPrinterSessions.clear();
+}
+
+const printerSessionBaselines = new Map<
+  EnvironmentId,
+  ReadonlyMap<string, PrinterServiceState["sessions"][number]>
+>();
+/** Retains sessions across a transient disconnect when no proxy took over, so the first reconnect snapshot can reconcile them. */
+const disconnectedPrinterSessions = new Map<
+  EnvironmentId,
+  ReadonlyMap<string, PrinterServiceState["sessions"][number]>
+>();
+/** Deduplicates identical agent printer sessions across environments by canonical session identity. */
+const activePrinterSessionOrigins = new Map<string, EnvironmentId>();
+/** Preserves user dismissal across cross-environment canonical ownership transfers until all envs end the session. */
+const dismissedCanonicalPrinterSessions = new Set<string>();
+
+function isPrinterSurfaceDismissed(threadRef: ScopedThreadRef, surfaceId: string): boolean {
+  return (
+    useRightPanelStore
+      .getState()
+      .byThreadKey[scopedThreadKey(threadRef)]?.dismissedPrinterSurfaceIds?.includes(surfaceId) ??
+    false
+  );
+}
+
+const printerSessionKey = (session: PrinterServiceState["sessions"][number]) =>
+  `${session.threadId}:${session.proxyEnvironmentId ?? ""}:${session.printerId}:${session.openedAt}`;
+
+const canonicalPrinterSessionKey = (
+  environmentId: EnvironmentId,
+  session: PrinterServiceState["sessions"][number],
+) => `${session.threadId}:${session.proxyEnvironmentId ?? environmentId}:${session.printerId}`;
+
+function printerSurfaceIdForSession(
+  originEnvironmentId: EnvironmentId,
+  session: PrinterServiceState["sessions"][number],
+): string {
+  const ownerEnvironmentId = session.proxyEnvironmentId ?? originEnvironmentId;
+  return ownerEnvironmentId !== originEnvironmentId
+    ? `printer:${encodeURIComponent(ownerEnvironmentId)}:${encodeURIComponent(session.printerId)}`
+    : `printer:${encodeURIComponent(session.printerId)}`;
+}
+
+function releaseOrTransferPrinterSessionOrigin(
+  canonical: string,
+  departingEnvironmentId: EnvironmentId,
+  sheetLayout: boolean,
+): boolean {
+  if (activePrinterSessionOrigins.get(canonical) !== departingEnvironmentId) return false;
+  for (const [survivingEnvId, sessions] of printerSessionBaselines) {
+    if (survivingEnvId === departingEnvironmentId) continue;
+    for (const session of sessions.values()) {
+      if (canonicalPrinterSessionKey(survivingEnvId, session) !== canonical) continue;
+      activePrinterSessionOrigins.set(canonical, survivingEnvId);
+      const threadRef = scopeThreadRef(survivingEnvId, session.threadId);
+      const surfaceId = printerSurfaceIdForSession(survivingEnvId, session);
+      if (
+        !sheetLayout &&
+        !dismissedCanonicalPrinterSessions.has(canonical) &&
+        !isPrinterSurfaceDismissed(threadRef, surfaceId)
+      ) {
+        useRightPanelStore.getState().openPrinter(
+          threadRef,
+          {
+            printerId: session.printerId,
+            ...(session.proxyEnvironmentId
+              ? { proxyEnvironmentId: session.proxyEnvironmentId }
+              : {}),
+            ...(session.printerLabel ? { label: session.printerLabel } : {}),
+          },
+          true,
+        );
+      }
+      return true;
+    }
+  }
+  activePrinterSessionOrigins.delete(canonical);
+  dismissedCanonicalPrinterSessions.delete(canonical);
+  return false;
+}
+
+export function disconnectPrinterEnvironment(
+  environmentId: EnvironmentId,
+  options: { readonly sheetLayout: boolean },
+): void {
+  const departingSessions = printerSessionBaselines.get(environmentId);
+  printerSessionBaselines.delete(environmentId);
+  const transferredCanonicals = new Set<string>();
+  const retainedOnDisconnect = new Map<string, PrinterServiceState["sessions"][number]>();
+
+  if (departingSessions) {
+    for (const session of departingSessions.values()) {
+      const threadRef = scopeThreadRef(environmentId, session.threadId);
+      const surfaceId = printerSurfaceIdForSession(environmentId, session);
+      const canonical = canonicalPrinterSessionKey(environmentId, session);
+      if (
+        activePrinterSessionOrigins.get(canonical) === environmentId &&
+        isPrinterSurfaceDismissed(threadRef, surfaceId)
+      ) {
+        dismissedCanonicalPrinterSessions.add(canonical);
+      }
+    }
+  }
+
+  const ownedCanonicals: string[] = [];
+  for (const [canonical, origin] of activePrinterSessionOrigins) {
+    if (origin === environmentId) {
+      ownedCanonicals.push(canonical);
+    }
+  }
+  for (const canonical of ownedCanonicals) {
+    if (releaseOrTransferPrinterSessionOrigin(canonical, environmentId, options.sheetLayout)) {
+      transferredCanonicals.add(canonical);
+    }
+  }
+
+  // Close departing agent-opened tabs immediately only on handoff to a surviving environment.
+  // Otherwise retain them across transient disconnects and reconcile against the first reconnect snapshot.
+  if (departingSessions) {
+    for (const [key, session] of departingSessions) {
+      const canonical = canonicalPrinterSessionKey(environmentId, session);
+      if (transferredCanonicals.has(canonical)) {
+        const threadRef = scopeThreadRef(environmentId, session.threadId);
+        const surfaceId = printerSurfaceIdForSession(environmentId, session);
+        useRightPanelStore.getState().closePrinterSessionSurface(threadRef, surfaceId);
+      } else {
+        retainedOnDisconnect.set(key, session);
+      }
+    }
+  }
+  if (retainedOnDisconnect.size > 0) {
+    disconnectedPrinterSessions.set(environmentId, retainedOnDisconnect);
+  } else {
+    disconnectedPrinterSessions.delete(environmentId);
+  }
+}
+
+export function applyPrinterSnapshot(
+  environmentId: EnvironmentId,
+  state: PrinterServiceState,
+  options: { readonly sheetLayout: boolean },
+): void {
+  const previous = printerSessionBaselines.get(environmentId);
+  const retainedBeforeDisconnect = disconnectedPrinterSessions.get(environmentId);
+  if (retainedBeforeDisconnect) {
+    disconnectedPrinterSessions.delete(environmentId);
+  }
+  const next = new Map(state.sessions.map((session) => [printerSessionKey(session), session]));
+  printerSessionBaselines.set(environmentId, next);
+  if (!previous) {
+    for (const session of next.values()) {
+      const canonical = canonicalPrinterSessionKey(environmentId, session);
+      if (!activePrinterSessionOrigins.has(canonical)) {
+        activePrinterSessionOrigins.set(canonical, environmentId);
+      }
+    }
+    if (retainedBeforeDisconnect) {
+      for (const [key, retained] of retainedBeforeDisconnect) {
+        const threadRef = scopeThreadRef(environmentId, retained.threadId);
+        const surfaceId = printerSurfaceIdForSession(environmentId, retained);
+        const canonical = canonicalPrinterSessionKey(environmentId, retained);
+        const claimedByOther =
+          activePrinterSessionOrigins.has(canonical) &&
+          activePrinterSessionOrigins.get(canonical) !== environmentId;
+        const stillActiveHere =
+          !claimedByOther &&
+          (next.has(key) ||
+            state.sessions.some(
+              (session) =>
+                session.threadId === retained.threadId &&
+                printerSurfaceIdForSession(environmentId, session) === surfaceId,
+            ));
+        if (!stillActiveHere) {
+          useRightPanelStore.getState().closePrinterSessionSurface(threadRef, surfaceId);
+        }
+      }
+    }
+    return;
+  }
+
+  // Close auto-opened printer tabs whose agent session ended and clear per-session dismissal suppression.
+  for (const [key, ended] of previous) {
+    if (next.has(key)) continue;
+    const threadRef = scopeThreadRef(environmentId, ended.threadId);
+    const surfaceId = printerSurfaceIdForSession(environmentId, ended);
+    const stillActiveHere = state.sessions.some(
+      (session) =>
+        session.threadId === ended.threadId &&
+        printerSurfaceIdForSession(environmentId, session) === surfaceId,
+    );
+    if (!stillActiveHere) {
+      const canonical = canonicalPrinterSessionKey(environmentId, ended);
+      if (
+        activePrinterSessionOrigins.get(canonical) === environmentId &&
+        isPrinterSurfaceDismissed(threadRef, surfaceId)
+      ) {
+        dismissedCanonicalPrinterSessions.add(canonical);
+      }
+      useRightPanelStore.getState().closePrinterSessionSurface(threadRef, surfaceId);
+      releaseOrTransferPrinterSessionOrigin(canonical, environmentId, options.sheetLayout);
+    }
+  }
+
+  if (options.sheetLayout) return;
+  for (const [key, session] of next) {
+    if (previous.has(key)) continue;
+    const canonical = canonicalPrinterSessionKey(environmentId, session);
+    const existingOrigin = activePrinterSessionOrigins.get(canonical);
+    if (existingOrigin !== undefined && existingOrigin !== environmentId) {
+      continue;
+    }
+    activePrinterSessionOrigins.set(canonical, environmentId);
+    const printer = state.printers.find((entry) => entry.id === session.printerId);
+    const threadRef = scopeThreadRef(environmentId, session.threadId);
+    const label = session.printerLabel ?? printer?.label;
+    useRightPanelStore.getState().openPrinter(
+      threadRef,
+      {
+        printerId: session.printerId,
+        ...(session.proxyEnvironmentId ? { proxyEnvironmentId: session.proxyEnvironmentId } : {}),
+        ...(label ? { label } : {}),
+      },
+      true,
+    );
+  }
 }
 
 function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
-  return appAtomRegistry.subscribe(
+  const stopDevices = appAtomRegistry.subscribe(
     deviceEnvironment.state({ environmentId, input: {} }),
     (result) => {
       const state = AsyncResult.getOrElse(result, () => null);
@@ -230,6 +461,25 @@ function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
     },
     { immediate: true },
   );
+  const stopPrinters = appAtomRegistry.subscribe(
+    printerEnvironment.state({ environmentId, input: {} }),
+    (result) => {
+      const state = AsyncResult.getOrElse(result, () => null);
+      if (state === null) return;
+      applyPrinterSnapshot(environmentId, state, {
+        sheetLayout: window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches,
+      });
+    },
+    { immediate: true },
+  );
+  return () => {
+    stopDevices();
+    stopPrinters();
+    deviceSessionBaselines.delete(environmentId);
+    disconnectPrinterEnvironment(environmentId, {
+      sheetLayout: window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches,
+    });
+  };
 }
 
 /**

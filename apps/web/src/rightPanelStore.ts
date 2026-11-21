@@ -26,6 +26,7 @@ const RIGHT_PANEL_KINDS = [
   "file",
   "preview",
   "device",
+  "printer",
   "terminal",
   "pull-request",
   "pull-requests",
@@ -48,6 +49,15 @@ export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
   | { id: "device" | `device:${string}`; kind: "device"; target?: DeviceTabTarget; title?: string }
+  | {
+      id: "printer" | `printer:${string}`;
+      kind: "printer";
+      printerId?: string;
+      proxyEnvironmentId?: EnvironmentId;
+      title?: string;
+      /** Set when opened automatically by an agent session so session-end cleanup never closes user-opened tabs. */
+      openedByAgent?: true;
+    }
   | {
       id: `terminal:${string}`;
       kind: "terminal";
@@ -130,7 +140,7 @@ export function decodeThreadSurface(surface: object): ThreadSurface | null {
 }
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 16;
+const RIGHT_PANEL_STORAGE_VERSION = 17;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -155,6 +165,7 @@ export interface ThreadRightPanelState {
   activeSurfaceId: string | null;
   surfaces: RightPanelSurface[];
   dismissedDeviceSurfaceIds?: string[];
+  dismissedPrinterSurfaceIds?: string[];
   maximized?: true;
   proactiveDiffTurnId?: RunId;
 }
@@ -196,6 +207,16 @@ interface RightPanelStoreState {
   /** Records the title the linked environment gave, so the tab and a reopened one show it. */
   setLinkedThreadTitle: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
+  openPrinter: (
+    ref: ScopedThreadRef,
+    target: {
+      readonly printerId: string;
+      readonly proxyEnvironmentId?: EnvironmentId;
+      readonly label?: string;
+    },
+    automatic?: boolean,
+  ) => void;
+  closePrinterSessionSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
@@ -299,6 +320,8 @@ const singletonSurface = (
       return { id: "pull-requests", kind };
     case "device":
       return { id: "device", kind };
+    case "printer":
+      return { id: "printer", kind };
   }
 };
 
@@ -438,6 +461,7 @@ const updateThreadStateMap = (
     next.activeSurfaceId === null &&
     next.surfaces.length === 0 &&
     !next.dismissedDeviceSurfaceIds?.length &&
+    !next.dismissedPrinterSurfaceIds?.length &&
     next.proactiveDiffTurnId === undefined
   ) {
     if (!(threadKey in byThreadKey)) return byThreadKey;
@@ -548,15 +572,33 @@ const userActionOnThread = (
       (surface) =>
         surface.kind === "device" && !next.surfaces.some((entry) => entry.id === surface.id),
     );
-    if (removedDevices.length === 0) return next;
+    const removedPrinters = current.surfaces.filter(
+      (surface) =>
+        surface.kind === "printer" && !next.surfaces.some((entry) => entry.id === surface.id),
+    );
+    if (removedDevices.length === 0 && removedPrinters.length === 0) return next;
     return {
       ...next,
-      dismissedDeviceSurfaceIds: [
-        ...new Set([
-          ...(next.dismissedDeviceSurfaceIds ?? []),
-          ...removedDevices.map((surface) => surface.id),
-        ]),
-      ],
+      ...(removedDevices.length > 0
+        ? {
+            dismissedDeviceSurfaceIds: [
+              ...new Set([
+                ...(next.dismissedDeviceSurfaceIds ?? []),
+                ...removedDevices.map((surface) => surface.id),
+              ]),
+            ],
+          }
+        : {}),
+      ...(removedPrinters.length > 0
+        ? {
+            dismissedPrinterSurfaceIds: [
+              ...new Set([
+                ...(next.dismissedPrinterSurfaceIds ?? []),
+                ...removedPrinters.map((surface) => surface.id),
+              ]),
+            ],
+          }
+        : {}),
     };
   }),
   userActionRevisionByThreadKey: {
@@ -677,6 +719,37 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         }),
                       ];
                     }
+                    if (surface.kind === "printer") {
+                      if (
+                        typeof surface.id !== "string" ||
+                        (surface.id !== "printer" && !surface.id.startsWith("printer:"))
+                      ) {
+                        return [];
+                      }
+                      const printerId =
+                        typeof surface.printerId === "string" && surface.printerId.length > 0
+                          ? surface.printerId
+                          : undefined;
+                      const proxyEnvironmentId =
+                        "proxyEnvironmentId" in surface &&
+                        typeof surface.proxyEnvironmentId === "string" &&
+                        surface.proxyEnvironmentId.length > 0
+                          ? (surface.proxyEnvironmentId as EnvironmentId)
+                          : undefined;
+                      const title =
+                        typeof surface.title === "string" && surface.title.length > 0
+                          ? surface.title
+                          : undefined;
+                      return [
+                        {
+                          id: surface.id,
+                          kind: "printer" as const,
+                          ...(printerId ? { printerId } : {}),
+                          ...(proxyEnvironmentId ? { proxyEnvironmentId } : {}),
+                          ...(title ? { title } : {}),
+                        },
+                      ];
+                    }
                     if (surface.kind !== "terminal") return [surface];
                     if (
                       !("resourceId" in surface) ||
@@ -745,6 +818,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     ? {
                         dismissedDeviceSurfaceIds:
                           validThreadState.dismissedDeviceSurfaceIds.filter(
+                            (id): id is string => typeof id === "string",
+                          ),
+                      }
+                    : {}),
+                  ...(Array.isArray(validThreadState?.dismissedPrinterSurfaceIds)
+                    ? {
+                        dismissedPrinterSurfaceIds:
+                          validThreadState.dismissedPrinterSurfaceIds.filter(
                             (id): id is string => typeof id === "string",
                           ),
                       }
@@ -870,6 +951,91 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               },
               existing ?? surface,
             );
+          }),
+        ),
+      openPrinter: (ref, target, automatic = false) =>
+        set((state) =>
+          (automatic ? automaticUpdate : userAction)(state, scopedThreadKey(ref), (current) => {
+            const ownerEnvironmentId = target.proxyEnvironmentId ?? ref.environmentId;
+            const isRemoteProxy = ownerEnvironmentId !== ref.environmentId;
+            const id = isRemoteProxy
+              ? (`printer:${encodeURIComponent(ownerEnvironmentId)}:${encodeURIComponent(target.printerId)}` as const)
+              : (`printer:${encodeURIComponent(target.printerId)}` as const);
+            if (automatic && current.dismissedPrinterSurfaceIds?.includes(id)) return current;
+            const surface: RightPanelSurface = {
+              id,
+              kind: "printer",
+              printerId: target.printerId,
+              proxyEnvironmentId: ownerEnvironmentId,
+              ...(target.label ? { title: target.label } : {}),
+              ...(automatic ? { openedByAgent: true as const } : {}),
+            };
+            const existing = current.surfaces.find((entry) => entry.id === id);
+            const updatedExisting =
+              existing && existing.kind === "printer"
+                ? (() => {
+                    const { openedByAgent: existingAgent, ...existingRest } = existing;
+                    return {
+                      ...existingRest,
+                      proxyEnvironmentId: ownerEnvironmentId,
+                      ...(target.label ? { title: target.label } : {}),
+                      ...(automatic && existingAgent ? { openedByAgent: true as const } : {}),
+                    };
+                  })()
+                : undefined;
+            const surfaces = existing
+              ? current.surfaces
+                  .filter((entry) => entry.id !== "printer")
+                  .map((entry) => (entry.id === id && updatedExisting ? updatedExisting : entry))
+              : current.surfaces.map((entry) => (entry.id === "printer" ? surface : entry));
+            const remainingDismissed = (current.dismissedPrinterSurfaceIds ?? []).filter(
+              (entry) => entry !== id,
+            );
+            const { dismissedPrinterSurfaceIds: _dropped, ...rest } = current;
+            return upsertSurface(
+              {
+                ...rest,
+                surfaces,
+                ...(remainingDismissed.length > 0
+                  ? { dismissedPrinterSurfaceIds: remainingDismissed }
+                  : {}),
+              },
+              updatedExisting ?? surface,
+            );
+          }),
+        ),
+      closePrinterSessionSurface: (ref, surfaceId) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => {
+            const remainingDismissed = (current.dismissedPrinterSurfaceIds ?? []).filter(
+              (entry) => entry !== surfaceId,
+            );
+            const dismissalChanged =
+              remainingDismissed.length !== (current.dismissedPrinterSurfaceIds?.length ?? 0);
+            const index = current.surfaces.findIndex(
+              (surface) =>
+                surface.id === surfaceId && surface.kind === "printer" && surface.openedByAgent,
+            );
+            if (index < 0 && !dismissalChanged) return current;
+            const { dismissedPrinterSurfaceIds: _dropped, ...rest } = current;
+            const base = {
+              ...rest,
+              ...(remainingDismissed.length > 0
+                ? { dismissedPrinterSurfaceIds: remainingDismissed }
+                : {}),
+            };
+            if (index < 0) return base;
+            const surfaces = current.surfaces.filter((surface) => surface.id !== surfaceId);
+            const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
+            return {
+              ...base,
+              isOpen: surfaces.length > 0 && current.isOpen,
+              surfaces,
+              activeSurfaceId:
+                current.activeSurfaceId === surfaceId
+                  ? (fallback?.id ?? null)
+                  : current.activeSurfaceId,
+            };
           }),
         ),
       openThread: (ref, threadId) =>

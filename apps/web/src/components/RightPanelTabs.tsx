@@ -51,6 +51,7 @@ import {
   Globe2,
   MessagesSquare,
   Plus,
+  Printer,
   TerminalSquare,
   Volume2Icon,
   VolumeOffIcon,
@@ -96,6 +97,8 @@ import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeviceState } from "~/state/device";
+import { useResolvedFleetPrinter } from "~/state/printer";
+import { formatDurationCompact, formatTemp, statusDotClass } from "./printer/printerFormat";
 import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
 import {
   newestPullRequestSummary,
@@ -157,6 +160,8 @@ export interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  /** Absent on non-thread pages where 3D Printers are not offered. */
+  onAddPrinter?: (() => void) | undefined;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -166,6 +171,7 @@ export interface RightPanelTabsProps {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
+  printerAvailable?: boolean;
   sideChatAvailable?: boolean;
   /** Overrides the default reason while side chats are available but cannot start. */
   sideChatDisabledReason?: string | null;
@@ -195,6 +201,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: msg("This thread's branch has no pull request yet."),
   pullRequests: msg("This thread has no linked items."),
   device: msg("Devices are only available from a thread."),
+  printer: msg("3D Printers are only available from a thread."),
   sideChat: msg("Side chats start after the first message."),
 } as const;
 
@@ -220,6 +227,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: msg("No pull request on this branch yet."),
   pullRequests: msg("No linked items available."),
   device: msg("Available from a thread."),
+  printer: msg("Available from a thread."),
   sideChat: msg("Available after the first message."),
 } as const;
 
@@ -343,6 +351,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  onAddPrinter?: (() => void) | undefined;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -352,6 +361,7 @@ function RightPanelEmptyState(props: {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
+  printerAvailable?: boolean;
   sideChatAvailable: boolean;
   sideChatDisabledReason: string | null;
 }) {
@@ -417,6 +427,19 @@ function RightPanelEmptyState(props: {
       disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.device),
       onClick: props.onAddDevice,
     },
+    ...(props.onAddPrinter
+      ? [
+          {
+            label: msg("3D Printer"),
+            description: msg("Monitor live camera, thermals, AMS, and print progress."),
+            icon: Printer,
+            shortcut: "3",
+            available: props.printerAvailable === true,
+            disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.printer),
+            onClick: props.onAddPrinter,
+          },
+        ]
+      : []),
     ...(props.onAddSideChat
       ? [
           {
@@ -622,6 +645,8 @@ function surfaceTitle(
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
     case "device":
       return surface.title ?? surface.target?.name ?? resolve(msg("Device"));
+    case "printer":
+      return surface.title ?? resolve(msg("3D Printer"));
     case "thread":
       // Until the thread's own title loads.
       return resolve(msg("Thread"));
@@ -731,6 +756,14 @@ function SurfaceIcon({
         <AndroidIcon className="size-3 shrink-0" />
       ) : (
         <Smartphone className="size-3 shrink-0" />
+      );
+    case "printer":
+      return (
+        <PrinterTabIcon
+          environmentId={environmentId}
+          printerId={surface.printerId}
+          proxyEnvironmentId={surface.proxyEnvironmentId}
+        />
       );
   }
 }
@@ -1089,6 +1122,12 @@ function RightPanelTab(
                 environmentId={props.environmentId}
                 title={title}
               />
+            ) : surface.kind === "printer" ? (
+              <PrinterTabTooltip
+                surface={surface}
+                environmentId={props.environmentId}
+                title={title}
+              />
             ) : (
               title
             )}
@@ -1259,6 +1298,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: messages(SURFACE_DISABLED_REASONS.device),
       onClick: props.onAddDevice,
     },
+    ...(props.onAddPrinter
+      ? [
+          {
+            label: msg("3D Printer"),
+            icon: Printer,
+            shortcut: "3",
+            available: props.printerAvailable === true,
+            disabledReason: messages(SURFACE_DISABLED_REASONS.printer),
+            onClick: props.onAddPrinter,
+          },
+        ]
+      : []),
     ...(props.onAddSideChat
       ? [
           {
@@ -1692,6 +1743,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
+            onAddPrinter={props.onAddPrinter}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
@@ -1700,6 +1752,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
+            printerAvailable={props.printerAvailable === true}
             sideChatAvailable={props.sideChatAvailable === true}
             sideChatDisabledReason={props.sideChatDisabledReason ?? null}
           />
@@ -1732,6 +1785,80 @@ function DeviceTabTooltip(props: {
           {device?.version ?? (target.platform === "ios" ? "iOS" : "Android")}
         </span>
       ) : null}
+    </div>
+  );
+}
+
+// Static status dot matching SideChatTabIcon (never animates continuously in tab strip).
+function PrinterTabIcon(props: {
+  readonly environmentId: EnvironmentId | null;
+  readonly printerId: string | undefined;
+  readonly proxyEnvironmentId: EnvironmentId | undefined;
+}) {
+  const entry = useResolvedFleetPrinter(
+    props.environmentId,
+    props.printerId,
+    props.proxyEnvironmentId,
+  );
+  const printer = entry?.printer;
+  const hasError = printer?.alerts.some((alert) => alert.severity === "error") ?? false;
+  const showDot =
+    printer !== undefined &&
+    (printer.job.status === "running" ||
+      printer.job.status === "prepare" ||
+      printer.job.status === "pause" ||
+      hasError);
+  return (
+    <span className="relative inline-flex shrink-0 items-center justify-center">
+      <Printer className="size-3 shrink-0" />
+      {showDot && printer ? (
+        <span
+          className={cn(
+            "absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-1 ring-background",
+            statusDotClass(printer.job.status, printer.online, hasError),
+          )}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function PrinterTabTooltip(props: {
+  readonly surface: Extract<RightPanelSurface, { kind: "printer" }>;
+  readonly environmentId: EnvironmentId | null;
+  readonly title: string;
+}) {
+  const gt = useGT();
+  const entry = useResolvedFleetPrinter(
+    props.environmentId,
+    props.surface.printerId,
+    props.surface.proxyEnvironmentId,
+  );
+  const printer = entry?.printer;
+  if (!printer) return <span>{props.title}</span>;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span>
+        {printer.label}
+        {printer.job.progressPercent !== null &&
+        (printer.job.status === "running" || printer.job.status === "pause")
+          ? ` · ${printer.job.progressPercent}%`
+          : ""}
+        {entry?.isProxied ? ` · ${entry.proxyEnvironmentLabel}` : ""}
+      </span>
+      <span className="text-muted-foreground tabular-nums">
+        {printer.job.displayName
+          ? `${printer.job.displayName}${printer.job.remainingSeconds !== null ? ` · ${formatDurationCompact(printer.job.remainingSeconds)}` : ""}`
+          : printer.online
+            ? gt("Idle")
+            : gt("Offline")}
+      </span>
+      <span className="text-muted-foreground tabular-nums">
+        {gt("Nozzle {nozzle} · Bed {bed}", {
+          nozzle: formatTemp(printer.thermals.nozzle.actualC),
+          bed: formatTemp(printer.thermals.bed.actualC),
+        })}
+      </span>
     </div>
   );
 }

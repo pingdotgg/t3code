@@ -3,6 +3,8 @@ import {
   type DeviceServiceState,
   type EnvironmentId,
   type PreviewSessionSnapshot,
+  PrinterId,
+  type PrinterServiceState,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -20,6 +22,8 @@ import {
 import { useRightPanelStore } from "../../rightPanelStore";
 import {
   applyDeviceSnapshot,
+  applyPrinterSnapshot,
+  disconnectPrinterEnvironment,
   floatDeviceSurface,
   followPreviewSessions,
   resetDeviceSessionBaselinesForTests,
@@ -404,5 +408,283 @@ describe("startAgentOpenedPreviews", () => {
       revision: 3,
     });
     expect(floatingTabId()).toBeNull();
+  });
+});
+
+describe("applyPrinterSnapshot", () => {
+  const proxyEnvId = "env-home-proxy" as EnvironmentId;
+  const printerState = (sessions: PrinterServiceState["sessions"]): PrinterServiceState => ({
+    enabled: true,
+    agentAccessEnabled: true,
+    mediaBasePath: "/api/printer-media",
+    printers: [],
+    sessions,
+    revision: 1,
+  });
+
+  it("opens new agent printer sessions, closes ended ones without dismissing, and honors user dismissal", () => {
+    setup();
+    const sessionA = {
+      threadId: ref.threadId,
+      printerId: PrinterId.make("p1s-studio"),
+      proxyEnvironmentId: proxyEnvId,
+      printerLabel: "Studio P1S",
+      openedAt: "2026-11-21T01:00:00.000Z",
+    };
+    const expectedSurfaceId = `printer:${encodeURIComponent(proxyEnvId)}:${encodeURIComponent("p1s-studio")}`;
+
+    // First snapshot establishes baseline without auto-opening.
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionA]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]).toBeUndefined();
+
+    // New session opens proxied printer surface.
+    const sessionB = { ...sessionA, openedAt: "2026-11-21T01:05:00.000Z" };
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionB]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedSurfaceId],
+    );
+
+    // Ending the session removes the surface WITHOUT marking it user-dismissed.
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces ?? []).toEqual([]);
+    expect(
+      useRightPanelStore.getState().byThreadKey[threadKey]?.dismissedPrinterSurfaceIds,
+    ).toBeUndefined();
+
+    // A later agent session can re-open it because the user did not dismiss it.
+    const sessionC = { ...sessionA, openedAt: "2026-11-21T01:10:00.000Z" };
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionC]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedSurfaceId],
+    );
+
+    // Explicit user close suppresses later automatic re-opening for the SAME session.
+    useRightPanelStore.getState().closeSurface(ref, expectedSurfaceId);
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionC]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces).toEqual([]);
+
+    // Ending the dismissed session clears dismissal so a NEW agent session can auto-open cleanly.
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    const sessionD = { ...sessionA, openedAt: "2026-11-21T01:15:00.000Z" };
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionD]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedSurfaceId],
+    );
+
+    // A manually opened tab is NOT closed when an agent session ends.
+    useRightPanelStore.getState().openPrinter(ref, {
+      printerId: "p1s-studio",
+      proxyEnvironmentId: proxyEnvId,
+      label: "Studio P1S",
+    });
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedSurfaceId],
+    );
+
+    // Cross-env duplicate of the same canonical session (even with differing server-local openedAt timestamps)
+    // does not open a duplicate tab on the owner env.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    const sessionE = { ...sessionA, openedAt: "2026-11-21T01:20:00.000Z" };
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionE]), { sheetLayout: false });
+    applyPrinterSnapshot(
+      proxyEnvId,
+      printerState([
+        { ...sessionE, proxyEnvironmentId: undefined, openedAt: "2026-11-21T01:20:03.000Z" },
+      ]),
+      { sheetLayout: false },
+    );
+    const ownerRef = scopeThreadRef(proxyEnvId, ref.threadId);
+    expect(useRightPanelStore.getState().byThreadKey[scopedThreadKey(ownerRef)]).toBeUndefined();
+
+    // Owner-ends / proxy-remains: ownership transfers to surviving proxy env and opens its panel cleanly.
+    setup();
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    const ownerSession = {
+      threadId: ref.threadId,
+      printerId: PrinterId.make("p1s-studio"),
+      printerLabel: "Studio P1S",
+      openedAt: "2026-11-21T02:00:00.000Z",
+    };
+    const proxySession = {
+      ...ownerSession,
+      proxyEnvironmentId: proxyEnvId,
+      openedAt: "2026-11-21T02:00:02.000Z",
+    };
+    // Owner opens first; proxy duplicate is suppressed.
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([proxySession]), { sheetLayout: false });
+    expect(
+      useRightPanelStore
+        .getState()
+        .byThreadKey[scopedThreadKey(ownerRef)]?.surfaces.map((s) => s.id),
+    ).toEqual(["printer:p1s-studio"]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]).toBeUndefined();
+
+    // Owner session ends while proxy remains active -> owner panel closes, proxy panel opens.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    expect(
+      useRightPanelStore.getState().byThreadKey[scopedThreadKey(ownerRef)]?.surfaces ?? [],
+    ).toEqual([]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedSurfaceId],
+    );
+  });
+
+  it("closes departing agent-opened tabs on disconnect handoff, preserves manual tabs, and avoids stale tabs on reconnect", () => {
+    setup();
+    const ownerRef = scopeThreadRef(proxyEnvId, ref.threadId);
+    const ownerThreadKey = scopedThreadKey(ownerRef);
+    const expectedProxySurfaceId = `printer:${encodeURIComponent(proxyEnvId)}:${encodeURIComponent("p1s-studio")}`;
+    const ownerSession = {
+      threadId: ref.threadId,
+      printerId: PrinterId.make("p1s-studio"),
+      printerLabel: "Studio P1S",
+      openedAt: "2026-11-21T03:00:00.000Z",
+    };
+    const proxySession = {
+      ...ownerSession,
+      proxyEnvironmentId: proxyEnvId,
+      openedAt: "2026-11-21T03:00:02.000Z",
+    };
+
+    // Baseline both envs, then owner opens first and proxy duplicate is suppressed.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([proxySession]), { sheetLayout: false });
+    expect(
+      useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces.map((s) => s.id),
+    ).toEqual(["printer:p1s-studio"]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]).toBeUndefined();
+
+    // Owner disconnects while proxy remains active: owner agent-opened tab closes, proxy opens.
+    disconnectPrinterEnvironment(proxyEnvId, { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces ?? []).toEqual([]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedProxySurfaceId],
+    );
+
+    // Owner reconnects with an empty session list: no stale tab lingers on owner; proxy stays open.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces ?? []).toEqual([]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedProxySurfaceId],
+    );
+
+    // Manually opened tabs on a disconnecting environment are preserved even on handoff.
+    setup();
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([proxySession]), { sheetLayout: false });
+    useRightPanelStore.getState().openPrinter(ownerRef, {
+      printerId: "p1s-studio",
+      label: "Studio P1S",
+    });
+    disconnectPrinterEnvironment(proxyEnvId, { sheetLayout: false });
+    expect(
+      useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces.map((s) => s.id),
+    ).toEqual(["printer:p1s-studio"]);
+  });
+
+  it("retains a single-environment agent tab across transient disconnect and reconciles on reconnect", () => {
+    setup();
+    const ownerRef = scopeThreadRef(proxyEnvId, ref.threadId);
+    const ownerThreadKey = scopedThreadKey(ownerRef);
+    const ownerSession = {
+      threadId: ref.threadId,
+      printerId: PrinterId.make("p1s-studio"),
+      printerLabel: "Studio P1S",
+      openedAt: "2026-11-21T03:30:00.000Z",
+    };
+
+    // Continuing session across transient disconnect -> tab survives disconnect and reconnect.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    expect(
+      useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces.map((s) => s.id),
+    ).toEqual(["printer:p1s-studio"]);
+
+    disconnectPrinterEnvironment(proxyEnvId, { sheetLayout: false });
+    expect(
+      useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces.map((s) => s.id),
+    ).toEqual(["printer:p1s-studio"]);
+
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    expect(
+      useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces.map((s) => s.id),
+    ).toEqual(["printer:p1s-studio"]);
+
+    // Ending the session after reconnect closes the tab cleanly.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces ?? []).toEqual([]);
+
+    // Ended session during transient disconnect -> tab closes on the first reconnect snapshot.
+    const nextSession = { ...ownerSession, openedAt: "2026-11-21T03:40:00.000Z" };
+    applyPrinterSnapshot(proxyEnvId, printerState([nextSession]), { sheetLayout: false });
+    expect(
+      useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces.map((s) => s.id),
+    ).toEqual(["printer:p1s-studio"]);
+
+    disconnectPrinterEnvironment(proxyEnvId, { sheetLayout: false });
+    expect(
+      useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces.map((s) => s.id),
+    ).toEqual(["printer:p1s-studio"]);
+
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces ?? []).toEqual([]);
+  });
+
+  it("does not resurrect a user-dismissed tab when canonical ownership transfers across thread keys", () => {
+    setup();
+    const ownerRef = scopeThreadRef(proxyEnvId, ref.threadId);
+    const ownerThreadKey = scopedThreadKey(ownerRef);
+    const expectedProxySurfaceId = `printer:${encodeURIComponent(proxyEnvId)}:${encodeURIComponent("p1s-studio")}`;
+    const ownerSession = {
+      threadId: ref.threadId,
+      printerId: PrinterId.make("p1s-studio"),
+      printerLabel: "Studio P1S",
+      openedAt: "2026-11-21T04:00:00.000Z",
+    };
+    const proxySession = {
+      ...ownerSession,
+      proxyEnvironmentId: proxyEnvId,
+      openedAt: "2026-11-21T04:00:01.000Z",
+    };
+
+    // Case 1: Session-end transfer after user dismisses owner tab.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([proxySession]), { sheetLayout: false });
+    useRightPanelStore.getState().closeSurface(ownerRef, "printer:p1s-studio");
+    expect(useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces).toEqual([]);
+
+    // Owner session ends while proxy remains -> ownership transfers without resurrecting proxy tab.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces ?? []).toEqual([]);
+
+    // Once proxy also ends, a brand-new later session can auto-open cleanly.
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    const freshProxySession = { ...proxySession, openedAt: "2026-11-21T04:10:00.000Z" };
+    applyPrinterSnapshot(ref.environmentId, printerState([freshProxySession]), {
+      sheetLayout: false,
+    });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedProxySurfaceId],
+    );
+
+    // Case 2: Disconnect transfer after user dismisses owner tab.
+    setup();
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([proxySession]), { sheetLayout: false });
+    useRightPanelStore.getState().closeSurface(ownerRef, "printer:p1s-studio");
+    disconnectPrinterEnvironment(proxyEnvId, { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces ?? []).toEqual([]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces ?? []).toEqual([]);
   });
 });

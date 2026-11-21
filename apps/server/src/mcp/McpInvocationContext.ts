@@ -21,6 +21,7 @@ const ALL_MCP_CAPABILITIES = [
   "orchestration",
   "worktree",
   "device",
+  "printer",
   "pull-requests",
   "issues",
   "background-wait",
@@ -204,6 +205,16 @@ export const hiddenFromOutsideClients = (): boolean => {
   return scope === undefined || scope.thread !== undefined;
 };
 
+/**
+ * `McpSchema.EnabledWhen` for read-only tools that serve calling threads and
+ * linked peer environments (over T3 Connect), but not unlinked outside OAuth clients.
+ */
+export const hiddenFromUnlinkedOutsideClients = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope === undefined || scope.thread !== undefined || scope.client?.linked === true;
+};
+
 /** `hiddenFromOutsideClients`, and hidden from a thread whose provider cannot hold for background work. */
 export const hiddenWithoutBackgroundWait = (): boolean => {
   const fiber = Fiber.getCurrent();
@@ -261,7 +272,7 @@ export const requireMcpCapability = <const C extends McpCapability>(
     Effect.withSpan("mcp.requireCapability"),
   );
 
-export const requireThreadMcpCapability = <const C extends "preview" | "device">(
+export const requireThreadMcpCapability = <const C extends "preview" | "device" | "printer">(
   capability: C,
 ): Effect.Effect<McpThreadInvocationScope, McpCapabilityError<C>, McpInvocationContext> =>
   McpInvocationContext.pipe(

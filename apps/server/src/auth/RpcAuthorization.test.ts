@@ -578,6 +578,91 @@ describe("settings mutation authorization", () => {
       expect(handled).toBe(1);
     }),
   );
+
+  it.effect(
+    "requires provider management when printer configure or testConnection uses a secret reference",
+    () =>
+      Effect.gen(function* () {
+        const printerGroup = WsRpcGroup.omit(
+          ...[...WsRpcGroup.requests.keys()].filter(
+            (
+              tag,
+            ): tag is Exclude<
+              keyof typeof RPC_REQUIRED_SCOPES,
+              typeof WS_METHODS.printerConfigure | typeof WS_METHODS.printerTestConnection
+            > => tag !== WS_METHODS.printerConfigure && tag !== WS_METHODS.printerTestConnection,
+          ),
+        );
+        let handled = 0;
+        const client = yield* RpcTest.makeClient(printerGroup).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              printerGroup.toLayerHandler(WS_METHODS.printerConfigure, () =>
+                Effect.sync(() => {
+                  handled++;
+                  return {
+                    enabled: true,
+                    agentAccessEnabled: true,
+                    mediaBasePath: "/api/printer-media",
+                    printers: [],
+                    sessions: [],
+                    revision: 1,
+                  };
+                }),
+              ),
+              printerGroup.toLayerHandler(WS_METHODS.printerTestConnection, () =>
+                Effect.sync(() => {
+                  handled++;
+                  return {
+                    ok: true,
+                    model: null,
+                    printerName: null,
+                    online: true,
+                    hasCamera: false,
+                    hasCoverImage: false,
+                    summary: "Connected",
+                  };
+                }),
+              ),
+              RpcAuthorization.layer([AuthSettingsWriteScope]),
+            ),
+          ),
+        );
+        const basePrinter = {
+          kind: "home-assistant-bambu" as const,
+          id: "p1s-test",
+          label: "Studio P1S",
+          baseUrl: "http://192.168.1.50:8123",
+          pollIntervalSeconds: 4,
+        };
+        const secretRef = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/HomeAssistant/token",
+        };
+
+        // Literal token works with settings:write alone.
+        yield* client[WS_METHODS.printerConfigure]({
+          printers: [{ ...basePrinter, accessToken: "literal-token" }],
+        });
+        yield* client[WS_METHODS.printerTestConnection]({
+          config: { ...basePrinter, accessToken: "literal-token" },
+        });
+        expect(handled).toBe(2);
+
+        // Secret references require providers:manage on both configure and testConnection.
+        expect(
+          yield* client[WS_METHODS.printerConfigure]({
+            printers: [{ ...basePrinter, accessToken: secretRef }],
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+        expect(
+          yield* client[WS_METHODS.printerTestConnection]({
+            config: { ...basePrinter, accessToken: secretRef },
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+        expect(handled).toBe(2);
+      }),
+  );
 });
 
 it.effect("requires task permission before attaching a prepared worktree to a thread", () =>
