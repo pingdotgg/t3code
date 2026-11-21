@@ -9508,6 +9508,316 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("starts a queued Auto message on the instance a failover selected", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-queued-auto-failover");
+      const failedSelection = {
+        ...modelSelection,
+        options: [{ id: "auto", value: "medium" }],
+      } satisfies ModelSelection;
+      const movedSelection = {
+        instanceId: alternateInstanceId,
+        model: "gpt-5.5",
+        options: [{ id: "auto", value: "medium" }],
+      } satisfies ModelSelection;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        createdBy: "user",
+        creationSource: "web",
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Queued Auto failover",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const send = (name: string, type: "start_immediately" | "queue_after_active") =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:${name}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${name}`),
+          text: name,
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          modelSelection,
+          dispatchMode: { type },
+        });
+      yield* send("active", "start_immediately");
+      yield* send("queued", "queue_after_active");
+      const [active, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.isDefined(active);
+      assert.isDefined(queued);
+      const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      const now = yield* DateTime.now;
+      // Auto routing stamps the concrete selection; supply it through events, as the router does.
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:active-auto`),
+            type: "run.updated",
+            threadId,
+            runId: active.id,
+            providerInstanceId: active.providerInstanceId,
+            occurredAt: now,
+            payload: { ...active, modelSelection: failedSelection },
+          },
+          {
+            id: EventId.make(`${threadId}:queued-auto`),
+            type: "run.updated",
+            threadId,
+            runId: queued.id,
+            providerInstanceId: queued.providerInstanceId,
+            occurredAt: now,
+            payload: { ...queued, modelSelection: failedSelection },
+          },
+          {
+            id: EventId.make(`${threadId}:thread-auto`),
+            type: "thread.model-selection-updated",
+            threadId,
+            providerInstanceId: thread.providerInstanceId,
+            occurredAt: now,
+            payload: { ...thread, modelSelection: failedSelection },
+          },
+        ],
+      });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:error`),
+            type: "turn-item.updated",
+            threadId,
+            runId: active.id,
+            nodeId: active.rootNodeId!,
+            providerInstanceId: active.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${threadId}:error`),
+              type: "error",
+              threadId,
+              runId: active.id,
+              nodeId: active.rootNodeId,
+              providerThreadId: active.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Usage limit reached",
+                code: "usage_limit",
+                retryable: null,
+              },
+            },
+          },
+          {
+            id: EventId.make(`${threadId}:failed`),
+            type: "run.updated",
+            threadId,
+            runId: active.id,
+            providerInstanceId: active.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              ...active,
+              modelSelection: failedSelection,
+              status: "failed",
+              completedAt: now,
+            },
+          },
+        ],
+      });
+      const failedThread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:moved`),
+            type: "thread.model-selection-updated",
+            threadId,
+            providerInstanceId: alternateInstanceId,
+            occurredAt: now,
+            payload: {
+              ...failedThread,
+              modelSelection: movedSelection,
+              providerInstanceId: alternateInstanceId,
+            },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const started = after.runs.find((run) => run.id === queued.id);
+      assert.equal(started?.status, "starting");
+      assert.deepEqual(started?.modelSelection, movedSelection);
+    }),
+  );
+
+  it.effect("requeues an unread Auto steer on the instance a failover selected", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-unread-steer-auto-failover");
+      const failedSelection = {
+        ...modelSelection,
+        options: [{ id: "auto", value: "medium" }],
+      } satisfies ModelSelection;
+      const movedSelection = {
+        instanceId: alternateInstanceId,
+        model: "gpt-5.5",
+        options: [{ id: "auto", value: "medium" }],
+      } satisfies ModelSelection;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        createdBy: "user",
+        creationSource: "web",
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Unread steer Auto failover",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const activeId = MessageId.make(`${threadId}:active`);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:active`),
+        threadId,
+        messageId: activeId,
+        text: "active",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const active = before.runs.find((run) => run.userMessageId === activeId)!;
+      const prompt = before.turnItems.find(
+        (item): item is Extract<(typeof before.turnItems)[number], { type: "user_message" }> =>
+          item.type === "user_message" && item.messageId === activeId,
+      )!;
+      const promptMessage = before.messages.find((message) => message.id === activeId)!;
+      const steerId = MessageId.make(`${threadId}:steer`);
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:active-auto`),
+            type: "run.updated",
+            threadId,
+            runId: active.id,
+            providerInstanceId: active.providerInstanceId,
+            occurredAt: now,
+            payload: { ...active, modelSelection: failedSelection },
+          },
+          {
+            id: EventId.make(`${threadId}:thread-auto`),
+            type: "thread.model-selection-updated",
+            threadId,
+            providerInstanceId: before.thread.providerInstanceId,
+            occurredAt: now,
+            payload: { ...before.thread, modelSelection: failedSelection },
+          },
+        ],
+      });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:steer-message`),
+            type: "message.updated",
+            threadId,
+            runId: active.id,
+            nodeId: prompt.nodeId ?? undefined,
+            providerInstanceId: active.providerInstanceId,
+            occurredAt: now,
+            payload: { ...promptMessage, id: steerId, text: "unread steer" },
+          },
+          {
+            id: EventId.make(`${threadId}:steer-item`),
+            type: "turn-item.updated",
+            threadId,
+            runId: active.id,
+            nodeId: prompt.nodeId ?? undefined,
+            providerInstanceId: active.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              ...prompt,
+              id: TurnItemId.make(`${threadId}:steer-item`),
+              type: "user_message" as const,
+              messageId: steerId,
+              inputIntent: "steer" as const,
+              status: "pending" as const,
+              text: "unread steer",
+              startedAt: null,
+              completedAt: null,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make(`${threadId}:failed`),
+            type: "run.updated",
+            threadId,
+            runId: active.id,
+            providerInstanceId: active.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              ...active,
+              modelSelection: failedSelection,
+              status: "failed",
+              completedAt: now,
+            },
+          },
+        ],
+      });
+      const failedThread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:moved`),
+            type: "thread.model-selection-updated",
+            threadId,
+            providerInstanceId: alternateInstanceId,
+            occurredAt: now,
+            payload: {
+              ...failedThread,
+              modelSelection: movedSelection,
+              providerInstanceId: alternateInstanceId,
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:next`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:next`),
+        text: "next",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        modelSelection: { instanceId: alternateInstanceId, model: "gpt-5.5" },
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const requeued = after.runs.find((run) => run.userMessageId === steerId);
+      assert.isDefined(requeued);
+      assert.deepEqual(requeued?.modelSelection, movedSelection);
+    }),
+  );
+
   it.effect.each(["the reset passes", "the user resumes"] as const)(
     "holds a limited provider's queue through another provider's turn until %s",
     (release) =>
