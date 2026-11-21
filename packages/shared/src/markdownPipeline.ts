@@ -752,6 +752,29 @@ function remarkNormalizeLinksAndTagInlineCode() {
   };
 }
 
+const ASSISTANT_FIELD_LINE = /^[\p{L}][\p{L}\p{N} /_-]{0,31}:[ \t]+\S/u;
+
+export function remarkAssistantFieldLines(): Transformer<Root> {
+  const addLineBreaks = remarkBreaks();
+  return (tree, file) => {
+    const source = String(file);
+    const fields = tree.children.filter((node) => {
+      if (node.type !== "paragraph" || !node.position) return false;
+      const { start, end } = node.position;
+      return (
+        start.line !== end.line &&
+        start.offset !== undefined &&
+        end.offset !== undefined &&
+        source
+          .slice(start.offset, end.offset)
+          .split(/\r\n?|\n/)
+          .every((line) => ASSISTANT_FIELD_LINE.test(line))
+      );
+    });
+    addLineBreaks({ type: "root", children: fields });
+  };
+}
+
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
 }

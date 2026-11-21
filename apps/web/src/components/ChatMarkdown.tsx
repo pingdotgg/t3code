@@ -27,6 +27,7 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   chatMarkdownImageSource,
   decodeMarkdownLinkEscapes,
+  remarkAssistantFieldLines,
   remarkAssistantInsights,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
@@ -248,6 +249,7 @@ const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
 interface ChatMarkdownProps {
   renderInsights?: boolean;
+  preserveFieldLines?: boolean;
   /** Compact markdown transforms remove blocks before rendering inside a label. */
   inline?: boolean;
   text: string;
@@ -1866,6 +1868,7 @@ const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, Plugga
 
 // One combined list per pair, so a stable extra list shares a renderer and its parse cache.
 const INSIGHT_REMARK_PLUGINS: PluggableList = [remarkAssistantInsights];
+const FIELD_LINE_REMARK_PLUGINS: PluggableList = [remarkAssistantFieldLines];
 
 function withExtraPlugins(shared: PluggableList, extra: PluggableList): PluggableList {
   if (extra.length === 0) return shared;
@@ -1937,6 +1940,7 @@ function ChatMarkdown({
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   renderInsights = false,
+  preserveFieldLines = false,
   ...props
 }: ChatMarkdownProps) {
   const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
@@ -1960,7 +1964,7 @@ function ChatMarkdown({
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
   };
-  const sharedRemarkPlugins =
+  const sharedRemarkPlugins = withExtraPlugins(
     CHAT_MARKDOWN_REMARK_PLUGIN_SETS[
       componentState.mathEnabled
         ? lineBreaks
@@ -1969,7 +1973,9 @@ function ChatMarkdown({
         : lineBreaks
           ? "breaks"
           : "plain"
-    ];
+    ],
+    preserveFieldLines && !lineBreaks ? FIELD_LINE_REMARK_PLUGINS : EMPTY_REMARK_PLUGINS,
+  );
   // The incremental parser keeps per-instance state, so its output is not shared.
   const uncachedPlugins = incrementalParsing;
   const remarkPlugins = incrementalParsing
