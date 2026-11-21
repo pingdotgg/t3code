@@ -444,3 +444,33 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## 3D models in the file viewer
+
+On web, desktop, and mobile, STL, 3MF, and GLB files open as 3D views from the workspace, a
+file link, or an attachment. Drag to orbit, Shift-drag to pan, and scroll to zoom. On mobile,
+drag one finger to orbit, use two fingers to pan, pinch to zoom, and double-tap to fit. Choose
+**Top**, **Front**, or **Iso** for a preset, or **Fit** to frame the model at the current angle.
+STL previews assume millimeters and display colors stored with the Magics extension. The viewer
+accepts STL and self-contained GLB files up to 128 MiB. GLB files that require Draco, meshopt,
+or KTX2 compression cannot be previewed.
+
+3MF previews omit print settings. They accept up to 2,048 archive entries, with limits of
+50 MiB for the archive and its expanded contents, 10 MiB per entry, and 8 MiB for entries ending
+in `.xml`.
+The expanded contents can be up to 200 times the archive size.
+
+Choose **Annotate** and click or tap the model to pin numbered notes. **Send to chat** adds them to
+your draft as one preview annotation with a screenshot. For a workspace model, **Open view**
+in the annotation details reopens the file at the saved camera. When the file changes,
+earlier notes keep their text and are marked as out of date.
+
+### Blender scenes
+
+To open `.blend` workspace files on web or desktop, turn on Blender in **Settings → Integrations**
+for the environment that owns your workspace. T3 Code finds an installed Blender automatically,
+or you can enter its executable path there.
+
+Open the scene in a thread to see it in the same 3D viewer. Blender exports the preview in the
+background and the thread's agent can discover tools to inspect or edit the scene. Ask the agent
+when you want a PNG render. The preview leaves your original `.blend` unchanged.

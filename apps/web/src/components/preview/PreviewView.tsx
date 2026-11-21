@@ -36,9 +36,8 @@ import {
   removeUrlForThread,
   useThreadRecentHistory,
 } from "~/browserHistoryStore";
-import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
-import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
-import { readComposerImageBytes } from "../chat/composerAttachmentFiles";
+import { type ComposerImageAttachment } from "~/composerDraftStore";
+import { stagePreviewAnnotation } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import { getClientSettings } from "~/hooks/useSettings";
 import {
@@ -201,8 +200,6 @@ export function PreviewView({
   const miniPlayerTabId = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayerTabId(state.byThreadKey, threadRef),
   );
-  const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
-  const addImage = useComposerDraftStore((store) => store.addImage);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const open = useAtomCommand(previewEnvironment.open);
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
@@ -875,14 +872,10 @@ export function PreviewView({
         submitted = true;
       }
       const { annotation: picked, submission, screenshotFailed = false } = result;
-      // Send annotations even if the optional crop fails or stalls; drop failed screenshots so prompts cannot
-      // claim an attachment.
-      const capture = capturePreviewAnnotationScreenshot(picked);
-      const cropDropped = screenshotFailed || capture.status === "failed";
-      const annotation = capture.status === "failed" ? { ...picked, screenshot: null } : picked;
-      if (capture.status === "captured") await readComposerImageBytes(capture.file);
-      addPreviewAnnotation(threadRef, annotation);
-      if (cropDropped) {
+      const staged = await stagePreviewAnnotation(threadRef, picked);
+      if (!staged) return;
+      const { annotation, image, cropDropped } = staged;
+      if (screenshotFailed || cropDropped) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -890,22 +883,6 @@ export function PreviewView({
             description: gt("The annotation was kept without the screenshot."),
           }),
         );
-      }
-      const screenshotFile = capture.status === "captured" ? capture.file : null;
-      const image =
-        screenshotFile && annotation.screenshot
-          ? ({
-              type: "image",
-              id: annotation.id,
-              name: screenshotFile.name,
-              mimeType: screenshotFile.type,
-              sizeBytes: screenshotFile.size,
-              previewUrl: annotation.screenshot.dataUrl,
-              file: screenshotFile,
-            } satisfies ComposerImageAttachment)
-          : null;
-      if (image) {
-        addImage(threadRef, image);
       }
       if (
         submission === "send" &&

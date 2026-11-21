@@ -6,6 +6,7 @@ import {
   type ScopedThreadRef,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
+import { modelPreviewKind } from "@t3tools/shared/filePreview";
 import {
   type FilePreviewScroll,
   filePreviewRestoreScrollMessage,
@@ -76,7 +77,7 @@ const HTML_RENDER_SHORTCUT_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
 ]);
 
 export const isPdfPreviewFile = (path: string): boolean =>
-  /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+  modelPreviewKind({ name: path }) === null && /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
 const PdfViewer = lazy(() => import("./PdfViewer"));
 

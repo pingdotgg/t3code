@@ -1,5 +1,7 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 
+import { readComposerImageBytes } from "../components/chat/composerAttachmentFiles";
+import { type ComposerThreadTarget, useComposerDraftStore } from "../composerDraftStore";
 import { dataUrlToFile } from "./imageCompression";
 
 export type PreviewAnnotationCapture =
@@ -24,4 +26,35 @@ export function capturePreviewAnnotationScreenshot(
   } catch {
     return { status: "failed" };
   }
+}
+
+/** Prepares the crop and stages it under the annotation ID before publishing the chip. */
+export async function stagePreviewAnnotation(
+  target: ComposerThreadTarget,
+  picked: PreviewAnnotationPayload,
+  { requireScreenshot = false, signal }: { requireScreenshot?: boolean; signal?: AbortSignal } = {},
+) {
+  const capture = capturePreviewAnnotationScreenshot(picked);
+  const screenshot = picked.screenshot;
+  let image = null;
+  if (capture.status === "captured" && screenshot) {
+    const { file } = capture;
+    await readComposerImageBytes(file);
+    if (signal?.aborted) return null;
+    const candidate = {
+      type: "image" as const,
+      id: picked.id,
+      name: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      previewUrl: screenshot.dataUrl,
+      file,
+    };
+    if (useComposerDraftStore.getState().addImage(target, candidate)) image = candidate;
+  }
+  if (signal?.aborted || (requireScreenshot && !image)) return null;
+  const cropDropped = screenshot !== null && screenshot !== undefined && image === null;
+  const annotation = cropDropped ? { ...picked, screenshot: null } : picked;
+  useComposerDraftStore.getState().addPreviewAnnotation(target, annotation);
+  return { annotation, image, cropDropped };
 }

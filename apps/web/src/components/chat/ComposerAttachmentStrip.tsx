@@ -12,6 +12,7 @@ import { type ComponentProps, useLayoutEffect, useRef } from "react";
 
 import {
   type ComposerFileAttachment,
+  type ComposerThreadTarget,
   type ComposerImageAttachment,
   type DraftId,
   composerFileNeedsReattach,
@@ -555,10 +556,12 @@ export function ComposerAttachmentFileList({
 
 export function ComposerFilePreviewDialog({
   file,
+  composerDraftTarget,
   onRemove,
   onPreviewFileIdChange,
 }: {
   readonly file: ComposerFileAttachment;
+  readonly composerDraftTarget: ComposerThreadTarget;
   readonly onRemove: (fileId: string) => void;
   readonly onPreviewFileIdChange: (fileId: string | null) => void;
 }) {
@@ -583,6 +586,8 @@ export function ComposerFilePreviewDialog({
           mimeType={file.mimeType}
           sizeBytes={file.sizeBytes}
           file={file.file}
+          draftAttachmentId={file.id}
+          composerDraftTarget={composerDraftTarget}
           origin={gt("Draft", { $context: "where an attachment comes from: the unsent message" })}
           {...(file.uploadedAttachmentId && file.uploadEnvironmentId
             ? {

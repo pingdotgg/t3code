@@ -657,6 +657,27 @@ describe("workspace document previews", () => {
 });
 
 describe("open file in preview browser", () => {
+  it.each(["bracket.pdf#v2.stl", "bracket.html?draft.glb"])(
+    "keeps a literal workspace model path %s in the model viewer",
+    async (name) => {
+      using _settings = setup();
+      state.file = { relativePath: name, contents: "", byteLength: 0, truncated: false };
+      state.assetUrl = {
+        _tag: "Success",
+        url: "/assets/model",
+        expiresAt: Number.MAX_SAFE_INTEGER,
+        fileRevision: "revision-1",
+      };
+      await using screen = await render(filePreview(name));
+      await expect
+        .element(screen.getByRole("button", { name: "Open file in preview browser" }))
+        .not.toBeInTheDocument();
+      await expect
+        .element(screen.getByRole("application", { name: `3D view of ${name}` }))
+        .toBeInTheDocument();
+    },
+  );
+
   it("mints a fresh asset URL on every click so the browser cannot reuse cached bytes", async () => {
     using _settings = setup();
     state.file = {

@@ -8,6 +8,7 @@ import {
   AssetCreateUrlInput,
   AssetPreviewTypeValidationError,
   SOURCE_CONTROL_MEDIA_ASSET,
+  BlenderJobId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -1017,6 +1018,34 @@ describe("AssetAccess", () => {
       yield* fs.rename(replacement, filePath);
       const replaced = yield* issueAssetUrl(input);
       expect(replaced.fileRevision).not.toBe(edited.fileRevision);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves a Blender output only from the file the Blender service resolved", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-blender-output-" });
+      const outputPath = path.join(root, "preview.glb");
+      yield* fs.writeFileString(outputPath, "glTF-binary");
+      const resource = {
+        _tag: "blender-output" as const,
+        threadId: ThreadId.make("thread-1"),
+        jobId: BlenderJobId.make("job-1"),
+        output: "preview" as const,
+      };
+      const issued = yield* issueAssetUrl({ resource, outputPath });
+      expect(issued.fileRevision).toBeDefined();
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+      if (asset?.kind !== "file") throw new Error("Expected the Blender output file");
+      const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+      expect(response.headers.get("content-type")).toBe("model/gltf-binary");
+      expect(yield* Effect.promise(() => response.text())).toBe("glTF-binary");
+      expect((yield* issueAssetUrl({ resource }).pipe(Effect.flip))._tag).toBe(
+        "AssetWorkspaceAssetNotFoundError",
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 

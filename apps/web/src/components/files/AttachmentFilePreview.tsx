@@ -8,6 +8,7 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import {
   filePreviewKind,
+  modelPreviewKind,
   officePreviewKind,
   FILE_TEXT_PREVIEW_MAX_BYTES,
 } from "@t3tools/shared/filePreview";
@@ -33,9 +34,11 @@ import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { toastManager } from "~/components/ui/toast";
 import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import type { ComposerThreadTarget } from "~/composerDraftStore";
 import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 
+import { modelViewRequestKey } from "./modelAnnotations";
 import { BinaryFilePreview } from "./BinaryFilePreview";
 import { PreviewImage } from "./PreviewImage";
 import { AudioPreview } from "./AudioPreview";
@@ -64,6 +67,8 @@ const MermaidFilePreview = lazy(() =>
 );
 
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
+
+const ModelViewer = lazy(() => import("./ModelViewer"));
 
 const STALE_URL_MS = 5 * 60_000;
 
@@ -102,6 +107,7 @@ export function AttachmentFilePreview(props: {
   mimeType: string;
   sizeBytes: number;
   file?: Blob | null;
+  draftAttachmentId?: string;
   asset?:
     | { environmentId: EnvironmentId; attachmentId: string }
     | {
@@ -110,12 +116,19 @@ export function AttachmentFilePreview(props: {
       };
   htmlRender?: boolean;
   threadRef?: ScopedThreadRef;
+  /** Where 3D model notes are drafted. */
+  composerDraftTarget?: ComposerThreadTarget;
+  /** A workspace path chat links open this model by; attachments have none. */
+  modelLinkPath?: string;
   origin?: string;
   onRemove?: () => void;
   onClose?: () => void;
 }) {
   const kind = filePreviewKind(props);
   const officeKind = officePreviewKind(props);
+  const modelKind = kind === "model" ? modelPreviewKind(props) : null;
+  const [modelStatsSlot, setModelStatsSlot] = useState<HTMLElement | null>(null);
+  const [modelActionsSlot, setModelActionsSlot] = useState<HTMLElement | null>(null);
   const delimiter = filePreviewDelimiter(props);
   const renderedMode =
     kind === "mermaid"
@@ -333,6 +346,30 @@ export function AttachmentFilePreview(props: {
       kind={kind}
       onRetry={() => setRevision((value) => value + 1)}
     />
+  ) : modelKind ? (
+    <Suspense fallback={<FileSurfaceLoading />}>
+      <ModelViewer
+        src={url}
+        name={props.name}
+        format={modelKind}
+        memoryKey={JSON.stringify(
+          props.draftAttachmentId
+            ? ["draft-attachment", props.draftAttachmentId]
+            : resource && "path" in resource
+              ? ["workspace", props.asset?.environmentId, resource.path]
+              : ["attachment", props.asset?.environmentId, attachmentId ?? url],
+        )}
+        viewRequestKey={
+          props.threadRef && props.modelLinkPath
+            ? modelViewRequestKey(props.threadRef, props.modelLinkPath)
+            : null
+        }
+        onRefreshUrl={props.file ? undefined : () => setRevision((value) => value + 1)}
+        linkPath={props.modelLinkPath ?? null}
+        composerDraftTarget={props.composerDraftTarget}
+        toolbarSlots={{ stats: modelStatsSlot, actions: modelActionsSlot }}
+      />
+    </Suspense>
   ) : kind === "font" ? (
     <Suspense fallback={<FileSurfaceLoading />}>
       <FontFilePreview src={url} name={props.name} />
@@ -423,7 +460,13 @@ export function AttachmentFilePreview(props: {
               {formatAttachmentSize(props.sizeBytes, messages)}
             </span>
           ) : null}
+          {modelKind ? (
+            <span ref={setModelStatsSlot} className="ml-2 min-w-0 truncate text-muted-foreground" />
+          ) : null}
         </div>
+        {modelKind ? (
+          <div ref={setModelActionsSlot} className="flex shrink-0 items-center gap-1" />
+        ) : null}
         {renderedMode ? (
           <FileSurfaceAction
             label={renderedToggleLabel(renderedMode, rendered, messages)}

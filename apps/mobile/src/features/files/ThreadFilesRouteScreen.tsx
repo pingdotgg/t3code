@@ -18,7 +18,10 @@ import {
   isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
   mediaMimeTypeFromExtension,
+  modelPreviewKind,
 } from "@t3tools/shared/filePreview";
+import { modelViewFromHash } from "@t3tools/client-runtime/model-preview/annotations";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
 import { ScreenContent } from "../../components/ui/ScreenContent";
@@ -61,6 +64,7 @@ import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
 import { WorkspaceFilePreviewError } from "./WorkspaceFilePreviewError";
 import { WorkspaceFileVideoPreview } from "./WorkspaceFileVideoPreview";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
+import { ModelFilePreview, useModelViewerControls } from "./ModelFilePreview";
 import {
   basename,
   fileHeaderSubtitle,
@@ -255,6 +259,10 @@ function FileContent(props: {
   readonly truncated: boolean;
   readonly selectable: boolean;
   readonly onRefresh?: () => Promise<void> | void;
+  readonly model: Omit<
+    ComponentProps<typeof ModelFilePreview>,
+    "name" | "format" | "uri" | "onRetry"
+  >;
 }) {
   const gt = useGT();
   // Reopening a mutable host file must not reuse a poster from an earlier visit.
@@ -267,9 +275,11 @@ function FileContent(props: {
   const isImageFile = isWorkspaceImagePreviewPath(props.relativePath);
   const isVideoFile = isVideoPreviewFile(props.relativePath);
   const isAudioFile = isAudioPreviewFile(props.relativePath);
+  const modelKind = modelPreviewKind({ name: props.relativePath });
   const needsAssetUrl =
     isVideoFile ||
     isAudioFile ||
+    modelKind !== null ||
     (props.activeMode === "preview" && (isImageFile || isBrowserFile));
 
   if (needsAssetUrl && props.previewFailure !== null) {
@@ -277,6 +287,18 @@ function FileContent(props: {
       <WorkspaceFilePreviewError
         environmentId={props.environmentId}
         reason={props.previewFailure}
+        onRetry={props.onRetryPreview}
+      />
+    );
+  }
+
+  if (modelKind) {
+    return (
+      <ModelFilePreview
+        {...props.model}
+        name={basename(props.relativePath)}
+        format={modelKind}
+        uri={props.previewUri}
         onRetry={props.onRetryPreview}
       />
     );
@@ -376,6 +398,8 @@ type ThreadFileRouteScreenProps = StaticScreenProps<{
   readonly threadId?: string;
   readonly path: string[];
   readonly line?: string;
+  /** A 3D model camera, as the `#view=` fragment of a model file link. */
+  readonly view?: string;
   readonly cwd?: string;
   readonly projectName?: string;
 }>;
@@ -641,6 +665,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const params = props.route.params;
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
+  const targetView = modelViewFromHash(firstRouteParam(params.view) ?? "");
+  const modelControls = useModelViewerControls();
   const { cwd, environmentId, projectName, relativePath, selectedThread, threadId } =
     useThreadFilesWorkspace(props.route.params);
   const messages = useMessages();
@@ -679,7 +705,6 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   } | null>(null);
   const [textSelectionPath, setTextSelectionPath] = useState<string | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
-  const previewKey = JSON.stringify([environmentId, cwd, relativePath, previewRevision]);
   const [fullScreenPreview, setFullScreenPreview] = useState<FilePreviewSource | null>(null);
   const isVideoFile = relativePath !== null && isVideoPreviewFile(relativePath);
   const isAudioFile = relativePath !== null && !isVideoFile && isAudioPreviewFile(relativePath);
@@ -687,9 +712,18 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     relativePath !== null && !isVideoFile && isWorkspaceBrowserPreviewPath(relativePath);
   const isImageFile =
     relativePath !== null && !isVideoFile && isWorkspaceImagePreviewPath(relativePath);
+  const isModelFile = relativePath !== null && modelPreviewKind({ name: relativePath }) !== null;
+  const previewKey = JSON.stringify([
+    environmentId,
+    threadId,
+    cwd,
+    relativePath,
+    isModelFile ? null : previewRevision,
+  ]);
   const canPreview =
     relativePath !== null &&
     (isMarkdownPreviewFile(relativePath) ||
+      isModelFile ||
       isBrowserFile ||
       isImageFile ||
       isVideoFile ||
@@ -702,11 +736,11 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         ? "source"
         : defaultViewMode(relativePath);
   const resolvedActiveMode =
-    isVideoFile || isAudioFile ? "preview" : canPreview ? activeMode : "source";
+    isVideoFile || isAudioFile || isModelFile ? "preview" : canPreview ? activeMode : "source";
   const assetPreviewPath =
     !metadataPending &&
     directoryPath === null &&
-    (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
+    (isBrowserFile || isImageFile || isVideoFile || isAudioFile || isModelFile)
       ? relativePath
       : null;
   const assetPreview = useWorkspaceFileAssetUrlState({
@@ -754,7 +788,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     assetPreviewUri === null || previewRevision === 0
       ? assetPreviewUri
       : `${assetPreviewUri}${assetPreviewUri.includes("?") ? "&" : "?"}revision=${previewRevision}`;
-  // Remounting the preview after a re-mint is what makes a failed asset URL retryable.
+  // Reloads media with the new authorization. Models keep the same viewer and camera.
   const handleRetryPreview = () => {
     void assetPreview.refresh().finally(() => setPreviewRevision((current) => current + 1));
   };
@@ -840,8 +874,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
 
   const fileMenuActions = (() => {
     if (relativePath === null) return [];
-    const canToggleMode = canPreview && !isImageFile && !isVideoFile && !isAudioFile;
+    const canToggleMode =
+      canPreview && !isImageFile && !isVideoFile && !isAudioFile && !isModelFile;
     return [
+      ...(isModelFile ? modelControls.menuActions : []),
       canToggleMode
         ? ({
             id: "preview",
@@ -949,14 +985,14 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           } as const)
         : null,
       resolvedActiveMode === "preview" &&
-      (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
+      (isBrowserFile || isImageFile || isVideoFile || isAudioFile || isModelFile)
         ? ({
             id: "refresh",
             title: gt("Refresh", { $context: "verb, reloads the file" }),
             icon: "arrow.clockwise",
             inline: false,
             onPress: async () => {
-              if (isVideoFile || isAudioFile) await assetPreview.refresh();
+              if (isVideoFile || isAudioFile || isModelFile) await assetPreview.refresh();
               setPreviewRevision((current) => current + 1);
             },
           } as const)
@@ -1091,6 +1127,26 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           truncated={fileData?.truncated ?? false}
           selectable={selectingText}
           onRefresh={() => fileQuery.refresh()}
+          model={{
+            ...modelControls.viewer,
+            memoryKey: JSON.stringify([
+              "workspace",
+              environmentId,
+              resolveWorkspaceFilePath(cwd, relativePath),
+            ]),
+            linkPath: relativePath,
+            initialView: targetView,
+            draftKey: threadId === null ? null : scopedThreadKey(environmentId, threadId),
+            onSent: () => {
+              if (threadId === null) return;
+              navigation.dispatch(
+                StackActions.popTo("Thread", {
+                  environmentId: String(environmentId),
+                  threadId: String(threadId),
+                }),
+              );
+            },
+          }}
         />
       </ScreenContent>
       <FilePreviewModal

@@ -51,9 +51,12 @@ import {
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import * as Blender from "../blender/Blender.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
 import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { BlenderToolkit } from "./toolkits/blender/tools.ts";
+import * as BlenderHandlers from "./toolkits/blender/handlers.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
@@ -284,6 +287,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   );
   const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
   const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
+  const blender = yield* Effect.serviceOption(Blender.Blender);
   // Every request reads it, and a remote added mid-thread shows the tools within a minute.
   const forgeOfThread = yield* Cache.make({
     capacity: 1_000,
@@ -337,7 +341,17 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread === undefined
         ? undefined
         : yield* Cache.get(forgeOfThread, limited.thread.threadId);
-    return { ...limited, linkedEnvironments, origin, ...(forge === undefined ? {} : { forge }) };
+    const blenderRelevant =
+      limited.thread === undefined || Option.isNone(blender)
+        ? undefined
+        : yield* blender.value.isRelevant(limited.thread.threadId);
+    return {
+      ...limited,
+      linkedEnvironments,
+      origin,
+      ...(forge === undefined ? {} : { forge }),
+      ...(blenderRelevant === undefined ? {} : { blenderRelevant }),
+    };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {
@@ -1366,6 +1380,7 @@ export const layerPullRequestsToolkit = toolkitRegistration(
 ).pipe(Layer.provide(PullRequestWatchService.layer));
 
 const layerIssuesToolkit = toolkitRegistration(IssuesToolkit, IssuesHandlers.layer);
+const layerBlenderToolkit = toolkitRegistration(BlenderToolkit, BlenderHandlers.layer);
 
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
@@ -1433,27 +1448,35 @@ const layerToolExposure = Layer.effect(
   McpToolExposure.McpToolExposure,
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
+    const notify = () => server.notifications["notifications/tools/list_changed"]({});
+    const blender = yield* Effect.serviceOption(Blender.Blender);
+    if (Option.isSome(blender)) {
+      yield* blender.value.relevanceChanges.pipe(Stream.runForEach(notify), Effect.forkScoped);
+    }
     return McpToolExposure.make(
       () =>
         server.tools.map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
-      () => server.notifications["notifications/tools/list_changed"]({}),
+      notify,
     );
   }),
 );
 
 /**
  * A provider session that sends `MCP_TOOL_EXPOSURE_HEADER: deferred` lists only
- * the direct tools and what its `tool_search` calls loaded. Calls are never
- * gated, and every other client lists everything but `tool_search`.
+ * the direct tools and what its `tool_search` calls loaded. Other clients list all
+ * visible tools except `tool_search`. Blender tools appear only in a thread that opened a scene.
  */
 const layerDeferredListing = McpServer.visibility(
   Effect.gen(function* () {
     const exposure = yield* McpToolExposure.McpToolExposure;
     // Untraced: it runs once per tool on every list request.
     return Effect.fnUntraced(function* ({ method, target, headers }: McpServer.MiddlewareOptions) {
+      const scope = Option.getOrUndefined(
+        yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
+      );
+      if (!McpToolExposure.isAllowedBlenderTool(scope, target)) return false;
       if (method !== "tools/list") return true;
-      const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
-      const providerSessionId = Option.getOrUndefined(scope)?.thread?.providerSessionId;
+      const providerSessionId = scope?.thread?.providerSessionId;
       if (headers[MCP_TOOL_EXPOSURE_HEADER] !== "deferred" || providerSessionId === undefined) {
         return target !== McpToolExposure.TOOL_SEARCH;
       }
@@ -1469,4 +1492,6 @@ export const layerToolSearch = Layer.mergeAll(
   layerDeferredListing,
 ).pipe(Layer.provide(layerToolExposure));
 
-export const layer = layerMcpTransport(Layer.mergeAll(layerTools, layerToolSearch));
+export const layer = layerMcpTransport(
+  Layer.mergeAll(layerTools, layerToolSearch, layerBlenderToolkit),
+);

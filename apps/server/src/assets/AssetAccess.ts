@@ -606,6 +606,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   readonly projectFaviconPath?: string;
   /** Where a cloned project's checkout stands, while the clone tracker still knows it. */
   readonly projectCheckout?: "pending" | "cloned";
+  /** A `blender-output`'s retained file, which the Blender service resolved for its thread. */
+  readonly outputPath?: string;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -870,6 +872,23 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       } else {
         fileName = PROJECT_FAVICON_FALLBACK_MARKER;
       }
+      break;
+    }
+    case "blender-output": {
+      if (input.outputPath === undefined) {
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      }
+      // Bound to the file's identity, so a later job's output is never served under this URL.
+      const finalized = yield* finalizeAbsoluteMediaFileAsset({
+        requestedPath: input.outputPath,
+        workspaceRoot: undefined,
+        resource: input.resource,
+        expiresAt,
+      });
+      claims = finalized.claims;
+      fileName = finalized.fileName;
+      imageDimensions = finalized.imageDimensions;
+      fileRevision = finalized.fileRevision;
       break;
     }
     case "tool-output-image": {

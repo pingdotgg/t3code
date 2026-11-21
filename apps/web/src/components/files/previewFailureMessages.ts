@@ -1,4 +1,5 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { isModelPreviewError } from "@t3tools/client-runtime/model-preview/error";
 import { isZipError } from "@t3tools/client-runtime/zip/error";
 import { ZIP_ERROR_MESSAGES } from "@t3tools/client-runtime/zip/error-messages";
 import { msg } from "gt-react";
@@ -133,6 +134,8 @@ const PREVIEW_FAILURE_MESSAGES = {
   "tiff-color-format": msg("This TIFF color format is not supported."),
   "image-decoding-unavailable": msg("Image decoding is unavailable."),
   "image-decode-failed": msg("Could not decode this image."),
+  "model-invalid": msg("This 3D model could not be read."),
+  "model-webgl-unavailable": msg("3D previews need WebGL, which is unavailable in this window."),
 } as const;
 
 export type PreviewFailureCode = keyof typeof PREVIEW_FAILURE_MESSAGES;
@@ -142,6 +145,8 @@ export function previewFailureText(failure: PreviewFailure, resolve: MessageReso
 }
 
 export function previewErrorText(cause: unknown, fallback: string): string {
-  if (isPreviewError(cause) || isZipError(cause)) return m(PREVIEW_FAILURE_MESSAGES[cause.code]);
+  if (isPreviewError(cause) || isZipError(cause) || isModelPreviewError(cause)) {
+    return m(PREVIEW_FAILURE_MESSAGES[cause.code]);
+  }
   return errorDisplayMessage(cause, m) ?? fallback;
 }

@@ -256,6 +256,17 @@ export function normalizeMarkdownLinkDestination(value: string): string {
   return trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
 }
 
+export function encodeMarkdownLinkDestination(path: string): string {
+  return encodeURI(path)
+    .replaceAll("(", "%28")
+    .replaceAll(")", "%29")
+    .replaceAll("#", "%23")
+    .replaceAll("?", "%3F")
+    .replaceAll("&", "%26")
+    .replaceAll(",", "%2C")
+    .replaceAll("\\", "%5C");
+}
+
 export function splitMarkdownLinkSearchAndHash(value: string): {
   readonly path: string;
   readonly hash: string;
@@ -418,16 +429,24 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   const hash = safeDecodeURIComponent(source.hash.trim());
   if (path.length === 0 || hasExternalScheme(path)) return null;
 
-  const position = parseFilePathLink(path, hash);
+  // Escaped delimiters are literal filename characters. Check their path shape
+  // without treating them as raw query or fragment syntax.
+  const shape = stripSlashPrefixedWindowsDrive(
+    safeDecodeURIComponent(source.path.trim().replace(/%(?:23|25|26|2c|3c|3e|3f)/gi, "_")),
+  );
+  const position = parseFilePathLink(path, hash, shape);
   // `src\a.ts` is Windows-relative. A link that already parses keeps its spelling, since POSIX
   // names may contain `\`; a rooted `\\host` or `\foo` would change root if rewritten.
   if (position || /^[\\/]/.test(path) || isWindowsAbsolutePath(path)) return position;
-  return path.includes("\\") ? parseFilePathLink(path.replaceAll("\\", "/"), hash) : null;
+  return path.includes("\\")
+    ? parseFilePathLink(path.replaceAll("\\", "/"), hash, shape.replaceAll("\\", "/"))
+    : null;
 }
 
-function parseFilePathLink(path: string, hash: string): FilePathPosition | null {
+function parseFilePathLink(path: string, hash: string, shape = path): FilePathPosition | null {
   const position = splitFilePathPosition(path, hash);
-  return !ELIDED_PATH_SEGMENT_PATTERN.test(position.path) && looksLikeFilePath(position.path, path)
+  return !ELIDED_PATH_SEGMENT_PATTERN.test(position.path) &&
+    looksLikeFilePath(splitFilePathPosition(shape, hash).path, shape)
     ? position
     : null;
 }

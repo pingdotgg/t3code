@@ -1,4 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { BlenderSettingsPanel } from "../components/settings/BlenderSettings";
 
-// Renamed to /settings/browser; the settings route redirects old links.
-export const Route = createFileRoute("/_chat/settings/integrations")({});
+export const Route = createFileRoute("/_chat/settings/integrations")({
+  component: BlenderSettingsPanel,
+});

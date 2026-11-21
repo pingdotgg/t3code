@@ -102,6 +102,7 @@ describe.each([
     ["~\\reports\\draft.md", "~/reports/draft.md"],
     ["reports/100% #1? draft.md", "./reports/100% #1? draft.md"],
     ["./reports/draft.md", "./reports/draft.md"],
+    ["./reports/draft#1.md", "./reports/draft#1.md"],
   ])("preserves the literal path and line: %s", (path, linkPath) => {
     const markdown = render(`:codex-file-citation{path="${path}" line_range_start="7"}`);
     const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];

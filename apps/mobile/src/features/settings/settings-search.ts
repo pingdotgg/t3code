@@ -80,6 +80,12 @@ const SETTINGS_SEARCH_TERMS = {
     msg("recurring", { $context: "settings search keyword" }),
     msg("webhook", { $context: "settings search keyword" }),
   ],
+  SettingsIntegrations: [
+    "blender",
+    msg("3d models", { $context: "settings search keyword" }),
+    msg("render", { $context: "settings search keyword" }),
+    msg("executable", { $context: "settings search keyword" }),
+  ],
   SettingsProjectOverview: [
     msg("project", { $context: "settings search keyword" }),
     msg("overview", { $context: "settings search keyword" }),

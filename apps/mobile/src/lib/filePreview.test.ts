@@ -1377,8 +1377,9 @@ describe("ThreadInlineFilePreview playback", () => {
 describe("PDF preview detection", () => {
   it.each([
     [{ name: "download", mimeType: "APPLICATION/PDF; charset=binary" }, true],
-    [{ name: "https://example.com/report.pdf?signature=abc#page=2" }, true],
+    [{ name: "https://example.com/report.pdf?signature=abc.stl" }, true],
     [{ name: "report.pdf", mimeType: "text/plain" }, false],
+    [{ name: "bracket.pdf#v2.stl", mimeType: "application/octet-stream" }, false],
     [{ name: "https://example.com/page?download=report.pdf" }, false],
   ])("classifies %j as %s", (file, expected) => {
     expect(isPdfFile(file)).toBe(expected);

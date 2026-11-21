@@ -140,6 +140,7 @@ import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
 import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNotificationsRouteScreen";
+import { SettingsIntegrationsRouteScreen } from "./features/settings/SettingsIntegrationsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { SettingsLabsRouteScreen } from "./features/settings/ThreadSettingsSections";
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
@@ -174,6 +175,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsIssueTracker: msg("Issue tracker"),
   SettingsEnvironmentAgentBehavior: msg("Threads"),
   SettingsWorktrees: msg("Worktrees"),
+  SettingsIntegrations: msg("Integrations"),
   SettingsLabs: msg("Labs"),
   SettingsProviderAccounts: msg("Providers"),
   SettingsEnvironmentMaintenance: msg("Maintenance"),
@@ -273,6 +275,11 @@ const SETTINGS_SCREENS = {
   SettingsWorktrees: createNativeStackScreen({
     screen: SettingsWorktreesRouteScreen,
     linking: "settings/worktrees",
+    options: settingsPage(),
+  }),
+  SettingsIntegrations: createNativeStackScreen({
+    screen: SettingsIntegrationsRouteScreen,
+    linking: "settings/integrations",
     options: settingsPage(),
   }),
   SettingsLabs: createNativeStackScreen({

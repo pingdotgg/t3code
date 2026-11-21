@@ -133,6 +133,12 @@ export const RPC_REQUIRED_SCOPES = {
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
+  // Probing runs only the executable this environment's settings chose, as provider checks do.
+  [WS_METHODS.blenderGetStatus]: AuthOrchestrationReadScope,
+  // Opening a scene runs Blender on the host, as a terminal does, on a workspace file of a
+  // thread; requiredScopesForRpcCall adds orchestration:operate and filesystem:read.
+  [WS_METHODS.blenderOpenScene]: AuthTerminalOperateScope,
+  [WS_METHODS.blenderSubscribeJobs]: AuthOrchestrationReadScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
@@ -309,12 +315,20 @@ const requiredScopesForRpcCall = (
   if (method === WS_METHODS.serverRetryResourceTelemetry) {
     return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
   }
+  if (method === WS_METHODS.blenderOpenScene) {
+    return [
+      requiredScopeForRpcMethod(method),
+      AuthOrchestrationOperateScope,
+      AuthFilesystemReadScope,
+    ];
+  }
   if (method === WS_METHODS.assetsCreateUrl) {
     const { resource } = decodeAssetCreateUrlInput(payload);
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||
       resource._tag === "draft-workspace-file" ||
+      resource._tag === "blender-output" ||
       (resource._tag === "native-app-icon" && resource.app._tag === "app-path")
         ? AuthFilesystemReadScope
         : AuthOrchestrationReadScope,

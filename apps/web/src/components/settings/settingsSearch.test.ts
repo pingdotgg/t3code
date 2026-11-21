@@ -391,6 +391,13 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/storage", "storage-worktrees")).toBe("/settings/worktrees");
     expect(movedSettingsPath("/settings/storage", "")).toBe("/settings/maintenance");
     expect(movedSettingsPath("/settings/integrations", "devices")).toBe("/settings/devices");
+    expect(movedSettingsPath("/settings/integrations", "")).toBeNull();
+    expect(movedSettingsPath("/settings/blender", "blender-executable")).toBe(
+      "/settings/integrations",
+    );
+    expect(searchSettings("Blender").find((item) => item.id === "blender-enabled")?.to).toBe(
+      "/settings/integrations",
+    );
     expect(movedSettingsPath("/settings/beta", "")).toBe("/settings/labs");
   });
 

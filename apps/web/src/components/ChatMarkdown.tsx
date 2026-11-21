@@ -1,4 +1,8 @@
 import { m } from "../i18n/messages";
+import {
+  modelViewFromHref,
+  type ModelCameraView,
+} from "@t3tools/client-runtime/model-preview/annotations";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
@@ -243,6 +247,7 @@ import {
   nodeToPlainText,
 } from "./chat/MarkdownCodeBlock.logic";
 import { reportMarkdownActionFailure } from "./chat/markdownActionFailure";
+import { openFileAtModelView } from "./files/modelAnnotations";
 
 const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
@@ -893,10 +898,15 @@ function useChatMarkdownState({
     }
     return findAgentDirectoryMatch(workspaceRelativePath, agentRoots, searchRoot);
   };
-  const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
+  const openFileInPanel = (
+    fileLinkMeta: MarkdownFileLinkMeta,
+    panelPath: string,
+    modelView: ModelCameraView | null,
+  ) => {
     if (!threadRef) return;
+    // A 3D model link can carry a saved camera; the preview applies it once it shows the file.
     const openAt = (path: string) =>
-      useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
+      openFileAtModelView(threadRef, path, modelView, fileLinkMeta.line);
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||
@@ -992,7 +1002,9 @@ function useChatMarkdownState({
         resolveCopyPaths={async () =>
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
         }
-        onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
+        onOpenInPanel={(path) =>
+          openFileInPanel(fileLinkMeta, path, mediaSource ? modelViewFromHref(mediaSource) : null)
+        }
         onOpenMedia={
           threadRef && canPreviewMedia
             ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)

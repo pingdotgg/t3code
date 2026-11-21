@@ -2025,7 +2025,7 @@ it.effect(
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("lists optional tools to a deferring client only after tool_search loads them", () =>
+it.effect("defers optional tools and exposes Blender only in a thread that opened a scene", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const scopeFor = (token: string): McpInvocationContext.McpThreadInvocationScope => ({
@@ -2040,9 +2040,11 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         capabilities: new Set(["orchestration"]),
         issuedAt: 1,
       });
-      const scopes = new Map([
+      const scopes = new Map<string, McpInvocationContext.McpThreadInvocationScope>([
         ["deferringToken", scopeFor("deferringToken")],
         ["otherToken", scopeFor("otherToken")],
+        ["blenderDeferred", { ...scopeFor("blenderDeferred"), blenderRelevant: true }],
+        ["blenderFlat", { ...scopeFor("blenderFlat"), blenderRelevant: true }],
       ]);
       const tool = (name: string, description: string) =>
         Tool.make(name, {
@@ -2055,6 +2057,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         tool("delegate_task", "Delegates a task."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
+        tool("blender_probe", "Reports Blender readiness."),
       );
       const reads = McpToolAccess.reads(() => Effect.succeed({}));
       const serverLayer = McpHttpServer.layerMcpTransport(
@@ -2065,6 +2068,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               delegate_task: reads,
               preview_open: reads,
               schedule_task: reads,
+              blender_probe: reads,
             }),
           ),
           McpHttpServer.layerToolSearch,
@@ -2137,6 +2141,30 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
 
       const deferring = yield* session("deferringToken", true);
       const other = yield* session("otherToken", false);
+      const blenderDeferred = yield* session("blenderDeferred", true);
+      const blenderFlat = yield* session("blenderFlat", false);
+      expect(yield* blenderFlat.listed).toEqual([
+        "blender_probe",
+        "delegate_task",
+        "preview_open",
+        "schedule_task",
+      ]);
+      expect(yield* blenderDeferred.listed).toEqual(["delegate_task", "tool_search"]);
+      expect((yield* blenderFlat.call("blender_probe", {})).structuredContent).toEqual({});
+      expect(yield* other.call("blender_probe", {})).toBeUndefined();
+      expect(
+        (yield* deferring.call("tool_search", { query: "blender" })).structuredContent,
+      ).toEqual({ tools: [] });
+      expect(
+        (yield* blenderDeferred.call("tool_search", { query: "blender" })).structuredContent,
+      ).toEqual({ tools: [{ name: "blender_probe", description: "Reports Blender readiness." }] });
+      expect(yield* blenderDeferred.listed).toEqual([
+        "blender_probe",
+        "delegate_task",
+        "tool_search",
+      ]);
+      scopes.set("blenderDeferred", scopeFor("blenderDeferred"));
+      expect(yield* blenderDeferred.listed).toEqual(["delegate_task", "tool_search"]);
       expect(yield* deferring.listed).toEqual(["delegate_task", "tool_search"]);
       expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
       // Unlisted tools stay callable.

@@ -276,6 +276,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
       ],
     },
     {
+      rows: [serverPage("SettingsIntegrations", "cable.connector", gt("Integrations"))],
+    },
+    {
       title: gt("Code"),
       rows: [
         page(

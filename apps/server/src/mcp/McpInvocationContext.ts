@@ -149,6 +149,8 @@ export interface McpInvocationScope {
   readonly issuedAt: number;
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
+  /** The thread opened a `.blend`, so its agent sees the Blender tools. Discovery only. */
+  readonly blenderRelevant?: boolean;
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;

@@ -1,4 +1,6 @@
 import { copySnapshot } from "./copySnapshot";
+import type { ModelCameraView } from "@t3tools/client-runtime/model-preview/annotations";
+import { openFileAtModelView } from "../files/modelAnnotations";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
@@ -736,6 +738,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     openFile: setPreviewFileId,
     openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
+    openModelView: (path: string, view: ModelCameraView) =>
+      openFileAtModelView(routeThreadRef, path, view),
     expandVideo: (fileId: string) => {
       const file = composerFiles.find((candidate) => candidate.id === fileId);
       if (!file || !isVideoAttachment(file)) return;
@@ -3683,6 +3687,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
+                    composerDraftTarget={composerDraftTarget}
                     onRemove={removeComposerFileFromDraft}
                     onPreviewFileIdChange={setPreviewFileId}
                   />

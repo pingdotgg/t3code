@@ -1,6 +1,12 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
+import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
+
+/** Lists and dispatches Blender tools only for a thread that opened a scene. */
+export const isAllowedBlenderTool = (scope: McpInvocationScope | undefined, tool: string) =>
+  !tool.startsWith("blender_") || (scope?.thread !== undefined && scope.blenderRelevant === true);
+
 export const TOOL_SEARCH = "tool_search";
 
 /** What a deferring client lists before it searches. Pi's extension declares the same three. */
@@ -25,7 +31,7 @@ export class McpToolExposure extends Context.Service<
   {
     /** Finds tools for the query and lists them to the session from now on. */
     readonly search: (
-      providerSessionId: string,
+      scope: McpThreadInvocationScope,
       query: string,
     ) => Effect.Effect<ReadonlyArray<ListedTool>>;
     readonly isListed: (providerSessionId: string, tool: string) => boolean;
@@ -60,13 +66,13 @@ export const make = (
     }
   };
   return McpToolExposure.of({
-    search: Effect.fn("McpToolExposure.search")(function* (providerSessionId, query) {
+    search: Effect.fn("McpToolExposure.search")(function* (scope, query) {
       const terms = query
         .toLowerCase()
         .split(/[^a-z0-9_]+/u)
         .filter(Boolean);
       const found = tools()
-        .filter((tool) => tool.name !== TOOL_SEARCH)
+        .filter((tool) => tool.name !== TOOL_SEARCH && isAllowedBlenderTool(scope, tool.name))
         .map((tool) => ({ tool, score: score(tool, terms) }))
         .filter((match) => match.score > 0)
         .sort((a, b) => b.score - a.score)
@@ -74,7 +80,7 @@ export const make = (
         .map((match) => match.tool);
       if (found.length > 0) {
         load(
-          providerSessionId,
+          scope.thread.providerSessionId,
           found.map((tool) => tool.name),
         );
         yield* announceListChanged();

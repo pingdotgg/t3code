@@ -354,6 +354,14 @@ import {
   DeviceShutdownInput,
 } from "./device.ts";
 import {
+  BlenderJob,
+  BlenderJobEvent,
+  BlenderOpenSceneInput,
+  BlenderRequestError,
+  BlenderStatus,
+  BlenderSubscribeJobsInput,
+} from "./blender.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
@@ -610,6 +618,10 @@ export const WS_METHODS = {
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+
+  blenderGetStatus: "blender.getStatus",
+  blenderOpenScene: "blender.openScene",
+  blenderSubscribeJobs: "blender.subscribeJobs",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -1141,6 +1153,25 @@ const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
   payload: ServerSignalProcessInput,
   success: ServerSignalProcessResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsBlenderGetStatusRpc = Rpc.make(WS_METHODS.blenderGetStatus, {
+  payload: Schema.Struct({}),
+  success: BlenderStatus,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsBlenderOpenSceneRpc = Rpc.make(WS_METHODS.blenderOpenScene, {
+  payload: BlenderOpenSceneInput,
+  success: BlenderJob,
+  error: Schema.Union([BlenderRequestError, ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsBlenderSubscribeJobsRpc = Rpc.make(WS_METHODS.blenderSubscribeJobs, {
+  payload: BlenderSubscribeJobsInput,
+  success: BlenderJobEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
 });
 
 const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
@@ -2404,6 +2435,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerCheckOtlpEndpointRpc,
+  WsBlenderGetStatusRpc,
+  WsBlenderOpenSceneRpc,
+  WsBlenderSubscribeJobsRpc,
   WsServerListTextGeneratorModelsRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,

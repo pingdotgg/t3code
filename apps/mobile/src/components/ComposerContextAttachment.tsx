@@ -22,11 +22,14 @@ import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
 import { AppText as Text } from "./ui/AppText";
 import { FilePreviewModal } from "./ui/FilePreviewModal";
 import { PresentationSource } from "./ui/NativePresentation";
+import { ModelAnnotationScreenshotPreview } from "../features/files/ModelAnnotationScreenshotPreview";
 
 export function ComposerContextAttachment(props: {
   record: Extract<ComposerContextRecord, { attachmentId: string }>;
   environmentId?: EnvironmentId;
   attachment?: DraftComposerAttachment;
+  /** Shows an image as a framed screenshot whose transparent areas take the theme. */
+  framed?: boolean;
 }) {
   const gt = useGT();
   const { record, attachment } = props;
@@ -36,9 +39,7 @@ export function ComposerContextAttachment(props: {
     attachmentId: record.attachmentId,
     fileName: record.name,
   };
-  const local = attachment?.fileUri
-    ? (attachment as DraftComposerAttachment & { fileUri: string })
-    : undefined;
+  const local = attachment && isFileBackedComposerAttachment(attachment) ? attachment : undefined;
   const inlineUri = composerAttachmentInlineUri(attachment);
   const remoteEnvironmentId = local || inlineUri ? null : (props.environmentId ?? null);
   const asset = useAssetUrlState(remoteEnvironmentId, resource);
@@ -85,6 +86,32 @@ export function ComposerContextAttachment(props: {
       );
     }
   };
+  let preview = null;
+  if (previewOpen && record.kind === "image" && uri) {
+    const actionsSource = {
+      name: record.name,
+      mimeType: record.mimeType,
+      ...(local
+        ? { attachment: local }
+        : inlineUri === undefined && props.environmentId
+          ? { environmentId: props.environmentId, resource }
+          : { uri }),
+    };
+    const close = () => setPreviewOpen(false);
+    preview = props.framed ? (
+      <ModelAnnotationScreenshotPreview
+        uri={uri}
+        name={record.name}
+        actionsSource={actionsSource}
+        onClose={close}
+      />
+    ) : (
+      <FilePreviewModal
+        source={{ kind: "image", name: record.name, uri, actionsSource }}
+        onRequestClose={close}
+      />
+    );
+  }
   return (
     <View className="gap-3">
       {record.kind === "image" && uri ? (
@@ -93,16 +120,18 @@ export function ComposerContextAttachment(props: {
           accessibilityLabel={gt("Preview {name}", { name: record.name })}
           onPress={() => setPreviewOpen(true)}
         >
-          <Image
-            source={
-              remoteEnvironmentId === null
-                ? { uri }
-                : assetImageSource(remoteEnvironmentId, resource, uri)
-            }
-            style={{ width: "100%", height: 280 }}
-            contentFit="contain"
-            accessibilityLabel={record.name}
-          />
+          <View className={props.framed ? "overflow-hidden rounded-xl bg-grouped-card" : undefined}>
+            <Image
+              source={
+                remoteEnvironmentId === null
+                  ? { uri }
+                  : assetImageSource(remoteEnvironmentId, resource, uri)
+              }
+              style={{ width: "100%", height: props.framed ? 214 : 280 }}
+              contentFit="contain"
+              accessibilityLabel={record.name}
+            />
+          </View>
         </Pressable>
       ) : null}
       {error || (!local && asset._tag === "Failure") ? (
@@ -120,25 +149,7 @@ export function ComposerContextAttachment(props: {
           loading={sharing}
         />
       </PresentationSource>
-      {previewOpen && record.kind === "image" && uri ? (
-        <FilePreviewModal
-          source={{
-            kind: "image",
-            name: record.name,
-            uri,
-            actionsSource: {
-              name: record.name,
-              mimeType: record.mimeType,
-              ...(attachment && isFileBackedComposerAttachment(attachment)
-                ? { attachment }
-                : inlineUri === undefined && props.environmentId
-                  ? { environmentId: props.environmentId, resource }
-                  : { uri }),
-            },
-          }}
-          onRequestClose={() => setPreviewOpen(false)}
-        />
-      ) : null}
+      {preview}
     </View>
   );
 }

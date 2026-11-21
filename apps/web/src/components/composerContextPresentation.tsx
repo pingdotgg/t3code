@@ -13,6 +13,8 @@ import { createContext, type ReactElement, type ReactNode, use } from "react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import type { MessageResolver } from "../i18n/messages";
 import { ComposerContextActionsContext } from "./composerContextActions";
+import { modelAnnotationFileTarget } from "@t3tools/client-runtime/model-preview/annotations";
+import { Button } from "./ui/button";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
 import { composerFileNeedsReattach } from "~/composerDraftStore";
@@ -413,8 +415,10 @@ function ComposerPreviewAnnotationDetails({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const actions = use(ComposerContextActionsContext);
   const summary = previewAnnotationTooltip(annotation, m);
   const screenshotUrl = annotation.screenshot?.dataUrl || screenshot?.previewUrl;
+  const modelTarget = modelAnnotationFileTarget(annotation.pageUrl);
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-background/70">
       {screenshotUrl ? (
@@ -431,6 +435,17 @@ function ComposerPreviewAnnotationDetails({
       <div className="whitespace-pre-wrap wrap-break-word px-3 py-2.5 text-sm text-foreground">
         {summary}
       </div>
+      {modelTarget ? (
+        <div className="flex justify-end px-3 pb-2.5">
+          <Button
+            size="micro"
+            variant="outline"
+            onClick={() => actions.openModelView(modelTarget.path, modelTarget.view)}
+          >
+            <T>Open view</T>
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

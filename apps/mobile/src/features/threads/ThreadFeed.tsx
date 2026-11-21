@@ -1,4 +1,9 @@
 import { CollapsibleUserMessageBody } from "./CollapsibleUserMessageBody";
+import {
+  formatModelViewHash,
+  modelViewFromHref,
+  type ModelCameraView,
+} from "@t3tools/client-runtime/model-preview/annotations";
 import { msg, T, useGT, useLocale, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
@@ -2908,6 +2913,17 @@ function UserMessageContent(props: UserMessageContentProps) {
           records={props.context?.records}
           record={props.context?.records.find((record) => record.contextId === selected.contextId)}
           onClose={() => setSelected(null)}
+          {...(selectedThread
+            ? {
+                onOpenModelView: (path: string, view: ModelCameraView) =>
+                  navigation.navigate("ThreadFile", {
+                    environmentId: String(props.environmentId),
+                    threadId: String(selectedThread.id),
+                    path: fileRoutePathSegments(path),
+                    view: formatModelViewHash(view),
+                  }),
+              }
+            : {})}
         />
       ) : null}
     </>
@@ -3498,11 +3514,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       void findFileLinkTarget(presentation.path, path, request.signal, reply).then((target) => {
         if (request.signal.aborted) return;
         void Haptics.selectionAsync();
+        const view = modelViewFromHref(href);
         navigation.navigate("ThreadFile", {
           environmentId: String(props.environmentId),
           threadId: String(props.threadId),
           path: fileRoutePathSegments(target),
           ...(presentation.line ? { line: String(presentation.line) } : {}),
+          // A 3D model link can carry a saved camera.
+          ...(view ? { view: formatModelViewHash(view) } : {}),
         });
       });
       return;

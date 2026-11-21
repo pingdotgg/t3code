@@ -702,6 +702,16 @@ describe("serverSettings helpers", () => {
     expect(Object.keys(removed.secretProviders)).toEqual([work]);
   });
 
+  it("keeps Blender off by default and merges its toggle and override separately", () => {
+    expect(DEFAULT_SERVER_SETTINGS.blender).toEqual({ enabled: false, executablePath: "" });
+    // Each edit was made against the defaults, so neither may reset the other's field.
+    const overridden = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      blender: { executablePath: "/opt/blender-4.5/blender" },
+    });
+    const enabled = applyServerSettingsPatch(overridden, { blender: { enabled: true } });
+    expect(enabled.blender).toEqual({ enabled: true, executablePath: "/opt/blender-4.5/blender" });
+  });
+
   it("replaces and removes individual usage prices without clobbering other models", () => {
     const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
     const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {

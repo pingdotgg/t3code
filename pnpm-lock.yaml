@@ -1514,6 +1514,9 @@ importers:
 
   packages/client-runtime:
     dependencies:
+      '@noble/hashes':
+        specifier: 'catalog:'
+        version: 1.8.0
       '@pierre/diffs':
         specifier: 1.7.0-beta.4
         version: 1.7.0-beta.4(patch_hash=7edcdd484a99c7ec0b2667499c4cb21d113ec9bea1f8570c0b0a030d33bbf1cd)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)

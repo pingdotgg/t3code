@@ -8,7 +8,8 @@ import {
   Texture,
 } from "three";
 import { expect, it, vi } from "vite-plus/test";
-import { createImportedPhoneScene, disposeDeviceModel } from "./modelScene.ts";
+import { disposeThreeObject } from "../three/disposeObject.ts";
+import { createImportedPhoneScene } from "./modelScene.ts";
 import { phoneDisplayLayout } from "./phoneScene.ts";
 
 function asset() {
@@ -39,7 +40,7 @@ it("rejects touches from the rear and preserves borrowed textures when releasing
   expect(borrowed).not.toHaveBeenCalled();
   expect(geometry).not.toHaveBeenCalled();
   expect(screen.material.map).toBeNull();
-  disposeDeviceModel(root);
+  disposeThreeObject(root);
   expect(owned).toHaveBeenCalledOnce();
   expect(geometry).toHaveBeenCalledOnce();
   expect(borrowed).not.toHaveBeenCalled();
@@ -65,6 +66,6 @@ it("rejects missing and incorrectly normalized displays before changing their ma
   expect(() =>
     createImportedPhoneScene(root, texture, phoneDisplayLayout(null, 1206, 2622)),
   ).toThrow("one device-screen");
-  disposeDeviceModel(root);
+  disposeThreeObject(root);
   texture.dispose();
 });

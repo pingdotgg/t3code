@@ -24,6 +24,7 @@ const SECTIONS = [
     rows: [
       { id: "SettingsProviderAccounts", label: "Provider accounts" },
       { id: "SettingsEnvironmentSourceControl", label: "Source control & issues" },
+      { id: "SettingsIntegrations", label: "Integrations" },
     ],
   },
 ];
@@ -50,9 +51,12 @@ describe("filterSettingsSections", () => {
     { query: "dark mode", expected: [["Interface", ["Appearance"]]] },
     { query: "microphone", expected: [["Interface", ["Voice"]]] },
     { query: "agent credits", expected: [["Server settings", ["Source control & issues"]]] },
+    { query: "blender", expected: [["Server settings", ["Integrations"]]] },
     {
       query: "server settings",
-      expected: [["Server settings", ["Provider accounts", "Source control & issues"]]],
+      expected: [
+        ["Server settings", ["Provider accounts", "Source control & issues", "Integrations"]],
+      ],
     },
     {
       query: "accounts",

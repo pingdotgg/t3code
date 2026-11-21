@@ -59,6 +59,10 @@
       "types": "./src/imageAttachmentSize.ts",
       "default": "./src/imageAttachmentSize.ts"
     },
+    "./data-url": {
+      "types": "./src/dataUrl.ts",
+      "default": "./src/dataUrl.ts"
+    },
     "./diff-file-order": {
       "types": "./src/diffFileOrder.ts",
       "default": "./src/diffFileOrder.ts"
@@ -539,6 +543,22 @@
       "types": "./src/device/frame.ts",
       "default": "./src/device/frame.ts"
     },
+    "./model-preview/annotations": {
+      "types": "./src/modelPreview/annotations.ts",
+      "default": "./src/modelPreview/annotations.ts"
+    },
+    "./model-preview/archive": {
+      "types": "./src/modelPreview/archive.ts",
+      "default": "./src/modelPreview/archive.ts"
+    },
+    "./model-preview/error": {
+      "types": "./src/modelPreview/error.ts",
+      "default": "./src/modelPreview/error.ts"
+    },
+    "./model-preview/scene": {
+      "types": "./src/modelPreview/scene.ts",
+      "default": "./src/modelPreview/scene.ts"
+    },
     "./device/phone-viewer": {
       "types": "./src/device/phoneViewer.ts",
       "default": "./src/device/phoneViewer.ts"
@@ -657,6 +677,7 @@
     "test": "vp test run"
   },
   "dependencies": {
+    "@noble/hashes": "catalog:",
     "@pierre/diffs": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/issue-tracker-linear": "workspace:*",

@@ -6,6 +6,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
 } from "./chatAttachment.ts";
+import { BlenderJobId, BlenderJobOutput } from "./blender.ts";
 import { ProjectFaviconPath } from "./project.ts";
 import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 import { EnvironmentThemeId } from "./server.ts";
@@ -54,6 +55,13 @@ export const AssetResource = Schema.Union([
     threadId: ThreadId,
     itemId: TurnItemId,
     index: NonNegativeInt,
+  }),
+  // A completed Blender job's output, kept privately by the environment that ran it.
+  Schema.TaggedStruct("blender-output", {
+    threadId: ThreadId,
+    jobId: BlenderJobId,
+    output: BlenderJobOutput,
+    revision: Schema.optionalKey(NonNegativeInt),
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),

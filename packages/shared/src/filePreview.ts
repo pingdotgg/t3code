@@ -21,6 +21,7 @@ export type FilePreviewKind =
   | "markdown"
   | "mermaid"
   | "font"
+  | "model"
   | "archive"
   | "sqlite"
   | "docx"
@@ -46,6 +47,7 @@ export function filePreviewKind(
   const richDocuments = options?.richDocuments !== false;
   const office = richDocuments ? officePreviewKind(file) : null;
   if (office) return office;
+  if (richDocuments && modelPreviewKind(file)) return "model";
   const binary = binaryPreviewKind(file);
   if (binary) return binary;
   if (mime === "application/pdf") return "pdf";
@@ -106,6 +108,11 @@ const BINARY_MIME_TYPES = new Map([
   [".db", "application/vnd.sqlite3"],
 ]);
 
+const ZIP_MIME_TYPES: ReadonlySet<string> = new Set([
+  "application/zip",
+  "application/x-zip-compressed",
+]);
+
 export function binaryPreviewKind(file: {
   readonly name: string;
   readonly mimeType?: string;
@@ -114,9 +121,8 @@ export function binaryPreviewKind(file: {
   if (["application/vnd.sqlite3", "application/x-sqlite3", "application/x-sqlite"].includes(mime))
     return "sqlite";
   if (
+    ZIP_MIME_TYPES.has(mime) ||
     [
-      "application/zip",
-      "application/x-zip-compressed",
       "application/java-archive",
       "application/x-java-archive",
       "application/x-tar",
@@ -130,6 +136,43 @@ export function binaryPreviewKind(file: {
   const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
   const inferred = BINARY_MIME_TYPES.get(extension);
   return inferred === "application/vnd.sqlite3" ? "sqlite" : inferred ? "archive" : null;
+}
+
+const MODEL_MIME_TYPES = {
+  stl: "model/stl",
+  "3mf": "model/3mf",
+  glb: "model/gltf-binary",
+} as const;
+
+export type ModelPreviewKind = keyof typeof MODEL_MIME_TYPES;
+
+// Aliases that OS MIME databases and browsers report for the same formats.
+const MODEL_MIME_ALIASES = new Map<string, ModelPreviewKind>([
+  ["model/x.stl-ascii", "stl"],
+  ["model/x.stl-binary", "stl"],
+  ["application/sla", "stl"],
+  ["application/vnd.ms-pki.stl", "stl"],
+  ["application/vnd.ms-3mfdocument", "3mf"],
+  ["application/vnd.ms-package.3dmanufacturing-3dmodel+xml", "3mf"],
+]);
+
+/** STL, 3MF and GLB meshes the web file preview renders in 3D. */
+export function modelPreviewKind(file: {
+  readonly name: string;
+  readonly mimeType?: string;
+}): ModelPreviewKind | null {
+  const mime = file.mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  for (const kind of Object.keys(MODEL_MIME_TYPES) as ModelPreviewKind[]) {
+    if (mime === MODEL_MIME_TYPES[kind]) return kind;
+  }
+  const alias = MODEL_MIME_ALIASES.get(mime);
+  if (alias) return alias;
+  if (ZIP_MIME_TYPES.has(mime) && file.name.toLowerCase().endsWith(".3mf")) return "3mf";
+  if (mime && !GENERIC_MIME_TYPES.has(mime) && mime !== "text/plain") return null;
+  const dot = file.name.lastIndexOf(".");
+  if (dot < 0) return null;
+  const extension = file.name.slice(dot + 1).toLowerCase();
+  return Object.hasOwn(MODEL_MIME_TYPES, extension) ? (extension as ModelPreviewKind) : null;
 }
 
 export const FILE_TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
@@ -210,6 +253,9 @@ export function hostPreviewMimeTypeFromExtension(extension: string): string | nu
     BROWSER_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ??
     FONT_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ??
     BINARY_MIME_TYPES.get(extension.toLowerCase()) ??
+    (Object.hasOwn(MODEL_MIME_TYPES, extension.toLowerCase().slice(1))
+      ? MODEL_MIME_TYPES[extension.toLowerCase().slice(1) as ModelPreviewKind]
+      : null) ??
     (Object.hasOwn(OFFICE_MIME_TYPES, extension.toLowerCase().slice(1))
       ? OFFICE_MIME_TYPES[extension.toLowerCase().slice(1) as OfficePreviewKind]
       : null) ??
@@ -237,6 +283,7 @@ export function isWorkspacePreviewEntryPath(path: string): boolean {
     isWorkspaceImagePreviewPath(path) ||
     isWorkspaceFontPreviewPath(path) ||
     officePreviewKind({ name: path }) !== null ||
+    modelPreviewKind({ name: path }) !== null ||
     binaryPreviewKind({ name: path }) !== null
   );
 }

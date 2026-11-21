@@ -7,6 +7,7 @@ import {
   withI18nMessage,
 } from "../errors/translatable.ts";
 import {
+  type BlenderJob,
   type DesktopUpdateChannel,
   type EnvironmentId,
   type ProviderInstanceId,
@@ -1571,6 +1572,36 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetNpmRelease,
       staleTimeMs: 60_000,
       refreshIntervalMs: 5 * 60_000,
+    }),
+    blenderOpenScene: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:blender:open-scene",
+      tag: WS_METHODS.blenderOpenScene,
+    }),
+    blenderJobs: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:blender:jobs",
+      idleTtlMs: 0,
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.blenderSubscribeJobs>) =>
+        subscribe(WS_METHODS.blenderSubscribeJobs, input).pipe(
+          Stream.mapAccum(
+            (): ReadonlyArray<BlenderJob> => [],
+            (jobs, event) => {
+              const next =
+                event._tag === "Snapshot"
+                  ? event.jobs
+                  : event._tag === "Removed"
+                    ? jobs.filter((job) => job.id !== event.jobId)
+                    : [event.job, ...jobs.filter((job) => job.id !== event.job.id)];
+              const ordered = [...next].sort((a, b) => b.sequence - a.sequence).slice(0, 24);
+              return [ordered, [ordered]] as const;
+            },
+          ),
+        ),
+    }),
+    // Each read probes the destination's Blender, so it reruns only on mount or an explicit refresh.
+    blenderStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:blender:status",
+      tag: WS_METHODS.blenderGetStatus,
+      idleTtlMs: 0,
     }),
     processDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-diagnostics",

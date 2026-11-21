@@ -48,6 +48,7 @@ import {
   type ComposerDocumentAttachment,
 } from "../lib/composerContext";
 import { m } from "../i18n/messages";
+import type { ModelCameraView } from "@t3tools/client-runtime/model-preview/annotations";
 
 export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly draftKey?: string | null;
@@ -55,6 +56,8 @@ export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly environmentId?: EnvironmentId;
   readonly onOpenMention?: (path: string) => void;
   readonly onOpenAttachment?: (attachment: ComposerDocumentAttachment) => void;
+  /** Opens a 3D model at the camera an annotation in the draft saved. */
+  readonly onOpenModelView?: (path: string, view: ModelCameraView) => void;
   readonly chipsInert?: boolean;
   readonly onInertChipPress?: () => void;
 };
@@ -65,6 +68,7 @@ export function ComposerEditor({
   environmentId,
   onOpenMention,
   onOpenAttachment,
+  onOpenModelView,
   chipsInert,
   onInertChipPress,
   ...props
@@ -340,6 +344,7 @@ export function ComposerEditor({
             setSelected(null);
             openThreadLink(thread);
           }}
+          {...(onOpenModelView ? { onOpenModelView } : {})}
           environmentId={environmentId ?? draft.project?.environmentId}
           projectId={draft.project?.projectId}
           records={draft.context?.records}

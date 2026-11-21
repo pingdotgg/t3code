@@ -93,6 +93,7 @@ import {
   serverProviderDeltas,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   SOURCE_CONTROL_MEDIA_ASSET,
@@ -264,6 +265,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
+import * as Blender from "./blender/Blender.ts";
 import * as TextGenerators from "./textGeneration/TextGenerators.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
@@ -1590,6 +1592,7 @@ export const layerWsRpc = (
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const secretCheck = yield* SecretCheck.SecretCheck;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
+      const blender = yield* Blender.Blender;
       const textGenerators = yield* TextGenerators.TextGenerators;
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -2786,6 +2789,9 @@ export const layerWsRpc = (
               ),
             ),
           ),
+        [WS_METHODS.blenderGetStatus]: (_input) => blender.status,
+        [WS_METHODS.blenderOpenScene]: (input) => blender.openScene(input),
+        [WS_METHODS.blenderSubscribeJobs]: (input) => blender.streamThreadJobs(input.threadId),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) => relayClient.resolve,
         [WS_METHODS.cloudInstallRelayClient]: (_input) =>
           Stream.callback<RelayClientInstallProgressEvent, RelayClientInstallFailedError>((queue) =>
@@ -3106,6 +3112,16 @@ export const layerWsRpc = (
                 !isNetworkPath(input.resource.path))
             ) {
               return yield* issueAssetUrl({ resource: input.resource });
+            }
+            if (input.resource._tag === "blender-output") {
+              const outputPath = yield* blender
+                .outputFile(input.resource)
+                .pipe(
+                  Effect.mapError(
+                    () => new AssetWorkspaceAssetNotFoundError({ resource: input.resource }),
+                  ),
+                );
+              return yield* issueAssetUrl({ resource: input.resource, outputPath });
             }
             if (input.resource._tag === "draft-workspace-file") {
               return yield* issueAssetUrl({

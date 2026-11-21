@@ -80,6 +80,7 @@ describe("parseMarkdownFileLink", () => {
     ["+page.svelte", "+page.svelte"],
     ["[id].tsx", "[id].tsx"],
     ["/\\server\\share\\x.ts", "/\\server\\share\\x.ts"],
+    ["out%5Cbracket%2Crev2.stl", "out/bracket,rev2.stl"],
   ])("recognizes %s as a file", (href, path) => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
@@ -90,6 +91,12 @@ describe("parseMarkdownFileLink", () => {
     "docs/My File (draft).md",
     "@scope/package.json",
     "$postId.tsx",
+    "out/bracket#2.ts",
+    "out/bracket?.ts",
+    "out/bracket%23.ts",
+    "docs/foo<bar>.md",
+    "out/bracket,rev2.stl",
+    "out/bracket&rev2.stl",
   ])("reads back the composer's link to %s", (path) => {
     const destination = /\]\((.*)\)$/.exec(serializeComposerFileLink(path))?.[1];
     expect(parseMarkdownFileLink(destination ?? "")?.path).toBe(path);

@@ -140,6 +140,12 @@ vi.mock("./SourceFileSurface", () => ({
   SourceFileSurface: (props: { readonly contents: string }) => <pre>{props.contents}</pre>,
 }));
 vi.mock("./AudioFilePreview", () => ({ AudioFilePreview: () => null }));
+vi.mock("./ModelFilePreview", () => ({
+  ModelFilePreview: (props: { readonly name: string; readonly format: string }) => (
+    <div aria-label={`3D view of ${props.name}`}>{props.format}</div>
+  ),
+  useModelViewerControls: () => ({ viewer: {}, menuActions: [] }),
+}));
 vi.mock("./FileMarkdownPreview", () => ({ FileMarkdownPreview: () => null }));
 vi.mock("./WorkspaceFileWebPreview", () => ({ WorkspaceFileWebPreview: () => null }));
 vi.mock("../threads/HtmlRenderWebView", () => ({ HtmlRenderWebView: () => null }));
@@ -209,7 +215,12 @@ function setup() {
   };
 }
 
-it("opens a ZIP chat attachment as a browsable archive on the attachment file screen", async () => {
+it.each([
+  ["archive.zip", "application/zip", null],
+  ["model.3mf", "application/zip", "3mf"],
+  ["model.3mf", "application/vnd.ms-package.3dmanufacturing-3dmodel+xml", "3mf"],
+  ["model.stl", "text/plain", "stl"],
+])("opens %s (%s) in its viewer", async (name, mimeType, modelFormat) => {
   const screen = setup();
   server.capabilities = {
     repositoryIdentity: false,
@@ -229,14 +240,22 @@ it("opens a ZIP chat attachment as a browsable archive on the attachment file sc
             environmentId: "environment-1",
             threadId: "thread-1",
             attachmentId: "attachment-1",
-            name: "archive.zip",
-            mimeType: "application/zip",
+            name,
+            mimeType,
             sizeBytes: "200",
           },
         }}
       />,
     ),
   );
+  if (modelFormat !== null) {
+    await screen.settle(() =>
+      expect(screen.container.querySelector(`[aria-label="3D view of ${name}"]`)?.textContent).toBe(
+        modelFormat,
+      ),
+    );
+    return;
+  }
   await screen.settle(() =>
     expect(screen.container.querySelector('[aria-label="first.txt"]')).not.toBeNull(),
   );

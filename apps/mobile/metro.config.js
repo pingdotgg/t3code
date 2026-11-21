@@ -18,6 +18,7 @@ const licenseGeneratorSource = path.join(
 const escapedWorkspaceRoot = workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const generatedDeviceStreamRoot = path.join(__dirname, ".generated", "device-stream");
 const generatedPreviewStreamRoot = path.join(__dirname, ".generated", "preview-stream");
+const generatedModelViewerRoot = path.join(__dirname, ".generated", "model-viewer");
 
 config.watchFolders = [...new Set([...(config.watchFolders ?? []), workspaceRoot])];
 config.resolver = {
@@ -35,6 +36,7 @@ config.resolver = {
     "@t3tools/mobile-third-party-licenses": generatedLicenseModuleRoot,
     "@t3tools/mobile-device-stream": generatedDeviceStreamRoot,
     "@t3tools/mobile-preview-stream": generatedPreviewStreamRoot,
+    "@t3tools/mobile-model-viewer": generatedModelViewerRoot,
   },
 };
 
@@ -71,11 +73,14 @@ async function generateMobileThirdPartyLicenses() {
 }
 
 async function prepareStreamScripts() {
-  const { generateDeviceStreamScript, generatePreviewStreamScript } = await import(
-    pathToFileURL(path.join(__dirname, "scripts", "generate-device-stream.mts")).href
-  );
+  const { generateDeviceStreamScript, generatePreviewStreamScript, generateModelViewerScript } =
+    await import(pathToFileURL(path.join(__dirname, "scripts", "generate-device-stream.mts")).href);
   const generateAll = () =>
-    Promise.all([generateDeviceStreamScript(), generatePreviewStreamScript()]);
+    Promise.all([
+      generateDeviceStreamScript(),
+      generatePreviewStreamScript(),
+      generateModelViewerScript(),
+    ]);
   await generateAll();
   if (process.env.NODE_ENV !== "production") {
     let rebuild = Promise.resolve();
@@ -96,6 +101,19 @@ async function prepareStreamScripts() {
         ["serverBrowserStream.ts"],
         generatePreviewStreamScript,
       ],
+      [
+        "apps/mobile/src/features/files",
+        ["model-viewer.browser.ts", "model-viewer-protocol.ts"],
+        generateModelViewerScript,
+      ],
+      [
+        "packages/client-runtime/src/modelPreview",
+        ["scene.ts", "annotations.ts", "archive.ts", "error.ts"],
+        generateModelViewerScript,
+      ],
+      ["packages/client-runtime/src", ["dataUrl.ts"], generateModelViewerScript],
+      ["packages/client-runtime/src/three", ["disposeObject.ts"], generateModelViewerScript],
+      ["packages/client-runtime/src/zip", ["boundedZip.ts"], generateModelViewerScript],
     ]) {
       fs.watch(path.join(workspaceRoot, directory), { persistent: false }, (_event, filename) => {
         if (filename && !files.includes(String(filename))) return;

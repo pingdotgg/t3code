@@ -33,6 +33,109 @@ import { AppText as Text } from "./ui/AppText";
 import { Sheet } from "./ui/Sheet";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { getMobileTerminalTheme } from "../features/terminal/terminalTheme";
+import {
+  modelCameraStatus,
+  type ModelCameraView,
+} from "@t3tools/client-runtime/model-preview/annotations";
+import { modelAnnotationOf } from "../features/files/modelAnnotationDraft";
+import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import { environmentConnectedAtom } from "../state/use-remote-environment-registry";
+import { cn } from "../lib/cn";
+
+const DISCONNECTED_ATOM = Atom.make(false).pipe(Atom.withLabel("context-sheet:no-environment"));
+
+/** Notes on a 3D model: the file and camera they were placed at, and each numbered note. */
+function ModelAnnotationDetails(props: {
+  readonly fileLabel: string;
+  readonly view: ModelCameraView | null;
+  readonly notes: NonNullable<ReturnType<typeof modelAnnotationOf>>["notes"];
+  readonly environmentId: EnvironmentId | undefined;
+  readonly onOpenView: (() => void) | undefined;
+}) {
+  const gt = useGT();
+  const connected = useAtomValue(
+    props.environmentId ? environmentConnectedAtom(props.environmentId) : DISCONNECTED_ATOM,
+  );
+  const status = props.view ? modelCameraStatus(props.view) : null;
+  return (
+    <>
+      <View className="gap-1">
+        <Text className="text-xs text-foreground-muted">{gt("File", { $context: "noun" })}</Text>
+        <Text
+          selectable
+          className="text-sm text-foreground"
+          style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+        >
+          {props.fileLabel}
+        </Text>
+        {status ? (
+          <Text
+            className="text-xs text-foreground-muted"
+            style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+          >
+            {gt("az {azimuth}° el {elevation}°", {
+              $context: "3D camera azimuth and elevation, abbreviated",
+              azimuth: status.azimuth,
+              elevation: status.elevation,
+            })}
+          </Text>
+        ) : null}
+      </View>
+      <View className="gap-2">
+        <Text className="text-xs text-foreground-muted">
+          {gt("Notes", { $context: "notes pinned to a 3D model" })}
+        </Text>
+        {props.notes.map((note) => (
+          <View key={note.number} className="flex-row gap-3">
+            <View
+              className={cn(
+                "mt-0.5 size-[22px] items-center justify-center rounded-full",
+                note.stale ? "border border-dashed border-icon-muted" : "bg-primary",
+              )}
+            >
+              <Text
+                className={cn(
+                  "text-2xs font-t3-bold",
+                  note.stale ? "text-foreground-muted" : "text-primary-foreground",
+                )}
+              >
+                {note.number}
+              </Text>
+            </View>
+            <View className="min-w-0 flex-1 gap-0.5">
+              <Text selectable className="text-[15px] text-foreground">
+                {note.text}
+              </Text>
+              {note.stale ? (
+                <Text className="text-[13px] text-warning-foreground">
+                  {gt("Model changed since. Shown as captured.")}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        ))}
+      </View>
+      {props.onOpenView ? (
+        <View className="gap-1">
+          <Button
+            label={gt("Open view")}
+            icon="cube"
+            tone="primary"
+            disabled={!connected}
+            onPress={props.onOpenView}
+            fullWidth
+          />
+          {!connected ? (
+            <Text className="text-center text-xs text-foreground-muted">
+              {gt("Connect to this environment to open the model.")}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+    </>
+  );
+}
 
 function ContextField(props: {
   label: string;
@@ -94,6 +197,8 @@ export function ComposerContextSheet(props: {
   readonly skillDescription?: string;
   readonly onOpenSkill?: () => void;
   readonly onOpenThread?: (thread: ScopedThreadRef) => void;
+  /** Opens a 3D model at the camera its annotation saved. */
+  readonly onOpenModelView?: (path: string, view: ModelCameraView) => void;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
   readonly records?: ReadonlyArray<ComposerContextRecord>;
@@ -200,6 +305,30 @@ export function ComposerContextSheet(props: {
     ).changeRequest,
   );
   const terminal = record?.kind === "terminal" && !("payload" in record) ? record : null;
+  const model = modelAnnotationOf(record);
+  const modelTarget = model?.target ?? null;
+  const onOpenModelView = props.onOpenModelView;
+  const openModelView =
+    modelTarget && onOpenModelView
+      ? () => {
+          props.onClose();
+          onOpenModelView(modelTarget.path, modelTarget.view);
+        }
+      : undefined;
+  const attachmentView =
+    attachmentRecord && "attachmentId" in attachmentRecord ? (
+      <ComposerContextAttachment
+        key={JSON.stringify([
+          props.environmentId,
+          attachmentRecord.attachmentId,
+          props.attachments?.find((entry) => entry.id === attachmentRecord.attachmentId)?.fileUri,
+        ])}
+        record={attachmentRecord}
+        environmentId={props.environmentId}
+        attachment={props.attachments?.find((entry) => entry.id === attachmentRecord.attachmentId)}
+        framed={model !== null}
+      />
+    ) : null;
   return (
     <Sheet title={terminal?.terminalLabel ?? props.label} onClose={props.onClose}>
       <ScrollView
@@ -287,7 +416,19 @@ export function ComposerContextSheet(props: {
                 ) : null}
               </>
             ) : null}
-            {record.kind === "preview-annotation" ? (
+            {record.kind === "preview-annotation" && model ? (
+              <>
+                {attachmentView}
+                <ModelAnnotationDetails
+                  fileLabel={model.target?.path ?? record.pageTitle ?? record.pageUrl}
+                  view={model.target?.view ?? null}
+                  notes={model.notes}
+                  environmentId={props.environmentId}
+                  onOpenView={openModelView}
+                />
+              </>
+            ) : null}
+            {record.kind === "preview-annotation" && !model ? (
               <>
                 <ContextField
                   label={gt("Page", { $context: "web page" })}
@@ -416,21 +557,7 @@ export function ComposerContextSheet(props: {
             ) : null}
           </>
         )}
-        {attachmentRecord && "attachmentId" in attachmentRecord ? (
-          <ComposerContextAttachment
-            key={JSON.stringify([
-              props.environmentId,
-              attachmentRecord.attachmentId,
-              props.attachments?.find((entry) => entry.id === attachmentRecord.attachmentId)
-                ?.fileUri,
-            ])}
-            record={attachmentRecord}
-            environmentId={props.environmentId}
-            attachment={props.attachments?.find(
-              (entry) => entry.id === attachmentRecord.attachmentId,
-            )}
-          />
-        ) : null}
+        {model ? null : attachmentView}
         {pullRequestUrl && /^https?:\/\//i.test(pullRequestUrl) ? (
           <Pressable
             accessibilityRole="link"

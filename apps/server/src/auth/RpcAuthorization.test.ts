@@ -13,6 +13,8 @@ import {
   IssueTrackerKind,
   SecretProviderId,
   ThreadId,
+  BlenderJobId,
+  type AuthEnvironmentScope,
   TurnItemId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -469,13 +471,13 @@ describe("settings mutation authorization", () => {
     "does not let a settings grant manage providers or turn off T3 Connect device approval",
     () =>
       Effect.gen(function* () {
-        let handled = false;
+        let handled = 0;
         const client = yield* RpcTest.makeClient(group).pipe(
           Effect.provide(
             Layer.mergeAll(
               group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
                 Effect.sync(() => {
-                  handled = true;
+                  handled++;
                   return DEFAULT_SERVER_SETTINGS;
                 }),
               ),
@@ -499,6 +501,13 @@ describe("settings mutation authorization", () => {
             patch: { requireConnectDeviceApproval: false },
           }).pipe(Effect.flip),
         ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
+        // Turning Blender on is a setting; choosing the executable it runs is not.
+        yield* client[WS_METHODS.serverUpdateSettings]({ patch: { blender: { enabled: true } } });
+        expect(
+          yield* client[WS_METHODS.serverUpdateSettings]({
+            patch: { blender: { executablePath: "/tmp/payload" } },
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
         // A reference names any secret the store holds, and the host entry names where it goes.
         expect(
           yield* client[WS_METHODS.serverUpdateSettings]({
@@ -520,7 +529,7 @@ describe("settings mutation authorization", () => {
             },
           }).pipe(Effect.flip),
         ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
-        expect(handled).toBe(false);
+        expect(handled).toBe(1);
       }),
   );
 
@@ -698,6 +707,13 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
       { _tag: "media-file", threadId: ThreadId.make("thread"), path: "/repo/image.png" },
       { _tag: "draft-workspace-file", cwd: "/repo", path: "file.txt" },
       { _tag: "native-app-icon", app: { _tag: "app-path", path: "/private/Secret.app" } },
+      // Derived from workspace files, so it needs what reading them does.
+      {
+        _tag: "blender-output",
+        threadId: ThreadId.make("thread"),
+        jobId: BlenderJobId.make("job"),
+        output: "preview",
+      },
     ] as const) {
       expect(
         yield* client[WS_METHODS.assetsCreateUrl]({ resource }).pipe(Effect.flip),
@@ -707,6 +723,65 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
       });
     }
     expect(handled).toBe(2);
+  }),
+);
+
+it.effect("requires host execution, thread operation and file reads to open a Blender scene", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.blenderOpenScene> =>
+          tag !== WS_METHODS.blenderOpenScene,
+      ),
+    );
+    const openWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.blenderOpenScene, (input) =>
+              Effect.succeed({
+                id: BlenderJobId.make("job"),
+                threadId: input.threadId,
+                sequence: 0,
+                input: input.path,
+                outputs: ["preview" as const],
+                createdAt: 0,
+                status: "queued" as const,
+              }),
+            ),
+            RpcAuthorization.layer(scopes),
+          ),
+        ),
+        Effect.flatMap((client) =>
+          client[WS_METHODS.blenderOpenScene]({
+            threadId: ThreadId.make("thread"),
+            path: "models/chair.blend",
+          }),
+        ),
+        Effect.map((job) => job.status),
+        Effect.catchTags({
+          EnvironmentAuthorizationError: (error) => Effect.succeed(error.requiredPermission),
+        }),
+      );
+    expect(
+      yield* Effect.all([
+        openWith([AuthOrchestrationOperateScope, AuthFilesystemReadScope]),
+        openWith([AuthTerminalOperateScope, AuthFilesystemReadScope]),
+        openWith([AuthTerminalOperateScope, AuthOrchestrationOperateScope]),
+        openWith([
+          AuthTerminalOperateScope,
+          AuthOrchestrationOperateScope,
+          AuthFilesystemReadScope,
+        ]),
+      ]),
+    ).toEqual([
+      AuthTerminalOperateScope,
+      AuthOrchestrationOperateScope,
+      AuthFilesystemReadScope,
+      "queued",
+    ]);
   }),
 );
 
