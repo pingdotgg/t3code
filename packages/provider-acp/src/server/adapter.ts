@@ -1675,6 +1675,7 @@ interface ActiveAcpTurn {
     { readonly status: "completed" | "failed"; readonly output?: string } | null
   >;
   readonly persistentBackgroundTaskIds: Set<string>;
+  readonly unawaitedToolCallIds: Set<string>;
   /** Monitor end notices lack output; wait for hydration or the safety timeout. */
   readonly awaitingBackgroundHydration: Set<string>;
   readonly pendingInjectedReport: Set<string>;
@@ -4249,7 +4250,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (flavor.toolOutlivesPrompt !== undefined) {
             // A tool that never started has nothing to report later.
             for (const tool of context.tools.values()) {
-              if (toolStatus(tool.status) === "running" && flavor.toolOutlivesPrompt(tool))
+              if (
+                toolStatus(tool.status) === "running" &&
+                !context.unawaitedToolCallIds.has(tool.toolCallId) &&
+                flavor.toolOutlivesPrompt(tool)
+              )
                 return true;
             }
           }
@@ -9393,6 +9398,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               toolCallIdsByBackgroundTaskId: new Map(),
               backgroundCommands: new Map(),
               persistentBackgroundTaskIds: new Set(),
+              unawaitedToolCallIds: new Set(),
               awaitingBackgroundHydration: new Set(),
               pendingInjectedReport: new Set(),
               earlyInjectedReportObserved: false,
@@ -10076,19 +10082,38 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 awaitBackgroundTasks: Effect.fn("AcpAdapterV2.awaitBackgroundTasks")(function* ({
                   providerThread,
                   taskIds,
+                  awaited,
                 }) {
                   const outlives = flavor.toolOutlivesPrompt;
                   const context = yield* Ref.get(activeTurn);
-                  const holdsCommand =
-                    outlives !== undefined &&
-                    defersFinalizeForBackgroundWork &&
-                    context !== null &&
-                    !context.finalized &&
-                    context.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
-                    [...context.tools.values()].some(
-                      (tool) => toolStatus(tool.status) === "running" && outlives(tool),
-                    );
-                  return { matched: holdsCommand ? [...new Set(taskIds)] : [] };
+                  if (
+                    outlives === undefined ||
+                    !defersFinalizeForBackgroundWork ||
+                    context === null ||
+                    context.finalized ||
+                    context.nativeThreadId !== providerThread.nativeThreadRef?.nativeId
+                  ) {
+                    return { matched: [] };
+                  }
+                  const runningOutliving = [...context.tools.values()].filter(
+                    (tool) => toolStatus(tool.status) === "running" && outlives(tool),
+                  );
+                  if (awaited) {
+                    if (runningOutliving.length === 0) return { matched: [] };
+                    for (const tool of runningOutliving) {
+                      context.unawaitedToolCallIds.delete(tool.toolCallId);
+                    }
+                    return { matched: [...new Set(taskIds)] };
+                  }
+                  const held = runningOutliving.filter(
+                    (tool) => !context.unawaitedToolCallIds.has(tool.toolCallId),
+                  );
+                  if (held.length === 0) return { matched: [] };
+                  for (const tool of held) {
+                    context.unawaitedToolCallIds.add(tool.toolCallId);
+                  }
+                  yield* rearmDeferredFinalize(context);
+                  return { matched: [...new Set(taskIds)] };
                 }),
               }),
           interruptTurn: Effect.fn("AcpAdapterV2.interruptTurn")(
