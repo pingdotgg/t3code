@@ -119,7 +119,8 @@ setting removes it from `settings.json`.
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your enabled environments and hubs you read one number per window rather than a
-list. Each window card shows how much of the pool is left and a bar with one segment per account,
+list. Each window card shows how much of the pool is left, or used with the **Used** setting below,
+and a bar with one segment per account,
 kept in the same column across windows. Accounts are ordered by their next 5-hour refill, soonest
 first. For an account with no weekly quota left, this is when its session becomes usable again.
 The first available window is used when no account reports a 5-hour limit. A gap means the
@@ -141,7 +142,7 @@ Percentages, bars, and the even-pace line then count up as you spend, and a rese
 the end of the fill. The mobile setting also applies to its home screen widgets.
 
 When a Claude or Codex account has no overall weekly quota left, its pooled session contribution
-shows 0% left. The next refill depends on both reset times: an exhausted session must also reset,
+shows 0% left, or 100% used. The next refill depends on both reset times: an exhausted session must also reset,
 and a partly spent session may only regain its unused portion when the week resets. Missing or
 stale reset times have no refill estimate; refresh Limits for a new reading. Claude's
 model-specific weekly allowances keep their reported values.
@@ -156,7 +157,7 @@ closes when you dismiss it or send your next message. It uses the same snapshot 
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
 To keep them in view on web and desktop, turn on **Usage limits** in **Settings → Appearance → Thread details**, or right-click the thread details card.
-The bottom of the thread details card then shows how much is left in each limit window of the
+The bottom of the thread details card then shows how much is left, or used, in each limit window of the
 current provider account. Some windows, such as a weekly Opus limit, count only one model. Hover a
 row to see when it resets and your pace. Turn on **Context window** to also show the thread's
 context use against the model's limit. A tick on the bar marks where the provider compacts
