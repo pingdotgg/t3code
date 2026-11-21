@@ -630,6 +630,38 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("reads Gemini model quotas when the summary reports only Claude/GPT buckets", () =>
+    Effect.gen(function* () {
+      const { probe } = yield* fixture({
+        summary: {
+          groups: [
+            {
+              displayName: "Claude and GPT models",
+              buckets: [
+                { bucketId: "3p-weekly", window: "weekly", remainingFraction: 1 },
+                { bucketId: "3p-5h", window: "5h", remainingFraction: 1 },
+              ],
+            },
+          ],
+        },
+        models: {
+          models: {
+            "gemini-a": {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              quotaInfo: { remainingFraction: 0.4306508, resetTime: "2026-10-10T12:00:00Z" },
+            },
+          },
+        },
+      });
+      const limits = yield* probe;
+      expect(limits.windows.map((window) => window.id)).toEqual(
+        expect.arrayContaining(["3p-weekly", "3p-5h"]),
+      );
+      const gemini = limits.windows.filter((window) => window.label.startsWith("Gemini"));
+      expect(gemini.map((window) => Math.round(window.usedPercent))).toContain(57);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("skips disabled and missing fractions and clamps valid percentages", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
