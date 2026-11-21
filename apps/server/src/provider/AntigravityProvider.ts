@@ -177,6 +177,7 @@ function sameVersionAdvisory(
 interface AntigravityProviderState {
   readonly draft: ServerProviderDraft;
   readonly authRevision: number;
+  readonly versionFromCheck: boolean;
 }
 
 interface AntigravityProviderOptions {
@@ -260,6 +261,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const metadata = yield* SubscriptionRef.make<AntigravityProviderState>({
     draft: initialDraft,
     authRevision: 0,
+    versionFromCheck: false,
   });
   // Preserve disk-discovered skills when callbacks replace workspace commands; the registry will not rescan them.
   const discoveredSkills = new Map<string, ServerProvider["skills"]>();
@@ -364,7 +366,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       const authenticated = draft.auth.status === "authenticated";
       const nextInstalled = !missingInstallation;
       // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
-      const nextVersion = version === "unknown" ? draft.version : version || draft.version;
+      const checkedVersion = version && version !== "unknown" ? version : undefined;
+      const nextVersion = checkedVersion ?? draft.version;
+      const versionFromCheck =
+        checkedVersion !== undefined ? true : missingInstallation ? false : state.versionFromCheck;
       const keepVersionAdvisory =
         previousVersionAdvisory !== undefined &&
         nextInstalled &&
@@ -379,6 +384,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             : authUncheckedMessage);
       return {
         ...state,
+        versionFromCheck,
         draft: {
           ...draft,
           installed: nextInstalled,
@@ -493,20 +499,24 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         ...draft
       } = state.draft;
       const handshakeVersion = started.initializeResult.agentInfo?.version;
-      // Preserve a newer authoritative version from checkProvider so an older leased session
-      // finishing its handshake after an upgrade cannot regress draft.version, while still
-      // allowing custom-launcher handshakes to populate or advance the version.
+      // Only guard versions established by an authoritative health check so an older managed
+      // lease finishing its handshake after an upgrade cannot regress draft.version, while
+      // custom-launcher handshakes can still report downgrades.
       const nextVersion =
         handshakeVersion &&
-        (!draft.version || compareSemverVersions(handshakeVersion, draft.version) >= 0)
+        (!state.versionFromCheck ||
+          !draft.version ||
+          compareSemverVersions(handshakeVersion, draft.version) >= 0)
           ? handshakeVersion
           : draft.version;
+      const nextVersionFromCheck = state.versionFromCheck && nextVersion === draft.version;
       const keepVersionAdvisory =
         previousVersionAdvisory !== undefined && nextVersion === draft.version;
       const workspaces = draft.workspaceSnapshots ?? [];
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
       const next = {
         authRevision: state.authRevision + 1,
+        versionFromCheck: nextVersionFromCheck,
         draft: {
           ...draft,
           installed: true,
@@ -596,6 +606,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const previousModes = yield* SubscriptionRef.modify(metadata, (state) => [
       state.draft.supportedRuntimeModes,
       {
+        ...state,
         authRevision: state.authRevision + 1,
         draft: {
           ...state.draft,
