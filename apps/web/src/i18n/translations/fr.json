@@ -7461,11 +7461,13 @@
   "dc87902396b8ade4": "Lettres, chiffres, '-' ou '_'.",
   "251dfec07b7c3612": "Ce driver n’a aucune configuration requise. Vous pouvez ajouter l’instance maintenant.",
   "08fe32f007e788f1": "Configurer manuellement",
+  "17ccef4ee78377e1": "Hub CLIProxyAPI",
+  "d3d32ee21a5dbff3": "MiniMax Coding Plan",
   "84eb2878dc17d3eb": "Clé de gestion",
   "7ac196c1e8175928": "Par défaut, le nom d’hôte du hub",
-  "e3548407052e9e12": "Ajouter un hub CLIProxyAPI",
-  "432e85a50e2e7964": [
-    "Affichez le quota de chaque compte regroupé par le hub, à côté des fournisseurs sur",
+  "a7651b8e78694dcd": "Ajouter une source d'utilisation",
+  "5d19ade717a7efc3": [
+    "Affichez le quota à côté des fournisseurs sur",
     " ",
     {
       "i": 1,
@@ -7474,10 +7476,12 @@
     },
     ". La clé reste sur ce serveur."
   ],
+  "c317fa79a76d4963": "Source",
   "556a695b117565ac": "URL du hub",
+  "4127ed42bf52cc3e": "Clé API Coding Plan",
   "e62cedcbcdbafc75": "Clé de gestion",
   "f1b3d0634ec035cb": "Libellé (facultatif)",
-  "52814dd6f7d0a15c": "Ajouter le hub",
+  "b35256ca61016104": "Ajouter une source",
   "27b770d3402abfa2": "Avancé",
   "584595dfcadab699": "Illustration",
   "7df1a31c9019f5ff": "Illustration Nightly",
@@ -8303,7 +8307,6 @@
   "e6886a7f77b73a8e": "{platform} non disponible",
   "b0b7610d9860d18d": "Non configuré sur cette machine.",
   "f5b66c481aa3e4df": "Modifier",
-  "b35256ca61016104": "Ajouter une source",
   "3b20ef0670ae4b0b": "Machine via SSH",
   "121ccffacb6b8c6d": "Expo Simulators",
   "130b55a1410a8030": "Pool Simlock (alpha)",
@@ -11450,7 +11453,8 @@
       "v": "v"
     }
   ],
-  "f54364b854a07918": "Aucun hub configuré.",
+  "39f64d971ba424b5": "Aucune source d'utilisation configurée.",
+  "88e32c6741acbe6f": "MiniMax",
   "4cf6a373a7535324": "{name} · Désactivé",
   "1d1e9cda847bd398": "La clé de gestion du hub est supprimée de ce serveur. Ses comptes quittent la vue Limites ; le hub lui-même n’est pas touché. Ajoutez-le à nouveau avec l’URL et la clé pour les récupérer.",
   "c9bee4f93481b77a": "Supprimer le hub",
@@ -11863,7 +11867,7 @@
   "9f5280c955132ee1": "Animations de capture",
   "f8d32e19131fd5b3": "agents cli codex claude cursor grok fx kiro opencode antigravity google se connecter se déconnecter installer abonnement instances authentification clé d’api modèles configuration chemin du binaire répertoire de configuration codex_home home fantôme point de terminaison arguments variables d’environnement nom d’affichage couleur d’accent personnalisé favori masqué compactage auto sessions natives importer reprendre",
   "ad371af21e5b4b01": "Fournisseurs d’utilisation",
-  "9d9d31a4f3d5ff69": "sources d’utilisation CLIProxyAPI proxy CLI hub quota abonnement limites clé de gestion ajouter supprimer",
+  "e021bca26b3a1244": "sources d’utilisation MiniMax CLIProxyAPI proxy CLI hub quota abonnement limites clé de gestion ajouter supprimer",
   "d65fa0946585b245": "Générateurs de texte",
   "e6fd69a8a3bb69e2": "modèle api clé d’api openai openrouter anthropic ollama lm studio point de terminaison personnalisé url de base titres de fils messages de commit",
   "f2b07faba1229ce7": "Intervalle de vérification de l’état",

@@ -22,3 +22,21 @@ export function sourceIdFromUrl(
   }
   return UsageLimitSourceId.make(id);
 }
+
+/**
+ * A MiniMax source always points at the same vendor URL, so URL reuse would overwrite the
+ * account added before it. Every MiniMax addition gets its own ID instead, while CLIProxyAPI
+ * hubs keep reusing the ID of the hub with the same URL.
+ */
+export function sourceIdForKind(
+  kind: "cliproxy" | "minimax",
+  url: string,
+  sources: UnifiedSettings["usageLimitSources"],
+): UsageLimitSourceId {
+  if (kind === "cliproxy") return sourceIdFromUrl(url, sources);
+  let id = "minimax";
+  for (let suffix = 2; id in sources; suffix += 1) {
+    id = `minimax-${suffix}`;
+  }
+  return UsageLimitSourceId.make(id);
+}

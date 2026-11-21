@@ -534,6 +534,18 @@ function hasDuplicateCursorTotal(pool: LimitPool): boolean {
   );
 }
 
+/**
+ * A generic driver such as the ACP registry names its provider on the account rather than
+ * on the driver, so prefer the account's plan over the driver's own label.
+ */
+export function poolDisplayName(pool: LimitPool, driverLabel: string): string {
+  if (pool.driver === "acpRegistry") {
+    const plan = pool.accounts.find((account) => account.plan !== undefined)?.plan;
+    if (plan !== undefined) return plan;
+  }
+  return driverLabel;
+}
+
 export function displayLimitWindows(pool: LimitPool) {
   if (pool.driver === "antigravity") {
     return [...pool.windows].sort(

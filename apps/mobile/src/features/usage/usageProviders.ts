@@ -11,10 +11,13 @@ export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
   "antigravity",
   "pi",
   "muse",
+  "minimax",
 ];
 
 export function usageProviderKind(driver: string): UsageProviderKind | null {
   if (driver === "claudeAgent") return "claude";
+  // The ACP registry hosts MiniMax, the only provider served from Hermes' own state.
+  if (driver === "acpRegistry") return "minimax";
   return PROVIDER_ORDER.find((kind) => kind === driver) ?? null;
 }
 
@@ -27,6 +30,7 @@ export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
   antigravity: "Antigravity",
   pi: "Pi",
   muse: "Muse Code",
+  minimax: "MiniMax (Hermes)",
 };
 
 export function useProviderColors(): Record<UsageProviderKind, string> {

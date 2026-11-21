@@ -14,7 +14,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { sourceIdFromUrl } from "./AddUsageLimitSourceDialog.logic";
+import { sourceIdForKind } from "./AddUsageLimitSourceDialog.logic";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 import { Label } from "../ui/label";
 
@@ -35,16 +35,18 @@ export function AddUsageLimitSourceDialog({
   const gt = useGT();
   const formId = useId();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const [kind, setKind] = useState<"cliproxy" | "minimax">("cliproxy");
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
   const secretSources = useSecretSources(environmentId);
   const [keyDraft, setKeyDraft] = useState<string | SecretReference>("");
   const [keyValid, setKeyValid] = useState(true);
   const managementKey = typeof keyDraft === "string" ? keyDraft.trim() : keyDraft;
-  const trimmedUrl = url.trim();
+  const trimmedUrl = kind === "minimax" ? "https://www.minimax.io" : url.trim();
   const canSave = keyValid && trimmedUrl.length > 0 && managementKey !== "";
 
   const reset = () => {
+    setKind("cliproxy");
     setLabel("");
     setUrl("");
     setKeyDraft("");
@@ -53,11 +55,11 @@ export function AddUsageLimitSourceDialog({
 
   const save = () => {
     if (!canSave) return;
-    const id = sourceIdFromUrl(trimmedUrl, sources);
+    const id = sourceIdForKind(kind, trimmedUrl, sources);
     updateSettings({
       usageLimitSources: {
         [id]: {
-          kind: "cliproxy",
+          kind,
           ...(label.trim() ? { label: label.trim() } : {}),
           url: trimmedUrl,
           managementKey,
@@ -80,12 +82,12 @@ export function AddUsageLimitSourceDialog({
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            <T>Add a CLIProxyAPI hub</T>
+            <T>Add a usage source</T>
           </DialogTitle>
           <DialogDescription>
             <T>
-              Show the quota of every account the hub pools, next to the providers on{" "}
-              <Var>{environmentLabel}</Var>. The key stays on that server.
+              Show account quota next to the providers on <Var>{environmentLabel}</Var>. The key
+              stays on that server.
             </T>
           </DialogDescription>
         </DialogHeader>
@@ -98,7 +100,17 @@ export function AddUsageLimitSourceDialog({
               save();
             }}
           >
-            <div className="grid gap-1.5">
+            <label className="grid gap-1.5">
+              <T>Source</T>
+              <select
+                value={kind}
+                onChange={(event) => setKind(event.target.value as "cliproxy" | "minimax")}
+              >
+                <option value="cliproxy">{gt("CLIProxyAPI hub")}</option>
+                <option value="minimax">{gt("MiniMax Coding Plan")}</option>
+              </select>
+            </label>
+            <div className={kind === "minimax" ? "hidden" : "grid gap-1.5"}>
               <Label htmlFor="usage-source-url">
                 <T>Hub URL</T>
               </Label>
@@ -112,7 +124,7 @@ export function AddUsageLimitSourceDialog({
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="usage-source-key">
-                <T>Management key</T>
+                {kind === "minimax" ? <T>Coding Plan API key</T> : <T>Management key</T>}
               </Label>
               <SecretSourceInput
                 id="usage-source-key"
@@ -149,7 +161,7 @@ export function AddUsageLimitSourceDialog({
             <T>Cancel</T>
           </Button>
           <Button type="submit" form={formId} disabled={!canSave}>
-            <T>Add hub</T>
+            <T>Add source</T>
           </Button>
         </DialogFooter>
       </DialogPopup>

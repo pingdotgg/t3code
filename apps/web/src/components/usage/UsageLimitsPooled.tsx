@@ -8,6 +8,7 @@ import {
   type LimitPoolMember,
   type LimitPoolWindow,
   paceRemainingPercent,
+  poolDisplayName,
   remainingPercent,
   type ResetCreditChoice,
 } from "@t3tools/shared/usageLimits";
@@ -638,7 +639,10 @@ function PoolWindowCard({
 
 function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
   const color = barColor(pool.driver);
-  const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
+  const label = poolDisplayName(
+    pool,
+    providerClients.get(pool.driver)?.label ?? String(pool.driver),
+  );
   const windows = displayLimitWindows(pool);
   const m = useMessages();
   return (

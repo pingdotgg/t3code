@@ -26,6 +26,10 @@
     "./server/AcpRegistryRuntimeCoordinator": {
       "types": "./src/server/AcpRegistryRuntimeCoordinator.ts",
       "import": "./src/server/AcpRegistryRuntimeCoordinator.ts"
+    },
+    "./server/minimaxUsage": {
+      "types": "./src/server/minimaxUsage.ts",
+      "import": "./src/server/minimaxUsage.ts"
     }
   },
   "scripts": {

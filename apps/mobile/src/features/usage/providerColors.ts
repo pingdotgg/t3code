@@ -10,5 +10,6 @@ export function providerColors(scheme: "light" | "dark"): Record<UsageProviderKi
     antigravity: "#8c7bd1",
     pi: "#4d9f8a",
     muse: "#0866ff",
+    minimax: "#e65365",
   };
 }

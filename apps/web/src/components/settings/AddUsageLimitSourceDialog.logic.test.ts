@@ -2,7 +2,7 @@ import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { describe, expect, it } from "vite-plus/test";
 
-import { sourceIdFromUrl } from "./AddUsageLimitSourceDialog.logic";
+import { sourceIdFromUrl, sourceIdForKind } from "./AddUsageLimitSourceDialog.logic";
 
 describe("adding usage limit sources", () => {
   it.each([
@@ -58,4 +58,10 @@ describe("adding usage limit sources", () => {
       },
     ]);
   });
+});
+
+it("keeps MiniMax accounts separate at the same vendor URL", () => {
+  const url = "https://www.minimax.io";
+  const sources = { minimax: { kind: "minimax" as const, url, managementKey: "", enabled: true } };
+  expect(sourceIdForKind("minimax", url, sources)).toBe("minimax-2");
 });

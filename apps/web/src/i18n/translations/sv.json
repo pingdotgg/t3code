@@ -7466,11 +7466,13 @@
   "dc87902396b8ade4": "Bokstäver, siffror, '-' eller '_'.",
   "251dfec07b7c3612": "Den här drivrutinen har ingen obligatorisk konfiguration. Du kan lägga till instansen nu.",
   "08fe32f007e788f1": "Konfigurera manuellt",
+  "17ccef4ee78377e1": "CLIProxyAPI-hubb",
+  "d3d32ee21a5dbff3": "MiniMax Coding Plan",
   "84eb2878dc17d3eb": "Hanteringsnyckel",
   "7ac196c1e8175928": "Standard är hubbens värdnamn",
-  "e3548407052e9e12": "Lägg till en CLIProxyAPI-hubb",
-  "432e85a50e2e7964": [
-    "Visa kvoten för alla konton som hubben samlar, bredvid leverantörerna på",
+  "a7651b8e78694dcd": "Lägg till en användningskälla",
+  "5d19ade717a7efc3": [
+    "Visa kvoten bredvid leverantörerna på",
     " ",
     {
       "i": 1,
@@ -7479,10 +7481,12 @@
     },
     ". Nyckeln stannar på den servern."
   ],
+  "c317fa79a76d4963": "Källa",
   "556a695b117565ac": "Hubb-URL",
+  "4127ed42bf52cc3e": "Coding Plan API-nyckel",
   "e62cedcbcdbafc75": "Hanteringsnyckel",
   "f1b3d0634ec035cb": "Etikett (valfritt)",
-  "52814dd6f7d0a15c": "Lägg till hubb",
+  "b35256ca61016104": "Lägg till källa",
   "27b770d3402abfa2": "Avancerat",
   "584595dfcadab699": "Grafik",
   "7df1a31c9019f5ff": "Nightly-grafik",
@@ -8308,7 +8312,6 @@
   "e6886a7f77b73a8e": "{platform} inte tillgänglig",
   "b0b7610d9860d18d": "Inte konfigurerad på den här datorn.",
   "f5b66c481aa3e4df": "Redigera",
-  "b35256ca61016104": "Lägg till källa",
   "3b20ef0670ae4b0b": "Dator via SSH",
   "121ccffacb6b8c6d": "Expo-simulatorer",
   "130b55a1410a8030": "Simlock-pool (alfa)",
@@ -11458,7 +11461,8 @@
       "v": "v"
     }
   ],
-  "f54364b854a07918": "Inga hubbar konfigurerade.",
+  "39f64d971ba424b5": "Inga användningskällor konfigurerade.",
+  "88e32c6741acbe6f": "MiniMax",
   "4cf6a373a7535324": "{name} · Inaktiverad",
   "1d1e9cda847bd398": "Hubbens hanteringsnyckel tas bort från den här servern. Dess konton försvinner från vyn Gränser; själva hubben påverkas inte. Lägg till den igen med URL och nyckel för att få tillbaka dem.",
   "c9bee4f93481b77a": "Ta bort hubb",
@@ -11871,7 +11875,7 @@
   "9f5280c955132ee1": "Fångstanimeringar",
   "f8d32e19131fd5b3": "agenter cli codex claude cursor grok fx kiro opencode antigravity google logga in logga ut installera prenumeration instanser autentisering api-nyckel modeller konfiguration binär sökväg konfigurationskatalog codex_home skugghem slutpunkt argument miljövariabler visningsnamn accentfärg anpassad favorit dold automatisk komprimering inbyggda sessioner importera återuppta",
   "ad371af21e5b4b01": "Användningsleverantörer",
-  "9d9d31a4f3d5ff69": "användningskällor CLIProxyAPI CLI-proxy hubb kvot prenumeration gränser hanteringsnyckel lägg till ta bort",
+  "e021bca26b3a1244": "användningskällor MiniMax CLIProxyAPI CLI-proxy hubb kvot prenumeration gränser hanteringsnyckel lägg till ta bort",
   "d65fa0946585b245": "Textgeneratorer",
   "e6fd69a8a3bb69e2": "modell api api-nyckel openai openrouter anthropic ollama lm studio anpassad slutpunkt bas-url trådtitlar commit-meddelanden",
   "f2b07faba1229ce7": "Intervall för hälsokontroll",

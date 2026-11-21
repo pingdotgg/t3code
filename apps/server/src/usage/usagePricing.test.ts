@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { cursorRateModel } from "@t3tools/provider-cursor/server/accountUsage";
+import { miniMaxRateModel } from "@t3tools/provider-acp-registry/server/minimaxUsage";
 import type { UsageSpeed } from "@t3tools/provider-core/server/usage";
 import {
   cacheSavingsUsd,
@@ -81,6 +82,30 @@ describe("usage pricing", () => {
 
     expect(priceUsage(table, unlisted)).toEqual(priceUsage(table, record("example-model")));
     expect(cacheSavingsUsd(table, unlisted)).toBeCloseTo(0.9);
+  });
+
+  it("prices MiniMax models at their first-party rate entry", () => {
+    const table = parseRateTable({
+      "minimax/MiniMax-M3": rate(3e-7, 6e-8),
+      // Resellers disagree on price, so the bare alias never reaches the table.
+      "fireworks_ai/minimax-m3": rate(1e-6),
+      "together_ai/minimax-m3": rate(2e-6),
+    });
+    const miniMaxRecord = (model: string) => ({
+      ...record(model),
+      rateModel: miniMaxRateModel(model),
+    });
+
+    // The recorded model name carries no first-party alias of its own.
+    expect(lookupRate(table, "MiniMax-M3")).toBeNull();
+    expect(priceUsage(table, miniMaxRecord("MiniMax-M3")).costSource).toBe("modelPriced");
+    expect(priceUsage(table, miniMaxRecord("MiniMax-M3")).costUsd).toBeCloseTo(
+      // 1M input + 1M cache read + 1M cache write + 1M output at M3's first-party rates.
+      1e6 * 3e-7 + 1e6 * 6e-8 + 1e6 * 3e-7 + 1e6 * 1.5e-6,
+    );
+    expect(cacheSavingsUsd(table, miniMaxRecord("MiniMax-M3"))).toBeCloseTo(1e6 * (3e-7 - 6e-8));
+    // M2.7 borrows M3's entry until the rate table carries M2.7 itself.
+    expect(priceUsage(table, miniMaxRecord("MiniMax-M2.7")).costSource).toBe("modelPriced");
   });
 
   it("prices unknown models offline and uses input prices for omitted cache rates", () => {
