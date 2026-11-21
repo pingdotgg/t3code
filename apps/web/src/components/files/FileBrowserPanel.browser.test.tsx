@@ -4,6 +4,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
 import { dismissContextMenu } from "~/contextMenuFallback";
+import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
 import { render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
@@ -338,17 +339,22 @@ describe("FileBrowserPanel", () => {
       />
     );
     // The tree mounts empty and measures itself before the first listing arrives, as it does for real.
+    // The panel's flex layout sizes the tree, so these load the app stylesheet.
     async function renderRevealedPanel(cwd: string) {
+      const style = document.createElement("style");
+      style.textContent = appCss;
+      document.head.append(style);
       writeExpandedDirectories(`env-files:${cwd}`, ["d01/", "d01/sub/"]);
       directory.ready = false;
       await using stack = new AsyncDisposableStack();
+      stack.defer(() => style.remove());
       const screen = stack.use(await render(renderPanel(cwd), { container: sizedContainer() }));
       directory.entries = roots;
       directory.ready = true;
       await screen.rerender(renderPanel(cwd));
       await vi.waitFor(() => expect(isTreeRowInView("d09/")).toBe(true));
-      stack.move();
-      return screen;
+      const owned = stack.move();
+      return Object.assign(screen, { [Symbol.asyncDispose]: () => owned.disposeAsync() });
     }
 
     it("keeps the revealed folder in view as restored folders above it load", async () => {

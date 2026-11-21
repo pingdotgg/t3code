@@ -431,8 +431,10 @@ describe("source file scroll", () => {
 
       const lines = Array.from({ length: 400 }, (_, index) => `line ${index + 1} markdown content`);
       const contents = `${lines.join("\n")}\n`;
+      // Its own file per case: the preview restores a file's scroll position across mounts.
+      const relativePath = `notes-${direction}-${startLine}.md`;
       state.file = {
-        relativePath: "notes.md",
+        relativePath,
         contents,
         byteLength: contents.length,
         truncated: false,
@@ -440,7 +442,7 @@ describe("source file scroll", () => {
 
       await using screen = await render(
         <div style={{ width: 560, height: 400, display: "flex", flexDirection: "column" }}>
-          {filePreview("notes.md")}
+          {filePreview(relativePath)}
         </div>,
       );
 
