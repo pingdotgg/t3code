@@ -89,6 +89,12 @@ describe("HttpApiBuilder", { concurrent: false }, () => {
 })
 
 describe("HttpApiScalar", { concurrent: false }, () => {
+  it.effect("bundles a Scalar renderer with customFetch support", () =>
+    Effect.gen(function*() {
+      const html = yield* render(HttpApiScalar.layer(HttpApi.make("Docs")))
+      assert.ok(html.includes("customFetch"), "Expected the bundled Scalar script to contain customFetch")
+    }))
+
   it.effect("defers and memoizes successful OpenAPI responses", () =>
     Effect.gen(function*() {
       let transforms = 0

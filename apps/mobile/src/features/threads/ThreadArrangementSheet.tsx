@@ -5,6 +5,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { sortInboxThreadsByReturn } from "@t3tools/client-runtime/state/thread-inbox";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Modal, Pressable, useWindowDimensions, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
@@ -18,7 +19,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { deriveThreadArrangementSizing } from "../../lib/layout";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
-import { environmentThreadShells } from "../../state/threads";
+import { steadyNavigationThreadShellsAtom, steadyShellsHoldingAtom } from "../../state/threads";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import {
@@ -64,6 +65,13 @@ type Drag = {
   destination: Destination | null;
 };
 
+const SECTION_LABELS = {
+  pinned: msg("Pinned", { $context: "thread list section" }),
+  active: msg("Active", { $context: "thread list section" }),
+  snoozed: msg("Snoozed", { $context: "thread list section" }),
+  settled: msg("Settled", { $context: "thread list section" }),
+} as const;
+
 function ArrangementRow(props: {
   height: number;
   offset: number;
@@ -104,6 +112,7 @@ function DragHandle(props: {
   canMoveUp: boolean;
   canMoveDown: boolean;
 }) {
+  const gt = useGT();
   const latest = useRef(props);
   /* oxlint-disable react/refs -- The pan gesture captures its callbacks once per `disabled` change; they read the latest handlers when native gesture events fire. */
   latest.current = props;
@@ -128,13 +137,15 @@ function DragHandle(props: {
         collapsable={false}
         accessible
         accessibilityRole="adjustable"
-        accessibilityLabel={`Reorder ${props.title}`}
-        accessibilityHint="Move up and Move down reorder within this section. Other actions move between sections."
+        accessibilityLabel={gt("Reorder {title}", { title: props.title })}
+        accessibilityHint={gt(
+          "Move up and Move down reorder within this section. Other actions move between sections.",
+        )}
         accessibilityState={{ disabled: props.disabled }}
         accessibilityActions={[
           ...props.sectionActions,
-          ...(props.canMoveUp ? [{ name: "decrement", label: "Move up" }] : []),
-          ...(props.canMoveDown ? [{ name: "increment", label: "Move down" }] : []),
+          ...(props.canMoveUp ? [{ name: "decrement", label: gt("Move up") }] : []),
+          ...(props.canMoveDown ? [{ name: "increment", label: gt("Move down") }] : []),
         ]}
         onAccessibilityAction={({ nativeEvent }) => {
           if (props.disabled) return;
@@ -164,18 +175,21 @@ function DragHandle(props: {
 }
 
 function ThreadArrangementSheet(props: { onClose: () => void }) {
+  const gt = useGT();
+  const m = useMessages();
   const { appearance } = useAppearancePreferences();
   const { fontScale } = useWindowDimensions();
   const { rowHeight, headerHeight } = deriveThreadArrangementSizing({
     baseFontSize: appearance.baseFontSize,
     fontScale,
   });
-  const threads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
+  const threads = useAtomValue(steadyNavigationThreadShellsAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const queuedThreadKeys = useAtomValue(queuedThreadKeysAtom);
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
   const dropBusy = useAtomValue(threadDropBusyAtom);
+  const holdingRows = useAtomValue(steadyShellsHoldingAtom);
   const { moveThread } = useThreadListActions();
   const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(threads);
@@ -395,12 +409,12 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
             <SafeAreaView style={{ flex: 1 }}>
               <SheetHeader
                 presentation="inline"
-                title="Arrange threads"
+                title={gt("Arrange threads")}
                 onClose={props.onClose}
-                accessibilityLabel="Close arrange threads"
+                accessibilityLabel={gt("Close arrange threads")}
               />
               <Text className="px-5 pb-3 text-sm text-foreground-muted">
-                Drag to reorder, pin, or settle. Changes save when you drop.
+                <T>Drag to reorder, pin, or settle. Changes save when you drop.</T>
               </Text>
               <View
                 onLayout={(event) => {
@@ -444,7 +458,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                           label: string;
                         }>((section) => {
                           if (section === item.section) return [];
-                          const label = threadDragAction(item.section, section);
+                          const label = threadDragAction(item.section, section, m);
                           if (!label) return [];
                           if (section === "settled")
                             return configLoaded ? [{ name: section, label }] : [];
@@ -489,6 +503,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                               disabled={
                                 dropBusy ||
                                 pendingOrder !== null ||
+                                holdingRows ||
                                 (!listEnvironments.pinReorderEnvironmentIds.has(
                                   thread.environmentId,
                                 ) &&
@@ -537,10 +552,15 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                           >
                             <Text className="text-sm text-foreground-muted">
                               {olderSettledShelf.loading
-                                ? "Loading"
+                                ? gt("Loading", { $context: "older threads are loading" })
                                 : olderSettledShelf.failed
-                                  ? "Could not load older threads. Retry"
-                                  : `Show more (${settledCount - visibleSettled.length} settled hidden)`}
+                                  ? gt("Could not load older threads. Retry")
+                                  : gt(
+                                      "{count, plural, one {Show more ({count} settled hidden)} other {Show more ({count} settled hidden)}}",
+                                      {
+                                        count: settledCount - visibleSettled.length,
+                                      },
+                                    )}
                             </Text>
                           </Pressable>
                         ) : (
@@ -554,11 +574,13 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                             }}
                           >
                             <Text className="text-sm font-t3-semibold text-foreground-muted">
-                              {item.section[0]!.toUpperCase() + item.section.slice(1)} (
-                              {item.section === "settled"
-                                ? settledCount
-                                : sections[item.section].length}
-                              )
+                              {gt("{section} ({count})", {
+                                section: m(SECTION_LABELS[item.section]),
+                                count:
+                                  item.section === "settled"
+                                    ? settledCount
+                                    : sections[item.section].length,
+                              })}
                             </Text>
                           </Pressable>
                         )}
@@ -583,6 +605,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                         {threadDragAction(
                           visiblePreview.sourceSection,
                           visiblePreview.destination.section,
+                          m,
                         )}
                       </Text>
                     ) : null}

@@ -18,6 +18,9 @@ import { WS_METHODS } from "./rpc.ts";
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
+  // An MCP sign-in stores a credential for the agent, as an account sign-in does.
+  [WS_METHODS.providerMcpSignInStart]: AuthProvidersManageScope,
+  [WS_METHODS.providerMcpSignInComplete]: AuthProvidersManageScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
@@ -25,6 +28,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Restarts the server, as an update does.
   [WS_METHODS.serverReclaimDatabaseSpace]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
+  [WS_METHODS.serverCheckSecretSource]: AuthSettingsWriteScope,
   // Listing models spends the stored API key, so only those who can choose a model may.
   [WS_METHODS.serverListTextGeneratorModels]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
@@ -39,6 +43,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pullRequestsSetFilesViewed]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsRequestReviewers]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsSetLabels]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesCreate]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesComment]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesUpdate]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesSetState]: AuthSourceControlWriteScope,
+  [WS_METHODS.issuesReact]: AuthSourceControlWriteScope,
+  // A tracker credential and a project's binding are settings, saved under the same grant.
+  [WS_METHODS.issueTrackersConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.issueTrackersBindProject]: AuthSettingsWriteScope,
   // Writing a guide runs a model on this environment's providers, which reading one does not.
   [WS_METHODS.pullRequestsGenerateReviewGuide]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsCreateFromThread]: AuthOrchestrationOperateScope,
@@ -57,6 +69,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.gitPreparePullRequestThread]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsCreateWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsRemoveWorktree]: AuthSourceControlWriteScope,
+  [WS_METHODS.workspaceAddTaskFolderRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
@@ -77,6 +90,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
+  [WS_METHODS.peerLinksPairClient]: AuthAccessWriteScope,
+  [WS_METHODS.peerLinksPairLink]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

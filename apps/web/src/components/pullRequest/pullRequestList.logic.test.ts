@@ -163,21 +163,23 @@ describe("ranking what a search found", () => {
   const row = (overrides: Partial<PullRequestListEntry> & { number?: number }) =>
     entry({ number: 1, ...overrides });
 
-  it("puts the pull request whose title says it above one that merely mentions it", () => {
-    const titled = row({
-      number: 1,
-      title: "Add the welcome wizard",
-      updatedAt: "2026-07-01T00:00:00Z",
-    });
-    const mentioned = row({
-      number: 2,
-      title: "Unrelated work",
-      updatedAt: "2026-08-01T00:00:00Z",
-    });
-    expect(
-      rankPullRequestMatches([mentioned, titled], "welcome wizard").map((entry) => entry.number),
-    ).toEqual([1, 2]);
-  });
+  it.each([
+    ["welcome wizard", "Add the welcome wizard"],
+    ["24", "Upgrade Node to 24"],
+  ])(
+    "puts the pull request whose title says %j above one that merely mentions it",
+    (query, title) => {
+      const titled = row({ number: 1, title, updatedAt: "2026-07-01T00:00:00Z" });
+      const mentioned = row({
+        number: 2,
+        title: "Unrelated work",
+        updatedAt: "2026-08-01T00:00:00Z",
+      });
+      expect(
+        rankPullRequestMatches([mentioned, titled], query).map((entry) => entry.number),
+      ).toEqual([1, 2]);
+    },
+  );
 
   it("keeps loaded partial-word matches the host's whole-word search missed, after its answer", () => {
     const bilal = { login: "bilal", name: null, avatarUrl: null };
@@ -386,6 +388,18 @@ describe("partitioning with the hosts' own priority reads", () => {
     expect(groups[0]!.entries.map((item) => item.number)).toEqual([1]);
     expect(groups[1]!.entries.map((item) => item.number)).toEqual([2, 3]);
   });
+
+  it("lists a pull request once when another environment's authored read supplies it", () => {
+    const mine = authoredRow(4, "2026-07-01T00:00:00Z");
+    const groups = partitionPullRequestsWithPriority(
+      [{ ...mine, environmentId: ENV_1 }],
+      [{ ...mine, environmentId: ENV_2 }],
+      [],
+    );
+    expect(groups.map((group) => [group.key, group.entries])).toEqual([
+      ["authored", [{ ...mine, environmentId: ENV_1 }]],
+    ]);
+  });
 });
 
 describe("remembered pull request list controls", () => {
@@ -489,12 +503,19 @@ describe("merging the environments' own listings", () => {
         ...rows.map((row) => [ENV_1, answer({ entries: [row] })] as const),
         [ENV_2, answer({ entries: [older] })],
       ]);
-      expect(merged?.entries).toEqual([
-        { ...newer, environmentId: ENV_1 },
-        { ...older, environmentId: ENV_2 },
-      ]);
+      expect(merged?.entries).toEqual([{ ...newer, environmentId: ENV_1 }]);
     },
   );
+
+  it("keeps a pull request two environments read on the first environment that answered", () => {
+    const older = entry({ number: 4, updatedAt: "2026-07-01T00:00:00Z" });
+    const newer = entry({ number: 4, updatedAt: "2026-07-02T00:00:00Z" });
+    const merged = mergePullRequestLists([
+      [ENV_1, answer({ entries: [older] })],
+      [ENV_2, answer({ entries: [newer] })],
+    ]);
+    expect(merged?.entries).toEqual([{ ...older, environmentId: ENV_1 }]);
+  });
 
   it("keeps Azure pull requests from distinct projects with the same repository name and number", () => {
     const first = entry({

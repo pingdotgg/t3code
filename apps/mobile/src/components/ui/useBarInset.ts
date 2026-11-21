@@ -65,3 +65,18 @@ export function useSearchToolbarInset(search: AppBarSearch | undefined): number 
     ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
     : 0;
 }
+
+/** Where a sheet's scrolling content ends: clear of the bottom safe area, with a little room. */
+export function useSheetContentBottomInset(): number {
+  const insets = useSafeAreaInsets();
+  const columnMetrics = useNativeColumnLayoutMetrics();
+  return Platform.OS === "ios"
+    ? (columnMetrics?.safeArea.bottom ?? insets.bottom) + 8
+    : Math.max(insets.bottom, 18) + 18;
+}
+
+/** The bottom safe area a list in a sheet pads itself: Android's, which its sheets don't adjust for. */
+export function useUnadjustedBottomInset(): number {
+  const insets = useSafeAreaInsets();
+  return Platform.OS === "android" ? insets.bottom : 0;
+}
