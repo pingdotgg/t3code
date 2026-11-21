@@ -32,7 +32,7 @@ async function extractFrame(uri: string, signal: AbortSignal) {
     const frame = (async () => {
       await player.replaceAsync({ uri, contentType: "progressive" });
       await attached;
-      if (disposed || signal.aborted) return null;
+      if (disposed) return null;
       const [thumbnail] = await player.generateThumbnailsAsync([0], {
         maxWidth: 480,
         maxHeight: 480,
@@ -71,7 +71,7 @@ export function loadVideoThumbnail(
       try {
         if (signal.aborted) return null;
         const thumbnail = await extractFrame(source.uri, signal);
-        if (!thumbnail || signal.aborted) return null;
+        if (!thumbnail) return null;
         thumbnails.set(key, thumbnail);
         if (thumbnails.size > MAX_CACHED_THUMBNAILS) {
           thumbnails.delete(thumbnails.keys().next().value!);
