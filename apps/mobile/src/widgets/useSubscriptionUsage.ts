@@ -33,8 +33,9 @@ const refreshableEnvironmentsAtom = Atom.make((get) =>
 );
 
 /**
- * App-lifetime worker that keeps provider quotas fresh for the usage widget:
- * on resume, on every connection change, and on a fixed interval while active.
+ * Keeps provider quotas fresh for the usage widget whenever an environment becomes refreshable
+ * and on an interval while active. Resume itself never refreshes: the shell reads a stale "live"
+ * until its wakeup resync, so refreshing then would compete with the reload.
  * Each environment is refreshed at most once per interval.
  */
 export function installSubscriptionUsageRefresh(): () => void {
@@ -55,8 +56,14 @@ export function installSubscriptionUsageRefresh(): () => void {
   const unsubscribeEnvironments = appAtomRegistry.subscribe(refreshableEnvironmentsAtom, update, {
     immediate: true,
   });
-  const unsubscribeAppState = subscribeAppState(update);
-  const timer = setInterval(update, WIDGET_REFRESH_INTERVAL);
+  let timer: ReturnType<typeof setInterval> | undefined;
+  // Restarted on resume: a tick that came due while suspended would otherwise fire before the resync.
+  const restartInterval = () => {
+    clearInterval(timer);
+    timer = isAppActive() ? setInterval(update, WIDGET_REFRESH_INTERVAL) : undefined;
+  };
+  restartInterval();
+  const unsubscribeAppState = subscribeAppState(restartInterval);
   return () => {
     unsubscribeCatalog();
     unsubscribeEnvironments();

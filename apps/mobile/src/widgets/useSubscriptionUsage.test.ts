@@ -70,6 +70,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentPresentations } from "../state/presentation";
 import { environmentShell } from "../state/shell";
+import { WIDGET_REFRESH_INTERVAL } from "./subscriptionUsageSnapshot";
 import { installSubscriptionUsageRefresh } from "./useSubscriptionUsage";
 
 const registry = appAtomRegistry as AtomRegistry.AtomRegistry;
@@ -92,8 +93,8 @@ const syncing = EnvironmentId.make("env-syncing");
 const failed = EnvironmentId.make("env-failed");
 
 describe("installSubscriptionUsageRefresh", () => {
-  it("refreshes connected environments once the catalog is ready and the app is active", () => {
-    fixture.appState = "background";
+  it("refreshes connected environments once the catalog is ready", () => {
+    fixture.appState = "active";
     fixture.refreshed = [];
     registry.set(catalogAtom, { isReady: false });
     registry.set(
@@ -110,12 +111,9 @@ describe("installSubscriptionUsageRefresh", () => {
     registry.set(shellAtom(failed), { status: "cached", error: Option.some("Shell failed") });
 
     const dispose = installSubscriptionUsageRefresh();
-    registry.set(catalogAtom, { isReady: true });
-    // Backgrounded: nothing refreshes yet.
     expect(fixture.refreshed).toEqual([]);
 
-    fixture.appState = "active";
-    for (const listener of fixture.appStateListeners) listener();
+    registry.set(catalogAtom, { isReady: true });
     expect(fixture.refreshed).toEqual([connected, failed]);
 
     // The refresh waits for the thread list, so it never competes with it on a cold start.
@@ -123,6 +121,37 @@ describe("installSubscriptionUsageRefresh", () => {
     expect(fixture.refreshed).toEqual([connected, failed, syncing]);
 
     dispose();
-    expect(fixture.appStateListeners.size).toBe(0);
+  });
+
+  it("waits for the resumed shell to resync before refreshing again", async () => {
+    vi.useFakeTimers();
+    const resumed = EnvironmentId.make("env-resumed");
+    fixture.appState = "active";
+    fixture.refreshed = [];
+    registry.set(catalogAtom, { isReady: true });
+    registry.set(presentationsAtom, new Map([[resumed, { connection: { phase: "connected" } }]]));
+    registry.set(shellAtom(resumed), { status: "live", error: Option.none() });
+
+    const dispose = installSubscriptionUsageRefresh();
+    expect(fixture.refreshed).toEqual([resumed]);
+
+    // On resume the shell still reads its pre-suspend "live" until the wakeup resubscribes it,
+    // so neither the app turning active nor an interval tick that came due meanwhile may refresh.
+    const setAppState = (state: string) => {
+      fixture.appState = state;
+      for (const listener of fixture.appStateListeners) listener();
+    };
+    setAppState("background");
+    await vi.advanceTimersByTimeAsync(WIDGET_REFRESH_INTERVAL - 60_000);
+    setAppState("active");
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(fixture.refreshed).toEqual([resumed]);
+
+    registry.set(shellAtom(resumed), { status: "synchronizing", error: Option.none() });
+    registry.set(shellAtom(resumed), { status: "live", error: Option.none() });
+    expect(fixture.refreshed).toEqual([resumed, resumed]);
+
+    dispose();
+    vi.useRealTimers();
   });
 });
