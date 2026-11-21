@@ -1119,6 +1119,30 @@ export function GeneralSettingsPanel() {
         ) : null}
       </SettingsSection>
 
+      <SettingsSection id="terminal" title={gt("Terminal")}>
+        <SettingsRow
+          {...setting("terminal-file-links-open-in-app")}
+          description={gt(
+            "Open files from terminal output in the side panel. Hold ⌘ or Ctrl while clicking to use your preferred editor. Folders still open in the editor.",
+          )}
+          resetAction={
+            settings.terminalFileLinksOpenInApp ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset terminal file links to default")}
+                onClick={() => updateSettings({ terminalFileLinksOpenInApp: false })}
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.terminalFileLinksOpenInApp}
+              onCheckedChange={(checked) => updateSettings({ terminalFileLinksOpenInApp: checked })}
+              aria-label={gt("Open terminal file links in T3 Code")}
+            />
+          }
+        />
+      </SettingsSection>
+
       <SettingsSection id="display" title={gt("Display")}>
         <SettingsRow
           {...setting("language")}

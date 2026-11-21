@@ -1,6 +1,7 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
 import {
@@ -24,8 +25,8 @@ import {
   Trash2,
 } from "lucide-react";
 import {
-  AuthPreviewOperateScope,
   AuthFilesystemReadScope,
+  AuthPreviewOperateScope,
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   type ContextMenuItem,
@@ -60,7 +61,13 @@ import {
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { isTerminalUrl, resolveTerminalLinkTarget } from "../terminal-links";
+import { parseFileUrlHref, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
+import {
+  isTerminalLinkActivation,
+  isTerminalUrl,
+  resolveTerminalLinkTarget,
+} from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
@@ -93,6 +100,9 @@ import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { terminalInputWriter } from "./terminal/terminalInputWriter";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { filesystemEnvironment } from "../state/filesystem";
+import { useRightPanelStore } from "../rightPanelStore";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
 import { threadShortcutContext } from "./Sidebar.logic";
@@ -503,6 +513,9 @@ export function TerminalViewport(props: TerminalViewportProps) {
   return <TerminalSessionViewport key={sessionKey} {...props} />;
 }
 
+const latestTerminalLinkActivations = new Map<string, symbol>();
+const latestTerminalLinkValidations = new Map<string, symbol>();
+
 function TerminalSessionViewport({
   advancedTypography,
   threadRef,
@@ -524,11 +537,13 @@ function TerminalSessionViewport({
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
   const visibleRef = useRef(visible);
   const environmentId = threadRef.environmentId;
+  const linkActivationScope = scopedThreadKey(threadRef);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = useEffectEvent(() =>
     readEnvironmentScope(environmentId, AuthTerminalOperateScope),
   );
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const openFilesInApp = useClientSettings((settings) => settings.terminalFileLinksOpenInApp);
   const canReadFilesystem = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const [linkPath, setLinkPath] = useState<string | null>(null);
   const metadataThreadRef = useContext(FileMetadataThreadContext);
@@ -536,7 +551,7 @@ function TerminalSessionViewport({
   const hostname = serverConfig?.hostname;
   const readHostname = useEffectEvent(() => hostname);
   const linkMetadataQuery =
-    linkPath !== null && canOpenHostEditor && canReadFilesystem
+    linkPath !== null && (canOpenHostEditor || openFilesInApp) && canReadFilesystem
       ? getFileMetadataQueryAtom(
           environmentId,
           resolveTerminalLinkTarget(linkPath, cwd, hostname),
@@ -546,15 +561,27 @@ function TerminalSessionViewport({
       : null;
   const canActivateTerminalLink = useEffectEvent((text: string) => {
     if (isTerminalUrl(text)) return true;
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+    if (!openFilesInApp && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+      return false;
     if (text !== linkPath || !linkMetadataQuery) return false;
     const metadata = AsyncResult.getOrElse(appAtomRegistry.get(linkMetadataQuery), () => null);
-    return metadata?.kind === "file" || metadata?.kind === "directory";
+    return (
+      metadata?.kind === "file" ||
+      (metadata?.kind === "directory" &&
+        readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+    );
   });
+  const hasTerminalLinkAccess = useEffectEvent(
+    (text: string) =>
+      isTerminalUrl(text) ||
+      (openFilesInApp && readEnvironmentScope(environmentId, AuthFilesystemReadScope)) ||
+      readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
+  );
   const validateTerminalLink = useEffectEvent(async (text: string) => {
+    latestTerminalLinkValidations.delete(linkActivationScope);
     if (isTerminalUrl(text)) return true;
     if (
-      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      (!openFilesInApp && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) ||
       !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
     )
       return false;
@@ -565,10 +592,17 @@ function TerminalSessionViewport({
       metadataThreadRef,
     );
     if (!query) return false;
+    const validation = Symbol();
+    latestTerminalLinkValidations.set(linkActivationScope, validation);
     const result = await executeAtomQuery(appAtomRegistry, query, { reportFailure: false });
+    const isCurrent = latestTerminalLinkValidations.get(linkActivationScope) === validation;
+    if (isCurrent) latestTerminalLinkValidations.delete(linkActivationScope);
     return (
+      isCurrent &&
       result._tag === "Success" &&
-      (result.value?.kind === "file" || result.value?.kind === "directory")
+      (result.value?.kind === "file" ||
+        (result.value?.kind === "directory" &&
+          readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)))
     );
   });
   const openInPreferredEditor = useOpenInPreferredEditor(
@@ -576,7 +610,41 @@ function TerminalSessionViewport({
     serverConfig?.availableEditors ?? [],
     worktreePath ?? cwd,
   );
-  const openTerminalPath = useEffectEvent((target: string) => openInPreferredEditor(target));
+  const getFilesystemMetadata = useAtomQueryRunner(filesystemEnvironment.getMetadata, {
+    reportFailure: false,
+    refresh: true,
+  });
+  const openTerminalPath = useEffectEvent(
+    async (target: string, event: MouseEvent, isCurrent: () => boolean) => {
+      const sourceTerminal = terminalRef.current;
+      if (
+        openFilesInApp &&
+        !isTerminalLinkActivation(event) &&
+        readEnvironmentScope(environmentId, AuthFilesystemReadScope)
+      ) {
+        const uri = /^file:\/\//iu.test(target) ? parseFileUrlHref(target) : null;
+        const position = uri
+          ? { ...splitFilePathPosition("", uri.hash), path: safeDecodeURIComponent(uri.path) }
+          : splitFilePathPosition(target);
+        const metadata = await getFilesystemMetadata({
+          environmentId,
+          input: { paths: [position.path] },
+        });
+        if (!isCurrent() || sourceTerminal !== terminalRef.current) {
+          return AsyncResult.success(undefined);
+        }
+        if (metadata._tag !== "Success") return metadata;
+        if (metadata.value.entries[0]?.kind === "file") {
+          if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) {
+            return AsyncResult.success(undefined);
+          }
+          useRightPanelStore.getState().openFile(threadRef, position.path, position.line);
+          return AsyncResult.success(undefined);
+        }
+      }
+      return openInPreferredEditor(target);
+    },
+  );
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -1064,13 +1132,11 @@ function TerminalSessionViewport({
       }
 
       function handleLinkActivate(text: string, event: MouseEvent): void {
-        if (
-          !isTerminalUrl(text) &&
-          !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-        )
-          return;
+        if (!hasTerminalLinkAccess(text)) return;
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
+        latestTerminalLinkActivations.delete(linkActivationScope);
+        latestTerminalLinkValidations.delete(linkActivationScope);
         if (isTerminalUrl(text)) {
           if (!localApi) {
             writeSystemMessage(
@@ -1104,9 +1170,13 @@ function TerminalSessionViewport({
           );
           return;
         }
+        const activation = Symbol();
+        latestTerminalLinkActivations.set(linkActivationScope, activation);
+        const isCurrent = () =>
+          latestTerminalLinkActivations.get(linkActivationScope) === activation;
         const target = resolveTerminalLinkTarget(text, cwd, readHostname());
         void (async () => {
-          const result = await openTerminalPath(target);
+          const result = await openTerminalPath(target, event, isCurrent);
           if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
             return;
           }
@@ -1115,7 +1185,9 @@ function TerminalSessionViewport({
             latestTerminal,
             thrownErrorMessage(error, m) ?? m(msg("Unable to open path")),
           );
-        })();
+        })().finally(() => {
+          if (isCurrent()) latestTerminalLinkActivations.delete(linkActivationScope);
+        });
       }
 
       function handleData(data: string): void {
@@ -1184,7 +1256,7 @@ function TerminalSessionViewport({
         mount.focus({ preventScroll: true });
       }
     };
-  }, [cwd, environmentId, terminalId, terminalSessionAtom, threadId]);
+  }, [cwd, environmentId, linkActivationScope, terminalId, terminalSessionAtom, threadId]);
 
   const attachContainer = (mount: HTMLDivElement) => {
     containerRef.current = mount;
