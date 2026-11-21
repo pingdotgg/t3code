@@ -16,6 +16,7 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import * as DateTime from "effect/DateTime";
 import { WorkLogRow } from "./WorkLog";
 import {
+  isRecoveryHandoff,
   resolveHandoffEndpoints,
   type HandoffEndpoints,
   type HandoffTimelineRun,
@@ -100,6 +101,7 @@ export function V2LifecycleRow(props: {
       <EnvironmentHandoffRow
         environmentId={props.environmentId}
         endpoints={resolveHandoffEndpoints(item, props.runs)}
+        recovery={isRecoveryHandoff(item)}
         failed={item.status === "failed"}
       />
     );
@@ -634,6 +636,7 @@ function EnvironmentHandoffRow({
 }: {
   readonly environmentId: EnvironmentId;
   readonly endpoints: HandoffEndpoints;
+  readonly recovery: boolean;
   readonly failed: boolean;
 }) {
   const providers =
@@ -676,6 +679,7 @@ export function HandoffRow(props: {
   readonly endpoints: HandoffEndpoints;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly pending?: boolean;
+  readonly recovery?: boolean;
   readonly failed?: boolean;
 }) {
   const gt = useGT();
@@ -685,7 +689,13 @@ export function HandoffRow(props: {
   const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
   return (
     <TimelineSystemDivider
-      label={props.pending ? gt("Context handoff pending") : gt("Context handoff")}
+      label={
+        props.pending
+          ? gt("Context handoff pending")
+          : props.recovery
+            ? gt("Recovered context")
+            : gt("Context handoff")
+      }
       icon={ArrowRightLeftIcon}
       showDetailSeparator={false}
       tone={props.failed ? "danger" : "neutral"}

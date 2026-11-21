@@ -52,7 +52,13 @@ export function resolvePendingHandoff(
 export function resolveHandoffEndpoints(
   item: Pick<
     Extract<OrchestrationV2TurnItem, { type: "handoff" }>,
-    "runId" | "fromModelSelections" | "fromProviderInstanceIds" | "toModel" | "toProviderInstanceId"
+    | "runId"
+    | "fromProviderThreadIds"
+    | "toProviderThreadId"
+    | "fromModelSelections"
+    | "fromProviderInstanceIds"
+    | "toModel"
+    | "toProviderInstanceId"
   >,
   runs: ReadonlyArray<HandoffTimelineRun>,
 ) {
@@ -72,7 +78,28 @@ export function resolveHandoffEndpoints(
           instanceId,
           model: latestRunModelBefore(runs, instanceId, handoffRun?.ordinal),
         }));
-  return { from: fromEndpoints, to: { instanceId: item.toProviderInstanceId, model: toModel } };
+  return {
+    from: isRecoveryHandoff(item) ? [] : fromEndpoints,
+    to: { instanceId: item.toProviderInstanceId, model: toModel },
+  };
+}
+
+/**
+ * Whether every source of the handoff is its own target conversation, as when a provider
+ * conversation restarts in a fresh session of itself after a failed resume or a rollback it
+ * cannot truncate. Nothing changed hands, so it has no source. Matching on the model instead
+ * would also catch a fork or a merge-back between two conversations that happen to share one.
+ */
+export function isRecoveryHandoff(
+  item: Pick<
+    Extract<OrchestrationV2TurnItem, { type: "handoff" }>,
+    "fromProviderThreadIds" | "toProviderThreadId"
+  >,
+): boolean {
+  return (
+    item.fromProviderThreadIds.length > 0 &&
+    item.fromProviderThreadIds.every((id) => id === item.toProviderThreadId)
+  );
 }
 
 function latestRunModelBefore(
