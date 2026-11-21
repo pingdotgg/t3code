@@ -6,6 +6,10 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
 
+/** A mocked Forgejo CLI beside a host whose git and processes die if a test reaches them. */
+const mockForgejoCli = (service: Partial<ForgejoCli.ForgejoCli["Service"]>) =>
+  Layer.merge(Layer.mock(ForgejoCli.ForgejoCli)(service), TestSourceControlHost.layer());
+
 it.effect("reads file revisions from the pull request diff and refuses a truncated one", () =>
   Effect.gen(function* () {
     let truncated = false;
@@ -27,7 +31,7 @@ it.effect("reads file revisions from the pull request diff and refuses a truncat
     ].join("\n");
     const provider = yield* ForgejoPullRequestProvider.make.pipe(
       Effect.provide(
-        Layer.mock(ForgejoCli.ForgejoCli)({
+        mockForgejoCli({
           api: (input) => {
             assert.strictEqual(input.host, "forge.example:3000");
             assert.strictEqual(input.repository, "reviewer/project");
@@ -88,7 +92,7 @@ it.effect("filters listed pull requests by the requested state", () =>
     }));
     const provider = yield* ForgejoPullRequestProvider.make.pipe(
       Effect.provide(
-        Layer.mock(ForgejoCli.ForgejoCli)({
+        mockForgejoCli({
           api: (input) => {
             const [path, query] = input.path.split("?");
             assert.strictEqual(path, "repos/maria/project/pulls");
@@ -142,7 +146,7 @@ const fastForwardOnlyProvider = (
 ) =>
   ForgejoPullRequestProvider.make.pipe(
     Effect.provide(
-      Layer.mock(ForgejoCli.ForgejoCli)({
+      mockForgejoCli({
         api: (input) => {
           const [path] = input.path.split("?");
           const reply = (value: unknown) =>

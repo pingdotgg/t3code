@@ -6,6 +6,8 @@ import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3t
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import { parseDiffFileRevisions } from "@t3tools/source-control-core/server/diffFileRevisions";
+import { makeLocalMergeabilityReader } from "@t3tools/source-control-core/server/localMergeability";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import {
   PullRequestProviderError,
   type ProviderChangeRequestDetail,
@@ -85,6 +87,18 @@ const reviewCommentId = (review: typeof ForgejoReview.Type) =>
 
 const decodePullRequest = decodeJsonResult(ForgejoPullRequest);
 
+/** Whether a remote URL points at `repository` on `host`, allowing a sub-path mount and SSH. */
+function isRepositoryRemote(url: string, input: ProviderRepositoryRef): boolean {
+  const remote = ForgejoCli.parseForgejoRemote(url);
+  if (!remote) return false;
+  const host = input.host.toLowerCase();
+  const path = remote.path.toLowerCase();
+  const repository = input.repository.toLowerCase();
+  // An SSH port says nothing about the web port; an HTTP port tells instances on one host apart.
+  const sameHost = remote.ssh ? remote.hostname === host.split(":")[0] : remote.host === host;
+  return sameHost && (path === repository || path.endsWith(`/${repository}`));
+}
+
 /** Only the PATCH reply carries the pull request; merge and update reply with an empty body. */
 function forgejoActionSummary(stdout: string): ProviderChangeRequestSummary | undefined {
   const decoded = decodePullRequest(stdout);
@@ -103,6 +117,8 @@ function forgejoActionSummary(stdout: string): ProviderChangeRequestSummary | un
 
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
+  const host = yield* SourceControlHost.SourceControlHost;
+  const readLocalMergeability = makeLocalMergeabilityReader(host.process);
   const failure = (operation: string, detail: string, cause?: unknown) =>
     new PullRequestProviderError({
       provider: SourceControlProviderKind.make("forgejo"),
@@ -282,6 +298,43 @@ export const make = Effect.gen(function* () {
     );
     return markRequiredForgejoChecks(forgejoChecks(statuses.items, pr.html_url), policy);
   });
+  /**
+   * Forgejo's `mergeable` is false alike for a conflict, a pending or failed conflict check, and a
+   * draft, and its API exposes nothing finer. A local merge of the two commits tells a conflict
+   * apart; a clean local merge stays unknown, since Forgejo may still refuse to merge. Lists do not
+   * fetch, so a page never waits on the network; they reuse what detail reads fetched.
+   */
+  const changeRequest = Effect.fn("ForgejoPullRequestProvider.changeRequest")(function* (
+    input: ProviderRepositoryRef,
+    pr: typeof ForgejoPullRequest.Type,
+    fetch = true,
+  ) {
+    const result = forgejoChangeRequest(pr);
+    if (result.state !== "open" || result.mergeability !== "unknown") return result;
+    const local = yield* readLocalMergeability({
+      cwd: input.cwd,
+      baseSha: pr.base.sha,
+      headSha: pr.head.sha,
+      fetchSource: !fetch
+        ? undefined
+        : host.git.remotes(input.cwd).pipe(
+            Effect.flatten,
+            Effect.map(({ remotes }) =>
+              remotes.find((remote) => isRepositoryRemote(remote.url, input)),
+            ),
+            Effect.map((remote) =>
+              remote === undefined
+                ? undefined
+                : {
+                    url: remote.url,
+                    refs: [`refs/pull/${pr.number}/head`, `refs/heads/${pr.base.ref}`],
+                  },
+            ),
+            Effect.orElseSucceed(() => undefined),
+          ),
+    });
+    return local === "conflicting" ? { ...result, mergeability: local } : result;
+  });
   const unsupported = (operation: string) =>
     Effect.fail(failure(operation, `Forgejo does not expose ${operation} through its API.`));
   const provider: PullRequestProviderApi = {
@@ -293,7 +346,7 @@ export const make = Effect.gen(function* () {
     listChangeRequests: Effect.fn("ForgejoPullRequestProvider.listChangeRequests")(
       function* (input) {
         const offset = input.cursor?.delivered ?? 0;
-        const items: ReturnType<typeof forgejoChangeRequest>[] = [];
+        const rows: Array<typeof ForgejoPullRequest.Type> = [];
         const state = input.state === "merged" ? "closed" : input.state;
         const params = new URLSearchParams({ state, sort: "recentupdate" });
         const filters = input.filters;
@@ -332,27 +385,29 @@ export const make = Effect.gen(function* () {
         // Forgejo has no `merged` list state: `state=closed` returns merged and
         // closed-unmerged rows alike, so rows are filtered by their mapped state and
         // only matching rows count toward the requested limit.
-        for (let index = firstIndex; more && items.length < input.limit; index++) {
+        for (let index = firstIndex; more && rows.length < input.limit; index++) {
           const result =
             index === 1 ? first : yield* readPage(query, Schema.NullOr(ForgejoPullRequest), index);
-          const rows = result.rows;
           const start = index === firstIndex ? offset % pageSize : 0;
           const countBefore = consumed;
-          for (const row of rows.slice(start)) {
-            if (items.length >= input.limit) break;
+          for (const row of result.rows.slice(start)) {
+            if (rows.length >= input.limit) break;
             consumed++;
             if (!row) continue;
-            const changeRequest = forgejoChangeRequest(row);
-            if (input.state !== "all" && changeRequest.state !== input.state) continue;
-            items.push(changeRequest);
+            if (input.state !== "all" && forgejoChangeRequest(row).state !== input.state) continue;
+            rows.push(row);
           }
-          more = result.more || rows.length - start > consumed - countBefore;
+          more = result.more || result.rows.length - start > consumed - countBefore;
         }
+        const items = yield* Effect.forEach(rows, (row) => changeRequest(input, row, false), {
+          concurrency: 4,
+        });
         return { items, truncated: more, continues: true, cursorAdvance: consumed };
       },
     ),
     getChangeRequestPreview: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
-    getChangeRequestSummary: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
+    getChangeRequestSummary: (input) =>
+      getPull(input).pipe(Effect.flatMap((pr) => changeRequest(input, pr))),
     getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
       function* (input) {
         const pr = yield* getPull(input);
@@ -364,9 +419,12 @@ export const make = Effect.gen(function* () {
         [getPull(input), getRepo(input), getViewer(input)],
         { concurrency: 3 },
       );
-      const checks = yield* readChecks(input, pr);
+      const [checks, summary] = yield* Effect.all(
+        [readChecks(input, pr), changeRequest(input, pr)],
+        { concurrency: 2 },
+      );
       return {
-        ...forgejoChangeRequest(pr),
+        ...summary,
         headSha: pr.head.sha,
         mergeCommitSha: pr.merge_commit_sha || null,
         mergedBy: forgejoActor(pr.merged_by),

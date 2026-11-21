@@ -24,6 +24,10 @@ import { markRequiredForgejoChecks } from "./forgejoRequiredChecks.ts";
 
 const processOutput = TestSourceControlHost.processOutput;
 
+/** A mocked Forgejo CLI beside a host whose git and processes die if a test reaches them. */
+const mockForgejoCli = (service: Partial<ForgejoCli.ForgejoCli["Service"]>) =>
+  Layer.merge(Layer.mock(ForgejoCli.ForgejoCli)(service), TestSourceControlHost.layer());
+
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -140,7 +144,7 @@ const requiredChecksLayer = (
   statuses = requiredChecksStatuses,
   pull: Readonly<Record<string, unknown>> = requiredChecksPullRequest,
 ) =>
-  Layer.mock(ForgejoCli.ForgejoCli)({
+  mockForgejoCli({
     api: (input) => {
       const [path, query] = input.path.split("?");
       const respond = (response: unknown) =>
@@ -288,7 +292,7 @@ const forgejoMergeProvider = (repository: Effect.Effect<string, ForgejoCli.Forge
   const writes: Array<ForgejoCli.ForgejoApiInput> = [];
   const provider = ForgejoPullRequestProvider.make.pipe(
     Effect.provide(
-      Layer.mock(ForgejoCli.ForgejoCli)({
+      mockForgejoCli({
         api: (input) => {
           if (input.method !== undefined && input.method !== "GET") writes.push(input);
           return (input.path === "repos/reviewer/project" ? repository : Effect.succeed("")).pipe(
@@ -382,7 +386,7 @@ it.effect.each([
       assert.strictEqual(exit._tag === "Failure", fails);
     }).pipe(
       Effect.provide(
-        Layer.mock(ForgejoCli.ForgejoCli)({
+        mockForgejoCli({
           api: (input) => {
             const respond = (response: unknown) =>
               encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));
@@ -465,7 +469,7 @@ it.effect("reads Forgejo jobs that did not run as finished checks", () =>
     );
   }).pipe(
     Effect.provide(
-      Layer.mock(ForgejoCli.ForgejoCli)({
+      mockForgejoCli({
         api: (input) => {
           if (input.path.endsWith("branches/main")) {
             return encodeJsonEffect({}).pipe(Effect.orDie, Effect.map(processOutput));
@@ -531,7 +535,7 @@ it.effect("opens Forgejo Actions check links on the pull request's server", () =
     );
   }).pipe(
     Effect.provide(
-      Layer.mock(ForgejoCli.ForgejoCli)({
+      mockForgejoCli({
         api: (input) => {
           const status = (context: string, target_url: string | null) => ({
             context,
@@ -641,7 +645,7 @@ it.effect.each([
       }
     }).pipe(
       Effect.provide(
-        Layer.mock(ForgejoCli.ForgejoCli)({
+        mockForgejoCli({
           api: (input) => {
             requests.push(input.path);
             const [path, query] = input.path.split("?");
@@ -696,7 +700,7 @@ it.effect("asks Forgejo for one required label by id and the author by login", (
     assert.strictEqual(params.get("poster"), "maria");
   }).pipe(
     Effect.provide(
-      Layer.mock(ForgejoCli.ForgejoCli)({
+      mockForgejoCli({
         api: (input) => {
           paths.push(input.path);
           const response = input.path.startsWith("repos/maria/project/labels")
@@ -725,7 +729,7 @@ it.effect("lists nothing for an author Forgejo has no account for", () =>
     assert.deepStrictEqual(page, { items: [], truncated: false, continues: false });
   }).pipe(
     Effect.provide(
-      Layer.mock(ForgejoCli.ForgejoCli)({
+      mockForgejoCli({
         api: (input) =>
           Effect.fail(
             new ForgejoCli.ForgejoCliError({
@@ -765,7 +769,7 @@ it.effect.each([
     });
   }).pipe(
     Effect.provide(
-      Layer.mock(ForgejoCli.ForgejoCli)({
+      mockForgejoCli({
         api: (input) => {
           paths.push(input.path);
           assert.strictEqual(input.path.split("?")[0], "repos/maria/project/assignees");
@@ -792,7 +796,7 @@ it.effect("says an author search was cut short by a server that pages below its 
     assert.isTrue(found.truncated);
   }).pipe(
     Effect.provide(
-      Layer.mock(ForgejoCli.ForgejoCli)({
+      mockForgejoCli({
         api: () =>
           encodeJsonEffect({
             ok: true,
@@ -1466,7 +1470,7 @@ it.effect(
       assert.strictEqual(reactionReads, 502);
     }).pipe(
       Effect.provide(
-        Layer.mock(ForgejoCli.ForgejoCli)({
+        mockForgejoCli({
           api: (input) => {
             if (input.method) {
               writes.push(input);
@@ -1503,7 +1507,7 @@ it.effect("lists each Forgejo assignee once as a reviewer candidate", () => {
     assert.strictEqual(paths.filter((path) => path.includes("/assignees")).length, 1);
   }).pipe(
     Effect.provide(
-      Layer.mock(ForgejoCli.ForgejoCli)({
+      mockForgejoCli({
         api: (input) => {
           paths.push(input.path);
           const respond = (response: unknown) =>
