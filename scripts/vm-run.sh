@@ -30,6 +30,7 @@ stop
 "$ROOT/scripts/bundle-app.sh" debug >/dev/null
 rm -f "$DEV/automation-port"
 EXTRA=()
+[[ -n "${CONN_GPUI_VIBRANCY_MATERIAL:-}" ]] && EXTRA+=(--env "CONN_GPUI_VIBRANCY_MATERIAL=$CONN_GPUI_VIBRANCY_MATERIAL")
 [[ -n "${CONN_GPUI_METAL_DISPLAY_LINK:-}" ]] && EXTRA+=(--env CONN_GPUI_METAL_DISPLAY_LINK=1)
 open -n "$APP" ${EXTRA[@]+"${EXTRA[@]}"} \
   --env CONN_WEB_TRACE=1 \

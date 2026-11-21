@@ -90,7 +90,11 @@ fn add_vibrancy(window: &Window) {
     // and `-[NSView addSubview:positioned:relativeTo:]` with a nil sibling, all on the main
     // thread; the content view retains the subview.
     unsafe {
-        let _: () = objc2::msg_send![&*effect, setMaterial: MATERIAL_UNDER_WINDOW_BACKGROUND];
+        let material = std::env::var("CONN_GPUI_VIBRANCY_MATERIAL")
+            .ok()
+            .and_then(|v| v.parse::<isize>().ok())
+            .unwrap_or(MATERIAL_UNDER_WINDOW_BACKGROUND);
+        let _: () = objc2::msg_send![&*effect, setMaterial: material];
         let _: () = objc2::msg_send![&*effect, setBlendingMode: BLENDING_BEHIND_WINDOW];
         let _: () = objc2::msg_send![&*effect, setState: STATE_FOLLOWS_WINDOW_ACTIVE_STATE];
         let _: () = objc2::msg_send![&*effect, setAutoresizingMask: AUTORESIZE_WIDTH_AND_HEIGHT];
@@ -101,6 +105,15 @@ fn add_vibrancy(window: &Window) {
             positioned: ORDERING_BELOW,
             relativeTo: nil
         ];
+    }
+    if std::env::var_os("CONN_GPUI_FRAME_LOG").is_some() {
+        // SAFETY: `-[NSView subviews]` returns the content view's subviews array.
+        let count: usize = unsafe {
+            let subviews: Retained<AnyObject> = objc2::msg_send![&*content, subviews];
+            objc2::msg_send![&*subviews, count]
+        };
+        let same = std::ptr::eq(view, &*content);
+        eprintln!("vibrancy: effect view added; content subviews {count}, gpui view is content view: {same}");
     }
 }
 

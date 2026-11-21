@@ -5,12 +5,12 @@ pub const SIDEBAR_MAX_WIDTH: f32 = 480.0;
 /// Default sidebar width in CSS pixels.
 pub const SIDEBAR_DEFAULT_WIDTH: f32 = 233.0;
 
-/// Minimum right-panel width in CSS pixels.
-pub const RIGHT_PANEL_MIN_WIDTH: f32 = 320.0;
+/// Minimum right-panel width in CSS pixels (Conn `PREVIEW_PANEL_MIN_WIDTH`).
+pub const RIGHT_PANEL_MIN_WIDTH: f32 = 360.0;
 /// Maximum right-panel width in CSS pixels.
 pub const RIGHT_PANEL_MAX_WIDTH: f32 = 1200.0;
-/// Default right-panel width in CSS pixels.
-pub const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 480.0;
+/// Default right-panel width in CSS pixels (Conn `PREVIEW_PANEL_DEFAULT_WIDTH`).
+pub const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 600.0;
 
 /// Top-level right-panel surfaces matching Conn desktop (`RightPanelTabs.tsx`, `rightPanelStore.ts`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -131,7 +131,7 @@ impl LayoutState {
         }
     }
 
-    /// Sets `right_panel_width`, clamping to `320.0..=1200.0`. Non-finite inputs are ignored.
+    /// Sets `right_panel_width`, clamping to `RIGHT_PANEL_MIN_WIDTH..=RIGHT_PANEL_MAX_WIDTH`. Non-finite inputs are ignored.
     pub fn set_right_panel_width(&mut self, width: f32) {
         if width.is_finite() {
             self.right_panel_width = width.clamp(RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH);

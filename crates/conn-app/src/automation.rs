@@ -220,12 +220,11 @@ async fn run(
             })
             .map_err(|e| err(e.into())),
         "panel" => {
-            let tab = match text(cmd, "tab") {
-                "files" => RightPanelTab::Files,
-                "diff" => RightPanelTab::Diff,
-                "terminal" => RightPanelTab::Terminal,
-                "browser" => RightPanelTab::Browser,
-                other => return Err(format!("unknown tab `{other}`")),
+            let name = text(cmd, "tab");
+            let Some(tab) = RightPanelTab::MENU_ORDER.into_iter().find(|tab| {
+                crate::panels::header::panel_tab_label(*tab).eq_ignore_ascii_case(name)
+            }) else {
+                return Err(format!("unknown tab `{name}`"));
             };
             app.update(cx, |app, cx| {
                 app.select_right_panel_tab(tab, cx);

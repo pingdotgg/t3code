@@ -1176,6 +1176,7 @@ dependencies = [
  "alacritty_terminal",
  "conn-client",
  "conn-contract",
+ "conn-desktop",
  "conn-state",
  "conn-theme",
  "conn-web",

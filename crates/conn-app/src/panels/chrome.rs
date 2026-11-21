@@ -1,0 +1,408 @@
+//! Conn's shared panel controls, drawn the same way in every surface (API, Database, MCP,
+//! Tasks): the subheader toolbar row, `ToolbarGroup`, ghost icon buttons, the soft input group,
+//! underlined section tabs (`ApiTabs`), the checkbox, warning notices and `dropdown-glass` menus.
+//!
+//! Metrics come from Conn's `index.css` (`--spacing-toolbar: 7.5px`, `--spacing-toolbar-end:
+//! 11.5px`, `--toolbar-radius: 9999px`, `--toolbar-group-fill: var(--shell-control)`,
+//! `--toolbar-group-border: var(--shell-divider-header)`) and `components/ui/*.tsx`.
+
+use conn_theme::{Appearance, Tokens};
+use gpui_kit::component::h_flex;
+use gpui_kit::prelude::*;
+use gpui_kit::{
+    AnyElement, App, BoxShadow, ClickEvent, Div, ElementId, FontWeight, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, SharedString, Stateful, Styled, Window, deferred, div,
+    point, px,
+};
+
+use super::color::to_hsla;
+use super::header::superhero_icon;
+
+/// `text-ui`: 13px / 20px.
+pub(crate) const UI_TEXT_PX: f32 = 13.0;
+pub(crate) const UI_LINE_HEIGHT_PX: f32 = 20.0;
+/// `text-xs`: 12px / 16px.
+pub(crate) const XS_TEXT_PX: f32 = 12.0;
+pub(crate) const XS_LINE_HEIGHT_PX: f32 = 16.0;
+/// `py-toolbar`, `ps-2`, `pe-toolbar-end`.
+pub(crate) const TOOLBAR_PAD_Y_PX: f32 = 7.5;
+pub(crate) const TOOLBAR_PAD_START_PX: f32 = 8.0;
+pub(crate) const TOOLBAR_PAD_END_PX: f32 = 11.5;
+/// Toolbar controls are `h-8`.
+pub(crate) const CONTROL_HEIGHT_PX: f32 = 32.0;
+/// `Button size="icon-xs"` (`sm:size-6`) with a `sm:size-3.5` glyph.
+pub(crate) const ICON_BUTTON_PX: f32 = 24.0;
+pub(crate) const ICON_BUTTON_GLYPH_PX: f32 = 14.0;
+/// `ApiTabs`: `h-9`, `gap-4`, `ps-4`.
+pub(crate) const SECTION_TABS_HEIGHT_PX: f32 = 36.0;
+/// Row inset used by panel lists (`ps-4`, `px-4`).
+pub(crate) const ROW_PAD_START_PX: f32 = 16.0;
+const PILL_RADIUS_PX: f32 = 9999.0;
+
+/// The surface subheader row (`data-surface-subheader`): `py-toolbar ps-2 pe-toolbar-end
+/// gap-2`, with the shell divider under it.
+pub(crate) fn toolbar_row(tokens: &Tokens) -> Div {
+    h_flex()
+        .w_full()
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(8.0))
+        .py(px(TOOLBAR_PAD_Y_PX))
+        .pl(px(TOOLBAR_PAD_START_PX))
+        .pr(px(TOOLBAR_PAD_END_PX))
+        .border_b_1()
+        .border_color(to_hsla(tokens.shell_divider))
+}
+
+/// `ToolbarGroup`: a bordered pill cluster of icon buttons (`h-8 px-0.75 gap-0.5`).
+pub(crate) fn toolbar_group(tokens: &Tokens) -> Div {
+    h_flex()
+        .flex_shrink_0()
+        .h(px(CONTROL_HEIGHT_PX))
+        .px(px(3.0))
+        .gap(px(2.0))
+        .items_center()
+        .rounded(px(PILL_RADIUS_PX))
+        .bg(to_hsla(tokens.shell_control))
+        .border_1()
+        .border_color(to_hsla(tokens.shell_divider_header))
+}
+
+/// A ghost `icon-xs` button (`[:hover]:bg-accent`). Inside a toolbar group the control radius
+/// is the group's pill radius. `disabled` dims it to 64% and drops the click.
+pub(crate) fn icon_button(
+    id: impl Into<ElementId>,
+    icon_path: &'static str,
+    tokens: &Tokens,
+    disabled: bool,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let hover = to_hsla(tokens.shell_highlight);
+    let color = to_hsla(tokens.muted_foreground);
+    let button = div()
+        .id(id)
+        .flex()
+        .flex_shrink_0()
+        .size(px(ICON_BUTTON_PX))
+        .items_center()
+        .justify_center()
+        .rounded(px(PILL_RADIUS_PX))
+        .child(superhero_icon(icon_path, ICON_BUTTON_GLYPH_PX, color));
+    if disabled {
+        button.opacity(0.64)
+    } else {
+        button
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .on_click(on_click)
+    }
+}
+
+/// A ghost `xs` text button (`h-6 gap-1 px-[7px] text-xs`, `size-3.5` glyph), such as
+/// "Add header".
+pub(crate) fn text_button(
+    id: impl Into<ElementId>,
+    icon_path: Option<&'static str>,
+    label: impl Into<SharedString>,
+    tokens: &Tokens,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let hover = to_hsla(tokens.shell_highlight);
+    let fg = to_hsla(tokens.foreground);
+    let mut button = h_flex()
+        .id(id)
+        .flex_shrink_0()
+        .h(px(24.0))
+        .px(px(7.0))
+        .gap(px(4.0))
+        .items_center()
+        .rounded(px(6.0))
+        .cursor_pointer()
+        .text_size(px(XS_TEXT_PX))
+        .line_height(px(XS_LINE_HEIGHT_PX))
+        .text_color(fg)
+        .hover(move |s| s.bg(hover))
+        .on_click(on_click);
+    if let Some(path) = icon_path {
+        button = button.child(superhero_icon(
+            path,
+            ICON_BUTTON_GLYPH_PX,
+            to_hsla(tokens.muted_foreground),
+        ));
+    }
+    button.child(label.into())
+}
+
+/// The soft input group (`InputGroup variant="soft"`): `h-8`, pill radius, `--shell-field`
+/// fill, `--shell-divider-header` border, `--shell-control` on hover.
+pub(crate) fn soft_input_group(tokens: &Tokens) -> Div {
+    let hover = to_hsla(tokens.shell_control);
+    h_flex()
+        .flex_1()
+        .min_w_0()
+        .h(px(CONTROL_HEIGHT_PX))
+        .items_center()
+        .rounded(px(PILL_RADIUS_PX))
+        .bg(to_hsla(tokens.shell_field))
+        .border_1()
+        .border_color(to_hsla(tokens.shell_divider_header))
+        .text_size(px(UI_TEXT_PX))
+        .hover(move |s| s.bg(hover))
+}
+
+/// One underlined section tab (`ApiTabs` button) with an optional muted count.
+#[derive(Clone, Debug)]
+pub(crate) struct SectionTab {
+    pub(crate) id: &'static str,
+    pub(crate) label: &'static str,
+    pub(crate) count: Option<usize>,
+}
+
+/// `ApiTabs`: underlined section tabs, `h-9 gap-4 ps-4 pe-toolbar-end`, divider below, the
+/// active tab marked with a 2px primary bar on the divider. `trailing` sits at the far end.
+pub(crate) fn section_tabs(
+    id: impl Into<SharedString>,
+    tokens: &Tokens,
+    tabs: &[SectionTab],
+    active: &str,
+    trailing: Option<AnyElement>,
+    on_select: impl Fn(&'static str, &mut Window, &mut App) + Clone + 'static,
+) -> Div {
+    let id: SharedString = id.into();
+    let fg = to_hsla(tokens.foreground);
+    let muted = to_hsla(tokens.muted_foreground);
+    let primary = to_hsla(tokens.primary);
+    let mut row = h_flex()
+        .w_full()
+        .flex_shrink_0()
+        .h(px(SECTION_TABS_HEIGHT_PX))
+        .items_stretch()
+        .gap(px(16.0))
+        .pl(px(ROW_PAD_START_PX))
+        .pr(px(TOOLBAR_PAD_END_PX))
+        .border_b_1()
+        .border_color(to_hsla(tokens.shell_divider));
+    for tab in tabs {
+        let is_active = tab.id == active;
+        let on_select = on_select.clone();
+        let tab_id = tab.id;
+        let mut button = h_flex()
+            .id(SharedString::from(format!("{id}-{tab_id}")))
+            .relative()
+            .items_center()
+            .gap(px(6.0))
+            .cursor_pointer()
+            .text_size(px(UI_TEXT_PX))
+            .line_height(px(UI_LINE_HEIGHT_PX))
+            .text_color(if is_active { fg } else { muted })
+            .when(!is_active, |el| el.hover(move |s| s.text_color(fg)))
+            .on_click(move |_, window, cx| on_select(tab_id, window, cx))
+            .child(tab.label);
+        if let Some(count) = tab.count.filter(|count| *count > 0) {
+            button = button.child(div().text_color(muted).child(count.to_string()));
+        }
+        if is_active {
+            button = button.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom(px(-1.0))
+                    .h(px(2.0))
+                    .rounded(px(PILL_RADIUS_PX))
+                    .bg(primary),
+            );
+        }
+        row = row.child(button);
+    }
+    if let Some(trailing) = trailing {
+        row = row.child(
+            h_flex()
+                .ml_auto()
+                .min_w_0()
+                .items_center()
+                .gap(px(8.0))
+                .child(trailing),
+        );
+    }
+    row
+}
+
+/// Conn's checkbox (`size-4`, 4px radius, `border-input`; checked: primary fill with a
+/// `size-3` check).
+pub(crate) fn checkbox(
+    id: impl Into<ElementId>,
+    checked: bool,
+    tokens: &Tokens,
+    on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let base = div()
+        .id(id)
+        .flex()
+        .flex_shrink_0()
+        .size(px(16.0))
+        .items_center()
+        .justify_center()
+        .rounded(px(4.0))
+        .cursor_pointer()
+        .on_click(on_toggle);
+    if checked {
+        base.bg(to_hsla(tokens.primary)).child(superhero_icon(
+            "superhero/check.svg",
+            12.0,
+            to_hsla(tokens.primary_foreground),
+        ))
+    } else {
+        let fill = match tokens.appearance {
+            Appearance::Dark => to_hsla(tokens.input.with_alpha(0.32)),
+            Appearance::Light => to_hsla(tokens.background),
+        };
+        base.bg(fill).border_1().border_color(to_hsla(tokens.input))
+    }
+}
+
+/// A warning notice (`m-1 rounded-lg bg-warning/10 px-3 py-2 text-ui text-warning`, alert
+/// glyph).
+pub(crate) fn warning_notice(tokens: &Tokens, text: impl Into<SharedString>) -> Div {
+    let warning = to_hsla(tokens.warning);
+    h_flex()
+        .m(px(4.0))
+        .items_center()
+        .gap(px(8.0))
+        .rounded(px(8.0))
+        .bg(to_hsla(tokens.warning.with_alpha(0.10)))
+        .px(px(12.0))
+        .py(px(8.0))
+        .text_size(px(UI_TEXT_PX))
+        .line_height(px(UI_LINE_HEIGHT_PX))
+        .text_color(warning)
+        .child(superhero_icon("superhero/error-circle.svg", 16.0, warning))
+        .child(div().min_w_0().child(text.into()))
+}
+
+/// One row of a `dropdown-glass` menu.
+pub(crate) struct MenuRow {
+    pub(crate) id: SharedString,
+    pub(crate) label: SharedString,
+    pub(crate) mono: bool,
+    /// Radio items mark the checked row with `bg-foreground/[0.08]`.
+    pub(crate) checked: bool,
+    pub(crate) on_select: Box<dyn Fn(&mut Window, &mut App)>,
+}
+
+/// A row list entry: a menu row or a `MenuSeparator`.
+pub(crate) enum MenuEntry {
+    Row(MenuRow),
+    Separator,
+}
+
+/// A `dropdown-glass` menu popup anchored `sideOffset={6}` under a 32px trigger at the left
+/// edge (`align="start"`), drawn above everything else.
+pub(crate) fn dropdown_menu(
+    id: impl Into<ElementId>,
+    tokens: &Tokens,
+    entries: Vec<MenuEntry>,
+    mono_font: SharedString,
+    top_px: f32,
+) -> AnyElement {
+    let fg = to_hsla(tokens.foreground);
+    let highlight = to_hsla(tokens.shell_highlight);
+    let checked_bg = to_hsla(tokens.foreground.with_alpha(0.08));
+    let divider = to_hsla(tokens.foreground.with_alpha(0.08));
+    let (offset_y, blur, alpha) = match tokens.appearance {
+        Appearance::Dark => (18.0, 44.0, 0.80),
+        Appearance::Light => (16.0, 40.0, 0.55),
+    };
+    let shadow = BoxShadow {
+        color: gpui_kit::hsla(0.0, 0.0, 0.0, alpha),
+        offset: point(px(0.0), px(offset_y)),
+        blur_radius: px(blur),
+        spread_radius: px(-18.0),
+        inset: false,
+    };
+    let mut list = div()
+        .id(id)
+        .flex()
+        .flex_col()
+        .min_w(px(160.0))
+        .max_w(px(320.0))
+        .p(px(4.0))
+        .rounded(px(12.0))
+        .bg(to_hsla(tokens.popover))
+        .border_1()
+        .border_color(divider)
+        .shadow(vec![shadow])
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+    for entry in entries {
+        match entry {
+            MenuEntry::Separator => {
+                list = list.child(div().mx(px(8.0)).my(px(4.0)).h(px(1.0)).bg(divider));
+            }
+            MenuEntry::Row(row) => {
+                let on_select = row.on_select;
+                let mut label = div().min_w_0().flex_1().truncate().child(row.label);
+                if row.mono {
+                    label = label.font_family(mono_font.clone());
+                }
+                list = list.child(
+                    h_flex()
+                        .id(row.id)
+                        .w_full()
+                        .min_h(px(28.0))
+                        .px(px(8.0))
+                        .py(px(4.0))
+                        .gap(px(8.0))
+                        .items_center()
+                        .rounded(px(8.0))
+                        .cursor_pointer()
+                        .text_size(px(14.0))
+                        .line_height(px(20.0))
+                        .text_color(fg)
+                        .when(row.checked, |el| el.bg(checked_bg))
+                        .hover(move |s| s.bg(highlight))
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            cx.stop_propagation();
+                            on_select(window, cx);
+                        })
+                        .child(label),
+                );
+            }
+        }
+    }
+    deferred(
+        div()
+            .absolute()
+            .top(px(top_px + 6.0))
+            .left(px(0.0))
+            .child(list),
+    )
+    .with_priority(2)
+    .into_any_element()
+}
+
+/// Bold-weight helper kept next to the menu code for `MenuShortcut`-style labels.
+#[expect(dead_code, reason = "used by surfaces ported next (Database, MCP)")]
+pub(crate) fn medium(text: impl Into<SharedString>) -> Div {
+    div().font_weight(FontWeight::MEDIUM).child(text.into())
+}
+
+/// Muted centered placeholder text, as panels show before there is content.
+pub(crate) fn empty_state(tokens: &Tokens, text: impl Into<SharedString>) -> Div {
+    h_flex()
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .items_center()
+        .justify_center()
+        .gap(px(8.0))
+        .px(px(ROW_PAD_START_PX))
+        .text_size(px(UI_TEXT_PX))
+        .line_height(px(UI_LINE_HEIGHT_PX))
+        .text_color(to_hsla(tokens.muted_foreground))
+        .child(text.into())
+}
+
+/// `Hsla` of a token with an alpha, for hover fills such as `hover:bg-foreground/4`.
+pub(crate) fn alpha(color: conn_theme::Rgba, a: f32) -> Hsla {
+    to_hsla(color.with_alpha(a))
+}

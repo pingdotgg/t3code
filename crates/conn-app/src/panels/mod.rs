@@ -1,7 +1,9 @@
 //! Right-panel surfaces for `conn-app`: Conn tab header, Files explorer + source preview,
 //! Diff viewer, local PTY Terminal, and Browser surface.
 
+mod api;
 mod browser;
+pub(crate) mod chrome;
 mod color;
 mod diff;
 mod diff_parser;
@@ -24,6 +26,7 @@ use gpui_kit::{
     AnyElement, App, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px,
 };
 
+use self::api::ApiPanel;
 use self::browser::BrowserPanel;
 use self::color::to_hsla;
 use self::diff::DiffPanel;
@@ -56,6 +59,7 @@ pub struct RightPanel {
     diff: Entity<DiffPanel>,
     terminal: Entity<TerminalPanel>,
     browser: Entity<BrowserPanel>,
+    api: Entity<ApiPanel>,
     /// True while the right panel is open and nothing covers it (see `set_surface_visible`).
     surface_visible: bool,
     /// False when the shell draws the tab strip in its 44px glass header and the card fill.
@@ -92,6 +96,7 @@ impl RightPanel {
         let diff = cx.new(|_| DiffPanel::new(tokens.clone(), connection));
         let terminal = cx.new(|cx| TerminalPanel::new(tokens.clone(), cx));
         let browser = cx.new(|cx| BrowserPanel::new(tokens.clone(), window, cx));
+        let api = cx.new(|cx| ApiPanel::new(tokens.clone(), window, cx));
 
         Self {
             tokens,
@@ -107,6 +112,7 @@ impl RightPanel {
             diff,
             terminal,
             browser,
+            api,
             chrome: true,
             surface_visible: false,
         }
@@ -151,6 +157,7 @@ impl RightPanel {
             .update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
         self.terminal
             .update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
+        self.api.update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
         self.browser.update(cx, |p, cx| p.set_tokens(tokens, cx));
         cx.notify();
     }
@@ -163,6 +170,10 @@ impl RightPanel {
         thread_id: Option<String>,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.project_id != project_id {
+            let key = project_id.clone();
+            self.api.update(cx, |p, cx| p.set_project(key, cx));
+        }
         self.project_id = project_id;
         if self.workspace_root != workspace_root {
             self.workspace_root = workspace_root.clone();
@@ -337,6 +348,7 @@ impl Render for RightPanel {
             RightPanelTab::Diff => self.diff.clone().into_any_element(),
             RightPanelTab::Terminal => self.terminal.clone().into_any_element(),
             RightPanelTab::Browser => self.browser.clone().into_any_element(),
+            RightPanelTab::Api => self.api.clone().into_any_element(),
             other => placeholder_surface(
                 panel_tab_label(other),
                 panel_tab_icon_path(other),
