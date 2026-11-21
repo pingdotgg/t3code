@@ -57,9 +57,6 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
         : [],
     )) as never,
 }));
-vi.mock(import("~/hooks/useSupportsMultiplePullRequests"), () => ({
-  useSupportsMultiplePullRequests: () => state.configLoaded,
-}));
 // Neither folder is a repository, which is what the server reports for both.
 vi.mock(import("~/state/vcs"), async (importOriginal) => {
   const actual = await importOriginal();
