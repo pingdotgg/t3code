@@ -5141,10 +5141,12 @@
   "c65e6cfd393d8dec": "Por tipo",
   "999c1e12be2b0b07": "Por velocidade",
   "acdde9c11660b3e7": "{cost} de adicional",
-  "52eb4ae22e3de46b": "Por modelo",
+  "ef85252c278cb404": "Detalhamento",
   "0f806caee7d50d39": "{share} dos tokens · sem taxas conhecidas",
   "fa8c94215417c702": "sem taxas conhecidas · {tokens} tokens",
   "77798cfa0f392e89": "Sem preço",
+  "52d5050fe3b493be": "ID {id}",
+  "48fb19071dd12d24": "Alguns sem preço",
   "ab4208cfa3aa2c7c": [
     "Contado uma vez entre ambientes que compartilham um diretório de transcrições:",
     " ",

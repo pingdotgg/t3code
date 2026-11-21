@@ -1,10 +1,12 @@
 // @effect-diagnostics globalDate:off
 import type {
+  ProjectId,
   UsageBucket,
   UsageCategoryCost,
   UsageDay,
   UsageModelFilter,
   UsageModelSelector,
+  UsageProjectTotals,
   UsageResolution,
   UsageTokenTotals,
 } from "@t3tools/contracts";
@@ -63,6 +65,16 @@ interface MutableBucket {
   sessions: Set<string>;
 }
 
+interface MutableProjectTotals {
+  projectId: ProjectId | null;
+  provider: UsageProjectTotals["provider"];
+  sourcePath: string;
+  totals: MutableBucket["totals"];
+  costUsd: number;
+  records: number;
+  unpricedRecords: number;
+}
+
 export interface AggregateOptions {
   readonly timeZone: string;
   readonly sinceDay: string;
@@ -75,6 +87,8 @@ export interface AggregateOptions {
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
+  /** When present, counted records also total per project; null means no T3 project claims it. */
+  readonly attributeProject?: (record: UsageRecord, transcriptPath?: string) => ProjectId | null;
 }
 
 export function resolveModelAliases(
@@ -138,6 +152,7 @@ export function canonicalModelFilter(
 
 export interface AggregateResult {
   readonly buckets: readonly UsageBucket[];
+  readonly projectTotals?: readonly UsageProjectTotals[];
   readonly duplicatesDropped: number;
   readonly outOfWindow: number;
 }
@@ -210,11 +225,13 @@ interface Contribution {
   record: UsageRecord;
   /** Null when the first copy fell outside the window. */
   readonly bucket: MutableBucket | null;
+  project: MutableProjectTotals | null;
 }
 
 /** Deduplicates across the whole scan; Claude copies records into resumed/forked transcripts. */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
+  readonly #projects = new Map<string, MutableProjectTotals>();
   readonly #seen = new Map<string, Contribution>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
@@ -246,7 +263,7 @@ export class UsageAggregator {
     }
   }
 
-  add(input: UsageRecord, sourcePath?: string): boolean {
+  add(input: UsageRecord, sourcePath?: string, transcriptPath?: string): boolean {
     if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
@@ -258,19 +275,32 @@ export class UsageAggregator {
             record.provider === "grok"
               ? smallestGrokCopy(held.record, record)
               : mergeUsageCopies(held.record, record);
+          if (
+            held.project !== null &&
+            held.project.projectId !== null &&
+            held.project.projectId !== this.#options.attributeProject?.(record, transcriptPath)
+          ) {
+            held.project = this.#projectFor(held.record, held.project.sourcePath, null);
+          }
         }
         return false;
       }
     }
 
-    const bucket = this.#placeInWindow(record, sourcePath ?? "");
-    if (record.dedupeKey !== null) this.#seen.set(record.dedupeKey, { record, bucket });
+    const source = sourcePath ?? "";
+    const bucket = this.#placeInWindow(record, source);
+    const attribute = this.#options.attributeProject;
+    const project =
+      bucket === null || attribute === undefined
+        ? null
+        : this.#projectFor(record, source, attribute(record, transcriptPath));
+    if (record.dedupeKey !== null) this.#seen.set(record.dedupeKey, { record, bucket, project });
     if (bucket === null) {
       this.#outOfWindow += 1;
       return false;
     }
     // Keyed usage is counted in finish(), once all its copies are merged.
-    if (record.dedupeKey === null) this.#accumulate(bucket, record);
+    if (record.dedupeKey === null) this.#accumulate(bucket, project, record);
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     return true;
   }
@@ -299,7 +329,33 @@ export class UsageAggregator {
     return this.#bucketFor(day, hourIndex, record.provider, record.model, source);
   }
 
-  #accumulate(bucket: MutableBucket, record: UsageRecord): void {
+  #projectFor(
+    record: UsageRecord,
+    source: string,
+    projectId: ProjectId | null,
+  ): MutableProjectTotals {
+    const key = `${projectId ?? ""}\u0000${record.provider}\u0000${source}`;
+    let project = this.#projects.get(key);
+    if (project === undefined) {
+      project = {
+        projectId,
+        provider: record.provider,
+        sourcePath: source,
+        totals: { ...EMPTY_TOTALS },
+        costUsd: 0,
+        records: 0,
+        unpricedRecords: 0,
+      };
+      this.#projects.set(key, project);
+    }
+    return project;
+  }
+
+  #accumulate(
+    bucket: MutableBucket,
+    project: MutableProjectTotals | null,
+    record: UsageRecord,
+  ): void {
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
     const totals = bucket.totals;
@@ -340,6 +396,16 @@ export class UsageAggregator {
         record.totals.outputTokens;
     }
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
+    if (project !== null) {
+      project.totals.uncachedInputTokens += record.totals.uncachedInputTokens;
+      project.totals.cachedInputTokens += record.totals.cachedInputTokens;
+      project.totals.cacheCreationTokens += record.totals.cacheCreationTokens;
+      project.totals.outputTokens += record.totals.outputTokens;
+      project.totals.reasoningTokens += record.totals.reasoningTokens;
+      project.costUsd += priced.costUsd;
+      project.records += 1;
+      if (priced.costSource === "unpriced") project.unpricedRecords += 1;
+    }
   }
 
   // Aliases use the target's rate. Only an unpriced target goes through the provider's own rate naming.
@@ -400,8 +466,8 @@ export class UsageAggregator {
   }
 
   finish(): AggregateResult {
-    for (const { record, bucket } of this.#seen.values()) {
-      if (bucket !== null) this.#accumulate(bucket, record);
+    for (const { record, bucket, project } of this.#seen.values()) {
+      if (bucket !== null) this.#accumulate(bucket, project, record);
     }
     this.#seen.clear();
     const buckets: UsageBucket[] = [];
@@ -449,8 +515,24 @@ export class UsageAggregator {
         a.model.localeCompare(b.model),
     );
 
+    const projectTotals =
+      this.#options.attributeProject === undefined
+        ? undefined
+        : [...this.#projects.values()]
+            .filter((project) => project.records > 0)
+            .map((project): UsageProjectTotals => ({
+              ...(project.projectId === null ? {} : { projectId: project.projectId }),
+              provider: project.provider,
+              ...(project.sourcePath === "" ? {} : { sourcePath: project.sourcePath }),
+              totals: { ...project.totals },
+              costUsd: project.costUsd,
+              records: project.records,
+              unpricedRecords: project.unpricedRecords,
+            }));
+
     return {
       buckets,
+      ...(projectTotals === undefined ? {} : { projectTotals }),
       duplicatesDropped: this.#duplicatesDropped,
       outOfWindow: this.#outOfWindow,
     };

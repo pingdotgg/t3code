@@ -16,6 +16,7 @@ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import {
   EnvironmentId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   UsageDay,
@@ -43,6 +44,7 @@ import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } fr
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as CodexUsageHistory from "./CodexUsageHistory.ts";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
@@ -201,7 +203,11 @@ const layerService = (input: {
     Layer.provideMerge(AntigravityUsage.layer),
     Layer.provideMerge(MuseUsageHome.layer),
     Layer.provideMerge(ProviderHostLive.layer),
-    Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
+    Layer.provideMerge(
+      Layer.merge(CodexUsageHistory.layer, ProjectStore.layer).pipe(
+        Layer.provideMerge(Sqlite.layerMemory),
+      ),
+    ),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
     Layer.provideMerge(
       Layer.mock(ServerSecretStore.ServerSecretStore)({
@@ -1127,7 +1133,23 @@ describe("UsageService", () => {
           );
         });
         yield* Effect.gen(function* () {
-          const service = yield* UsageService.make;
+          const makeAttributed = UsageService.make.pipe(
+            Effect.provide(
+              Layer.mock(ProjectStore.ProjectStoreV2)({
+                listProviderSessionProjects: () =>
+                  Effect.succeed(
+                    ["parent.jsonl", "fork.jsonl"].map((name) => ({
+                      driver: "pi",
+                      nativeId: NodePath.join(dir, name),
+                      projectId: ProjectId.make("pi-project"),
+                      title: "Pi project",
+                      workspaceRoot: dir,
+                    })),
+                  ),
+              }),
+            ),
+          );
+          const service = yield* makeAttributed;
           const first = yield* service.readSummary(WINDOW);
           const pi = first.buckets.filter((bucket) => bucket.provider === "pi");
           assert.strictEqual(
@@ -1190,9 +1212,45 @@ describe("UsageService", () => {
               .reduce((total, bucket) => total + bucket.costUsd, 0),
             45,
           );
+          assert.ok(grown.projectTotals?.every((row) => row.projectId === "pi-project"));
+          assert.deepStrictEqual(grown.projects, [
+            { projectId: ProjectId.make("pi-project"), title: "Pi project" },
+          ]);
+          yield* Effect.promise(async () => {
+            for (const name of ["parent.jsonl", "fork.jsonl"]) {
+              const file = NodePath.join(dir, name);
+              await NodeFSP.writeFile(
+                file + ".zst",
+                NodeZlib.zstdCompressSync(await NodeFSP.readFile(file)),
+              );
+              await NodeFSP.unlink(file);
+            }
+          });
+          const archived = yield* service.readSummary(WINDOW);
+          assert.deepStrictEqual(archived.projectTotals, grown.projectTotals);
           yield* service.awaitPersisted;
-          const restarted = yield* UsageService.make;
-          assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, grown.buckets);
+          const restarted = yield* makeAttributed;
+          const restored = yield* restarted.readSummary(WINDOW);
+          assert.deepStrictEqual(restored.buckets, grown.buckets);
+          assert.deepStrictEqual(restored.projectTotals, grown.projectTotals);
+          // Project-read failures omit the project breakdown while preserving summary totals.
+          const failingProjects = yield* UsageService.make.pipe(
+            Effect.provide(
+              Layer.mock(ProjectStore.ProjectStoreV2)({
+                listProviderSessionProjects: () =>
+                  Effect.fail(
+                    new ProjectStore.ProjectStoreV2Error({
+                      operation: "listProviderSessionProjects",
+                      cause: new Error("unavailable"),
+                    }),
+                  ),
+              }),
+            ),
+          );
+          const degraded = yield* failingProjects.readSummary(WINDOW);
+          assert.deepStrictEqual(degraded.buckets, grown.buckets);
+          assert.strictEqual(degraded.projectTotals, undefined);
+          assert.strictEqual(degraded.projects, undefined);
         }).pipe(
           Effect.scoped,
           Effect.provide(

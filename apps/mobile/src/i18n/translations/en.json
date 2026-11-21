@@ -5149,10 +5149,12 @@
   "c65e6cfd393d8dec": "By type",
   "999c1e12be2b0b07": "By speed",
   "acdde9c11660b3e7": "{cost} premium",
-  "52eb4ae22e3de46b": "By model",
+  "ef85252c278cb404": "Breakdown",
   "0f806caee7d50d39": "{share} of tokens · no known rates",
   "fa8c94215417c702": "no known rates · {tokens} tokens",
   "77798cfa0f392e89": "Unpriced",
+  "52d5050fe3b493be": "ID {id}",
+  "48fb19071dd12d24": "Some unpriced",
   "ab4208cfa3aa2c7c": [
     "Counted once across environments sharing a transcript directory:",
     " ",

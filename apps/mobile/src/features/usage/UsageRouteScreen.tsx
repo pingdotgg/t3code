@@ -13,6 +13,7 @@ import {
   isModelCostUnknown,
   type DailyTotals,
   type MergedUsage,
+  type ProjectTotals,
 } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -50,6 +51,12 @@ import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
 
 type UsageView = UsageChartMetric | "limits";
+type UsageBreakdown = "model" | "project";
+const BREAKDOWN_OPTIONS = [
+  { value: "model", label: msg("Model") },
+  { value: "project", label: msg("Project") },
+] as const satisfies readonly { value: UsageBreakdown; label: string }[];
+
 const VIEW_OPTIONS = [
   { value: "cost", label: msg("Cost", { $context: "usage view tab" }) },
   { value: "tokens", label: msg("Tokens", { $context: "usage view tab" }) },
@@ -117,6 +124,7 @@ function UsageScreen(props: {
   }
   const { view } = selection;
   const setView = (view: UsageView) => setSelection({ params: props.tabParam, view });
+  const [breakdown, setBreakdown] = useState<UsageBreakdown>("model");
   const [measuredWidth, setWidth] = useState(0);
   // A workspace pane knows its width in the render that resizes it; measuring lags a frame.
   const width = useWorkspaceSettledContentWidth() ?? measuredWidth;
@@ -395,7 +403,14 @@ function UsageScreen(props: {
                           columns={width >= 900 ? 6 : wide ? 3 : 2}
                         />
                         <CostSection merged={merged} wide={wide} />
-                        <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
+                        <ModelsSection
+                          merged={merged}
+                          metric={metric}
+                          columns={wide ? 2 : 1}
+                          breakdown={breakdown}
+                          onBreakdownChange={setBreakdown}
+                          showEnvironment={selectedEnvironments.length > 1}
+                        />
                       </UsageUpdating>
                     </>
                   )}
@@ -838,11 +853,20 @@ function ModelsSection(props: {
   readonly merged: MergedUsage;
   readonly metric: UsageChartMetric;
   readonly columns: 1 | 2;
+  readonly breakdown: UsageBreakdown;
+  readonly onBreakdownChange: (value: UsageBreakdown) => void;
+  readonly showEnvironment: boolean;
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
   const gt = useGT();
-  if (merged.models.length === 0) return null;
+  const m = useMessages();
+  if (merged.models.length === 0 && merged.projects.length === 0) return null;
+
+  const breakdownOptions = BREAKDOWN_OPTIONS.map((option) => ({
+    ...option,
+    label: m(option.label),
+  }));
 
   // Hermes lacks toSorted.
   const ordered = [...merged.models].sort((a, b) =>
@@ -852,11 +876,145 @@ function ModelsSection(props: {
   );
 
   return (
-    <SettingsSection title={gt("By model")}>
-      <View className="flex-row flex-wrap">
-        {ordered.map((model, index) => (
+    <SettingsSection
+      title={gt("Breakdown")}
+      trailing={
+        <SegmentedControl
+          options={breakdownOptions}
+          selected={props.breakdown}
+          onSelect={props.onBreakdownChange}
+          role="tab"
+          className="w-44"
+        />
+      }
+    >
+      {props.breakdown === "project" ? (
+        <ProjectRows
+          projects={merged.projects}
+          metric={metric}
+          columns={props.columns}
+          showEnvironment={props.showEnvironment}
+        />
+      ) : (
+        <View className="flex-row flex-wrap">
+          {ordered.map((model, index) => (
+            <View
+              key={`${model.provider}:${model.model}`}
+              className={cn(
+                "flex-row items-center gap-3 p-4",
+                index >= props.columns && "border-t border-border-subtle",
+                index % props.columns === 1 && "border-l border-border-subtle",
+              )}
+              style={{ width: `${100 / props.columns}%` }}
+            >
+              <View
+                className="size-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: colors[model.provider] }}
+              />
+              <View className="min-w-0 flex-1 gap-0.5">
+                <Text className="text-base text-foreground" numberOfLines={1}>
+                  {model.model}
+                </Text>
+                <Text className="text-sm text-foreground-muted">
+                  {metric === "tokens"
+                    ? isModelCostUnknown(model)
+                      ? gt("{share} of tokens · no known rates", {
+                          share: formatPercent(model.tokenShare),
+                        })
+                      : gt("{share} of tokens · {cost}", {
+                          share: formatPercent(model.tokenShare),
+                          cost: formatUsd(model.costUsd),
+                        })
+                    : isModelCostUnknown(model)
+                      ? gt("no known rates · {tokens} tokens", {
+                          tokens: formatTokens(model.totalTokens),
+                        })
+                      : gt("{share} of cost · {tokens} tokens", {
+                          share: formatPercent(model.costShare),
+                          tokens: formatTokens(model.totalTokens),
+                        })}
+                </Text>
+              </View>
+              <Text className="text-base tabular-nums text-foreground">
+                {metric === "tokens"
+                  ? formatTokens(model.totalTokens)
+                  : isModelCostUnknown(model)
+                    ? gt("Unpriced", { $context: "model with no known price" })
+                    : formatUsd(model.costUsd)}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </SettingsSection>
+  );
+}
+
+function ProjectRows(props: {
+  readonly projects: readonly ProjectTotals[];
+  readonly metric: UsageChartMetric;
+  readonly columns: 1 | 2;
+  readonly showEnvironment: boolean;
+}) {
+  const { metric } = props;
+  const gt = useGT();
+  // Hermes lacks toSorted.
+  const ordered = [...props.projects].sort((a, b) =>
+    metric === "cost"
+      ? b.costUsd - a.costUsd || b.totalTokens - a.totalTokens
+      : b.totalTokens - a.totalTokens || b.costUsd - a.costUsd,
+  );
+  const peak =
+    ordered[0] === undefined
+      ? 0
+      : metric === "tokens"
+        ? ordered[0].totalTokens
+        : ordered[0].costUsd;
+
+  return (
+    <View className="flex-row flex-wrap">
+      {ordered.map((project, index) => {
+        const unknown = isModelCostUnknown(project);
+        const magnitude = metric === "tokens" ? project.totalTokens : project.costUsd;
+        const label = project.kind === "project" ? project.title : gt("No project");
+        const value =
+          metric === "tokens"
+            ? formatTokens(project.totalTokens)
+            : unknown
+              ? gt("Unpriced", { $context: "model with no known price" })
+              : formatUsd(project.costUsd);
+        const detail = [
+          project.kind === "project" && props.showEnvironment ? project.environmentLabel : null,
+          project.duplicateTitleId !== null
+            ? gt("ID {id}", { id: project.duplicateTitleId })
+            : null,
+          metric === "tokens"
+            ? unknown
+              ? gt("{share} of tokens · no known rates", {
+                  share: formatPercent(project.tokenShare),
+                })
+              : gt("{share} of tokens · {cost}", {
+                  share: formatPercent(project.tokenShare),
+                  cost: formatUsd(project.costUsd),
+                })
+            : unknown
+              ? gt("no known rates · {tokens} tokens", {
+                  tokens: formatTokens(project.totalTokens),
+                })
+              : gt("{share} of cost · {tokens} tokens", {
+                  share: formatPercent(project.costShare),
+                  tokens: formatTokens(project.totalTokens),
+                }),
+          !unknown && project.unpricedRecords > 0 ? gt("Some unpriced") : null,
+        ]
+          .filter((part) => part !== null)
+          .join(" · ");
+
+        return (
           <View
-            key={`${model.provider}:${model.model}`}
+            key={project.key}
+            accessible
+            accessibilityLabel={`${label}, ${value}, ${detail}`}
             className={cn(
               "flex-row items-center gap-3 p-4",
               index >= props.columns && "border-t border-border-subtle",
@@ -864,45 +1022,32 @@ function ModelsSection(props: {
             )}
             style={{ width: `${100 / props.columns}%` }}
           >
-            <View
-              className="size-2.5 shrink-0 rounded-full"
-              style={{ backgroundColor: colors[model.provider] }}
-            />
             <View className="min-w-0 flex-1 gap-0.5">
-              <Text className="text-base text-foreground" numberOfLines={1}>
-                {model.model}
+              <Text
+                className={
+                  project.kind === "project"
+                    ? "text-base text-foreground"
+                    : "text-base text-foreground-muted"
+                }
+                numberOfLines={2}
+              >
+                {label}
               </Text>
-              <Text className="text-sm text-foreground-muted">
-                {metric === "tokens"
-                  ? isModelCostUnknown(model)
-                    ? gt("{share} of tokens · no known rates", {
-                        share: formatPercent(model.tokenShare),
-                      })
-                    : gt("{share} of tokens · {cost}", {
-                        share: formatPercent(model.tokenShare),
-                        cost: formatUsd(model.costUsd),
-                      })
-                  : isModelCostUnknown(model)
-                    ? gt("no known rates · {tokens} tokens", {
-                        tokens: formatTokens(model.totalTokens),
-                      })
-                    : gt("{share} of cost · {tokens} tokens", {
-                        share: formatPercent(model.costShare),
-                        tokens: formatTokens(model.totalTokens),
-                      })}
-              </Text>
+              <Text className="text-sm text-foreground-muted">{detail}</Text>
+              {magnitude > 0 && peak > 0 ? (
+                <View className="mt-1 h-1 overflow-hidden rounded-full bg-border-subtle">
+                  <View
+                    className="h-full rounded-full bg-foreground-muted"
+                    style={{ width: `${(magnitude / peak) * 100}%` }}
+                  />
+                </View>
+              ) : null}
             </View>
-            <Text className="text-base tabular-nums text-foreground">
-              {metric === "tokens"
-                ? formatTokens(model.totalTokens)
-                : isModelCostUnknown(model)
-                  ? gt("Unpriced", { $context: "model with no known price" })
-                  : formatUsd(model.costUsd)}
-            </Text>
+            <Text className="text-base tabular-nums text-foreground">{value}</Text>
           </View>
-        ))}
-      </View>
-    </SettingsSection>
+        );
+      })}
+    </View>
   );
 }
 
