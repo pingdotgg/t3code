@@ -8115,6 +8115,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // regression: #40477 a changed repository list was refused as a model or setting change.
+  it.effect(
+    "keeps a process running a background shell when the project's repositories change",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (
+          ordinal: number,
+          workspace?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["workspace"],
+        ) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-workspace-background:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              ...CLAUDE_TEST_RUNTIME_POLICY,
+              ...(workspace === undefined ? {} : { workspace }),
+            }),
+          });
+        yield* harness.runtime.startTurn(
+          turn(1, {
+            folders: [{ name: "foo", path: "/workspace/vendor/foo", isGitRepository: true }],
+            extraRoots: [],
+          }),
+        );
+        const originalOptions = harness.getOpenedOptions();
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // t3.json now ignores vendor/foo, so discovery returns no folders.
+        const sent = yield* harness.runtime.startTurn(turn(2)).pipe(Effect.result);
+        assert.notInstanceOf(
+          sent._tag === "Failure" ? sent.failure.cause : undefined,
+          ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+        );
+        assert.equal(sent._tag, "Success");
+        assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+        assert.lengthOf(harness.offeredMessages, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   // regression: #34549 a model change sent with a steer was shown but never applied to the turn.
   it.effect("applies a model change sent with a steer to the running turn", () =>
     Effect.gen(function* () {
