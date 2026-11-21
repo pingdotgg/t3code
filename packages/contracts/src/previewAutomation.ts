@@ -1,6 +1,11 @@
 import { Schema } from "effect";
 
-import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  SECRET_REF_PATTERN,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
   PreviewRenderedViewportSize,
@@ -398,6 +403,11 @@ export const PreviewAutomationTypeInput = Schema.Struct({
     (input) =>
       !(input.selector !== undefined && input.locator !== undefined) ||
       "Provide at most one of selector or locator.",
+  ),
+  Schema.makeFilter(
+    (input) =>
+      !SECRET_REF_PATTERN.test(input.text.trim()) ||
+      "`text` is a secretRef, not the secret's value. preview_act types `text` literally and cannot use a secretRef, so nothing was typed.",
   ),
 );
 export type PreviewAutomationTypeInput = typeof PreviewAutomationTypeInput.Type;
