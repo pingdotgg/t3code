@@ -31,7 +31,6 @@ interface UsageProviderChartProps {
   readonly hours: readonly string[];
   readonly hourly: readonly HourlyTotals[];
   readonly metric: UsageChartMetric;
-  readonly referenceTime: string | undefined;
   readonly resolution: "day" | "hour";
   readonly timeZone: string;
   readonly hour12: boolean;
@@ -413,7 +412,6 @@ export function UsageProviderChart({
   hours,
   hourly,
   metric,
-  referenceTime,
   resolution,
   timeZone,
   hour12,
@@ -426,6 +424,8 @@ export function UsageProviderChart({
   const byPeriod = new Map(
     totals.map((entry) => ["hourStart" in entry ? entry.hourStart : entry.day, entry]),
   );
+  // An hourly window ends with the hour in progress.
+  const latestHour = resolution === "hour" ? periods.at(-1) : undefined;
   const { columns, scale, paths, stepX } = buildChart(
     periods,
     byPeriod,
@@ -443,8 +443,8 @@ export function UsageProviderChart({
       ? formatHourShort(period, timeZone, hour12, locale)
       : formatDayShort(period, locale);
   const formatTooltipPeriod = (period: string) =>
-    resolution === "hour" && referenceTime !== undefined
-      ? formatRelativeHourShort(period, referenceTime, timeZone, hour12, m, locale)
+    latestHour !== undefined
+      ? formatRelativeHourShort(period, latestHour, timeZone, hour12, m, locale)
       : formatPeriod(period);
 
   return (

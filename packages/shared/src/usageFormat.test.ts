@@ -152,12 +152,22 @@ describe("hourly usage formatting", () => {
     );
   });
 
-  it("builds an exact minute-aligned 24-hour request", () => {
-    const window = makeWindow(1, new Date("2026-08-11T12:37:42.123Z"), "hour");
+  it("builds a 24-hour request on the viewer's clock hours", () => {
+    const resolved = new Intl.DateTimeFormat().resolvedOptions();
+    const resolvedOptions = vi
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockReturnValue({ ...resolved, timeZone: "Asia/Kolkata" });
 
-    expect(window.resolution).toBe("hour");
-    expect(window.sinceTime).toBe("2026-08-10T12:37:00.000Z");
-    expect(window.untilTime).toBe("2026-08-11T12:37:00.000Z");
+    try {
+      // 18:07 in Kolkata, where hours start on the UTC half hour.
+      const window = makeWindow(1, new Date("2026-08-11T12:37:42.123Z"), "hour");
+
+      expect(window.resolution).toBe("hour");
+      expect(window.sinceTime).toBe("2026-08-10T13:30:00.000Z");
+      expect(window.untilTime).toBe("2026-08-11T13:30:00.000Z");
+    } finally {
+      resolvedOptions.mockRestore();
+    }
   });
 
   it("degrades an unknown resolved zone to UTC instead of crashing", () => {
