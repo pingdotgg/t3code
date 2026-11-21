@@ -1,6 +1,7 @@
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, type MachineStatus, WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentPresentations } from "./presentation";
@@ -25,6 +26,23 @@ const machineStatusQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRun
   idleTtlMs: 0,
 });
 
+/** A failed poll keeps the last sample, so a brief outage does not read as "off". */
+export function machineEnvironmentFromResult(
+  environmentId: EnvironmentId,
+  label: string,
+  result: AsyncResult.AsyncResult<MachineStatus, unknown> | null,
+): MachineEnvironment {
+  const previousSuccess =
+    result?._tag === "Failure" ? Option.getOrNull(result.previousSuccess) : null;
+  return {
+    environmentId,
+    label,
+    status: result === null ? null : Option.getOrNull(AsyncResult.value(result)),
+    receivedAt: result?._tag === "Success" ? result.timestamp : (previousSuccess?.timestamp ?? 0),
+    loading: result?._tag === "Initial",
+  };
+}
+
 /** True when an enabled environment's server reports its machine. */
 export const machineBarAvailableAtom = Atom.make((get) =>
   [...get(environmentPresentations.serverConfigsAtom).values()].some(
@@ -43,13 +61,9 @@ export const machineEnvironmentsAtom = Atom.make((get): ReadonlyArray<MachineEnv
       presentation.connection.phase === "connected"
         ? get(machineStatusQuery({ environmentId, input: {} }))
         : null;
-    environments.push({
-      environmentId,
-      label: presentation.entry.target.label,
-      status: result?._tag === "Success" ? result.value : null,
-      receivedAt: result?._tag === "Success" ? result.timestamp : 0,
-      loading: result?._tag === "Initial",
-    });
+    environments.push(
+      machineEnvironmentFromResult(environmentId, presentation.entry.target.label, result),
+    );
   }
   return environments;
 }).pipe(Atom.withLabel("web-machine-environments"));
