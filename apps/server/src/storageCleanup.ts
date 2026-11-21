@@ -46,7 +46,6 @@ import * as GitManager from "./git/GitManager.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import { scratchFolderRoot } from "./project/ManagedProjectFolders.ts";
-import { parseGitfileTarget } from "./project/worktreeContainer.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -429,12 +428,18 @@ const make = Effect.gen(function* () {
         );
       };
       // A gitfile whose target is missing holds no repository data. An unreadable one counts.
+      // Parsed and joined as Git does: only trailing CR/LF is stripped, and `..` is left to the
+      // kernel so a symlinked parent resolves the same way.
       const isDanglingGitfile = Effect.fn("storageCleanup.isDanglingGitfile")(
-        function* (gitPath: string) {
+        function* (directory: string, name: string) {
+          const gitPath = path.join(directory, name);
           if ((yield* fs.lstat(gitPath)).type !== "File") return false;
-          const gitDir = parseGitfileTarget(yield* fs.readFileString(gitPath));
-          if (gitDir === undefined) return false;
-          return !(yield* fs.exists(path.resolve(path.dirname(gitPath), gitDir)));
+          const contents = (yield* fs.readFileString(gitPath)).replace(/[\r\n]+$/u, "");
+          if (!contents.startsWith("gitdir: ") || contents.length === 8) return false;
+          const gitDir = contents.slice(8);
+          // Statting a network path makes Windows sign in to its host with the user's credentials.
+          if (isNetworkPath(gitDir)) return false;
+          return !(yield* fs.exists(path.isAbsolute(gitDir) ? gitDir : `${directory}/${gitDir}`));
         },
         Effect.orElseSucceed(() => false),
       );
@@ -484,10 +489,7 @@ const make = Effect.gen(function* () {
           if (inspectRepositories && isNestedRepository(result.target, result.names)) {
             const names = yield* Effect.filter(result.names, (name) =>
               name.toLowerCase() === ".git"
-                ? Effect.map(
-                    isDanglingGitfile(path.join(result.target, name)),
-                    (dangling) => !dangling,
-                  )
+                ? Effect.map(isDanglingGitfile(result.target, name), (dangling) => !dangling)
                 : Effect.succeed(true),
             );
             if (isNestedRepository(result.target, names))
