@@ -50,6 +50,11 @@ import {
 } from "../../provider/acp/AntigravityProtocol.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 import {
+  discoverAntigravitySkills,
+  dispatchAntigravitySkillMentions,
+  hasAntigravitySkillMention,
+} from "../../provider/Drivers/AntigravitySkills.ts";
+import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
   type AcpAdapterV2Flavor,
@@ -103,6 +108,8 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  /** Where agy looks for user skills; with profileDirectory, enables `$skill` dispatch. */
+  readonly userHome?: string;
 }
 
 /**
@@ -235,6 +242,25 @@ export function makeAntigravityAcpAdapterFlavor(
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
         Effect.provideService(Path.Path, options.path),
       ),
+    rewriteUserText: (text, turnInput) => {
+      const { userHome, profileDirectory } = options;
+      const cwd = turnInput.runtimePolicy.cwd;
+      const historyLength = turnInput.inlineContextLength ?? 0;
+      if (
+        !userHome ||
+        !profileDirectory ||
+        !cwd ||
+        !hasAntigravitySkillMention(text, historyLength)
+      ) {
+        return Effect.succeed(text);
+      }
+      return discoverAntigravitySkills({ cwd, userHome, profileDirectory }).pipe(
+        Effect.flatMap((skills) => dispatchAntigravitySkillMentions(text, skills, historyLength)),
+        Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+        Effect.provideService(Path.Path, options.path),
+        Effect.orElseSucceed(() => text),
+      );
+    },
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
     // A finished background command or timer wakes the agent with no prompt open: it streams a

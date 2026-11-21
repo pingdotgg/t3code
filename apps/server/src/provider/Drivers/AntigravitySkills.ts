@@ -5,6 +5,7 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
 
 /** Match Python os.path.expanduser: USERPROFILE, then HOMEDRIVE+HOMEPATH on Windows; HOME elsewhere. */
@@ -44,6 +45,8 @@ const SKILL_READ_CHUNK_BYTES = 1024;
 const SkillFrontmatter = Schema.Struct({
   name: Schema.optional(Schema.NullOr(Schema.String)),
   description: Schema.optional(Schema.NullOr(Schema.String)),
+  "disable-model-invocation": Schema.optional(Schema.Unknown),
+  "user-invocable": Schema.optional(Schema.Unknown),
 });
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
 const SkillConfigEntry = Schema.Struct({
@@ -104,6 +107,24 @@ const readIfPresent = <A, R>(
     }),
   );
 
+function parseFrontmatterBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1 ? true : value === 0 ? false : undefined;
+  if (typeof value !== "string") return undefined;
+  switch (value.trim().toLowerCase()) {
+    case "true":
+    case "yes":
+    case "on":
+      return true;
+    case "false":
+    case "no":
+    case "off":
+      return false;
+    default:
+      return undefined;
+  }
+}
+
 function parseSkillFrontmatter(contents: string, fileName: string) {
   const start = contents.indexOf("---");
   if (start === -1) return undefined;
@@ -117,7 +138,15 @@ function parseSkillFrontmatter(contents: string, fileName: string) {
     const description = frontmatter.description?.trim();
     // Native names are not trimmed. Do not rename one to fit the picker contract.
     if (!name || name !== name.trim()) return undefined;
-    return { name, ...(description ? { description } : {}) };
+    const userInvocationOnly =
+      parseFrontmatterBoolean(frontmatter["disable-model-invocation"]) === true;
+    const userInvocable = parseFrontmatterBoolean(frontmatter["user-invocable"]);
+    return {
+      name,
+      ...(description ? { description } : {}),
+      ...(userInvocationOnly ? { userInvocationOnly: true } : {}),
+      ...(userInvocable === false ? { userInvocable: false } : {}),
+    };
   } catch {
     return undefined;
   }
@@ -437,3 +466,48 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   }
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
+
+const FRONTMATTER_PATTERN = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
+
+/** True when the user's words, after `historyLength` characters of handoff context, hold a `$name` chip. */
+export function hasAntigravitySkillMention(text: string, historyLength = 0): boolean {
+  return text.slice(historyLength).search(SKILL_MENTION_PATTERN) !== -1;
+}
+
+/**
+ * Rewrites `$name` to `/name` and appends the invoked skills' instructions. Antigravity expands
+ * `/name` only at the start of a prompt and hides `disable-model-invocation` skills from the model.
+ * The first `historyLength` characters are handoff history, so their mentions stay as they are.
+ */
+export const dispatchAntigravitySkillMentions = Effect.fn("dispatchAntigravitySkillMentions")(
+  function* (text: string, skills: ReadonlyArray<ServerProviderSkill>, historyLength = 0) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const invocable = new Map(
+      skills
+        .filter((skill) => skill.enabled && skill.userInvocable !== false)
+        .map((skill) => [skill.name, skill]),
+    );
+    const invoked = new Map<string, ServerProviderSkill>();
+    const request = text.slice(historyLength);
+    const rewritten = request.replace(
+      SKILL_MENTION_PATTERN,
+      (match, prefix: string, name: string) => {
+        const skill = invocable.get(name);
+        if (skill === undefined) return match;
+        invoked.set(name, skill);
+        return `${prefix}/${name}`;
+      },
+    );
+    const blocks = yield* Effect.forEach(invoked.values(), (skill) =>
+      fileSystem.readFileString(skill.path).pipe(
+        Effect.map((contents) => contents.replace(FRONTMATTER_PATTERN, "").trim()),
+        Effect.orElseSucceed(() => `Read and follow ${skill.path}.`),
+        Effect.map((body) => `<skill name="${skill.name}">\n${body}\n</skill>`),
+      ),
+    );
+    const history = text.slice(0, historyLength);
+    return blocks.length === 0
+      ? text
+      : `${history}${rewritten}\n\nThe user invoked these skills. Follow their instructions:\n\n${blocks.join("\n\n")}`;
+  },
+);

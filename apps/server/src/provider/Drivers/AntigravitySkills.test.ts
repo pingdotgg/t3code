@@ -4,7 +4,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
+import {
+  discoverAntigravitySkills,
+  dispatchAntigravitySkillMentions,
+} from "./AntigravitySkills.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const writeSkill = Effect.fn("writeSkill")(function* (directory: string, contents: string) {
@@ -91,6 +94,86 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }
 
       assert.deepEqual(yield* discoverAntigravitySkills(input), expected);
+    }),
+  );
+
+  it.effect("dispatches $skill mentions by their frontmatter invocation flags", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const shipPath = yield* writeSkill(
+        path.join(input.userHome, ".gemini", "config", "skills", "ship"),
+        "---\nname: ship\ndescription: Ship changes.\ndisable-model-invocation: true\n---\n# Ship\nRun tests before commit.\n",
+      );
+      const internalPath = yield* writeSkill(
+        path.join(input.cwd, ".gemini", "skills", "internal"),
+        "---\nname: internal\ndescription: Internal skill.\nuser-invocable: false\n---\n",
+      );
+      const reviewPath = yield* writeSkill(
+        path.join(input.cwd, ".gemini", "skills", "review"),
+        "---\nname: review\ndescription: Review changes.\n---\n",
+      );
+
+      const skills = yield* discoverAntigravitySkills(input);
+      assert.deepEqual(skills, [
+        {
+          name: "internal",
+          description: "Internal skill.",
+          path: internalPath,
+          scope: "project",
+          enabled: true,
+          userInvocable: false,
+        },
+        {
+          name: "review",
+          description: "Review changes.",
+          path: reviewPath,
+          scope: "project",
+          enabled: true,
+        },
+        {
+          name: "ship",
+          description: "Ship changes.",
+          path: shipPath,
+          scope: "user",
+          enabled: true,
+          userInvocationOnly: true,
+        },
+      ]);
+
+      const instructions = (...names: ReadonlyArray<string>) =>
+        `\n\nThe user invoked these skills. Follow their instructions:\n\n${names
+          .map((name) =>
+            name === "ship"
+              ? '<skill name="ship">\n# Ship\nRun tests before commit.\n</skill>'
+              : `<skill name="${name}">\n\n</skill>`,
+          )
+          .join("\n\n")}`;
+      assert.equal(
+        yield* dispatchAntigravitySkillMentions("Fix it then $ship", skills),
+        `Fix it then /ship${instructions("ship")}`,
+      );
+      // Antigravity expands only a leading `/review`, so a later one still carries its instructions.
+      assert.equal(
+        yield* dispatchAntigravitySkillMentions(
+          "Fix X. $review it for $25, not $internal or $unknown",
+          skills,
+        ),
+        `Fix X. /review it for $25, not $internal or $unknown${instructions("review")}`,
+      );
+      const history = "Earlier: $ship went out.\n\n";
+      assert.equal(
+        yield* dispatchAntigravitySkillMentions(
+          `${history}Fix the typo only.`,
+          skills,
+          history.length,
+        ),
+        `${history}Fix the typo only.`,
+      );
+      assert.equal(
+        yield* dispatchAntigravitySkillMentions(`${history}Then $review`, skills, history.length),
+        `${history}Then /review${instructions("review")}`,
+      );
     }),
   );
 
