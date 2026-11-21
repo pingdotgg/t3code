@@ -11,12 +11,14 @@ import {
   type AntigravitySettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -66,6 +68,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     readonly enabled?: boolean;
     /** Extra instance variables, such as ones a parent T3 turn already exported. */
     readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+    readonly beforeAcquire?: Effect.Effect<void>;
+    /** Leaves a Google sign-in agy saved in the profile before the driver starts. */
+    readonly savedSignIn?: boolean;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -137,7 +142,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     selected: AntigravityInstallation.AntigravityExecutable;
     failResolution: boolean;
     beforeAcquire: Effect.Effect<void>;
-  } = { selected: first, failResolution: false, beforeAcquire: Effect.void };
+  } = {
+    selected: first,
+    failResolution: false,
+    beforeAcquire: options.beforeAcquire ?? Effect.void,
+  };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
   const launches: Array<{
@@ -221,6 +230,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       return handle;
     }),
   );
+  if (options.savedSignIn) {
+    const acpDirectory = path.join(profileDirectory, "antigravity-acp");
+    yield* fs.makeDirectory(acpDirectory, { recursive: true });
+    yield* fs.writeFileString(path.join(acpDirectory, "acp_token.json"), "{}");
+  }
   const instance = yield* AntigravityDriver.create({
     instanceId,
     displayName: "Google test account",
@@ -588,6 +602,32 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(h.acquisitions).toHaveLength(2);
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
         yield* h.assertClosed;
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "loads models at start for a configured Gemini API key or a saved Google sign-in",
+    () =>
+      Effect.gen(function* () {
+        for (const start of [
+          { config: { authMethod: "gemini-api-key", apiKey: "fixture-gemini-key" } } as const,
+          { savedSignIn: true },
+        ]) {
+          const release = yield* Deferred.make<void>();
+          const h = yield* makeHarness({ ...start, beforeAcquire: Deferred.await(release) });
+          const changes = yield* Stream.toPull(h.instance.snapshot.streamChanges);
+          yield* Deferred.succeed(release, undefined);
+          let snapshot = yield* h.instance.snapshot.getSnapshot;
+          while (snapshot.models.length === 0) snapshot = (yield* changes).at(-1)!;
+          expect(snapshot.auth.status).toBe("authenticated");
+          expect(snapshot.models.map((model) => model.slug)).toEqual([
+            "gemini-test-low",
+            "gemini-test-high",
+          ]);
+          expect(h.launches.at(-1)?.geminiApiKey).toBe(
+            "config" in start ? "fixture-gemini-key" : undefined,
+          );
+        }
       }),
   );
 
