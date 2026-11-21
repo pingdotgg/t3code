@@ -2928,6 +2928,83 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("keeps Devin's /compact running until Devin reports the compaction", () =>
+    Effect.gen(function* () {
+      const compaction = (status: string) => ({
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "_cognition.ai/compaction",
+          params: {
+            sessionId: CLAUDE_ROOT_SESSION,
+            status,
+            ...(status === "completed" ? { summary: "Devin summary" } : {}),
+          },
+        },
+      });
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [{ name: "compact", description: "Compact the conversation" }],
+          }),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          // Devin acknowledges /compact at once and summarizes in the background.
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          compaction("started"),
+          claudeMarker("compaction started"),
+          compaction("completed"),
+          claudeMarker("compaction completed"),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      const input = session.turnInput(1);
+      yield* session.runtime.startTurn({
+        ...input,
+        message: { ...input.message, text: "/compact" },
+      });
+      const beforeOutcome = yield* session.throughMarker("compaction started");
+      assert.isFalse(
+        beforeOutcome.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "compaction" &&
+            event.turnItem.status === "completed",
+        ),
+        "the compaction is shown completed before Devin reports it",
+      );
+      assert.isFalse(
+        beforeOutcome.some((event) => event.type === "turn.terminal"),
+        "the /compact turn settles before Devin finishes compacting",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("counts per-turn usage for a local glm command", () =>
     Effect.gen(function* () {
       const session = yield* openClaudeReplaySession(
