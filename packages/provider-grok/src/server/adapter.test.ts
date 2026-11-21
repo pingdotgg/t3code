@@ -297,3 +297,62 @@ it.effect("a steer reaches Grok as an interjection that carries its images", () 
     assert.strictEqual(refused._tag, "AcpRequestError");
   }),
 );
+
+it.effect("answers Grok's MCP elicitation request with the user's form answer", () =>
+  Effect.gen(function* () {
+    const handlers = new Map<
+      string,
+      (params: unknown, context: { requestId: string; method: string }) => Effect.Effect<unknown>
+    >();
+    const runtime = {
+      handleExtRequest: (method: string, _schema: unknown, handler: never) => {
+        handlers.set(method, handler);
+        return Effect.void;
+      },
+      handleExtNotification: () => Effect.void,
+    } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+    const flavor = makeGrokAcpAdapterFlavor(
+      { makeRuntime: () => Effect.never } as unknown as Parameters<
+        typeof makeGrokAcpAdapterFlavor
+      >[0],
+      "/home/ada",
+    );
+    const askedQuestions: Array<unknown> = [];
+    let answers: Record<string, string> | null = { choice: "allow_once" };
+    yield* flavor.registerExtensions!({
+      runtime,
+      lastProposedPlanMarkdown: Effect.undefined,
+      requestUserInput: (input: { questions: unknown }) => {
+        askedQuestions.push(input.questions);
+        return Effect.succeed({ acknowledgeNativeResponse: Effect.void, answers });
+      },
+    } as unknown as Parameters<NonNullable<typeof flavor.registerExtensions>>[0]);
+
+    // Grok 1.0.77+ sends MCP forms as `_x.ai/mcp/elicit`; an unknown method is answered -32601,
+    // which Grok forwards to the MCP server as `cancel`.
+    const elicit = handlers.get("_x.ai/mcp/elicit");
+    assert.isDefined(elicit);
+    const params = {
+      sessionId: "session-1",
+      toolCallId: "tool-1",
+      serverName: "consent-demo",
+      message: "Allow reading the secret line?",
+      mode: "form",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          choice: { type: "string", enum: ["allow_once", "allow_always", "deny"] },
+        },
+        required: ["choice"],
+      },
+    };
+    const context = { requestId: "7", method: "_x.ai/mcp/elicit" };
+    assert.deepStrictEqual(yield* elicit!(params, context), {
+      outcome: "accept",
+      content: { choice: "allow_once" },
+    });
+    assert.lengthOf(askedQuestions, 1);
+    answers = null;
+    assert.deepStrictEqual(yield* elicit!(params, context), { outcome: "cancel" });
+  }),
+);

@@ -60,6 +60,7 @@ import {
 } from "./xaiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
+import { parseElicitationForm } from "@t3tools/provider-acp/server/elicitationForm";
 import {
   findModelConfigOption,
   sessionModelStateFromInitialize,
@@ -187,6 +188,7 @@ const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensi
   registerXAiBackgroundTaskTracking(runtime, applyBackgroundTaskMutation).pipe(
     Effect.andThen(registerXAiSubagentFinished(runtime, finishSubagent)),
     Effect.andThen(registerGrokAskUserQuestionExtensions({ runtime, requestUserInput })),
+    Effect.andThen(registerGrokMcpElicitExtensions({ runtime, requestUserInput })),
     Effect.andThen(
       registerGrokExitPlanModeExtensions({
         runtime,
@@ -248,6 +250,45 @@ const registerGrokAskUserQuestionExtensions = ({
                 : makeXAiAskUserQuestionResponse(params, answers),
             ).pipe(Effect.tap(() => acknowledgeNativeResponse)),
           ),
+        );
+      }),
+    { discard: true },
+  );
+
+const XAiMcpElicitRequest = Schema.Struct({
+  sessionId: Schema.String,
+  message: Schema.String,
+  mode: Schema.String,
+  requestedSchema: Schema.optional(Schema.Unknown),
+});
+
+// Grok forwards MCP `elicitation/create` here; its reply is tagged by `outcome`, not MCP's `action`.
+const registerGrokMcpElicitExtensions = ({
+  runtime,
+  requestUserInput,
+}: Pick<AcpAdapterV2ExtensionContext, "runtime" | "requestUserInput">) =>
+  Effect.forEach(
+    ["x.ai/mcp/elicit", "_x.ai/mcp/elicit"] as const,
+    (method) =>
+      runtime.handleExtRequest(method, XAiMcpElicitRequest, (params, requestContext) => {
+        const form =
+          params.mode === "form"
+            ? parseElicitationForm(params.requestedSchema, params.message)
+            : undefined;
+        if (form === undefined) return Effect.succeed({ outcome: "decline" } as const);
+        const nativeRequestId = `${params.sessionId}:xai-mcp-elicit:${requestContext.requestId}`;
+        return requestUserInput(
+          { nativeItemId: nativeRequestId, nativeRequestId, questions: form.questions },
+          requestContext,
+        ).pipe(
+          Effect.flatMap(({ acknowledgeNativeResponse, answers }) => {
+            const content = answers === null ? undefined : form.content(answers);
+            return Effect.succeed(
+              content === undefined
+                ? ({ outcome: "cancel" } as const)
+                : ({ outcome: "accept", content } as const),
+            ).pipe(Effect.tap(() => acknowledgeNativeResponse));
+          }),
         );
       }),
     { discard: true },
