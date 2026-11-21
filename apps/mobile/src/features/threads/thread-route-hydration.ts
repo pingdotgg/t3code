@@ -81,7 +81,7 @@ export function threadRouteStartsConnection(connectionState: EnvironmentConnecti
 /**
  * Replacing the route with a draft can't be undone, so only a thread this route already showed,
  * and which the environment then reported deleted, opens a new task in its place. A link to a
- * thread the app hasn't loaded shows "Thread unavailable" instead, so the user can retry.
+ * thread the app hasn't loaded shows "Thread unavailable" instead, so the user can reconnect.
  */
 export function threadRouteOpensDraft(input: {
   readonly detailStatus: EnvironmentThreadStatus;

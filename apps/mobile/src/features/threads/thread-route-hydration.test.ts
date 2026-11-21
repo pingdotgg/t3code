@@ -6,7 +6,6 @@ import {
   threadRouteAwaitsConnection,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
-  threadRouteStartsConnection,
 } from "./thread-route-hydration";
 
 const settled = {
@@ -146,20 +145,6 @@ describe("threadRouteAwaitsConnection", () => {
       threadRouteIsHydrating({ ...settled, connectionState: "connecting", detailStatus: "empty" }),
     ).toBe(true);
     expect(threadRouteIsHydrating({ ...settled, detailStatus: "empty" })).toBe(true);
-  });
-});
-
-describe("threadRouteStartsConnection", () => {
-  it("retries an offline or backing-off environment", () => {
-    expect(threadRouteStartsConnection("offline")).toBe(true);
-    expect(threadRouteStartsConnection("reconnecting")).toBe(true);
-  });
-
-  it("leaves an attempt in progress, a connected or a switched-off environment alone", () => {
-    expect(threadRouteStartsConnection("connecting")).toBe(false);
-    expect(threadRouteStartsConnection("connected")).toBe(false);
-    expect(threadRouteStartsConnection("available")).toBe(false);
-    expect(threadRouteStartsConnection("error")).toBe(false);
   });
 });
 

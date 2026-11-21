@@ -291,7 +291,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   if (routeThreadShown && shownThreadKey !== routeThreadKey) {
     setShownThreadKey(routeThreadKey);
   }
-  // Each Retry restarts the wait for the environment to deliver the thread.
+  // Each Reconnect restarts the wait for the environment to deliver the thread.
   const [connectAttempt, setConnectAttempt] = useState(0);
   const connectAttemptKey = routeThreadKey === null ? null : `${routeThreadKey}#${connectAttempt}`;
   const [graceExpiredKey, setGraceExpiredKey] = useState<string | null>(null);
@@ -405,10 +405,12 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
 
   return withInspectorHeader(
     <ThreadUnavailableScreen
-      actionLabel={routeEnvironmentRuntime === null ? gt("Manage environments") : gt("Retry")}
+      actionLabel={
+        routeEnvironmentRuntime === null ? gt("Manage environments") : gt("Reconnect environment")
+      }
       onAction={() => {
         if (routeEnvironmentRuntime !== null) {
-          // Retry reconnects itself, so the new wait must not start the connection again.
+          // This reconnects itself, so the new wait must not start the connection again.
           connectionStartedKey.current = `${routeThreadKey}#${connectAttempt + 1}`;
           setConnectAttempt(connectAttempt + 1);
           onReconnectEnvironment(environmentId);
