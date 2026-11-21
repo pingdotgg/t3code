@@ -40,6 +40,30 @@ export const ApnsNotificationPayload = Schema.Struct({
 });
 export type ApnsNotificationPayload = typeof ApnsNotificationPayload.Type;
 
+// One alert per target and phase time, so retries and same-phase renames reuse the delivery claim.
+export function notificationJobIdentity(input: {
+  readonly userId: string;
+  readonly deviceId: string;
+  readonly token: string;
+  readonly bundleId?: string | null;
+  readonly apsEnvironment?: "sandbox" | "production" | null;
+  readonly notification: ApnsNotificationPayload;
+}): string | null {
+  const { notification } = input;
+  if (notification.phase === undefined || notification.updatedAt === undefined) return null;
+  return JSON.stringify([
+    input.userId,
+    input.deviceId,
+    input.token,
+    input.bundleId ?? null,
+    input.apsEnvironment ?? null,
+    notification.environmentId,
+    notification.threadId,
+    notification.phase,
+    notification.updatedAt,
+  ]);
+}
+
 export const ApnsLiveActivityAlert = Schema.Struct({
   title: Schema.String,
   body: Schema.String,

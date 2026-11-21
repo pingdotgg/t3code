@@ -1,5 +1,6 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -19,6 +20,7 @@ import {
 } from "./agentActivityPayloads.ts";
 import {
   expiresAtForJob,
+  notificationJobIdentity,
   makeApnsDeliveryJobPayload,
   signApnsDeliveryJob,
   type ApnsDeliveryJobPayload,
@@ -80,6 +82,7 @@ export class ApnsDeliveryQueue extends Context.Service<
 const make = Effect.gen(function* () {
   const sender = yield* ApnsDeliveryQueueSender;
   const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const config = yield* RelayConfiguration.RelayConfiguration;
   const mac = yield* Mac.Mac;
 
@@ -150,19 +153,23 @@ const make = Effect.gen(function* () {
           "relay.thread_id": input.notification.threadId,
         });
         const now = yield* DateTime.now;
-        const jobId = yield* random.uuidV4().pipe(
-          Effect.mapError(
-            (cause) =>
-              new ApnsDeliveryQueueSendError({
-                operation: "generate-job-id",
-                jobId: null,
-                kind: "push_notification",
-                userId: input.userId,
-                deviceId: input.deviceId,
-                cause,
-              }),
-          ),
-        );
+        const identity = notificationJobIdentity(input);
+        const jobId =
+          identity !== null
+            ? yield* digest.digestHex(Digest.sha256, new TextEncoder().encode(identity))
+            : yield* random.uuidV4().pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ApnsDeliveryQueueSendError({
+                      operation: "generate-job-id",
+                      jobId: null,
+                      kind: "push_notification",
+                      userId: input.userId,
+                      deviceId: input.deviceId,
+                      cause,
+                    }),
+                ),
+              );
         yield* Effect.annotateCurrentSpan({ "relay.delivery.job_id": jobId });
         const payload = makeApnsDeliveryJobPayload({
           kind: "push_notification",
