@@ -36,6 +36,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   Columns2Icon,
+  EyeOffIcon,
   FlaskConicalOffIcon,
   FolderTreeIcon,
   InfoIcon,
@@ -191,6 +192,7 @@ type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 const COMMIT_PAGE_SIZE = 10;
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
+const PULL_REQUEST_HIDE_VIEWED_FILES_STORAGE_KEY = "t3code.pullRequestHideViewedFiles";
 
 interface DiffSlice {
   readonly source: PullRequestDiffResult;
@@ -483,6 +485,11 @@ function PullRequestCodeTab({
     Schema.Boolean,
   );
   const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
+  const [hideViewedFiles, setHideViewedFiles] = useLocalStorage(
+    PULL_REQUEST_HIDE_VIEWED_FILES_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const [selectedLines, setSelectedLines] = useState<{
     id: string;
     range: SelectedLineRange;
@@ -775,15 +782,28 @@ function PullRequestCodeTab({
   const testFileCount = loadedFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
   ).length;
-  // A requested file stays visible so a jump to a hidden test still lands.
-  const files = hideTestFiles
+  // A filter never hides the file being jumped to or one holding unsent review comments.
+  const isPinned = (path: string) =>
+    path === revealRequest?.path ||
+    path === linkPath ||
+    path === draft?.path ||
+    pendingComments.some((comment) => comment.path === path);
+  const reviewFiles = hideTestFiles
     ? loadedFiles.filter((file) => {
         const path = resolveFileDiffPath(file);
-        return path === revealRequest?.path || path === linkPath || !isTestChangedFile(path);
+        return isPinned(path) || !isTestChangedFile(path);
       })
     : loadedFiles;
-  const hiddenTestFileCount = loadedFiles.length - files.length;
-  const filePaths = files.map((file) => resolveFileDiffPath(file));
+  const hiddenTestFileCount = loadedFiles.length - reviewFiles.length;
+  const viewedFileCount = reviewFiles.filter((file) =>
+    isFileViewed(resolveFileDiffPath(file)),
+  ).length;
+  const files = hideViewedFiles
+    ? reviewFiles.filter((file) => {
+        const path = resolveFileDiffPath(file);
+        return isPinned(path) || !isFileViewed(path);
+      })
+    : reviewFiles;
   const omittedFileStats = new Map(
     loadedSlices.flatMap((slice) =>
       slice.omittedFileStats.map((file) => [file.path, file] as const),
@@ -1023,11 +1043,14 @@ function PullRequestCodeTab({
   };
 
   const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
-    const range = getFileViewedRange(
-      annotatedFiles,
-      fileKey,
-      extendRange ? lastViewedFileKey : null,
-    );
+    // Include files hidden as viewed: the Shift-click anchor is usually one of them.
+    const rangeFiles = reviewFiles.map((file) => ({
+      fileKey: buildFileDiffRenderKey(file),
+      foldKey: buildFileDiffFoldKey(file),
+      path: resolveFileDiffPath(file),
+      fileDiff: file,
+    }));
+    const range = getFileViewedRange(rangeFiles, fileKey, extendRange ? lastViewedFileKey : null);
     setLastViewedFileKey(fileKey);
     for (const file of range) {
       // A commit's diff names that commit's version of the file, not the head's.
@@ -1481,10 +1504,10 @@ function PullRequestCodeTab({
               )}
             </Button>
           ) : null}
-          {filesViewed.enabled && files.length > 0 ? (
+          {filesViewed.enabled && reviewFiles.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
-                {filePaths.filter(isFileViewed).length} / {files.length}
+                {viewedFileCount} / {reviewFiles.length}
               </span>
               <span className="truncate">
                 {viewedFilesStore === "environment"
@@ -1731,6 +1754,26 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {viewedFileCount > 0 || hideViewedFiles ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={gt("Hide viewed files")}
+                  variant="ghost"
+                  size="sm"
+                  pressed={hideViewedFiles}
+                  onPressedChange={(pressed) => setHideViewedFiles(Boolean(pressed))}
+                />
+              }
+            >
+              <EyeOffIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {hideViewedFiles ? gt("Show viewed files") : gt("Hide viewed files")}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1867,16 +1910,85 @@ function PullRequestCodeTab({
     return withToolbar(rawSlicesView);
   }
 
+  const orphanThreads = detail.reviewThreads.filter((thread) => !placedThreadIds.has(thread.id));
+  const orphanFiles = new Map<string, PullRequestReviewThread[]>();
+  for (const thread of orphanThreads) {
+    const existing = orphanFiles.get(thread.path);
+    if (existing) existing.push(thread);
+    else orphanFiles.set(thread.path, [thread]);
+  }
+  const orphanConversations =
+    orphanFiles.size > 0 ? (
+      <div className="shrink-0 border-b border-border/60">
+        <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
+          <h2>
+            <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
+              <span>
+                {nextCursor === null
+                  ? gt("Conversations not on the current diff")
+                  : gt("Conversations not on the diff loaded so far")}
+              </span>
+              <ChevronRightIcon
+                aria-hidden
+                className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
+              />
+              <span aria-hidden className="tabular-nums">
+                {orphanThreads.length}
+              </span>
+              <span className="sr-only">
+                {gt("{count, plural, one {{count} conversation} other {{count} conversations}}", {
+                  count: orphanThreads.length,
+                })}
+              </span>
+            </CollapsibleTrigger>
+          </h2>
+          <CollapsiblePanel>
+            <div className="max-h-64 space-y-1 overflow-auto px-1 pb-1">
+              {[...orphanFiles].map(([path, threads]) => (
+                <div key={path}>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<p className="truncate px-3 text-xs text-muted-foreground">{path}</p>}
+                    />
+                    <TooltipPopup side="top">{path}</TooltipPopup>
+                  </Tooltip>
+                  <div className="mt-1 space-y-2">
+                    {threads.map((thread) => (
+                      <div key={thread.id}>
+                        {thread.line === null ? null : (
+                          <p className="px-3 text-xs text-muted-foreground">
+                            <T>
+                              Line <Var>{thread.line}</Var>
+                            </T>
+                          </p>
+                        )}
+                        {renderThreadCard(thread)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CollapsiblePanel>
+        </Collapsible>
+      </div>
+    ) : null;
+
   if (items.length === 0 && nextCursor === null) {
+    const noFilesMessage =
+      commit === null
+        ? gt(
+            "This {term, select, mr {merge request} cr {change request} other {pull request}} has no file changes.",
+            { term },
+          )
+        : gt("This commit has no file changes.");
     return withToolbar(
-      <p className="px-4 py-5 text-sm text-muted-foreground">
-        {commit === null
-          ? gt(
-              "This {term, select, mr {merge request} cr {change request} other {pull request}} has no file changes.",
-              { term },
-            )
-          : gt("This commit has no file changes.")}
-      </p>,
+      <>
+        {orphanConversations}
+        <p className="px-4 py-5 text-sm text-muted-foreground">
+          {loadedFiles.length > 0 ? gt("All files are hidden.") : noFilesMessage}
+        </p>
+      </>,
     );
   }
 
@@ -1885,74 +1997,10 @@ function PullRequestCodeTab({
     return withToolbar(diffLoading);
   }
 
-  const orphanThreads = detail.reviewThreads.filter((thread) => !placedThreadIds.has(thread.id));
-  const orphanFiles = new Map<string, PullRequestReviewThread[]>();
-  for (const thread of orphanThreads) {
-    const existing = orphanFiles.get(thread.path);
-    if (existing) existing.push(thread);
-    else orphanFiles.set(thread.path, [thread]);
-  }
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
-      {orphanFiles.size > 0 ? (
-        <div className="shrink-0 border-b border-border/60">
-          <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
-            <h2>
-              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
-                <span>
-                  {nextCursor === null
-                    ? gt("Conversations not on the current diff")
-                    : gt("Conversations not on the diff loaded so far")}
-                </span>
-                <ChevronRightIcon
-                  aria-hidden
-                  className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
-                />
-                <span aria-hidden className="tabular-nums">
-                  {orphanThreads.length}
-                </span>
-                <span className="sr-only">
-                  {gt("{count, plural, one {{count} conversation} other {{count} conversations}}", {
-                    count: orphanThreads.length,
-                  })}
-                </span>
-              </CollapsibleTrigger>
-            </h2>
-            <CollapsiblePanel>
-              <div className="max-h-64 space-y-1 overflow-auto px-1 pb-1">
-                {[...orphanFiles].map(([path, threads]) => (
-                  <div key={path}>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <p className="truncate px-3 text-xs text-muted-foreground">{path}</p>
-                        }
-                      />
-                      <TooltipPopup side="top">{path}</TooltipPopup>
-                    </Tooltip>
-                    <div className="mt-1 space-y-2">
-                      {threads.map((thread) => (
-                        <div key={thread.id}>
-                          {thread.line === null ? null : (
-                            <p className="px-3 text-xs text-muted-foreground">
-                              <T>
-                                Line <Var>{thread.line}</Var>
-                              </T>
-                            </p>
-                          )}
-                          {renderThreadCard(thread)}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CollapsiblePanel>
-          </Collapsible>
-        </div>
-      ) : null}
+      {orphanConversations}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className="relative min-h-0 min-w-0 flex-1"
