@@ -63,8 +63,8 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { supportsAppleSpeechLocale, useAppleSpeechLocales } from "../../speech/appleSpeech";
 import { cn } from "~/lib/utils";
 import {
-  listAudioInputs,
   updateMicrophoneOrder,
+  useMicrophoneRefresh,
   type BrowserMicrophone,
 } from "../../speech/browserMicrophones";
 import {
@@ -1345,25 +1345,13 @@ export function VoiceSettingsPanel() {
   const prepared = destination.cloudProvider ? null : destination.prepared;
   const catalog = useVoiceModels(prepared);
 
-  const refreshMicrophones = useStableCallback(async () => {
-    if (!navigator.mediaDevices?.enumerateDevices) return;
-    try {
-      const devices = await listAudioInputs();
-      setMicrophones(devices);
-      updateMicrophoneOrder((order) => rememberMicrophones(order, devices));
-    } catch {
-      setMicrophones([]);
-    }
+  const refreshMicrophones = useMicrophoneRefresh({
+    enabled: true,
+    onResult: (devices) => {
+      setMicrophones(devices ?? []);
+      if (devices) updateMicrophoneOrder((order) => rememberMicrophones(order, devices));
+    },
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to microphone device changes while settings are open
-  useEffect(() => {
-    queueMicrotask(() => void refreshMicrophones());
-    const mediaDevices = navigator.mediaDevices;
-    if (!mediaDevices?.addEventListener) return;
-    const onChange = () => void refreshMicrophones();
-    mediaDevices.addEventListener("devicechange", onChange);
-    return () => mediaDevices.removeEventListener("devicechange", onChange);
-  }, [refreshMicrophones]);
   const modelStatus = catalog.status;
   const target = settingsScope?.target;
   const members = settingsScope?.scope.members;
