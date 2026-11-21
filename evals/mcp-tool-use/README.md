@@ -34,7 +34,7 @@ Check that the case builds with `--dry-run --case <id>`. Then run it on the text
 
 ## Device manager cases
 
-`cases/device-manager.ndjson` ports nine mechanisms from the [device-routing investigation described in #25661](https://github.com/pingdotgg/t3code/pull/25661) and adds seven cases from t3dotgg’s 2026-10-26 fleet device investigation. All prompts, files, hosts and prior turns are authored Acme data; the fleet cases cite finding ids without carrying source transcripts or identifiers.
+`cases/device-manager.ndjson` ports nine mechanisms from the [device-routing investigation described in #25661](https://github.com/pingdotgg/t3code/pull/25661) and adds seven cases from t3dotgg’s 2026-10-26 fleet device investigation, plus USER-01 from [#39560](https://github.com/pingdotgg/t3code/issues/39560). All prompts, files, hosts and prior turns are authored Acme data; the fleet cases cite finding ids without carrying source transcripts or identifiers.
 
 | Case           | Kind    | What it checks                                                                                                                                                                                     |
 | -------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -47,6 +47,7 @@ Check that the case builds with `--dry-run --case <id>`. Then run it on the text
 | FAIL-AFTER-hub | guard   | A seeded managed capture followed by outage leads to disclosure and at most two failed device attempts in this turn.                                                                               |
 | LEGIT-01       | control | A build-only task uses SSH without opening a device.                                                                                                                                               |
 | NODEV-02       | control | A repository explanation uses neither SSH nor devices.                                                                                                                                             |
+| USER-01        | bad     | From [#39560](https://github.com/pingdotgg/t3code/issues/39560): a user who explicitly opts out of the device tools gets the adb screenshot they asked for.                                        |
 
 | Case    | Finding       | Kind  | What it checks                                                                                                                                                                                                                                                                                                                                  |
 | ------- | ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
