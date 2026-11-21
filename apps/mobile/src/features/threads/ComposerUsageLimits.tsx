@@ -1,5 +1,5 @@
 import { providerClients } from "@t3tools/client-runtime/provider-clients";
-import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
+import type { EnvironmentId, ServerProvider, UsageLimitsReport } from "@t3tools/contracts";
 import { T, useGT } from "gt-react-native";
 import { Pressable, ScrollView, View } from "react-native";
 
@@ -10,11 +10,13 @@ import { AccountLimits, ResetCredits } from "../usage/UsageLimitsSection";
 export function ComposerUsageLimits({
   report,
   environmentId,
+  providers,
   maxHeight,
   onClose,
 }: {
   readonly report: UsageLimitsReport;
   readonly environmentId: EnvironmentId;
+  readonly providers: readonly ServerProvider[];
   readonly maxHeight: number;
   readonly onClose: () => void;
 }) {
@@ -38,7 +40,9 @@ export function ComposerUsageLimits({
           const resetCreditInput =
             account.resetCreditInput ??
             (account.instanceId ? { instanceId: account.instanceId } : undefined);
-          const driverLabel = providerClients.get(account.driver)?.label ?? account.driver;
+          const driverLabel =
+            providerClients.get(account.driver)?.label ??
+            (account.displayName?.trim() || account.driver);
           return (
             <AccountLimits
               key={account.id}
@@ -46,6 +50,12 @@ export function ComposerUsageLimits({
               first={index === 0}
               driver={account.driver}
               accentColor={account.accentColor}
+              iconUrl={
+                account.instanceId === undefined
+                  ? undefined
+                  : providers.find((provider) => provider.instanceId === account.instanceId)
+                      ?.iconUrl
+              }
               label={driverLabel}
               instanceLabel={
                 account.instanceId

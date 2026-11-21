@@ -87,10 +87,17 @@ export interface AcpRegistryAdapterV2Options {
   >;
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** Runs synchronously inside failure classification, so a caller forks any work it starts. */
+  readonly onPromptRequestError?: () => void;
 }
 
 // Mistral Vibe's application rate-limit code, outside ACP.
 const MISTRAL_VIBE_RATE_LIMITED = -31001;
+// ACP's request-cancelled code: a stopped turn, not a failed one.
+const ACP_REQUEST_CANCELLED = -32800;
+
+export const isFailedPromptRequest = (cause: unknown) =>
+  isAcpRequestError(cause) && cause.code !== ACP_REQUEST_CANCELLED;
 
 const MistralVibeSessionRetrying = Schema.Struct({
   sessionId: Schema.String,
@@ -274,8 +281,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     compactViaAdvertisedCommand: true,
     ...(isAntigravityCli ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true } : {}),
-    promptFailure: (cause) =>
-      acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause),
+    promptFailure: (cause) => {
+      if (isFailedPromptRequest(cause)) options.onPromptRequestError?.();
+      return acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause);
+    },
     ...(isDroid
       ? { extractElicitationForm: extractDroidElicitationForm }
       : isOmp
@@ -426,6 +435,46 @@ export type AcpRegistryAdapterV2DriverEnv =
   | ProviderEventLoggers.ProviderEventLoggers
   | ProviderHost.ProviderHost;
 
+export const createAcpRegistryAdapterV2 = Effect.fn("AcpRegistryAdapterV2Driver.create")(
+  function* (
+    input: ProviderAdapterDriverCreateInput<AcpRegistrySettings> &
+      Pick<AcpRegistryAdapterV2Options, "onPromptRequestError">,
+  ) {
+    const hostEnvironment = yield* HostProcess.Environment;
+    const selfInvocation = yield* resolveSelfInvocation();
+    const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+    const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
+    return yield* makeAcpRegistryAdapterV2({
+      instanceId: input.instanceId,
+      settings: { ...input.config, enabled: input.enabled },
+      environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+      selfInvocation,
+      continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
+      nativeLogging: (threadId) =>
+        makeNativeLogger({
+          nativeEventLogger: providerEventLoggers.native,
+          provider: ACP_REGISTRY_PROVIDER,
+          threadId,
+        }),
+      ...(input.onPromptRequestError === undefined
+        ? {}
+        : { onPromptRequestError: input.onPromptRequestError }),
+    });
+  },
+  (effect, input) =>
+    effect.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterDriverCreateError({
+            driver: ACP_REGISTRY_PROVIDER,
+            instanceId: input.instanceId,
+            detail: "Failed to create ACP Registry adapter.",
+            cause,
+          }),
+      ),
+    ),
+);
+
 export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
   AcpRegistrySettings,
   AcpRegistryAdapterV2DriverEnv
@@ -433,37 +482,5 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
   driverKind: ACP_REGISTRY_PROVIDER,
   configSchema: AcpRegistrySettings,
   defaultConfig: (): AcpRegistrySettings => DEFAULT_ACP_REGISTRY_SETTINGS,
-  create: Effect.fn("AcpRegistryAdapterV2Driver.create")(
-    function* (input: ProviderAdapterDriverCreateInput<AcpRegistrySettings>) {
-      const hostEnvironment = yield* HostProcess.Environment;
-      const selfInvocation = yield* resolveSelfInvocation();
-      const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-      return yield* makeAcpRegistryAdapterV2({
-        instanceId: input.instanceId,
-        settings: { ...input.config, enabled: input.enabled },
-        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-        selfInvocation,
-        continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
-        nativeLogging: (threadId) =>
-          makeNativeLogger({
-            nativeEventLogger: providerEventLoggers.native,
-            provider: ACP_REGISTRY_PROVIDER,
-            threadId,
-          }),
-      });
-    },
-    (effect, input) =>
-      effect.pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterDriverCreateError({
-              driver: ACP_REGISTRY_PROVIDER,
-              instanceId: input.instanceId,
-              detail: "Failed to create ACP Registry adapter.",
-              cause,
-            }),
-        ),
-      ),
-  ),
+  create: createAcpRegistryAdapterV2,
 };

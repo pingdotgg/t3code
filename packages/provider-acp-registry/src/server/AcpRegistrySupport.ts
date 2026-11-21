@@ -529,10 +529,12 @@ export class AcpRegistryCatalog extends Context.Service<
       settings: AcpRegistrySettings,
       environment?: NodeJS.ProcessEnv,
     ) => Effect.Effect<AcpRegistryInspection, AcpRegistryError>;
+    /** `install: false` resolves only an agent already on disk and never installs or downloads. */
     readonly resolve: (
       settings: AcpRegistrySettings,
       cwd: string,
       environment?: NodeJS.ProcessEnv,
+      options?: { readonly install?: boolean },
     ) => Effect.Effect<ResolvedAcpRegistryAgent, AcpRegistryError, Scope.Scope>;
     readonly uninstallManagedBinary: (
       input: AcpRegistryManagedBinaryUninstallInput,
@@ -1307,11 +1309,20 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     },
   );
 
+  const notInstalled = (agent: AcpRegistryAgent) =>
+    Effect.fail(
+      new AcpRegistryError({
+        reason: "runner_unavailable",
+        detail: `ACP Registry agent ${agent.id} has not been prepared on this environment.`,
+      }),
+    );
+
   const ensureGlobalPackage = Effect.fn("AcpRegistryCatalog.ensureGlobalPackage")(function* (
     agent: AcpRegistryAgent,
     distribution: "npx" | "uvx",
     packageSpec: string,
     environment: NodeJS.ProcessEnv,
+    install = true,
   ) {
     const managerName = packageManagerFor(distribution)!;
     const managerPath = resolveExecutable(managerName, platform, environment);
@@ -1363,6 +1374,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       return existing.value;
     }
 
+    if (!install) return yield* notInstalled(agent);
     const managerDirectory = yield* managerBinDirectory(managerPath);
     const installEnvironment = withPreferredPath(packageEnvironment, managerDirectory, platform);
     if (distribution === "npx") {
@@ -1508,6 +1520,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const installBinary = Effect.fn("AcpRegistryCatalog.installBinary")(function* (
     agent: AcpRegistryAgent,
     target: typeof AcpRegistryBinaryTarget.Type,
+    install = true,
   ) {
     if (platformTarget === undefined) {
       return yield* new AcpRegistryError({
@@ -1537,6 +1550,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       );
     }
 
+    if (!install) return yield* notInstalled(agent);
     yield* fileSystem.makeDirectory(path.dirname(installRoot), { recursive: true }).pipe(
       Effect.mapError(
         (cause) =>
@@ -1943,6 +1957,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     cwd: string,
     environment: NodeJS.ProcessEnv | undefined,
     registry: AcpRegistryIndex,
+    install: boolean,
   ) {
     const agentId = settings.agentId.trim();
     if (agentId.length === 0) {
@@ -1976,6 +1991,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           distribution.kind,
           distribution.packageName!,
           effectiveEnvironment,
+          install,
         ),
       );
       command = installed.executablePath;
@@ -1984,7 +2000,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     } else {
       const target = distribution.binaryTarget!;
       command = yield* withInstallPermit(agent.id)(
-        installBinary(agent, target).pipe(
+        installBinary(agent, target, install).pipe(
           Effect.tap(() => consumePreparedBinaryReservation(agent.id)),
         ),
       );
@@ -2018,7 +2034,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   // A cached index can pin a version whose archive was since removed upstream.
   const resolve: AcpRegistryCatalog["Service"]["resolve"] = Effect.fn("AcpRegistryCatalog.resolve")(
-    function* (settings, cwd, environment) {
+    function* (settings, cwd, environment, options) {
+      const install = options?.install !== false;
       if (settings.source === "local") {
         const executable = settings.commandPath.trim();
         if (!executable) {
@@ -2042,7 +2059,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         } satisfies ResolvedAcpRegistryAgent;
       }
       const registry = yield* loadRegistry();
-      return yield* resolveWithRegistry(settings, cwd, environment, registry).pipe(
+      return yield* resolveWithRegistry(settings, cwd, environment, registry, install).pipe(
         Effect.catchIf(
           (error) => error.reason === "download_failed",
           (error) =>
@@ -2052,7 +2069,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               const versionIn = (index: AcpRegistryIndex) =>
                 index.agents.find((agent) => agent.id === agentId)?.version;
               if (versionIn(latest) === versionIn(registry)) return yield* error;
-              return yield* resolveWithRegistry(settings, cwd, environment, latest);
+              return yield* resolveWithRegistry(settings, cwd, environment, latest, install);
             }),
         ),
       );
