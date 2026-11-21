@@ -6364,6 +6364,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           .pipe(Effect.exit);
         assert.equal(failed._tag, "Failure");
         assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+        const missingSource = yield* driver
+          .renameBranch({
+            cwd,
+            oldBranch: "missing",
+            newBranch: "Julius/ABC-123",
+            exactName: true,
+          })
+          .pipe(Effect.exit);
+        assert.equal(missingSource._tag, "Failure");
         const renamed = yield* driver.renameBranch({
           cwd,
           oldBranch: initialBranch,
