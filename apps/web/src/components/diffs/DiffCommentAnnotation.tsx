@@ -1,6 +1,7 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
 import { reviewCommentRangeText } from "~/lib/composerContextRecords";
+import { isMacPlatform } from "~/lib/utils";
 import { MessageCircle, Trash2 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
@@ -162,7 +163,9 @@ export function DiffCommentAnnotation({
       />
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
         <span className="mr-auto text-3xs text-muted-foreground/70">
-          <T>⌘/Ctrl Enter to send</T>
+          {gt("{shortcut} to send", {
+            shortcut: `${isMacPlatform(navigator.platform) ? "⌘" : "Ctrl"} + Enter`,
+          })}
         </span>
         {speech ? <TextFieldSpeechControls speech={speech} disabled={pending} /> : null}
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
