@@ -89,7 +89,7 @@ export class Workflows extends Context.Service<
     ) => Effect.Effect<void, WorkflowInputError>;
     /** Run a paused run's failed step again. */
     readonly resume: (runId: string) => Effect.Effect<void, WorkflowError>;
-    readonly cancel: (runId: string, reason: string) => Effect.Effect<void, WorkflowError>;
+    readonly cancel: (runId: string, reason?: string) => Effect.Effect<void, WorkflowError>;
     readonly get: (runId: string) => Effect.Effect<
       {
         readonly run: WorkflowStore.WorkflowRun;

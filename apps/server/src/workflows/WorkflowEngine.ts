@@ -831,7 +831,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         // midway: the engine would go on with a cancelled run, or its parent wait forever.
         const cancelled = yield* Effect.uninterruptible(
           Effect.gen(function* () {
-            if (!(yield* store.runEnded(runId, "cancelled", reason, null))) return false;
+            if (!(yield* store.runEnded(runId, "cancelled", reason ?? null, null))) return false;
             if (engine !== undefined) yield* withEngine(engine.interrupt(runId));
             yield* ended(runId);
             return true;
@@ -847,7 +847,10 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         );
         // Waited for briefly, so the caller usually hears of a run that is cleaned up. A cleanup
         // can take minutes; it goes on by itself, and the sweep finishes one that is cut short.
-        const cleanup = yield* Effect.forkIn(endCancelled({ ...row, detail: reason }), scope);
+        const cleanup = yield* Effect.forkIn(
+          endCancelled({ ...row, detail: reason ?? null }),
+          scope,
+        );
         yield* Fiber.join(cleanup).pipe(Effect.timeoutOption(CANCEL_WAITS));
       }).pipe(Effect.ensuring(Effect.sync(() => cancelling.delete(runId))));
     },

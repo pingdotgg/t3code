@@ -79,7 +79,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
         yield* (
           input.action === "resume"
             ? workflows.resume(runId)
-            : workflows.cancel(runId, input.reason ?? "Cancelled")
+            : workflows.cancel(runId, input.reason)
         ).pipe(Effect.mapError(refused));
         return yield* workflows.get(runId).pipe(Effect.mapError(refused));
       }),

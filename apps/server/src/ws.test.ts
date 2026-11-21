@@ -2779,7 +2779,7 @@ it.effect("workflow RPCs read a run and pass an answer, a resume and a cancel to
       { answer: ["run-1", "approve"], value: { choice: "yes", reason: "Looks good" } },
       { answer: ["run-1", "approve"], value: { choice: "no" } },
       { resume: "run-1" },
-      { cancel: "run-1", reason: "Cancelled" },
+      { cancel: "run-1", reason: undefined },
       { cancel: "run-1", reason: "Wrong branch" },
     ]);
   }).pipe(Effect.provide(layerWorkflowRpcTest), Effect.scoped),
