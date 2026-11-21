@@ -306,6 +306,13 @@ const family = [
         ended.outcome === "completed" ? ended.value : `${ended.outcome}: ${ended.reason}`,
       ),
   ),
+  /** Invokes under a name a step of its own already has. */
+  workflow("clash", { version: 1, payload: Schema.Struct({}) }, () =>
+    Effect.andThen(
+      step("kid", { returns: Schema.Void, ...once }, Effect.void),
+      invoke("kid", kid, { mode: "finish" }),
+    ),
+  ),
   /** Starts two kids and does not wait for them. */
   workflow(
     "spawner",
@@ -1586,6 +1593,17 @@ it.effect("an invoked run reports how it ended, and cancelling the parent cancel
         for (const runId of spawned) {
           assert.equal((yield* workflows.waitFor(runId, status("completed"))).result, "grown");
         }
+
+        // A name taken twice pauses the run before the kid it names is started.
+        const clash = yield* workflows.start("clash", {}, { idempotencyKey: "c" });
+        assert.include(
+          (yield* workflows.waitFor(clash.runId, status("paused"))).detail ?? "",
+          'named "kid"',
+        );
+        assert.deepStrictEqual(
+          (yield* workflows.list()).filter((run) => run.parentRunId === clash.runId),
+          [],
+        );
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
