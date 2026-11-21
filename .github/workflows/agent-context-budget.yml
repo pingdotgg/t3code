@@ -14,7 +14,7 @@ permissions:
 jobs:
   budget:
     name: Agent context budget
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 5
     env:
       BUDGET: apps/server/src/provider/agentContextBudget.json

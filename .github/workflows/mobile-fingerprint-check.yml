@@ -25,7 +25,7 @@ concurrency:
 jobs:
   fingerprint:
     name: Native fingerprint diff
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     permissions:
       contents: read
     env:

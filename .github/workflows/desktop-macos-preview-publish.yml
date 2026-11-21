@@ -36,7 +36,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
     # The build workflow completes for every PR push (its label gate is on the
     # job), so this runs often and usually finds nothing. Keep it cheap.
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     permissions:
       actions: read
@@ -326,7 +326,7 @@ jobs:
     name: Publish anonymous download
     needs: [resolve, build]
     if: needs.resolve.outputs.eligible == 'true' && needs.build.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     # Its own group, so a publish never cancels a newer commit's signing job
     # (they would share the build group) and is never cancelled mid-upload.
@@ -504,7 +504,7 @@ jobs:
       (github.event.action == 'closed' ||
       (github.event.action == 'unlabeled' && github.event.label.name == 'preview:mac'))
     # Runs on every PR close and usually finds nothing. Keep it cheap.
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     # Cleanup runs must complete: a close event right after an unlabel queues
     # behind the running cleanup instead of canceling it mid-delete.

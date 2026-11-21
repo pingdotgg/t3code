@@ -24,7 +24,7 @@ jobs:
     if: >-
       github.event_name != 'issue_comment' ||
       (github.event.issue.pull_request && contains(github.event.comment.body, '/recheck-vouch'))
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     outputs:
       targets: ${{ steps.collect.outputs.targets }}
     steps:
@@ -70,7 +70,7 @@ jobs:
     name: Label PR ${{ matrix.target.number }}
     needs: collect-targets
     if: ${{ needs.collect-targets.outputs.targets != '[]' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     concurrency:
       group: pr-vouch-${{ matrix.target.number }}
       cancel-in-progress: true

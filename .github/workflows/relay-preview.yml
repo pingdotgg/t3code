@@ -22,7 +22,7 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'relay:preview')
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 20
     environment:
       name: relay-preview

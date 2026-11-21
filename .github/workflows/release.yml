@@ -54,7 +54,7 @@ jobs:
   resolve_commit:
     name: Resolve release commit
     if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'schedule' || vars.PAUSE_NIGHTLY != 'true')
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 5
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
@@ -110,7 +110,7 @@ jobs:
     if: |
       needs.resolve_commit.result == 'success' &&
       (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     outputs:
       release_channel: ${{ steps.release_meta.outputs.release_channel }}
@@ -235,7 +235,7 @@ jobs:
     name: Release quality checks
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -267,7 +267,7 @@ jobs:
     name: Release tests
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -302,7 +302,7 @@ jobs:
     name: Release web tests ${{ matrix.shard }}
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -361,7 +361,7 @@ jobs:
     name: Release server tests ${{ matrix.shard }}
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -399,7 +399,7 @@ jobs:
     if: |
       needs.resolve_commit.result == 'success' &&
       (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 5
     # Previews build any branch, but production admits only main and v* tags.
     # The empty name runs previews with no environment, so their Clerk and relay
@@ -521,7 +521,7 @@ jobs:
     # this runs alongside preflight. See the condition comment there.
     needs: [preflight, relay_public_config]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, large-compute]
     timeout-minutes: 30
     outputs:
       npm_launcher_artifact_id: ${{ steps.npm_launcher.outputs.artifact-id }}
@@ -806,7 +806,7 @@ jobs:
         desktop_win_arm64,
       ]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test_web.result == 'success' && needs.test_server.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 30
     permissions:
       contents: write
@@ -1029,7 +1029,7 @@ jobs:
     name: Check the update feed
     needs: [preflight, release]
     if: ${{ !cancelled() && github.repository == 'pingdotgg/t3code' && ((github.event_name == 'schedule' && vars.PAUSE_NIGHTLY != 'true') || needs.preflight.outputs.release_channel == 'nightly') }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 5
     permissions:
       contents: write
@@ -1098,7 +1098,7 @@ jobs:
     name: Publish CLI to npm
     needs: [preflight, build_bundle, release]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -1179,7 +1179,7 @@ jobs:
     name: Build hosted web app
     needs: [preflight, relay_public_config]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     outputs:
       deployment_url: ${{ steps.deploy.outputs.deployment_url }}
@@ -1280,7 +1280,7 @@ jobs:
     name: Deploy hosted web app
     needs: [preflight, build_web, release, publish_cli]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_web.result == 'success' && needs.release.result == 'success' && needs.publish_cli.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     env:
       DEPLOYMENT_URL: ${{ needs.build_web.outputs.deployment_url }}
@@ -1355,7 +1355,7 @@ jobs:
     name: Build marketing site
     needs: [preflight]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     outputs:
       deployment_url: ${{ steps.deploy.outputs.deployment_url }}
@@ -1422,7 +1422,7 @@ jobs:
     name: Deploy marketing site
     needs: [preflight, build_marketing, release]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_marketing.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     env:
       DEPLOYMENT_URL: ${{ needs.build_marketing.outputs.deployment_url }}
@@ -1465,7 +1465,7 @@ jobs:
     name: Finalize release
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
     needs: [preflight, release]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     steps:
       - id: app_token
@@ -1557,7 +1557,7 @@ jobs:
       needs.deploy_web.result == 'success' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
     needs: [preflight, relay_public_config, release, deploy_web, finalize]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     timeout-minutes: 10
     steps:
       - name: Checkout

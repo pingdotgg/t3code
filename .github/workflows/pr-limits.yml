@@ -28,7 +28,7 @@ jobs:
   open-limit:
     name: Open PR limit
     if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     steps:
       # pull_request_target has a write token. Load the script from the default
       # branch and never run PR code. Cone mode also checks out the files beside
@@ -51,7 +51,7 @@ jobs:
   sweep:
     name: Conflict and close windows
     if: github.event_name != 'pull_request_target'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, small]
     concurrency:
       group: pr-limits-sweep
       cancel-in-progress: false
