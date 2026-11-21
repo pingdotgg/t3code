@@ -82,9 +82,6 @@ vi.mock("expo/fetch", () => ({ fetch: vi.fn() }));
 vi.mock("react-native-svg", () => ({ parse: vi.fn(), SvgAst: () => null }));
 vi.mock("@t3tools/client-runtime/state/assets", () => ({ MISSING_FILE_ACCESS_MESSAGE: "" }));
 vi.mock("../../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
-vi.mock("../../components/ui/FilePreviewGallery", () => ({
-  useFilePreviewGallery: () => (source: unknown) => source,
-}));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
 }));
@@ -96,11 +93,64 @@ vi.mock("../../state/mediaActions", () => ({ useMediaActions: () => ({ actions: 
 vi.mock("../../state/assets", () => ({ useAssetUrlState: vi.fn() }));
 
 import { RegistryContext } from "@effect/atom-react";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/reactivity";
 import { fetch } from "expo/fetch";
 import { parse } from "react-native-svg";
 
-import { MarkdownImageAvailableWidthContext, ThreadMarkdownImageView } from "./ThreadMarkdownImage";
+import { FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
+import type { FilePreviewSource } from "../../components/ui/FilePreviewModal.types";
+import { useAssetUrlState } from "../../state/assets";
+import {
+  MarkdownImageAvailableWidthContext,
+  ThreadMarkdownImage,
+  ThreadMarkdownImageView,
+} from "./ThreadMarkdownImage";
+
+it("keeps the tapped workspace image fragment on its gallery page", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.createElement("div"));
+  const environmentId = EnvironmentId.make("environment-1");
+  const threadId = ThreadId.make("thread-1");
+  const resource = { _tag: "media-file", threadId, path: "/repo/./red.png" } as const;
+  const red = { kind: "image", environmentId, resource, srcFragment: "#detail" } as const;
+  const blue = {
+    kind: "image",
+    environmentId,
+    resource: { ...resource, path: "/repo/./blue.png" },
+  } as const;
+  const openPreview = vi.fn<(source: FilePreviewSource) => void>();
+  vi.mocked(useAssetUrlState).mockReturnValueOnce({
+    _tag: "Success",
+    url: "https://example.test/red.png",
+    expiresAt: 0,
+  });
+  try {
+    await act(async () =>
+      root.render(
+        <FilePreviewGallery value={[red, blue]}>
+          <ThreadMarkdownImage
+            environmentId={environmentId}
+            resource={resource}
+            srcFragment="#detail"
+            alt="Red"
+            onPressPreview={openPreview}
+          />
+        </FilePreviewGallery>,
+      ),
+    );
+    await act(async () => harness.pressable.onPress?.({ nativeEvent: {} }));
+    expect(openPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resource,
+        srcFragment: "#detail",
+        gallery: [expect.objectContaining(red), blue],
+      }),
+    );
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
 
 it("keeps the frame size when the same image reports a different decoded width", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
