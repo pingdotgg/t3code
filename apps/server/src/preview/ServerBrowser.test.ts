@@ -2111,6 +2111,40 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a request whose frame is not available yet is not a main navigation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const frameless = {
+        url: () => "https://example.com/early",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => {
+          throw new Error("Frame for this navigation request is not available");
+        },
+        failure: () => ({ errorText: "net::ERR_CONNECTION_REFUSED" }),
+      };
+      expect(() => page.emit("request", frameless)).not.toThrow();
+      const statusAfterRequest = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(statusAfterRequest.loading).toBe(false);
+      expect(() => page.emit("requestfailed", frameless)).not.toThrow();
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.loading).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect.each(["before", "during"] as const)(
   "a navigation that fails while a load reads its title keeps its failure (request %s read)",
   (requestTiming) =>
@@ -3013,6 +3047,11 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
       expect(
         yield* resize({ mode: "freeform", width: 900, height: 600 }, 900, 600),
       ).toBeUndefined();
+      // A hidden guest takes the new size only while the desktop paints it, which a capture asks for.
+      expect(cdp.send).toHaveBeenCalledWith(
+        "Page.captureScreenshot",
+        expect.objectContaining({ clip: expect.anything() }),
+      );
       desktopSizeAnswer = null;
       expect(yield* resize({ mode: "freeform", width: 1280, height: 760 }, 1280, 760)).toEqual({
         width: 1280,

@@ -48,6 +48,13 @@ export function getCommandPaletteReturnFocus(): HTMLElement | boolean {
   return element?.isConnected && !element.matches(":disabled") ? element : true;
 }
 
+/** The element the palette opened from, while focus is still inside the palette. */
+export function getCommandPaletteOpener(): HTMLElement | null {
+  const active = document.activeElement;
+  if (!returnFocus || !active?.closest("[data-command-palette]")) return null;
+  return returnFocus.element;
+}
+
 // The palette is only mounted on app-shell routes (not /pair, sign-in or
 // landings), so its shortcuts must stay inert elsewhere.
 let mountedPalettes = 0;
