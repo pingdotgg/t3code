@@ -676,9 +676,14 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       kind: first.kind,
       label: first.label,
       members,
-      columns: accounts.map(
-        (account) => memberByAccount.get(account.key) ?? { account, window: null },
-      ),
+      columns: accounts.flatMap<LimitPoolWindow["columns"][number]>((account) => {
+        const member = memberByAccount.get(account.key);
+        return member
+          ? [member]
+          : first.kind === "monthly" && account.limits.zeroSpendCap
+            ? [{ account, window: null }]
+            : [];
+      }),
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),

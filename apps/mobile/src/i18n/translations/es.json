@@ -5006,15 +5006,6 @@
     },
     "% a estas alturas"
   ],
-  "a6ae2f414eb6349a": [
-    "Restaura un ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "% del total"
-  ],
   "427c46cf712e8cb6": "Créditos de restablecimiento",
   "fb7be23247bbe5ec": "por encima del ritmo",
   "05c53f9e062392da": "al ritmo",
@@ -5027,9 +5018,6 @@
   "8864ac914d8205e8": "¿Usar un crédito de restablecimiento?",
   "e32c2c7e61a16f4b": "Usar crédito",
   "b58a90dc5356f80a": "se restablece ahora",
-  "1d8c701d90e48e07": "↻ +{percent} % ahora",
-  "949db5acc5a82add": "↻ +{percent} % Se restablece en un momento",
-  "96f9e0677375a802": "↻ +{percent} % en {duration}",
   "f8a9ced202b79202": "Ocultar la etiqueta de la cuenta",
   "e4b6c8eab1e48ee2": "Mostrar la etiqueta de la cuenta",
   "1f76510e608a9292": "Usando…",
@@ -5390,5 +5378,26 @@
   "ad208e3e32c85029": "Ocultar todo",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Llamadas a herramientas en el chat",
-  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran."
+  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
+  "0823a39756bb74a0": "Próximo restablecimiento de cuenta ahora",
+  "49012e2676b17322": "Próximo restablecimiento de cuenta en breve",
+  "a43d270db904770e": "Próximo restablecimiento de cuenta en {duration}",
+  "d343b39fa4fc62f3": "Entre {count} cuentas",
+  "34def2fecab9556a": "Tras el restablecimiento: queda un {percent}% en esta cuenta",
+  "2c1bdecdcb724828": [
+    {
+      "t": "Text",
+      "i": 1,
+      "c": [
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    },
+    " ",
+    "disponible de media"
+  ]
 }

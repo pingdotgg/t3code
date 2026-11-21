@@ -198,10 +198,17 @@ export function formatResetsIn(
   window: ServerProviderUsageWindow,
   now: number,
   resolve: MFunctionType = mFallback,
-  style: "full" | "in" | "refill" = "full",
+  style: "full" | "in" | "refill" | "account" = "full",
 ): string | null {
   const countdown = resetCountdown(window, now);
   if (countdown === null) return null;
+  if (style === "account") {
+    if (countdown.kind === "now") return resolve(msg("Next account reset now"));
+    if (countdown.kind === "momentarily") return resolve(msg("Next account reset momentarily"));
+    return resolve(
+      msg("Next account reset in {duration}", { duration: formatDuration(countdown.ms, resolve) }),
+    );
+  }
   if (countdown.kind === "now") return resolve(msg("resets now"));
   if (countdown.kind === "momentarily") return resolve(msg("Resets momentarily"));
   const duration = formatDuration(countdown.ms, resolve);

@@ -5013,15 +5013,6 @@
     },
     "% left by now"
   ],
-  "a6ae2f414eb6349a": [
-    "Restores ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "% of the pool"
-  ],
   "427c46cf712e8cb6": "Reset credits",
   "fb7be23247bbe5ec": "ahead of pace",
   "05c53f9e062392da": "on pace",
@@ -5034,9 +5025,6 @@
   "8864ac914d8205e8": "Use a reset credit?",
   "e32c2c7e61a16f4b": "Use credit",
   "b58a90dc5356f80a": "resets now",
-  "1d8c701d90e48e07": "↻ +{percent}% now",
-  "949db5acc5a82add": "↻ +{percent}% Resets momentarily",
-  "96f9e0677375a802": "↻ +{percent}% in {duration}",
   "f8a9ced202b79202": "Hide account label",
   "e4b6c8eab1e48ee2": "Reveal account label",
   "1f76510e608a9292": "Using…",
@@ -5397,5 +5385,26 @@
   "ad208e3e32c85029": "Hide all",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool calls in chat",
-  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show."
+  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
+  "0823a39756bb74a0": "Next account reset now",
+  "49012e2676b17322": "Next account reset momentarily",
+  "a43d270db904770e": "Next account reset in {duration}",
+  "d343b39fa4fc62f3": "Across {count} accounts",
+  "34def2fecab9556a": "After reset: {percent}% left on this account",
+  "2c1bdecdcb724828": [
+    {
+      "t": "Text",
+      "i": 1,
+      "c": [
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    },
+    " ",
+    "average left"
+  ]
 }

@@ -12116,8 +12116,6 @@
   "0d2c1db7fa27153e": "Resets",
   "e164fc7ee32dd6a4": "Even pace",
   "f017b7b86d1968e8": "{timeLeft}% left by now",
-  "07fdf12ac5b965fa": "Restores",
-  "0bd938825ffcf992": "+{percent}% of pool",
   "09c0e00d7fb55402": "Using reset credit…",
   "4df3ff1be768a7ab": "{name}: {remaining}% left",
   "7aaaff1c6484f25c": "Segment",
@@ -12402,5 +12400,12 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide"
+  "9e91e9a77b664e4e": "Could not start a review guide",
+  "0823a39756bb74a0": "Next account reset now",
+  "49012e2676b17322": "Next account reset momentarily",
+  "a43d270db904770e": "Next account reset in {duration}",
+  "25aac459cb293af7": "After reset",
+  "6229f9d89ef02482": "{percent}% left on this account",
+  "d343b39fa4fc62f3": "Across {count} accounts",
+  "da49725ab92240bc": "average left"
 }

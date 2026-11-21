@@ -12108,8 +12108,6 @@
   "0d2c1db7fa27153e": "Zurücksetzung",
   "e164fc7ee32dd6a4": "Gleichmäßiges Tempo",
   "f017b7b86d1968e8": "{timeLeft} % sollten jetzt übrig sein",
-  "07fdf12ac5b965fa": "Stellt wieder her",
-  "0bd938825ffcf992": "+{percent} % des Kontingents",
   "09c0e00d7fb55402": "Reset-Guthaben wird verwendet…",
   "4df3ff1be768a7ab": "{name}: {remaining} % übrig",
   "7aaaff1c6484f25c": "Segment",
@@ -12393,5 +12391,12 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "0823a39756bb74a0": "Nächste Kontozurücksetzung jetzt",
+  "49012e2676b17322": "Nächste Kontozurücksetzung in Kürze",
+  "a43d270db904770e": "Nächste Kontozurücksetzung in {duration}",
+  "25aac459cb293af7": "Nach der Zurücksetzung",
+  "6229f9d89ef02482": "{percent}% auf diesem Konto übrig",
+  "d343b39fa4fc62f3": "Über {count} Konten",
+  "da49725ab92240bc": "im Durchschnitt übrig"
 }

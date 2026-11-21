@@ -12114,8 +12114,6 @@
   "0d2c1db7fa27153e": "Återställs",
   "e164fc7ee32dd6a4": "Jämn takt",
   "f017b7b86d1968e8": "{timeLeft} % kvar vid det här laget",
-  "07fdf12ac5b965fa": "Återställer",
-  "0bd938825ffcf992": "+{percent} % av poolen",
   "09c0e00d7fb55402": "Använder återställningskredit…",
   "4df3ff1be768a7ab": "{name}: {remaining} % kvar",
   "7aaaff1c6484f25c": "Segment",
@@ -12400,5 +12398,12 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "0823a39756bb74a0": "Nästa kontoåterställning sker nu",
+  "49012e2676b17322": "Nästa kontoåterställning sker strax",
+  "a43d270db904770e": "Nästa kontoåterställning om {duration}",
+  "25aac459cb293af7": "Efter återställning",
+  "6229f9d89ef02482": "{percent}% kvar på det här kontot",
+  "d343b39fa4fc62f3": "För {count} konton",
+  "da49725ab92240bc": "kvar i genomsnitt"
 }

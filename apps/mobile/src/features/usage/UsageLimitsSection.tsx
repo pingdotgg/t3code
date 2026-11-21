@@ -396,26 +396,3 @@ export function resetLabels(
   const duration = formatDuration(countdown.ms, resolve);
   return { full: resolve(msg("resets in {duration}", { duration })), compact: duration };
 }
-
-export function refillLabel(
-  window: ServerProviderUsageWindow,
-  now: number,
-  percent: number,
-  resolve: MessageResolver,
-): string | null {
-  const countdown = resetCountdown(window, now);
-  if (countdown === null) return null;
-  if (countdown.kind === "now") {
-    return resolve(msg("↻ +{percent}% now", { percent, $context: "usage limit refill" }));
-  }
-  if (countdown.kind === "momentarily") {
-    return resolve(msg("↻ +{percent}% Resets momentarily", { percent }));
-  }
-  return resolve(
-    msg("↻ +{percent}% in {duration}", {
-      percent,
-      duration: formatDuration(countdown.ms, resolve),
-      $context: "usage limit refill",
-    }),
-  );
-}

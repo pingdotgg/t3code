@@ -5012,15 +5012,6 @@
     },
     " % sollten jetzt übrig sein"
   ],
-  "a6ae2f414eb6349a": [
-    "Stellt ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " % des Kontingents wieder her"
-  ],
   "427c46cf712e8cb6": "Reset-Guthaben",
   "fb7be23247bbe5ec": "über dem Tempo",
   "05c53f9e062392da": "im Tempo",
@@ -5033,9 +5024,6 @@
   "8864ac914d8205e8": "Ein Reset-Guthaben verwenden?",
   "e32c2c7e61a16f4b": "Guthaben verwenden",
   "b58a90dc5356f80a": "wird jetzt zurückgesetzt",
-  "1d8c701d90e48e07": "↻ +{percent} % jetzt",
-  "949db5acc5a82add": "↻ +{percent} % Wird gleich zurückgesetzt",
-  "96f9e0677375a802": "↻ +{percent} % in {duration}",
   "f8a9ced202b79202": "Kontobezeichnung ausblenden",
   "e4b6c8eab1e48ee2": "Kontobezeichnung anzeigen",
   "1f76510e608a9292": "Wird verwendet…",
@@ -5396,5 +5384,26 @@
   "ad208e3e32c85029": "Alle ausblenden",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
-  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt."
+  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
+  "0823a39756bb74a0": "Nächste Kontozurücksetzung jetzt",
+  "49012e2676b17322": "Nächste Kontozurücksetzung in Kürze",
+  "a43d270db904770e": "Nächste Kontozurücksetzung in {duration}",
+  "d343b39fa4fc62f3": "Über {count} Konten",
+  "34def2fecab9556a": "Nach der Zurücksetzung: {percent}% auf diesem Konto übrig",
+  "2c1bdecdcb724828": [
+    {
+      "t": "Text",
+      "i": 1,
+      "c": [
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    },
+    " ",
+    "im Durchschnitt übrig"
+  ]
 }

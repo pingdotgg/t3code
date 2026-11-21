@@ -16,6 +16,7 @@ import {
   collectExternalUsageLinks,
   collectLimitNotices,
   cursorUsageWindowDetails,
+  formatResetsIn,
 } from "@t3tools/shared/usageLimitsCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { Fragment, type ReactNode, useId, useState } from "react";
@@ -31,7 +32,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import type { MessageResolver } from "../../i18n/messages";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
-import { refillLabel, ResetCredits, resetLabels } from "./UsageLimitsSection";
+import { ResetCredits, resetLabels } from "./UsageLimitsSection";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
 
 const PACE_LABEL = {
@@ -194,7 +195,7 @@ function PoolWindowCard({
   const inlineLabels = wide && segmentWidth >= 96;
   const inlineReset = wide && segmentWidth >= 150;
   const inlineName = wide && segmentWidth >= 220;
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const nextReset = pool.resets[0];
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsUsageAccount", {
       accountKey: account.key,
@@ -212,23 +213,37 @@ function PoolWindowCard({
           ) : null}
           <View className="flex-row items-baseline gap-1.5">
             <Text className="text-sm text-foreground-muted">
-              <T>
-                <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
-                  <Var>{pool.remainingPercent}</Var>%
-                </Text>{" "}
-                left
-              </T>
+              {pool.members.length > 1 ? (
+                <T>
+                  <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
+                    <Var>{pool.remainingPercent}</Var>%
+                  </Text>{" "}
+                  average left
+                </T>
+              ) : (
+                <T>
+                  <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
+                    <Var>{pool.remainingPercent}</Var>%
+                  </Text>{" "}
+                  left
+                </T>
+              )}
             </Text>
           </View>
+          {pool.members.length > 1 ? (
+            <Text className="text-xs text-foreground-muted">
+              {gt("Across {count} accounts", { count: pool.members.length })}
+            </Text>
+          ) : null}
         </View>
         {pool.pace ? (
           <Text className="text-xs text-foreground-tertiary">{m(PACE_LABEL[pool.pace])}</Text>
         ) : null}
       </View>
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
-      {nextRefill ? (
+      {nextReset ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
-          {refillLabel(nextRefill.member.window, now, nextRefill.restoresPercent, m)}
+          {formatResetsIn(nextReset.member.window, now, m, "account")}
         </Text>
       ) : null}
     </>
@@ -682,11 +697,13 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                   </T>
                 </Text>
               ) : null}
-              {reset && reset.restoresPercent > 0 ? (
+              {reset && reset.member.refillPercent > 0 ? (
                 <Text className="text-sm text-foreground-muted">
-                  <T>
-                    Restores <Var>{reset.restoresPercent}</Var>% of the pool
-                  </T>
+                  {gt("After reset: {percent}% left on this account", {
+                    percent: Math.round(
+                      Math.min(100, remainingPercent(window) + reset.member.refillPercent),
+                    ),
+                  })}
                 </Text>
               ) : null}
             </View>

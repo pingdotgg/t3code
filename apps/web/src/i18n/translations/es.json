@@ -12101,8 +12101,6 @@
   "0d2c1db7fa27153e": "Se restablece",
   "e164fc7ee32dd6a4": "Ritmo uniforme",
   "f017b7b86d1968e8": "Debería quedar un {timeLeft}% a estas alturas",
-  "07fdf12ac5b965fa": "Restaura",
-  "0bd938825ffcf992": "+{percent}% del total",
   "09c0e00d7fb55402": "Usando el crédito de restablecimiento…",
   "4df3ff1be768a7ab": "{name}: queda un {remaining}%",
   "7aaaff1c6484f25c": "Segmento",
@@ -12388,5 +12386,12 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
+  "0823a39756bb74a0": "Próximo restablecimiento de cuenta ahora",
+  "49012e2676b17322": "Próximo restablecimiento de cuenta en breve",
+  "a43d270db904770e": "Próximo restablecimiento de cuenta en {duration}",
+  "25aac459cb293af7": "Tras el restablecimiento",
+  "6229f9d89ef02482": "Queda un {percent}% en esta cuenta",
+  "d343b39fa4fc62f3": "Entre {count} cuentas",
+  "da49725ab92240bc": "disponible de media"
 }

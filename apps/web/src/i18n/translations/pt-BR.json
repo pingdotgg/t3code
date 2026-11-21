@@ -12105,8 +12105,6 @@
   "0d2c1db7fa27153e": "Redefine",
   "e164fc7ee32dd6a4": "Ritmo uniforme",
   "f017b7b86d1968e8": "{timeLeft}% restante até agora",
-  "07fdf12ac5b965fa": "Restaura",
-  "0bd938825ffcf992": "+{percent}% do total",
   "09c0e00d7fb55402": "Usando crédito de redefinição…",
   "4df3ff1be768a7ab": "{name}: {remaining}% restante",
   "7aaaff1c6484f25c": "Segmento",
@@ -12392,5 +12390,12 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
+  "0823a39756bb74a0": "Próxima redefinição da conta agora",
+  "49012e2676b17322": "Próxima redefinição da conta em instantes",
+  "a43d270db904770e": "Próxima redefinição da conta em {duration}",
+  "25aac459cb293af7": "Após a redefinição",
+  "6229f9d89ef02482": "Restam {percent}% nesta conta",
+  "d343b39fa4fc62f3": "Em {count} contas",
+  "da49725ab92240bc": "restantes em média"
 }
