@@ -1,4 +1,4 @@
-import { WorkflowHook } from "@t3tools/contracts";
+import { WorkflowHook, WorkflowRunStatus } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -30,7 +30,7 @@ const jsonArgument = (text: string, what: string) =>
   );
 
 const runLine = (run: WorkflowRun) =>
-  [run.runId, run.status.padEnd(9), run.title, run.detail ?? ""].join("  ").trimEnd();
+  [run.runId, run.status.padEnd(9), run.workflow, run.title, run.detail ?? ""].join("  ").trimEnd();
 
 const printRun = Effect.fn("cli.workflow.printRun")(function* (
   result: typeof RunResult.Type,
@@ -51,8 +51,8 @@ const printRun = Effect.fn("cli.workflow.printRun")(function* (
 });
 
 const runArgument = Argument.String("run").pipe(Argument.withDescription("Run id."));
-const act = (tools: ThreadTools, action: "read" | "resume" | "cancel", runId: string) =>
-  tools.call("t3_workflow", { action, runId }, RunResult);
+const readRun = (tools: ThreadTools, runId: string) =>
+  tools.call("t3_workflow", { action: "read", runId }, RunResult);
 
 const startCommand = Command.make("start", {
   ...projectLocationFlags,
@@ -62,7 +62,9 @@ const startCommand = Command.make("start", {
     Flag.withDefault("{}"),
   ),
   key: Flag.String("key").pipe(
-    Flag.withDescription("Names this run: starting again with the same key is the same run."),
+    Flag.withDescription(
+      "Required. Names this run: starting again with the same key is the same run, not a second one.",
+    ),
   ),
   json: jsonFlag,
 }).pipe(
@@ -87,9 +89,9 @@ const startCommand = Command.make("start", {
 
 const listCommand = Command.make("list", {
   ...projectLocationFlags,
-  status: Flag.String("status").pipe(
+  status: Flag.Literals("status", WorkflowRunStatus.literals).pipe(
     Flag.withDescription(
-      "Only runs in this state, such as paused or waiting. A skipped run is listed only with `skipped`, unless another run invoked it.",
+      "Only runs in this state. A skipped run is listed only with `skipped`, unless another run invoked it.",
     ),
     Flag.optional,
   ),
@@ -119,29 +121,95 @@ const listCommand = Command.make("list", {
   ),
 );
 
-const runCommand = (
-  name: "show" | "resume" | "cancel",
-  action: "read" | "resume" | "cancel",
-  description: string,
-) =>
-  Command.make(name, { ...projectLocationFlags, run: runArgument, json: jsonFlag }).pipe(
-    Command.withDescription(description),
-    Command.withHandler((flags) =>
-      withThreadTools(
-        flags,
-        Effect.fn("cli.workflow.run")(function* (tools) {
-          yield* printRun(yield* act(tools, action, flags.run), flags.json);
-        }),
-      ).pipe(reportThreadErrors),
-    ),
+const showCommand = Command.make("show", {
+  ...projectLocationFlags,
+  run: runArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Show a run and its steps."),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.workflow.show")(function* (tools) {
+        yield* printRun(yield* readRun(tools, flags.run), flags.json);
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+/** Why `action` would leave the run as it is, or undefined when it would act. */
+const noOpReason = (action: "resume" | "cancel", run: WorkflowRun) => {
+  if (action === "cancel") {
+    return run.endedAt === null
+      ? undefined
+      : `Run ${run.runId} is ${run.status}; nothing to cancel.`;
+  }
+  return run.status === "paused"
+    ? undefined
+    : `Run ${run.runId} is ${run.status}; nothing to resume.`;
+};
+
+const steer = Effect.fn("cli.workflow.steer")(function* (
+  tools: ThreadTools,
+  action: "resume" | "cancel",
+  flags: { readonly run: string; readonly json: boolean; readonly reason: Option.Option<string> },
+) {
+  const before = yield* readRun(tools, flags.run);
+  const skipped = noOpReason(action, before.run);
+  if (skipped !== undefined) {
+    // Stderr, so --json output stays the run alone.
+    yield* Console.error(skipped);
+    return yield* printRun(before, flags.json);
+  }
+  const after = yield* tools.call(
+    "t3_workflow",
+    {
+      action,
+      runId: flags.run,
+      ...(Option.isSome(flags.reason) ? { reason: flags.reason.value } : {}),
+    },
+    RunResult,
   );
+  yield* printRun(after, flags.json);
+});
+
+const resumeCommand = Command.make("resume", {
+  ...projectLocationFlags,
+  run: runArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Run a paused run's failed step again."),
+  Command.withHandler((flags) =>
+    withThreadTools(flags, (tools) =>
+      steer(tools, "resume", { ...flags, reason: Option.none() }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+const cancelCommand = Command.make("cancel", {
+  ...projectLocationFlags,
+  run: runArgument,
+  reason: Flag.String("reason").pipe(
+    Flag.withDescription("Why, kept as the run's detail."),
+    Flag.optional,
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Cancel a run."),
+  Command.withHandler((flags) =>
+    withThreadTools(flags, (tools) => steer(tools, "cancel", flags)).pipe(reportThreadErrors),
+  ),
+);
 
 const signalCommand = Command.make("signal", {
   ...projectLocationFlags,
   value: Argument.String("value").pipe(
     Argument.withDescription('What the wait receives, as JSON. A question takes {"choice": ...}.'),
   ),
-  run: Flag.String("run").pipe(Flag.withDescription("Run id. Pass with --wait."), Flag.optional),
+  run: Flag.String("run").pipe(
+    Flag.withDescription("Run id. Pass with --wait, not with --workflow and --channel."),
+    Flag.optional,
+  ),
   wait: Flag.String("wait").pipe(
     Flag.withDescription("The wait's or question's name in that run."),
     Flag.optional,
@@ -165,6 +233,14 @@ const signalCommand = Command.make("signal", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const value = yield* jsonArgument(flags.value, "The value");
+      const byRun = Option.isSome(flags.run) || Option.isSome(flags.wait);
+      const byChannel = Option.isSome(flags.workflow) || Option.isSome(flags.channel);
+      if (byRun && byChannel) {
+        return yield* new ThreadUsageError({
+          detail:
+            "Address a signal with --run and --wait, or with --workflow and --channel, not both.",
+        });
+      }
       yield* withThreadTools(
         { ...flags, json: false },
         Effect.fn("cli.workflow.signal")(function* (tools) {
@@ -318,9 +394,9 @@ export const workflowCommand = Command.make("workflow").pipe(
   Command.withSubcommands([
     startCommand,
     listCommand,
-    runCommand("show", "read", "Show a run and its steps."),
-    runCommand("resume", "resume", "Run a paused run's failed step again."),
-    runCommand("cancel", "cancel", "Cancel a run."),
+    showCommand,
+    resumeCommand,
+    cancelCommand,
     signalCommand,
     questionsCommand,
     hooksCommand,

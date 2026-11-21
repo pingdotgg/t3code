@@ -1,7 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { AuthSessionId } from "@t3tools/contracts";
+import { AuthSessionId, type WorkflowRun } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
@@ -34,6 +34,24 @@ vi.mock("../auth/EnvironmentAuth.ts", async (importOriginal) => {
       revokeSession: () => Effect.succeed(true),
     }),
   };
+});
+
+const makeRun = (status: WorkflowRun["status"]): WorkflowRun => ({
+  runId: "run-1",
+  workflow: "review",
+  version: 1,
+  title: "review pr-1",
+  status,
+  detail: null,
+  result: null,
+  pauses: 0,
+  retired: false,
+  resumesAt: null,
+  parentRunId: null,
+  parentStep: null,
+  startedAt: "2026-11-20T00:00:00.000Z",
+  updatedAt: "2026-11-20T00:00:00.000Z",
+  endedAt: ["running", "waiting", "paused"].includes(status) ? null : "2026-11-20T00:00:00.000Z",
 });
 
 /** Runs `t3 workflow <args>` against a live-looking server whose t3_workflow is `call`. */
@@ -82,6 +100,40 @@ const runCli = (
     ),
   );
 
+/** Answers each action with the run in `status`, as the server does. */
+const serving =
+  (status: WorkflowRun["status"]): McpBridge.McpToolSession["call"] =>
+  () =>
+    Effect.succeed({ structuredContent: { run: makeRun(status), steps: [] } });
+
+it.effect("cancel sends --reason, and steers nothing when the run cannot take it", () =>
+  Effect.gen(function* () {
+    const cancelled = yield* runCli(
+      ["cancel", "run-1", "--reason", "superseded"],
+      serving("running"),
+    );
+    assert.deepStrictEqual(cancelled.calls.at(-1), {
+      action: "cancel",
+      runId: "run-1",
+      reason: "superseded",
+    });
+
+    for (const [command, status, said] of [
+      ["cancel", "completed", "Run run-1 is completed; nothing to cancel."],
+      ["resume", "waiting", "Run run-1 is waiting; nothing to resume."],
+      ["resume", "cancelled", "Run run-1 is cancelled; nothing to resume."],
+    ] as const) {
+      const { error, calls, errors } = yield* runCli([command, "run-1"], serving(status));
+      assert.isUndefined(error, command);
+      assert.deepStrictEqual(
+        calls.map((input) => input.action),
+        ["read"],
+      );
+      assert.include(errors, said);
+    }
+  }),
+);
+
 it.effect("reports what the server refused instead of calling it unreachable", () =>
   Effect.gen(function* () {
     const refused = yield* runCli(["start", "review", "--key", " "], () =>
@@ -105,5 +157,24 @@ it.effect("reports what the server refused instead of calling it unreachable", (
       Effect.fail(new McpBridge.AcpMcpBridgeError({ message: "fetch failed" })),
     );
     assert.strictEqual(unreachable.error?._tag, "ThreadServerUnreachableError");
+  }),
+);
+
+it.effect("signal refuses both addresses at once before reaching the server", () =>
+  Effect.gen(function* () {
+    const { error, calls } = yield* runCli([
+      "signal",
+      "{}",
+      "--run",
+      "run-1",
+      "--wait",
+      "approve",
+      "--workflow",
+      "review",
+      "--channel",
+      "pr-1",
+    ]);
+    assert.strictEqual(error?._tag, "ThreadUsageError");
+    assert.lengthOf(calls, 0);
   }),
 );
