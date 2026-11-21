@@ -12059,7 +12059,10 @@
     }
   ],
   "e7f35f60e6229cf5": "App de bureau",
+  "8907bc7124be3655": "Rien à mettre à jour pour le moment",
+  "e2b6767a6f691040": "Tout est à jour",
   "77be1b7e2a1d3d31": "{count, plural, one {Mettre à jour {count} machine ?} other {Mettre à jour {count} machines ?}}",
+  "f2008fcdc60c6cdf": "Il ne reste rien à mettre à jour.",
   "e4892b21e88abb60": "{count, plural, one {{count} mise à jour de fournisseur} other {{count} mises à jour de fournisseurs}}",
   "36d530903a763a14": "Recherche d’autres…",
   "f34dd019e6000fe3": "{count, plural, one {{count} ignoré} other {{count} ignorés}}",

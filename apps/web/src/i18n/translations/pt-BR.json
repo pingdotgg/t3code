@@ -12059,7 +12059,10 @@
     }
   ],
   "e7f35f60e6229cf5": "App desktop",
+  "8907bc7124be3655": "Nada para atualizar no momento",
+  "e2b6767a6f691040": "Tudo está atualizado",
   "77be1b7e2a1d3d31": "{count, plural, one {Atualizar {count} máquina?} other {Atualizar {count} máquinas?}}",
+  "f2008fcdc60c6cdf": "Não resta nada para atualizar.",
   "e4892b21e88abb60": "{count, plural, one {{count} atualização de provedor} other {{count} atualizações de provedores}}",
   "36d530903a763a14": "Verificando mais…",
   "f34dd019e6000fe3": "{count, plural, one {{count} ignorada} other {{count} ignoradas}}",

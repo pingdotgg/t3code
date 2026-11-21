@@ -11,8 +11,15 @@ const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
   return {
     update: null as DesktopUpdateState | null,
-    hasUpdates: false,
-    rows: [] as ReadonlyArray<UpdateEverythingRow>,
+    isElectron: true,
+    everything: {
+      hasUpdates: false,
+      summary: "Update everything",
+      version: null,
+      providerCount: 0,
+      rows: [] as ReadonlyArray<UpdateEverythingRow>,
+      restarts: [],
+    },
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -30,20 +37,18 @@ vi.mock("../../state/desktopUpdate", async (importOriginal) => ({
     () => mocks.update,
   ),
 }));
-// The pill only renders in the desktop app.
 vi.mock("../../env", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../env")>()),
-  isElectron: true,
+  get isElectron() {
+    return mocks.isElectron;
+  },
 }));
-vi.mock("./useUpdateEverything", () => ({
-  useUpdateEverything: () => ({
-    hasUpdates: mocks.hasUpdates,
-    summary: "Update everything",
-    version: null,
-    providerCount: 0,
-    rows: mocks.rows,
-    restarts: [],
-  }),
+vi.mock("./useUpdateEverything", async () => ({
+  useUpdateEverything: (await import("react")).useSyncExternalStore.bind(
+    null,
+    mocks.subscribe,
+    () => mocks.everything,
+  ),
 }));
 
 function nightlyUpdate(releaseNotes: DesktopUpdateState["releaseNotes"]): DesktopUpdateState {
@@ -76,11 +81,12 @@ function setup(
   {
     hasUpdates = false,
     rows = [],
-  }: { hasUpdates?: boolean; rows?: ReadonlyArray<UpdateEverythingRow> } = {},
+    isElectron = true,
+  }: { hasUpdates?: boolean; rows?: ReadonlyArray<UpdateEverythingRow>; isElectron?: boolean } = {},
 ) {
   mocks.update = update;
-  mocks.hasUpdates = hasUpdates;
-  mocks.rows = rows;
+  mocks.isElectron = isElectron;
+  mocks.everything = { ...mocks.everything, hasUpdates, rows };
 }
 
 function publish(update: DesktopUpdateState | null) {
@@ -89,6 +95,14 @@ function publish(update: DesktopUpdateState | null) {
     mocks.notify();
   });
 }
+
+const LAPTOP_CODEX: UpdateEverythingRow = {
+  environmentId: null,
+  label: "Laptop",
+  app: null,
+  skipped: null,
+  providers: ["Codex"],
+};
 
 const releaseNotes = () => document.querySelector('[aria-label="Update release notes"]');
 
@@ -127,7 +141,7 @@ describe("SidebarUpdatePill release notes", () => {
 
 describe("SidebarUpdatePill update everything", () => {
   it("does not refocus the update button after a pointer cancel", async () => {
-    setup(null, { hasUpdates: true });
+    setup(null, { hasUpdates: true, rows: [LAPTOP_CODEX] });
     await using screen = await render(<SidebarUpdatePill />);
     const button = screen.getByRole("button", { name: "Update everything" });
     await userEvent.click(button);
@@ -140,7 +154,7 @@ describe("SidebarUpdatePill update everything", () => {
   });
 
   it("returns focus to the update button after Escape", async () => {
-    setup(null, { hasUpdates: true });
+    setup(null, { hasUpdates: true, rows: [LAPTOP_CODEX] });
     await using screen = await render(<SidebarUpdatePill />);
     const button = screen.getByRole("button", { name: "Update everything" });
     await userEvent.click(button);
@@ -166,5 +180,24 @@ describe("SidebarUpdatePill update everything", () => {
     const row = table.getByRole("row", { name: new RegExp(label) });
     await expect.element(row.getByRole("cell", { name: label, exact: true })).toBeVisible();
     await expect.element(row.getByRole("cell", { name: "Claude", exact: true })).toBeVisible();
+  });
+
+  it("keeps an open dialog on web when the updates finish and the pill hides", async () => {
+    setup(null, { hasUpdates: true, rows: [LAPTOP_CODEX], isElectron: false });
+    await using screen = await render(<SidebarUpdatePill />);
+    await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
+    await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeVisible();
+
+    await act(() => {
+      mocks.everything = { ...mocks.everything, hasUpdates: false, rows: [] };
+      mocks.notify();
+    });
+    await expect
+      .element(screen.getByRole("button", { name: "Update everything" }))
+      .not.toBeInTheDocument();
+    const dialog = page.getByRole("alertdialog");
+    await expect.element(dialog.getByText("Everything is up to date")).toBeVisible();
+    await userEvent.click(dialog.getByRole("button", { name: "Close" }));
+    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
   });
 });
