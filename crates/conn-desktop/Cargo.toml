@@ -12,8 +12,15 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
 url.workspace = true
+# Database panel: one async driver stack for MySQL/MariaDB, PostgreSQL and SQLite.
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "mysql", "postgres", "sqlite-bundled", "json", "chrono", "uuid", "bigdecimal"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
+futures = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
