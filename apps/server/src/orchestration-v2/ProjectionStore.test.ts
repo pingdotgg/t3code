@@ -4243,6 +4243,52 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
 
+      // A tracked repository's scope names the run that first changed it, here one outside the
+      // window, while its newest checkpoint belongs to a run inside it.
+      const repositoryScope = {
+        id: CheckpointScopeId.make("scope:bounded-sql-history:repository"),
+        threadId,
+        runId: RunId.make("run:bounded-sql-history:1"),
+        nodeId: NodeId.make("node:bounded-sql-history:1"),
+        parentScopeId: scopeId,
+        providerThreadId: null,
+        kind: "manual" as const,
+        ordinalWithinParent: 1,
+        advancesAppRunCount: false,
+        cwd: "/repo/worktree/api",
+        label: "api",
+        repositoryPath: "/repo/worktree/api",
+        createdAt: now,
+      };
+      const repositoryCheckpointId = CheckpointId.make("checkpoint:bounded-sql-history:repository");
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:repository-scope"),
+        type: "checkpoint-scope.created",
+        threadId,
+        occurredAt: now,
+        payload: repositoryScope,
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:repository-checkpoint"),
+        type: "checkpoint.captured",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: repositoryCheckpointId,
+          threadId,
+          scopeId: repositoryScope.id,
+          runId: RunId.make("run:bounded-sql-history:1000"),
+          nodeId: NodeId.make("node:bounded-sql-history:1000"),
+          parentCheckpointId: null,
+          ordinalWithinScope: 1_000,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make("refs/t3/bounded-sql-history/repository/1000"),
+          status: "ready",
+          files: [{ path: "src/main.ts", kind: "modified", additions: 1, deletions: 0 }],
+          capturedAt: now,
+        },
+      });
+
       const snapshots = yield* Effect.all(
         Array.from({ length: 4 }, () =>
           projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 76 }),
@@ -4261,11 +4307,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
         assert.deepEqual(
           snapshot.projection.checkpointScopes.map((scope) => scope.id),
-          [scopeId],
+          [scopeId, repositoryScope.id],
         );
+        assert.deepEqual(snapshot.projection.checkpointScopes[1], repositoryScope);
         assert.deepEqual(
           snapshot.projection.checkpoints.map((checkpoint) => checkpoint.id),
-          [baselineId],
+          [repositoryCheckpointId, baselineId],
         );
       }
       const humanWindow = () =>
@@ -8044,6 +8091,19 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         payload: task,
       });
 
+      const output = { value: { verdict: "merge" }, submittedAt: "2026-11-11T00:00:00.000Z" };
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-delegated-completion:output"),
+        type: "run.output-submitted",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { runId, output },
+      });
+
+      // Lifecycle writers hold the run as it was when the turn started.
       const { delegatedCompletion: _delegatedCompletion, ...staleRun } = run;
       const { completionDelivery: _completionDelivery, ...staleTask } = task;
       yield* projectionStore.apply({
@@ -8054,7 +8114,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         nodeId: rootNodeId,
         providerInstanceId,
         occurredAt: later,
-        payload: { ...staleRun, status: "interrupted", completedAt: later },
+        payload: {
+          ...staleRun,
+          // An earlier submission, read before the latest one landed.
+          output: { value: { verdict: "fix-first" }, submittedAt: "2026-11-10T00:00:00.000Z" },
+          status: "interrupted",
+          completedAt: later,
+        },
       });
       yield* projectionStore.apply({
         id: EventId.make("event:projection-delegated-completion:stale-task"),
@@ -8075,6 +8141,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(projection.runs[0]?.delegatedCompletion, run.delegatedCompletion);
+      assert.deepEqual(projection.runs[0]?.output, output);
       assert.deepEqual(projection.subagents[0]?.completionDelivery, task.completionDelivery);
       assert.deepEqual(
         (yield* projectionStore.getThreadRecords(threadId, ["subagents"], {

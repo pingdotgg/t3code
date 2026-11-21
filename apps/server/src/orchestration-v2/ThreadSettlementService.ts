@@ -370,6 +370,7 @@ export const make = Effect.gen(function* () {
     const settleThread = Effect.fnUntraced(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
         if (thread.lineage.relationshipToParent === "subagent") {
+          if (yield* terminals.hasActiveSubprocess({ threadId: thread.id })) return null;
           // The store returns a subagent only once its parent is done, so it
           // settles with the parent and never runs its own lookup.
           const uuid = yield* random.uuidV4();
@@ -396,6 +397,8 @@ export const make = Effect.gen(function* () {
           autoSettleKeepPullRequests: currentSettings.sidebarAutoSettleKeepPullRequests,
         });
         if (settledAt === null) return thread;
+        // A terminal still running a program keeps its thread open; a later sweep settles it.
+        if (yield* terminals.hasActiveSubprocess({ threadId: thread.id })) return null;
         const uuid = yield* random.uuidV4();
         yield* orchestrator.dispatch({
           type: "thread.auto-settle",
@@ -621,7 +624,13 @@ export const make = Effect.gen(function* () {
       groups.values(),
       (group) =>
         Effect.gen(function* () {
-          const pullRequest = yield* pullRequestFor(group);
+          // A thread of a project whose folder is not a repository has no branch pull request.
+          const pullRequest = yield* pullRequestFor(group).pipe(
+            Effect.catchIf(
+              (error) => error._tag === "GitCommandError" && error.reason === "not_a_repository",
+              () => Effect.void,
+            ),
+          );
           if (pullRequest === undefined) return;
           yield* Effect.forEach(group, (thread) => settleThread(thread, pullRequest), {
             discard: true,
