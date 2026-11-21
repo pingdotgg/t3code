@@ -650,6 +650,14 @@ export const invoke = <P, A>(
   never,
   InRun
 > => {
+  // Files are not type-checked, and a name would start nothing until its first step failed.
+  if (typeof workflow !== "object" || workflow === null || typeof workflow.name !== "string") {
+    return Effect.die(
+      new Error(
+        `invoke takes the workflow definition, not its name: invoke("${name}", …) was given ${JSON.stringify(workflow)}. Pass what workflow(…) returned.`,
+      ),
+    );
+  }
   checkOptions(`invoke("${name}")`, options, ["key"]);
   return Effect.orDie(invokeAs(name, workflow, payload, options));
 };

@@ -353,12 +353,18 @@ const family = [
         ended.outcome === "completed" ? ended.value : `${ended.outcome}: ${ended.reason}`,
       ),
   ),
-  /** Invokes under a name a step of its own already has. */
-  workflow("clash", { version: 1, payload: Schema.Struct({}) }, () =>
-    Effect.andThen(
-      step("kid", { returns: Schema.Void, ...once }, Effect.void),
-      invoke("kid", kid, { mode: "finish" }),
-    ),
+  /** Invokes under a name a step of its own already has, or by a name and not the definition. */
+  workflow(
+    "clash",
+    { version: 1, payload: Schema.Struct({ byName: Schema.optional(Schema.Boolean) }) },
+    (payload) =>
+      payload.byName === true
+        ? // Files are not type-checked, so this is what one that passes a name does.
+          invoke("child", "kid" as unknown as typeof kid, { mode: "finish" })
+        : Effect.andThen(
+            step("kid", { returns: Schema.Void, ...once }, Effect.void),
+            invoke("kid", kid, { mode: "finish" }),
+          ),
   ),
   /** Starts two kids and does not wait for them. */
   workflow(
@@ -1728,6 +1734,11 @@ it.effect("an invoked run reports how it ended, and cancelling the parent cancel
         assert.deepStrictEqual(
           (yield* workflows.list()).filter((run) => run.parentRunId === clash.runId),
           [],
+        );
+        const byName = yield* workflows.start("clash", { byName: true }, { idempotencyKey: "n" });
+        assert.include(
+          (yield* workflows.waitFor(byName.runId, status("paused"))).detail ?? "",
+          "invoke takes the workflow definition, not its name",
         );
       }),
     );
