@@ -70,13 +70,7 @@ export const acceptWebhookDedupe = Effect.fn("ScheduledTaskService.acceptWebhook
   }
   // Coalesced requests retain their validation slot, bounding writes without dropping accepted payloads.
   yield* claimReplayKey(task.id, replayKey, pending[0]?.delivery_id ?? deliveryId, now);
-  const requestJson = yield* encodePendingRequest({
-    method: request.method,
-    path: request.path,
-    query: request.query,
-    headers: request.headers,
-    bodyText: request.bodyText,
-  });
+  const requestJson = yield* encodeRequest(request);
   if (pending.length > 0) {
     yield* sql`UPDATE scheduled_task_webhook_pending SET request_json = ${requestJson},
       delivery_ids_json = json_insert(delivery_ids_json, '$[#]', ${deliveryId}) WHERE delivery_id = ${pending[0]!.delivery_id}`;
@@ -107,6 +101,11 @@ export const acceptImmediateWebhookDedupe = Effect.fn(
   if (yield* hasReplayKey(task.id, replayKey, now)) return "duplicate" as const;
   yield* reserve;
   yield* claimReplayKey(task.id, replayKey, deliveryId, now);
+  // Persisted with the accepted log, so a restart before the run still drains it.
+  // The empty coalesce key marks it as no window; windows never key on ''.
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT INTO scheduled_task_webhook_pending (delivery_id, task_id, coalesce_key, due_at, state, task_json, request_json, delivery_ids_json)
+    VALUES (${deliveryId}, ${task.id}, '', ${now}, 'dispatching', ${yield* encodePendingTask(task)}, ${yield* encodeRequest(request)}, json_array(${deliveryId}))`;
   return "run" as const;
 });
 
@@ -123,6 +122,14 @@ const PendingRequestJson = Schema.fromJsonString(
   }),
 );
 const encodePendingRequest = Schema.encodeEffect(PendingRequestJson);
+const encodeRequest = (request: WebhookRequest) =>
+  encodePendingRequest({
+    method: request.method,
+    path: request.path,
+    query: request.query,
+    headers: request.headers,
+    bodyText: request.bodyText,
+  });
 export const decodePendingRequest = Schema.decodeUnknownEffect(PendingRequestJson);
 export const dedupeError = (cause: unknown) =>
   new ScheduledTaskError({ message: "Could not persist webhook dedupe state.", cause });
