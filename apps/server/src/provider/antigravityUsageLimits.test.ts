@@ -1,6 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import * as Layer from "effect/Layer";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -571,17 +573,16 @@ describe("Antigravity subscription limits", () => {
                   bucketId: "gemini-3.1-pro-low",
                   displayName: "Gemini 3.1 Pro (Low)",
                   remainingFraction: 0.8,
-                  resetTime: "2026-10-21T18:00:00Z",
+                  resetTime: "2026-10-21T20:00:00Z",
                 },
-                { bucketId: "gemini-3.1-pro-high", remainingFraction: 0.4 },
                 {
-                  bucketId: "gemini-4-neon-xhigh",
-                  remainingFraction: 0.4,
-                  resetTime: "2026-10-21T16:00:00Z",
+                  bucketId: "gemini-3.1-pro-high",
+                  remainingFraction: 0,
+                  resetTime: "2026-10-21T18:00:00Z",
                 },
                 {
                   bucketId: "gemini-3.6-flash-high",
-                  remainingFraction: 0.4,
+                  remainingFraction: 0,
                   resetTime: "2026-10-21T14:00:00Z",
                 },
                 { bucketId: "gemini-3.1-pro-disabled", remainingFraction: 0, disabled: true },
@@ -600,7 +601,8 @@ describe("Antigravity subscription limits", () => {
           ],
         },
       });
-      expect((yield* probe).windows).toEqual([
+      const usageLimits = yield* probe;
+      expect(usageLimits.windows).toEqual([
         {
           id: "3p-custom",
           label: "Claude & GPT (shared) · Custom",
@@ -612,7 +614,6 @@ describe("Antigravity subscription limits", () => {
           label: "Claude · Reported quota",
           kind: "other",
           usedPercent: 50,
-          resetsAt: "2026-10-21T17:00:00.000Z",
         },
         {
           id: "gemini-argon-quota",
@@ -630,11 +631,32 @@ describe("Antigravity subscription limits", () => {
           id: "gemini-quota",
           label: "Gemini · Reported quota",
           kind: "other",
-          usedPercent: expect.closeTo(60),
-          resetsAt: "2026-10-21T14:00:00.000Z",
+          usedPercent: 100,
+          resetsAt: "2026-10-21T18:00:00.000Z",
         },
         { id: "gpt-quota", label: "GPT · Reported quota", kind: "other", usedPercent: 0 },
       ]);
+      // gemini-3.1-pro-high is still exhausted after flash's earlier reset.
+      expect(
+        exhaustedUsageWindow(
+          {
+            instanceId: ProviderInstanceId.make("antigravity"),
+            driver: ProviderDriverKind.make("antigravity"),
+            enabled: true,
+            installed: true,
+            version: null,
+            status: "ready",
+            auth: { status: "authenticated" },
+            checkedAt: usageLimits.checkedAt,
+            models: [],
+            slashCommands: [],
+            skills: [],
+            usageLimits,
+          },
+          Date.parse("2026-10-21T15:00:00Z"),
+          "gemini-3.1-pro-high",
+        )?.id,
+      ).toBe("gemini-quota");
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

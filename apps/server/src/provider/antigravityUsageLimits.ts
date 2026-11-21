@@ -272,9 +272,9 @@ function shouldReplaceFoldedWindow(
 ): boolean {
   if (!previous) return true;
   if (next.usedPercent !== previous.usedPercent) return next.usedPercent > previous.usedPercent;
-  if (next.resetsAt === undefined) return false;
-  if (previous.resetsAt === undefined) return true;
-  return Date.parse(next.resetsAt) < Date.parse(previous.resetsAt);
+  // Fallback reads an exhausted family as blocked until this reset, so keep the last one; unknown is last.
+  if (previous.resetsAt === undefined) return false;
+  return next.resetsAt === undefined || Date.parse(next.resetsAt) > Date.parse(previous.resetsAt);
 }
 
 function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
