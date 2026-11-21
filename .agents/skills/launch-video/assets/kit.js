@@ -175,6 +175,23 @@ window.Kit = (() => {
     ];
     return anim(target, keys, { at: 0, dur: end, ease: "linear" });
   };
+  // Captions in order: [[selector, from, to], ...]. Each fades in and out inside its window,
+  // and overlapping windows throw, since two captions on screen read as garbled text.
+  const captions = (list) =>
+    list.forEach(([target, from, to], i) => {
+      const next = list[i + 1];
+      if (next && next[1] < to) throw new Error(`Kit: caption ${target} overlaps ${next[0]}`);
+      anim(
+        target,
+        [
+          { opacity: 0, transform: "translateY(14px)" },
+          { opacity: 1, transform: "none", offset: 0.06 },
+          { opacity: 1, transform: "none", offset: 0.94 },
+          { opacity: 0, transform: "translateY(-8px)" },
+        ],
+        { at: from, dur: to - from, ease: "linear" },
+      );
+    });
   // The beats in order: [[name, at, fade?], ...]. Each shows from its `at` until the next beat
   // has finished fading in over it.
   const beats = (sequence) =>
@@ -407,6 +424,7 @@ window.Kit = (() => {
     el,
     all,
     css,
+    captions,
     text,
     rect,
     centerOf,

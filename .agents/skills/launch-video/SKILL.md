@@ -158,7 +158,8 @@ seeks every animation (in the story and inside each beat) to each frame's time.
   finished. Camera steps centre `on` at screen height `y` (default 420, clear of the captions)
   at scale `s`; repeat a step to hold. Cursor clicks draw a ripple.
 - **Captions** `.cap`: a numbered chip, a bold lead phrase and a muted rest. Short enough to
-  read in two seconds.
+  read in two seconds. Play them with `Kit.captions([[selector, from, to], ...])`, which
+  throws if two overlap; two captions crossfading read as garbled text.
 - **Pacing**: `Kit.timeline([[realSeconds, animFrom, animTo], ...])` maps video time to
   animation time; `animFrom == animTo` holds a frame. It also sets the video length.
 - **Outro** `.outro`: logo, a two-line headline, "Available now in **T3 Code** `<version>`",
