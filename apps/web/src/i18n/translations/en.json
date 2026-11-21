@@ -1440,6 +1440,7 @@
   "5590426dc4cfa3f6": "Notifications with sound",
   "0aceebf3f6d0d568": "Loading messages...",
   "ed50d75cb04dfb8c": "Syncing messages...",
+  "c1968621dc365115": "Could not sync messages",
   "de032945adf75356": "{time}, {date}",
   "fe01feb02ef95d6c": "yesterday at {time}",
   "d54b94665b443500": "tomorrow at {time}",
