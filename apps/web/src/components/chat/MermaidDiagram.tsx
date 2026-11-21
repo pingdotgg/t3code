@@ -204,7 +204,8 @@ export const MermaidDiagram = memo(function MermaidDiagram({
     theme: string;
     attempt: number;
     svg?: string;
-    error?: string;
+    /** Null when the failure carried no message of its own. */
+    error?: string | null;
   } | null>(null);
   const [showSource, setShowSource] = useState(false);
   const searching = use(MarkdownFindContext);
@@ -228,15 +229,14 @@ export const MermaidDiagram = memo(function MermaidDiagram({
             source,
             theme,
             attempt,
-            error:
-              error instanceof Error ? error.message : gt("The diagram could not be rendered."),
+            error: error instanceof Error ? error.message : null,
           });
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [source, theme, pending, attempt, gt]);
+  }, [source, theme, pending, attempt]);
   const current =
     result?.source === source && result.theme === theme && result.attempt === attempt
       ? result
@@ -245,7 +245,10 @@ export const MermaidDiagram = memo(function MermaidDiagram({
   const imageSource = svg
     ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
     : undefined;
-  const error = pending ? undefined : current?.error;
+  const error =
+    pending || current?.error === undefined
+      ? undefined
+      : (current.error ?? gt("The diagram could not be rendered."));
   const copy = async () => {
     try {
       await writeTextToClipboard(source);
