@@ -139,6 +139,7 @@ const fastForwardOnlySettings = {
 const fastForwardOnlyProvider = (
   writes: Array<{ path: string; body: unknown }>,
   mergeSettings: object = fastForwardOnlySettings,
+  title = "Fast-forward me",
 ) =>
   ForgejoPullRequestProvider.make.pipe(
     Effect.provide(
@@ -147,7 +148,7 @@ const fastForwardOnlyProvider = (
           const [path] = input.path.split("?");
           const reply = (value: unknown) =>
             Effect.succeed(TestSourceControlHost.processOutput(JSON.stringify(value)));
-          if (input.method === "POST") {
+          if (input.method === "POST" || input.method === "PATCH") {
             writes.push({ path: input.path, body: input.body });
             return reply("");
           }
@@ -163,7 +164,7 @@ const fastForwardOnlyProvider = (
             case "repos/maria/project/pulls/3":
               return reply({
                 number: 3,
-                title: "Fast-forward me",
+                title,
                 body: "",
                 html_url: "https://forge.example:3000/maria/project/pulls/3",
                 user: { login: "maria" },
@@ -222,5 +223,30 @@ it.effect("merges with Forgejo's fast-forward-only style", () =>
         body: { Do: "fast-forward-only", delete_branch_after_merge: false },
       },
     ]);
+  }),
+);
+
+it.effect("drafts and readies a pull request through its WIP title prefix", () =>
+  Effect.gen(function* () {
+    const drafted: Array<{ path: string; body: unknown }> = [];
+    yield* (yield* fastForwardOnlyProvider(drafted)).runAction({
+      ...fastForwardOnly,
+      action: "draft",
+    });
+    const readied: Array<{ path: string; body: unknown }> = [];
+    const wipProvider = yield* fastForwardOnlyProvider(
+      readied,
+      fastForwardOnlySettings,
+      "WIP: Fast-forward me",
+    );
+    assert.includeMembers(wipProvider.capabilities.actions, ["draft", "ready"]);
+    yield* wipProvider.runAction({ ...fastForwardOnly, action: "ready" });
+    assert.deepStrictEqual(
+      [...drafted, ...readied],
+      [
+        { path: "repos/maria/project/pulls/3", body: { title: "WIP: Fast-forward me" } },
+        { path: "repos/maria/project/pulls/3", body: { title: "Fast-forward me" } },
+      ],
+    );
   }),
 );
