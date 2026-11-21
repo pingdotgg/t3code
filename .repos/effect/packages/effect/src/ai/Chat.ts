@@ -75,6 +75,27 @@ import type * as Tool from "./Tool.ts"
 export const Chat: Context.Service<Chat, Chat> = Context.Service("effect/ai/Chat")
 
 /**
+ * Options accepted by `Chat.streamText`.
+ *
+ * **Details**
+ *
+ * Extends the `LanguageModel` text generation options with `maxSteps`, the
+ * most model rounds one call may run. It defaults to `1`.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.0
+ */
+export interface StreamTextOptions<Tools extends Record<string, Tool.Any>>
+  extends LanguageModel.GenerateTextOptions<Tools>
+{
+  /**
+   * The most model rounds one call may run. Defaults to `1`.
+   */
+  readonly maxSteps?: number | undefined
+}
+
+/**
  * Brand type for `Chat`.
  *
  * @stability unstable
@@ -272,6 +293,14 @@ export interface Chat {
    * Returns a stream of response parts that are emitted as soon as they're
    * available from the model. Supports tool calling and maintains chat history.
    *
+   * By default the model is called once. With `maxSteps`, the chat calls the
+   * model again with the updated history while each round ends in tool calls
+   * that were all resolved, for at most `maxSteps` rounds. The loop stops at a
+   * round that needs no tools, an incomplete finish, or a tool call left
+   * unanswered, such as a client-executed tool call or an approval request.
+   * The stream carries every round's parts, each round ending with its own
+   * `finish` part, and history records each round in order.
+   *
    * **Example** (Streaming chat responses)
    *
    * ```ts import.meta.vitest
@@ -306,8 +335,8 @@ export interface Chat {
    * ```
    */
   readonly streamText: {
-    <Options extends NoExcessProperties<LanguageModel.GenerateTextOptions<{}>, Options>>(
-      options: Options & { readonly toolkit?: undefined } & LanguageModel.GenerateTextOptions<{}>
+    <Options extends NoExcessProperties<StreamTextOptions<{}>, Options>>(
+      options: Options & { readonly toolkit?: undefined } & StreamTextOptions<{}>
     ): Stream.Stream<
       Response.StreamPart<{}, LanguageModel.ExtractToolParametersModeWithoutToolkit<Options>>,
       LanguageModel.ExtractError<Options>,
@@ -316,11 +345,11 @@ export interface Chat {
     <
       Tools extends Record<string, Tool.Any>,
       Options extends NoExcessProperties<
-        LanguageModel.GenerateTextOptions<Tools> & { readonly toolkit: LanguageModel.ToolkitInput<Tools> },
+        StreamTextOptions<Tools> & { readonly toolkit: LanguageModel.ToolkitInput<Tools> },
         Options
       >
     >(
-      options: Options & LanguageModel.GenerateTextOptions<Tools> & {
+      options: Options & StreamTextOptions<Tools> & {
         readonly toolkit: LanguageModel.ToolkitInput<Tools>
       }
     ): Stream.Stream<
@@ -394,13 +423,19 @@ export interface Chat {
   readonly generateObject: <
     ObjectEncoded extends Record<string, any>,
     ObjectSchema extends Schema.Encoder<ObjectEncoded, unknown>,
-    Options extends NoExcessProperties<LanguageModel.GenerateObjectOptions<any, ObjectSchema>, Options>
+    Options extends NoExcessProperties<LanguageModel.GenerateObjectOptions<any, ObjectSchema, boolean>, Options>
   >(
-    options: Options & LanguageModel.GenerateObjectOptions<LanguageModel.ExtractTools<Options>, ObjectSchema>
+    options:
+      & Options
+      & LanguageModel.GenerateObjectOptions<
+        LanguageModel.ExtractTools<Options>,
+        ObjectSchema,
+        false | Extract<Options["allowEmpty" & keyof Options], boolean>
+      >
   ) => Effect.Effect<
     LanguageModel.GenerateObjectResponse<
       LanguageModel.ExtractTools<Options>,
-      ObjectSchema["Type"],
+      LanguageModel.ExtractObjectValue<Options, ObjectSchema["Type"]>,
       LanguageModel.ExtractToolParametersMode<Options>
     >,
     LanguageModel.ExtractError<Options>,
@@ -416,6 +451,20 @@ const encodeHistoryJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Promp
 // =============================================================================
 // Constructors
 // =============================================================================
+
+// A round continues the step loop when it ended in tool calls that all have a
+// final result. A client-executed tool call or an approval request has none,
+// and an incomplete finish ends the loop.
+const shouldContinue = (round: ReadonlyArray<Response.AnyPart>): boolean => {
+  const finish = round.find((part) => part.type === "finish")
+  if (finish === undefined || finish.reason !== "tool-calls") return false
+  const unanswered = new Set<string>()
+  for (const part of round) {
+    if (part.type === "tool-call") unanswered.add(part.id)
+    else if (part.type === "tool-result" && !part.preliminary) unanswered.delete(part.id)
+  }
+  return unanswered.size === 0 && round.some((part) => part.type === "tool-call")
+}
 
 const makeUnsafe = (history: Ref.Ref<Prompt.Prompt>) => {
   const semaphore = Semaphore.makeUnsafe(1)
@@ -460,26 +509,45 @@ const makeUnsafe = (history: Ref.Ref<Prompt.Prompt>) => {
       (effect) => Effect.withSpan(effect, "Chat.generateText", { captureStackTrace: false })
     ) as Chat["generateText"],
     streamText: Effect.fnUntraced(
-      function*(options) {
+      function*({ maxSteps = 1, ...options }) {
+        // The prompt including every completed round, and the parts of the
+        // round in progress, so an interrupted round keeps its partial output
+        let completed = Prompt.empty
         let parts = Chunk.empty<Response.AnyPart>()
+        const completeRound = () => {
+          const round = Array.from(parts)
+          completed = Prompt.concat(completed, Prompt.fromResponseParts(round))
+          parts = Chunk.empty()
+          return round
+        }
+        const runRound = (step: number): Stream.Stream<Response.AnyPart, unknown, unknown> =>
+          (LanguageModel.streamText({ ...options, prompt: completed }) as Stream.Stream<
+            Response.AnyPart,
+            unknown,
+            unknown
+          >).pipe(
+            Stream.mapArray((chunk) => {
+              parts = Chunk.appendAll(parts, Chunk.fromArrayUnsafe(chunk))
+              return chunk
+            }),
+            Stream.concat(Stream.suspend(() => {
+              const round = completeRound()
+              return step < maxSteps && shouldContinue(round) ? runRound(step + 1) : Stream.empty
+            }))
+          )
         return Stream.fromChannel(Channel.acquireUseRelease(
           semaphore.take(1).pipe(
             Effect.flatMap(() => Ref.get(history)),
-            Effect.map((history) => Prompt.concat(history, Prompt.make(options.prompt)))
+            Effect.map((history) => {
+              completed = Prompt.concat(history, Prompt.make(options.prompt))
+            })
           ),
-          (prompt) =>
-            LanguageModel.streamText({ ...options, prompt }).pipe(
-              Stream.mapArray((chunk) => {
-                parts = Chunk.appendAll(parts, Chunk.fromArrayUnsafe(chunk))
-                return chunk
-              }),
-              Stream.toChannel
-            ),
-          (prompt) =>
+          () => Stream.toChannel(runRound(1)),
+          () =>
             Effect.andThen(
               Ref.set(
                 history,
-                Prompt.concat(prompt, Prompt.fromResponseParts(Array.from(parts)))
+                Prompt.concat(completed, Prompt.fromResponseParts(Array.from(parts)))
               ),
               semaphore.release(1)
             )

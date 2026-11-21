@@ -1,3 +1,7 @@
+export interface SecretTextInputHandle {
+  readonly focus: () => void;
+}
+
 export interface SecretTextInputProps {
   readonly accessibilityLabel: string;
   readonly placeholder: string;
@@ -7,4 +11,9 @@ export interface SecretTextInputProps {
   readonly onSubmitEditing: (value: string) => void;
   readonly editable: boolean;
   readonly textDirection?: "ltr" | "rtl";
+  /** False shows the text with no eye toggle, for a value such as an email. Defaults to true. */
+  readonly secret?: boolean;
+  /** "next" keeps the keyboard open for the following field. */
+  readonly returnKeyType?: "next" | "done";
+  readonly onMount?: (handle: SecretTextInputHandle | null) => void;
 }
