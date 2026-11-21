@@ -3069,6 +3069,25 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
         height: 760,
       });
       expect(yield* status).toEqual({ width: 560, height: 760 });
+      // A desktop that never draws the new size, such as a minimized window, fails the resize.
+      const unpainted = Promise.withResolvers<void>();
+      heldStill = () => unpainted.promise;
+      const undrawn = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "freeform", width: 1440, height: 900 },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      let undrawnEvent = yield* PubSub.take(events);
+      while (undrawnEvent.type !== "resized" || undrawnEvent.tabId !== tabId) {
+        undrawnEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isFailure(yield* Fiber.join(undrawn))).toBe(true);
+      heldStill = null;
+      unpainted.resolve();
       expect(yield* resize({ mode: "fill" }, 1234, 700)).toEqual({ width: 1234, height: 700 });
       // No page resize or load since that read, so status answers without reading again.
       let reads = 0;
