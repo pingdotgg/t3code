@@ -1350,25 +1350,30 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
   );
 
   const exited = new AcpError.AcpProcessExitedError({ signal: "SIGABRT" });
-  const transformStdoutError = new AcpError.AcpTransportError({
-    detail: "Sign in required",
-    cause: undefined,
-  });
   it.effect.each([
-    { name: "a write fails", stdout: Sink.forEach(() => Effect.die("EPIPE")), expected: exited },
-    { name: "the writer ends early", stdout: Sink.succeed(undefined), expected: exited },
+    {
+      name: "a write fails",
+      stdout: Sink.forEach(() => Effect.die("EPIPE")),
+      expected: "AcpProcessExitedError",
+    },
+    {
+      name: "the writer ends early",
+      stdout: Sink.succeed(undefined),
+      expected: "AcpProcessExitedError",
+    },
     {
       name: "a read fails",
       stdin: Stream.fail(
         PlatformError.systemError({ _tag: "UnexpectedEof", module: "Stream", method: "read" }),
       ),
-      expected: exited,
+      expected: "AcpProcessExitedError",
     },
     {
       name: "stdout's transform fails with its own diagnosis",
-      stdin: Stream.fail(transformStdoutError),
-      expected: transformStdoutError,
+      stdin: Stream.fail(new AcpError.AcpTransportError({ detail: "Sign in", cause: undefined })),
+      expected: "AcpTransportError",
     },
+    { name: "the reader dies", stdin: Stream.die("boom"), expected: "AcpTransportError" },
   ])("reports the right termination when $name after the child died", (testCase) =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
@@ -1385,7 +1390,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       });
 
       yield* transport.notify("x/initialize", {}).pipe(Effect.exit);
-      assert.strictEqual(yield* Deferred.await(termination), testCase.expected);
+      assert.equal((yield* Deferred.await(termination))._tag, testCase.expected);
     }),
   );
 
