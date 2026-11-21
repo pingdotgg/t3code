@@ -462,13 +462,15 @@ function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
 
 function markdownLinkTailScanner(markdown: string) {
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
-  const titleEnd = markdownRunEndFinder(markdown, /["']/g);
+  const doubleQuoteEnd = markdownRunEndFinder(markdown, /"/g);
+  const singleQuoteEnd = markdownRunEndFinder(markdown, /'/g);
   const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
   return (start: number) => {
     const end = whitespaceEnd(start);
-    if (markdown[end] === ")") return end + 1;
-    if (end === start || (markdown[end] !== '"' && markdown[end] !== "'")) return null;
-    const quoteEnd = titleEnd(end + 1);
+    const quote = markdown[end];
+    if (quote === ")") return end + 1;
+    if (end === start || (quote !== '"' && quote !== "'")) return null;
+    const quoteEnd = (quote === '"' ? doubleQuoteEnd : singleQuoteEnd)(end + 1);
     if (quoteEnd === markdown.length) return null;
     const close = titleWhitespaceEnd(quoteEnd + 1);
     return markdown[close] === ")" ? close + 1 : null;
