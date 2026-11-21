@@ -14,7 +14,8 @@ import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
 import { Badge } from "../ui/badge";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { TooltipPopup } from "../ui/tooltip";
+import { RowTooltip, RowTooltipsContext } from "../workItem/WorkItemRowTooltip";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import { pullRequestPanelReference } from "./usePullRequestDetail";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
@@ -276,8 +277,10 @@ function PullRequestRowImpl({
   onCloseSweepStart?: (entry: EnvironmentPullRequestEntry, event: PointerEvent) => void;
 }) {
   const { Icon, providerName, terminology } = getSourceControlPresentationForKind(entry.provider);
+  const [pointed, setPointed] = useState(false);
   return (
     <div
+      onPointerEnter={() => setPointed(true)}
       ref={statsRef}
       data-pull-request-stats-key={statsKey}
       data-pull-request-key={statsKey}
@@ -306,38 +309,54 @@ function PullRequestRowImpl({
           "min-w-0 flex-1",
         )}
       >
-        {rail ?? (
-          <PullRequestRowGlyph
-            state={entry.state}
-            isDraft={entry.isDraft}
-            mergeability={entry.mergeability}
-            baseBranch={entry.baseBranch}
-            // Centred on the title line.
-            className="mt-0.5 self-start"
-          />
-        )}
-        <PullRequestRowLines
-          number={
-            <span
-              className={PULL_REQUEST_ROW_NUMBER_CLASS}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                void showPullRequestLinkContextMenu({
-                  url: entry.url,
-                  openLabel: openOnHostLabel(sourceControlClients.get(entry.provider)),
-                  position: { x: event.clientX, y: event.clientY },
-                });
-              }}
-            >
-              #{entry.number}
-            </span>
-          }
-          title={entry.title}
-          status={
-            <>
-              {entry.stack && !rail ? (
-                <PullRequestStackPopover
+        <RowTooltipsContext value={pointed}>
+          {rail ?? (
+            <PullRequestRowGlyph
+              state={entry.state}
+              isDraft={entry.isDraft}
+              mergeability={entry.mergeability}
+              baseBranch={entry.baseBranch}
+              // Centred on the title line.
+              className="mt-0.5 self-start"
+            />
+          )}
+          <PullRequestRowLines
+            number={
+              <span
+                className={PULL_REQUEST_ROW_NUMBER_CLASS}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void showPullRequestLinkContextMenu({
+                    url: entry.url,
+                    openLabel: openOnHostLabel(sourceControlClients.get(entry.provider)),
+                    position: { x: event.clientX, y: event.clientY },
+                  });
+                }}
+              >
+                #{entry.number}
+              </span>
+            }
+            title={entry.title}
+            status={
+              <>
+                {entry.stack && !rail ? (
+                  <PullRequestStackPopover
+                    environmentId={entry.environmentId}
+                    reference={{
+                      projectId: entry.projectId,
+                      host: entry.host,
+                      repository: entry.repository,
+                      number: entry.number,
+                    }}
+                    membership={entry.stack}
+                    terminology={sourceControlClients.get(entry.provider).changeRequest}
+                    onSelect={(target) =>
+                      onSelect({ ...target, host: entry.host, environmentId: entry.environmentId })
+                    }
+                  />
+                ) : null}
+                <PullRequestChangeBreakdownStat
                   environmentId={entry.environmentId}
                   reference={{
                     projectId: entry.projectId,
@@ -345,35 +364,24 @@ function PullRequestRowImpl({
                     repository: entry.repository,
                     number: entry.number,
                   }}
-                  membership={entry.stack}
-                  terminology={sourceControlClients.get(entry.provider).changeRequest}
-                  onSelect={(target) =>
-                    onSelect({ ...target, host: entry.host, environmentId: entry.environmentId })
-                  }
+                  additions={entry.additions}
+                  deletions={entry.deletions}
+                  className={PAGE_DIFF_STAT_CLASS}
                 />
-              ) : null}
-              <PullRequestChangeBreakdownStat
-                environmentId={entry.environmentId}
-                reference={{
-                  projectId: entry.projectId,
-                  host: entry.host,
-                  repository: entry.repository,
-                  number: entry.number,
-                }}
-                additions={entry.additions}
-                deletions={entry.deletions}
-                className={PAGE_DIFF_STAT_CLASS}
-              />
-            </>
-          }
-          metaClassName="@container/pr-row-meta"
-          meta={
-            <>
-              {matchedElsewhere ? (
-                <Tooltip>
-                  <TooltipTrigger
+              </>
+            }
+            metaClassName="@container/pr-row-meta"
+            meta={
+              <>
+                {matchedElsewhere ? (
+                  <RowTooltip
                     render={
                       <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-micro" />
+                    }
+                    popup={
+                      <TooltipPopup side="top">
+                        <T>Matched in the description</T>
+                      </TooltipPopup>
                     }
                   >
                     <span className="sr-only">
@@ -383,54 +391,51 @@ function PullRequestRowImpl({
                     <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
                       <T>matched in the description</T>
                     </span>
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">
-                    <T>Matched in the description</T>
-                  </TooltipPopup>
-                </Tooltip>
-              ) : null}
-              {showProvider ? (
-                <Tooltip>
-                  <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+                  </RowTooltip>
+                ) : null}
+                {showProvider ? (
+                  <RowTooltip
+                    render={<span className="inline-flex shrink-0" />}
+                    popup={<TooltipPopup>{providerName}</TooltipPopup>}
+                  >
                     <Icon aria-label={providerName} className="size-3" />
-                  </TooltipTrigger>
-                  <TooltipPopup>{providerName}</TooltipPopup>
-                </Tooltip>
-              ) : null}
-              {/* A narrow row (the list beside an open review, or a narrow window) keeps the branch, which tells
+                  </RowTooltip>
+                ) : null}
+                {/* A narrow row (the list beside an open review, or a narrow window) keeps the branch, which tells
                 rows apart, over the repository, which the scope above already names, and over the
                 author's name, which the avatar's tooltip still gives. */}
-              <PullRequestRowAuthor
-                actor={entry.author}
-                className="min-w-3.5 max-w-40"
-                labelClassName="sr-only @3xl/pr-row-meta:not-sr-only @3xl/pr-row-meta:truncate"
-              />
+                <PullRequestRowAuthor
+                  actor={entry.author}
+                  className="min-w-3.5 max-w-40"
+                  labelClassName="sr-only @3xl/pr-row-meta:not-sr-only @3xl/pr-row-meta:truncate"
+                />
 
-              <Tooltip>
-                <TooltipTrigger
+                <RowTooltip
                   render={
                     <span className="min-w-12 truncate font-mono text-caption text-dim-foreground @max-md/pr-list:flex-1" />
                   }
+                  popup={
+                    <TooltipPopup>
+                      <span className="flex flex-col gap-0.5">
+                        {showProjectTitle ? <span>{entry.repository}</span> : null}
+                        <span>{entry.headBranch}</span>
+                      </span>
+                    </TooltipPopup>
+                  }
                 >
                   {entry.headBranch}
-                </TooltipTrigger>
-                <TooltipPopup>
-                  <span className="flex flex-col gap-0.5">
-                    {showProjectTitle ? <span>{entry.repository}</span> : null}
-                    <span>{entry.headBranch}</span>
-                  </span>
-                </TooltipPopup>
-              </Tooltip>
-              {environmentLabel ? (
-                <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
-              ) : null}
-              {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
-            </>
-          }
-          metaStatus={pullRequestRowStatus(entry)}
-          updatedAt={entry.updatedAt}
-          layout="page"
-        />
+                </RowTooltip>
+                {environmentLabel ? (
+                  <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
+                ) : null}
+                {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
+              </>
+            }
+            metaStatus={pullRequestRowStatus(entry)}
+            updatedAt={entry.updatedAt}
+            layout="page"
+          />
+        </RowTooltipsContext>
       </button>
       {hostActions.size > 0 ? (
         <PullRequestSpeedActions

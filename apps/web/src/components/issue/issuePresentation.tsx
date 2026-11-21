@@ -6,7 +6,8 @@ import { cn } from "~/lib/utils";
 import { LinearIcon, type Icon } from "~/components/Icons";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { TooltipPopup } from "../ui/tooltip";
+import { RowTooltip } from "../workItem/WorkItemRowTooltip";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
 
 export const IssueGlyph = { issue: CircleDotIcon } as const;
@@ -55,16 +56,16 @@ export function issueStatePresentation(state: IssueState) {
 export function IssueStateGlyph({ state, className }: { state: IssueState; className?: string }) {
   const presentation = issueStatePresentation(state);
   return (
-    <Tooltip>
-      {/* The list row is itself a button, so the trigger stays a span. */}
-      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <presentation.Icon
-          role="img"
-          aria-label={presentation.label}
-          className={cn("size-4 shrink-0", presentation.toneClassName, className)}
-        />
-      </TooltipTrigger>
-      <TooltipPopup>{presentation.label}</TooltipPopup>
-    </Tooltip>
+    // The list row is itself a button, so the trigger stays a span.
+    <RowTooltip
+      render={<span className="inline-flex shrink-0" />}
+      popup={<TooltipPopup>{presentation.label}</TooltipPopup>}
+    >
+      <presentation.Icon
+        role="img"
+        aria-label={presentation.label}
+        className={cn("size-4 shrink-0", presentation.toneClassName, className)}
+      />
+    </RowTooltip>
   );
 }

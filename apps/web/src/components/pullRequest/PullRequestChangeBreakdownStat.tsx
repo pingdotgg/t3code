@@ -5,7 +5,8 @@ import { useState } from "react";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { TooltipPopup } from "../ui/tooltip";
+import { RowTooltip } from "../workItem/WorkItemRowTooltip";
 import { ChangeBreakdownGrid } from "./ChangeBreakdownGrid";
 import { PullRequestDiffStat } from "./pullRequestPresentation";
 
@@ -36,30 +37,26 @@ export function PullRequestChangeBreakdownStat({
   const breakdown = query.data;
   if (additions === 0 && deletions === 0) return null;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        onPointerEnter={() => setRequested(true)}
-        onFocus={() => setRequested(true)}
-        render={
-          <span className="inline-flex">
-            <PullRequestDiffStat
-              additions={additions}
-              deletions={deletions}
-              className={className}
-            />
-          </span>
-        }
-      />
-      {breakdown ? (
-        <TooltipPopup side="bottom">
-          <ChangeBreakdownGrid breakdown={breakdown} total={{ additions, deletions }} />
-        </TooltipPopup>
-      ) : query.isPending ? (
-        <TooltipPopup side="bottom">
-          <T>Loading breakdown</T>
-        </TooltipPopup>
-      ) : null}
-    </Tooltip>
+    <RowTooltip
+      onPointerEnter={() => setRequested(true)}
+      onFocus={() => setRequested(true)}
+      render={
+        <span className="inline-flex">
+          <PullRequestDiffStat additions={additions} deletions={deletions} className={className} />
+        </span>
+      }
+      popup={
+        breakdown ? (
+          <TooltipPopup side="bottom">
+            <ChangeBreakdownGrid breakdown={breakdown} total={{ additions, deletions }} />
+          </TooltipPopup>
+        ) : query.isPending ? (
+          <TooltipPopup side="bottom">
+            <T>Loading breakdown</T>
+          </TooltipPopup>
+        ) : null
+      }
+    />
   );
 }
 
