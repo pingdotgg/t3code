@@ -14,13 +14,15 @@ import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
 import type * as Electron from "electron";
 
-const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
+const { cursorScreenPoint, focusedWebContents, ownerWindow } = vi.hoisted(() => ({
+  cursorScreenPoint: vi.fn(),
   focusedWebContents: vi.fn(),
   ownerWindow: vi.fn(),
 }));
 vi.mock("electron", () => ({
   webContents: { getFocusedWebContents: focusedWebContents },
   BrowserWindow: { fromWebContents: ownerWindow },
+  screen: { getCursorScreenPoint: cursorScreenPoint },
 }));
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
@@ -35,7 +37,9 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
+  dragWindow,
   getLocalEnvironmentBootstraps,
+  pageCanMoveWindow,
   installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
@@ -514,6 +518,66 @@ describe("syncHtmlFullscreen", () => {
       yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
       finishExit();
       assert.isFalse(window.isFullScreen());
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+it.each([
+  { platform: "win32", env: {}, ozone: "", movable: true },
+  { platform: "darwin", env: {}, ozone: "", movable: true },
+  { platform: "linux", env: { XDG_SESSION_TYPE: "x11" }, ozone: "", movable: true },
+  { platform: "linux", env: { XDG_SESSION_TYPE: "wayland" }, ozone: "", movable: false },
+  { platform: "linux", env: { WAYLAND_DISPLAY: "wayland-0" }, ozone: "", movable: false },
+  { platform: "linux", env: { XDG_SESSION_TYPE: "wayland" }, ozone: "x11", movable: true },
+  { platform: "linux", env: { XDG_SESSION_TYPE: "x11" }, ozone: "wayland", movable: false },
+] as const)(
+  "a page can move its window on $platform with $env and --ozone-platform=$ozone: $movable",
+  ({ platform, env, ozone, movable }) => {
+    assert.strictEqual(pageCanMoveWindow(platform, env, ozone), movable);
+  },
+);
+
+describe("dragWindow", () => {
+  const movableWindow = (state: { fullscreen?: boolean; maximized?: boolean } = {}) => {
+    let position = [100, 200];
+    const window = {
+      webContents: { id: 1 },
+      isDestroyed: () => false,
+      isFullScreen: () => state.fullscreen === true,
+      isMaximized: () => state.maximized === true,
+      getPosition: () => position,
+      setPosition: (x: number, y: number) => {
+        position = [x, y];
+      },
+    } as unknown as Electron.BrowserWindow;
+    const layer = Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(window) });
+    return { window, layer };
+  };
+  const drag = Effect.fn("test.dragWindow")(function* (sender: { id: number }) {
+    cursorScreenPoint.mockReturnValue({ x: 320, y: 220 });
+    const movable = yield* dragWindow.handler("start", { sender });
+    cursorScreenPoint.mockReturnValue({ x: 350, y: 205 });
+    yield* dragWindow.handler("move", { sender });
+    return movable;
+  });
+
+  it.effect("keeps the window under the cursor where the press took hold of it", () => {
+    const { window, layer } = movableWindow();
+    return Effect.gen(function* () {
+      assert.isTrue(yield* drag({ id: 1 }));
+      assert.deepStrictEqual(window.getPosition(), [130, 185]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect.each([
+    { name: "a fullscreen window", state: { fullscreen: true }, sender: { id: 1 } },
+    { name: "a maximized window", state: { maximized: true }, sender: { id: 1 } },
+    { name: "a window another renderer asks to move", state: {}, sender: { id: 2 } },
+  ])("leaves $name where it is", ({ state, sender }) => {
+    const { window, layer } = movableWindow(state);
+    return Effect.gen(function* () {
+      assert.isFalse(yield* drag(sender));
+      assert.deepStrictEqual(window.getPosition(), [100, 200]);
     }).pipe(Effect.provide(layer));
   });
 });

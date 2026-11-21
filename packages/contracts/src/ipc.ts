@@ -1214,6 +1214,12 @@ export interface DesktopBridge {
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getWindowZoomFactor: () => number;
+  /**
+   * Moves the window with the cursor: `start` on the press, `move` as the pointer drags.
+   * `start` resolves false when the window cannot move (fullscreen or maximized).
+   * Absent where a page cannot position its window (Wayland); only a drag region moves it there.
+   */
+  dragWindow?: (phase: "start" | "move") => Promise<boolean>;
   getUpdateState: () => Promise<DesktopUpdateState>;
   /** `minimumVersion` is a track switch's checked release; nothing older is offered after. */
   setUpdateChannel: (
