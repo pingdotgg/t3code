@@ -1,3 +1,4 @@
+import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 import * as DateTime from "effect/DateTime";
@@ -303,6 +304,51 @@ export function toPeople(
   }));
 }
 
+const ATTACHMENT_PATH = "/api/attachments/";
+const HTML_ATTACHMENT_SRC = /\bsrc\s*=\s*["']?(?=\/api\/attachments\/)/giu;
+
+/**
+ * GitCafe links uploads by path from its own origin. Clients render a body away from that
+ * origin, so the attachments are made absolute here, where they become credentialed media.
+ * Only destinations the markdown parser finds change; the same text in prose or code stays.
+ */
+export function toBody(text: string | null, host: string): string {
+  const body = text ?? "";
+  if (!body.includes(ATTACHMENT_PATH)) return body;
+  const insertAt: Array<number> = [];
+  const tree = parseMarkdownWithMath(body);
+  const visit = (node: typeof tree | (typeof tree.children)[number]): void => {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start !== undefined && end !== undefined) {
+      const source = body.slice(start, end);
+      if (node.type === "html") {
+        for (const match of source.matchAll(HTML_ATTACHMENT_SRC)) {
+          insertAt.push(start + match.index + match[0].length);
+        }
+      } else if (
+        (node.type === "image" || node.type === "link" || node.type === "definition") &&
+        node.url.startsWith(ATTACHMENT_PATH)
+      ) {
+        // The destination follows the label, which may repeat the same text.
+        const labelEnd =
+          node.type === "link"
+            ? (node.children.at(-1)?.position?.end.offset ?? start) - start
+            : source.indexOf("]");
+        const at = source.indexOf(node.url, Math.max(labelEnd, 0));
+        if (at !== -1) insertAt.push(start + at);
+      }
+    }
+    if ("children" in node) node.children.forEach(visit);
+  };
+  visit(tree);
+  let result = body;
+  for (const offset of insertAt.toSorted((a, b) => b - a)) {
+    result = `${result.slice(0, offset)}https://${host}${result.slice(offset)}`;
+  }
+  return result;
+}
+
 interface RepositoryOnHost {
   readonly repository: string;
   readonly host: string;
@@ -488,7 +534,7 @@ export function toActivity(input: {
   const remark = (comment: GitCafeComment) => ({
     id: comment.id,
     author: toActor(comment.author, host),
-    body: comment.body ?? "",
+    body: toBody(comment.body, host),
     createdAt: comment.createdAt,
     url: null,
     ...(comment.capabilities === undefined ? {} : { canEdit: comment.capabilities.edit }),
@@ -535,7 +581,7 @@ export function toActivity(input: {
       id: review.id,
       kind: "review" as const,
       author: toActor(review.author, host),
-      body: review.body ?? "",
+      body: toBody(review.body, host),
       createdAt: review.createdAt,
       url: null,
       path: null,
