@@ -540,9 +540,8 @@ export function PrinterPanel(props: {
         title: gt("Could not refresh printer"),
         description: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      setRefreshing(false);
     }
+    setRefreshing(false);
   };
 
   const handleAction = async (
@@ -574,9 +573,8 @@ export function PrinterPanel(props: {
         title: gt("Printer command failed"),
         description: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      setPendingAction(null);
     }
+    setPendingAction(null);
   };
 
   const handleSelectPrinter = (fleetKey: string | null) => {

@@ -265,24 +265,23 @@ function PrinterEditorForm({
       });
       if (result._tag === "Failure") {
         setTestResult({ ok: false, summary: formatEnvironmentQueryError(result.cause) });
-        return;
-      }
-      setTestResult({ ok: true, summary: result.value.summary });
-      if (draft.kind === "home-assistant-bambu") {
-        setDraft((current) => ({
-          ...current,
-          entityPrefix: current.entityPrefix || result.value.detectedEntityPrefix || "",
-          deviceId: current.deviceId || result.value.detectedDeviceId || "",
-        }));
+      } else {
+        setTestResult({ ok: true, summary: result.value.summary });
+        if (draft.kind === "home-assistant-bambu") {
+          setDraft((current) => ({
+            ...current,
+            entityPrefix: current.entityPrefix || result.value.detectedEntityPrefix || "",
+            deviceId: current.deviceId || result.value.detectedDeviceId || "",
+          }));
+        }
       }
     } catch (error) {
       setTestResult({
         ok: false,
         summary: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      setTesting(false);
     }
+    setTesting(false);
   };
 
   const handleSubmit = async () => {
@@ -297,9 +296,8 @@ function PrinterEditorForm({
         title: gt("Could not save 3D printer settings"),
         description: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      setSaving(false);
     }
+    setSaving(false);
   };
 
   const backendId = `${fieldPrefix}-backend`;
@@ -567,6 +565,7 @@ function PrinterSettingsContent() {
   }): Promise<boolean> => {
     if (!environmentId || !canConfigure) return false;
     setPending(true);
+    let ok = false;
     try {
       const result = await configure({ environmentId, input: patch });
       if (result._tag === "Failure") {
@@ -575,19 +574,18 @@ function PrinterSettingsContent() {
           title: gt("Could not save 3D printer settings"),
           description: formatEnvironmentQueryError(result.cause),
         });
-        return false;
+      } else {
+        ok = true;
       }
-      return true;
     } catch (error) {
       toastManager.add({
         type: "error",
         title: gt("Could not save 3D printer settings"),
         description: error instanceof Error ? error.message : String(error),
       });
-      return false;
-    } finally {
-      setPending(false);
     }
+    setPending(false);
+    return ok;
   };
 
   const handleSavePrinter = async (
