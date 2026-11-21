@@ -340,12 +340,24 @@ function stripAtPaneEdge(strip: HTMLElement, row: HTMLElement | null): boolean {
   return Math.abs(lead - Number.parseFloat(style.paddingLeft)) < 1;
 }
 
+/**
+ * How much a transform (the overview) scales an element, 0 when it has no width. offsetWidth is
+ * rounded, so within that rounding the element is unscaled: a ratio there would be noise that
+ * moves the foot by a hundredth of a pixel, restyling the whole bar, whenever the tab's width changes.
+ */
+function transformScale(element: HTMLElement, box: DOMRect): number {
+  const layoutWidth = element.offsetWidth;
+  if (layoutWidth <= 0) return 0;
+  return Math.abs(box.width - layoutWidth) <= 0.5 ? 1 : box.width / layoutWidth;
+}
+
 function measurePaneLit(entry: PaneStrip): void {
   const notch = entry.strip.closest<HTMLElement>('[data-pane-notch=""]');
+  const notchBox = notch?.getBoundingClientRect();
+  const notchScale = notch && notchBox ? transformScale(notch, notchBox) : 0;
   entry.footOffset =
-    notch && notch.offsetWidth > 0
-      ? (entry.strip.getBoundingClientRect().left - notch.getBoundingClientRect().left) /
-        (notch.getBoundingClientRect().width / notch.offsetWidth)
+    notchBox && notchScale > 0
+      ? (entry.strip.getBoundingClientRect().left - notchBox.left) / notchScale
       : null;
   const host = entry.strip.closest<HTMLElement>("[data-layout-pane-id]");
   if (entry.lit && entry.lit.host !== host) {
@@ -354,7 +366,7 @@ function measurePaneLit(entry: PaneStrip): void {
   }
   if (!host) return;
   const hostBox = host.getBoundingClientRect();
-  const scale = host.offsetWidth > 0 ? hostBox.width / host.offsetWidth : 0;
+  const scale = transformScale(host, hostBox);
   if (scale <= 0) return;
   entry.lit = {
     host,
@@ -389,7 +401,7 @@ function markJoinFoot(entry: PaneStrip, scrollLeft: number): void {
   if (!footed) return;
   notch.style.setProperty("--pane-join-foot-x", `${footOffset + left}px`);
   notch.style.setProperty("--pane-join-foot-w", `${right - left}px`);
-  notch.setAttribute("data-pane-join-footed", "");
+  if (!notch.hasAttribute("data-pane-join-footed")) notch.setAttribute("data-pane-join-footed", "");
 }
 
 function markPaneLit(entry: PaneStrip, scrollLeft: number): void {
