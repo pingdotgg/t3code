@@ -255,6 +255,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 0,
       idleTtlMs: 0,
     }),
+    popOutParent: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:pop-out-parent",
+      tag: ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     // Read right before deleting a worktree, so never served from cache.
     worktreeThreadIds: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:worktree-thread-ids",

@@ -8,6 +8,10 @@ import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
   deriveWorkflowGroups,
   projectedSubagentsToRuntime,
   type RuntimeSubagent,
@@ -21,6 +25,7 @@ import {
   threadRelationshipRowStatus,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
+  threadPopOutAvailability,
   type ThreadRelationshipEdge,
   type ThreadRelationshipWalkRow,
 } from "@t3tools/client-runtime/state/thread-relationships";
@@ -54,6 +59,7 @@ import {
   MessagesSquareIcon,
   MoreHorizontalIcon,
   PlusIcon,
+  SquareArrowOutUpRightIcon,
   SquareIcon,
   UnplugIcon,
 } from "lucide-react";
@@ -89,6 +95,7 @@ import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadR
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { openSideThread, resolveThreadOpenRoute } from "../../lib/sideChatPane";
+import { usePopOutThread } from "../../hooks/useThreadActions";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -227,6 +234,11 @@ function relationshipHint(
     return edge.sourceThreadId === currentThreadId
       ? resolve(msg("Open subagent"))
       : resolve(msg("Open parent agent in this chat"));
+  }
+  if (edge.kind === "popped_out") {
+    return edge.sourceThreadId === currentThreadId
+      ? resolve(msg("Popped out"))
+      : resolve(msg("Former parent"));
   }
   return edge.sourceThreadId === currentThreadId
     ? resolve(msg("Open fork in this chat"))
@@ -475,6 +487,20 @@ export function ThreadRelationshipsPanel(props: {
   const providersByEnvironment = useEnvironmentProviders();
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const relationshipShells = useThreadRelationshipShells(ref);
+  const family = useEnvironmentQuery(
+    props.showLineage &&
+      projection?.subagents.some(
+        (task) =>
+          task.origin === "app_owned" &&
+          task.childThreadId !== null &&
+          !relationshipShells.some((thread) => thread.id === task.childThreadId),
+      )
+      ? orchestrationEnvironment.threadFamily({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId },
+        })
+      : null,
+  );
   const hiddenKeys = useHiddenThreadKeys();
   const hidingAnywhere = useAnyEnvironmentHiding();
   const allProjects = useProjects();
@@ -512,6 +538,8 @@ export function ThreadRelationshipsPanel(props: {
   const mergeErrorToastId = useRef<string | null>(null);
   const detachErrorToastId = useRef<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const popOutThread = usePopOutThread();
+  const [poppingOutId, setPoppingOutId] = useState<ThreadId | null>(null);
   // Derive graphs after hooks to preserve their compiler cache.
   const providers = providersByEnvironment.get(props.environmentId);
   const derivedProviderEntries = deriveProviderInstanceEntries(providers ?? []);
@@ -553,6 +581,7 @@ export function ThreadRelationshipsPanel(props: {
   );
   const shells: ReadonlyArray<OrchestrationV2ThreadShell> = [
     ...relationshipShells,
+    ...(family.data?.threads ?? []),
     ...(archivedShells ?? []),
   ];
   const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
@@ -761,6 +790,21 @@ export function ThreadRelationshipsPanel(props: {
     }
   };
 
+  const popOut = async (childThreadId: ThreadId) => {
+    if (poppingOutId !== null) return;
+    setPoppingOutId(childThreadId);
+    const result = await popOutThread(scopeThreadRef(props.environmentId, childThreadId));
+    setPoppingOutId(null);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: gt("Could not pop out thread"),
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
   const stopWorkflow = async (subagentId: string) => {
     if (stoppingId !== null) return;
     setStoppingId(subagentId);
@@ -794,10 +838,11 @@ export function ThreadRelationshipsPanel(props: {
       ? CornerLeftUpIcon
       : isSubagent
         ? BotIcon
-        : node?.thread?.lineage.sideChat === true
-          ? MessagesSquareIcon
-          : GitForkIcon;
-
+        : edge.kind === "popped_out"
+          ? SquareArrowOutUpRightIcon
+          : node?.thread?.lineage.sideChat === true
+            ? MessagesSquareIcon
+            : GitForkIcon;
     const projectedAgent = isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
     const workflowGroup =
       projectedAgent === undefined ? undefined : workflowGroupsById.get(projectedAgent.id);
@@ -814,6 +859,17 @@ export function ThreadRelationshipsPanel(props: {
           ["pending", "running", "waiting"].includes(agent.nativeStatus))) &&
       agent.startedAt &&
       ["pending", "running", "waiting"].includes(agent.status);
+    const popOutAvailability =
+      agent?.origin === "app_owned" && node?.thread != null
+        ? threadPopOutAvailability(
+            node.thread,
+            projected.filter(
+              (task) => task.origin === "app_owned" && task.childThreadId === threadId,
+            ),
+            projection?.runs,
+          )
+        : "unsupported";
+    const canPopOut = popOutAvailability !== "unsupported";
     const threadTitle = relationshipThreadTitle({
       title:
         workflowGroup?.workflow.workflowName ??
@@ -836,7 +892,7 @@ export function ThreadRelationshipsPanel(props: {
       workflowGroup?.workflow.status === "running" &&
       agent?.origin === "provider_native" &&
       providerDriver === "claudeAgent";
-    const trailingVisibilityClass = (workflowGroup ? canStopWorkflow : canStop)
+    const trailingVisibilityClass = (workflowGroup ? canStopWorkflow : canStop || canPopOut)
       ? "group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:opacity-0 [@media(hover:none)]:opacity-0"
       : "";
     const project = projects.find((project) => project.id === node?.thread?.projectId);
@@ -1003,32 +1059,65 @@ export function ThreadRelationshipsPanel(props: {
         ) : (
           relationshipLink
         )}
-        {canStop && agent ? (
-          <div className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <ThreadDetailsControl
-                    size="icon-xs"
-                    variant="ghost"
-                    part="icon"
-                    tone="destructive"
-                    aria-label={gt("Stop subagent {threadTitle}", { threadTitle })}
-                    disabled={stoppingId !== null}
-                    onClick={() => void stopSubagent(threadId, agent)}
-                  />
-                }
-              >
-                {stoppingId === threadId ? (
-                  <Spinner aria-hidden size="xs" />
-                ) : (
-                  <SquareIcon aria-hidden className="size-3 fill-current" />
-                )}
-              </TooltipTrigger>
-              <TooltipPopup side="left">
-                <T>Stop subagent</T>
-              </TooltipPopup>
-            </Tooltip>
+        {(canStop && agent) || canPopOut ? (
+          <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+            {canPopOut ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <ThreadDetailsControl
+                      size="icon-xs"
+                      variant="ghost"
+                      part="icon"
+                      aria-label={gt("Pop out {threadTitle} to top level", { threadTitle })}
+                      disabled={poppingOutId !== null}
+                      // Still focusable and hoverable, so the blocked hint can show.
+                      aria-disabled={popOutAvailability === "blocked" || undefined}
+                      onClick={() => {
+                        if (popOutAvailability !== "blocked") void popOut(threadId);
+                      }}
+                    />
+                  }
+                >
+                  {poppingOutId === threadId ? (
+                    <Spinner aria-hidden size="xs" />
+                  ) : (
+                    <SquareArrowOutUpRightIcon aria-hidden className="size-3" />
+                  )}
+                </TooltipTrigger>
+                <TooltipPopup side="left">
+                  {popOutAvailability === "blocked"
+                    ? gt("Pop out to top level. Wait for it to finish or stop it first.")
+                    : gt("Pop out to top level")}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+            {canStop && agent ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <ThreadDetailsControl
+                      size="icon-xs"
+                      variant="ghost"
+                      part="icon"
+                      tone="destructive"
+                      aria-label={gt("Stop subagent {threadTitle}", { threadTitle })}
+                      disabled={stoppingId !== null}
+                      onClick={() => void stopSubagent(threadId, agent)}
+                    />
+                  }
+                >
+                  {stoppingId === threadId ? (
+                    <Spinner aria-hidden size="xs" />
+                  ) : (
+                    <SquareIcon aria-hidden className="size-3 fill-current" />
+                  )}
+                </TooltipTrigger>
+                <TooltipPopup side="left">
+                  <T>Stop subagent</T>
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
           </div>
         ) : null}
       </li>

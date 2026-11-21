@@ -1,8 +1,12 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import type { ThreadPopOutAvailability } from "@t3tools/client-runtime/state/thread-relationships";
+
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../i18n/messages";
+
+const POP_OUT_BLOCKED_HINT = msg("Wait for it to finish or stop it first");
 
 export type ThreadActionMenuId =
   | "find"
@@ -23,6 +27,7 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
+  | "pop-out"
   | "share-guest"
   | "copy"
   | "copy-path"
@@ -123,6 +128,7 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  readonly popOut?: ThreadPopOutAvailability;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -220,6 +226,18 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
+    ...(state.popOut === "available" || state.popOut === "blocked"
+      ? [
+          {
+            id: "pop-out" as const,
+            label: resolve(msg("Pop out to top level")),
+            icon: "square-arrow-out-up-right",
+            ...(state.popOut === "blocked"
+              ? { disabled: true, detail: resolve(POP_OUT_BLOCKED_HINT) }
+              : {}),
+          },
+        ]
+      : []),
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: resolve(msg("Share with guest")), icon: "user-plus" }]
       : []),

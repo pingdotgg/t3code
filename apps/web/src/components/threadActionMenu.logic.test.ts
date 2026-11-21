@@ -79,4 +79,17 @@ describe("buildThreadActionMenuItems", () => {
     const items = buildThreadActionMenuItems({ ...baseState, canRename: false });
     expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(["rename"]);
   });
+
+  it("offers pop-out only for delegated children, disabled with a hint until it can run", () => {
+    const popOut = (state: Partial<ThreadActionMenuState>) =>
+      buildThreadActionMenuItems({ ...baseState, ...state }).find((item) => item.id === "pop-out");
+    expect(popOut({})).toBeUndefined();
+    expect(popOut({ popOut: "unsupported" })).toBeUndefined();
+    expect(popOut({ popOut: "available" })?.disabled).toBeUndefined();
+    expect(popOut({ popOut: "blocked" })).toMatchObject({
+      disabled: true,
+      detail: "Wait for it to finish or stop it first",
+    });
+    expect(popOut({ popOut: "available", canOperate: false })?.disabled).toBe(true);
+  });
 });

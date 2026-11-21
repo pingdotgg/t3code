@@ -638,6 +638,60 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
   );
 });
 
+it.effect("allows an agent to pop out only its own child", () => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const otherThreadId = ThreadId.make("mcp-core-child");
+    for (const target of [undefined, threadId, otherThreadId, ThreadId.make("unrelated")]) {
+      const result = yield* server
+        .callTool({
+          name: "t3_thread_organize",
+          arguments: { action: "pop_out", ...(target === undefined ? {} : { threadId: target }) },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      if (target === otherThreadId) expect(result.isError).not.toBe(true);
+      else
+        expect(declaredFailure(result)).toMatchObject({
+          code: "invalid_request",
+          message: expect.stringContaining("cannot pop itself out"),
+        });
+    }
+    expect(dispatched).toMatchObject([{ type: "thread.detach", threadId: otherThreadId }]);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) => {
+              const shell = McpToolAccessTestkit.liveThreadShell(id);
+              return Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection({
+                  ...shell,
+                  lineage: {
+                    ...shell.lineage,
+                    parentThreadId: id === ThreadId.make("mcp-core-child") ? threadId : null,
+                  },
+                }),
+              );
+            },
+            dispatch: (command) => {
+              dispatched.push(command);
+              return Effect.succeed({ sequence: 1 } as never);
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("keeps unexpected handler defects private through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;

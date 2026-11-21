@@ -95,7 +95,10 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
-import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
+import {
+  resolveMergeBackTargetThreadId,
+  threadPopOutAvailability,
+} from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import { threadEnvironment } from "../../state/threads";
 import {
@@ -465,6 +468,45 @@ function ThreadRouteContent(
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const openPullRequest = useOpenPullRequest();
+  const popOut = useAtomCommand(threadEnvironment.popOut, { reportFailure: false });
+  const popOutBusyRef = useRef(false);
+  const popOutAvailability =
+    selectedThread && canOperateThread
+      ? threadPopOutAvailability(selectedThread.source)
+      : "unsupported";
+  const handlePopOut = () => {
+    if (!selectedThread || popOutBusyRef.current) return;
+    if (popOutAvailability === "blocked") {
+      Dialog.alert(gt("Can't pop out yet"), gt("Wait for it to finish or stop it first."));
+      return;
+    }
+    const environmentId = selectedThread.environmentId;
+    const threadId = selectedThread.id;
+    Dialog.confirm({
+      title: gt("Pop out to top level?"),
+      message: gt(
+        "It becomes an ordinary thread in your list and stops reporting to the thread that started it.",
+      ),
+      confirmText: gt("Pop out"),
+      onConfirm: () => {
+        if (popOutBusyRef.current) return;
+        popOutBusyRef.current = true;
+        void popOut({ environmentId, input: { threadId } })
+          .then((result) => {
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              Dialog.alert(
+                gt("Could not pop out thread"),
+                error instanceof Error ? error.message : gt("Try again."),
+              );
+            }
+          })
+          .finally(() => {
+            popOutBusyRef.current = false;
+          });
+      },
+    });
+  };
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, "merge thread back");
   const mergeBackTargetThreadId = resolveMergeBackTargetThreadId(selectedThreadDetail);
   const mergeBackRun =
@@ -1049,6 +1091,7 @@ function ThreadRouteContent(
                 inspectorMode={inspectorMode}
                 onOpenFilesInspector={handleOpenFilesInspector}
                 onReturnToThread={props.onReturnToThread}
+                onPopOut={popOutAvailability === "unsupported" ? undefined : handlePopOut}
               />
             )
           }

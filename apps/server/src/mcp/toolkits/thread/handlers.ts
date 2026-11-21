@@ -402,7 +402,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
-      const { threads, projection, caller } = yield* readThread(input.threadId);
+      const { threads, projection, caller, scope } = yield* readThread(input.threadId);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       if (input.action === "settle") {
         return yield* threads
@@ -426,6 +426,21 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           break;
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
+          break;
+        case "pop_out":
+          // Otherwise a child could leave its parent's Stop on its own.
+          if (
+            scope.client?.senderThread !== undefined ||
+            (caller !== undefined &&
+              (caller.id === projection.thread.id ||
+                caller.id !== projection.thread.lineage.parentThreadId))
+          ) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "A thread cannot pop itself out; its parent or the user can.",
+            });
+          }
+          command = { ...common, type: "thread.detach" };
           break;
         case "pin": {
           // Always send a key, as the client does: the reducer ignores it for a

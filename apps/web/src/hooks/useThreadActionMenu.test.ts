@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
   granted: new Set<string>(),
   effects: [] as string[],
   completed: deferred<void>(),
+  child: false,
+  delivery: "pending" as "pending" | "acknowledged",
   show: vi.fn<
     (
       items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>>,
@@ -58,11 +60,34 @@ vi.mock("../state/entities", () => ({
     worktreePath: null,
     runtime: null,
     latestRun: null,
+    source: {
+      creationSource: "server",
+      status: "completed",
+      pendingRuntimeRequest: null,
+      lineage: {
+        parentThreadId: state.child ? "parent" : null,
+        relationshipToParent: state.child ? "subagent" : null,
+      },
+    },
   }),
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
+vi.mock("../state/orchestration", () => ({ orchestrationEnvironment: { popOutParent: "parent" } }));
+vi.mock("../state/use-atom-query-runner", () => ({
+  useAtomQueryRunner: () => async () =>
+    AsyncResult.success({
+      subagents: [
+        {
+          childThreadId: "thread",
+          status: "completed",
+          completionDelivery: { state: state.delivery },
+        },
+      ],
+      runs: [],
+    }),
+}));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => {
     recordEffect("metadata");
@@ -120,6 +145,7 @@ vi.mock("./useSettings", () => ({
 }));
 vi.mock("./useThreadActions", () => ({
   canTurnThreadIntoProject: () => false,
+  usePopOutThread: () => async () => AsyncResult.success(undefined),
   useThreadActions: () =>
     Object.fromEntries(
       [
@@ -162,10 +188,25 @@ beforeEach(() => {
   state.granted = new Set(["primary"]);
   state.effects = [];
   state.completed = deferred<void>();
+  state.child = false;
+  state.delivery = "pending";
   state.show.mockReset().mockResolvedValue(null);
 });
 
 describe("thread menu permissions", () => {
+  it.each(["pending", "acknowledged"] as const)(
+    "pop-out waits for %s completion delivery",
+    async (delivery) => {
+      state.granted.add("secondary");
+      state.child = true;
+      state.delivery = delivery;
+      createMenu().openMenu(position);
+      await vi.waitFor(() => expect(state.show).toHaveBeenCalledOnce());
+      const item = state.show.mock.calls[0]![0].find((item) => item.id === "pop-out");
+      expect(item).toBeDefined();
+      expect(item?.disabled === true).toBe(delivery === "pending");
+    },
+  );
   it.each(["rename", "regenerate-title", "delete", "pin", "settle", "archive"] as const)(
     "%s rechecks after the native menu closes",
     async (action) => {
