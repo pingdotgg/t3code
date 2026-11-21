@@ -311,6 +311,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                     ),
                   )
                 : Layer.mock(CheckpointService.CheckpointServiceV2)({
+                    capturesSoFar: () => Effect.succeed(0),
                     repositoryScopes: () => Effect.succeed([]),
                     materializeBaselineCheckpoint: () =>
                       Effect.die(
@@ -892,6 +893,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           Layer.mergeAll(
             IdAllocator.layer,
             Layer.mock(CheckpointService.CheckpointServiceV2)({
+              capturesSoFar: () => Effect.succeed(0),
               repositoryScopes: () => Effect.succeed([]),
               materializeBaselineCheckpoint: () =>
                 Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
@@ -1326,6 +1328,18 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                   }),
                 ),
               ),
+              (layerCheckpoints) =>
+                Layer.effect(
+                  CheckpointService.CheckpointServiceV2,
+                  Effect.gen(function* () {
+                    const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+                    return CheckpointService.CheckpointServiceV2.of({
+                      ...checkpoints,
+                      capturesSoFar: (cwd) =>
+                        inWorkspace(cwd).pipe(Effect.andThen(checkpoints.capturesSoFar(cwd))),
+                    });
+                  }),
+                ).pipe(Layer.provide(layerCheckpoints)),
             ),
             Layer.mock(EventSink.EventSinkV2)({
               commitCommand: () => Effect.succeed({ committed: true } as never),
@@ -1342,8 +1356,9 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         }),
       ).pipe(Effect.provide(layerCapture));
 
-      // Its checkpoint and both baselines are taken where it ran, not in the thread's latest worktree,
-      // and none of it is left out for a repository only that worktree tracks.
+      // Its checkpoint, both baselines and the folder's capture count before them are taken where it
+      // ran, not in the thread's latest worktree, and none of it is left out for a repository only
+      // that worktree tracks.
       assert.deepEqual(
         [...workspaces].filter((cwd) => !cwd.startsWith("/repo-next/vendor/lib")),
         ["/repo"],
