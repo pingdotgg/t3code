@@ -4643,15 +4643,16 @@ describe("AcpAdapterV2", () => {
       const initialize = Array.from(yield* Queue.takeAll(protocolEvents)).find(
         (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "initialize",
       );
-      assert.deepEqual(
+      const clientCapabilities =
         initialize === undefined
           ? undefined
-          : Reflect.get(
-              Object(rawProtocolRequestParam(initialize, "clientCapabilities")),
-              "session",
-            ),
-        { notices: {}, compaction: {} },
-      );
+          : Object(rawProtocolRequestParam(initialize, "clientCapabilities"));
+      assert.deepEqual(Reflect.get(Object(clientCapabilities), "session"), {
+        notices: {},
+        compaction: {},
+      });
+      // MiniMax Code sends plan markdown for review only to clients advertising `plan`.
+      assert.deepEqual(Reflect.get(Object(clientCapabilities), "plan"), {});
       const title =
         "skill discovery warning: candidate was skipped because its metadata is invalid";
       assert.deepEqual(
