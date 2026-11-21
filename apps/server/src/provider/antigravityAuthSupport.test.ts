@@ -887,6 +887,29 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
     }),
   );
 
+  it.effect("reuses a passed preflight until the runtime environment changes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const helper = preflightHelper(Effect.void);
+      const prepare = (baseEnv: NodeJS.ProcessEnv) =>
+        prepareAntigravityProfile({
+          profileDirectory: path.join(directory, "profile"),
+          userHome: path.join(directory, "home"),
+          runtimeExecutablePath: process.execPath,
+          platform: "linux",
+          baseEnv,
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, helper.spawner));
+
+      yield* prepare({});
+      yield* prepare({});
+      expect(helper.spawns.count).toBe(1);
+      yield* prepare({ NODE_OPTIONS: "--require=./hook.js" });
+      expect(helper.spawns.count).toBe(2);
+    }),
+  );
+
   it.effect("rejects Python BROWSER delimiter collisions before starting a helper", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
