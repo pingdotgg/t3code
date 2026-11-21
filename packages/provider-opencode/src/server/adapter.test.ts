@@ -5095,6 +5095,31 @@ describe("OpenCodeAdapterV2", () => {
       }),
     );
     assert.equal(permissionAction(approvalRequiredWorkspaceWrite, "edit"), "ask");
+
+    // A multi-folder thread reaches its other folders, and edits there still ask.
+    const multiFolder = openCodePermissionRules(
+      runtimePolicy("approval-required", {
+        workspace: { folders: [], extraRoots: ["/repos/api/", "/repos/api?", "/repos/a*"] },
+      }),
+    );
+    // A root with a glob character would also match its siblings, so it keeps asking.
+    assert.deepEqual(
+      multiFolder
+        .filter((rule) => rule.permission === "external_directory" && rule.action === "allow")
+        .map((rule) => rule.pattern),
+      ["/repos/api/*"],
+    );
+    assert.deepInclude(multiFolder, {
+      permission: "external_directory",
+      pattern: "/repos/api/*",
+      action: "allow",
+    });
+    assert.equal(permissionAction(multiFolder, "edit"), "ask");
+    assert.notDeepInclude(approvalRequired, {
+      permission: "external_directory",
+      pattern: "/repos/api/*",
+      action: "allow",
+    });
   });
 
   it("enforces non-interactive sandbox policy through OpenCode permissions", () => {

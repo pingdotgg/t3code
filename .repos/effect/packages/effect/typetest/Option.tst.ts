@@ -13,6 +13,27 @@ declare const nullOr: number | null
 declare const undefinedOr: number | undefined
 
 describe("Option", () => {
+  it("all checks symbol fields and accepts object type aliases", () => {
+    const key = Symbol()
+    type Fields = {
+      text: Option.Option<string>
+      [key]: Option.Option<number>
+    }
+    const fields: Fields = { text: Option.some("value"), [key]: number }
+    expect(Option.all(fields)).type.toBe<Option.Option<{ text: string; [key]: number }>>()
+    type IndexedFields = {
+      [key: string]: Option.Option<number>
+    }
+    const indexed: IndexedFields = { value: number }
+    expect(Option.all(indexed)).type.toBe<Option.Option<{ [key: string]: number }>>()
+    expect(Option.all([fields.text, number])).type.toBe<Option.Option<[string, number]>>()
+    expect(Option.all(new Set([number]))).type.toBe<Option.Option<Array<number>>>()
+    expect(Option.all).type.not.toBeCallableWith({ [key]: 42 })
+    expect(Option.all).type.not.toBeCallableWith(42)
+    expect(Option.all).type.not.toBeCallableWith("value")
+    expect(Option.all).type.not.toBeCallableWith({ text: fields.text, [key]: 42 })
+  })
+
   it("data-last product operations", () => {
     expect(Option.product(Option.some("a"))(number)).type.toBe<Option.Option<[number, string]>>()
     expect(Option.productMany([Option.some(1), Option.some(2)])(number)).type.toBe<
