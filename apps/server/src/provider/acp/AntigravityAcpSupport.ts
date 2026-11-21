@@ -25,6 +25,7 @@ import {
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   acpPermissionDisposition,
+  isAcpReadKind,
   type AcpRuntimePolicy,
 } from "@t3tools/provider-acp/server/clientPolicy";
 import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
@@ -186,8 +187,12 @@ export function antigravityPermissionDisposition(
   request: EffectAcpSchema.RequestPermissionRequest,
 ) {
   const disposition = acpPermissionDisposition(policy, request);
-  // agy's Auto has already reviewed what it sends; the user decides unless the sandbox forbids it.
-  return policy.runtimeMode === "auto" && disposition !== "deny" ? "ask" : disposition;
+  // agy's Auto reviews commands, not file reads: reads follow the shared policy, everything else it sends asks.
+  return policy.runtimeMode === "auto" &&
+    disposition !== "deny" &&
+    !isAcpReadKind(request.toolCall.kind ?? "other")
+    ? "ask"
+    : disposition;
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
