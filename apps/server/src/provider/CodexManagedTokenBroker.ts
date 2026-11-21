@@ -47,6 +47,8 @@ const acquireListener = Effect.gen(function* () {
   const environmentId = yield* identity.getEnvironmentId;
   const platform = yield* HostProcess.Platform;
   const uid = yield* HostProcess.UserId;
+  const environment = yield* HostProcess.Environment;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   const owned = yield* Effect.acquireRelease(
     io(async () => {
       if (platform === "win32")
@@ -84,7 +86,24 @@ const acquireListener = Effect.gen(function* () {
           throw error;
         }
       };
-      return acquireDirectory(NodeOS.tmpdir()).catch(() => acquireDirectory("/tmp"));
+      // Shared temp directories can have unmapped owners in rootless containers.
+      const candidates = new Set([
+        environment.XDG_RUNTIME_DIR,
+        NodeOS.tmpdir(),
+        "/tmp",
+        "/var/tmp",
+        homeDirectory,
+      ]);
+      let lastError: unknown;
+      for (const candidate of candidates) {
+        if (!candidate || !NodePath.isAbsolute(candidate)) continue;
+        try {
+          return await acquireDirectory(candidate);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError;
     }),
     (owned) =>
       Effect.promise(async () => {
