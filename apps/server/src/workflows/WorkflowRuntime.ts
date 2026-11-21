@@ -2,6 +2,9 @@
 // change while the server runs. A file that loads replaces what it defined before; one that does
 // not keeps its last good version running. With no definitions there is no engine, unless runs
 // from before are kept: then one with nothing registered serves their history.
+import * as NodeAsyncHooks from "node:async_hooks";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodeURL from "node:url";
 
 import type {
@@ -80,11 +83,29 @@ const isDefinition = (value: unknown): value is WorkflowDefinition =>
   Array.isArray((value as WorkflowDefinition).resumeAfter);
 
 // The API is handed to a file as globals, which the whole process shares, so files load one at
-// a time: each load's `T3.workflow` must register with that load and no other.
+// a time. A load that was given up on still runs, so `T3.workflow` registers with the load whose
+// code calls it, and with none once that load is over.
 const loading = Semaphore.makeUnsafe(1);
 // A file whose top-level code never settles would otherwise hold every later load. Real time,
 // since importing a module is.
 const LOAD_DEADLINE_MS = 20_000;
+
+interface Evaluation {
+  readonly registered: Array<unknown>;
+  open: boolean;
+}
+const evaluating = new NodeAsyncHooks.AsyncLocalStorage<Evaluation>();
+const required = NodeModule.createRequire(import.meta.url);
+
+/** A file with no `import` or `export` loads as CommonJS, which Node keeps by path, not address. */
+const forget = (file: string) => {
+  delete required.cache[file];
+  try {
+    delete required.cache[NodeFS.realpathSync(file)];
+  } catch {
+    // Gone already, so nothing can be kept under its real path either.
+  }
+};
 
 const within = <A>(work: Promise<A>, ms: number): Promise<A | undefined> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -95,13 +116,18 @@ const within = <A>(work: Promise<A>, ms: number): Promise<A | undefined> => {
   return Promise.race([work, late]).finally(() => clearTimeout(timer));
 };
 
-const evaluate = async (url: string): Promise<ReadonlyArray<unknown>> => {
+const evaluate = async (url: string, evaluation: Evaluation): Promise<ReadonlyArray<unknown>> => {
   const api = await import("./api.ts");
   const { Duration, Effect: effect, Option: option, Schedule, Schema: schema, ...t3 } = api;
-  const registered: Array<unknown> = [];
   const workflow = ((...input: Parameters<typeof api.workflow>) => {
+    const current = evaluating.getStore();
+    if (current === undefined || !current.open) {
+      throw new Error(
+        "T3.workflow was called after its file finished loading. Call it at the top of the file.",
+      );
+    }
     const definition = api.workflow(...input);
-    registered.push(definition);
+    current.registered.push(definition);
     return definition;
   }) as typeof api.workflow;
   Object.assign(globalThis, {
@@ -112,7 +138,10 @@ const evaluate = async (url: string): Promise<ReadonlyArray<unknown>> => {
     Duration,
     Schedule,
   });
-  const loaded = (await import(url)) as { readonly default?: unknown; "module.exports"?: unknown };
+  const loaded = (await evaluating.run(evaluation, () => import(url))) as {
+    readonly default?: unknown;
+    "module.exports"?: unknown;
+  };
   // A file with no `import` or `export` loads as CommonJS, whose default is its `module.exports`:
   // an empty object unless the file set one, which says nothing about what it defines.
   const commonJs = "module.exports" in loaded;
@@ -138,7 +167,7 @@ const evaluate = async (url: string): Promise<ReadonlyArray<unknown>> => {
       "The default export is not a workflow or a list of them. Call T3.workflow(…), or export what it returned.",
     );
   }
-  return [...new Set([...registered, ...listed])];
+  return [...new Set([...evaluation.registered, ...listed])];
 };
 
 /**
@@ -152,9 +181,17 @@ export const loadDefinitions = Effect.fn("WorkflowRuntime.loadDefinitions")(func
   deadlineMs = LOAD_DEADLINE_MS,
 ) {
   const path = yield* Path.Path;
-  const url = NodeURL.pathToFileURL(path.resolve(module)).href + (load === 0 ? "" : `?${load}`);
+  const file = path.resolve(module);
+  const url = NodeURL.pathToFileURL(file).href + (load === 0 ? "" : `?${load}`);
   const definitions = yield* Effect.tryPromise({
-    try: () => within(evaluate(url), deadlineMs),
+    try: () => {
+      const evaluation: Evaluation = { registered: [], open: true };
+      forget(file);
+      return within(evaluate(url, evaluation), deadlineMs).finally(() => {
+        evaluation.open = false;
+        forget(file);
+      });
+    },
     catch: (cause) => new WorkflowDefinitionsLoadError({ module, cause }),
   }).pipe(loading.withPermits(1));
   if (definitions === undefined) {
