@@ -96,7 +96,11 @@ fn add_vibrancy(window: &Window) {
             .unwrap_or(MATERIAL_UNDER_WINDOW_BACKGROUND);
         let _: () = objc2::msg_send![&*effect, setMaterial: material];
         let _: () = objc2::msg_send![&*effect, setBlendingMode: BLENDING_BEHIND_WINDOW];
-        let _: () = objc2::msg_send![&*effect, setState: STATE_FOLLOWS_WINDOW_ACTIVE_STATE];
+        let state = std::env::var("CONN_GPUI_VIBRANCY_STATE")
+            .ok()
+            .and_then(|v| v.parse::<isize>().ok())
+            .unwrap_or(STATE_FOLLOWS_WINDOW_ACTIVE_STATE);
+        let _: () = objc2::msg_send![&*effect, setState: state];
         let _: () = objc2::msg_send![&*effect, setAutoresizingMask: AUTORESIZE_WIDTH_AND_HEIGHT];
         let nil: *mut AnyObject = std::ptr::null_mut();
         let _: () = objc2::msg_send![
