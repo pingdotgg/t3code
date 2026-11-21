@@ -993,6 +993,25 @@ it.layer(
       }),
   );
 
+  it.effect("reports whether any terminal session for a thread has an active subprocess", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager(5, {
+        processTable: Effect.succeed([
+          { pid: 9000, ppid: 1, name: "zsh" },
+          { pid: 100, ppid: 9000, name: "zsh" },
+          { pid: 9001, ppid: 1, name: "zsh" },
+          { pid: 200, ppid: 9001, name: "node" },
+        ]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput({ terminalId: "idle", threadId: "thread-idle" }));
+      yield* manager.open(openInput({ terminalId: "dev-server", threadId: "thread-active" }));
+
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-none" })).toBe(false);
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-idle" })).toBe(false);
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-active" })).toBe(true);
+    }),
+  );
+
   it.effect.each([
     ["linux", ["SIGHUP", "SIGTERM"]],
     ["win32", ["SIGTERM"]],

@@ -13,6 +13,8 @@ export interface AppBarAction {
   /** Android overflow menu: the row's second line. */
   readonly subtitle?: string;
   readonly destructive?: boolean;
+  /** Android: scales the toolbar glyph, for one that overshoots its neighbours' bounds. */
+  readonly iconScale?: number;
   /** Android: always in the overflow menu, never a toolbar button. */
   readonly overflowOnly?: boolean;
   /** iOS: false shares one glass capsule with neighbouring items. Defaults to true. */
