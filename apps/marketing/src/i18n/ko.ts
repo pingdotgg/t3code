@@ -31,7 +31,8 @@ export const ko: Messages = {
     downloadForAndroid: "Android용 다운로드",
     sourceLink: "코드 훔쳐 가기(합법적으로)",
     alsoOnPhone: "휴대폰에서도:",
-    screenshotAlt: "하나의 스레드에서 Claude, Codex, Muse, Gemini 서브에이전트를 실행 중인 T3 Code",
+    screenshotAlt:
+      "스레드 목록 옆에 Claude 스레드를 연 T3 Code. 고정된 세부 정보 카드에 브랜치, 변경 사항, 검사를 통과한 연결된 풀 리퀘스트, 사용 한도, 컨텍스트, 자동화, 포크가 표시됩니다",
     endorsementsTitle: "{users}명이 넘는 개발자가 나쁘지 않다고 합니다",
     endorsementsSub: "몇몇은 트윗까지 했습니다.",
     endorsementsLabel: "개발자 추천",
@@ -84,9 +85,13 @@ export const ko: Messages = {
     channelLabel: "릴리스 채널",
     stable: "안정판",
     nightly: "Nightly",
+    stableTagline: "모든 릴리스는 먼저 Nightly에서 사용된 빌드입니다.",
+    nightlyTagline:
+      "새 변경 사항을 안정판보다 먼저 만나 보세요. 다듬어지지 않은 부분이 있을 수 있습니다.",
     intelNote: "Intel Mac을 쓰시나요? {link}.",
     intelLink: "x64 빌드 다운로드",
     armNote: "ARM을 쓰시나요? arm64 {deb} 또는 {appimage}를 다운로드하세요.",
+    exeArmNote: "ARM을 쓰시나요? arm64 {exe}를 다운로드하세요.",
     mobile: "모바일",
     iphoneIpad: "iPhone & iPad",
     terminal: "터미널",
