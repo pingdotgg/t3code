@@ -1243,7 +1243,7 @@ export function chatActionErrorMessage(error: unknown, resolve: MessageResolver 
 }
 
 /** A local copy of the runtime's error shares the runtime's key, so one dismissal covers both. */
-export function threadErrorIsServerRuntime(input: {
+function threadErrorIsServerRuntime(input: {
   readonly isServerThread: boolean;
   readonly localServerError: string | null;
   readonly runtimeError: string | null;
@@ -1252,6 +1252,43 @@ export function threadErrorIsServerRuntime(input: {
     input.isServerThread &&
     (input.localServerError === null || input.localServerError === input.runtimeError)
   );
+}
+
+// Only server runtime errors get a session dismissal: they persist in projections across
+// remounts. Local and draft errors are cleared on dismiss, so a repeat shows again.
+export function resolveThreadErrorBanner(input: {
+  readonly isServerThread: boolean;
+  readonly localServerError: string | null;
+  readonly localDraftError: string | null;
+  readonly runtimeError: string | null;
+  readonly runtimeErrorSource: string | null;
+}): {
+  readonly threadError: string | null;
+  readonly sessionDismissal: {
+    readonly error: string;
+    readonly source: string | null;
+  } | null;
+} {
+  const threadError = input.isServerThread
+    ? (input.localServerError ?? input.runtimeError ?? null)
+    : input.localDraftError;
+  if (
+    threadError === null ||
+    !threadErrorIsServerRuntime({
+      isServerThread: input.isServerThread,
+      localServerError: input.localServerError,
+      runtimeError: input.runtimeError,
+    })
+  ) {
+    return { threadError, sessionDismissal: null };
+  }
+  return {
+    threadError,
+    sessionDismissal: {
+      error: threadError,
+      source: input.runtimeErrorSource,
+    },
+  };
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(

@@ -225,6 +225,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const threadId = ThreadId.make(commandId);
         const messageId = MessageId.make(commandId);
         const attachments = input.attachments ?? [];
+        if (input.generateTitle === true && !input.message?.trim() && attachments.length === 0)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "Title generation requires a message or attachments. No thread was created.",
+          });
         const schemaProblem =
           input.outputSchema === undefined
             ? null
@@ -428,6 +433,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           threadId,
           projectId,
           title: input.title,
+          ...(input.generateTitle === undefined ? {} : { generateTitle: input.generateTitle }),
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
