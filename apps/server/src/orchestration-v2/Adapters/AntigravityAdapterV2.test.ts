@@ -2662,10 +2662,10 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
                     } else {
                       yield* onSwarmNotification!({
                         sessionId: rootSessionId,
-                        head: 4,
+                        head: 5,
                         activeWorkers: 1,
                         workingWorkers: 1,
-                        waitingWorkers: 1,
+                        waitingWorkers: 0,
                         members: [
                           {
                             name: "alpha",
@@ -2673,13 +2673,6 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
                             conversationId: alphaSessionId,
                             brief: "Inspect frontend",
                             state: "working",
-                          },
-                          {
-                            name: "beta",
-                            role: "worker",
-                            conversationId: betaSessionId,
-                            brief: "Inspect backend",
-                            state: "waiting",
                           },
                         ],
                       });
@@ -2884,6 +2877,31 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
           ),
         );
 
+        // Between turns @beta wakes and is killed; turn 2 must not replay the queued running update.
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 4,
+          activeWorkers: 1,
+          workingWorkers: 1,
+          waitingWorkers: 1,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+            { name: "beta", role: "worker", conversationId: betaSessionId, state: "working" },
+          ],
+        });
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 4,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 1,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+            { name: "beta", role: "worker", conversationId: betaSessionId, state: "killed" },
+          ],
+          posts: [{ seq: 4, agent: "beta", text: "@coordinator Backend wrap-up." }],
+        });
+
         // Turn 2 wakes @alpha again on the exact same child thread, then kills @alpha after reporting.
         const turn2Input = makeTurnInput({
           instanceId,
@@ -2913,16 +2931,15 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
 
         yield* onSwarmNotification!({
           sessionId: rootSessionId,
-          head: 5,
+          head: 6,
           activeWorkers: 0,
           workingWorkers: 0,
-          waitingWorkers: 1,
+          waitingWorkers: 0,
           coordinatorPendingWake: false,
           members: [
             { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "killed" },
-            { name: "beta", role: "worker", conversationId: betaSessionId, state: "waiting" },
           ],
-          posts: [{ seq: 5, agent: "alpha", text: "@coordinator Follow-up complete." }],
+          posts: [{ seq: 6, agent: "alpha", text: "@coordinator Follow-up complete." }],
         });
         yield* onSessionUpdate!({
           sessionId: rootSessionId,
@@ -2933,6 +2950,8 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         assert.equal(collected.filter((event) => event.type === "turn.terminal").length, 2);
         assert.equal(subagentsByTitle().get("@alpha")?.status, "completed");
         assert.equal(subagentsByTitle().get("@alpha")?.result, "Follow-up complete.");
+        assert.equal(subagentsByTitle().get("@beta")?.status, "completed");
+        assert.equal(subagentsByTitle().get("@beta")?.result, "Backend wrap-up.");
 
         yield* Fiber.interrupt(reader);
       }).pipe(Effect.provide(layerSession), Effect.scoped),
