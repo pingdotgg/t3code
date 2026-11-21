@@ -303,8 +303,16 @@ describe("terminalUiStateStore actions", () => {
     store.reconcileTerminalIds(THREAD_REF, ["first", "elsewhere", "pending"]);
 
     expect(layout().terminalGroups).toEqual([
-      { id: "group-first", terminalIds: ["first", "pending"], splitDirection: "vertical" },
-      { id: "group-elsewhere", terminalIds: ["elsewhere"] },
+      {
+        id: "group-first",
+        terminalIds: ["first", "pending"],
+        layout: {
+          kind: "split",
+          direction: "vertical",
+          children: [paneLayout("first"), paneLayout("pending")],
+        },
+      },
+      { id: "group-elsewhere", terminalIds: ["elsewhere"], layout: paneLayout("elsewhere") },
     ]);
     expect(layout().activeTerminalId).toBe("pending");
   });
