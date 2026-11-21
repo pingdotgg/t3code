@@ -7039,6 +7039,7 @@
   "9736f3763a6476c2": "Pending",
   "e3e1ec05d1224d36": "Could not save the description",
   "faef5657f28d1c69": "Could not save the comment",
+  "7f72a174c51f79d8": "Could not update the task",
   "58af69b2314359ae": "Open comment on host",
   "eb60367cf891f1fa": "{count, plural, one {{count} reply} other {{count} replies}}",
   "69a6f3659c32ab5f": "Fix",
