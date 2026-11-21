@@ -7102,13 +7102,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("asks to sign in to a configured MCP server, but not to a claude.ai connector", () =>
+  it.effect("asks to sign in to a configured MCP server, but not to a connector or plugin", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({
         mcp: {
           mcpServerStatus: Effect.succeed([
             { name: "linear", status: "needs-auth" },
             { name: "claude.ai Gmail", status: "needs-auth", scope: "claudeai" },
+            { name: "plugin:legal:slack", status: "needs-auth", source: "plugin" },
+            { name: "plugin:design:figma", status: "needs-auth" },
             { name: "docs", status: "connected" },
           ]),
           readMcpResource: () => Effect.die("unexpected MCP resource read"),
