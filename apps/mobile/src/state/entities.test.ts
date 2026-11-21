@@ -603,7 +603,7 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
       });
 
       // A partial batch failure applies succeeded titles/icons (archId) and confirmed misses
-      // (deletedId) while keeping failed IDs (olderId) unconfirmed and non-deleted.
+      // (deletedId) while failed IDs (olderId) render the fallback title and keep any confirmed miss.
       setMetadata(
         localEnv,
         [archId, deletedId, olderId],
@@ -663,11 +663,16 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
         threadId: olderId,
       });
       expect(failedLinks.titleFor({ environmentId: localEnv, threadId: olderId })).toBeNull();
-      // After a settled failure clears confirmation, a new streaming key no longer keeps local olderId.
+      // After a settled failure clears positive confirmation (archId) while keeping confirmed misses
+      // (olderId), a new streaming key drops stale local titles and an overlapping pending key still
+      // resolves taps and icons to the remote match even after an unrelated shell rename.
       const afterFailureStreamed = useMessageThreadLinks(
         `${markdown} [later](t3-thread://v2/${localEnv}/later-1)`,
         localEnv,
       );
+      expect(
+        afterFailureStreamed.titleFor({ environmentId: localEnv, threadId: archId }),
+      ).toBeNull();
       expect(
         resolveThreadLinkTarget(
           registry.get.bind(registry),
@@ -679,6 +684,30 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
         ref: { environmentId: remoteEnv, threadId: olderId },
         title: "Remote Same ID",
       });
+      setShell(localEnv, overlapShellId, {
+        title: "Overlap After Failure",
+        projectId: projectLocal,
+        updatedAt: 3,
+      });
+      const overlapAfterFailure = useMessageThreadLinks(overlapMarkdown, localEnv);
+      expect(overlapAfterFailure.markdown).toBe(
+        `[Local Renamed](t3-thread://v1/${olderId}) [Overlap After Failure](t3-thread://v2/${localEnv}/${overlapShellId})`,
+      );
+      expect(
+        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, overlapAfterFailure),
+      ).toEqual({
+        ref: { environmentId: remoteEnv, threadId: olderId },
+        title: "Remote Same ID",
+      });
+      expect(overlapAfterFailure.resolve(v1Link, registry.get.bind(registry))).toEqual({
+        environmentId: remoteEnv,
+        threadId: olderId,
+      });
+      expect(
+        useThreadChipIcons(localEnv, overlapAfterFailure.markdown, {
+          sourceRefKeys: overlapAfterFailure.refKeys,
+        }).get(`t3-thread://v1/${olderId}`),
+      ).toBe("https://favicon.test/remote-repo");
       const failedIcons = useThreadChipIcons(localEnv, failedLinks.markdown, {
         sourceRefKeys: failedLinks.refKeys,
       });

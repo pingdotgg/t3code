@@ -288,7 +288,7 @@ const threadLinkTitlesAtom = Atom.family((key: string) => {
         continue;
       }
       if (outcome.kind === "failed") {
-        confirmedTitles.delete(refKey);
+        if (confirmedTitles.get(refKey) !== null) confirmedTitles.delete(refKey);
         titles.set(refKey, FALLBACK_THREAD_TITLE);
         continue;
       }
