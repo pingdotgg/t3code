@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1960,6 +1961,25 @@ it.effect("a wait on a pull request ends when its checks have, and says how", ()
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a step or sleep with an option it cannot read says which and what it takes", () =>
+  Effect.gen(function* () {
+    assert.throws(
+      () =>
+        step(
+          "push",
+          { returns: Schema.Void, retry: { times: 2, shedule: 1 } as never },
+          Effect.void,
+        ),
+      'step("push")\'s retry does not take `shedule`',
+    );
+    const slept = yield* Effect.exit(sleep("z", "soon" as never) as unknown as Effect.Effect<void>);
+    assert.include(
+      String(Exit.isFailure(slept) ? Cause.squash(slept.cause) : ""),
+      'sleep("z") cannot read "soon" as a duration. Write one such as "5 minutes".',
+    );
+  }),
 );
 
 it("hooks of different workflows never share an id", () => {

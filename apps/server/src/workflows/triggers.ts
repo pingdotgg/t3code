@@ -4,7 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
 import { parseTimeOfDay } from "../scheduledTasks/Schedule.ts";
-import { checkOptions } from "./options.ts";
+import { checkOptions, durationOf } from "./options.ts";
 import type { Issue, PullRequest } from "./WorkflowForge.ts";
 
 /** The time a scheduled run was due, which is not the time it started. */
@@ -53,7 +53,7 @@ export type Trigger<Fires> = (ScheduleTrigger | WebhookTrigger | OpenedTrigger) 
 
 /** A run every so often, counted from when the last one was started. At least a minute. */
 export const every = (interval: Duration.Input): Trigger<Tick> => {
-  const everyMs = Duration.toMillis(Duration.fromInputUnsafe(interval));
+  const everyMs = Duration.toMillis(durationOf(`every(${JSON.stringify(interval)})`, interval));
   // The sweep would quietly stretch a shorter one to a minute.
   if (everyMs < 60_000) {
     throw new Error(`every(${JSON.stringify(interval)}) is shorter than the shortest, one minute.`);

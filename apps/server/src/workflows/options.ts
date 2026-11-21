@@ -1,3 +1,16 @@
+import * as Duration from "effect/Duration";
+import * as Option from "effect/Option";
+
+/** The duration `input` is, or an error that names `what` and shows one that reads. */
+export const durationOf = (what: string, input: Duration.Input): Duration.Duration =>
+  Option.getOrThrowWith(
+    Duration.fromInput(input),
+    () =>
+      new Error(
+        `${what} cannot read ${JSON.stringify(input)} as a duration. Write one such as "5 minutes".`,
+      ),
+  );
+
 /**
  * Refuses an option the call does not take. A workflow file is not type-checked, so a misspelt or
  * renamed option would otherwise be dropped without a word.
