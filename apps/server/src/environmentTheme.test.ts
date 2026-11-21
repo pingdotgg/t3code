@@ -347,6 +347,65 @@ describe("environment theme", () => {
       ),
   );
 
+  it.live.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "win32")(
+    "publishes edits when a relative link's missing grandparent is restored",
+    () =>
+      withEnvironmentThemes(
+        { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+        Effect.gen(function* () {
+          const service = yield* EnvironmentTheme.EnvironmentThemeService;
+          const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const userdata = path.dirname(environmentThemesDir);
+          const fixture = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-linked-themes-" });
+          const anchor = path.join(fixture, "anchor");
+          const active = path.join(fixture, "active");
+          const restored = path.join(fixture, "restored");
+          const restoredTarget = path.join(restored, "shared", "themes");
+          yield* fs.makeDirectory(anchor);
+          yield* fs.makeDirectory(restoredTarget, { recursive: true });
+          yield* fs.writeFileString(
+            path.join(restoredTarget, "shared-light.json"),
+            encodeThemeFile({ ...SHARED_THEME, name: "Restored Shared Light" }),
+          );
+          yield* fs.symlink(anchor, path.join(userdata, "alias"));
+          const stagedLink = path.join(userdata, "next-themes");
+          yield* fs.symlink("alias/../active/shared/themes", stagedLink);
+          yield* fs.writeFileString(
+            path.join(anchor, "shared-light.json"),
+            encodeThemeFile(SHARED_THEME),
+          );
+
+          const snapshots = yield* service.streamChanges.pipe(
+            Stream.map((themes) => themes.map((theme) => theme.name)),
+            Stream.toQueue({ capacity: "unbounded" }),
+          );
+          assert.deepEqual(yield* Queue.take(snapshots), ["Nightfall"]);
+          yield* fs.rename(environmentThemesDir, path.join(userdata, "original-themes"));
+          yield* fs.symlink(anchor, environmentThemesDir);
+          assert.deepEqual(
+            (yield* Stream.fromQueue(snapshots).pipe(
+              Stream.filter((names) => names.length > 0),
+              Stream.runHead,
+            )).valueOrUndefined,
+            ["Shared Light"],
+          );
+
+          yield* fs.rename(stagedLink, environmentThemesDir);
+          assert.deepEqual(yield* Queue.take(snapshots), []);
+          yield* fs.rename(restored, active);
+          assert.deepEqual(yield* Queue.take(snapshots), ["Restored Shared Light"]);
+
+          yield* fs.writeFileString(
+            path.join(active, "shared", "themes", "shared-light.json"),
+            encodeThemeFile({ ...SHARED_THEME, name: "Edited Shared Light" }),
+          );
+          assert.deepEqual(yield* Queue.take(snapshots), ["Edited Shared Light"]);
+        }),
+      ),
+  );
+
   it.effect("skips invalid files while keeping valid ones", () =>
     withEnvironmentThemes(
       {
