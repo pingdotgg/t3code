@@ -1,9 +1,76 @@
 //! Conn native desktop application entry point (GPUI).
-//!
-//! Scaffold placeholder — see `GOAL.md` Phase 1 and `.refs/threadbear/desktop/gpui/src/main.rs`
-//! for wiring the GPUI `Application`, macOS 44px traffic-light window frame, and Tokio bridge
-//! to `conn-client`.
+
+mod app;
+mod colour_space;
+mod fixture;
+mod header;
+mod icons;
+mod shell;
+mod sidebar;
+mod theme;
+
+use app::ConnApp;
+use conn_theme::Tokens;
+use gpui_kit::{
+    AppContext as _, Bounds, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
+    WindowOptions, point, px, size,
+};
+
+/// Default window size matching a comfortable Conn desktop workspace.
+const DEFAULT_WINDOW_WIDTH_PX: f32 = 1440.0;
+const DEFAULT_WINDOW_HEIGHT_PX: f32 = 900.0;
+/// Minimum usable window size.
+const MIN_WINDOW_WIDTH_PX: f32 = 760.0;
+const MIN_WINDOW_HEIGHT_PX: f32 = 480.0;
+
+/// macOS traffic-light position matching `../conn/apps/desktop/src/window/DesktopWindow.ts`:
+/// - `x = 16.0` (Conn's `setWindowButtonPosition({ x: 16, ... })`).
+/// - `y = 15.0` (`MACOS_SHELL_HEADER_HEIGHT (44) / 2 - MACOS_WINDOW_BUTTON_RADIUS (7) = 15`).
+///
+/// In `gpui-pre-macos`, `titlebar_container` height is set to
+/// `button_height (14) + 2 * y (30) = 44px`, placing the buttons' vertical center
+/// at `y + button_height / 2 = 22px` — centered on the 44px glass header.
+const MACOS_TRAFFIC_LIGHT_X_PX: f32 = 16.0;
+const MACOS_TRAFFIC_LIGHT_Y_PX: f32 = 15.0;
 
 fn main() {
-    let _geometry = conn_theme::ShellGeometry::default();
+    let application = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
+    application.run(|cx| {
+        gpui_kit::init(cx);
+        colour_space::install(cx);
+        theme::apply_kit_theme(&Tokens::placeholder_dark(), cx);
+        app::register_keybindings(cx);
+
+        let bounds = Bounds::centered(
+            None,
+            size(px(DEFAULT_WINDOW_WIDTH_PX), px(DEFAULT_WINDOW_HEIGHT_PX)),
+            cx,
+        );
+
+        #[expect(
+            clippy::expect_used,
+            reason = "with no main window there is no desktop app to run"
+        )]
+        let _ = gpui_kit::open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Conn".into()),
+                    appears_transparent: true,
+                    traffic_light_position: Some(point(
+                        px(MACOS_TRAFFIC_LIGHT_X_PX),
+                        px(MACOS_TRAFFIC_LIGHT_Y_PX),
+                    )),
+                }),
+                window_background: WindowBackgroundAppearance::Blurred,
+                app_owns_titlebar_drag: true,
+                window_min_size: Some(size(px(MIN_WINDOW_WIDTH_PX), px(MIN_WINDOW_HEIGHT_PX))),
+                app_id: Some("conn".into()),
+                ..Default::default()
+            },
+            cx,
+            |window, cx| cx.new(|cx| ConnApp::new(window, cx)),
+        )
+        .expect("failed to open Conn main window");
+    });
 }
