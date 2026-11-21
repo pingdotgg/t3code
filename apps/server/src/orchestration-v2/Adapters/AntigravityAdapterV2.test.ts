@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ChatFileAttachment,
+  CheckpointId,
   MessageId,
   NodeId,
   ProjectId,
@@ -2502,6 +2503,428 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         assert.include(sent, "through the Antigravity harness, as gemini-test-low");
         assert.notInclude(append, "systemPrompt");
         assert.include(sent, "<pull_request_linking>");
+      }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 prompt suggestions", () => {
+  const makePromptSuggestionSession = Effect.fn("makePromptSuggestionSession")(function* (options: {
+    readonly promptSuggestions: Effect.Effect<boolean>;
+    readonly samplePromptSuggestion: NonNullable<
+      AntigravityAdapterV2Options["samplePromptSuggestion"]
+    >;
+    readonly assistantText?: string;
+    readonly holdPrompt?: Deferred.Deferred<void>;
+    readonly continuationRequests?: AntigravityAdapterV2Options["continuationRequests"];
+  }) {
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    const instanceId = ProviderInstanceId.make("antigravity-prompt-suggestion-test");
+    const threadId = ThreadId.make("thread-antigravity-prompt-suggestion");
+    const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const runtimeEvents = yield* Queue.unbounded<AcpSessionRuntime.AcpSessionRuntimeEvent>();
+    let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+    const initializeResult: EffectAcpSchema.InitializeResponse = {
+      protocolVersion: 1,
+      agentCapabilities: {
+        loadSession: true,
+        promptCapabilities: { image: true, audio: false, embeddedContext: true },
+        sessionCapabilities: { resume: {}, list: {}, close: {} },
+      },
+      agentInfo: { name: "Antigravity ACP Server", version: "1.5.13" },
+    };
+    const startResult: AcpSessionRuntime.AcpSessionRuntimeStartResult = {
+      sessionId: "mock-suggestion-session",
+      initializeResult,
+      modelConfigId: "model",
+      sessionSetupResult: {
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: modelSelection.model,
+            options: [{ value: modelSelection.model, name: "Gemini test" }],
+          },
+        ],
+      },
+    };
+    const mockRuntime: RuntimeService = {
+      initialize: () => Effect.succeed(initializeResult),
+      start: () =>
+        Effect.gen(function* () {
+          if (sessionUpdate !== undefined) {
+            yield* sessionUpdate({
+              sessionId: startResult.sessionId,
+              update: {
+                sessionUpdate: "available_commands_update",
+                availableCommands: [{ name: "compact", description: "Compact" }],
+              },
+            });
+          }
+          return startResult;
+        }),
+      loadSession: () => Effect.succeed(startResult),
+      resumeSession: () => Effect.succeed(startResult),
+      forkSession: () => Effect.succeed(startResult),
+      listSessions: () => Effect.succeed({ sessions: [] }),
+      closeSession: () => Effect.succeed({}),
+      deleteSession: () => Effect.succeed({}),
+      listProviders: Effect.succeed({ providers: [] }),
+      setProvider: () => Effect.succeed({}),
+      disableProvider: () => Effect.succeed({}),
+      logout: Effect.succeed({}),
+      getEvents: () => Stream.fromQueue(runtimeEvents),
+      drainEvents: Effect.void,
+      getConfigOptions: Effect.succeed(startResult.sessionSetupResult.configOptions ?? []),
+      configOptionChanges: Stream.empty,
+      getModeState: Effect.undefined,
+      setMode: () => Effect.succeed({}),
+      setSessionModel: () => Effect.succeed({}),
+      setModel: () => Effect.void,
+      setConfigOption: () => Effect.succeed({ configOptions: [] }),
+      prompt: (_payload, promptOptions) =>
+        Effect.gen(function* () {
+          if (promptOptions?.dispatched !== undefined) {
+            yield* Deferred.succeed(promptOptions.dispatched, undefined);
+          }
+          if (options.holdPrompt !== undefined) {
+            yield* Deferred.await(options.holdPrompt);
+          }
+          if (sessionUpdate !== undefined) {
+            yield* sessionUpdate({
+              sessionId: startResult.sessionId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: {
+                  type: "text",
+                  text: options.assistantText ?? "Added subtract in math.ts.",
+                },
+              },
+            });
+          }
+          return { stopReason: "end_turn" as const };
+        }),
+      cancel: Effect.void,
+      request: () => Effect.die("unused"),
+      notify: () => Effect.void,
+      handleSessionUpdate: (handler) =>
+        Effect.sync(() => {
+          sessionUpdate = handler;
+        }),
+      handleRequestPermission: () => Effect.void,
+      handleElicitation: () => Effect.void,
+      handleElicitationComplete: () => Effect.void,
+      handleMcpConnect: () => Effect.void,
+      handleMcpMessage: () => Effect.void,
+      handleMcpDisconnect: () => Effect.void,
+      handleMcpNotification: () => Effect.void,
+      handleReadTextFile: () => Effect.void,
+      handleWriteTextFile: () => Effect.void,
+      handleCreateTerminal: () => Effect.void,
+      handleTerminalOutput: () => Effect.void,
+      handleTerminalWaitForExit: () => Effect.void,
+      handleTerminalKill: () => Effect.void,
+      handleTerminalRelease: () => Effect.void,
+      handleUnknownExtRequest: () => Effect.void,
+      handleUnknownExtNotification: () => Effect.void,
+      handleExtRequest: () => Effect.void,
+      handleExtNotification: () => Effect.void,
+    };
+    const adapter = yield* makeAntigravityAdapterV2({
+      instanceId,
+      selfInvocation: yield* resolveSelfInvocation(),
+      makeRuntime: () => Effect.succeed(mockRuntime),
+      withProcess: (_stop, task) => task,
+      defaultModel: Effect.undefined,
+      samplePromptSuggestion: options.samplePromptSuggestion,
+      ...(options.continuationRequests !== undefined
+        ? { continuationRequests: options.continuationRequests }
+        : {}),
+    });
+    const session = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-antigravity-suggestion"),
+      modelSelection,
+      runtimePolicy,
+      promptSuggestions: options.promptSuggestions,
+    });
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    yield* session.events.pipe(
+      Stream.runForEach((event) => Queue.offer(events, event)),
+      Effect.forkScoped,
+    );
+    const providerThread = yield* session.ensureThread({
+      threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const until = (done: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean) =>
+      Effect.gen(function* () {
+        const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        while (true) {
+          const event = yield* Queue.take(events);
+          seen.push(event);
+          if (done(event)) return seen;
+        }
+      });
+    const now = yield* DateTime.now;
+    const makeTurn = (
+      ordinal: number,
+      overrides?: {
+        readonly text?: string;
+        readonly delegated?: boolean;
+        readonly continuation?: boolean;
+      },
+    ) => {
+      const turn = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        modelSelection,
+        runtimePolicy,
+        now,
+        messageText: overrides?.text ?? `Turn ${ordinal} request`,
+      });
+      return {
+        ...turn,
+        runId: RunId.make(`run-suggestion-${ordinal}`),
+        runOrdinal: ordinal,
+        providerTurnOrdinal: ordinal,
+        attemptId: RunAttemptId.make(`attempt-suggestion-${ordinal}`),
+        rootNodeId: NodeId.make(`node-suggestion-${ordinal}`),
+        appThread: {
+          ...turn.appThread,
+          lineage: overrides?.delegated
+            ? {
+                parentThreadId: ThreadId.make("parent-thread"),
+                relationshipToParent: "subagent" as const,
+                rootThreadId: ThreadId.make("parent-thread"),
+              }
+            : turn.appThread.lineage,
+        },
+        message: {
+          ...turn.message,
+          messageId: MessageId.make(`message-suggestion-${ordinal}`),
+          ...(overrides?.continuation
+            ? { createdBy: "agent" as const, creationSource: "provider" as const }
+            : {}),
+        },
+      };
+    };
+    const emitSessionUpdate = (notification: EffectAcpSchema.SessionNotification) =>
+      sessionUpdate === undefined ? Effect.void : sessionUpdate(notification);
+    return {
+      threadId,
+      modelSelection,
+      providerThread,
+      session,
+      until,
+      makeTurn,
+      emitSessionUpdate,
+    };
+  });
+
+  it.effect(
+    "emits prompt_suggestion.updated after a completed root turn and reads the flag live",
+    () =>
+      Effect.gen(function* () {
+        const enabled = yield* Ref.make(true);
+        const sampled: Array<{
+          readonly model: string;
+          readonly messages: ReadonlyArray<{ readonly role: string; readonly text: string }>;
+        }> = [];
+        const { threadId, modelSelection, session, until, makeTurn } =
+          yield* makePromptSuggestionSession({
+            promptSuggestions: Ref.get(enabled),
+            samplePromptSuggestion: (input) =>
+              Effect.sync(() => {
+                sampled.push({ model: input.modelSelection.model, messages: input.messages });
+                return "  add tests for subtract\n";
+              }),
+          });
+
+        const turn1 = makeTurn(1, { text: "Add a subtract function." });
+        yield* session.startTurn(turn1);
+        const events1 = yield* until((event) => event.type === "prompt_suggestion.updated");
+        const suggestionEvent = events1.find((event) => event.type === "prompt_suggestion.updated");
+        assert.deepEqual(suggestionEvent, {
+          type: "prompt_suggestion.updated",
+          driver: "antigravity",
+          threadId,
+          runId: turn1.runId,
+          text: "add tests for subtract",
+        });
+        assert.deepEqual(sampled, [
+          {
+            model: modelSelection.model,
+            messages: [
+              { role: "user", text: "Add a subtract function." },
+              { role: "assistant", text: "Added subtract in math.ts." },
+            ],
+          },
+        ]);
+
+        yield* Ref.set(enabled, false);
+        const turn2 = makeTurn(2, { text: "Now add divide." });
+        yield* session.startTurn(turn2);
+        yield* until((event) => event.type === "turn.terminal");
+        assert.equal(sampled.length, 1);
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("skips sampling for delegated threads, continuations, and /compact turns", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const { session, until, makeTurn } = yield* makePromptSuggestionSession({
+        promptSuggestions: Effect.succeed(true),
+        samplePromptSuggestion: () =>
+          Effect.sync(() => {
+            calls += 1;
+            return "should not run";
+          }),
+      });
+
+      yield* session.startTurn(makeTurn(1, { delegated: true }));
+      yield* until((event) => event.type === "turn.terminal");
+      yield* session.startTurn(makeTurn(2, { continuation: true }));
+      yield* until((event) => event.type === "turn.terminal");
+      yield* session.startTurn(makeTurn(3, { text: "/compact" }));
+      yield* until((event) => event.type === "turn.terminal");
+      assert.equal(calls, 0);
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "cancels an in-flight suggestion on next turn, rollback, forced session replacement, or admitted continuation",
+    () =>
+      Effect.gen(function* () {
+        const started = [
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+        ] as const;
+        const interrupted = [
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+        ] as const;
+        const continuationOffered =
+          yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+        let callCount = 0;
+        const {
+          threadId,
+          modelSelection,
+          providerThread,
+          session,
+          until,
+          makeTurn,
+          emitSessionUpdate,
+        } = yield* makePromptSuggestionSession({
+          promptSuggestions: Effect.succeed(true),
+          continuationRequests: {
+            offer: (request) => Deferred.succeed(continuationOffered, request).pipe(Effect.asVoid),
+          },
+          samplePromptSuggestion: () =>
+            Effect.gen(function* () {
+              const index = callCount;
+              callCount += 1;
+              if (index < 4) {
+                yield* Deferred.succeed(started[index]!, undefined);
+                return yield* Effect.never.pipe(
+                  Effect.onInterrupt(() =>
+                    Deferred.succeed(interrupted[index]!, undefined).pipe(Effect.asVoid),
+                  ),
+                );
+              }
+              return "run the test suite";
+            }),
+        });
+
+        // 1. Next turn cancels the first in-flight suggestion.
+        yield* session.startTurn(makeTurn(1, { text: "First turn" }));
+        yield* until((event) => event.type === "turn.terminal");
+        yield* Deferred.await(started[0]);
+
+        yield* session.startTurn(makeTurn(2, { text: "Second turn" }));
+        yield* Deferred.await(interrupted[0]);
+        yield* until((event) => event.type === "turn.terminal");
+        yield* Deferred.await(started[1]);
+
+        // 2. Rollback cancels the second in-flight suggestion before replacing the session.
+        yield* session.rollbackThread({
+          providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-before-first-run"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [],
+        });
+        yield* Deferred.await(interrupted[1]);
+
+        // 3. Forced session replacement cancels the third in-flight suggestion before starting the new runtime.
+        yield* session.startTurn(makeTurn(3, { text: "Third turn" }));
+        yield* until((event) => event.type === "turn.terminal");
+        yield* Deferred.await(started[2]);
+
+        yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          }),
+          forceNewNativeThread: true,
+          existingProviderThread: providerThread,
+        });
+        yield* Deferred.await(interrupted[2]);
+
+        // 4. Admitting a late continuation cancels the fourth in-flight suggestion and suppresses
+        //    sampling while the continuation remains pending.
+        yield* session.startTurn(makeTurn(4, { text: "Fourth turn" }));
+        yield* until((event) => event.type === "turn.terminal");
+        yield* Deferred.await(started[3]);
+
+        yield* emitSessionUpdate({
+          sessionId: "mock-suggestion-session",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Late background wake" },
+          },
+        });
+        const offeredRequest = yield* Deferred.await(continuationOffered);
+        yield* Deferred.await(interrupted[3]);
+
+        yield* session.startTurn(makeTurn(5, { text: "Fifth turn while continuation pending" }));
+        yield* until((event) => event.type === "turn.terminal");
+        assert.equal(callCount, 4);
+
+        // 5. Once the pending continuation clears, a subsequent normal turn emits its suggestion.
+        yield* offeredRequest.clearIfCurrent?.() ?? Effect.void;
+        const turn6 = makeTurn(6, { text: "Sixth turn" });
+        yield* session.startTurn(turn6);
+        const events6 = yield* until((event) => event.type === "prompt_suggestion.updated");
+        assert.deepEqual(
+          events6.filter((event) => event.type === "prompt_suggestion.updated"),
+          [
+            {
+              type: "prompt_suggestion.updated",
+              driver: "antigravity",
+              threadId: turn6.threadId,
+              runId: turn6.runId,
+              text: "run the test suite",
+            },
+          ],
+        );
       }).pipe(Effect.provide(layerSession)),
   );
 });
