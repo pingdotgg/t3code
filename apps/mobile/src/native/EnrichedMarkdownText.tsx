@@ -11,7 +11,13 @@ import {
   markdownWithInlineFileLinks,
   markdownWithTableBreaks,
   markdownWithTextDirection,
+  parseMarkdownAst,
 } from "../lib/markdownDocument";
+import {
+  EMPTY_FILE_HREFS,
+  getCachedMarkdownLinkUrls,
+  getCachedNativeMarkdown,
+} from "../lib/markdownParseCache";
 import { useGT } from "gt-react-native";
 import { isValidElement, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import { Platform, Share, StyleSheet, useWindowDimensions, View } from "react-native";
@@ -232,13 +238,19 @@ function codeBlockElement(
   return undefined;
 }
 
-export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
-  const { renderImage, resolveImageSource, fileEmbedLabel } = props;
-  const gt = useGT();
-  const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
+interface EnrichedStaticLabels {
+  readonly accessibilityLabels: AccessibilityLabels;
+  readonly selectionMenuConfig: TextSelectionMenuConfig;
+}
+
+const staticLabelsByGt = new WeakMap<ReturnType<typeof useGT>, EnrichedStaticLabels>();
+
+function getStaticLabels(gt: ReturnType<typeof useGT>): EnrichedStaticLabels {
+  const cached = staticLabelsByGt.get(gt);
+  if (cached !== undefined) return cached;
   // The library fills in {n}, {content} and {speech} itself when VoiceOver or TalkBack speaks.
-  const accessibilityLabels = useMemo<AccessibilityLabels>(
-    () => ({
+  const created: EnrichedStaticLabels = {
+    accessibilityLabels: {
       list: {
         bulletPoint: gt("Bullet point"),
         nestedBulletPoint: gt("Nested bullet point"),
@@ -254,28 +266,35 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         links: gt("Links", { $context: "screen reader rotor category" }),
         images: gt("Images", { $context: "screen reader rotor category" }),
       },
-    }),
-    [gt],
-  );
-  // The library's built-in selection menu items default to English labels.
-  const selectionMenuConfig = useMemo<TextSelectionMenuConfig>(
-    () => ({
+    },
+    // The library's built-in selection menu items default to English labels.
+    selectionMenuConfig: {
       copy: { label: gt("Copy", { $context: "verb" }) },
       copyAsMarkdown: { label: gt("Copy as Markdown") },
       copyImageUrl: {
         label: gt("Copy Image URL"),
         pluralLabels: { other: gt("Copy {count} Image URLs", { count: "{count}" }) },
       },
-    }),
-    [gt],
-  );
+    },
+  };
+  staticLabelsByGt.set(gt, created);
+  return created;
+}
+
+export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
+  const { renderImage, resolveImageSource, fileEmbedLabel } = props;
+  const gt = useGT();
+  const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
+  const { accessibilityLabels, selectionMenuConfig } = useMemo(() => getStaticLabels(gt), [gt]);
   const { markdown, fileHrefs } = useMemo(() => {
-    if (!fileEmbedLabel) {
+    if (!fileEmbedLabel || (!props.markdown.includes("![") && !/<img\b/i.test(props.markdown))) {
       return {
-        markdown: markdownWithTextDirection(
-          markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+        markdown: getCachedNativeMarkdown(props.markdown, (input) =>
+          markdownWithTextDirection(
+            markdownForNativeRendering(input, ENRICHED_INLINE_FILE_LINK_REGEX),
+          ),
         ),
-        fileHrefs: new Set<string>(),
+        fileHrefs: EMPTY_FILE_HREFS,
       };
     }
     const content = markdownWithInlineFileLinks(
@@ -288,14 +307,27 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       markdown: markdownWithTextDirection(markdownWithTableBreaks(files.markdown)),
     };
   }, [props.markdown, fileEmbedLabel]);
-  const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
+  const initialLinkUrls = useMemo(
+    () => getCachedMarkdownLinkUrls(markdown, parseMarkdownAst),
+    [markdown],
+  );
+  const [overrideLinks, setOverrideLinks] = useState<{
+    readonly markdown: string;
+    readonly urls: ReadonlyArray<string>;
+  } | null>(null);
+  const parsedLinkUrls =
+    overrideLinks !== null && overrideLinks.markdown === markdown
+      ? overrideLinks.urls
+      : initialLinkUrls;
   const onLinksChange = (links: MarkdownLinkOccurrence[]) => {
     const urls = [...new Set(links.map((link) => link.url))];
-    setParsedLinkUrls((previous) =>
-      previous.length === urls.length && previous.every((url, index) => url === urls[index])
-        ? previous
-        : urls,
-    );
+    if (
+      parsedLinkUrls.length === urls.length &&
+      parsedLinkUrls.every((url, index) => url === urls[index])
+    ) {
+      return;
+    }
+    setOverrideLinks({ markdown, urls });
   };
   const textLinkRegex = useMemo(
     () => enrichedTextLinkRegex(props.skills, props.models),
