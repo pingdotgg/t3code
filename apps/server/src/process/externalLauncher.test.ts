@@ -276,6 +276,47 @@ it.effect.skipIf(windowsHost)(
 );
 
 // Windows drive letters cannot resolve the POSIX editor stub.
+it.effect.skipIf(windowsHost)("opens Winc with the positioned target as a single argument", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-project-" });
+    const wincPath = path.join(binDir, "winc");
+    yield* fileSystem.writeFileString(wincPath, "#!/bin/sh\n");
+    yield* fileSystem.chmod(wincPath, 0o755);
+    const file = path.join(project, "file.ts");
+    yield* fileSystem.writeFileString(file, "content");
+
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "winc", cwd: project });
+      yield* launcher.launchEditor({ editor: "winc", cwd: file });
+      yield* launcher.launchEditor({
+        editor: "winc",
+        cwd: file,
+        position: { line: 5, column: 3 },
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { PATH: binDir, DISPLAY: ":0" },
+          onSpawn: (command) => spawned.push(command),
+        }),
+      ),
+      Effect.provideService(HostProcess.Environment, { PATH: binDir, DISPLAY: ":0" }),
+    );
+
+    assert.deepEqual(
+      spawned.map((command) => command.args),
+      [[project], [file], [`${file}:5:3`]],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// Windows drive letters cannot resolve the POSIX editor stub.
 it.effect.skipIf(windowsHost)(
   "a Linux editor launch without a display takes the desktop session's display from the systemd user manager",
   () =>

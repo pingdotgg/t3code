@@ -411,6 +411,19 @@ export const Zed: Icon = (props) => {
   );
 };
 
+export const Winc: Icon = (props) => (
+  <svg {...props} fill="none" viewBox="0 0 96 96">
+    <path
+      stroke="currentColor"
+      strokeWidth={11}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M17 35 L28.5 66 L44 38 L56.5 66 L68 35"
+    />
+    <circle cx="77" cy="29" r="9" fill="currentColor" />
+  </svg>
+);
+
 export const OpenAI: Icon = ({ className, ...props }) => (
   <svg
     {...props}
