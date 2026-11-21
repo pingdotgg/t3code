@@ -245,11 +245,17 @@ export function makeAntigravityAcpAdapterFlavor(
     rewriteUserText: (text, turnInput) => {
       const { userHome, profileDirectory } = options;
       const cwd = turnInput.runtimePolicy.cwd;
-      if (!userHome || !profileDirectory || !cwd || !hasAntigravitySkillMention(text)) {
+      const historyLength = turnInput.inlineContextLength ?? 0;
+      if (
+        !userHome ||
+        !profileDirectory ||
+        !cwd ||
+        !hasAntigravitySkillMention(text, historyLength)
+      ) {
         return Effect.succeed(text);
       }
       return discoverAntigravitySkills({ cwd, userHome, profileDirectory }).pipe(
-        Effect.flatMap((skills) => dispatchAntigravitySkillMentions(text, skills)),
+        Effect.flatMap((skills) => dispatchAntigravitySkillMentions(text, skills, historyLength)),
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
         Effect.provideService(Path.Path, options.path),
         Effect.orElseSucceed(() => text),

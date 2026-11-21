@@ -554,17 +554,18 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 
 const FRONTMATTER_PATTERN = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
 
-/** True when the text holds a `$name` the composer would show as a skill chip. */
-export function hasAntigravitySkillMention(text: string): boolean {
-  return text.search(SKILL_MENTION_PATTERN) !== -1;
+/** True when the user's words, after `historyLength` characters of handoff context, hold a `$name` chip. */
+export function hasAntigravitySkillMention(text: string, historyLength = 0): boolean {
+  return text.slice(historyLength).search(SKILL_MENTION_PATTERN) !== -1;
 }
 
 /**
- * Rewrites `$name` to the native `/name`. Antigravity hides `disable-model-invocation` skills
- * from the model's catalog, so the prompt carries the contents of those the user invoked.
+ * Rewrites `$name` to `/name` and appends the invoked skills' instructions. Antigravity expands
+ * `/name` only at the start of a prompt and hides `disable-model-invocation` skills from the model.
+ * The first `historyLength` characters are handoff history, so their mentions stay as they are.
  */
 export const dispatchAntigravitySkillMentions = Effect.fn("dispatchAntigravitySkillMentions")(
-  function* (text: string, skills: ReadonlyArray<ServerProviderSkill>) {
+  function* (text: string, skills: ReadonlyArray<ServerProviderSkill>, historyLength = 0) {
     const fileSystem = yield* FileSystem.FileSystem;
     const invocable = new Map(
       skills
@@ -572,23 +573,26 @@ export const dispatchAntigravitySkillMentions = Effect.fn("dispatchAntigravitySk
         .map((skill) => [skill.name, skill]),
     );
     const invoked = new Map<string, ServerProviderSkill>();
-    const rewritten = text.replace(SKILL_MENTION_PATTERN, (match, prefix: string, name: string) => {
-      const skill = invocable.get(name);
-      if (skill === undefined) return match;
-      invoked.set(name, skill);
-      return `${prefix}/${name}`;
-    });
-    const blocks = yield* Effect.forEach(
-      [...invoked.values()].filter((skill) => skill.userInvocationOnly === true),
-      (skill) =>
-        fileSystem.readFileString(skill.path).pipe(
-          Effect.map((contents) => contents.replace(FRONTMATTER_PATTERN, "").trim()),
-          Effect.orElseSucceed(() => `Read and follow ${skill.path}.`),
-          Effect.map((body) => `<skill name="${skill.name}">\n${body}\n</skill>`),
-        ),
+    const request = text.slice(historyLength);
+    const rewritten = request.replace(
+      SKILL_MENTION_PATTERN,
+      (match, prefix: string, name: string) => {
+        const skill = invocable.get(name);
+        if (skill === undefined) return match;
+        invoked.set(name, skill);
+        return `${prefix}/${name}`;
+      },
     );
+    const blocks = yield* Effect.forEach(invoked.values(), (skill) =>
+      fileSystem.readFileString(skill.path).pipe(
+        Effect.map((contents) => contents.replace(FRONTMATTER_PATTERN, "").trim()),
+        Effect.orElseSucceed(() => `Read and follow ${skill.path}.`),
+        Effect.map((body) => `<skill name="${skill.name}">\n${body}\n</skill>`),
+      ),
+    );
+    const history = text.slice(0, historyLength);
     return blocks.length === 0
-      ? rewritten
-      : `${rewritten}\n\nThe user invoked these skills. Follow their instructions:\n\n${blocks.join("\n\n")}`;
+      ? text
+      : `${history}${rewritten}\n\nThe user invoked these skills. Follow their instructions:\n\n${blocks.join("\n\n")}`;
   },
 );

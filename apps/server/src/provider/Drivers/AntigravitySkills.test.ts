@@ -141,16 +141,38 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         },
       ]);
 
+      const instructions = (...names: ReadonlyArray<string>) =>
+        `\n\nThe user invoked these skills. Follow their instructions:\n\n${names
+          .map((name) =>
+            name === "ship"
+              ? '<skill name="ship">\n# Ship\nRun tests before commit.\n</skill>'
+              : `<skill name="${name}">\n\n</skill>`,
+          )
+          .join("\n\n")}`;
       assert.equal(
         yield* dispatchAntigravitySkillMentions("Fix it then $ship", skills),
-        'Fix it then /ship\n\nThe user invoked these skills. Follow their instructions:\n\n<skill name="ship">\n# Ship\nRun tests before commit.\n</skill>',
+        `Fix it then /ship${instructions("ship")}`,
       );
+      // Antigravity expands only a leading `/review`, so a later one still carries its instructions.
       assert.equal(
         yield* dispatchAntigravitySkillMentions(
-          "$review it for $25, not $internal or $unknown",
+          "Fix X. $review it for $25, not $internal or $unknown",
           skills,
         ),
-        "/review it for $25, not $internal or $unknown",
+        `Fix X. /review it for $25, not $internal or $unknown${instructions("review")}`,
+      );
+      const history = "Earlier: $ship went out.\n\n";
+      assert.equal(
+        yield* dispatchAntigravitySkillMentions(
+          `${history}Fix the typo only.`,
+          skills,
+          history.length,
+        ),
+        `${history}Fix the typo only.`,
+      );
+      assert.equal(
+        yield* dispatchAntigravitySkillMentions(`${history}Then $review`, skills, history.length),
+        `${history}Then /review${instructions("review")}`,
       );
     }),
   );
