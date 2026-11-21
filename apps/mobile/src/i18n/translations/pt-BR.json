@@ -5216,6 +5216,7 @@
   "2f4ed7dbd22be30d": "Cancelar execução",
   "6bc75632fd9c9136": "Não foi possível cancelar a execução",
   "071226144ee6df21": "Uma etapa falhou.",
+  "45b9a27847b394eb": "Ela não pode continuar até que a versão do workflow seja registrada novamente.",
   "cb2e5a62b219ce79": "Ela aguarda você retomá-la.",
   "bbdb7367c4963b67": "Ela tenta de novo sozinha, ou retome agora.",
   "df86826bcb3eb1c3": "Retomar agora",

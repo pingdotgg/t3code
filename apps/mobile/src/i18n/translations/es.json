@@ -5216,6 +5216,7 @@
   "2f4ed7dbd22be30d": "Cancelar ejecución",
   "6bc75632fd9c9136": "No se pudo cancelar la ejecución",
   "071226144ee6df21": "Falló un paso.",
+  "45b9a27847b394eb": "No puede continuar hasta que su versión del flujo de trabajo vuelva a registrarse.",
   "cb2e5a62b219ce79": "Espera a que la reanudes.",
   "bbdb7367c4963b67": "Lo reintenta sola, o reanúdala ahora.",
   "df86826bcb3eb1c3": "Reanudar ahora",

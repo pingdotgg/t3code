@@ -5216,6 +5216,7 @@
   "2f4ed7dbd22be30d": "Annuler l’exécution",
   "6bc75632fd9c9136": "Impossible d’annuler l’exécution",
   "071226144ee6df21": "Une étape a échoué.",
+  "45b9a27847b394eb": "Elle ne peut pas continuer tant que sa version du workflow n’est pas de nouveau enregistrée.",
   "cb2e5a62b219ce79": "Elle attend que vous la repreniez.",
   "bbdb7367c4963b67": "Elle réessaie d’elle-même, ou reprenez-la maintenant.",
   "df86826bcb3eb1c3": "Reprendre maintenant",

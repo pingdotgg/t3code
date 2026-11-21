@@ -50,6 +50,7 @@ import {
   workflowAnswer,
   workflowChip,
   workflowFlowFocus,
+  workflowPausedBeat,
   workflowResultLines,
   workflowRunNow,
   workflowRunState,
@@ -251,7 +252,7 @@ export function WorkflowRunFeed({
   const loose = node.questions.filter(
     (question) => !beats.some((beat) => questionOf(beat) === question),
   );
-  const failedAtStep = beats.some((beat) => beat.status === "failed");
+  const pausedAt = feed === null ? null : workflowPausedBeat(feed, run.status);
   const pause = (name: string | null, attempts: number, reason: string | null) => (
     <WorkflowPauseCard
       run={run}
@@ -259,13 +260,19 @@ export function WorkflowRunFeed({
       attempts={attempts}
       reason={reason}
       nowMs={nowMs}
-      disabled={busy || !canResume}
+      disabled={busy || !canResume || run.retired}
       onResume={() => void resumeRun()}
     />
   );
   const beatCard = (beat: WorkflowBeat) => {
-    if (beat.status === "failed" && run.status === "paused") {
-      return pause(beat.name, beat.attempts, beat.detail ?? run.detail);
+    if (beat === pausedAt) {
+      // The step's own card stays, so its transcript can be read before resuming.
+      return (
+        <div className="flex flex-col gap-3">
+          {pause(beat.name, beat.attempts, beat.detail ?? run.detail)}
+          {stepCard(beat)}
+        </div>
+      );
     }
     const question = questionOf(beat);
     if (question !== null) {
@@ -277,20 +284,21 @@ export function WorkflowRunFeed({
         />
       );
     }
-    return (
-      <WorkflowBeatCard
-        environmentId={environmentId}
-        beat={beat}
-        child={node.children.find((child) => child.run.runId === beat.childRun?.runId) ?? null}
-        nowMs={nowMs}
-        open={beat.thread !== null && beat.thread.threadId === openThreadId}
-        onSelect={onSelect}
-        onOpenThread={onOpenThread}
-      />
-    );
+    return stepCard(beat);
   };
+  const stepCard = (beat: WorkflowBeat) => (
+    <WorkflowBeatCard
+      environmentId={environmentId}
+      beat={beat}
+      child={node.children.find((child) => child.run.runId === beat.childRun?.runId) ?? null}
+      nowMs={nowMs}
+      open={beat.thread !== null && beat.thread.threadId === openThreadId}
+      onSelect={onSelect}
+      onOpenThread={onOpenThread}
+    />
+  );
   const resultLines = workflowResultLines(run.result);
-  const pausedApart = run.status === "paused" && !failedAtStep;
+  const pausedApart = run.status === "paused" && pausedAt === null;
   const keys = new Set([
     ...(feed ?? []).flatMap((row) => (row.kind === "quick" ? [`quick:${row.steps[0]?.name}`] : [])),
     ...beats.map((beat) => `step:${beat.name}`),
@@ -411,6 +419,9 @@ export function WorkflowRunFeed({
             </p>
           )}
           {/* A question the run already asks is answerable without its step history. */}
+          {run.status === "paused" ? (
+            <div className="mt-4">{pause(null, run.pauses, run.detail)}</div>
+          ) : null}
           {node.questions.map((question) => (
             <div key={question.name} className="mt-4">
               <WorkflowQuestionCard

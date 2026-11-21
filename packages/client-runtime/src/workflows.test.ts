@@ -14,6 +14,7 @@ import {
   workflowAnswer,
   workflowChip,
   workflowFlowFocus,
+  workflowPausedBeat,
   workflowResultLines,
   workflowRunLists,
   workflowRunNow,
@@ -340,6 +341,23 @@ describe("buildWorkflowTimeline", () => {
     expect(focus("paused")).toBe("step:publish");
     expect(focus("completed")).toBe("end");
     expect(focus("running")).toBe("step:publish");
+    expect(workflowPausedBeat(feed, "paused")?.name).toBe("publish");
+    // A failure the workflow caught, with the run going on after it, is not where it paused.
+    const caught = buildWorkflowFeed(
+      buildWorkflowTimeline({
+        run: run("r", { startedAt: at(0) }),
+        children: [],
+        nowMs: Date.parse(at(10)),
+        steps: [
+          step("lint", "agent", at(0), at(2), { status: "failed", detail: "timed out" }),
+          step("build", "agent", at(2), at(4)),
+        ],
+      }),
+    );
+    expect(workflowPausedBeat(caught, "paused")).toBeNull();
+    expect(workflowFlowFocus({ rows: caught, status: "paused", ended: false, questions: [] })).toBe(
+      "pause",
+    );
   });
 
   it("measures a step that is under way up to now", () => {

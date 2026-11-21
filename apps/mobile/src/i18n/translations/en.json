@@ -5224,6 +5224,7 @@
   "2f4ed7dbd22be30d": "Cancel run",
   "6bc75632fd9c9136": "Could not cancel the run",
   "071226144ee6df21": "A step failed.",
+  "45b9a27847b394eb": "It cannot go on until its workflow version is registered again.",
   "cb2e5a62b219ce79": "It waits for you to resume it.",
   "bbdb7367c4963b67": "It tries again by itself, or resume it now.",
   "df86826bcb3eb1c3": "Resume now",

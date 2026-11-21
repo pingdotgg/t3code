@@ -5222,6 +5222,7 @@
   "2f4ed7dbd22be30d": "Avbryt körningen",
   "6bc75632fd9c9136": "Kunde inte avbryta körningen",
   "071226144ee6df21": "Ett steg misslyckades.",
+  "45b9a27847b394eb": "Den kan inte fortsätta förrän dess arbetsflödesversion registreras igen.",
   "cb2e5a62b219ce79": "Den väntar på att du återupptar den.",
   "bbdb7367c4963b67": "Den försöker igen själv, eller återuppta den nu.",
   "df86826bcb3eb1c3": "Återuppta nu",
