@@ -233,6 +233,7 @@ export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "variant",
   "reasoning_effort",
   "thinking_level",
+  "thought_level",
 ];
 
 export function formatModelSelectionEffort(
@@ -244,11 +245,21 @@ export function formatModelSelectionEffort(
   if (!caps) return null;
   const options = withLegacyUltracodeEffort(caps.optionDescriptors, selection.options);
   const current = options ? { ...selection, options } : selection;
-  for (const id of REASONING_EFFORT_OPTION_IDS) {
-    const descriptor = caps.optionDescriptors?.find((candidate) => candidate.id === id);
-    if (descriptor?.type !== "select") continue;
-    const value = getProviderOptionStatedValue(id, current, reportedSelection);
-    if (value === undefined && id !== "variant") continue;
+  const selectDescriptors = (caps.optionDescriptors ?? []).filter(
+    (candidate) => candidate.type === "select",
+  );
+  const reasoningDescriptors = [
+    ...selectDescriptors.filter((candidate) => candidate.role === "reasoning"),
+    ...REASONING_EFFORT_OPTION_IDS.flatMap((id) => {
+      const descriptor = selectDescriptors.find(
+        (candidate) => candidate.id === id && candidate.role !== "reasoning",
+      );
+      return descriptor ? [descriptor] : [];
+    }),
+  ];
+  for (const descriptor of reasoningDescriptors) {
+    const value = getProviderOptionStatedValue(descriptor.id, current, reportedSelection);
+    if (value === undefined && descriptor.id !== "variant") continue;
     if (typeof value === "boolean") continue;
     // Bypass picker normalization so an obsolete choice cannot become a catalog default.
     const label = getProviderOptionCurrentLabel(
