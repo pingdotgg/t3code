@@ -46,6 +46,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import type { MessageResolver } from "../../i18n/messages";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";
+import { createSwipeableScrollGate } from "./swipe-scroll-gate";
 import { registerThreadDismissal } from "./thread-dismissal";
 
 const ACTION_ITEM_WIDTH = 58;
@@ -162,64 +163,43 @@ export function useSwipeableScrollGate(options?: {
   readonly onScrollBeginDrag?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
 }) {
   const [gateActive, setGateActive] = useState(false);
-  const gateActiveRef = useRef(false);
-  const draggingRef = useRef(false);
-  const dragStartYRef = useRef(0);
-  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [gate] = useState(() => createSwipeableScrollGate(setGateActive));
   const externalOnScroll = options?.onScroll;
   const externalOnScrollBeginDrag = options?.onScrollBeginDrag;
 
-  const update = useCallback((next: boolean) => {
-    if (gateActiveRef.current !== next) {
-      gateActiveRef.current = next;
-      setGateActive(next);
-    }
-  }, []);
-  const clearSettle = useCallback(() => {
-    if (settleTimerRef.current !== null) {
-      clearTimeout(settleTimerRef.current);
-      settleTimerRef.current = null;
-    }
-  }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the scroll settle timer on unmount
-  useEffect(() => clearSettle, [clearSettle]);
+  useEffect(() => () => gate.dispose(), [gate]);
 
   const onScrollBeginDrag = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      draggingRef.current = true;
-      dragStartYRef.current = event.nativeEvent.contentOffset.y;
-      clearSettle();
+      gate.onScrollBeginDrag(event.nativeEvent.contentOffset.y);
       externalOnScrollBeginDrag?.(event);
     },
-    [clearSettle, externalOnScrollBeginDrag],
+    [externalOnScrollBeginDrag, gate],
   );
   const onScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (
-        draggingRef.current &&
-        !gateActiveRef.current &&
-        Math.abs(event.nativeEvent.contentOffset.y - dragStartYRef.current) > 4
-      ) {
-        update(true);
-      }
+      gate.onScroll(event.nativeEvent.contentOffset.y);
       externalOnScroll?.(event);
     },
-    [externalOnScroll, update],
+    [externalOnScroll, gate],
   );
   const onScrollEndDrag = useCallback(() => {
-    draggingRef.current = false;
-    clearSettle();
-    settleTimerRef.current = setTimeout(() => update(false), 160);
-  }, [clearSettle, update]);
+    gate.onScrollEndDrag();
+  }, [gate]);
   const onMomentumScrollBegin = useCallback(() => {
-    clearSettle();
-  }, [clearSettle]);
+    gate.onMomentumScrollBegin();
+  }, [gate]);
   const onMomentumScrollEnd = useCallback(() => {
-    update(false);
-  }, [update]);
+    gate.onMomentumScrollEnd();
+  }, [gate]);
+  const resetScrollGate = useCallback(() => {
+    gate.reset();
+  }, [gate]);
 
   return {
     swipeEnabled: !gateActive,
+    resetScrollGate,
     scrollGateHandlers: {
       onScroll,
       onScrollBeginDrag,
