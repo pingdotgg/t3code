@@ -381,7 +381,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           path.join(sharedSkills, "yagni"),
           "---\nname: yagni\ndescription: Keep it simple.\n---\n",
         );
-        yield* writeSkill(
+        const experimentalPath = yield* writeSkill(
           path.join(sharedSkills, "experimental-draft"),
           "---\nname: experimental-draft\n---\n",
         );
@@ -392,11 +392,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           "---\nname: linter\n---\n",
         );
         yield* writeSkill(path.join(inheritedSkills, "skipped"), "---\nname: skipped\n---\n");
-        // Backtracks exponentially under RegExp against the pattern below.
-        yield* writeSkill(
-          path.join(inheritedSkills, "a".repeat(40)),
-          "---\nname: backtrack\n---\n",
-        );
+        yield* writeSkill(path.join(inheritedSkills, "lint-draft"), "---\nname: lint-draft\n---\n");
 
         const projectSkills = path.join(input.cwd, "tools", "skills");
         const projectPath = yield* writeSkill(
@@ -425,7 +421,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         yield* fileSystem.writeFileString(
           path.join(globalConfigDir, "skills.json"),
           JSON.stringify({
-            inherits: [{ path: inheritedConfigPath, include_only: ["linter", "(a*)*b"] }],
+            inherits: [{ path: inheritedConfigPath, include_only: ["linter", "lint-.*"] }],
             entries: [
               { path: sharedSkills, exclude: ["experimental-.*"] },
               { path: "~/tilde-skills" },
@@ -452,6 +448,12 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
 
         assert.deepEqual(yield* discoverAntigravitySkills(input), [
           { name: "deploy", path: projectPath, scope: "project", enabled: true },
+          {
+            name: "experimental-draft",
+            path: experimentalPath,
+            scope: "user",
+            enabled: true,
+          },
           { name: "linter", path: inheritedPath, scope: "user", enabled: true },
           {
             name: "yagni",

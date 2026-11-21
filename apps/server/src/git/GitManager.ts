@@ -111,6 +111,8 @@ export interface GitLocalStatusOptions {
 
 export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
   readonly refreshMissingPullRequest?: boolean;
+  /** Details the caller just read without fetching; used instead of reading them again. */
+  readonly statusDetails?: GitVcsDriver.GitRemoteStatusDetails;
 }
 
 export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
@@ -1603,9 +1605,11 @@ export const make = Effect.gen(function* () {
     cwd: string,
     options?: GitRemoteStatusOptions,
   ) {
-    const details = yield* gitCore
-      .statusDetailsRemote(cwd, options)
-      .pipe(Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(null)));
+    const details =
+      options?.statusDetails ??
+      (yield* gitCore
+        .statusDetailsRemote(cwd, options)
+        .pipe(Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(null))));
     if (details === null || !details.isRepo) {
       return null;
     }

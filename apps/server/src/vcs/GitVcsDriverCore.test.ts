@@ -720,7 +720,10 @@ it.effect.each(["bare", "unborn"] as const)(
         } else {
           assert.isEmpty(refs.refs);
         }
-        assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
+        assert.equal(
+          spawnedArgs.filter((args) => args.includes("--git-common-dir")).length,
+          state === "bare" ? 2 : 1,
+        );
       }),
     ).pipe(Effect.provide(layerTest)),
 );
@@ -829,7 +832,7 @@ it.effect.each(["on a branch", "detached", "unborn"] as const)(
           file: { path: "new.txt", previousPath: null, sourceKind: "working-tree" },
         } as const;
         const workingTree = yield* driver.getReviewDiffPreview(workingTreeFile);
-        assert.deepStrictEqual(discoveries(), { commonDir: 1, worktreeRoot: 1, branch: 1 });
+        assert.deepStrictEqual(discoveries(), { commonDir: 1, worktreeRoot: 1, branch: 0 });
         assert.deepStrictEqual(
           workingTree.sources
             .find((source) => source.kind === "working-tree")!
@@ -964,7 +967,13 @@ it.effect("resolves a branch's base once while its refs and branch config are un
       });
       assert.deepStrictEqual(reused.sources, withUntracked.sources);
       yield* (yield* FileSystem.FileSystem).remove(`${cwd}/untracked.txt`);
+      yield* driver.statusDetailsLocal(cwd);
       spawnedArgs.length = 0;
+
+      // Git for Windows' no-op `fetch --dry-run` touches a refs directory without moving a ref.
+      NodeFS.utimesSync(`${cwd}/.git/refs/heads`, 1_893_456_000, 1_893_456_000);
+      yield* driver.statusDetailsLocal(cwd);
+      assert.equal(lookups(), 0);
 
       yield* git(cwd, ["config", "branch.feature/x.t3-merge-base-ref", "refs/heads/main"]);
       yield* driver.statusDetailsLocal(cwd);
@@ -1924,6 +1933,48 @@ it.effect("retries an in-flight ref snapshot invalidated by a mutation", () =>
       const refs = yield* Fiber.join(inFlight);
       assert.isTrue(refs.refs.some((ref) => ref.name === "feature/during-refresh"));
       assert.equal(yield* Ref.get(refScans), 2);
+    }),
+  ).pipe(
+    Effect.provide(
+      layerServerConfig.pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
+it.effect("a refreshed ref list reads the current branch and repository paths once", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnedArgs: Array<ReadonlyArray<string>> = [];
+      const recordingSpawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args.map(String));
+        return delegate.spawn(command);
+      });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+      yield* git(cwd, ["checkout", "-b", "outside-checkout"]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+      spawnedArgs.length = 0;
+
+      // The branch selector's paginated queries send two refreshes at once.
+      const [first, second] = yield* Effect.all(
+        [
+          driver.listRefs({ cwd, refresh: true }),
+          driver.listRefs({ cwd, refresh: true, limit: 1 }),
+        ],
+        { concurrency: 2 },
+      );
+
+      assert.equal(first.refs.find((ref) => ref.current)?.name, "outside-checkout");
+      assert.equal(second.refs.find((ref) => ref.current)?.name, "outside-checkout");
+      assert.equal(spawnedArgs.filter((args) => args[0] === "symbolic-ref").length, 1);
+      assert.equal(spawnedArgs.filter((args) => args[0] === "rev-parse").length, 1);
     }),
   ).pipe(
     Effect.provide(

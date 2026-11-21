@@ -23,6 +23,7 @@ import {
   CommandAvailability,
   CommandResolutionCache,
   type CommandAvailabilityChecker,
+  gitForWindowsBash,
   isCommandAvailable,
   listLoginShellCandidates,
   mergePathEntries,
@@ -414,6 +415,9 @@ describe("readEnvironmentFromWindowsShell", () => {
         expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
         { encoding: "utf8", timeout: 5000 },
       );
+      expect(execFile.mock.calls[0]?.[1].at(-1)).toContain(
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+      );
     }),
   );
 
@@ -438,6 +442,21 @@ describe("readEnvironmentFromWindowsShell", () => {
         FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
       });
     }),
+  );
+
+  effectIt.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "reads a non-ASCII value from the real shell",
+    () =>
+      Effect.gen(function* () {
+        const name = "T3CODE_TEST_NON_ASCII_PATH";
+        const value = "C:\\Users\\Jürgen\\Grüße";
+        vi.stubEnv(name, value);
+        try {
+          expect(yield* readEnvironmentFromWindowsShell([name])).toEqual({ [name]: value });
+        } finally {
+          vi.unstubAllEnvs();
+        }
+      }),
   );
 
   effectIt.effect("omits -NoProfile when loadProfile is enabled", () =>
@@ -666,6 +685,7 @@ describe("runsGitWithoutConsole", () => {
 
   it.each([
     [["rev-parse", "--git-path", "index"], true],
+    [["rev-parse", "--git-common-dir", "--show-toplevel"], true],
     [
       [
         "rev-parse",
@@ -754,6 +774,24 @@ describe("preferGitForWindowsBinary", () => {
     expect(preferGitForWindowsBinary("C:\\Program Files\\Git\\cmd\\gitk.exe", {}, everything)).toBe(
       "C:\\Program Files\\Git\\cmd\\gitk.exe",
     );
+  });
+});
+
+describe("gitForWindowsBash", () => {
+  const bash = "C:\\Program Files\\Git\\bin\\bash.exe";
+  const isBash = (filePath: string) => filePath === bash;
+
+  it.each([
+    "C:\\Program Files\\Git\\cmd\\git.exe",
+    "C:\\Program Files\\Git\\bin\\git.exe",
+    "C:\\Program Files\\Git\\mingw64\\bin\\git.exe",
+  ])("finds Git Bash from %s", (git) => {
+    expect(gitForWindowsBash(git, isBash)).toBe(bash);
+  });
+
+  it("finds nothing without a Git for Windows bash", () => {
+    expect(gitForWindowsBash("C:\\Users\\me\\scoop\\shims\\git.exe", isBash)).toBeUndefined();
+    expect(gitForWindowsBash("C:\\Program Files\\Git\\cmd\\gitk.exe", () => true)).toBeUndefined();
   });
 });
 

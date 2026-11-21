@@ -214,7 +214,7 @@ describe("document preview contents", () => {
     expect(html).not.toContain("https:");
   });
 
-  it("treats a backslash before a line break as a paragraph break, as TextEdit writes them", () => {
+  it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
     const html = (rtf: string) => {
       const result = openRtf(bytes(rtf));
       if (result.type !== "document") throw new Error("Expected document");
@@ -230,6 +230,12 @@ Third}`;
     );
     expect(html(textEdit)).toEqual(expected);
     expect(html(textEdit.replaceAll("\n", "\r\n"))).toEqual(expected);
+    const lineBreak = html(String.raw`{\rtf1\ansi First line\line Second line}`);
+    expect(lineBreak).toEqual(["<p>First line<br>Second line</p>"]);
+    expect(html(String.raw`{\rtf1\ansi First line\uc0\u8232 Second line}`)).toEqual(lineBreak);
+    expect(html(String.raw`{\rtf1\ansi First line\u8232?Second line{\deleted\u8232?}}`)).toEqual(
+      lineBreak,
+    );
   });
 
   it("preserves rich text page breaks and formatting without splitting hidden destinations", () => {
@@ -246,6 +252,27 @@ Third}`;
     expect(() => openRtf(bytes(String.raw`{\rtf1 ` + String.raw`\page`.repeat(501) + "}"))).toThrow(
       expect.objectContaining({ code: "rtf-too-many-pages" }),
     );
+  });
+
+  it("starts a new line at rich text section and column breaks", () => {
+    const result = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi\sectd\cols2\pard North quota: 120\column South quota: 240\page East quota: 360\sect\sectd\pard West quota: 480\par}`,
+      ),
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages.map((page) => page.html)).toEqual([
+      "<p>North quota: 120<br>South quota: 240</p>",
+      "<p>East quota: 360<br>West quota: 480<br></p>",
+    ]);
+    const written = openRtf(
+      bytes(String.raw`{\rtf1\ansi First\par\sect\sectd Second\par\column Third\page\sect Fourth}`),
+    );
+    if (written.type !== "document") throw new Error("Expected document");
+    expect(written.pages.map((page) => page.html)).toEqual([
+      "<p>First<br>Second<br>Third</p>",
+      "<p>Fourth</p>",
+    ]);
   });
 
   it("decodes declared rich text code pages for raw bytes and escaped byte runs", () => {

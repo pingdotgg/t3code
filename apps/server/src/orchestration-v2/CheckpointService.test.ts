@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -546,6 +547,156 @@ it.effect("backs off only baseline retries after repeated workspace capture time
       yield* Effect.result(checkpoints.captureBaseline(baseline));
       yield* Effect.result(checkpoints.captureBaseline(baseline));
       assert.strictEqual(attempts, 13, "a successful baseline must clear the timeout streak");
+    }).pipe(Effect.provide(layerTest));
+  }),
+);
+
+it.effect("skips post-turn captures that waited out another capture's timeout in the folder", () =>
+  Effect.gen(function* () {
+    const scopeFor = (name: string): OrchestrationV2CheckpointScope => ({
+      id: CheckpointScopeId.make(`checkpoint-scope:shared-folder:${name}`),
+      threadId: ThreadId.make(`thread:shared-folder:${name}`),
+      runId: RunId.make(`run:shared-folder:${name}:1`),
+      nodeId: NodeId.make(`node:shared-folder:${name}:1`),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make(`provider-thread:shared-folder:${name}`),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/repo/shared",
+      createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+    });
+    const attempts = yield* Ref.make(0);
+    // Outcomes for upcoming attempts; an attempt with none scripted times out.
+    const script = yield* Ref.make<ReadonlyArray<"ready" | "timeout">>([]);
+    const started = yield* Queue.unbounded<void>();
+    const layerTest = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          layerNoTrackedFolders,
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            isGitRepository: () => Effect.succeed(true),
+            hasCheckpointRef: () => Effect.succeed(false),
+            resolveCleanHead: () => Effect.succeed(null),
+            captureCheckpoint: ({ cwd }) =>
+              Effect.gen(function* () {
+                yield* Ref.update(attempts, (count) => count + 1);
+                yield* Queue.offer(started, undefined);
+                yield* Effect.sleep("30 seconds");
+                const [next = "timeout", ...rest] = yield* Ref.get(script);
+                yield* Ref.set(script, rest);
+                if (next === "ready") return;
+                return yield* new VcsProcessTimeoutError({
+                  operation: "GitVcsDriver.checkpoints.captureCheckpoint",
+                  command: "git",
+                  cwd,
+                  timeoutMs: 30_000,
+                });
+              }),
+          }),
+        ),
+      ),
+      Layer.provideMerge(NodeCrypto.layer),
+    );
+    yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const captureTurn = (scope: OrchestrationV2CheckpointScope) =>
+        checkpoints
+          .capture({
+            scope,
+            ordinalWithinScope: 1,
+            runId: scope.runId!,
+            nodeId: scope.nodeId!,
+            appRunOrdinal: 1,
+            capturedAt: scope.createdAt,
+          })
+          .pipe(Effect.forkChild);
+      // A baseline's short budget running out says nothing about a post-turn capture.
+      const baseline = yield* checkpoints
+        .captureBaseline({ scope: scopeFor("baseline"), ordinalWithinScope: 0 })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Queue.take(started);
+      const afterBaseline = yield* captureTurn(scopeFor("after-baseline"));
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(baseline);
+      yield* Queue.take(started);
+      yield* TestClock.adjust("30 seconds");
+      assert.strictEqual((yield* Fiber.join(afterBaseline)).status, "error");
+      assert.strictEqual(yield* Ref.get(attempts), 2);
+
+      const first = yield* captureTurn(scopeFor("first"));
+      yield* Queue.take(started);
+      // Other threads in the same folder finish their turns while the first capture hangs.
+      const waiting = [
+        yield* captureTurn(scopeFor("second")),
+        yield* captureTurn(scopeFor("third")),
+      ];
+      const repository = scopeFor("repository");
+      const repositoryWaiting = yield* checkpoints
+        .captureRepository({
+          scope: repository,
+          runId: repository.runId!,
+          nodeId: repository.nodeId!,
+          ordinalWithinScope: 1,
+          capturedAt: repository.createdAt,
+          baselineCapturedAt: repository.createdAt,
+          baselineRecorded: true,
+        })
+        .pipe(Effect.forkChild);
+      // A thread's root capture first materializes its baseline, which waits on the lock too.
+      const root = scopeFor("root");
+      const rootWaiting = yield* Effect.gen(function* () {
+        const capturesBeforeLock = yield* checkpoints.capturesSoFar(root.cwd);
+        yield* checkpoints.materializeBaselineCheckpoint({
+          scope: root,
+          ordinalWithinScope: 0,
+          nodeId: root.nodeId!,
+          capturedAt: root.createdAt,
+        });
+        return yield* checkpoints.capture({
+          scope: root,
+          ordinalWithinScope: 1,
+          runId: root.runId!,
+          nodeId: root.nodeId!,
+          appRunOrdinal: 1,
+          capturedAt: root.createdAt,
+          capturesBeforeLock,
+        });
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+      assert.strictEqual((yield* Fiber.join(first)).status, "error");
+      // Room for every waiter to probe, so the count below is what fails without the fix.
+      yield* TestClock.adjust("120 seconds");
+      for (const fiber of waiting) {
+        assert.strictEqual((yield* Fiber.join(fiber)).status, "error");
+      }
+      const repositoryCaptured = yield* Fiber.join(repositoryWaiting);
+      assert.strictEqual(Option.getOrThrow(repositoryCaptured).checkpoint.status, "error");
+      assert.strictEqual((yield* Fiber.join(rootWaiting)).status, "error");
+      assert.strictEqual(yield* Ref.get(attempts), 3, "each waiter spent its own full timeout");
+
+      // A capture that starts after the timeout still probes for recovery.
+      const later = yield* captureTurn(scopeFor("later"));
+      yield* TestClock.adjust("30 seconds");
+      assert.strictEqual((yield* Fiber.join(later)).status, "error");
+      assert.strictEqual(yield* Ref.get(attempts), 4);
+
+      // A success ahead in the queue does not hide a timeout that follows it.
+      yield* Ref.set(script, ["ready", "timeout"]);
+      const recovered = yield* captureTurn(scopeFor("recovered"));
+      const relapsed = yield* captureTurn(scopeFor("relapsed"));
+      const queuedBehind = yield* captureTurn(scopeFor("queued-behind"));
+      yield* TestClock.adjust("90 seconds");
+      assert.deepEqual(
+        [
+          (yield* Fiber.join(recovered)).status,
+          (yield* Fiber.join(relapsed)).status,
+          (yield* Fiber.join(queuedBehind)).status,
+        ],
+        ["ready", "error", "error"],
+      );
+      assert.strictEqual(yield* Ref.get(attempts), 6, "the waiter probed after a later timeout");
     }).pipe(Effect.provide(layerTest));
   }),
 );

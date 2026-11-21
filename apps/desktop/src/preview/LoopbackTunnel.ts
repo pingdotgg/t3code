@@ -11,6 +11,7 @@ import type {
   EnvironmentId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -314,6 +315,7 @@ const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const userId = yield* HostProcess.UserId;
   const random = yield* SecureRandom.SecureRandom;
+  const net = yield* NetService.NetService;
   const listenerScope = yield* Effect.scope;
   const routing = yield* Semaphore.make(1);
   const forwarding = yield* Semaphore.make(1);
@@ -503,6 +505,13 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // `localhost` also names ::1, and a server here on ::1 or :: does not collide with the
+  // forward's 127.0.0.1 bind, so it would keep answering `localhost` in place of the forward.
+  const servedOverIpv6 = (port: number) =>
+    Effect.forEach(["::1", "::"], (host) => net.canListenOnHost(port, host)).pipe(
+      Effect.map((free) => free.includes(false)),
+    );
+
   const forward: LoopbackTunnel["Service"]["forward"] = Effect.fn("LoopbackTunnel.forward")(
     function* ({ environmentId, remotePort }) {
       const existing = forwarded.get(forwardKey(environmentId, remotePort));
@@ -513,7 +522,8 @@ const make = Effect.gen(function* () {
       const scope = yield* Scope.fork(listenerScope);
       const bind = (port: number) =>
         NodeSocketServer.make({ port, host: "127.0.0.1" }).pipe(Scope.provide(scope));
-      const server = yield* bind(remotePort).pipe(
+      const preferredPort = (yield* servedOverIpv6(remotePort)) ? 0 : remotePort;
+      const server = yield* bind(preferredPort).pipe(
         // Taken here, or privileged: any free port still reaches the environment's.
         Effect.catch(() => bind(0)),
         Effect.onError(() => Scope.close(scope, Exit.void)),
