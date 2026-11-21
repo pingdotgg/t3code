@@ -14,6 +14,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.modules.Module
@@ -44,7 +45,13 @@ class T3SecretInputModule : Module() {
       }
       Prop("editable") { view: T3SecretInputView, value: Boolean -> view.input.isEnabled = value }
       Prop("revealed") { view: T3SecretInputView, value: Boolean -> view.setRevealed(value) }
+      Prop("returnKey") { view: T3SecretInputView, value: String ->
+        view.input.imeOptions =
+          if (value == "next") EditorInfo.IME_ACTION_NEXT else EditorInfo.IME_ACTION_DONE
+      }
       Events("onChangeText", "onSubmit")
+
+      AsyncFunction("focus") { view: T3SecretInputView -> view.focusInput() }
     }
   }
 }
@@ -103,7 +110,12 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
       }
     )
     input.setOnEditorActionListener { _, actionId, event ->
-      if (actionId == EditorInfo.IME_ACTION_DONE || event?.keyCode == KeyEvent.KEYCODE_ENTER) {
+      // Next is submitted too: JS moves focus to the following field.
+      if (
+        actionId == EditorInfo.IME_ACTION_DONE ||
+        actionId == EditorInfo.IME_ACTION_NEXT ||
+        event?.keyCode == KeyEvent.KEYCODE_ENTER
+      ) {
         // Hardware Enter reports IME_NULL on Android 13 and earlier, and both key down and key up.
         if (event == null || event.action == KeyEvent.ACTION_DOWN) {
           onSubmit(mapOf("value" to input.text.toString()))
@@ -145,6 +157,12 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
     input.transformationMethod = method
     if (start >= 0 && end >= 0) input.setSelection(start, end)
     applyingValue = false
+  }
+
+  fun focusInput() {
+    input.requestFocus()
+    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+    imm?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
   }
 
   fun setCursorColor(color: Int) {

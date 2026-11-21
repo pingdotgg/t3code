@@ -3,7 +3,7 @@ import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/co
 import { AsyncResult } from "effect/reactivity";
 import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { cdp, userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
@@ -19,6 +19,8 @@ const state = vi.hoisted(() => ({
   writeFile: vi.fn(),
   assetUrl: { _tag: "Loading" } as import("~/assets/assetUrls").AssetUrlState,
   mintUrl: vi.fn<() => Promise<string | null>>(),
+  browserAssetMints: 0,
+  openedBrowserUrls: [] as string[],
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
@@ -65,6 +67,56 @@ vi.mock(import("~/assets/assetUrls"), async (original) => ({
   useAssetUrlRefresh: () => state.mintUrl,
   useAssetUrlState: () => state.assetUrl,
 }));
+vi.mock(import("~/browser/previewRuntime"), async (original) => ({
+  ...(await original()),
+  usePreviewAvailable: () => true,
+}));
+vi.mock(import("~/state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironmentHttpBaseUrl: () => "http://environment.test",
+}));
+vi.mock(import("~/state/assets"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const Effect = await import("effect/Effect");
+  // Like the real query family, a minted URL stays cached until the atom is refreshed.
+  const createUrl = Atom.family((_key: string) =>
+    Atom.make(
+      Effect.sync(() => ({
+        relativeUrl: `/api/assets/mint-${++state.browserAssetMints}/page.html`,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      })),
+    ).pipe(Atom.keepAlive),
+  );
+  return {
+    ...actual,
+    assetEnvironment: {
+      ...actual.assetEnvironment,
+      createUrl: ((target: { input: { resource: { path: string } } }) =>
+        createUrl(target.input.resource.path)) as never,
+    },
+  };
+});
+vi.mock(import("~/browser/openFileInPreview"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    openFileInPreview: (async (input: Parameters<typeof actual.openFileInPreview>[0]) => {
+      const result = await input.createAssetUrl({
+        environmentId: input.threadRef.environmentId,
+        input: {
+          resource: {
+            _tag: "workspace-file",
+            threadId: input.threadRef.threadId,
+            path: input.filePath,
+          },
+        },
+      });
+      if (result._tag === "Success") state.openedBrowserUrls.push(result.value.relativeUrl);
+      return AsyncResult.success(undefined);
+    }) as never,
+  };
+});
 // The Word engine compiles a large WebAssembly bundle; these tests only need the URL it loads.
 vi.mock(import("./OfficeFilePreview"), () => ({
   OfficeFilePreview: ({ src }: { src: string }) => <div data-testid="office-preview">{src}</div>,
@@ -121,6 +173,7 @@ function setup() {
   state.file = null;
   state.optimistic = null;
   state.assetUrl = { _tag: "Loading" };
+  state.openedBrowserUrls = [];
   let mints = 0;
   state.mintUrl.mockReset().mockImplementation(async () => `/assets/report.docx?mint=${++mints}`);
   state.writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -223,6 +276,17 @@ describe("source file focus", () => {
       isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
     );
     await vi.waitFor(() => expect(deepActiveElement()).toBeInstanceOf(HTMLInputElement));
+
+    const findField = deepActiveElement() as HTMLInputElement;
+    await userEvent.keyboard("server");
+    findField.blur();
+    expect(focus.focus("panel", false)).toBe(true);
+    await vi.waitFor(editorHasFocus);
+    const editor = deepActiveElement() as HTMLElement;
+    await userEvent.keyboard("ab");
+    await vi.waitFor(() => expect(editor.textContent).toContain("xabconst server"));
+    expect(findField.value).toBe("server");
+    editorHasFocus();
   });
 
   it("focuses the editor when a file row is clicked or activated with Enter", async () => {
@@ -300,6 +364,200 @@ describe("source file scroll", () => {
     await screen.rerender(sourceFile("a.ts", 2000));
 
     await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+  });
+
+  it.each([
+    {
+      label: "keeps a downward drag whose anchor stays mounted across a window shift",
+      startLine: 65,
+      initialScrollLine: 65,
+      direction: "down" as const,
+      targetFirstMounted: 101,
+      expectedIncludedLine: 121,
+    },
+    {
+      label: "keeps a downward drag whose anchor unmounts on a window shift",
+      startLine: 5,
+      initialScrollLine: null,
+      direction: "down" as const,
+      targetFirstMounted: 101,
+      expectedIncludedLine: 121,
+    },
+    {
+      label: "keeps an upward drag whose anchor unmounts on a window shift",
+      startLine: 385,
+      initialScrollLine: 385,
+      direction: "up" as const,
+      targetFirstMounted: 201,
+      expectedIncludedLine: 290,
+    },
+  ])(
+    "$label",
+    async ({
+      startLine,
+      initialScrollLine,
+      direction,
+      targetFirstMounted,
+      expectedIncludedLine,
+    }) => {
+      using _settings = setup();
+      localStorage.setItem("t3code.renderMarkdown", "false");
+      const style = document.createElement("style");
+      style.textContent = appCss;
+      document.head.append(style);
+      using _style = { [Symbol.dispose]: () => style.remove() };
+      await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["markdown"] });
+
+      const lines = Array.from({ length: 400 }, (_, index) => `line ${index + 1} markdown content`);
+      const contents = `${lines.join("\n")}\n`;
+      state.file = {
+        relativePath: "notes.md",
+        contents,
+        byteLength: contents.length,
+        truncated: false,
+      };
+
+      await using screen = await render(
+        <div style={{ width: 560, height: 400, display: "flex", flexDirection: "column" }}>
+          {filePreview("notes.md")}
+        </div>,
+      );
+
+      const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
+      const rows = () => shadowRoot()?.querySelectorAll<HTMLElement>("[data-line]") ?? [];
+      await vi.waitFor(() =>
+        expect(
+          shadowRoot()?.querySelector('[data-content][contenteditable="true"]'),
+        ).not.toBeNull(),
+      );
+
+      const scroller = screen.container.querySelector<HTMLElement>(".file-preview-virtualizer")!;
+      if (initialScrollLine !== null) {
+        if (direction === "up") {
+          await vi.waitFor(() => expect(scroller.scrollHeight).toBeGreaterThan(5000));
+          scroller.scrollTop = scroller.scrollHeight;
+          await vi.waitFor(() =>
+            expect(
+              [...rows()].some((row) => row.getAttribute("data-line") === String(startLine)),
+            ).toBe(true),
+          );
+        }
+        const target = [...rows()].find(
+          (row) => row.getAttribute("data-line") === String(initialScrollLine),
+        );
+        expect(target).toBeDefined();
+        target!.scrollIntoView({ block: direction === "up" ? "end" : "start" });
+        await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+      }
+
+      const startRow = [...rows()].find(
+        (row) => row.getAttribute("data-line") === String(startLine),
+      );
+      expect(startRow).toBeDefined();
+      const startRect = startRow!.getBoundingClientRect();
+      const scrollerRect = scroller.getBoundingClientRect();
+      const nearEdgeY = direction === "down" ? scrollerRect.bottom - 5 : scrollerRect.top + 5;
+      const outsideEdgeY = direction === "down" ? scrollerRect.bottom + 60 : scrollerRect.top - 60;
+      const frame = window.frameElement?.getBoundingClientRect();
+      const mouse = (type: "mousePressed" | "mouseMoved" | "mouseReleased", x: number, y: number) =>
+        cdp().send("Input.dispatchMouseEvent", {
+          type,
+          x: x + (frame?.left ?? 0),
+          y: y + (frame?.top ?? 0),
+          button: "left",
+          buttons: type === "mouseReleased" ? 0 : 1,
+          clickCount: 1,
+        });
+
+      const startX = direction === "up" ? startRect.left + 140 : startRect.left + 2;
+      // The editor records the drag anchor on the press's selectionchange; drag only after it.
+      const anchored = new Promise((resolve) =>
+        document.addEventListener("selectionchange", resolve, { once: true }),
+      );
+      await mouse("mousePressed", startX, startRect.top + 5);
+      await anchored;
+      await mouse("mouseMoved", startRect.left + 80, nearEdgeY);
+      await mouse("mouseMoved", startRect.left + 80, outsideEdgeY);
+      await vi.waitFor(() => {
+        const firstMounted = Number(rows()[0]?.getAttribute("data-line"));
+        if (direction === "down") {
+          expect(firstMounted).toBeGreaterThanOrEqual(targetFirstMounted);
+        } else {
+          expect(firstMounted).toBeLessThanOrEqual(targetFirstMounted);
+        }
+      });
+      await mouse("mouseReleased", startRect.left + 80, outsideEdgeY);
+
+      const overlayRanges = shadowRoot()!.querySelectorAll("[data-selection-range]");
+      expect(overlayRanges.length).toBeGreaterThan(0);
+
+      const clipboardData = new DataTransfer();
+      const contentEl = shadowRoot()!.querySelector("[data-content]")!;
+      const handled = !contentEl.dispatchEvent(
+        new ClipboardEvent("copy", {
+          clipboardData,
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        }),
+      );
+      expect(handled).toBe(true);
+      const copied = clipboardData.getData("text/plain");
+      expect(copied).toContain(`line ${startLine} `);
+      expect(copied).toContain(`line ${expectedIncludedLine} markdown content`);
+    },
+  );
+
+  it("scrolls a find match below many wrapped lines into view", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    const wrapped = "wrap ".repeat(60);
+    const lines = Array.from({ length: 800 }, (_, i) => `const line${i} = "${wrapped}";`);
+    lines.push(
+      "const needle = 1;",
+      ...Array.from({ length: 40 }, (_, i) => `const tail${i} = ${i};`),
+    );
+    const contents = lines.join("\n");
+    state.file = {
+      relativePath: "wrapped.ts",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+
+    await using _screen = await render(
+      <div style={{ width: 500, height: 400, display: "flex", flexDirection: "column" }}>
+        {filePreview("wrapped.ts")}
+      </div>,
+    );
+    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(20_000));
+    const shadowRows = () =>
+      [...document.querySelectorAll("*")].flatMap((host) =>
+        host.shadowRoot ? [...host.shadowRoot.querySelectorAll<HTMLElement>("[data-line]")] : [],
+      );
+    await userEvent.click(shadowRows().find((row) => row.getAttribute("data-line") === "1")!);
+    await vi.waitFor(() => expect(deepActiveElement()?.matches("[data-content]")).toBe(true));
+    await userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
+    );
+    await vi.waitFor(() => expect(deepActiveElement()).toBeInstanceOf(HTMLInputElement));
+    await userEvent.keyboard("needle{Enter}");
+
+    const visibleLines = () => {
+      const viewport = scroller()!.getBoundingClientRect();
+      return shadowRows()
+        .filter((row) => {
+          const box = row.getBoundingClientRect();
+          return box.height > 0 && box.top >= viewport.top && box.bottom <= viewport.bottom;
+        })
+        .map((row) => Number(row.getAttribute("data-line")));
+    };
+    await vi.waitFor(() => expect(visibleLines()).toContain(801));
   });
 });
 
@@ -395,6 +653,29 @@ describe("workspace document previews", () => {
     await screen.rerender(documentPreview("mutation-2", "revision-2"));
 
     await expect.element(preview).toHaveTextContent("/assets/report.docx?mint=2");
+  });
+});
+
+describe("open file in preview browser", () => {
+  it("mints a fresh asset URL on every click so the browser cannot reuse cached bytes", async () => {
+    using _settings = setup();
+    state.file = {
+      relativePath: "page.html",
+      contents: "<h1>page</h1>",
+      byteLength: 13,
+      truncated: false,
+    };
+    await using screen = await render(filePreview("page.html"));
+    const button = screen.getByRole("button", { name: "Open file in preview browser" });
+
+    await userEvent.click(button);
+    await vi.waitFor(() => expect(state.openedBrowserUrls).toHaveLength(1));
+    await userEvent.click(button);
+    await vi.waitFor(() => expect(state.openedBrowserUrls).toHaveLength(2));
+
+    expect(state.openedBrowserUrls[1], "the second click reused the first signed URL").not.toBe(
+      state.openedBrowserUrls[0],
+    );
   });
 });
 

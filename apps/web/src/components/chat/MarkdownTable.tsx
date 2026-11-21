@@ -1,34 +1,45 @@
+import { T, useGT } from "gt-react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef, type ComponentProps } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   serializeTableElementToCsv,
+  serializeTableElementToHtml,
   serializeTableElementToMarkdown,
 } from "../../markdown-clipboard";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { reportMarkdownActionFailure } from "./markdownActionFailure";
+import { reportMarkdownActionFailure, type TableCopyFormat } from "./markdownActionFailure";
+
+const TABLE_COPY_SERIALIZERS: Record<TableCopyFormat, (table: Element) => string> = {
+  markdown: serializeTableElementToMarkdown,
+  csv: serializeTableElementToCsv,
+  html: serializeTableElementToHtml,
+};
 
 export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
+  const gt = useGT();
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { copyToClipboard, isCopied: copied } = useCopyToClipboard<"markdown" | "csv">({
+  const { copyToClipboard, isCopied: copied } = useCopyToClipboard<TableCopyFormat>({
     timeout: 1200,
     onError: (cause, format) =>
       reportMarkdownActionFailure({ operation: "copy-table", format }, cause),
   });
-  const copyLabel = copied ? "Copied" : "Copy table";
+  const copyLabel = copied ? gt("Copied") : gt("Copy table");
 
-  const handleCopy = (format: "markdown" | "csv") => {
+  const handleCopy = (format: TableCopyFormat) => {
     const table = containerRef.current?.querySelector("table");
     if (!table) return;
+    const text = TABLE_COPY_SERIALIZERS[format](table);
+    // Plain-text targets get the markup; rich targets (mail, docs, wikis) paste a real table.
     copyToClipboard(
-      format === "markdown"
-        ? serializeTableElementToMarkdown(table)
-        : serializeTableElementToCsv(table),
+      text,
       format,
+      format === "html" ? { "text/html": `<meta charset="utf-8">${text}` } : undefined,
+      { requireHtml: format === "html" },
     );
   };
 
@@ -60,8 +71,15 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
             <TooltipPopup side="top">{copyLabel}</TooltipPopup>
           </Tooltip>
           <MenuPopup align="end">
-            <MenuItem onClick={() => handleCopy("markdown")}>Copy as Markdown</MenuItem>
-            <MenuItem onClick={() => handleCopy("csv")}>Copy as CSV</MenuItem>
+            <MenuItem onClick={() => handleCopy("markdown")}>
+              <T>Copy as Markdown</T>
+            </MenuItem>
+            <MenuItem onClick={() => handleCopy("csv")}>
+              <T>Copy as CSV</T>
+            </MenuItem>
+            <MenuItem onClick={() => handleCopy("html")}>
+              <T>Copy as HTML</T>
+            </MenuItem>
           </MenuPopup>
         </Menu>
       </div>
