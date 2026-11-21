@@ -16,7 +16,6 @@ import Markdown, { type Components, defaultUrlTransform, type Options } from "re
 import remarkMath from "remark-math";
 
 import { BlockContext } from "./blockContext";
-import { isSafeImageSource } from "./imageSource";
 import { Details } from "./Details";
 import { MarkdownAnchor } from "./MarkdownAnchor";
 import { MarkdownCode } from "./MarkdownCode";
@@ -118,12 +117,8 @@ const components: Components = {
 
 const UNTRUSTED_COMPONENTS: Components = {
   ...components,
-  img: ({ node: _node, src, alt, ...props }) =>
-    isSafeImageSource(src) ? (
-      <img src={src} alt={alt} {...props} />
-    ) : (
-      <span data-blocked-image>{alt}</span>
-    ),
+  img: ({ alt }) => <span>{alt}</span>,
+  source: () => null,
 };
 
 // A path the engine's machine holds, such as `C:\work\a.png`, reads as a scheme to the default

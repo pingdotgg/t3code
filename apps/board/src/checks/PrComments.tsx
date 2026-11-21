@@ -14,7 +14,13 @@ const AUDIENCES = [
 const EMPTY = { all: "No comments yet.", humans: "No human comments.", bots: "No bot comments." };
 
 /** The pull request's comments and review threads, oldest first, with Orca's All, Humans, and Bots filter. */
-export function PrComments({ activity }: { activity: PullRequestActivity | null }) {
+export function PrComments({
+  activity,
+  failed,
+}: {
+  activity: PullRequestActivity | null;
+  failed: boolean;
+}) {
   const [audience, setAudience] = useState<Audience>("all");
   const items = useMemo(() => (activity === null ? [] : conversationItems(activity)), [activity]);
   const counts = audienceCounts(items);
@@ -58,7 +64,9 @@ export function PrComments({ activity }: { activity: PullRequestActivity | null 
         </div>
       </div>
       {activity === null ? (
-        <p className="py-5 text-center text-[11px] text-muted">Loading comments</p>
+        <p className="py-5 text-center text-[11px] text-muted">
+          {failed ? "Could not read the comments." : "Loading comments"}
+        </p>
       ) : filtered.length === 0 ? (
         <p className="py-5 text-center text-[11px] text-muted">{EMPTY[audience]}</p>
       ) : (

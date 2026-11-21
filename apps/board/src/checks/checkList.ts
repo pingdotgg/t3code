@@ -51,15 +51,3 @@ export function summarizeChecks(checks: ReadonlyArray<CheckRun>): string {
   );
   return parts.length === 0 ? "No checks" : parts.join(", ");
 }
-
-const UNIT = String.raw`(?:h|hr|hrs|hours?|m|min|mins|minutes?|s|secs?|seconds?)`;
-const DURATION = new RegExp(
-  String.raw`\b(?:in|after|took|for)\s+(\d+(?:\.\d+)?\s*${UNIT}\b(?:\s*\d+(?:\.\d+)?\s*${UNIT}\b)*)`,
-  "i",
-);
-
-/** How long a check took, when the host's description says so, such as "Build passed in 5m 52s". */
-export function durationOf(description: string | null): string | null {
-  const found = description === null ? null : DURATION.exec(description);
-  return found?.[1] ?? null;
-}

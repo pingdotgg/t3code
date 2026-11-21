@@ -216,7 +216,7 @@ The checks group is headed by a count per kind, such as `3 failing`, `1 running`
 
 The comments section reads `pullRequests.activity` and lists comments and review threads as cards, with a bot badge, reactions, and **All**, **Humans**, and **Bots** filters. Comment bodies are other people's text, so an image whose source is loopback, `localhost`, or a relative path is dropped. The CSP allows images from `http://127.0.0.1:*`, where the engine answers.
 
-The header, comments, and their refresh timer start when the tab is first shown. `board:checks-open` marks the tab coming into view. `board:checks-painted` marks the frame that draws the check rows after the checks read answers, once for each time the tab comes into view.
+The header and comments are read when the tab is first shown. `board:checks-open` marks the tab coming into view. `board:checks-painted` marks the frame that draws the check rows after the checks read answers, once for each time the tab comes into view.
 
 ## Browser
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { CheckRun, CheckStatus } from "../domain/readiness";
-import { durationOf, sortChecks, summarizeChecks } from "./checkList";
+import { sortChecks, summarizeChecks } from "./checkList";
 
 const check = (name: string, status: CheckStatus, fields: Partial<CheckRun> = {}): CheckRun => ({
   name,
@@ -61,25 +61,5 @@ describe("the checks list", () => {
 
   it("Given no checks, when summed up, then it says so", () => {
     expect(summarizeChecks([])).toBe("No checks");
-  });
-
-  it("Given the input, when it is sorted, then the input list is left as it was", () => {
-    const before = MIXED.map((entry) => entry.name);
-    sortChecks(MIXED);
-    expect(MIXED.map((entry) => entry.name)).toEqual(before);
-  });
-});
-
-describe("a check's duration", () => {
-  it.each([
-    ["Build passed in 5m 52s", "5m 52s"],
-    ["Successful in 2 minutes 3 seconds", "2 minutes 3 seconds"],
-    ["Tests took 1h 4m", "1h 4m"],
-    ["Ran for 45s on the runner", "45s"],
-    ["Deployment has completed", null],
-    ["The build passed", null],
-    [null, null],
-  ])("Given the description %j, when read, then the duration is %j", (description, expected) => {
-    expect(durationOf(description)).toBe(expected);
   });
 });

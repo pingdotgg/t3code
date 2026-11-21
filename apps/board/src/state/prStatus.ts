@@ -92,14 +92,6 @@ const checksPollAtom = Atom.family((key: string) => {
   });
 });
 
-type AtomValue<A> = A extends Atom.Atom<infer Value> ? Value : never;
-
-/** Stand in for the header and comment reads until the Checks tab is first shown. */
-export const NO_DETAIL: Atom.Atom<AtomValue<ReturnType<typeof pullRequestEnvironment.detail>>> =
-  Atom.make(AsyncResult.initial());
-export const NO_ACTIVITY: Atom.Atom<AtomValue<ReturnType<typeof pullRequestEnvironment.activity>>> =
-  Atom.make(AsyncResult.initial());
-
 /**
  * One pull request as the board shows it, keyed by `[environmentId, orchestratorThreadId, ref]`
  * as JSON. The value is null until some source answers. It keeps its identity while nothing

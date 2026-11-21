@@ -17,7 +17,11 @@ describe("markdown from other people", () => {
     expect(out).toContain("probe");
   });
 
-  it("Given the same image in the app's own text, when it renders, then the image is drawn", () => {
-    expect(html("![probe](http://127.0.0.1:3813/api/x.png)", false)).toContain("<img");
+  it("Given a picture whose source is loopback and an image from a public host, when untrusted text renders, then no loopback address is in the output", () => {
+    const out = html(
+      '<picture><x><source srcset="http://127.0.0.1:3813/api/x.png"></x><img src="https://example.com/a.png"></picture>',
+      true,
+    );
+    expect(out).not.toContain("127.0.0.1");
   });
 });

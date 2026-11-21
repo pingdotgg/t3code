@@ -15,7 +15,6 @@ import { formatElapsed } from "../chat/MessageActions";
 import { openInBrowser } from "../browser/browserTabs";
 import { type CheckRun, type CheckStatus, isStuck } from "../domain/readiness";
 import { Tooltip } from "../ui/Tooltip";
-import { durationOf } from "./checkList";
 
 const STATUS = {
   pending: { label: "Running", tone: "text-amber-500", Icon: LoaderCircle },
@@ -50,12 +49,11 @@ export function CheckRow({ check, now }: { check: CheckRun; now: number }) {
   const { label, tone, Icon } = stuck
     ? { label: "Stuck", tone: "text-rose-500", Icon: LoaderCircle }
     : STATUS[check.status];
-  const duration = durationOf(check.description);
   const running =
     check.runningSince === null
       ? null
       : `Running for ${formatElapsed(Math.max(0, Math.floor((now - check.runningSince) / 1_000)))}`;
-  const time = running ?? duration;
+  const time = running;
   const timeTone = stuck ? "text-rose-500" : "text-muted";
   return (
     <li

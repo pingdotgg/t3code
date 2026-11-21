@@ -6,7 +6,7 @@ import { useCallback, useContext, useState } from "react";
 
 import type { PrLive } from "../domain/readiness";
 import { markChecksPainted } from "../browser/panel";
-import { NO_ACTIVITY, NO_DETAIL, pullRequestEnvironment } from "../state/prStatus";
+import { pullRequestEnvironment } from "../state/prStatus";
 import { CheckGroup } from "./CheckGroup";
 import { PrAction } from "./PrAction";
 import { PrComments } from "./PrComments";
@@ -30,15 +30,10 @@ export function PrView({
   const detailAtom = pullRequestEnvironment.detail({ environmentId, input: reference });
   const activityAtom = pullRequestEnvironment.activity({ environmentId, input: reference });
   const checksAtom = pullRequestEnvironment.checks({ environmentId, input: reference });
-  // The header, rows and comments are read and drawn from the tab's first showing, so a board whose tab stays closed never pays for them.
-  const [opened, setOpened] = useState(active);
-  if (active && !opened) setOpened(true);
-  const detailResult = useAtomValue(opened ? detailAtom : NO_DETAIL);
+  const detailResult = useAtomValue(detailAtom);
   const detail = AsyncResult.getOrElse(detailResult, () => null);
-  const activity = AsyncResult.getOrElse(
-    useAtomValue(opened ? activityAtom : NO_ACTIVITY),
-    () => null,
-  );
+  const activityResult = useAtomValue(activityAtom);
+  const activity = AsyncResult.getOrElse(activityResult, () => null);
   const answered = AsyncResult.getOrElse(useAtomValue(checksAtom), () => null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -86,15 +81,14 @@ export function PrView({
           Could not read this pull request.
         </p>
       )}
-      {opened &&
-        (live === null ? (
-          <p className="border-y border-line px-3 py-2 text-[12px] text-faint">Loading checks</p>
-        ) : (
-          <div ref={mark}>
-            <CheckGroup live={live} now={now} />
-          </div>
-        ))}
-      {opened && <PrComments activity={activity} />}
+      {live === null ? (
+        <p className="border-y border-line px-3 py-2 text-[12px] text-faint">Loading checks</p>
+      ) : (
+        <div ref={mark}>
+          <CheckGroup live={live} now={now} />
+        </div>
+      )}
+      <PrComments activity={activity} failed={AsyncResult.isFailure(activityResult)} />
     </div>
   );
 }

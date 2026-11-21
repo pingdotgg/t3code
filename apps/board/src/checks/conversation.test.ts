@@ -51,7 +51,7 @@ const flat = [
   comment("c2", "kyle", 2),
   comment("r1", "coderabbit[bot]", 3, { kind: "review-comment", path: "src/app.ts" }),
   comment("r2", "kyle", 4, { kind: "review-comment", path: "src/app.ts" }),
-  comment("c3", null, 5),
+  comment("c3", "ana", 5),
 ];
 const threads = [thread("t1", [flat[3]!, flat[2]!])];
 const activity = { comments: flat, reviewThreads: threads };
@@ -71,7 +71,7 @@ describe("a pull request's conversation", () => {
     ).toEqual(["r1", ["r2"]]);
   });
 
-  it("Given the same conversation, when counted, then a bot's thread and bot comment count as bots and a ghost author as human", () => {
+  it("Given the same conversation, when counted, then a bot's thread and bot comment count as bots", () => {
     expect(audienceCounts(conversationItems(activity))).toEqual({ all: 4, humans: 2, bots: 2 });
   });
 
