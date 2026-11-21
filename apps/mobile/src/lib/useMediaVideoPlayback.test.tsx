@@ -290,7 +290,7 @@ it.each([
     screen.render(false);
     expect(mocks.thumbnail).not.toHaveBeenCalled();
     await act(async () => screen.render(true));
-    const requests = kind === "files" ? 2 : 1;
+    const requests = compact ? 1 : 2;
     expect(mocks.thumbnail).toHaveBeenCalledTimes(requests);
     const aborted = Promise.all(
       mocks.thumbnail.mock.calls.map(([, , signal]) => {
