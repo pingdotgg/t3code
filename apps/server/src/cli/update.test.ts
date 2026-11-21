@@ -249,8 +249,8 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
             mode: 0o755,
           });
         }
-        const launcher = path.join(root, "bin/t3");
-        const alias = path.join(root, "alias/t3");
+        const launcher = path.join(root, "bin", FORK_IDENTITY.cliBin);
+        const alias = path.join(root, "alias", FORK_IDENTITY.cliBin);
         yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
         yield* fs.makeDirectory(path.dirname(alias), { recursive: true });
         yield* fs.writeFileString(launcher, posixLauncherScript(entry("1.0.0")), { mode: 0o755 });
