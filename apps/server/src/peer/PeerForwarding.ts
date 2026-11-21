@@ -9,6 +9,7 @@ import {
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
   type PeerLinkError,
+  type ThreadId,
   RuntimeMode,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -21,6 +22,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
 
+import { ThreadToolkit } from "../mcp/toolkits/thread/tools.ts";
 import { runtimeModeRank } from "../mcp/delegatedTaskModes.ts";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
@@ -66,6 +68,12 @@ export class PeerForwarding extends Context.Service<
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadInterruptInput,
     ) => Effect.Effect<OrchestratorMcpThreadInterruptResult, OrchestratorMcpFailure>;
+    /** Settles an existing delegated task, including when new linked work is disabled. */
+    readonly settleThread: (
+      scope: Scope,
+      environmentId: EnvironmentId,
+      input: { readonly threadId: ThreadId },
+    ) => Effect.Effect<void, OrchestratorMcpFailure>;
     /** `t3_thread_wait` there, bounded like a local wait. */
     readonly waitForThread: (
       scope: Scope,
@@ -232,6 +240,16 @@ const make = Effect.gen(function* () {
       input,
     );
 
+  const settleThread: PeerForwarding["Service"]["settleThread"] = (scope, environmentId, input) =>
+    forward(
+      scope,
+      "t3_thread_organize",
+      ThreadToolkit.tools.t3_thread_organize.parametersSchema,
+      ThreadToolkit.tools.t3_thread_organize.successSchema,
+      environmentId,
+      { ...input, action: "settle" },
+    ).pipe(Effect.asVoid);
+
   const waitForThread: PeerForwarding["Service"]["waitForThread"] = (scope, environmentId, input) =>
     forward<OrchestratorMcpThreadWaitResult>(
       scope,
@@ -315,6 +333,7 @@ const make = Effect.gen(function* () {
     call,
     readThread,
     interruptThread,
+    settleThread,
     waitForThread,
     links: listLinks,
   });

@@ -48,6 +48,7 @@ import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexA
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -154,6 +155,9 @@ interface BoxThread {
   readonly sent: Ref.Ref<ReadonlyArray<string>>;
   /** Runs as the launch there is answered, before the laptop hears back. */
   readonly afterLaunch: Ref.Ref<Effect.Effect<void>>;
+  readonly settled: Ref.Ref<ReadonlyArray<ThreadId>>;
+  readonly settledOnce: Deferred.Deferred<void>;
+  readonly refuseSettleOnce: Ref.Ref<boolean>;
 }
 
 const makeBoxThread = Effect.gen(function* () {
@@ -196,6 +200,9 @@ const makeBoxThread = Effect.gen(function* () {
     releaseStop: yield* Deferred.make<void>(),
     sent: yield* Ref.make<ReadonlyArray<string>>([]),
     afterLaunch: yield* Ref.make<Effect.Effect<void>>(Effect.void),
+    settled: yield* Ref.make<ReadonlyArray<ThreadId>>([]),
+    settledOnce: yield* Deferred.make<void>(),
+    refuseSettleOnce: yield* Ref.make(false),
   } satisfies BoxThread;
 });
 
@@ -518,6 +525,18 @@ const boxToolkitLayer = (thread: BoxThread) => {
           )
         : Effect.die(`The box does not expect ${command.type}`),
     stopDelegatedTasks: (input) => recordStop(input.commandId, "delegated-tasks"),
+    settleThread: (input) =>
+      Effect.gen(function* () {
+        if (yield* Ref.getAndSet(thread.refuseSettleOnce, false)) {
+          return yield* new Orchestrator.OrchestratorCommandRejectedError({
+            commandId: input.commandId,
+            commandType: "thread.settle",
+          });
+        }
+        yield* Ref.update(thread.settled, (seen) => [...seen, input.threadId]);
+        yield* Deferred.succeed(thread.settledOnce, undefined);
+        return { sequence: 0 };
+      }),
     sendToThread: (input) =>
       Ref.update(thread.sent, (seen) => [...seen, input.text]).pipe(
         Effect.as(
@@ -569,15 +588,21 @@ const boxToolkitLayer = (thread: BoxThread) => {
         ),
       ),
   });
-  return Layer.merge(
+  return Layer.mergeAll(
     McpHttpServer.layerOrchestratorToolkit,
     McpHttpServer.layerProjectRegistration,
+    McpHttpServer.layerThreadToolkit,
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(layerBoxThreads),
     Layer.provide(layerBoxLaunches),
-    Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadSearch.ThreadSearch)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+      ),
+    ),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -2077,6 +2102,68 @@ it.effect("stopping the parent stops its task there", () =>
       expect(yield* Ref.get(thread.interrupted)).toBe(1);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect.each(["enabled", "disabled", "retry"] as const)(
+  "settling the parent settles its task there (%s)",
+  (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const retries = yield* steppedRetries;
+        const a = yield* makeLaptop(database, offers).pipe(
+          Effect.provideService(RemoteDelegation.FollowRetrySchedule, retries.schedule),
+        );
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
+        yield* a.remote.start();
+
+        const delegated = yield* delegateToBox(a);
+        yield* Ref.set(thread.status, "completed");
+        yield* Deferred.succeed(thread.finished, undefined);
+        yield* taskResult(a, delegated.taskId);
+        const now = yield* DateTime.now;
+        const run = (yield* a.orchestrator.getThreadProjection(parentThreadId)).runs.find(
+          (candidate) => candidate.id === parentRunId,
+        )!;
+        yield* a.sink.write({
+          commandId: CommandId.make("command:complete:laptop-parent"),
+          events: [
+            {
+              id: EventId.make("event:complete-run:laptop-parent"),
+              type: "run.updated",
+              threadId: parentThreadId,
+              runId: parentRunId,
+              nodeId: parentRootNode,
+              providerInstanceId: instanceId,
+              occurredAt: now,
+              payload: { ...run, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        expect(yield* Ref.get(thread.settled)).toEqual([]);
+        yield* a.settings.updateSettings({ linkedEnvironmentsEnabled: scenario !== "disabled" });
+        yield* Ref.set(thread.refuseSettleOnce, scenario === "retry");
+
+        yield* a.orchestrator.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("command:settle:laptop-parent"),
+          threadId: parentThreadId,
+        });
+        if (scenario === "retry") {
+          yield* Queue.take(retries.failed);
+          expect(yield* Ref.get(thread.settled)).toEqual([]);
+          yield* Queue.offer(retries.retry, undefined);
+        }
+        yield* Deferred.await(thread.settledOnce);
+        expect(yield* Ref.get(thread.settled)).toEqual([delegated.remoteChild.threadId]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 /** A follower retry schedule the test steps: each failed attempt is offered, then waits for `retry`. */
