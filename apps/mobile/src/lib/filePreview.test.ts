@@ -183,6 +183,14 @@ vi.mock("../state/atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironment: {} }));
 vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
+  useMessageThreadLinks: (markdown: string) => ({
+    markdown,
+    refKeys: [],
+    refKeysKey: null,
+    refKeySet: new Set<string>(),
+    resolve: () => null,
+    titleFor: () => null,
+  }),
   useThreadChipIcons: () => new Map(),
   useEnvironmentPreviewTunnelOff: () => false,
 }));

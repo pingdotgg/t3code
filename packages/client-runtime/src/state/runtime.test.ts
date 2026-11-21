@@ -51,7 +51,10 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type * as RpcSession from "../rpc/session.ts";
-import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
+import {
+  createOrchestrationEnvironmentAtoms,
+  PartialThreadLinkMetadataError,
+} from "./orchestration.ts";
 import { createReviewEnvironmentAtoms } from "./review.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import { createFilesystemEnvironmentAtoms } from "./filesystem.ts";
@@ -86,6 +89,9 @@ const QUERY_RPC_SESSION = {} as RpcSession.RpcSession;
 class TestQueryError extends Schema.TaggedError<TestQueryError>()("TestQueryError", {
   message: Schema.String,
 }) {}
+
+const isTestQueryError = Schema.is(TestQueryError);
+const isPartialThreadLinkMetadataError = Schema.is(PartialThreadLinkMetadataError);
 
 const OFFLINE_QUERY_FAILURE = new ConnectionTransientError({
   reason: "transport",
@@ -1490,6 +1496,886 @@ describe("environment query lifecycle", () => {
     }),
   );
 
+  it.effect(
+    "coalesces concurrent threadLinkMetadata queries, caches per thread synchronously, and invalidates on shell removal",
+    () =>
+      Effect.gen(function* () {
+        const projectId = ProjectId.make("project");
+        const calls: Array<ReadonlyArray<ThreadId>> = [];
+        const requests =
+          yield* Queue.unbounded<
+            Deferred.Deferred<Record<string, { title: string; projectId: ProjectId | null }>>
+          >();
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+          rpcSession: {
+            initialConfig: Effect.succeed({ threadLinkMetadata: true }),
+            client: {
+              [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input: {
+                readonly threadIds: ReadonlyArray<ThreadId>;
+              }) =>
+                Effect.gen(function* () {
+                  calls.push(input.threadIds);
+                  const answer =
+                    yield* Deferred.make<
+                      Record<string, { title: string; projectId: ProjectId | null }>
+                    >();
+                  yield* Queue.offer(requests, answer);
+                  return yield* Deferred.await(answer);
+                }),
+            },
+          } as unknown as RpcSession.RpcSession,
+        });
+        const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt" | "generation">>({
+          removedAt: new Map(),
+          generation: 0,
+        }).pipe(Atom.keepAlive);
+        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const orchestration = createOrchestrationEnvironmentAtoms(runtime, {
+          shellState: () => shellState,
+        });
+
+        const t1 = ThreadId.make("t1");
+        const t2 = ThreadId.make("t2");
+        const t3 = ThreadId.make("t3");
+        const t4 = ThreadId.make("t4");
+        const t5 = ThreadId.make("t5");
+        const atomA = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [t1, t2] },
+        });
+        const atomB = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [t2, t3] },
+        });
+        const atomC = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [t4] },
+        });
+        const emptyAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [] },
+        });
+
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const releaseC = registry.mount(atomC);
+        const releaseA = registry.mount(atomA);
+        const releaseB = registry.mount(atomB);
+        const releaseEmpty = registry.mount(emptyAtom);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            releaseA();
+            releaseB();
+            releaseC();
+            releaseEmpty();
+          }),
+        );
+
+        const firstRequest = yield* Queue.take(requests);
+
+        expect(calls).toHaveLength(1);
+        const [firstCall] = calls;
+        expect(firstCall).toBeDefined();
+        expect([...(firstCall ?? [])].toSorted()).toEqual([t1, t2, t3, t4]);
+
+        yield* Deferred.succeed(firstRequest, {
+          [t1]: { title: "One", projectId },
+          [t2]: { title: "Two", projectId },
+          [t3]: { title: "Three", projectId: null },
+        });
+
+        expect(yield* readEnvironmentQuery(registry, atomA)).toEqual({
+          [t1]: { title: "One", projectId },
+          [t2]: { title: "Two", projectId },
+        });
+        expect(yield* readEnvironmentQuery(registry, atomB)).toEqual({
+          [t2]: { title: "Two", projectId },
+          [t3]: { title: "Three", projectId: null },
+        });
+        const emptyResult = yield* readEnvironmentQuery(registry, emptyAtom);
+        expect(emptyResult).toEqual({});
+        expect(calls).toHaveLength(1);
+
+        // A cold single-ID or subset query for already-cached threads (including cached misses)
+        // settles synchronously with zero new RPCs.
+        const singleHit = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [t1] },
+        });
+        const singleMiss = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [t4] },
+        });
+        expect(registry.get(singleHit)).toMatchObject({
+          _tag: "Success",
+          waiting: false,
+          value: { [t1]: { title: "One", projectId } },
+        });
+        expect(registry.get(singleMiss)).toMatchObject({
+          _tag: "Success",
+          waiting: false,
+          value: {},
+        });
+        expect(calls).toHaveLength(1);
+
+        // A query mixing a cached thread and an uncached thread emits the cached slice immediately
+        // and fetches only the uncached thread.
+        const mixedAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [t1, t5] },
+        });
+        const mixedStates: Array<AsyncResult.AsyncResult<unknown, unknown>> = [];
+        const unsubMixed = registry.subscribe(
+          mixedAtom,
+          (value) => {
+            mixedStates.push(value);
+          },
+          { immediate: true },
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubMixed));
+        const mixedRequest = yield* Queue.take(requests);
+        expect(calls[1]).toEqual([t5]);
+        expect(
+          mixedStates.some(
+            (state) =>
+              AsyncResult.isSuccess(state) &&
+              state.waiting &&
+              Object.hasOwn(state.value as object, t1),
+          ),
+        ).toBe(true);
+        yield* Deferred.succeed(mixedRequest, { [t5]: { title: "Five", projectId: null } });
+        expect(yield* readEnvironmentQuery(registry, mixedAtom)).toEqual({
+          [t1]: { title: "One", projectId },
+          [t5]: { title: "Five", projectId: null },
+        });
+
+        // Removing t1 from the shell invalidates only t1 and re-fetches it immediately.
+        registry.set(shellState, { removedAt: new Map([[t1, 10]]), generation: 0 });
+        const invalidationRequest = yield* Queue.take(requests);
+        expect(calls).toHaveLength(3);
+        expect(calls[2]).toEqual([t1]);
+        yield* Deferred.succeed(invalidationRequest, {});
+        expect(yield* readEnvironmentQuery(registry, atomA)).toEqual({
+          [t2]: { title: "Two", projectId },
+        });
+
+        // A same-session authoritative shell snapshot bumps generation and clears removedAt;
+        // entries cached under generation 0 (including the t1 and t4 misses) coalesce into one re-check.
+        registry.set(shellState, { removedAt: new Map(), generation: 1 });
+        const snapshotResetRequest = yield* Queue.take(requests);
+        expect(calls).toHaveLength(4);
+        expect([...(calls[3] ?? [])].toSorted()).toEqual([t1, t2, t3, t4, t5]);
+        yield* Deferred.succeed(snapshotResetRequest, {
+          [t1]: { title: "Restored One", projectId },
+          [t2]: { title: "Two", projectId },
+          [t3]: { title: "Three", projectId: null },
+          [t5]: { title: "Five", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, atomA)).toEqual({
+          [t1]: { title: "Restored One", projectId },
+          [t2]: { title: "Two", projectId },
+        });
+      }),
+  );
+
+  it.effect(
+    "expires cached threadLinkMetadata after 60 s and skips caching responses invalidated in flight",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<ReadonlyArray<ThreadId>> = [];
+        const requests =
+          yield* Queue.unbounded<
+            Deferred.Deferred<
+              Record<string, { title: string; projectId: ProjectId | null }>,
+              TestQueryError
+            >
+          >();
+        const clock = yield* Clock.Clock;
+        const rpcSession = {
+          initialConfig: Effect.succeed({ threadLinkMetadata: true }),
+          client: {
+            [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input: {
+              readonly threadIds: ReadonlyArray<ThreadId>;
+            }) =>
+              Effect.gen(function* () {
+                calls.push(input.threadIds);
+                const answer = yield* Deferred.make<
+                  Record<string, { title: string; projectId: ProjectId | null }>,
+                  TestQueryError
+                >();
+                yield* Queue.offer(requests, answer);
+                return yield* Deferred.await(answer);
+              }),
+          },
+        } as unknown as RpcSession.RpcSession;
+        const supervisorState = yield* SubscriptionRef.make(queryConnectionState());
+        const supervisorSession = yield* SubscriptionRef.make(Option.some(rpcSession));
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: QUERY_ENVIRONMENT,
+          state: supervisorState,
+          session: supervisorSession,
+          prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+          _environmentId,
+          effect,
+        ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
+          _environmentId,
+          stream,
+        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          run,
+          followStream,
+          stateChanges: () => SubscriptionRef.changes(supervisorState),
+        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Layer.succeed(Clock.Clock, clock),
+          ),
+        ) as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt" | "generation">>({
+          removedAt: new Map(),
+          generation: 1,
+        }).pipe(Atom.keepAlive);
+        const orchestration = createOrchestrationEnvironmentAtoms(runtime, {
+          shellState: () => shellState,
+        });
+        const t1 = ThreadId.make("ttl-1");
+        const t2 = ThreadId.make("race-2");
+        const tBystander = ThreadId.make("bystander-3");
+        const tSubset = ThreadId.make("subset-4");
+        const atom1 = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [t1, tSubset] },
+        });
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const release1 = registry.mount(atom1);
+        yield* Effect.addFinalizer(() => Effect.sync(release1));
+
+        const req1 = yield* Queue.take(requests);
+        yield* Deferred.succeed(req1, {
+          [t1]: { title: "Before TTL", projectId: null },
+          [tSubset]: { title: "Subset Before", projectId: null },
+        });
+        const beforeTtl = yield* readEnvironmentQuery(registry, atom1);
+        expect(beforeTtl).toEqual({
+          [t1]: { title: "Before TTL", projectId: null },
+          [tSubset]: { title: "Subset Before", projectId: null },
+        });
+        expect(calls).toHaveLength(1);
+
+        // Reading a subset key at t=59 s hits the cache without extending its 60 s expiry, and
+        // unmounting drops its idle query node while keeping the per-thread cache warm until 60 s.
+        yield* TestClock.adjust(59_000);
+        const subsetAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tSubset] },
+        });
+        const releaseSubset1 = registry.mount(subsetAtom);
+        expect(yield* readEnvironmentQuery(registry, subsetAtom)).toEqual({
+          [tSubset]: { title: "Subset Before", projectId: null },
+        });
+        expect(calls).toHaveLength(1);
+        releaseSubset1();
+
+        // Reopening within 60 s hits the per-thread cache synchronously with zero RPCs.
+        expect(registry.get(subsetAtom)).toMatchObject({
+          _tag: "Success",
+          waiting: false,
+          value: { [tSubset]: { title: "Subset Before", projectId: null } },
+        });
+        expect(calls).toHaveLength(1);
+
+        yield* TestClock.adjust(2_000);
+        // After 60 s, the unmounted prefix key retains no stale idle Success result.
+        const releaseSubset2 = registry.mount(subsetAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseSubset2));
+        expect(registry.get(subsetAtom)._tag).toBe("Initial");
+        const reqSubsetAfterTtl = yield* Queue.take(requests);
+        expect(calls).toHaveLength(2);
+        yield* Deferred.succeed(reqSubsetAfterTtl, {
+          [tSubset]: { title: "Subset After", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, subsetAtom)).toEqual({
+          [tSubset]: { title: "Subset After", projectId: null },
+        });
+
+        // Refreshing after TTL with equal data keeps referential identity.
+        registry.refresh(atom1);
+        const req2 = yield* Queue.take(requests);
+        expect(calls).toHaveLength(3);
+        yield* Deferred.succeed(req2, {
+          [t1]: { title: "Before TTL", projectId: null },
+        });
+        const afterUnchangedTtl = yield* readEnvironmentQuery(registry, atom1);
+        expect(afterUnchangedTtl).toEqual({
+          [t1]: { title: "Before TTL", projectId: null },
+          [tSubset]: { title: "Subset After", projectId: null },
+        });
+
+        // Re-fetching atom1 with identical payload preserves object reference through reuseUnchanged.
+        yield* TestClock.adjust(60_001);
+        registry.refresh(atom1);
+        const req3 = yield* Queue.take(requests);
+        expect(calls).toHaveLength(4);
+        yield* Deferred.succeed(req3, {
+          [t1]: { title: "Before TTL", projectId: null },
+          [tSubset]: { title: "Subset After", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, atom1)).toBe(afterUnchangedTtl);
+
+        // Case A: if removedAt changes while an RPC is in flight, the stale response must not
+        // overwrite the fresh cache entry. A bystander in the same batch (unaffected by t2's
+        // removal) stays attached to `inflight` so awaiting it guarantees runAll completed.
+        const atom2 = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [t2] },
+        });
+        const bystanderAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tBystander] },
+        });
+        const release2 = registry.mount(atom2);
+        const releaseBystander = registry.mount(bystanderAtom);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            release2();
+            releaseBystander();
+          }),
+        );
+        const inflightRemoval = yield* Queue.take(requests);
+        registry.set(shellState, { removedAt: new Map([[t2, 5]]), generation: 1 });
+        const freshAfterRemoval = yield* Queue.take(requests);
+        yield* Deferred.succeed(freshAfterRemoval, { [t2]: { title: "Fresh", projectId: null } });
+        expect(yield* readEnvironmentQuery(registry, atom2)).toEqual({
+          [t2]: { title: "Fresh", projectId: null },
+        });
+        yield* Deferred.succeed(inflightRemoval, {
+          [t2]: { title: "Stale Removal", projectId: null },
+          [tBystander]: { title: "Bystander", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, bystanderAtom)).toEqual({
+          [tBystander]: { title: "Bystander", projectId: null },
+        });
+        const callsAfterRemovalRace = calls.length;
+        const verifyRemovalCache = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [t2, tBystander] },
+        });
+        expect(registry.get(verifyRemovalCache)).toMatchObject({
+          _tag: "Success",
+          waiting: false,
+          value: {
+            [t2]: { title: "Fresh", projectId: null },
+            [tBystander]: { title: "Bystander", projectId: null },
+          },
+        });
+        expect(calls).toHaveLength(callsAfterRemovalRace);
+
+        // Case B: if a removal arrives and an authoritative shell snapshot clears removedAt back
+        // to empty (bumping generation 1 -> 2), before/after both see removedAt=-1, so the
+        // shell generation guard must block the older response from overwriting fresh metadata.
+        const tSnap = ThreadId.make("snap-5");
+        const snapAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tSnap] },
+        });
+        const releaseSnap = registry.mount(snapAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseSnap));
+        const inflightSnap = yield* Queue.take(requests);
+        const snapshotGuardChecked = yield* Deferred.make<void>();
+        let watchSnapshotGuard = false;
+        registry.set(shellState, { removedAt: new Map([[tSnap, 9]]), generation: 1 });
+        registry.set(shellState, {
+          removedAt: new Map(),
+          get generation() {
+            if (watchSnapshotGuard) Deferred.doneUnsafe(snapshotGuardChecked, Exit.void);
+            return 2;
+          },
+        });
+        const freshAfterSnapshot = yield* Queue.take(requests);
+        yield* Deferred.succeed(freshAfterSnapshot, {
+          [tSnap]: { title: "Post-Snapshot Fresh", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, snapAtom)).toEqual({
+          [tSnap]: { title: "Post-Snapshot Fresh", projectId: null },
+        });
+        watchSnapshotGuard = true;
+        yield* Deferred.succeed(inflightSnap, {
+          [tSnap]: { title: "Pre-Snapshot Stale", projectId: null },
+        });
+        yield* Deferred.await(snapshotGuardChecked);
+        // Yield once after the getter fired so the synchronous post-check body finishes.
+        yield* Effect.yieldNow;
+        const callsAfterSnapRace = calls.length;
+        // Read tSnap through a fresh cold query key ([tSnap, tSnap]) so the assertion reads
+        // straight from the per-thread cache instead of snapAtom's mounted value.
+        const verifySnapCache = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tSnap, tSnap] },
+        });
+        expect(registry.get(verifySnapCache)).toMatchObject({
+          _tag: "Success",
+          waiting: false,
+          value: { [tSnap]: { title: "Post-Snapshot Fresh", projectId: null } },
+        });
+        expect(calls).toHaveLength(callsAfterSnapRace);
+
+        // Case C: growing streaming prefixes reuse in-flight lookups (fetching only new IDs even
+        // when the earlier prefix unmounts), and failed in-flight lookups are cleared for retry.
+        const tStreamA = ThreadId.make("stream-a-6");
+        const tStreamB = ThreadId.make("stream-b-7");
+        const prefixA = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tStreamA] },
+        });
+        const prefixAB = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tStreamA, tStreamB] },
+        });
+        const callsBeforeStream = calls.length;
+        const releasePrefixA = registry.mount(prefixA);
+        const reqStreamA = yield* Queue.take(requests);
+        expect(calls[callsBeforeStream]).toEqual([tStreamA]);
+        // Streaming moves to [A, B] and unmounts [A] (idleTtlMs: 0): [A, B] awaits A and fetches only B.
+        const releasePrefixAB = registry.mount(prefixAB);
+        yield* Effect.addFinalizer(() => Effect.sync(releasePrefixAB));
+        releasePrefixA();
+        const reqStreamB = yield* Queue.take(requests);
+        expect(calls[callsBeforeStream + 1]).toEqual([tStreamB]);
+        yield* Deferred.succeed(reqStreamB, {
+          [tStreamB]: { title: "Stream B", projectId: null },
+        });
+        yield* Deferred.succeed(reqStreamA, {
+          [tStreamA]: { title: "Stream A", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, prefixAB)).toEqual({
+          [tStreamA]: { title: "Stream A", projectId: null },
+          [tStreamB]: { title: "Stream B", projectId: null },
+        });
+        expect(calls).toHaveLength(callsBeforeStream + 2);
+
+        // Failed in-flight work is removed from the in-flight index so a retry fetches it again.
+        const tFail = ThreadId.make("inflight-fail-8");
+        const tOk = ThreadId.make("inflight-ok-9");
+        const failOnlyAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tFail] },
+        });
+        const failAndOkAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tFail, tOk] },
+        });
+        const callsBeforeFail = calls.length;
+        const releaseFailOnly = registry.mount(failOnlyAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseFailOnly));
+        const reqFail = yield* Queue.take(requests);
+        expect(calls[callsBeforeFail]).toEqual([tFail]);
+        const releaseFailAndOk = registry.mount(failAndOkAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseFailAndOk));
+        const reqOk = yield* Queue.take(requests);
+        expect(calls[callsBeforeFail + 1]).toEqual([tOk]);
+        yield* Deferred.fail(reqFail, new TestQueryError({ message: "inflight failed" }));
+        yield* Deferred.succeed(reqOk, { [tOk]: { title: "Inflight OK", projectId: null } });
+
+        const failOnlyExit = yield* Effect.exit(readEnvironmentQuery(registry, failOnlyAtom));
+        expect(Exit.isFailure(failOnlyExit)).toBe(true);
+        const failAndOkExit = yield* Effect.exit(readEnvironmentQuery(registry, failAndOkAtom));
+        expect(Exit.isFailure(failAndOkExit)).toBe(true);
+        if (Exit.isFailure(failAndOkExit)) {
+          const partial = Option.getOrUndefined(Cause.findErrorOption(failAndOkExit.cause));
+          expect(isPartialThreadLinkMetadataError(partial)).toBe(true);
+          if (isPartialThreadLinkMetadataError(partial)) {
+            expect(partial.metadata).toEqual({
+              [tOk]: { title: "Inflight OK", projectId: null },
+            });
+            expect(partial.failedThreadIds).toEqual([tFail]);
+          }
+        }
+        registry.refresh(failOnlyAtom);
+        const retryFail = yield* Queue.take(requests);
+        expect(calls[callsBeforeFail + 2]).toEqual([tFail]);
+        yield* Deferred.succeed(retryFail, {
+          [tFail]: { title: "Recovered Fail", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, failOnlyAtom)).toEqual({
+          [tFail]: { title: "Recovered Fail", projectId: null },
+        });
+
+        // Case D: flights superseded by a shell snapshot or thread removal during the batch delay
+        // are rejected before dispatch, while current-generation flights in the same batch still run.
+        const orderRegistry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => orderRegistry.dispose()));
+        // Warm orderRegistry's AtomRuntime layer (0 RPCs) so subsequent mounts enter execute synchronously.
+        const warmOrderAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [] },
+        });
+        const releaseWarm = orderRegistry.mount(warmOrderAtom);
+        expect(yield* readEnvironmentQuery(orderRegistry, warmOrderAtom)).toEqual({});
+        releaseWarm();
+
+        const tOrder = ThreadId.make("order-10");
+        const tOrderOther = ThreadId.make("order-other-11");
+        const tOrderFresh = ThreadId.make("order-fresh-12");
+        const tOrderRemoved = ThreadId.make("order-removed-13");
+        const tOrderKept = ThreadId.make("order-kept-14");
+        const tOrderAfterStale = ThreadId.make("order-after-stale-15");
+        const olderAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tOrder, tOrderOther] },
+        });
+        const newerAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tOrder, tOrderFresh] },
+        });
+        const callsBeforeOrder = calls.length;
+        const releaseOlder = orderRegistry.mount(olderAtom);
+        releaseOlder();
+        // Bump generation 1 -> 3 during the yieldNow delay and mount newerAtom in the same batch:
+        // gen-1 flights are rejected without dispatching, and only [tOrder, tOrderFresh] is sent.
+        orderRegistry.set(shellState, { removedAt: new Map(), generation: 3 });
+        const releaseNewer = orderRegistry.mount(newerAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseNewer));
+        const newerReq = yield* Queue.take(requests);
+        expect(calls).toHaveLength(callsBeforeOrder + 1);
+        expect(calls[callsBeforeOrder]).toEqual([tOrder, tOrderFresh]);
+        yield* Deferred.succeed(newerReq, {
+          [tOrder]: { title: "Newer Title", projectId: null },
+          [tOrderFresh]: { title: "Fresh Title", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(orderRegistry, newerAtom)).toEqual({
+          [tOrder]: { title: "Newer Title", projectId: null },
+          [tOrderFresh]: { title: "Fresh Title", projectId: null },
+        });
+
+        // A removal arriving during the batch delay rejects only the superseded removedAtSeq flight
+        // while dispatching unaffected flights in the same batch.
+        const staleRemovedAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tOrderRemoved, tOrderKept] },
+        });
+        const callsBeforeRemovedDelay = calls.length;
+        const releaseStaleRemoved = orderRegistry.mount(staleRemovedAtom);
+        releaseStaleRemoved();
+        orderRegistry.set(shellState, { removedAt: new Map([[tOrderRemoved, 10]]), generation: 3 });
+        const keptReq = yield* Queue.take(requests);
+        expect(calls).toHaveLength(callsBeforeRemovedDelay + 1);
+        expect(calls[callsBeforeRemovedDelay]).toEqual([tOrderKept]);
+        yield* Deferred.succeed(keptReq, {
+          [tOrderKept]: { title: "Kept Title", projectId: null },
+        });
+        const freshRemovedAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tOrderRemoved] },
+        });
+        const releaseFreshRemoved = orderRegistry.mount(freshRemovedAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseFreshRemoved));
+        const removedDelayReq = yield* Queue.take(requests);
+        expect(calls[callsBeforeRemovedDelay + 1]).toEqual([tOrderRemoved]);
+        yield* Deferred.succeed(removedDelayReq, {
+          [tOrderRemoved]: { title: "Removed Fresh", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(orderRegistry, freshRemovedAtom)).toEqual({
+          [tOrderRemoved]: { title: "Removed Fresh", projectId: null },
+        });
+
+        // A batch containing only superseded-generation flights dispatches zero RPCs and clears
+        // its in-flight entries so a later lookup fetches normally.
+        releaseNewer();
+        releaseFreshRemoved();
+        const staleOnlyAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tOrderOther] },
+        });
+        const staleBatchChecked = yield* Deferred.make<void>();
+        const callsBeforeStaleOnly = calls.length;
+        const releaseStaleOnly = orderRegistry.mount(staleOnlyAtom);
+        releaseStaleOnly();
+        orderRegistry.set(shellState, {
+          removedAt: new Map(),
+          get generation() {
+            Deferred.doneUnsafe(staleBatchChecked, Exit.void);
+            return 4;
+          },
+        });
+        yield* Deferred.await(staleBatchChecked);
+        const afterStaleAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tOrderAfterStale, tOrderOther] },
+        });
+        const releaseAfterStale = orderRegistry.mount(afterStaleAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseAfterStale));
+        const afterStaleReq = yield* Queue.take(requests);
+        expect(calls).toHaveLength(callsBeforeStaleOnly + 1);
+        expect(calls[callsBeforeStaleOnly]).toEqual([tOrderAfterStale, tOrderOther]);
+        yield* Deferred.succeed(afterStaleReq, {
+          [tOrderAfterStale]: { title: "After Stale", projectId: null },
+          [tOrderOther]: { title: "Gen 4 Other", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(orderRegistry, afterStaleAtom)).toEqual({
+          [tOrderAfterStale]: { title: "After Stale", projectId: null },
+          [tOrderOther]: { title: "Gen 4 Other", projectId: null },
+        });
+      }),
+  );
+
+  it.effect("chunks more than 500 ids and stops if the session is replaced between chunks", () =>
+    Effect.gen(function* () {
+      const session1Chunks: Array<ReadonlyArray<ThreadId>> = [];
+      const session2Chunks: Array<ReadonlyArray<ThreadId>> = [];
+      const firstChunkStarted = yield* Deferred.make<void>();
+      const releaseFirstChunk = yield* Deferred.make<void>();
+      const session1 = {
+        initialConfig: Effect.succeed({ threadLinkMetadata: true }),
+        client: {
+          [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input: {
+            readonly threadIds: ReadonlyArray<ThreadId>;
+          }) =>
+            Effect.gen(function* () {
+              session1Chunks.push(input.threadIds);
+              if (session1Chunks.length === 1) {
+                yield* Deferred.succeed(firstChunkStarted, undefined);
+                yield* Deferred.await(releaseFirstChunk);
+              }
+              return {};
+            }),
+        },
+      } as unknown as RpcSession.RpcSession;
+      const session2 = {
+        initialConfig: Effect.succeed({ threadLinkMetadata: true }),
+        client: {
+          [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input: {
+            readonly threadIds: ReadonlyArray<ThreadId>;
+          }) =>
+            Effect.sync(() => {
+              session2Chunks.push(input.threadIds);
+              return { "id-0": { title: "Recovered", projectId: null } };
+            }),
+        },
+      } as unknown as RpcSession.RpcSession;
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void, { rpcSession: session1 });
+      const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+        EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+      >;
+      const orchestration = createOrchestrationEnvironmentAtoms(runtime);
+      const ids = Array.from({ length: 502 }, (_, index) => ThreadId.make(`id-${index}`));
+      const atom = orchestration.threadLinkMetadata({
+        environmentId: QUERY_ENVIRONMENT.environmentId,
+        input: { threadIds: ids },
+      });
+      const registry = yield* mountEnvironmentQuery(atom);
+
+      yield* Deferred.await(firstChunkStarted);
+      expect(session1Chunks).toHaveLength(1);
+      expect(session1Chunks[0]).toHaveLength(500);
+
+      // Replace the session while chunk 1 is in flight: chunk 2 must NOT dispatch on session 1
+      // or mix session 1's config with session 2's client; the query recovers on session 2.
+      yield* SubscriptionRef.set(harness.supervisorSession, Option.some(session2));
+      yield* SubscriptionRef.set(harness.supervisorState, queryConnectionState({ generation: 2 }));
+      yield* Deferred.succeed(releaseFirstChunk, undefined);
+
+      const result = yield* readEnvironmentQuery(registry, atom);
+      expect(session1Chunks).toHaveLength(1);
+      expect(session2Chunks.map((chunk) => chunk.length)).toEqual([500, 2]);
+      expect(result).toEqual({ "id-0": { title: "Recovered", projectId: null } });
+    }),
+  );
+
+  it.effect(
+    "stops superseded chunked batches on shell snapshot and isolates unrelated chunk failures",
+    () =>
+      Effect.gen(function* () {
+        const dispatchedChunks: Array<ReadonlyArray<ThreadId>> = [];
+        const chunkRequests =
+          yield* Queue.unbounded<
+            Deferred.Deferred<
+              Record<string, { title: string; projectId: ProjectId | null }>,
+              TestQueryError
+            >
+          >();
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+          rpcSession: {
+            initialConfig: Effect.succeed({ threadLinkMetadata: true }),
+            client: {
+              [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input: {
+                readonly threadIds: ReadonlyArray<ThreadId>;
+              }) =>
+                Effect.gen(function* () {
+                  dispatchedChunks.push(input.threadIds);
+                  const answer = yield* Deferred.make<
+                    Record<string, { title: string; projectId: ProjectId | null }>,
+                    TestQueryError
+                  >();
+                  yield* Queue.offer(chunkRequests, answer);
+                  return yield* Deferred.await(answer);
+                }),
+            },
+          } as unknown as RpcSession.RpcSession,
+        });
+        const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt" | "generation">>({
+          removedAt: new Map(),
+          generation: 1,
+        }).pipe(Atom.keepAlive);
+        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const orchestration = createOrchestrationEnvironmentAtoms(runtime, {
+          shellState: () => shellState,
+        });
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+
+        // 1. Same-session shell snapshot supersedes chunk 1: chunk 2 must NOT dispatch for gen 1.
+        const genIds = Array.from({ length: 502 }, (_, index) => ThreadId.make(`gen-${index}`));
+        const genAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: genIds },
+        });
+        const releaseGen = registry.mount(genAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseGen));
+        const gen1Chunk1 = yield* Queue.take(chunkRequests);
+        expect(dispatchedChunks.map((chunk) => chunk.length)).toEqual([500]);
+
+        registry.set(shellState, { removedAt: new Map(), generation: 2 });
+        const gen2Chunk1 = yield* Queue.take(chunkRequests);
+        yield* Deferred.succeed(gen1Chunk1, {
+          "gen-0": { title: "Stale Gen 1", projectId: null },
+        });
+        yield* Deferred.succeed(gen2Chunk1, {
+          "gen-0": { title: "Fresh Gen 2", projectId: null },
+        });
+        const gen2Chunk2 = yield* Queue.take(chunkRequests);
+        yield* Deferred.succeed(gen2Chunk2, {
+          "gen-501": { title: "Tail Gen 2", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, genAtom)).toEqual({
+          "gen-0": { title: "Fresh Gen 2", projectId: null },
+          "gen-501": { title: "Tail Gen 2", projectId: null },
+        });
+        // Total dispatched chunks: 1 from gen 1 (chunk 2 skipped) + 2 from gen 2.
+        expect(dispatchedChunks.map((chunk) => chunk.length)).toEqual([500, 500, 2]);
+
+        // 2. Shared batch across chunk 1 and chunk 2: callerA (499 IDs), callerB (spanning chunk 1
+        // miss + chunk 1 hit + chunk 2 failure), and callerC (chunk 2 only) enter the same batch.
+        // Chunk 1 (500 IDs ending with iso-499) proves callerA and callerB shared the batch and
+        // only chunk 1 dispatched before its reply is released.
+        const callerAIds = Array.from({ length: 499 }, (_, index) => ThreadId.make(`iso-${index}`));
+        const iso498 = ThreadId.make("iso-498");
+        const iso499 = ThreadId.make("iso-499");
+        const iso500 = ThreadId.make("iso-500");
+        const iso501 = ThreadId.make("iso-501");
+        const iso502 = ThreadId.make("iso-502");
+        const callerA = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: callerAIds },
+        });
+        const callerB = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [iso498, iso499, iso500] },
+        });
+        const callerC = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [iso501] },
+        });
+        const callerD = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [iso502] },
+        });
+        const callsBeforeIso = dispatchedChunks.length;
+        const releaseA = registry.mount(callerA);
+        const releaseB = registry.mount(callerB);
+        const releaseC = registry.mount(callerC);
+        const releaseD = registry.mount(callerD);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            releaseA();
+            releaseB();
+            releaseC();
+          }),
+        );
+        const isoChunk1 = yield* Queue.take(chunkRequests);
+        expect(dispatchedChunks).toHaveLength(callsBeforeIso + 1);
+        expect(dispatchedChunks[callsBeforeIso]).toHaveLength(500);
+        expect(dispatchedChunks[callsBeforeIso]?.at(-1)).toBe(iso499);
+        // Remove iso502 while chunk 1 is held: chunk 2 skips the superseded flight instead of sending it.
+        releaseD();
+        registry.set(shellState, { removedAt: new Map([[iso502, 1]]), generation: 2 });
+        yield* Deferred.succeed(isoChunk1, {
+          "iso-0": { title: "Chunk 1 OK", projectId: null },
+          [iso499]: { title: "Spanning OK", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, callerA)).toEqual({
+          "iso-0": { title: "Chunk 1 OK", projectId: null },
+        });
+        const isoChunk2 = yield* Queue.take(chunkRequests);
+        expect(dispatchedChunks).toHaveLength(callsBeforeIso + 2);
+        expect(dispatchedChunks[callsBeforeIso + 1]).toEqual([iso500, iso501]);
+        yield* Deferred.fail(isoChunk2, new TestQueryError({ message: "chunk 2 failed" }));
+
+        // Spanning callerB receives chunk 1's succeeded metadata and keeps only iso500 failed.
+        const callerBExit = yield* Effect.exit(readEnvironmentQuery(registry, callerB));
+        expect(Exit.isFailure(callerBExit)).toBe(true);
+        if (Exit.isFailure(callerBExit)) {
+          const partial = Option.getOrUndefined(Cause.findErrorOption(callerBExit.cause));
+          expect(isPartialThreadLinkMetadataError(partial)).toBe(true);
+          if (isPartialThreadLinkMetadataError(partial)) {
+            expect(partial.metadata).toEqual({
+              [iso499]: { title: "Spanning OK", projectId: null },
+            });
+            expect(partial.failedThreadIds).toEqual([iso500]);
+          }
+        }
+        expect(AsyncResult.getOrElse(registry.get(callerB), () => null)).toEqual({
+          [iso499]: { title: "Spanning OK", projectId: null },
+        });
+
+        // Chunk-2-only callerC fails with the underlying error (not a partial error).
+        const callerCExit = yield* Effect.exit(readEnvironmentQuery(registry, callerC));
+        expect(Exit.isFailure(callerCExit)).toBe(true);
+        if (Exit.isFailure(callerCExit)) {
+          const err = Option.getOrUndefined(Cause.findErrorOption(callerCExit.cause));
+          expect(isTestQueryError(err)).toBe(true);
+        }
+
+        // Retrying callerB hits cache for iso498 (miss) and iso499 (hit) and fetches only iso500.
+        const callsBeforeRetry = dispatchedChunks.length;
+        registry.refresh(callerB);
+        const retryB = yield* Queue.take(chunkRequests);
+        expect(dispatchedChunks).toHaveLength(callsBeforeRetry + 1);
+        expect(dispatchedChunks[callsBeforeRetry]).toEqual([iso500]);
+        yield* Deferred.succeed(retryB, {
+          [iso500]: { title: "Chunk 2 Retried", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, callerB)).toEqual({
+          [iso499]: { title: "Spanning OK", projectId: null },
+          [iso500]: { title: "Chunk 2 Retried", projectId: null },
+        });
+
+        // Retrying callerC fetches iso501 (not cached as a miss) and succeeds.
+        registry.refresh(callerC);
+        const retryC = yield* Queue.take(chunkRequests);
+        expect(dispatchedChunks[callsBeforeRetry + 1]).toEqual([iso501]);
+        yield* Deferred.succeed(retryC, {
+          [iso501]: { title: "Caller C Retried", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, callerC)).toEqual({
+          [iso501]: { title: "Caller C Retried", projectId: null },
+        });
+      }),
+  );
+
   it.effect("re-checks thread titles when one of their threads leaves the shell", () =>
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<Deferred.Deferred<Record<string, string>>>();
@@ -1505,11 +2391,13 @@ describe("environment query lifecycle", () => {
           },
         } as unknown as RpcSession.RpcSession,
       });
-      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt" | "generation">>({
         removedAt: new Map(),
+        generation: 0,
       }).pipe(Atom.keepAlive);
       const removed = (entries: ReadonlyArray<readonly [string, number]>) => ({
         removedAt: new Map(entries.map(([id, sequence]) => [ThreadId.make(id), sequence])),
+        generation: 0,
       });
       // Thread titles never use the HTTP client.
       const runtime = harness.runtime as unknown as Atom.AtomRuntime<
@@ -1562,8 +2450,9 @@ describe("environment query lifecycle", () => {
           },
         } as unknown as RpcSession.RpcSession,
       });
-      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt" | "generation">>({
         removedAt: new Map(),
+        generation: 0,
       }).pipe(Atom.keepAlive);
       const runtime = harness.runtime as unknown as Atom.AtomRuntime<
         EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
@@ -1585,14 +2474,14 @@ describe("environment query lifecycle", () => {
       expect(yield* archivedIds).toEqual([]);
 
       // Another client archives the thread, then deletes it from the archive.
-      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 2]]) });
+      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 2]]), generation: 0 });
       expect(registry.get(atom).waiting).toBe(true);
       yield* Deferred.succeed(
         yield* Queue.take(requests),
         page([{ ...v2ThreadShell, archivedAt: v2Now }]),
       );
       expect(yield* archivedIds).toEqual([v2ThreadId]);
-      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 3]]) });
+      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 3]]), generation: 0 });
       yield* Deferred.succeed(yield* Queue.take(requests), page([]));
       expect(yield* archivedIds).toEqual([]);
     }),

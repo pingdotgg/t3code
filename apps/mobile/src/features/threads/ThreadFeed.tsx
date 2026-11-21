@@ -289,11 +289,13 @@ import {
   workspaceLinkLookupQuery,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import {
-  resolveThreadLink,
+  resolveThreadLinkTarget,
   useEnvironmentPreviewTunnelOff,
-  useLiveThreadLinkLabels,
+  useMessageThreadLinks,
   useQuietThreadShell,
   useThreadChipIcons,
+  type MessageThreadLinkLookup,
+  type ResolvedThreadLinkTarget,
 } from "../../state/entities";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -1236,12 +1238,20 @@ function ThreadMediaVisibility(props: {
 type MarkdownLinkReply = Pick<OrchestrationV2ProjectedTurnItem, "sourceThreadId" | "sourceItemId">;
 
 interface MarkdownLinkHandlers {
-  readonly onLinkPress: (href: string, reply?: MarkdownLinkReply) => void;
-  readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
+  readonly onLinkPress: (
+    href: string,
+    reply?: MarkdownLinkReply,
+    threadLinks?: MessageThreadLinkLookup,
+  ) => void;
+  readonly fileContextMenu: (
+    href: string,
+    threadLinks?: MessageThreadLinkLookup,
+  ) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction: (
     href: string,
     actionId: string,
     reply?: MarkdownLinkReply,
+    threadLinks?: MessageThreadLinkLookup,
   ) => void;
   /** `withGallery` pages the image through its message's images; the feed's viewer sits outside that scope. */
   readonly onImagePress?: (
@@ -1331,11 +1341,12 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
   const gt = useGT();
-  const liveMarkdown = useLiveThreadLinkLabels(
+  const threadLinks = useMessageThreadLinks(
     props.markdown,
     props.environmentId,
     useLinkedEnvironments(hasThreadLinks(props.markdown) ? props.environmentId : null),
   );
+  const liveMarkdown = threadLinks.markdown;
   const [quoteSelection, setQuoteSelection] = useState<{
     markdown: string;
     selectors: ReturnType<typeof collectMobileAssistantTextSelectors>;
@@ -1353,15 +1364,18 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     });
   };
   const models = useModelMentions(props.environmentId, props.markdown);
-  const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
+  const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown, {
+    sourceRefKeys: threadLinks.refKeys,
+  });
   const withGallery = useFilePreviewGallery();
   const onImagePress = props.linkHandlers.onImagePress;
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
     ...(onImagePress ? { onImagePress: (href: string) => onImagePress(href, withGallery) } : {}),
-    onLinkPress: (href) => props.linkHandlers.onLinkPress(href, props.reply),
+    onLinkPress: (href) => props.linkHandlers.onLinkPress(href, props.reply, threadLinks),
+    fileContextMenu: (href) => props.linkHandlers.fileContextMenu(href, threadLinks),
     onFileContextMenuAction: (href, actionId) =>
-      props.linkHandlers.onFileContextMenuAction(href, actionId, props.reply),
+      props.linkHandlers.onFileContextMenuAction(href, actionId, props.reply, threadLinks),
     linkCustomization: (href) =>
       withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
   };
@@ -2830,12 +2844,16 @@ function UserMessageContent(props: UserMessageContentProps) {
   const navigation = useNavigation();
   const openThreadLink = useOpenThreadLink(props.environmentId);
   const { selectedThread } = useThreadSelection();
-  const liveText = useLiveThreadLinkLabels(
+  const threadLinks = useMessageThreadLinks(
     props.text,
     props.environmentId,
     useLinkedEnvironments(hasThreadLinks(props.text) ? props.environmentId : null),
   );
-  const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
+  const liveText = threadLinks.markdown;
+  const threadIcons = useThreadChipIcons(props.environmentId, liveText, {
+    records: props.context?.records,
+    sourceRefKeys: threadLinks.refKeys,
+  });
   const text = replaceComposerContextReferences(liveText, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
     const label = available ? ref.label : gt("{label} (unavailable)", { label: ref.label });
@@ -2843,7 +2861,7 @@ function UserMessageContent(props: UserMessageContentProps) {
   });
   const onLinkPress = (href: string) => {
     const reference = parseComposerContextHref(href);
-    if (!reference) return props.linkHandlers.onLinkPress?.(href);
+    if (!reference) return props.linkHandlers.onLinkPress?.(href, undefined, threadLinks);
     const record = props.context?.records.find(
       (record) => record.contextId === reference.contextId,
     );
@@ -2882,7 +2900,7 @@ function UserMessageContent(props: UserMessageContentProps) {
           onLinkPress,
           fileContextMenu: (href) => {
             const reference = parseComposerContextHref(href);
-            if (!reference) return props.linkHandlers.fileContextMenu(href);
+            if (!reference) return props.linkHandlers.fileContextMenu(href, threadLinks);
             const record = props.context?.records.find(
               (item) => item.contextId === reference.contextId,
             );
@@ -2896,7 +2914,14 @@ function UserMessageContent(props: UserMessageContentProps) {
           },
           onFileContextMenuAction: (href, actionId) => {
             const reference = parseComposerContextHref(href);
-            if (!reference) return props.linkHandlers.onFileContextMenuAction(href, actionId);
+            if (!reference) {
+              return props.linkHandlers.onFileContextMenuAction(
+                href,
+                actionId,
+                undefined,
+                threadLinks,
+              );
+            }
             if (actionId === "open-context") return onLinkPress(href);
             const record = props.context?.records.find(
               (item) => item.contextId === reference.contextId,
@@ -3322,18 +3347,44 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       path: fileRoutePathSegments(path),
     });
   };
-  const resolveLinkedThread = (href: string) => {
+  const resolveLinkedThreadTarget = (
+    href: string,
+    threadLinks?: MessageThreadLinkLookup,
+    live = true,
+  ): ResolvedThreadLinkTarget | null => {
     const link = parseThreadLinkHref(href);
     if (!link) return null;
-    const resolved = resolveThreadLink(
+    if (!live && threadLinks !== undefined) {
+      const resolved = threadLinks.resolve(link, (atom) => appAtomRegistry.get(atom));
+      const ref =
+        resolved ??
+        (link.environmentId === null ? scopeThreadRef(props.environmentId, link.threadId) : null);
+      if (!ref) return null;
+      return {
+        ref,
+        title:
+          threadLinks.titleFor(ref) ??
+          appAtomRegistry.get(environmentThreadShells.quietThreadShellAtom(ref))?.title ??
+          null,
+      };
+    }
+    const resolved = resolveThreadLinkTarget(
       (atom) => appAtomRegistry.get(atom),
       link,
       props.environmentId,
+      threadLinks,
     );
     if (resolved !== null || link.environmentId !== null) return resolved;
     // A v1 link names no environment, so it falls back to this message's.
-    return scopeThreadRef(props.environmentId, link.threadId);
+    const fallback = scopeThreadRef(props.environmentId, link.threadId);
+    return {
+      ref: fallback,
+      title:
+        appAtomRegistry.get(environmentThreadShells.quietThreadShellAtom(fallback))?.title ?? null,
+    };
   };
+  const resolveLinkedThread = (href: string, threadLinks?: MessageThreadLinkLookup) =>
+    resolveLinkedThreadTarget(href, threadLinks)?.ref ?? null;
   // The file a chat link names: in this workspace, else in the one other project that has it.
   const findFileLinkTarget = async (
     linkPath: string,
@@ -3448,6 +3499,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     imageEmbed = false,
     reply?: MarkdownLinkReply,
     withGallery?: (source: FilePreviewSource) => FilePreviewSource,
+    threadLinks?: MessageThreadLinkLookup,
   ) => {
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
@@ -3468,7 +3520,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return;
     }
     if (parseThreadLinkHref(href)) {
-      const target = resolveLinkedThread(href);
+      const target = resolveLinkedThread(href, threadLinks);
       if (target) openThreadLink(target);
       return;
     }
@@ -3560,11 +3612,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         },
         standalone,
       ),
-    onLinkPress: (href, reply) => onMarkdownLinkPress(href, false, reply),
+    onLinkPress: (href, reply, threadLinks) =>
+      onMarkdownLinkPress(href, false, reply, undefined, threadLinks),
     linkCustomization: enrichedThreadLinkCustomization,
     onImagePress: (href, withGallery) => onMarkdownLinkPress(href, true, undefined, withGallery),
     resolveImageSource,
-    fileContextMenu: (href) => {
+    fileContextMenu: (href, threadLinks) => {
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
         return {
@@ -3579,15 +3632,30 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ],
         };
       }
-      const thread = resolveLinkedThread(href);
-      if (thread) {
+      const isAndroid = Platform.OS === "android";
+      const linkedThread = resolveLinkedThreadTarget(href, threadLinks, isAndroid);
+      if (linkedThread) {
+        const { ref: thread, title } = linkedThread;
         return {
-          title:
-            appAtomRegistry.get(environmentThreadShells.threadShellAtom(thread))?.title ??
-            gt("Thread"),
+          title: title ?? gt("Thread"),
           actions: [
-            { id: "open-thread", title: gt("Open thread") },
-            { id: "copy-thread-link", title: gt("Copy link") },
+            {
+              id: "open-thread",
+              title: gt("Open thread"),
+              ...(isAndroid
+                ? {
+                    onPress: () => {
+                      markdownLinkRequest.current?.abort();
+                      openThreadLink(thread);
+                    },
+                  }
+                : {}),
+            },
+            {
+              id: "copy-thread-link",
+              title: gt("Copy link"),
+              ...(isAndroid ? { onPress: () => copyTextWithHaptic(hostedThreadLink(thread)) } : {}),
+            },
           ],
         };
       }
@@ -3604,7 +3672,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       return target ? fileChipMenu(target) : undefined;
     },
-    onFileContextMenuAction: (href, actionId, reply) => {
+    onFileContextMenuAction: (href, actionId, reply, threadLinks) => {
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
         const instructionsPath = enrichedSkillInstructionsPath(skill);
@@ -3612,10 +3680,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         else if (actionId === "copy-skill") copyTextWithHaptic(`$${skill.name}`);
         return;
       }
-      const thread = resolveLinkedThread(href);
+      const thread = resolveLinkedThread(href, threadLinks);
       if (thread) {
-        if (actionId === "open-thread") onMarkdownLinkPress(href);
-        else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
+        if (actionId === "open-thread") {
+          markdownLinkRequest.current?.abort();
+          openThreadLink(thread);
+        } else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
         return;
       }
       const deviceUrl = deviceLoopbackUrl(href);
