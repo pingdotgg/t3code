@@ -12,6 +12,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
@@ -194,6 +195,8 @@ export type GitHubAnswer<A> = {
       readonly value: A;
       /** GitHub left part of the answer out as not found or forbidden for this credential. */
       readonly withheld?: boolean;
+      /** Each withheld part is its own batched lookup, so the rest can stand without it. */
+      readonly separable?: boolean;
     }
   | { readonly _tag: "RateLimited" | "Unauthorized" | "NotFound" }
   | { readonly _tag: "Failed"; readonly messages?: ReadonlyArray<string> | undefined }
@@ -443,7 +446,14 @@ export const make = Effect.gen(function* () {
                 yield* quota.observe(host, answer.headers);
                 yield* limits.recordSuccess({ ...key, lease });
                 yield* Effect.annotateCurrentSpan({ "github.app_refused": true });
-                return { _tag: "Retry", with: personal.value } as const;
+                return {
+                  _tag: "Retry",
+                  with: personal.value,
+                  partial:
+                    answer._tag === "Ok" && answer.separable === true
+                      ? Option.some(answer.value)
+                      : Option.none(),
+                } as const;
               }
             }
             return { _tag: "Done", value: yield* settle(lease, answer, held) } as const;
@@ -456,10 +466,26 @@ export const make = Effect.gen(function* () {
 
     // Only an app credential is handed on, so this runs at most twice.
     let held = yield* choose(host, false);
+    let partial = Option.none<A>();
     while (true) {
-      const outcome = yield* attempt(held);
+      const kept = partial;
+      const outcome = yield* attempt(held).pipe(
+        // The app's partial answer beats none when the personal credential is out of allowance.
+        Effect.catchIf(
+          (error) =>
+            Option.isSome(kept) &&
+            (Predicate.isTagged(error, "GitHubApiRateLimitError") ||
+              Predicate.isTagged(error, "SourceControlRateLimitPausedError")),
+          (error) =>
+            Option.match(kept, {
+              onNone: () => Effect.fail(error),
+              onSome: (value) => Effect.succeed({ _tag: "Done", value } as const),
+            }),
+        ),
+      );
       if (outcome._tag === "Done") return outcome.value;
       held = outcome.with;
+      partial = outcome.partial;
     }
   });
 
