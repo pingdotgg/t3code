@@ -49,7 +49,10 @@ const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
 const PROJECT_ID = ProjectId.make("relay-project");
 const NOW = "2026-09-04T12:00:00.000Z";
 
-function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): OrchestrationV2ThreadShell {
+type AwarenessShell = OrchestrationV2ThreadShell &
+  Pick<ProjectionStore.AgentAwarenessThread, "lastSnoozeWakeAt">;
+
+function shell(overrides: Partial<AwarenessShell> = {}): AwarenessShell {
   return {
     id: THREAD_ID,
     projectId: PROJECT_ID,
@@ -818,6 +821,43 @@ describe("AgentAwarenessRelay", () => {
         ["running", "completed", null],
       );
     }),
+  );
+
+  it.effect.each(["1 second", "5 seconds"] as const)(
+    "does not alert a completion the snooze hid when woken %s after it",
+    (beforeWake) =>
+      Effect.gen(function* () {
+        const snoozed = {
+          snoozedUntil: DateTime.makeUnsafe("2999-01-01T00:00:00.000Z"),
+          snoozedAt: DateTime.makeUnsafe(NOW),
+        };
+        const completed = {
+          status: "completed" as const,
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:01:00.000Z"),
+        };
+        const { relay, currentShell, publications } = yield* makeTestRelay();
+        yield* Ref.set(currentShell, shell(snoozed));
+        yield* relay.publishThread(THREAD_ID);
+        yield* Ref.set(currentShell, shell({ ...snoozed, ...completed }));
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust(beforeWake);
+        yield* relay.drain;
+
+        yield* Ref.set(
+          currentShell,
+          shell({
+            ...completed,
+            lastSnoozeWakeAt: DateTime.makeUnsafe("2026-09-04T12:02:00.000Z"),
+          }),
+        );
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map((publication) => publication.state?.phase ?? null),
+          ["running", null],
+        );
+      }),
   );
 
   it.effect("publishes a cleared thread's tombstone once while it stays cleared", () =>

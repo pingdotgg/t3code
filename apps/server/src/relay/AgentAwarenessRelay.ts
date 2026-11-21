@@ -380,6 +380,13 @@ function snoozedCompletion(
 ): boolean {
   if (state?.phase !== "completed" || thread.latestRunCompletedAt == null) return false;
   const completedAt = DateTime.toEpochMillis(thread.latestRunCompletedAt);
+  // Wake clears the snooze fields, so a completion that ended before the wake was hidden by it.
+  if (
+    thread.lastSnoozeWakeAt != null &&
+    completedAt <= DateTime.toEpochMillis(thread.lastSnoozeWakeAt)
+  ) {
+    return true;
+  }
   if (thread.snoozedAt != null && completedAt < DateTime.toEpochMillis(thread.snoozedAt)) {
     return false;
   }
