@@ -11854,7 +11854,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
         branch: null,
         worktreePath: null,
       });
-      const send = (key: string, outputSchema?: { readonly type: "object" }) =>
+      const send = (
+        key: string,
+        outputSchema?: { readonly type: "object" },
+        freshContext?: boolean,
+      ) =>
         orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "user",
@@ -11866,35 +11870,73 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           attachments: [],
           modelSelection,
           ...(outputSchema === undefined ? {} : { outputSchema }),
+          ...(freshContext === undefined ? {} : { freshContext }),
           dispatchMode: { type: "start_immediately" },
         });
-      yield* send("asked", { type: "object" });
-      const asked = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-      // The agent ended its turn to wait for something, without the result.
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make(`${threadId}-asked-completed`),
-            type: "run.updated",
-            threadId,
-            runId: asked.id,
-            occurredAt: asked.requestedAt,
-            payload: { ...asked, status: "completed", completedAt: asked.requestedAt },
-          },
-        ],
+      const runOf = Effect.fn(function* (key: string) {
+        const runs = (yield* orchestrator.getThreadProjection(threadId)).runs;
+        return runs.find(
+          (run) => run.userMessageId === MessageId.make(`runtime-layer-owed-output-${key}`),
+        )!;
       });
+      // The agent ends its turn, to wait for something or because it is done.
+      const complete = Effect.fn(function* (key: string) {
+        const run = yield* runOf(key);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-${key}-completed`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: run.requestedAt,
+              payload: { ...run, status: "completed", completedAt: run.requestedAt },
+            },
+          ],
+        });
+      });
+      const submit = (key: string, json = '{"head":"abc"}') =>
+        threadManagement.submitRunOutput({
+          threadId,
+          commandId: CommandId.make(`runtime-layer-owed-output-submit-${key}`),
+          json,
+        });
+      const refused = Effect.fn(function* (key: string) {
+        const rejected = yield* submit(key).pipe(Effect.flip);
+        assert.include(rejected.message, "not asked for a result");
+      });
+      yield* send("asked", { type: "object" });
+      const asked = yield* runOf("asked");
+      yield* complete("asked");
       yield* send("woken");
 
-      const accepted = yield* threadManagement.submitRunOutput({
-        threadId,
-        commandId: CommandId.make("runtime-layer-owed-output-submit"),
-        json: '{"head":"abc"}',
-      });
+      const accepted = yield* submit("asked");
       assert.equal(accepted.runId, asked.id);
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.deepEqual(after.runs.find((run) => run.id === asked.id)?.output?.value, {
         head: "abc",
       });
+
+      // Its reply was lost, and the retry comes once the next step's turn asked for a result.
+      yield* complete("woken");
+      yield* send("next", { type: "object" });
+      assert.equal((yield* submit("asked")).runId, asked.id);
+      assert.isUndefined((yield* runOf("next")).output);
+
+      // A correction gave the result `next` owed, so a later plain turn owes nothing.
+      yield* complete("next");
+      yield* send("correction", { type: "object" });
+      yield* submit("correction");
+      yield* complete("correction");
+      yield* send("plain");
+      yield* refused("plain");
+
+      // A turn in a fresh conversation cannot answer for one the agent no longer sees.
+      yield* complete("plain");
+      yield* send("before-fresh", { type: "object" });
+      yield* complete("before-fresh");
+      yield* send("fresh", undefined, true);
+      yield* refused("fresh");
     }),
   );
 
