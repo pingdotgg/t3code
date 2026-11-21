@@ -282,10 +282,15 @@ When the check reports an export, remove the `export` keyword or the code. If a 
 import graph uses the export, add `/** @public */` above it. For a single exception, put
 `// fallow-ignore-next-line unused-export` on the line above.
 
-Two blind spots differ from Knip. A name that a package entry re-exports with `export *` (most of
-`@t3tools/contracts`) counts as used, so delete such exports by reading their callers. A namespace
-import that escapes as a value, such as `Contracts as Record<string, unknown>`, marks every export
-of that module used; read namespace members by name instead.
+Fallow counts a name that a package entry re-exports with `export *` as used. The packages with
+such barrels (`client-runtime`, `contracts`, `effect-acp`, `effect-codex-app-server`, `tailscale`)
+keep Knip's export pass, `vp run knip:check:exports`, which CI, the pre-commit hook and
+`check:changed` run next to `fallow:check`. Its schema preprocessor is
+[scripts/knip-schemas.ts](../../scripts/knip-schemas.ts) and its config is
+[knip.jsonc](../../knip.jsonc). Add a package there when it gains an `export *` barrel, and drop the
+pass once fallow checks these exports. A namespace import that escapes as a value, such as
+`Contracts as Record<string, unknown>`, makes fallow count every export of that module used; read
+namespace members by name instead.
 
 ## Desktop artifacts
 

@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - hashes inputs with node:crypto and sizes the budget with node:os.
 // Runs CI's fast checks for this branch's changes: format and lint of the
-// changed files, fallow, generated GraphQL operations, typecheck of the affected
+// changed files, fallow and knip's export pass, generated GraphQL operations, typecheck of the affected
 // packages and their dependents, the test files beside the changed files, and
 // the cross-file checks those miss (agent context budget, React Compiler
 // coverage of the changed client files).
@@ -396,7 +396,10 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   // it runs whenever code or a manifest changes.
   const runFallow = files.some(
     (file) =>
-      CODE.test(file) || path.basename(file) === "package.json" || file === ".fallowrc.jsonc",
+      CODE.test(file) ||
+      path.basename(file) === "package.json" ||
+      file === ".fallowrc.jsonc" ||
+      file === "knip.jsonc",
   );
 
   // A version bump can leave a patch unused, causing pnpm to reject the install
@@ -489,7 +492,12 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...(code.length > 0
       ? [command("lint", ["lint", "--no-error-on-unmatched-pattern", ...code])]
       : []),
-    ...(runFallow ? [command("fallow", ["run", "fallow:check"])] : []),
+    ...(runFallow
+      ? [
+          command("fallow", ["run", "fallow:check"]),
+          command("knip exports", ["run", "knip:check:exports"]),
+        ]
+      : []),
     ...graphql.map((dir) =>
       command(`graphql (${dir})`, ["run", "--filter", `./${dir}`, "generate", "--check"]),
     ),

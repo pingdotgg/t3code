@@ -166,7 +166,10 @@ export default defineConfig({
     "*": ["vp fmt --no-error-on-unmatched-pattern", "vp lint --no-error-on-unmatched-pattern"],
     // fallow checks the whole repo, so it takes no file list. Any code or manifest change can leave
     // a file, export, or dependency unused.
-    "{*.{js,jsx,ts,tsx,mjs,cjs,mts,cts},package.json,.fallowrc.jsonc}": () => "vp run fallow:check",
+    "{*.{js,jsx,ts,tsx,mjs,cjs,mts,cts},package.json,.fallowrc.jsonc,knip.jsonc}": () => [
+      "vp run fallow:check",
+      "vp run knip:check:exports",
+    ],
   },
   fmt: {
     ignorePatterns: [

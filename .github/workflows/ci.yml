@@ -104,6 +104,10 @@ jobs:
       - name: Check unused code
         run: vp run fallow:check
 
+      # Fallow counts names re-exported with `export *` from a package entry as used.
+      - name: Check unused exports behind package barrels
+        run: vp run knip:check:exports
+
       - name: Check generated GitHub GraphQL operations
         run: vp run --filter @t3tools/source-control-github generate --check
 

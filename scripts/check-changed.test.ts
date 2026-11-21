@@ -493,6 +493,7 @@ it("lints an Astro component and runs fallow when only it changed", () => {
   ]);
   const commands = calls.map(({ args }) => args);
   expect(commands).toContainEqual(["run", "fallow:check"]);
+  expect(commands).toContainEqual(["run", "knip:check:exports"]);
 });
 
 it.each(["install", "lint"])("reports a failing %s step with its output", (step) => {
