@@ -1606,7 +1606,9 @@ const make = Effect.gen(function* () {
   const loadProviders = providerRegistry.getProviders;
 
   /** The folder the composer's model picker scans for this thread. */
-  const parentWorkspaceCwd = (parent: Pick<OrchestrationV2ThreadProjection, "thread">) =>
+  const parentWorkspaceCwd = (parent: {
+    readonly thread: { readonly worktreePath?: string | null; readonly projectId: ProjectId };
+  }) =>
     parent.thread.worktreePath
       ? Effect.succeed(parent.thread.worktreePath)
       : projects.getById(parent.thread.projectId).pipe(
@@ -2407,6 +2409,7 @@ const make = Effect.gen(function* () {
       parent: { thread: { modelSelection: base.modelSelection, projectId } },
       target,
       providers: yield* loadProviders,
+      cwd: yield* parentWorkspaceCwd({ thread: { projectId } }),
     });
     // Launch refuses a provider the project disables, so every run would fail.
     const instanceId = resolved.modelSelection.instanceId;
