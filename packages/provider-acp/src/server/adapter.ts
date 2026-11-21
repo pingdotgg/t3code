@@ -87,6 +87,7 @@ import {
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionUpdateEvent,
+  sessionUpdateIsReplay,
   toolCallVisibleOutputChanged,
   withTrackedPermissionToolCall,
   type AcpPlanUpdate,
@@ -7015,6 +7016,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(
             function* (rawNotification: EffectAcpSchema.SessionNotification) {
+              if (sessionUpdateIsReplay(rawNotification)) return;
               if (flavor.ignoreSessionUpdate?.(rawNotification) === true) return;
               yield* notePromptProgress(rawNotification);
               const nativePromptId = flavor.forkFromTurn?.nativeTurnId(rawNotification);
