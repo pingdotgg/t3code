@@ -101,9 +101,10 @@ interface BranchToolbarBranchSelectorProps {
 
 const WORKTREE_CHANGE_BLOCKED_MESSAGE = msg("Stop the current turn to switch worktrees.");
 
-// Branches a picker is checking out, by environment and checkout. Shared because a draft thread
-// mounts two selectors on one checkout, and the switch's own settle reloads refs for both.
-const pickerCheckouts = new Map<string, string>();
+// Picker checkouts by environment and checkout: null while in flight, then the branch it landed
+// on. Shared because a draft thread mounts two selectors on one checkout, and the switch's own
+// settle reloads refs for both.
+const pickerCheckouts = new Map<string, string | null>();
 const pickerCheckoutKey = (environmentId: string, cwd: string) => `${environmentId}\u0000${cwd}`;
 
 export function BranchToolbarBranchSelector({
@@ -511,7 +512,7 @@ export function BranchToolbarBranchSelector({
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(selectedBranchName);
       const checkoutKey = pickerCheckoutKey(environmentId, selectionTarget.checkoutCwd);
-      pickerCheckouts.set(checkoutKey, selectedBranchName);
+      pickerCheckouts.set(checkoutKey, null);
       const checkoutResult = await switchRef({
         environmentId,
         input: {
@@ -523,6 +524,7 @@ export function BranchToolbarBranchSelector({
         const nextBranchName = refName.isRemote
           ? (checkoutResult.value.refName ?? selectedBranchName)
           : selectedBranchName;
+        pickerCheckouts.set(checkoutKey, nextBranchName);
         const movesCheckout = selectionTarget.checkoutCwd !== branchCwd;
         let hold: BranchHold | null = null;
         const applied = setThreadBranch(
@@ -583,7 +585,7 @@ export function BranchToolbarBranchSelector({
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(name);
       const checkoutKey = pickerCheckoutKey(environmentId, branchCwd);
-      pickerCheckouts.set(checkoutKey, name);
+      pickerCheckouts.set(checkoutKey, null);
       const createBranchResult = await createRefMutation({
         environmentId,
         input: {
@@ -594,6 +596,7 @@ export function BranchToolbarBranchSelector({
       });
       if (createBranchResult._tag === "Success") {
         const nextBranchName = createBranchResult.value.refName;
+        pickerCheckouts.set(checkoutKey, nextBranchName);
         const applied = setThreadBranch(nextBranchName, activeWorktreePath);
         if (applied) {
           setBranchHold({
@@ -641,8 +644,11 @@ export function BranchToolbarBranchSelector({
     if (branch === null || branchCwd === null) return;
     // Kept until the checkout reports another branch, so every selector on it skips the refresh.
     const checkoutKey = pickerCheckoutKey(environmentId, branchCwd);
-    if (pickerCheckouts.get(checkoutKey) === branch) return;
-    pickerCheckouts.delete(checkoutKey);
+    if (pickerCheckouts.has(checkoutKey)) {
+      const pickerBranch = pickerCheckouts.get(checkoutKey);
+      if (pickerBranch === null || pickerBranch === branch) return;
+      pickerCheckouts.delete(checkoutKey);
+    }
     if (isInitialBranchesLoadPending) return;
     if (branchByName.get(branch)?.current !== true) refreshStaleRefs();
   });
