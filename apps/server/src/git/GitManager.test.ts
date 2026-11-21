@@ -1065,6 +1065,41 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("status of a repository without remotes runs no remote, provider or PR lookups", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/local-only"]);
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({ gitCommands });
+
+      const local = yield* manager.localStatus({ cwd: repoDir });
+      const remote = yield* manager.remoteStatus({ cwd: repoDir });
+
+      expect(local.hasPrimaryRemote).toBe(false);
+      expect(local.sourceControlProvider).toBeUndefined();
+      expect(remote?.pr ?? null).toBeNull();
+      // Once git reports no remotes, remote URLs, branch remotes and remote refs cannot exist.
+      expect(
+        gitCommands.filter((args) =>
+          /remote get-url|remote\.[^ ]+\.url|branch\.[^ ]+\.remote|refs\/remotes/.test(args),
+        ),
+      ).toEqual([]);
+
+      // A remote added outside T3 Code shows on the next read.
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+      ]);
+      yield* TestClock.adjust("2 seconds");
+      const afterRemote = yield* manager.localStatus({ cwd: repoDir });
+      expect(afterRemote.hasPrimaryRemote).toBe(true);
+      expect(afterRemote.sourceControlProvider?.kind).toBe("github");
+    }),
+  );
+
   it.effect("a git read in flight during a T3 git action does not outlive it", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -3372,6 +3407,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/status-open-over-merged"]);
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+      ]);
 
       const { manager } = yield* makeManager({
         providerScenario: {
