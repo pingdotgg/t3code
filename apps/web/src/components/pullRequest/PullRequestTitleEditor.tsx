@@ -15,6 +15,7 @@ import { PullRequestDetailTitleRow } from "./PullRequestDetailLayout";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { readableFailure } from "./pullRequestDetail.logic";
 import { canEditPullRequestChangeRequest } from "@t3tools/client-runtime/pull-request-editing";
+import { textDirection } from "~/textDirection";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
@@ -72,7 +73,10 @@ export function PullRequestTitleEditor({
         <Tooltip>
           <TooltipTrigger
             render={
-              <h1 className="min-w-0 flex-1 truncate text-base font-semibold leading-snug">
+              <h1
+                className="min-w-0 flex-1 truncate text-base font-semibold leading-snug"
+                dir={textDirection(detail.title)}
+              >
                 {detail.title}
               </h1>
             }
@@ -95,6 +99,7 @@ export function PullRequestTitleEditor({
         size="sm"
         disabled={titleSaving}
         value={titleDraft}
+        dir={textDirection(titleDraft)}
         aria-label={gt(
           "{term, select, mr {Merge request} cr {Change request} other {Pull request}} title",
           {

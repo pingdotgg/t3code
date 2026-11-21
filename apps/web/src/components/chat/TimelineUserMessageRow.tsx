@@ -63,6 +63,7 @@ import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+import { visibleUserMessageText } from "./MessagesTimeline.logic";
 import { formatBytes } from "../../lib/formatBytes";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -82,7 +83,7 @@ import {
 import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { cn } from "~/lib/utils";
-import { markdownProseDirection } from "~/textDirection";
+import { markdownProseDirection, textDirection } from "~/textDirection";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
@@ -431,7 +432,9 @@ export function FoldedMessageHeader(props: {
         {props.label}
       </span>
       {/* Mentioned macOS paths can be NFD; compose them like the chips in the body. */}
-      <span className="min-w-0 flex-1 truncate">{props.summary.normalize("NFC")}</span>
+      <span className="min-w-0 flex-1 truncate" dir={textDirection(props.summary)}>
+        {props.summary.normalize("NFC")}
+      </span>
       <ChevronDownIcon
         className={cn(
           "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -978,7 +981,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <div
             ref={folded ? revealFoldRef : undefined}
             hidden={folded && !expanded}
-            dir={markdownProseDirection(resolvedContext.text)}
+            dir={markdownProseDirection(visibleUserMessageText(resolvedContext.text))}
             className={cn(
               folded && "px-3 pb-3",
               folded && !ctx.findActive && "max-h-96 overflow-auto",

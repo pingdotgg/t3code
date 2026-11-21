@@ -156,6 +156,7 @@ export function BranchNamingSettings() {
               }}
               rows={4}
               defaultValue={instructionsMixed ? "" : settings.branchNameInstructions}
+              dir="auto"
               placeholder={
                 instructionsMixed
                   ? gt("Mixed. Enter instructions to apply to all selected targets.")

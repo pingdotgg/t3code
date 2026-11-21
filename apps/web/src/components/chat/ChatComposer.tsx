@@ -246,7 +246,7 @@ import { observeResize } from "~/lib/observeResize";
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 import { toastManager } from "../ui/toast";
 import { m as resolveMessage } from "../../i18n/messages";
-import { BuildingIcon, PlayIcon, ReplyIcon } from "lucide-react";
+import { ArrowRightToLineIcon, BuildingIcon, PlayIcon, ReplyIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import { assistantCitationNavigation } from "../../lib/assistantCitationNavigation";
@@ -3753,7 +3753,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           type="button"
                           tabIndex={-1}
                           aria-label={gt("Use suggested prompt")}
-                          className="pointer-events-auto ml-2 inline-flex cursor-pointer rounded align-[1px] [&:hover_kbd]:text-foreground"
+                          className="pointer-events-auto ms-2 inline-flex cursor-pointer rounded align-[1px] [&:hover_kbd]:text-foreground"
                           onPointerDown={(event) => event.preventDefault()}
                           onClick={() => {
                             const accepted = promptSuggestionToAccept(
@@ -3763,7 +3763,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             if (accepted !== null) applyPromptReplacementStable(0, 0, accepted);
                           }}
                         >
-                          <Kbd variant="outline">⇥ Tab</Kbd>
+                          <Kbd dir="ltr" variant="outline">
+                            <ArrowRightToLineIcon aria-hidden />
+                            Tab
+                          </Kbd>
                         </button>
                       ) : undefined
                     }

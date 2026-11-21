@@ -16,6 +16,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { markdownProseDirection, textDirection } from "@t3tools/shared/textDirection";
 import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
@@ -34,6 +35,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { Button } from "../../components/ui/Button";
+import { directionalText, proseDirectionStyle } from "../../lib/directionalText";
 import { Chip } from "../../components/ui/Chip";
 
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
@@ -68,7 +70,7 @@ export function SecretRequestCard(props: {
     <View className="mb-3 min-h-9 flex-row items-center gap-2 px-1">
       <SymbolView name={icon} size={13} tintColor={props.iconColor} type="monochrome" />
       <Text className="flex-1 font-sans text-sm text-foreground-muted" numberOfLines={2}>
-        {item.label} · {display.label}
+        {`\u2068${item.label}\u2069 · ${display.label}`}
       </Text>
     </View>
   );
@@ -103,6 +105,7 @@ function PendingSecretRequestForm(props: {
   const [error, setError] = useState<string | null>(null);
   // Submit then a tap can both run before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
+  const cardDirection = markdownProseDirection(item.label, item.reason);
   const inputRefs = useRef<Array<SecretTextInputHandle | null>>([]);
 
   const send = async (reply: SecretRequestReply) => {
@@ -146,10 +149,19 @@ function PendingSecretRequestForm(props: {
   return (
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <View className="gap-1">
-        <Text className="font-t3-bold text-base text-foreground">{item.label}</Text>
+        <Text
+          className="font-t3-bold text-base text-foreground"
+          style={proseDirectionStyle(item.label, cardDirection)}
+        >
+          {directionalText(item.label)}
+        </Text>
         {item.reason.trim() ? (
-          <Text className="font-sans text-sm leading-5 text-foreground-muted" selectable>
-            {item.reason}
+          <Text
+            className="font-sans text-sm leading-5 text-foreground-muted"
+            selectable
+            style={proseDirectionStyle(item.reason, cardDirection)}
+          >
+            {directionalText(item.reason)}
           </Text>
         ) : null}
       </View>
@@ -199,6 +211,7 @@ function PendingSecretRequestForm(props: {
       {source === null ? (
         inputs.map((input, index) => {
           const last = index === inputs.length - 1;
+          const value = secretRequestValue(values, input.key);
           const field = (
             <SecretTextInput
               key={input.key}
@@ -208,8 +221,11 @@ function PendingSecretRequestForm(props: {
               onMount={(handle) => {
                 inputRefs.current[index] = handle;
               }}
-              placeholder={input.placeholder}
-              value={secretRequestValue(values, input.key)}
+              placeholder={directionalText(input.placeholder)}
+              textDirection={
+                input.secret && value ? "ltr" : textDirection(value || input.placeholder)
+              }
+              value={value}
               onChangeText={(value) => setValues((current) => ({ ...current, [input.key]: value }))}
               editable={!submitting}
               returnKeyType={last ? "done" : "next"}
@@ -222,7 +238,12 @@ function PendingSecretRequestForm(props: {
           );
           return multiple ? (
             <View key={input.key} className="gap-1.5">
-              <Text className="font-t3-medium text-sm text-foreground-muted">{input.label}</Text>
+              <Text
+                className="font-t3-medium text-sm text-foreground-muted"
+                style={proseDirectionStyle(input.label, cardDirection)}
+              >
+                {directionalText(input.label)}
+              </Text>
               {field}
             </View>
           ) : (

@@ -9,6 +9,8 @@ import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { type PromptStashEntry } from "../../promptStashStore";
 import { ComposerBanner } from "./ComposerBanner";
+import { BidiMarkdownText } from "./BidiMarkdownText";
+import { markdownPreview } from "~/textDirection";
 
 const SNIPPET_MAX_CHARS = 90;
 
@@ -16,12 +18,18 @@ function missingImageCount(entry: PromptStashEntry): number {
   return entry.droppedImageNames.length + (entry.unreadableImageNames?.length ?? 0);
 }
 
-export function stashEntrySnippet(entry: PromptStashEntry, resolve: MessageResolver = m): string {
-  const trimmed = assistantCitationsToPlainText(
+function stashEntryPlainText(entry: PromptStashEntry): string {
+  return assistantCitationsToPlainText(
     replaceComposerContextReferences(entry.prompt, (reference) => reference.label),
-  )
-    .trim()
-    .replace(/\s+/g, " ");
+  ).trim();
+}
+
+function stashEntryPreviewText(entry: PromptStashEntry, resolve: MessageResolver): string {
+  return stashEntryPlainText(entry) || stashEntrySnippet(entry, resolve);
+}
+
+export function stashEntrySnippet(entry: PromptStashEntry, resolve: MessageResolver = m): string {
+  const trimmed = stashEntryPlainText(entry).replace(/\s+/g, " ");
   if (trimmed.length > 0) {
     if (trimmed.length <= SNIPPET_MAX_CHARS) return trimmed;
     // Never end on a lone high surrogate, the first half of an emoji.
@@ -216,15 +224,21 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                 <ComposerBanner.Content>
                   <button
                     type="button"
-                    className="min-w-0 flex-1 cursor-pointer truncate text-left text-foreground/80 outline-none before:absolute before:inset-0 before:rounded-sm focus-visible:before:ring-2 focus-visible:before:ring-inset focus-visible:before:ring-ring"
+                    className="min-w-0 flex-1 cursor-pointer truncate text-start text-foreground/80 outline-none before:absolute before:inset-0 before:rounded-sm focus-visible:before:ring-2 focus-visible:before:ring-inset focus-visible:before:ring-ring"
                     data-stash-restore={entry.id}
+                    dir={
+                      markdownPreview(stashEntryPreviewText(entry, m), SNIPPET_MAX_CHARS).direction
+                    }
                     aria-label={gt("Restore stashed prompt: {snippet}", {
                       snippet: stashEntrySnippet(entry, m),
                     })}
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => onRestore(entry)}
                   >
-                    {stashEntrySnippet(entry, m)}
+                    <BidiMarkdownText
+                      text={stashEntryPreviewText(entry, m)}
+                      maxChars={SNIPPET_MAX_CHARS}
+                    />
                   </button>
                 </ComposerBanner.Content>
                 <ComposerBanner.Actions>

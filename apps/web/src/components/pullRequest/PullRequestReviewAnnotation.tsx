@@ -38,6 +38,7 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
+import { textDirection } from "~/textDirection";
 import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
@@ -454,6 +455,7 @@ export function ReviewThreadCard({
                       size="sm"
                       completionScope={completionScope}
                       value={reply}
+                      dir={textDirection(reply)}
                       placeholder={gt("Reply", { $context: "noun, placeholder" })}
                       aria-label={gt("Reply to this conversation")}
                       onValueChange={setReply}

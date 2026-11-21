@@ -69,6 +69,7 @@ import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { subagentResumedSince } from "./V2LifecycleRow.logic";
 import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
+import { textDirection } from "~/textDirection";
 
 export type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
 
@@ -127,7 +128,10 @@ export function V2LifecycleRow(props: {
           <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/60">
             <MessageSquareIcon className="size-4 text-secondary-label" aria-hidden />
           </span>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+          <span
+            dir={textDirection(item.title ?? gt("Created thread"))}
+            className="min-w-0 flex-1 truncate text-left text-sm font-medium"
+          >
             {item.title ?? gt("Created thread")}
           </span>
           <Button
@@ -152,7 +156,10 @@ export function V2LifecycleRow(props: {
         label={
           item.title ? (
             <T>
-              Created thread · <Var>{item.title}</Var>
+              Created thread ·{" "}
+              <Var>
+                <bdi dir={textDirection(item.title)}>{item.title}</bdi>
+              </Var>
             </T>
           ) : (
             <T>Created thread</T>

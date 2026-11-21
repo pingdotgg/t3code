@@ -1079,7 +1079,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     <span
       ref={isRegeneratingTitle ? observeVisibleAnimation : undefined}
       className={cn(
-        "min-w-0 flex-1 text-start text-sm transition-opacity motion-reduce:transition-none",
+        "min-w-0 flex-1 text-left text-sm transition-opacity motion-reduce:transition-none",
         shouldRecede ? "font-normal" : "font-medium",
         isRegeneratingTitle
           ? "relative truncate text-muted-foreground"
@@ -1921,7 +1921,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               <span
                 ref={isRegeneratingTitle ? observeVisibleAnimation : undefined}
                 className={cn(
-                  "min-w-0 flex-1 truncate",
+                  "min-w-0 flex-1 truncate text-left",
                   props.isSettled ? "font-normal" : "font-medium",
                   isRegeneratingTitle
                     ? "relative text-muted-foreground"
@@ -1929,6 +1929,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
                       ? "text-secondary-label/70 group-hover/sidebar-row:text-foreground"
                       : "text-foreground",
                 )}
+                dir={textDirection(thread.title)}
               >
                 {thread.title}
                 {isRegeneratingTitle ? (

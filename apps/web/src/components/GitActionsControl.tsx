@@ -136,6 +136,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { ChangeBreakdownGrid } from "./pullRequest/ChangeBreakdownGrid";
 import { useOpenLink } from "~/browser/useOpenLink";
+import { textDirection } from "~/textDirection";
 
 /** The folder a Git actions control acts on: a thread's own folder or a tracked repository. */
 export interface GitActionsTarget {
@@ -1950,6 +1951,7 @@ function CheckoutGitActionsControl({
               </p>
               <Textarea
                 value={dialogCommitMessage}
+                dir={textDirection(dialogCommitMessage)}
                 onChange={(event) => setDialogCommitMessage(event.target.value)}
                 placeholder={gt("Leave empty to auto-generate")}
                 size="sm"

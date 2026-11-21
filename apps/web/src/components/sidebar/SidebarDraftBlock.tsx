@@ -24,6 +24,8 @@ import {
   type ComposerThreadDraftState,
   type DraftSessionState,
 } from "../../composerDraftStore";
+import { markdownProseDirection } from "~/textDirection";
+import { BidiMarkdownText } from "../chat/BidiMarkdownText";
 import {
   draftPenClassName,
   draftSurfaceClassName,
@@ -150,7 +152,12 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
             </span>
           </div>
-          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
+          <div
+            className="mt-0.5 truncate text-sm font-medium text-foreground/90"
+            dir={markdownProseDirection(preview)}
+          >
+            <BidiMarkdownText text={preview} />
+          </div>
         </div>
       </div>
     </li>

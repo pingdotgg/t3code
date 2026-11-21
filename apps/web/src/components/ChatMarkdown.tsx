@@ -1558,7 +1558,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         );
       }
       return (
-        <code {...props} className={className}>
+        <code {...props} dir="ltr" className={cn("[unicode-bidi:isolate]", className)}>
           {children}
         </code>
       );
