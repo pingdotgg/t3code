@@ -143,8 +143,9 @@ Alternatively, open **Settings → Source control & issues**, expand **TanStack 
 from `https://source.tanstack.com/settings/tokens`. A saved token is used before `SRC_TOKEN`, which is
 used before the `src` login. With several `src` logins, pick the account there too.
 
-Pull requests show the runs of TanStack Source CI with their logs, and update live while open.
-Reactions and picking reviewers from a list are not available yet.
+Pull requests show the runs of TanStack Source CI with their logs, and update live while open. Issues
+can be listed, filed, edited, commented on and closed. Reactions and picking reviewers or assignees
+from a list are not available yet.
 
 ### Cursor Origin
 

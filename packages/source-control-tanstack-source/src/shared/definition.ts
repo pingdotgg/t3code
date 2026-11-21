@@ -8,6 +8,7 @@ import {
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
   parseCommitPath,
+  parseIssuePath,
   projectChangeRequestHost,
   repositoryUrlFromPagePath,
 } from "@t3tools/source-control-core/shared/definition";
@@ -18,6 +19,7 @@ export const TANSTACK_SOURCE_HOST = "source.tanstack.com";
 
 /** Every web page and clone URL names the owner with a leading `@`, as `/@TanStack/router`. */
 const CHANGE_REQUEST_PATH = /^\/@?([^/@]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u;
+const ISSUE_PATH = /^\/@?([^/@]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/@?([^/@]+\/[^/]+)\/commit\/([0-9a-f]+)\/?$/iu;
 const REPOSITORY_PAGE_PATH = /^\/(@[^/@]+\/[^/]+)\/(?:tree|blob)\/[^/]/u;
 const CHECKOUT_COMMAND = /^src\s+pr\s+checkout\s+(.+)$/iu;
@@ -87,6 +89,8 @@ export const definition = defineSourceControl({
         : { ...input, webUrl: `https://${input.host}/@${input.repository.replace(/^@/u, "")}` },
       "commit",
     ),
+  parseIssueUrl: (url) =>
+    isTanStackSourceHost(url.hostname) ? parseIssuePath(url, ISSUE_PATH) : null,
   parseCommitUrl: (url) =>
     isTanStackSourceHost(url.hostname) ? parseCommitPath(url, COMMIT_PATH) : null,
   repositoryUrlFromPage: (url) =>
