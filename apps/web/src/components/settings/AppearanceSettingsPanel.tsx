@@ -364,12 +364,40 @@ export function AppearanceSettingsPanel() {
         <AdvancedSettings
           targetIds={[
             searchableSetting("panel-animations").id,
+            searchableSetting("smooth-activity-shimmer").id,
             searchableSetting("environment-identification").id,
             // Environment identification's search result lands on this section.
             "appearance-interface",
             searchableSetting("composer-context").id,
           ]}
         >
+          <SettingsRow
+            {...searchableSetting("smooth-activity-shimmer")}
+            description={gt(
+              "Make Thinking and running tool highlights move more smoothly. Uses more power while visible; respects reduced motion.",
+            )}
+            resetAction={
+              settings.smoothActivityShimmer !== DEFAULT_UNIFIED_SETTINGS.smoothActivityShimmer ? (
+                <SettingResetButton
+                  ariaLabel={gt("Reset activity shimmer to default")}
+                  onClick={() =>
+                    updateSettings({
+                      smoothActivityShimmer: DEFAULT_UNIFIED_SETTINGS.smoothActivityShimmer,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.smoothActivityShimmer}
+                onCheckedChange={(checked) =>
+                  updateSettings({ smoothActivityShimmer: Boolean(checked) })
+                }
+                aria-label={gt("Smoother activity shimmer")}
+              />
+            }
+          />
           <SettingsRow
             {...searchableSetting("panel-animations")}
             description={gt("Set how fast panels open and close.")}

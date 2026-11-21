@@ -43,6 +43,11 @@ preference is saved separately on each device.
 
 ## Motion
 
+On web and desktop, **Smoother activity shimmer** under **Settings → Appearance → Advanced**
+trades higher power use for smoother Thinking and running tool highlights. It is off by default
+and saved per device or browser. Reduced motion and high-contrast system colors still disable
+the shimmer.
+
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
 **Panel animations** slider above 0 ms to add motion, up to 400 ms, unless reduced motion is enabled
 in your operating system. Moving between threads always snaps to the selected thread's panel state
