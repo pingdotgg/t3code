@@ -377,29 +377,37 @@ describe("GitHubRest", () => {
           );
         }),
       );
+      let configReads = 0;
       const host = TestSourceControlHost.layer({
         process: {
           run: () =>
-            config === ""
-              ? Effect.succeed(TestSourceControlHost.processOutput("\n"))
-              : Effect.fail(
-                  new VcsProcessTimeoutError({
-                    operation: "GitHubHttpClient.config",
-                    command: "gh",
-                    cwd: "/",
-                    timeoutMs: 10_000,
-                  }),
-                ),
+            Effect.sync(() => configReads++).pipe(
+              Effect.andThen(
+                config === ""
+                  ? Effect.succeed(TestSourceControlHost.processOutput("\n"))
+                  : Effect.fail(
+                      new VcsProcessTimeoutError({
+                        operation: "GitHubHttpClient.config",
+                        command: "gh",
+                        cwd: "/",
+                        timeoutMs: 10_000,
+                      }),
+                    ),
+              ),
+            ),
         },
       });
       return Effect.gen(function* () {
         const api = yield* HttpClient.HttpClient;
+        // Building the client must not start gh: it sits on the server's startup path.
+        expect(configReads).toBe(0);
         const answer = yield* api.execute(
           HttpClientRequest.get("https://api.github.com/user").pipe(
             HttpClientRequest.bearerToken("first"),
           ),
         );
         expect(yield* answer.json).toEqual({ login: "direct-user" });
+        expect(configReads).toBe(1);
         expect(requests).toHaveLength(1);
         expect(requests[0]).toMatchObject({
           url: "https://api.github.com/user",

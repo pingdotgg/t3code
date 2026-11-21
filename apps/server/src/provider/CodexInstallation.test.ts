@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -40,6 +41,8 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     local?: { version: string; appServerFails?: boolean; versionFails?: boolean };
     platform?: NodeJS.Platform;
     spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
+    /** Return while the local probe still runs; tests otherwise start from its result. */
+    probing?: boolean;
     runtimeRenameFailures?: number;
     /** Served by URL instead of the pinned package. */
     responses?: Readonly<Record<string, () => Response>>;
@@ -129,6 +132,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
       ),
     ),
   );
+  if (!input.probing) yield* installation.state;
   return {
     installation,
     fs,
@@ -311,6 +315,29 @@ it.effect("rechecks a cached local executable when the shared manifest policy ch
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("starts without waiting for the local probe, which readers then wait for", () =>
+  Effect.gen(function* () {
+    const real = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const probeStarted = yield* Deferred.make<void>();
+    const releaseProbe = yield* Deferred.make<void>();
+    const h = yield* makeHarness({
+      local: { version: "0.156.1" },
+      probing: true,
+      spawner: ChildProcessSpawner.make((command) =>
+        Deferred.succeed(probeStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseProbe)),
+          Effect.andThen(real.spawn(command)),
+        ),
+      ),
+    });
+    const state = yield* Effect.forkChild(h.installation.state);
+    yield* Deferred.await(probeStarted);
+    expect(state.pollUnsafe()).toBeUndefined();
+    yield* Deferred.succeed(releaseProbe, undefined);
+    expect(yield* Fiber.join(state)).toMatchObject({ source: "local", phase: "succeeded" });
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("uses bundled Codex compatibility when the remote manifest omits its policy", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness({
@@ -434,11 +461,15 @@ it.effect("updates an older supported managed installation to the pinned release
       `${first.installation.managedDirectory}/active.json`,
       '{"version":"0.156.0"}',
     );
-    const restarted = yield* makeHarness({ baseDir: first.baseDir });
+    const restarted = yield* makeHarness({ baseDir: first.baseDir, probing: true });
+    // A session that opens during the probe must not hold the gate the probe's update needs.
+    const session = yield* Effect.forkChild(restarted.installation.acquire().pipe(Effect.scoped));
     expect((yield* restarted.installation.state).operationId).not.toBeNull();
     expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
     expect((yield* restarted.installation.resolve()).version).toBe("0.156.1");
     expect(restarted.downloads()).toBe(1);
+    // Either runtime may serve it: the older one still resolves while the update downloads.
+    expect((yield* Fiber.join(session)).source).toBe("managed");
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

@@ -737,6 +737,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it("leaves the staged dependency patches out of the packaged app", () => {
+    const patch = "patches/@cursor__sdk@1.3.1.patch";
+    assert.isTrue(
+      DESKTOP_FILE_EXCLUSIONS.some((glob) => NodePath.matchesGlob(patch, glob.slice(1))),
+    );
+    assert.isTrue(
+      WINDOWS_SERVER_ASAR_IGNORE_GLOBS.some((glob) => NodePath.matchesGlob(patch, glob)),
+    );
+  });
+
   it("drops the other architecture's Darwin prebuilds from single-architecture Mac builds", () => {
     const excludes = (arch: "arm64" | "x64" | "universal", file: string) =>
       resolveMacFileExclusions(arch).some((glob) => NodePath.matchesGlob(file, glob.slice(1)));

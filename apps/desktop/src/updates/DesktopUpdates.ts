@@ -13,6 +13,7 @@ import { errorTag } from "@t3tools/shared/observability";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -64,6 +65,8 @@ const CHANNEL_CHANGE_RETRIES = 30;
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 hours";
 const UPDATE_CHECK_WAIT = Duration.seconds(90);
+// Install trusts a feed answer this recent instead of asking again before it restarts.
+const INSTALL_RECHECK_AFTER = Duration.minutes(5);
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
@@ -401,6 +404,7 @@ export const make = Effect.gen(function* () {
   >([]);
   const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
+  const feedAnsweredAtRef = yield* Ref.make(Option.none<number>());
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const notAppliedVersionRef = yield* Ref.make(Option.none<string>());
   // The release a track switch's database check cleared. A build crosses to another track only
@@ -591,6 +595,11 @@ export const make = Effect.gen(function* () {
     const restoreDowngrade = yield* electronUpdater.allowDowngrade;
     if (allowDowngrade) yield* electronUpdater.setAllowDowngrade(true);
     return yield* electronUpdater.checkForUpdates.pipe(
+      Effect.tap(() =>
+        Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) => Ref.set(feedAnsweredAtRef, Option.some(now))),
+        ),
+      ),
       Effect.ensuring(electronUpdater.setAllowDowngrade(restoreDowngrade).pipe(Effect.ignore)),
     );
   });
@@ -1009,14 +1018,21 @@ export const make = Effect.gen(function* () {
     let installVersion = expectedVersion;
     // A download can be hours old: a release published since replaces it before restarting.
     const retained = yield* Ref.get(updateStateRef);
+    const changesTrack = retained.channel !== desktopUpdateChannelOf(environment.appVersion);
+    const now = yield* Clock.currentTimeMillis;
+    const feedIsFresh =
+      !changesTrack &&
+      Option.exists(
+        yield* Ref.get(feedAnsweredAtRef),
+        // A clock set back since the answer must not make it look fresh.
+        (answeredAt) =>
+          now >= answeredAt && now - answeredAt < Duration.toMillis(INSTALL_RECHECK_AFTER),
+      );
     if (
       retained.downloadedVersion !== null &&
       (expectedVersion === undefined || retained.downloadedVersion === expectedVersion) &&
-      (yield* checkForUpdates(
-        "install",
-        "acquire",
-        retained.channel !== desktopUpdateChannelOf(environment.appVersion),
-      )) &&
+      !feedIsFresh &&
+      (yield* checkForUpdates("install", "acquire", changesTrack)) &&
       (yield* Ref.get(updateStateRef)).status === "available"
     ) {
       const refreshed = yield* Ref.get(updateStateRef);
