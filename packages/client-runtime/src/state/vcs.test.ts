@@ -492,6 +492,7 @@ describe("cached VCS refs", () => {
         [WS_METHODS.vcsRefreshStatus]: () =>
           Deferred.succeed(refreshStarted, undefined).pipe(
             Effect.andThen(Deferred.await(releaseRefresh)),
+            Effect.as({}),
           ),
         [WS_METHODS.vcsSwitchRef]: () => Effect.succeed({ refName: "feature" }),
       } as unknown as WsRpcProtocolClient;

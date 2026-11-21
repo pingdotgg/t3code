@@ -736,21 +736,27 @@ export const make = Effect.gen(function* () {
   )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     yield* acquireBranchChangesDemand(cwd);
-    const refsBeforeLocalRead = options?.localOnly ? null : yield* workflow.readRefSnapshot(cwd);
-    yield* refreshLocalStatusCore(cwd);
+    // Lets the client keep its cached branch list when no ref moved since its last refresh.
+    const withRefsDigest = (status: VcsStatusResult, refs: string | null) =>
+      refs === null
+        ? status
+        : {
+            ...status,
+            refsDigest: NodeCrypto.createHash("sha256").update(refs).digest("hex").slice(0, 32),
+          };
     if (options?.localOnly) {
+      const [refs] = yield* Effect.all(
+        [workflow.readRefSnapshot(cwd), refreshLocalStatusCore(cwd)],
+        { concurrency: "unbounded" },
+      );
       // Never cache a remote here: readers take `value: null` as "read and found no PR".
       const parts = yield* getStatusParts(cwd);
-      return mergeGitStatusParts(parts.local, parts.remote);
+      return withRefsDigest(mergeGitStatusParts(parts.local, parts.remote), refs);
     }
+    const refsBeforeLocalRead = yield* workflow.readRefSnapshot(cwd);
+    yield* refreshLocalStatusCore(cwd);
     const { status, refs } = yield* refreshRemoteAndLocalTotals(cwd, rawCwd, refsBeforeLocalRead);
-    // Lets the client keep its cached branch list when no ref moved since its last refresh.
-    return refs === null
-      ? status
-      : {
-          ...status,
-          refsDigest: NodeCrypto.createHash("sha256").update(refs).digest("hex").slice(0, 32),
-        };
+    return withRefsDigest(status, refs);
   }, Effect.scoped);
 
   const refreshAfterCheckout: VcsStatusBroadcaster["Service"]["refreshAfterCheckout"] = Effect.fn(
