@@ -553,14 +553,14 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     }).pipe(Effect.asVoid);
 
   // A broken pipe can win the race against the exit that explains it; wait briefly on the live clock.
-  const preferProcessExit = (error: AcpError.AcpError) =>
-    options.terminationError
-      ? options.terminationError.pipe(
-          Effect.timeoutOption("250 millis"),
-          Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
-          Effect.map(Option.getOrElse(() => error)),
-        )
-      : Effect.succeed(error);
+  const preferProcessExit = Effect.fn("preferProcessExit")(function* (error: AcpError.AcpError) {
+    if (!options.terminationError) return error;
+    return yield* options.terminationError.pipe(
+      Effect.timeoutOption("250 millis"),
+      Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+      Effect.map(Option.getOrElse(() => error)),
+    );
+  });
 
   const handleTermination = (classify: Effect.Effect<AcpError.AcpError>) =>
     Ref.modify(terminationHandled, (handled) => {
