@@ -790,7 +790,7 @@ describe("AgentAwarenessRelay", () => {
       }),
   );
 
-  it.effect("still publishes a completion when the thread settles during the hold", () =>
+  it.effect("clears instead of alerting when the thread settles during the completion hold", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
       yield* relay.publishThread(THREAD_ID);
@@ -808,14 +808,14 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase ?? null),
-        ["running", "completed"],
+        ["running", null],
       );
 
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase ?? null),
-        ["running", "completed", null],
+        ["running", null],
       );
     }),
   );
@@ -888,43 +888,45 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("alerts a completion settled during its hold after an earlier tombstone", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)));
-      const { relay, currentShell, publications } = yield* makeTestRelay();
-      const settledAt = DateTime.makeUnsafe(NOW);
-      yield* Ref.set(currentShell, {
-        ...shell({ status: "completed" }),
-        settledOverride: "settled",
-        settledAt,
-        lastVisitedAt: null,
-      });
-      yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
+  it.effect(
+    "does not alert when a completion settles during its hold after an earlier tombstone",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)));
+        const { relay, currentShell, publications } = yield* makeTestRelay();
+        const settledAt = DateTime.makeUnsafe(NOW);
+        yield* Ref.set(currentShell, {
+          ...shell({ status: "completed" }),
+          settledOverride: "settled",
+          settledAt,
+          lastVisitedAt: null,
+        });
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
 
-      const completed = shell({
-        status: "completed",
-        latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:06.000Z"),
-      });
-      yield* Ref.set(currentShell, completed);
-      yield* relay.publishThread(THREAD_ID);
-      yield* Ref.set(currentShell, {
-        ...completed,
-        settledOverride: "settled",
-        settledAt,
-        lastVisitedAt: null,
-      });
-      yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-      assert.deepEqual(
-        publications.map((publication) => publication.state?.phase ?? null),
-        [null, "completed", null],
-      );
-    }),
+        const completed = shell({
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:06.000Z"),
+        });
+        yield* Ref.set(currentShell, completed);
+        yield* relay.publishThread(THREAD_ID);
+        yield* Ref.set(currentShell, {
+          ...completed,
+          settledOverride: "settled",
+          settledAt,
+          lastVisitedAt: null,
+        });
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map((publication) => publication.state?.phase ?? null),
+          [null],
+        );
+      }),
   );
 
   it.effect("drops a held completion when a queued continuation hides the thread", () =>
@@ -944,7 +946,7 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("retries a failed completion even after the thread settles", () =>
+  it.effect("clears instead of retrying a failed completion after the thread settles", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay({
         respond: (attempt) =>
@@ -968,12 +970,12 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase ?? null),
-        ["running", "completed", "completed"],
+        ["running", "completed", null],
       );
 
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
-      assert.equal(publications.at(-1)?.state ?? null, null);
+      assert.equal(publications.length, 3);
     }),
   );
 
