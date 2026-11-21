@@ -303,6 +303,11 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       rejection: "API Error: 400 This model does not support images larger than 5 MB.",
       expectedCalls: ["images", "text", "images", "text"],
     },
+    {
+      label: "keeps sending images to a model that limits image input size",
+      rejection: "API Error: 400 Image inputs are not supported for images larger than 5 MB.",
+      expectedCalls: ["images", "text", "images", "text"],
+    },
   ])("still generates text and $label", ({ rejection, expectedCalls }) =>
     withFakeClaudeEnv(
       {
