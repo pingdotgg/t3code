@@ -101,7 +101,7 @@ describe("Antigravity Auto", () => {
     expect(antigravitySessionMode("auto", modeState)).toBe(expected);
   });
 
-  it.each(["execute", "read"] as const)("asks about the %s requests agy's Auto sends", (kind) => {
+  it.each(["execute"] as const)("asks about the %s requests agy's Auto sends", (kind) => {
     const request = {
       sessionId: "session-1",
       toolCall: { toolCallId: "call-1", title: "Tool call", kind },
@@ -110,6 +110,27 @@ describe("Antigravity Auto", () => {
     expect(antigravityPermissionDisposition({ runtimeMode: "auto", cwd: null }, request)).toBe(
       "ask",
     );
+  });
+
+  it("allows reads outside the workspace in Auto, as every other mode does", () => {
+    const request = {
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "call-1",
+        title: "Read README.md",
+        kind: "read",
+        locations: [{ path: "/sibling-repo/README.md" }],
+      },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    } satisfies EffectAcpSchema.RequestPermissionRequest;
+    for (const sandboxPolicy of [undefined, { type: "workspaceWrite", writableRoots: [] }]) {
+      expect(
+        antigravityPermissionDisposition(
+          { runtimeMode: "auto", cwd: "/workspace", ...(sandboxPolicy ? { sandboxPolicy } : {}) },
+          request,
+        ),
+      ).toBe("allow");
+    }
   });
 
   it.each([{ type: "readOnly" }, { type: "workspaceWrite", writableRoots: [] }])(
