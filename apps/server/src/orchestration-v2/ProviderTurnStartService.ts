@@ -30,9 +30,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import {
+  CLAUDE_PROVIDER,
+  CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL,
+} from "./Adapters/ClaudeAdapterV2.ts";
 import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -127,9 +132,31 @@ export function abandonedProviderTurns(
 }
 
 export const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
+const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 const isProviderAdapterOpenSessionError = Schema.is(
   ProviderAdapter.ProviderAdapterOpenSessionError,
 );
+
+/**
+ * Claude refuses these before it reads the prompt: replacing a process running background work,
+ * launch arguments whose appended system prompt or settings cannot be read, or MCP registration
+ * that never answers while the query opens. A query that ends before the turn attaches (such as a
+ * rejected resume point) never received the prompt either.
+ */
+const PROMPT_REFUSAL_TAGS = [
+  "ClaudeBackgroundWorkBlocksQueryReplacementError",
+  "ClaudeAppendSystemPromptFileError",
+  "ClaudeAppendSystemPromptMissingValueError",
+  "ClaudeSettingsLaunchArgError",
+  "ClaudeMcpRegistrationTimeoutError",
+] as const;
+
+const refusedBeforePrompt = (error: unknown): boolean =>
+  PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
+  (isProviderAdapterProtocolError(error) &&
+    error.driver === CLAUDE_PROVIDER &&
+    error.detail === CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL) ||
+  (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
 /**
  * Whether a non-truncating provider's native session lost the conversation kept before `run`.
@@ -2074,7 +2101,7 @@ export const layer: Layer.Layer<
           yield* operation.pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
             Effect.tapError((error) =>
-              RunExecutionService.refusedBeforePrompt(error)
+              refusedBeforePrompt(error)
                 ? delivery.unsent.pipe(
                     Effect.catchCause(() =>
                       Effect.logWarning("Failed to restore unsent context handoffs", {

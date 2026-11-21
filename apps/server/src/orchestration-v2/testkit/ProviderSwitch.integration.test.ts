@@ -48,7 +48,10 @@ import {
   CodexProviderCapabilitiesV2,
   canReuseCodexContextUsage,
 } from "../Adapters/CodexAdapterV2.ts";
-import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
+import {
+  ACP_ATTACHMENT_PROMPT_FAILURE_DETAIL,
+  AcpProviderCapabilitiesV2,
+} from "@t3tools/provider-acp/server/adapter";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
@@ -2921,7 +2924,18 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
-  it.live("a rejected attachment does not fail every later turn in the thread", () =>
+  it.live.each([
+    [
+      "a rejected attachment does not fail every later turn in the thread",
+      ACP_ATTACHMENT_PROMPT_FAILURE_DETAIL,
+      false,
+    ],
+    [
+      "a closed transport keeps the attachment for the next turn",
+      "Provider app-server transport closed",
+      true,
+    ],
+  ] as const)("%s", ([, detail, carried]) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("rejected-attachment-later-turns");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
@@ -2943,7 +2957,7 @@ describe("orchestration v2 provider switching", () => {
           rejectAttachmentId: rejected.id,
           refusalCause: new ProviderAdapter.ProviderAdapterProtocolError({
             driver: CLAUDE_DRIVER,
-            detail: "Failed to build ACP attachment prompt",
+            detail,
           }),
         }),
       ]);
@@ -2991,8 +3005,9 @@ describe("orchestration v2 provider switching", () => {
         });
         assert.equal(yield* run(1), "completed");
         assert.equal(yield* run(2), "failed");
-        assert.equal(yield* run(3), "completed");
-        assert.deepEqual((yield* Ref.get(capturedTurns)).at(-1)?.attachments, []);
+        // The adapter refuses any prompt carrying the attachment, so a failed run 3 shows it rode along.
+        assert.equal(yield* run(3), carried ? "failed" : "completed");
+        if (!carried) assert.deepEqual((yield* Ref.get(capturedTurns)).at(-1)?.attachments, []);
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
