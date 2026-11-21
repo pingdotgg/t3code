@@ -15,6 +15,7 @@ import {
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -1054,7 +1055,7 @@ it.effect.each([
 ] as const)("handles an unread steer when %s", (outcome) =>
   Effect.gen(function* () {
     const cwd = yield* checkpointWorkspace("claude-unread-steer");
-    const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+    const sdkMessages = yield* Queue.unbounded<SDKMessage, Cause.Done>();
     const offers: SDKUserMessage[] = [];
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       instanceId: modelSelection.instanceId,
@@ -1256,9 +1257,17 @@ it.effect.each([
             event.payload.userMessageId === steerId &&
             event.payload.status === "queued",
         );
-        yield* Queue.shutdown(sdkMessages);
+        // The first prompt's reply completes; its result waits for the steer, then Claude exits.
+        yield* answer(offers[0]!);
+        yield* Queue.end(sdkMessages);
         yield* Fiber.join(requeued);
         yield* worker.drain();
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).providerTurns.find(
+            (turn) => turn.runAttemptId === parent.activeAttemptId,
+          )?.turnTokenUsage?.usageStatus,
+          "partial",
+        );
         // The provider failure holds the queue, the follow-up included, until someone resumes it.
         assert.deepEqual(yield* queuedOrder, [
           [MessageId.make("before"), true],

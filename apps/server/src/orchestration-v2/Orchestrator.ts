@@ -3557,7 +3557,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     for (const { run, message, steer, afterRunOrdinal } of placed) {
       yield* dispatchWithReceiptEffect({
         type: "message.dispatch",
-        commandId: CommandId.make(`command:unread-steer:${run.id}:${message.id}`),
+        // Per attempt, so a rejected one does not block a retry. The pending item, read under the
+        // thread lock, is what keeps a requeued steer from being sent again.
+        commandId: CommandId.make(
+          `command:unread-steer:${run.id}:${message.id}:${DateTime.toEpochMillis(yield* DateTime.now)}`,
+        ),
         threadId,
         messageId: message.id,
         steerFollowUpOfRunId: run.id,
