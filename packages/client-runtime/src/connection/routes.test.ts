@@ -133,7 +133,8 @@ describe("connection routes", () => {
   it("keeps a newly paired route behind a different kind of the same rank", () => {
     const vpn = direct("vpn", "http://100.101.102.103:3773/");
     const pasted = direct("ts-2", "http://[fd7a:115c:a1e0::2]:3773/");
-    expect(upsertRoute([vpn, TAILNET], pasted)).toEqual([vpn, pasted, TAILNET]);
+    const http = direct("tailnet-http", "http://desk.tail1234.ts.net:3773/");
+    expect(upsertRoute([vpn, http], pasted)).toEqual([vpn, pasted, http]);
   });
 
   it("shows a dragged order only until the saved routes catch up or change", () => {
@@ -142,6 +143,18 @@ describe("connection routes", () => {
     expect(pendingRouteOrder(dragged, ["tailnet", "lan"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "public"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "tailnet", "public"])).toBeNull();
+  });
+
+  it("prefers Tailscale HTTPS over HTTP regardless of which route is added first", () => {
+    const http = direct("tailnet-http", "http://desk.tail1234.ts.net:3773/");
+    expect(insertRoute([LAN, http, RELAY], TAILNET)).toEqual([LAN, TAILNET, http, RELAY]);
+    expect(insertRoute([LAN, TAILNET, RELAY], http)).toEqual([LAN, TAILNET, http, RELAY]);
+    expect(upsertRoute([LAN, TAILNET, RELAY], http)).toEqual([LAN, TAILNET, http, RELAY]);
+  });
+
+  it("preserves a manual preference for Tailscale HTTP when refreshing saved routes", () => {
+    const http = direct("tailnet-http", "http://desk.tail1234.ts.net:3773/");
+    expect(upsertRoute([http, TAILNET, RELAY], TAILNET)).toEqual([http, TAILNET, RELAY]);
   });
 });
 
@@ -190,6 +203,59 @@ describe("learned routes", () => {
       allowInsecure: true,
     });
     expect(ids(moved)).toEqual([`learned:${ENVIRONMENT_ID}:http://10.0.0.42:3773`, "relay"]);
+  });
+
+  it.each([false, true])(
+    "learns Tailscale HTTPS ahead of HTTP with HTTPS reported first: %s",
+    (httpsFirst) => {
+      const http = { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" };
+      const https = { kind: "tailnet", httpBaseUrl: "https://desk.tail1234.ts.net/" };
+      const routes = mergeLearnedRoutes({
+        entry: relayOnly,
+        activeRoute: RELAY,
+        reported: [
+          { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+          ...(httpsFirst ? [https, http] : [http, https]),
+        ],
+        allowInsecure: true,
+      })!;
+      expect(ids(routes)).toEqual([
+        `learned:${ENVIRONMENT_ID}:http://192.168.1.10:3773`,
+        `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net`,
+        `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773`,
+        "relay",
+      ]);
+    },
+  );
+
+  it("promotes newly available Tailscale HTTPS ahead of an existing HTTP route", () => {
+    const http = { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" };
+    const https = { kind: "tailnet", httpBaseUrl: "https://desk.tail1234.ts.net/" };
+    const first = mergeLearnedRoutes({
+      entry: relayOnly,
+      activeRoute: RELAY,
+      reported: [http],
+      allowInsecure: true,
+    })!;
+    const routes = mergeLearnedRoutes({
+      entry: entryWithRoutes(relayOnly, first),
+      activeRoute: first[0]!,
+      reported: [http, https],
+      allowInsecure: true,
+    })!;
+    expect(ids(routes)).toEqual([
+      `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net`,
+      `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773`,
+      "relay",
+    ]);
+    expect(
+      mergeLearnedRoutes({
+        entry: entryWithRoutes(relayOnly, [routes[1]!, routes[0]!, RELAY]),
+        activeRoute: routes[1]!,
+        reported: [http, https],
+        allowInsecure: true,
+      }),
+    ).toBeNull();
   });
 
   it("keeps a learned route where the user moved it while the server reports it", () => {
@@ -301,8 +367,8 @@ describe("learned routes", () => {
       allowInsecure: true,
     });
     expect(ids(routes)).toEqual([
-      `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773@public`,
       `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net@public`,
+      `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773@public`,
       "public",
       "relay",
     ]);
