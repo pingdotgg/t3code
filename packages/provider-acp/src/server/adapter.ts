@@ -9048,6 +9048,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(compactionMarkers, new Map());
           yield* Ref.set(completedCompactionIds, new Set());
           yield* Ref.set(snapshot, emptySnapshotState());
+          // The old process's tasks cannot report a terminal update to the new one.
+          yield* continuationPermit.withPermit(
+            Effect.gen(function* () {
+              yield* Ref.set(runningBackgroundTaskIds, new Set());
+              yield* Ref.set(detachedBackgroundCommands, new Map());
+            }),
+          );
           return true;
         });
 
