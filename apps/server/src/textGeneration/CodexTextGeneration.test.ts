@@ -58,6 +58,8 @@ interface FakeCodexInput {
   mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
   requiredCwd?: string;
   requireInstructions?: string;
+  requireMcpServersOff?: ReadonlyArray<string>;
+  requireOriginator?: string;
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -73,6 +75,8 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     mcpServers: input.mcpServers ?? [],
     requiredCwd: input.requiredCwd ?? null,
     requireInstructions: input.requireInstructions ?? null,
+    requireMcpServersOff: input.requireMcpServersOff ?? [],
+    requireOriginator: input.requireOriginator ?? null,
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
@@ -128,6 +132,36 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "function fail(message, code) {",
         '  process.stderr.write(message + "\\n");',
         "  process.exit(code);",
+        "}",
+        "// Like Codex: a later mcp_servers={...} override replaces servers earlier -c flags defined.",
+        "const servers = new Map();",
+        "const offServers = new Set();",
+        "for (let index = 0; index < args.length; index += 1) {",
+        '  if (args[index] !== "-c" && args[index] !== "--config") continue;',
+        '  const value = args[index + 1] ?? "";',
+        '  if (value.startsWith("mcp_servers={")) {',
+        '    const named = [...value.matchAll(/"([^"]+)"=\\{enabled=false\\}/g)].map((match) => match[1]);',
+        "    for (const name of named) offServers.add(name);",
+        "    for (const name of [...servers.keys()]) {",
+        "      if (named.includes(name)) servers.set(name, false);",
+        "      else servers.delete(name);",
+        "    }",
+        '  } else if (value.startsWith("mcp_servers.")) {',
+        '    const [name, key] = value.slice("mcp_servers.".length).split(/[.=]/);',
+        "    if (value === `mcp_servers.${name}.enabled=false`) offServers.add(name);",
+        "    // An enabled flag alone toggles a server another layer (config.toml) defines.",
+        '    if (key === "enabled" && !servers.has(name)) continue;',
+        '    servers.set(name, servers.get(name) === true || key === "url" || key === "command");',
+        "  }",
+        "}",
+        "for (const [name, hasTransport] of servers) {",
+        '  if (!hasTransport) fail("Error loading config.toml: invalid transport in `mcp_servers." + name + "`", 12);',
+        "}",
+        "for (const name of check.requireMcpServersOff) {",
+        '  if (!offServers.has(name)) fail("MCP server left on: " + name, 13);',
+        "}",
+        "if (check.requireOriginator !== null && process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE !== check.requireOriginator) {",
+        '  fail("unexpected originator: " + process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE, 14);',
         "}",
         'if (check.requiredCwd !== null && process.cwd() !== check.requiredCwd) fail("cannot inspect checkout", 10);',
         'if (check.requireInstructions !== null && !instructions.includes(check.requireInstructions)) fail("missing writer task", 11);',
@@ -365,7 +399,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           { name: "already-off", enabled: false },
         ],
         requireArg:
-          '--config features.plugins=false --config features.apps=false --config mcp_servers={"augmenter"={enabled=false},"my.server"={enabled=false}}',
+          'exec --config mcp_servers={"augmenter"={enabled=false},"my.server"={enabled=false}} --config developer_instructions="Use',
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -377,6 +411,52 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             diffSummary: "shapes.ts | 2 --",
             diffPatch: "-addDefaultShapes();",
             threadContext: "user: in a few minutes PR will be up then $babysit-pr",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Remove default shapes");
+        }),
+    ),
+  );
+
+  it.effect("turns off an MCP server that launch args define without dropping its transport", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Remove default shapes" }),
+        launchArgs: `-c 'mcp_servers.t3-code.url="http://127.0.0.1:1/mcp"' -c 'mcp_servers.t3-code.enabled=true'`,
+        mcpServers: [{ name: "t3-code", enabled: true }],
+        requireMcpServersOff: ["t3-code"],
+        requireArg:
+          "--config features.apps=false --config mcp_servers.t3-code.enabled=false --ephemeral",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Remove default shapes from characters",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Remove default shapes");
+        }),
+    ),
+  );
+
+  it.effect("keeps MCP servers off when launch args set their own mcp_servers table", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Remove default shapes" }),
+        launchArgs: `-c 'mcp_servers={"my.server"={command="echo",enabled=true}}'`,
+        mcpServers: [
+          { name: "my.server", enabled: true },
+          { name: "my server", enabled: true },
+        ],
+        requireArg:
+          '--config features.apps=false --config mcp_servers={"my.server"={enabled=false},"my server"={enabled=false}} --config mcp_servers.my server.enabled=false --ephemeral',
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Remove default shapes from characters",
             modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           });
           expect(result.title).toBe("Remove default shapes");
@@ -408,9 +488,10 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     withFakeCodexEnv(
       {
         output: JSON.stringify({ title: "Remove default shapes" }),
-        launchArgs: "--config features.plugins=true --config features.apps=true",
+        launchArgs:
+          "--config features.plugins=true --config features.apps=true --config features.connectors=true",
         requireArg:
-          "--config features.plugins=true --config features.apps=true --config features.plugins=false --config features.apps=false --ephemeral",
+          "--config features.plugins=true --config features.apps=true --config features.connectors=true --config features.connectors=false --config features.plugins=false --config features.apps=false --ephemeral",
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -420,6 +501,41 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           });
           expect(result.title).toBe("Remove default shapes");
+        }),
+    ),
+  );
+
+  it.effect("keeps user hooks off over launch args that turn them on", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Hookless title" }),
+        launchArgs: "--config features.hooks=true --enable hooks",
+        requireArg: "--config features.codex_hooks=false --config features.hooks=false",
+        forbidArg: "--enable",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Describe this change",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Hookless title");
+        }),
+    ),
+  );
+
+  it.effect("identifies codex exec as T3 Code", () =>
+    withFakeCodexEnv(
+      { output: JSON.stringify({ title: "Live title" }), requireOriginator: "T3 Code" },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Live title");
         }),
     ),
   );
@@ -548,6 +664,8 @@ const PREFLIGHT_PRIMARY_STATES = [
   "signed out, fallback failed",
   "cannot generate text",
   "model cannot generate text",
+  "disabled",
+  "disabled, fallback disabled for project",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
@@ -608,6 +726,9 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
               ],
             }
           : {}),
+        ...(primaryState.startsWith("disabled") && instanceId === primary
+          ? { enabled: false, status: "disabled" }
+          : {}),
         ...(primaryState === "exhausted" && instanceId === primary
           ? {
               usageLimits: {
@@ -655,7 +776,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
               },
             },
             defaultModelSelection: threadDefault,
-            ...(primaryState === "not installed, fallback disabled for project"
+            ...(primaryState.endsWith("fallback disabled for project")
               ? {
                   projectSettingsOverrides: {
                     [projectId]: { providerInstances: { [fallback]: { enabled: false } } },
@@ -671,15 +792,21 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         ),
       ),
     );
-    expect(
-      yield* service.generateThreadTitle({
+    const generated = yield* service
+      .generateThreadTitle({
         cwd: "/tmp",
         message: "hello",
         linkedContext: "",
         modelSelection: selection,
         projectId,
-      }),
-    ).toEqual({ title: "Generated title" });
+      })
+      .pipe(Effect.exit);
+    if (primaryState === "disabled, fallback disabled for project") {
+      expect(Exit.isFailure(generated)).toBe(true);
+      expect(calls).toEqual([]);
+      return;
+    }
+    expect(generated).toEqual(Exit.succeed({ title: "Generated title" }));
     expect(calls).toEqual([
       primaryState === "ready" ||
       primaryState === "pending" ||

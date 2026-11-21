@@ -238,6 +238,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadHistoryPage: () => Effect.die("unused"),
     getTimelinePage: () => Effect.die("Unused timeline read"),
     getMessageCount: () => Effect.die("unused message count"),
+    getRunCount: () => Effect.die("unused run count"),
+    getMessagesById: () => Effect.die("unused messages by id"),
     getTurnItem: () => Effect.die("unused turn item read"),
     getThreadRecords: () => Effect.die("unused record read"),
     getThreadProjection: unused,
@@ -248,6 +250,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getProjectThreadRecords: () => Effect.die("unused project record read"),
     listProjectThreads: unused,
     sendToThread: unused,
+    submitRunOutput: unused,
     assertProviderInstanceEnabled: unused,
     isProviderInstanceEnabledForProject: unused,
     hasReceipt: unused,
@@ -289,9 +292,13 @@ const makeTestRelay = Effect.fnUntraced(function* (
         authorization: new Headers(init?.headers).get("authorization"),
         state: payload.state,
       });
-      return Promise.resolve(
-        options.respond?.(publications.length) ?? Response.json({ ok: true, deliveries: [] }),
-      );
+      try {
+        return Promise.resolve(
+          options.respond?.(publications.length) ?? Response.json({ ok: true, deliveries: [] }),
+        );
+      } catch (error) {
+        return Promise.reject(error);
+      }
     },
     { preconnect: () => {} },
   );
@@ -434,7 +441,7 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.length, 1);
       assert.isTrue(publications[0]?.url.includes(`/threads/${THREAD_ID}/`) ?? false);
       assert.equal(publications[0]?.state?.phase, "waiting_for_input");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -528,7 +535,7 @@ describe("AgentAwarenessRelay", () => {
         yield* relay.drain;
         assert.equal(publications.length, 2);
         assert.equal(publications[1]?.state?.phase, "completed");
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("republishes a completed parent for its waiting child after a relink", () =>
@@ -554,7 +561,7 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.drain;
       assert.equal(publications.length, 2);
       assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a child's alert time when the parent's own request comes and goes", () =>
@@ -722,7 +729,7 @@ describe("AgentAwarenessRelay", () => {
         yield* relay.drain;
         assert.equal(publications.length, 3);
         assert.equal(publications[2]?.state, null);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("holds a completion through a continuation gap, then publishes it once", () =>
@@ -750,6 +757,37 @@ describe("AgentAwarenessRelay", () => {
         ["running", "completed"],
       );
     }),
+  );
+
+  it.effect(
+    "clears a completion that landed while snoozed, even when processed after the wake",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)));
+        const { relay, currentShell, publications } = yield* makeTestRelay();
+        const snooze = {
+          snoozedAt: DateTime.makeUnsafe(NOW),
+          snoozedUntil: DateTime.makeUnsafe("2026-09-04T13:00:00.000Z"),
+        };
+        yield* Ref.set(currentShell, shell(snooze));
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("2 hours");
+        yield* Ref.set(
+          currentShell,
+          shell({
+            ...snooze,
+            status: "completed",
+            latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:30:00.000Z"),
+          }),
+        );
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map((publication) => publication.state?.phase ?? null),
+          ["running", null],
+        );
+      }),
   );
 
   it.effect("still publishes a completion when the thread settles during the hold", () =>
@@ -936,6 +974,43 @@ describe("AgentAwarenessRelay", () => {
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
       assert.equal(publications.at(-1)?.state ?? null, null);
+    }),
+  );
+
+  it.effect("delivers a completion once the network returns after the retry budget runs out", () =>
+    Effect.gen(function* () {
+      let networkUp = true;
+      const delivered: Array<string | null> = [];
+      const { relay, currentShell, publications } = yield* makeTestRelay({
+        respond: (attempt) => {
+          if (!networkUp) throw new TypeError("fetch failed: getaddrinfo EAI_AGAIN");
+          delivered.push(publications[attempt - 1]?.state?.phase ?? null);
+          return Response.json({ ok: true, deliveries: [] });
+        },
+      });
+      yield* relay.publishThread(THREAD_ID);
+      networkUp = false;
+      yield* Ref.set(currentShell, shell({ status: "completed" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      for (const delay of [
+        "1 second",
+        "2 seconds",
+        "4 seconds",
+        "8 seconds",
+        "16 seconds",
+      ] as const) {
+        yield* TestClock.adjust(delay);
+        yield* relay.drain;
+      }
+      assert.equal(publications.length, 7);
+      assert.deepEqual(delivered, ["running"]);
+
+      networkUp = true;
+      yield* TestClock.adjust("10 minutes");
+      yield* relay.drain;
+      assert.deepEqual(delivered, ["running", "completed"]);
     }),
   );
 
@@ -1170,5 +1245,5 @@ it.effect("catches up after startup without polling after success", () =>
     assert.equal(catchUp.activitySnapshotReads, 3);
     assert.equal(publications.length, 2);
     assert.equal(publications[1]?.state?.threadId, THREAD_ID);
-  }).pipe(Effect.scoped),
+  }),
 );

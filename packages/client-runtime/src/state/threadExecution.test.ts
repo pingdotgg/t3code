@@ -179,7 +179,46 @@ describe("thread execution presentation", () => {
     expect(deriveThreadRuntime(projection)).toMatchObject({
       lastError: "Plan limit reached",
       lastErrorClass: "usage_limit",
+      lastErrorSource: "limit-error@2026-07-28T10:00:00.000Z",
     });
+    // A retried run fails again through the same item, so only its failure time tells it apart.
+    const later = DateTime.makeUnsafe("2026-07-28T10:05:00.000Z");
+    const source = (input: Partial<Parameters<typeof deriveThreadRuntime>[0]>) =>
+      deriveThreadRuntime({ ...projection, ...input })?.lastErrorSource;
+    expect(source({ turnItems: [{ ...item, completedAt: later, updatedAt: later }] })).toBe(
+      "limit-error@2026-07-28T10:05:00.000Z",
+    );
+    expect(source({ turnItems: [{ ...item, updatedAt: later }] })).toBe(
+      "limit-error@2026-07-28T10:00:00.000Z",
+    );
+    const session = (lastError: string) => ({
+      id: ProviderSessionId.make("failed-session"),
+      driver: ProviderDriverKind.make("pi"),
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      status: "error" as const,
+      cwd: "/repo",
+      model: null,
+      capabilities: {} as never,
+      createdAt: now,
+      updatedAt: later,
+      lastError,
+    });
+    // A session that repeats the failure keeps its source, whatever the session's own updates.
+    expect(source({ providerSessions: [session("Plan limit reached")] })).toBe(
+      "limit-error@2026-07-28T10:00:00.000Z",
+    );
+    // Otherwise a session error belongs to the latest ended run, kept while a newer run starts.
+    const ended = { ...failed, completedAt: now };
+    const starting = [ended, run("next", 2, "starting")];
+    expect(source({ runs: [ended], providerSessions: [session("Session failed")] })).toBe(
+      "limited@2026-07-28T10:00:00.000Z",
+    );
+    expect(source({ runs: starting, providerSessions: [session("Session failed")] })).toBe(
+      "limited@2026-07-28T10:00:00.000Z",
+    );
+    expect(source({ runs: starting, providerSessions: [session("Plan limit reached")] })).toBe(
+      "limit-error@2026-07-28T10:00:00.000Z",
+    );
     expect(deriveResumableRunId(projection, deriveThreadRuntime(projection))).toBe(failed.id);
     expect(
       deriveThreadRuntime({
@@ -196,6 +235,39 @@ describe("thread execution presentation", () => {
     expect(
       deriveThreadRuntime({ ...projection, runs: [failed, run("new", 2, "running")] }),
     ).toMatchObject({ status: "running", lastError: null, lastErrorClass: null });
+  });
+
+  it.each([
+    {
+      name: "a provider without native resume",
+      nativeResume: false,
+      delivered: true,
+      resumes: false,
+    },
+    { name: "an undelivered message", nativeResume: false, delivered: false, resumes: true },
+    { name: "a provider with native resume", nativeResume: true, delivered: true, resumes: true },
+    {
+      name: "a session from an older server",
+      nativeResume: undefined,
+      delivered: true,
+      resumes: true,
+    },
+  ])("offers to resume an interrupted run on $name", ({ nativeResume, delivered, resumes }) => {
+    const providerThreadId = ProviderThreadId.make("stopped-thread");
+    const sessionId = ProviderSessionId.make("stopped-session");
+    const attemptId = RunAttemptId.make("stopped-attempt");
+    const stopped = { ...run("stopped", 1, "interrupted"), providerThreadId };
+    const projection = {
+      ...v2Projection,
+      runs: [stopped],
+      attempts: [{ id: attemptId, runId: stopped.id, attemptOrdinal: 1, reason: "initial" }],
+      providerTurns: delivered ? [{ runAttemptId: attemptId }] : [],
+      providerThreads: [{ id: providerThreadId, providerSessionId: sessionId }],
+      providerSessions: [
+        { id: sessionId, capabilities: { turns: { supportsNativeResume: nativeResume } } },
+      ],
+    } as unknown as typeof v2Projection;
+    expect(deriveResumableRunId(projection, null)).toBe(resumes ? stopped.id : null);
   });
 
   // regression: #15029 working timers no longer reset on every background wake
@@ -553,7 +625,14 @@ describe("deriveRunlessWorkStartedAt", () => {
   };
 
   it("times a provider-native subagent from its runless root turn while it works", () => {
-    const projection = { ...nativeChild, nodes: [rootTurn("running", later)] };
+    const projection = {
+      ...nativeChild,
+      thread: {
+        ...nativeChild.thread,
+        activeProviderThreadId: ProviderThreadId.make("native-child"),
+      },
+      nodes: [rootTurn("running", later)],
+    };
     expect(deriveRunlessWorkStartedAt(projection)).toBe("2026-07-28T10:05:00.000Z");
     expect(deriveThreadRuntime(projection)).toBeNull();
   });

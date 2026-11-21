@@ -104,9 +104,11 @@ export const make = Effect.gen(function* () {
     );
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
+    const selectedDisabled = selected?.enabled === false;
     // Only a failed probe counts: a pending one is also not installed yet.
     const unusable =
       textGeneratorCannotRun ||
+      selectedDisabled ||
       (selected?.enabled === true &&
         (!isProviderTextGenerationCapable(selected) ||
           selected.models.find((model) => model.slug === selection.model)
@@ -149,7 +151,14 @@ export const make = Effect.gen(function* () {
       return yield* new TextGenerationError({
         operation,
         detail:
-          "Review guides need a coding agent that can read the checkout. None is ready. Pick Codex or Claude as the review guide model in Settings → Source control.",
+          "Review guides need a coding agent that can read the checkout. None is ready. Pick Codex or Claude as the review guide model in Settings → Source control & issues.",
+      });
+    }
+    if (selectedDisabled && selection.instanceId === selected.instanceId) {
+      return yield* new TextGenerationError({
+        operation,
+        detail:
+          "No text generation provider is available. Enable a provider that can generate text in Settings → Providers.",
       });
     }
     return yield* installationGate.execute(
