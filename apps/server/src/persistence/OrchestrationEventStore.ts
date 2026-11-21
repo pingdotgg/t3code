@@ -289,10 +289,30 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
       : toPersistenceSqlError(sqlOperation)(cause);
 }
 
+// A streaming text snapshot replaces its whole entity. Matches the live coalescer's text keys.
+function streamingTextEntityId(event: OrchestrationV2DomainEvent): string | null {
+  if (event.type === "message.updated") {
+    return event.payload.role === "assistant" && event.payload.streaming ? event.payload.id : null;
+  }
+  if (event.type !== "turn-item.updated" || event.payload.status !== "running") return null;
+  return (event.payload.type === "assistant_message" || event.payload.type === "reasoning") &&
+    event.payload.streaming
+    ? event.payload.id
+    : null;
+}
+
+interface StreamingSnapshotRow {
+  readonly entityId: string;
+  readonly eventId: string;
+  readonly sequence: number;
+}
+
 const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const committedEvents = yield* PubSub.unbounded<ApplicationStoredEvent>();
   const promptHints = new Map<string, number>();
+  // Per thread and event type, the newest streaming text row while nothing else has followed it.
+  const streamingSnapshots = new Map<string, Map<string, StreamingSnapshotRow>>();
   const restoredPayloadJson = sql`CASE
     WHEN orchestration_events.event_type IN ('subagent.updated', 'turn-item.updated')
       AND json_type(orchestration_events.payload_json, '$.promptSequence') = 'integer'
@@ -525,6 +545,36 @@ const makeEventStore = Effect.gen(function* () {
             if (promptHints.size > 4096) {
               const oldest = promptHints.keys().next().value;
               if (oldest !== undefined) promptHints.delete(oldest);
+            }
+          }
+          const entityId = streamingTextEntityId(event);
+          const snapshots = streamingSnapshots.get(event.threadId);
+          // Thread record events, such as an open client's periodic thread.visited, carry no run
+          // content and leave a run of snapshots unbroken.
+          if (!event.type.startsWith("thread.")) streamingSnapshots.delete(event.threadId);
+          if (entityId !== null && row !== undefined) {
+            const previous = snapshots?.get(event.type);
+            // Replay orders entities by first row, so only an unbroken run of one entity
+            // collapses. The event id guards a sequence reused after a rollback.
+            if (previous !== undefined && previous.entityId !== entityId) {
+              snapshots?.clear();
+            } else if (previous !== undefined && previous.eventId !== event.id) {
+              yield* sql`
+                DELETE FROM orchestration_events
+                WHERE sequence = ${previous.sequence} AND event_id = ${previous.eventId}
+              `;
+            }
+            streamingSnapshots.set(
+              event.threadId,
+              (snapshots ?? new Map<string, StreamingSnapshotRow>()).set(event.type, {
+                entityId,
+                eventId: event.id,
+                sequence: row.sequence,
+              }),
+            );
+            if (streamingSnapshots.size > 4096) {
+              const oldest = streamingSnapshots.keys().next().value;
+              if (oldest !== undefined) streamingSnapshots.delete(oldest);
             }
           }
           return yield* decodeV2StoredEvent({
