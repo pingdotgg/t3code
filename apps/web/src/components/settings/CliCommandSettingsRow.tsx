@@ -18,6 +18,8 @@ const FAILURE_TITLES = {
   install: msg("Could not install t3"),
   uninstall: msg("Could not remove t3"),
   addToPath: msg("Could not add t3 to PATH"),
+  installWsl: msg("Could not install t3 in WSL"),
+  uninstallWsl: msg("Could not remove t3 from WSL"),
 } as const;
 
 /** The desktop `t3` command's state, and its actions with a toast on failure. */
@@ -60,6 +62,7 @@ export function CliCommandSettingsRow() {
 
   if (!state?.supported) return null;
   const installed = state.installedPath !== null;
+  const wslInstalled = state.wslInstalledPath !== null;
   const description = state.shadowedBy
     ? resolve(
         msg("Another t3 at {path} runs first in a new terminal. Remove it to use T3 Code's.", {
@@ -95,28 +98,82 @@ export function CliCommandSettingsRow() {
               );
 
   return (
-    <SettingsRow
-      {...searchableSetting("cli-command")}
-      description={description}
-      control={
-        <div className="flex gap-2">
-          {state.pathSetup && !state.pathSetup.added ? (
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
-              <T>Add to PATH</T>
+    <>
+      <SettingsRow
+        {...searchableSetting("cli-command")}
+        description={description}
+        control={
+          <div className="flex gap-2">
+            {state.pathSetup && !state.pathSetup.added ? (
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
+                <T>Add to PATH</T>
+              </Button>
+            ) : null}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || (!installed && Boolean(state.shadowedBy))}
+              onClick={() => run(installed ? "uninstall" : "install")}
+            >
+              {installed
+                ? resolve(msg("Remove", { $context: "verb, uninstalls the t3 command" }))
+                : resolve(msg("Install", { $context: "verb, installs the t3 command" }))}
             </Button>
-          ) : null}
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy || (!installed && Boolean(state.shadowedBy))}
-            onClick={() => run(installed ? "uninstall" : "install")}
-          >
-            {installed
-              ? resolve(msg("Remove", { $context: "verb, uninstalls the t3 command" }))
-              : resolve(msg("Install", { $context: "verb, installs the t3 command" }))}
-          </Button>
-        </div>
-      }
-    />
+          </div>
+        }
+      />
+      {state.wslSupported ? (
+        <SettingsRow
+          {...searchableSetting("wsl-cli-command")}
+          title={resolve(msg("t3 command in WSL"))}
+          description={
+            state.wslStatusUnavailable
+              ? resolve(
+                  msg(
+                    "Could not check the t3 command in {distro}. Check that the distro is available.",
+                    { distro: state.wslInstalledDistro ?? "WSL" },
+                  ),
+                )
+              : wslInstalled
+                ? state.wslBackendEnabled
+                  ? resolve(
+                      msg(
+                        "Installed at {path} in {distro}. Ensure ~/.local/bin is on your shell PATH.",
+                        { path: state.wslInstalledPath, distro: state.wslInstalledDistro ?? "WSL" },
+                      ),
+                    )
+                  : resolve(
+                      msg(
+                        "Installed at {path} in {distro}. Ensure ~/.local/bin is on your shell PATH. Enable the WSL backend to open projects.",
+                        { path: state.wslInstalledPath, distro: state.wslInstalledDistro ?? "WSL" },
+                      ),
+                    )
+                : !state.wslBackendEnabled
+                  ? resolve(
+                      msg(
+                        "Enable the WSL backend in Sharing & access before installing the WSL command.",
+                      ),
+                    )
+                  : resolve(
+                      msg(
+                        "Run t3 app from WSL to open the current Linux project in the Windows desktop app.",
+                      ),
+                    )
+          }
+          control={
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || (!wslInstalled && !state.wslBackendEnabled)}
+              onClick={() => run(wslInstalled ? "uninstallWsl" : "installWsl")}
+            >
+              {wslInstalled
+                ? resolve(msg("Remove", { $context: "verb, uninstalls the t3 command" }))
+                : resolve(msg("Install", { $context: "verb, installs the t3 command" }))}
+            </Button>
+          }
+        />
+      ) : null}
+    </>
   );
 }

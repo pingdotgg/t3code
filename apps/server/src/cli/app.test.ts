@@ -307,6 +307,26 @@ describe("t3 app", () => {
     ),
   );
 
+  it.effect("preserves a WSL path and distro when the Windows launcher forwards the request", () =>
+    withTempDirectory("t3-app-wsl-command-test-", (root) =>
+      Effect.gen(function* () {
+        const baseDir = NodePath.join(root, "t3-home");
+        const desktop = yield* fakeDesktop({ baseDir });
+
+        yield* runCli(["app"], {
+          T3CODE_HOME: NodePath.join(root, "other-home"),
+          T3CODE_WSL_DISTRO: "Ubuntu",
+          T3CODE_WSL_WORKSPACE_ROOT: "/home/user/project",
+          T3CODE_WSL_BASE_DIR: baseDir,
+        });
+
+        expect(desktop.received).toMatchObject([
+          { workspaceRoot: "/home/user/project", platform: "linux", wslDistro: "Ubuntu" },
+        ]);
+      }).pipe(Effect.scoped),
+    ),
+  );
+
   it.effect("prefers the installed desktop app when a dev desktop is also running", () =>
     withTempDirectory("t3-app-preferred-test-", (root) =>
       Effect.gen(function* () {
@@ -391,6 +411,7 @@ describe("t3 app", () => {
                 message: "The project path is not available.",
               },
             });
+            expect(error.message).toContain("The project path is not available.");
           } else {
             expect(error).toMatchObject({
               _tag: "DesktopAppUnreachableError",
