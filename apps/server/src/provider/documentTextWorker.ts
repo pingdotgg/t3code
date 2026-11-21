@@ -256,9 +256,8 @@ function hasCellText(cell: XmlNode): boolean {
 function* table(node: XmlNode): Generator<TextPart, void> {
   let rowCount = 0;
   for (const row of all(node, ["tr", "table-row"])) {
-    const cells = children(row).filter((cell) =>
-      ["tc", "table-cell", "covered-table-cell", "td", "th"].includes(cell.name),
-    );
+    // Word nests a cell inside w:sdt when a content control wraps the whole cell.
+    const cells = [...all(row, ["tc", "table-cell", "covered-table-cell", "td", "th"])];
     // ODS writers pad sheets with repeated empty rows and trailing cells.
     while (cells.length && !hasCellText(cells.at(-1)!)) cells.pop();
     if (!cells.length) continue;
@@ -416,10 +415,35 @@ function* notebook(source: string): Generator<string, void> {
   }
 }
 
+// Per-byte decoding only supports the single-byte \fcharset values.
+const FONT_CODE_PAGES = new Map([
+  [77, "macintosh"],
+  [161, "windows-1253"],
+  [162, "windows-1254"],
+  [163, "windows-1258"],
+  [177, "windows-1255"],
+  [178, "windows-1256"],
+  [186, "windows-1257"],
+  [204, "windows-1251"],
+  [222, "windows-874"],
+  [238, "windows-1250"],
+]);
+
 function* rtf(source: string): Generator<string, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
-  let state = { skip: false, deleted: false, uc: 1, decoder: new TextDecoder("windows-1252") };
+  let state = {
+    skip: false,
+    deleted: false,
+    uc: 1,
+    font: 0,
+    fontTable: false,
+    decoder: new TextDecoder("windows-1252"),
+  };
   const stack: Array<typeof state> = [];
+  // A font's \fcharset, not the document code page, encodes the bytes written in that font.
+  const fonts = new Map<number, typeof state.decoder>();
+  let defaultFont = 0;
+  const decoder = () => fonts.get(state.font) ?? state.decoder;
   const hidden = () => state.skip || state.deleted;
   const symbols = new Map([
     ["endash", "–"],
@@ -454,7 +478,7 @@ function* rtf(source: string): Generator<string, void> {
       const word = /^([a-z]+)(-?\d+)? ?/i.exec(rest);
       if (hex) {
         if (fallback) fallback--;
-        else if (!hidden()) yield state.decoder.decode(Uint8Array.of(Number.parseInt(hex[1]!, 16)));
+        else if (!hidden()) yield decoder().decode(Uint8Array.of(Number.parseInt(hex[1]!, 16)));
         i += 3;
       } else if (word) {
         i += word[0].length;
@@ -489,8 +513,20 @@ function* rtf(source: string): Generator<string, void> {
           ].includes(control)
         )
           state.skip = true;
+        if (control === "fonttbl") state.fontTable = true;
+        else if (control === "deff") state.font = defaultFont = value;
+        else if (control === "f") {
+          state.font = value;
+          if (state.fontTable) fonts.delete(value);
+        } else if (control === "fcharset" && state.fontTable) {
+          const codePage = FONT_CODE_PAGES.get(value);
+          if (codePage) fonts.set(state.font, new TextDecoder(codePage));
+        }
         if (control === "deleted") state.deleted = value !== 0;
-        else if (control === "plain") state.deleted = false;
+        else if (control === "plain") {
+          state.deleted = false;
+          state.font = defaultFont;
+        }
         if (control === "mac" || (control === "ansicpg" && value === 10000))
           state.decoder = new TextDecoder("macintosh");
         else if (control === "ansicpg") {
@@ -524,9 +560,7 @@ function* rtf(source: string): Generator<string, void> {
     } else if (char !== "\n" && char !== "\r") {
       if (fallback) fallback--;
       else if (!hidden())
-        yield char.charCodeAt(0) < 128
-          ? char
-          : state.decoder.decode(Uint8Array.of(char.charCodeAt(0)));
+        yield char.charCodeAt(0) < 128 ? char : decoder().decode(Uint8Array.of(char.charCodeAt(0)));
     }
   }
 }
