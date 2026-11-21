@@ -74,7 +74,9 @@ const make = Effect.gen(function* () {
 
   const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
 
-  // Working: a run that is not waiting on the user. Open: a live session without one.
+  // Working: a run that is preparing, starting or running. A queued run on an idle thread
+  // waits on a hold, a usage limit or the user, so it runs no agent. Open: a live session
+  // still bound to the thread; detaching removes the binding but not `sessions.thread_id`.
   // The status list repeats the partial recovery index's predicate so SQLite can use it.
   const readAgents = SqlSchema.findAll({
     Request: Schema.Void,
@@ -84,7 +86,7 @@ const make = Effect.gen(function* () {
         SELECT thread_id, provider_instance_id, MIN(ordinal)
         FROM orchestration_v2_projection_runs
         WHERE status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
-          AND status != 'waiting'
+          AND status IN ('preparing', 'starting', 'running')
         GROUP BY thread_id
       ),
       live_sessions AS (
@@ -93,10 +95,6 @@ const make = Effect.gen(function* () {
         JOIN orchestration_v2_projection_provider_session_bindings AS bindings
           ON bindings.provider_session_id = sessions.provider_session_id
         WHERE sessions.status NOT IN ('stopped', 'error')
-        UNION ALL
-        SELECT thread_id, provider_instance_id
-        FROM orchestration_v2_projection_provider_sessions
-        WHERE status NOT IN ('stopped', 'error') AND thread_id IS NOT NULL
       )
       SELECT
         threads.thread_id AS "threadId",
