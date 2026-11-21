@@ -553,6 +553,48 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
+  it.effect(
+    "preserves sibling shortcuts when an inherited edit target has since become hidden",
+    () =>
+      Effect.gen(function* () {
+        const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* writeKeybindingsConfig(
+          keybindingsConfigPath,
+          Array.from({ length: 209 }, (_, index) => ({
+            key: "mod+alt+f1",
+            command: `script.filler-${index}.run` as const,
+          })),
+        );
+
+        const target = { key: "mod+n", command: "chat.new", when: "!terminalFocus" } as const;
+        const sibling = { ...target, key: "mod+shift+o" };
+        const isChatNew = (binding: { readonly command: KeybindingCommand }) =>
+          binding.command === target.command;
+        const before = yield* keybindings.getSnapshot;
+        assert.deepEqual(
+          before.keybindings.filter(isChatNew),
+          SharedKeybindings.compileResolvedKeybindingsConfig([target, sibling]),
+        );
+
+        const afterUnrelatedSave = yield* keybindings.upsertKeybindingRule({
+          key: "mod+alt+f1",
+          command: "script.extra.run",
+        });
+        assert.deepEqual(
+          afterUnrelatedSave.keybindings.filter(isChatNew),
+          SharedKeybindings.compileResolvedKeybindingsConfig([sibling]),
+        );
+
+        const replacement = { ...target, key: "f8" };
+        const saved = yield* keybindings.upsertKeybindingRule({ ...replacement, replace: target });
+        assert.deepEqual(
+          saved.keybindings.filter(isChatNew),
+          SharedKeybindings.compileResolvedKeybindingsConfig([sibling, replacement]),
+        );
+      }).pipe(Effect.provide(layerKeybindings())),
+  );
+
   it.effect("unassigns a shortcut without restoring it on startup and can reassign it", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
