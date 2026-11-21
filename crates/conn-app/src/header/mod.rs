@@ -28,6 +28,7 @@ use gpui_kit::{
 
 use crate::app::ConnApp;
 use crate::icons;
+use crate::panels::chrome::ConnTooltipExt as _;
 use crate::shell::MACOS_TRAFFIC_LIGHTS_INSET_PX;
 use crate::sidebar::render_project_favicon;
 use crate::theme::{hsla, hsla_alpha};
@@ -99,6 +100,7 @@ pub(crate) fn render_chat_header(
                 .on_click(cx.listener(|app, _event, _window, cx| {
                     app.toggle_sidebar(cx);
                 }))
+                .conn_tooltip("Show sidebar (⌘B)", tokens)
                 .child(icons::chrome(IconName::PanelLeft, muted)),
         );
     }
@@ -152,42 +154,55 @@ pub(crate) fn render_chat_header(
     left_group = left_group.child(breadcrumb);
 
     // Right-side controls (`ThreadPanelHeaderControl` / `PanelLayoutControls`):
-    // When the right panel is open, only the thread details/notes button sits on
+    // When the right panel is open, only the thread details/linked items button sits on
     // the chat header; when closed, the terminal and right-panel toggles join it.
+    let details_active =
+        layout.right_panel_open && layout.right_panel_tab == RightPanelTab::LinkedItems;
     let mut right_group = div()
         .flex()
         .flex_row()
         .items_center()
         .gap(px(4.0))
         .flex_shrink_0()
-        .child(header_ghost_toggle(
-            "header-thread-details",
-            icons::PANEL_MENU,
-            false,
-            tokens,
-            cx.listener(|_app, _event, _window, _cx| {}),
-        ));
+        .child(
+            header_ghost_toggle(
+                "header-thread-details",
+                icons::PANEL_MENU,
+                details_active,
+                tokens,
+                cx.listener(|app, _event, _window, cx| {
+                    app.activate_or_toggle_right_panel_tab(RightPanelTab::LinkedItems, cx);
+                }),
+            )
+            .conn_tooltip("Linked items", tokens),
+        );
 
     if !layout.right_panel_open {
         right_group = right_group
-            .child(header_ghost_toggle(
-                "header-toggle-terminal",
-                icons::PANEL_BOTTOM,
-                false,
-                tokens,
-                cx.listener(|app, _event, _window, cx| {
-                    app.activate_or_toggle_right_panel_tab(RightPanelTab::Terminal, cx);
-                }),
-            ))
-            .child(header_ghost_toggle(
-                "header-toggle-right-panel",
-                icons::SIDEBAR_RIGHT,
-                false,
-                tokens,
-                cx.listener(|app, _event, _window, cx| {
-                    app.toggle_right_panel(cx);
-                }),
-            ));
+            .child(
+                header_ghost_toggle(
+                    "header-toggle-terminal",
+                    icons::PANEL_BOTTOM,
+                    false,
+                    tokens,
+                    cx.listener(|app, _event, _window, cx| {
+                        app.activate_or_toggle_right_panel_tab(RightPanelTab::Terminal, cx);
+                    }),
+                )
+                .conn_tooltip("Terminal", tokens),
+            )
+            .child(
+                header_ghost_toggle(
+                    "header-toggle-right-panel",
+                    icons::SIDEBAR_RIGHT,
+                    false,
+                    tokens,
+                    cx.listener(|app, _event, _window, cx| {
+                        app.toggle_right_panel(cx);
+                    }),
+                )
+                .conn_tooltip("Toggle right panel (⌘⌥B)", tokens),
+            );
     }
 
     div()

@@ -16,7 +16,8 @@ use conn_client::{Connection, StreamId};
 use conn_contract::{
     OrchestrationProjectShell, OrchestrationV2Command, OrchestrationV2CommandThreadPullRequestLink,
     OrchestrationV2CommandThreadPullRequestUnlink, OrchestrationV2CommandThreadPullRequestWatch,
-    ThreadPullRequestLink, ThreadPullRequestLinkSource, lit,
+    PullRequestRef, PullRequestsChangeBreakdownSuccess, ThreadPullRequestLink,
+    ThreadPullRequestLinkSource, lit,
 };
 use conn_theme::Tokens;
 use gpui_kit::component::input::{InputEvent, InputState};
@@ -77,6 +78,13 @@ enum LoadState {
     Error(String),
 }
 
+#[derive(Clone, Debug)]
+pub(super) enum ChangeBreakdownState {
+    Loading,
+    Ready(Option<PullRequestsChangeBreakdownSuccess>),
+    Error(String),
+}
+
 /// The Linked items panel entity.
 pub(crate) struct LinkedItemsPanel {
     tokens: Tokens,
@@ -90,6 +98,8 @@ pub(crate) struct LinkedItemsPanel {
     load_generation: u64,
     issue_details: HashMap<String, IssueDetailSummary>,
     open_menu_key: Option<String>,
+    open_breakdown_key: Option<String>,
+    breakdowns: HashMap<String, ChangeBreakdownState>,
     action_notice: Option<String>,
     link_dialog_open: bool,
     link_input: Entity<InputState>,
@@ -159,6 +169,8 @@ impl LinkedItemsPanel {
             load_generation: 0,
             issue_details: HashMap::new(),
             open_menu_key: None,
+            open_breakdown_key: None,
+            breakdowns: HashMap::new(),
             action_notice: None,
             link_dialog_open: false,
             link_input,
@@ -194,6 +206,8 @@ impl LinkedItemsPanel {
         self.workspace_root = workspace_root;
         self.thread_id = thread_id;
         self.open_menu_key = None;
+        self.open_breakdown_key = None;
+        self.breakdowns.clear();
         self.action_notice = None;
         self.issue_details.clear();
         self.reload(false, cx);
@@ -508,6 +522,74 @@ impl LinkedItemsPanel {
         cx.notify();
     }
 
+    fn toggle_breakdown(
+        &mut self,
+        key: String,
+        link: ThreadPullRequestLink,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.open_menu_key = None;
+        if self.open_breakdown_key.as_deref() == Some(key.as_str()) {
+            self.open_breakdown_key = None;
+            cx.notify();
+            return;
+        }
+        self.open_breakdown_key = Some(key.clone());
+        if self.breakdowns.contains_key(&key) {
+            cx.notify();
+            return;
+        }
+        let Some(conn) = self.connection.clone() else {
+            return;
+        };
+        self.breakdowns
+            .insert(key.clone(), ChangeBreakdownState::Loading);
+        cx.notify();
+
+        let generation = self.load_generation;
+        let thread_project_id = match &self.load_state {
+            LoadState::Ready(data) => data.project_id.as_deref(),
+            _ => None,
+        };
+        let projects = self.projects_list();
+        let Some(project_id) = find_project_for_link(&projects, thread_project_id, &link) else {
+            self.breakdowns.insert(
+                key,
+                ChangeBreakdownState::Error("Project not found for pull request.".to_owned()),
+            );
+            cx.notify();
+            return;
+        };
+        let payload = PullRequestRef {
+            project_id,
+            host: Some(link.host),
+            repository: link.repository,
+            number: link.number,
+            allow_stale: None,
+            expected_account_id: None,
+        };
+        cx.spawn(async move |this, cx| {
+            let res = conn
+                .call::<conn_contract::rpc::pull_requests::change_breakdown::Payload, conn_contract::rpc::pull_requests::change_breakdown::Success>(
+                    "pullRequests.changeBreakdown",
+                    &payload,
+                )
+                .await;
+            let _ = this.update(cx, |panel, cx| {
+                if panel.load_generation != generation {
+                    return;
+                }
+                let next = match res {
+                    Ok(breakdown) => ChangeBreakdownState::Ready(breakdown),
+                    Err(err) => ChangeBreakdownState::Error(err.to_string()),
+                };
+                panel.breakdowns.insert(key, next);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn copy_link(&mut self, url: String, cx: &mut Context<'_, Self>) {
         self.open_menu_key = None;
         cx.write_to_clipboard(ClipboardItem::new_string(url));
@@ -521,6 +603,8 @@ impl LinkedItemsPanel {
         cx: &mut Context<'_, Self>,
     ) {
         self.open_menu_key = None;
+        self.open_breakdown_key = None;
+        self.breakdowns.clear();
         self.action_notice = None;
         let (Some(conn), Some(thread_id)) = (self.connection.clone(), self.thread_id.clone())
         else {
@@ -554,6 +638,8 @@ impl LinkedItemsPanel {
 
     fn unlink(&mut self, link: ThreadPullRequestLink, cx: &mut Context<'_, Self>) {
         self.open_menu_key = None;
+        self.open_breakdown_key = None;
+        self.breakdowns.clear();
         self.action_notice = None;
         let (Some(conn), Some(thread_id)) = (self.connection.clone(), self.thread_id.clone())
         else {
@@ -668,8 +754,9 @@ impl LinkedItemsPanel {
             "escape" => {
                 if self.link_dialog_open {
                     self.close_link_dialog(cx);
-                } else if self.open_menu_key.is_some() {
+                } else if self.open_menu_key.is_some() || self.open_breakdown_key.is_some() {
                     self.open_menu_key = None;
+                    self.open_breakdown_key = None;
                     cx.notify();
                 }
             }
@@ -760,7 +847,16 @@ impl Render for LinkedItemsPanel {
                                 Rc::new(move |key, _, cx| {
                                     entity.update(cx, |panel, cx| {
                                         panel.open_menu_key = key;
+                                        panel.open_breakdown_key = None;
                                         cx.notify();
+                                    });
+                                })
+                            },
+                            on_toggle_breakdown: {
+                                let entity = entity.clone();
+                                Rc::new(move |key, link, _, cx| {
+                                    entity.update(cx, |panel, cx| {
+                                        panel.toggle_breakdown(key, link, cx);
                                     });
                                 })
                             },
@@ -789,6 +885,8 @@ impl Render for LinkedItemsPanel {
                             &data.issues,
                             &self.issue_details,
                             self.open_menu_key.as_deref(),
+                            self.open_breakdown_key.as_deref(),
+                            &self.breakdowns,
                             self.capabilities,
                             self.action_notice.as_deref(),
                             self.now_ms,

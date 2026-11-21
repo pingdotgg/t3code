@@ -77,9 +77,8 @@ CEF lint check: `CARGO_TARGET_DIR=target-cef cargo clippy -p conn-web -p conn-ap
 
 - **VM side-by-side visual verification** (queued on `nick-vm` unlock): capture T3 Code Light + Dark Ocean screenshots in `nick-vm` against `Conn.app` to verify shell RGB (~233 vs 251), tooltip placement, Tasks chart gradients, and every right-panel surface (PR pickers/review/reactions, Device live stream, Diff syntax highlight/split view/split drag, chat worked duration/changed-files card/agent rows/code wrap).
 - **Composer:** attachments (paperclip / image paste), BranchToolbar, effort/reasoning picker.
-- **Sidebar & Rail:** rail `+` workspace / Usage / Pull requests views.
 - **Chat:** inline file-path link chips.
-- **Diff & Terminal:** diff scopes (`working-tree`/`branch`/`turn`); terminal tabs/splits.
+- **Diff & Terminal:** working-tree/branch diff scopes; terminal tabs/splits.
 
 ## Phase 2 drift (fixed)
 

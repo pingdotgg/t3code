@@ -15,7 +15,7 @@
 //! - Bottom utility column (`gap-2 pb-2`): Usage (`chart`), Pull Requests
 //!   (`pull-request`), and Settings (`settings`).
 
-use conn_state::ShellState;
+use conn_state::{RightPanelTab, ShellState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
@@ -25,6 +25,7 @@ use gpui_kit::{
 
 use crate::app::ConnApp;
 use crate::icons;
+use crate::panels::chrome::ConnTooltipExt as _;
 use crate::shell::WORKSPACE_RAIL_WIDTH_PX;
 use crate::theme::{hsla, hsla_alpha};
 
@@ -76,31 +77,41 @@ pub(crate) fn render_workspace_rail(
         cx.listener(|app, _event, _window, cx| {
             app.select_workspace(None, cx);
         }),
-    );
+    )
+    .conn_tooltip("All projects", tokens);
 
     let add_workspace_btn = rail_button(
         "rail-new-workspace",
         false,
         tokens,
         icons::chrome(IconName::Plus, muted),
-        cx.listener(|_app, _event, _window, _cx| {}),
-    );
+        cx.listener(|app, _event, window, cx| {
+            app.add_project_via_picker(window, cx);
+        }),
+    )
+    .conn_tooltip("Add project", tokens);
 
     let usage_btn = rail_button(
         "rail-usage",
         false,
         tokens,
         icons::chrome(IconName::ChartNoAxesColumn, muted),
-        cx.listener(|_app, _event, _window, _cx| {}),
-    );
+        cx.listener(|app, _event, _window, cx| {
+            app.activate_or_toggle_right_panel_tab(RightPanelTab::Tasks, cx);
+        }),
+    )
+    .conn_tooltip("Tasks & usage", tokens);
 
     let pull_requests_btn = rail_button(
         "rail-pull-requests",
         false,
         tokens,
         icons::concept(icons::PULL_REQUEST, icons::CHROME_ICON_PX, muted),
-        cx.listener(|_app, _event, _window, _cx| {}),
-    );
+        cx.listener(|app, _event, _window, cx| {
+            app.activate_or_toggle_right_panel_tab(RightPanelTab::LinkedItems, cx);
+        }),
+    )
+    .conn_tooltip("Pull requests", tokens);
 
     let settings_btn = rail_button(
         "rail-settings",
@@ -110,7 +121,8 @@ pub(crate) fn render_workspace_rail(
         cx.listener(|app, _event, window, cx| {
             app.open_settings(window, cx);
         }),
-    );
+    )
+    .conn_tooltip("Settings (⌘,)", tokens);
 
     div()
         .flex()

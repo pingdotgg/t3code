@@ -5,17 +5,19 @@
 use std::fmt;
 
 use conn_client::Connection;
-use conn_contract::OrchestrationGetFullThreadDiffInput;
-use conn_contract::rpc::orchestration::get_full_thread_diff;
+use conn_contract::rpc::orchestration::{get_full_thread_diff, get_turn_diff};
+use conn_contract::{OrchestrationGetFullThreadDiffInput, OrchestrationGetTurnDiffInput};
 use conn_theme::{Appearance, Tokens, color_mix_srgb};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     Context, CursorStyle, FontWeight, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Render, SharedString, Styled, Window, div, px,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Render, SharedString, Styled, Window, deferred,
+    div, px,
 };
 use serde_json::{Value, json};
 
+use super::chrome::ConnTooltipExt as _;
 use super::color::to_hsla;
 use super::diff_parser::{DiffFile, DiffLine, DiffLineKind, parse_unified_diff};
 use super::header::{CONTROL_RADIUS_PX, superhero_icon};
@@ -50,12 +52,34 @@ enum DiffViewMode {
     Split,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum DiffScope {
+    #[default]
+    AllChanges,
+    Turn {
+        from: i64,
+        to: i64,
+    },
+}
+
+impl DiffScope {
+    fn label(self) -> String {
+        match self {
+            Self::AllChanges => "All changes".to_owned(),
+            Self::Turn { to, .. } => format!("Turn {to}"),
+        }
+    }
+}
+
 /// Thread diff panel displaying changed files on the left and unified or split diff hunks on the right.
 pub(crate) struct DiffPanel {
     tokens: Tokens,
     connection: Option<Connection>,
     thread_id: Option<String>,
     turn_count: Option<i64>,
+    available_turns: Vec<i64>,
+    scope: DiffScope,
+    scope_menu_open: bool,
     state: DiffLoadState,
     selected_index: usize,
     view_mode: DiffViewMode,
@@ -83,6 +107,9 @@ impl DiffPanel {
             connection,
             thread_id: None,
             turn_count: None,
+            available_turns: Vec::new(),
+            scope: DiffScope::AllChanges,
+            scope_menu_open: false,
             state: DiffLoadState::Empty,
             selected_index: 0,
             view_mode: DiffViewMode::Unified,
@@ -105,6 +132,9 @@ impl DiffPanel {
         }
         self.thread_id = thread_id;
         self.turn_count = None;
+        self.available_turns.clear();
+        self.scope = DiffScope::AllChanges;
+        self.scope_menu_open = false;
         self.selected_index = 0;
         self.reload(cx);
     }
@@ -135,37 +165,62 @@ impl DiffPanel {
         };
 
         let explicit_turns = self.turn_count;
+        let scope = self.scope;
         self.state = DiffLoadState::Loading;
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            let to_turn_count = match explicit_turns {
-                Some(n) => Ok(n),
-                None => resolve_latest_turn_count(&conn, &thread_id).await,
-            };
+            let discovered_turns = resolve_checkpoint_turns(&conn, &thread_id).await;
+            let turns_for_ui = discovered_turns.as_ref().cloned().unwrap_or_default();
 
-            let result = match to_turn_count {
-                Ok(0) => Ok(Vec::new()),
-                Ok(to_turn_count) => {
-                    let payload = OrchestrationGetFullThreadDiffInput {
+            let result = match scope {
+                DiffScope::AllChanges => {
+                    let to_turn_count = match explicit_turns {
+                        Some(n) => Ok(n),
+                        None => discovered_turns.map(|v| v.last().copied().unwrap_or(0)),
+                    };
+                    match to_turn_count {
+                        Ok(0) => Ok(Vec::new()),
+                        Ok(to_turn_count) => {
+                            let payload = OrchestrationGetFullThreadDiffInput {
+                                thread_id,
+                                to_turn_count,
+                                ignore_whitespace: None,
+                            };
+                            conn.call::<get_full_thread_diff::Payload, get_full_thread_diff::Success>(
+                                "orchestration.getFullThreadDiff",
+                                &payload,
+                            )
+                            .await
+                            .map(|resp| parse_unified_diff(&resp.diff))
+                            .map_err(|e| e.to_string())
+                        }
+                        Err(err) => Err(err),
+                    }
+                }
+                DiffScope::Turn { from, to } => {
+                    let payload = OrchestrationGetTurnDiffInput {
+                        from_turn_count: from,
+                        to_turn_count: to,
                         thread_id,
-                        to_turn_count,
                         ignore_whitespace: None,
                     };
-                    conn.call::<get_full_thread_diff::Payload, get_full_thread_diff::Success>(
-                        "orchestration.getFullThreadDiff",
+                    conn.call::<get_turn_diff::Payload, get_turn_diff::Success>(
+                        "orchestration.getTurnDiff",
                         &payload,
                     )
                     .await
                     .map(|resp| parse_unified_diff(&resp.diff))
                     .map_err(|e| e.to_string())
                 }
-                Err(err) => Err(err),
             };
 
             let _ = this.update(cx, |panel, cx| {
                 if panel.generation != generation {
                     return;
+                }
+                if !turns_for_ui.is_empty() {
+                    panel.available_turns = turns_for_ui;
                 }
                 match result {
                     Ok(files) => {
@@ -218,6 +273,139 @@ impl DiffPanel {
             DiffViewMode::Split => "superhero/diff-unified.svg",
         };
 
+        let has_turns = !self.available_turns.is_empty();
+        let mut scope_slot = div().relative().child(
+            // Scope trigger pill matching `DiffPanel.tsx` (`size="xs" variant="secondary"`, 6px radius).
+            h_flex()
+                .id("diff-scope-trigger")
+                .h(px(28.0))
+                .px(px(8.0))
+                .gap(px(4.0))
+                .items_center()
+                .rounded(px(CONTROL_RADIUS_PX))
+                .bg(control_bg)
+                .border_1()
+                .border_color(control_border)
+                .text_size(px(UI_TEXT_PX))
+                .line_height(px(UI_LINE_HEIGHT_PX))
+                .text_color(fg)
+                .when(has_turns, |el| {
+                    el.cursor_pointer()
+                        .hover(move |s| s.bg(hover_bg))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.scope_menu_open = !this.scope_menu_open;
+                                cx.notify();
+                            }),
+                        )
+                })
+                .child(self.scope.label())
+                .when(has_turns, |el| {
+                    el.child(superhero_icon("superhero/chevron-down.svg", 12.0, muted))
+                }),
+        );
+        if self.scope_menu_open && has_turns {
+            let pop_bg = to_hsla(self.tokens.popover);
+            let pop_fg = to_hsla(self.tokens.popover_foreground);
+            let pop_border = to_hsla(self.tokens.shell_inner_border);
+            let mut menu = v_flex()
+                .id("diff-scope-menu")
+                .absolute()
+                .top_full()
+                .left_0()
+                .mt(px(4.0))
+                .w(px(164.0))
+                .max_h(px(240.0))
+                .overflow_y_scroll()
+                .rounded(px(8.0))
+                .bg(pop_bg)
+                .border_1()
+                .border_color(pop_border)
+                .shadow_md()
+                .p(px(4.0))
+                .gap(px(2.0))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+            let all_selected = self.scope == DiffScope::AllChanges;
+            menu = menu.child(
+                h_flex()
+                    .id("diff-scope-all")
+                    .h(px(26.0))
+                    .px(px(8.0))
+                    .gap(px(6.0))
+                    .items_center()
+                    .rounded(px(5.0))
+                    .cursor_pointer()
+                    .text_size(px(UI_TEXT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .text_color(pop_fg)
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.scope_menu_open = false;
+                            if this.scope != DiffScope::AllChanges {
+                                this.scope = DiffScope::AllChanges;
+                                this.reload(cx);
+                            } else {
+                                cx.notify();
+                            }
+                        }),
+                    )
+                    .child(div().flex_1().child("All changes"))
+                    .when(all_selected, |el| {
+                        el.child(superhero_icon("superhero/check.svg", 13.0, pop_fg))
+                    }),
+            );
+
+            for (idx, &turn) in self.available_turns.iter().enumerate() {
+                let prev = idx
+                    .checked_sub(1)
+                    .and_then(|p| self.available_turns.get(p).copied())
+                    .unwrap_or(0);
+                let target = DiffScope::Turn {
+                    from: prev,
+                    to: turn,
+                };
+                let selected = self.scope == target;
+                menu = menu.child(
+                    h_flex()
+                        .id(SharedString::from(format!("diff-scope-turn-{turn}")))
+                        .h(px(26.0))
+                        .px(px(8.0))
+                        .gap(px(6.0))
+                        .items_center()
+                        .rounded(px(5.0))
+                        .cursor_pointer()
+                        .text_size(px(UI_TEXT_PX))
+                        .line_height(px(UI_LINE_HEIGHT_PX))
+                        .text_color(if selected { pop_fg } else { muted })
+                        .hover(move |s| s.bg(hover_bg).text_color(pop_fg))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.scope_menu_open = false;
+                                if this.scope != target {
+                                    this.scope = target;
+                                    this.reload(cx);
+                                } else {
+                                    cx.notify();
+                                }
+                            }),
+                        )
+                        .child(div().flex_1().child(format!("Turn {turn}")))
+                        .when(selected, |el| {
+                            el.child(superhero_icon("superhero/check.svg", 13.0, pop_fg))
+                        }),
+                );
+            }
+            scope_slot = scope_slot.child(deferred(menu).with_priority(3));
+        }
+
         h_flex()
             .w_full()
             .py(px(TOOLBAR_PAD_Y_PX))
@@ -226,36 +414,18 @@ impl DiffPanel {
             .items_center()
             .justify_between()
             .gap(px(8.0))
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(
-                        // Scope trigger pill matching `DiffPanel.tsx` (`size="xs" variant="secondary"`, 6px radius).
-                        h_flex()
-                            .h(px(28.0))
-                            .px(px(8.0))
-                            .gap(px(4.0))
-                            .items_center()
-                            .rounded(px(CONTROL_RADIUS_PX))
-                            .bg(control_bg)
-                            .border_1()
-                            .border_color(control_border)
+            .child(h_flex().items_center().gap(px(8.0)).child(scope_slot).when(
+                file_count > 0,
+                |el| {
+                    el.child(
+                        div()
                             .text_size(px(UI_TEXT_PX))
                             .line_height(px(UI_LINE_HEIGHT_PX))
-                            .text_color(fg)
-                            .child("Changes"),
+                            .text_color(muted)
+                            .child(file_count_label),
                     )
-                    .when(file_count > 0, |el| {
-                        el.child(
-                            div()
-                                .text_size(px(UI_TEXT_PX))
-                                .line_height(px(UI_LINE_HEIGHT_PX))
-                                .text_color(muted)
-                                .child(file_count_label),
-                        )
-                    }),
-            )
+                },
+            ))
             .child(
                 h_flex()
                     .flex_shrink_0()
@@ -304,6 +474,7 @@ impl DiffPanel {
                                         MouseButton::Left,
                                         cx.listener(|this, _, _, cx| this.reload(cx)),
                                     )
+                                    .conn_tooltip("Refresh diff", &self.tokens)
                                     .child(superhero_icon("superhero/refresh.svg", 14.0, muted)),
                             )
                             .child(
@@ -326,6 +497,13 @@ impl DiffPanel {
                                             cx.notify();
                                         }),
                                     )
+                                    .conn_tooltip(
+                                        match self.view_mode {
+                                            DiffViewMode::Unified => "Split diff",
+                                            DiffViewMode::Split => "Unified diff",
+                                        },
+                                        &self.tokens,
+                                    )
                                     .child(superhero_icon(split_icon, 14.0, split_color)),
                             )
                             .child(
@@ -345,6 +523,7 @@ impl DiffPanel {
                                             cx.notify();
                                         }),
                                     )
+                                    .conn_tooltip("Wrap lines", &self.tokens)
                                     .child(superhero_icon(
                                         "superhero/wrap-lines.svg",
                                         14.0,
@@ -368,6 +547,7 @@ impl DiffPanel {
                                             cx.notify();
                                         }),
                                     )
+                                    .conn_tooltip("Toggle file tree", &self.tokens)
                                     .child(superhero_icon(
                                         "superhero/file-tree.svg",
                                         14.0,
@@ -902,6 +1082,15 @@ impl Render for DiffPanel {
 
         v_flex()
             .size_full()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.scope_menu_open {
+                        this.scope_menu_open = false;
+                        cx.notify();
+                    }
+                }),
+            )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                 if let Some((from_x, start)) = this.split_drag {
                     let next = (start + (f32::from(event.position.x) - from_x))
@@ -973,9 +1162,9 @@ fn styled_diff_line(fallback: &str, spans: Option<&[HighlightSpan]>) -> gpui_kit
     gpui_kit::StyledText::new(text).with_highlights(runs)
 }
 
-/// Queries `orchestration.getThreadProjection` to find the highest ready checkpoint turn ordinal
-/// when the caller did not pass an explicit `turn_count`.
-async fn resolve_latest_turn_count(conn: &Connection, thread_id: &str) -> Result<i64, String> {
+/// Queries `orchestration.getThreadProjection` to discover sorted ready checkpoint turn ordinals
+/// for the scope dropdown and full-thread diff upper bound.
+async fn resolve_checkpoint_turns(conn: &Connection, thread_id: &str) -> Result<Vec<i64>, String> {
     let projection: Value = conn
         .call_json(
             "orchestration.getThreadProjection",
@@ -989,7 +1178,7 @@ async fn resolve_latest_turn_count(conn: &Connection, thread_id: &str) -> Result
         .or_else(|| projection.get("thread").and_then(|t| t.get("checkpoints")))
         .and_then(Value::as_array);
 
-    let max_ordinal = checkpoints
+    let mut ordinals: Vec<i64> = checkpoints
         .into_iter()
         .flatten()
         .filter(|cp| cp.get("status").and_then(Value::as_str) == Some("ready"))
@@ -998,10 +1187,11 @@ async fn resolve_latest_turn_count(conn: &Connection, thread_id: &str) -> Result
                 .or_else(|| cp.get("turnCount"))
                 .and_then(Value::as_i64)
         })
-        .max()
-        .unwrap_or(0);
-
-    Ok(max_ordinal)
+        .filter(|&n| n > 0)
+        .collect();
+    ordinals.sort_unstable();
+    ordinals.dedup();
+    Ok(ordinals)
 }
 
 /// Pairs unified hunk lines into `(left_index, right_index)` rows for side-by-side split diff:

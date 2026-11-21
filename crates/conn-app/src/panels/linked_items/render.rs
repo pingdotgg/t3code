@@ -17,6 +17,7 @@ use gpui_kit::{
     div, point, px,
 };
 
+use super::ChangeBreakdownState;
 use super::logic::{
     ChainKind, IssueDetailSummary, LinkInputResolution, PullRequestListLine, ServerCapabilities,
     ThreadIssueLink, format_diff_count, format_footer_summary, format_relative_time,
@@ -58,6 +59,8 @@ pub(super) struct ListCallbacks {
     pub(super) on_toggle_watch: Rc<dyn Fn(ThreadPullRequestLink, bool, &mut Window, &mut App)>,
     pub(super) on_unlink: Rc<dyn Fn(ThreadPullRequestLink, &mut Window, &mut App)>,
     pub(super) on_toggle_menu: Rc<dyn Fn(Option<String>, &mut Window, &mut App)>,
+    pub(super) on_toggle_breakdown:
+        Rc<dyn Fn(String, ThreadPullRequestLink, &mut Window, &mut App)>,
     pub(super) on_open_link_dialog: Rc<dyn Fn(&mut Window, &mut App)>,
     pub(super) on_dismiss_notice: Rc<dyn Fn(&mut Window, &mut App)>,
 }
@@ -210,6 +213,8 @@ pub(super) fn render_linked_list(
     issues: &[ThreadIssueLink],
     issue_details: &HashMap<String, IssueDetailSummary>,
     open_menu_key: Option<&str>,
+    open_breakdown_key: Option<&str>,
+    breakdowns: &HashMap<String, ChangeBreakdownState>,
     capabilities: ServerCapabilities,
     notice: Option<&str>,
     now_ms: i64,
@@ -275,12 +280,16 @@ pub(super) fn render_linked_list(
     for (idx, line) in lines.iter().enumerate() {
         let row_key = pull_request_key(&line.link);
         let menu_open = open_menu_key == Some(row_key.as_str());
+        let breakdown_open = open_breakdown_key == Some(row_key.as_str());
+        let breakdown = breakdowns.get(&row_key);
         scroll = scroll.child(render_pull_request_row(
             tokens,
             idx,
             line,
             &row_key,
             menu_open,
+            breakdown_open,
+            breakdown,
             capabilities.thread_pull_request_watch,
             now_ms,
             &callbacks,
@@ -489,6 +498,8 @@ fn render_pull_request_row(
     line: &PullRequestListLine,
     row_key: &str,
     menu_open: bool,
+    breakdown_open: bool,
+    breakdown: Option<&ChangeBreakdownState>,
     supports_watch: bool,
     now_ms: i64,
     callbacks: &ListCallbacks,
@@ -637,15 +648,28 @@ fn render_pull_request_row(
     let additions = snapshot.and_then(|s| s.additions).unwrap_or(0);
     let deletions = snapshot.and_then(|s| s.deletions).unwrap_or(0);
     if additions > 0 || deletions > 0 {
-        line_one = line_one.child(
+        let breakdown_key = row_key.to_owned();
+        let breakdown_link = link.clone();
+        let on_toggle_breakdown = Rc::clone(&callbacks.on_toggle_breakdown);
+        let hover_bg = to_hsla(tokens.shell_highlight);
+        let mut stat_slot = div().relative().ml_auto().flex_shrink_0().child(
             h_flex()
-                .ml_auto()
-                .flex_shrink_0()
+                .id(SharedString::from(format!("linked-pr-diff-stat-{index}")))
                 .items_center()
                 .gap(px(4.0))
+                .px(px(4.0))
+                .py(px(1.0))
+                .rounded(px(4.0))
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover_bg))
                 .font_family(mono.clone())
                 .text_size(px(TWO_XS_TEXT_PX))
                 .line_height(px(TWO_XS_LINE_HEIGHT_PX))
+                .conn_tooltip("Change breakdown", tokens)
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    cx.stop_propagation();
+                    on_toggle_breakdown(breakdown_key.clone(), breakdown_link.clone(), window, cx);
+                })
                 .child(
                     div()
                         .text_color(to_hsla(tokens.diff_added))
@@ -657,6 +681,10 @@ fn render_pull_request_row(
                         .child(format!("-{}", format_diff_count(deletions))),
                 ),
         );
+        if breakdown_open {
+            stat_slot = stat_slot.child(render_change_breakdown_popover(tokens, breakdown));
+        }
+        line_one = line_one.child(stat_slot);
     }
 
     // Line 2: stack badge, author, repository, head -> base branches, updated relative time.
@@ -1255,4 +1283,130 @@ fn outline_button(
             })
             .into_any_element()
     }
+}
+
+/// Renders the `pullRequests.changeBreakdown` popover anchored under a PR row's `+A -D` stat.
+fn render_change_breakdown_popover(
+    tokens: &Tokens,
+    state: Option<&ChangeBreakdownState>,
+) -> AnyElement {
+    let fg = to_hsla(tokens.popover_foreground);
+    let muted = to_hsla(tokens.muted_foreground);
+    let added = to_hsla(tokens.diff_added);
+    let removed = to_hsla(tokens.diff_removed);
+    let mono: SharedString = MONO_FONT.into();
+
+    let mut box_el = v_flex()
+        .id("linked-pr-change-breakdown")
+        .absolute()
+        .top_full()
+        .right_0()
+        .mt(px(4.0))
+        .w(px(208.0))
+        .rounded(px(8.0))
+        .bg(to_hsla(tokens.popover))
+        .border_1()
+        .border_color(to_hsla(tokens.shell_inner_border))
+        .shadow_md()
+        .p(px(10.0))
+        .gap(px(6.0))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(
+            div()
+                .text_size(px(XS_TEXT_PX))
+                .line_height(px(XS_LINE_HEIGHT_PX))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(fg)
+                .child("Change breakdown"),
+        );
+
+    match state {
+        None | Some(ChangeBreakdownState::Loading) => {
+            box_el = box_el.child(
+                div()
+                    .text_size(px(XS_TEXT_PX))
+                    .line_height(px(XS_LINE_HEIGHT_PX))
+                    .text_color(muted)
+                    .child("Loading breakdown…"),
+            );
+        }
+        Some(ChangeBreakdownState::Error(err)) => {
+            box_el = box_el.child(
+                div()
+                    .text_size(px(XS_TEXT_PX))
+                    .line_height(px(XS_LINE_HEIGHT_PX))
+                    .text_color(to_hsla(tokens.destructive))
+                    .child(err.clone()),
+            );
+        }
+        Some(ChangeBreakdownState::Ready(None)) => {
+            box_el = box_el.child(
+                div()
+                    .text_size(px(XS_TEXT_PX))
+                    .line_height(px(XS_LINE_HEIGHT_PX))
+                    .text_color(muted)
+                    .child("Breakdown unavailable for this pull request."),
+            );
+        }
+        Some(ChangeBreakdownState::Ready(Some(data))) => {
+            let categories: Vec<(&str, i64, i64)> = [
+                ("Code", data.code.additions, data.code.deletions),
+                ("Tests", data.tests.additions, data.tests.deletions),
+                ("Mocks", data.mocks.additions, data.mocks.deletions),
+                (
+                    "Generated",
+                    data.generated.additions,
+                    data.generated.deletions,
+                ),
+            ]
+            .into_iter()
+            .chain(
+                data.docs
+                    .as_ref()
+                    .map(|d| ("Docs", d.additions, d.deletions)),
+            )
+            .filter(|&(_, a, d)| a > 0 || d > 0)
+            .collect();
+
+            if categories.is_empty() {
+                box_el = box_el.child(
+                    div()
+                        .text_size(px(XS_TEXT_PX))
+                        .line_height(px(XS_LINE_HEIGHT_PX))
+                        .text_color(muted)
+                        .child("No categorized line changes."),
+                );
+            } else {
+                for (label, add, del) in categories {
+                    box_el = box_el.child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(8.0))
+                            .text_size(px(XS_TEXT_PX))
+                            .line_height(px(XS_LINE_HEIGHT_PX))
+                            .child(div().text_color(muted).child(label))
+                            .child(
+                                h_flex()
+                                    .gap(px(6.0))
+                                    .font_family(mono.clone())
+                                    .child(
+                                        div()
+                                            .text_color(added)
+                                            .child(format!("+{}", format_diff_count(add))),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(removed)
+                                            .child(format!("-{}", format_diff_count(del))),
+                                    ),
+                            ),
+                    );
+                }
+            }
+        }
+    }
+
+    deferred(box_el).with_priority(4).into_any_element()
 }
