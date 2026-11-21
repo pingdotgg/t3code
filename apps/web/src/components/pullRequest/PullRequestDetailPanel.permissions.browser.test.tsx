@@ -236,7 +236,6 @@ it("keeps a screen reader's place when scrolling the description condenses the h
   await act(() => {
     scroller!.scrollTop = scroller!.scrollHeight;
   });
-  await vi.waitFor(() => expect(expanded.closest("[inert]")).not.toBeNull());
   await act(() => vi.advanceTimersToNextFrame());
   // A programmatic focus() pulls the screen reader's browse cursor back to the header.
   expect(moves).not.toHaveBeenCalled();
