@@ -33,7 +33,8 @@ const WatchTargetInput = Schema.Struct({
 const HomeNotesReadTool = Tool.make("home_notes_read", {
   ...shared,
   description: "Read Home's notes.md, your memory across fresh starts.",
-  parameters: Schema.Struct({}),
+  // No `parameters`: an explicit Schema.Struct({}) advertises `anyOf: [object, array]`,
+  // which MCP clients reject. The default EmptyParams advertises `type: "object"`.
   success: HomeNotes,
 })
   .annotate(Tool.Readonly, true)
@@ -66,7 +67,6 @@ const HomeWatchRemoveTool = Tool.make("home_watch_remove", {
 const HomeWatchListTool = Tool.make("home_watch_list", {
   ...shared,
   description: "List what wakes Home.",
-  parameters: Schema.Struct({}),
   success: HomeWatchesResult,
 })
   .annotate(Tool.Readonly, true)
