@@ -1856,29 +1856,54 @@ const make = Effect.gen(function* () {
         cutoff: sideChat?.cutoff ?? receipt.resultSequence,
         archiveCommandId: sideChat?.archiveCommandId,
       };
+      const dispatchChild = Effect.fn("ThreadManagementService.dispatchCascadeChild")(function* (
+        threadId: ThreadId,
+        baseId: CommandId,
+        path: ReadonlyArray<ThreadId>,
+        parentArchiveCommandId: CommandId,
+      ) {
+        for (let retry = 0; retry < CommandReceiptStore.cascadeCommandIdLimit; retry++) {
+          const commandId = CommandReceiptStore.cascadeCommandIdAt(baseId, retry);
+          const result = yield* orchestrator
+            .dispatch({ type: input.operation, commandId, threadId })
+            .pipe(
+              Effect.tap(cascadeBeforeReply),
+              Effect.provideService(EffectOutbox.SubagentCascade, {
+                source,
+                path,
+                parentArchiveCommandId,
+              }),
+              Effect.catchTags({
+                OrchestratorThreadAboveModeLimitError: () => Effect.undefined,
+              }),
+            );
+          if (result === undefined) return;
+          if (!result.cascadeIdOccupied) return commandId;
+        }
+        return yield* new Orchestrator.OrchestratorDispatchError({
+          commandId: baseId,
+          commandType: input.operation,
+          cause: "All 32 subagent lifecycle command IDs were occupied or rejected.",
+        });
+      });
+
       const visit: (
         thread: {
           readonly id: ThreadId;
           readonly deletedAt: unknown;
           readonly projectId?: unknown;
         },
-        commandId: CommandId,
+        baseId: CommandId,
         path: ReadonlyArray<ThreadId>,
+        parentArchiveCommandId: CommandId,
       ) => ReturnType<ThreadManagementServiceShape["cascadeSubagentLifecycle"]> = Effect.fn(
         "ThreadManagementService.visitSubagentCascade",
-      )(function* (thread, commandId, path) {
-        if (path.length > 0 && thread.deletedAt === null) {
-          const command = { type: input.operation, commandId, threadId: thread.id };
-          const dispatched = yield* orchestrator.dispatch(command).pipe(
-            Effect.tap((result) => cascadeBeforeReply(result)),
-            Effect.provideService(EffectOutbox.SubagentCascade, { source, path }),
-            Effect.as(true),
-            Effect.catchTags({
-              OrchestratorThreadAboveModeLimitError: () => Effect.succeed(false),
-            }),
-          );
-          if (!dispatched) return;
-        }
+      )(function* (thread, baseId, path, parentArchiveCommandId) {
+        const commandId =
+          path.length > 0 && thread.deletedAt === null
+            ? yield* dispatchChild(thread.id, baseId, path, parentArchiveCommandId)
+            : baseId;
+        if (commandId === undefined) return;
         // Holds each thread's lock while visiting its subagents, so locks nest parent before child.
         yield* threadDispatch.withLock(
           thread.id,
@@ -1903,27 +1928,24 @@ const make = Effect.gen(function* () {
             if (limit && exceededDispatchModeLimit(limit, current)) return;
             if (source && current.deletedAt !== null) return;
             const latest = source
-              ? yield* receipts.getLatestLifecycle(
-                  thread.id,
-                  path.length === 0 && sideChat
-                    ? ["thread.archive", "thread.unarchive"]
-                    : undefined,
-                )
+              ? yield* receipts.getLatestLifecycle(thread.id, [
+                  "thread.archive",
+                  "thread.unarchive",
+                ])
               : null;
             if (source && CommandReceiptStore.supersedesCascade(latest, source.cutoff, commandId))
               return;
+            const archiveCommandId =
+              input.operation === "thread.archive" &&
+              latest?.commandType === "thread.archive" &&
+              latest.commandId === commandId
+                ? commandId
+                : parentArchiveCommandId;
             const children = yield* orchestrator.getSubagentChildThreads(thread.id);
             const [, failures] = yield* Effect.partition(children, (child) =>
               Effect.gen(function* () {
                 const base = CommandId.make(`${commandId}:subagent:${child.id}`);
-                const childCommandId = yield* CommandReceiptStore.cascadeCommandId(receipts, base);
-                if (childCommandId !== undefined)
-                  return yield* visit(child, childCommandId, [...path, child.id]);
-                return yield* new Orchestrator.OrchestratorDispatchError({
-                  commandId: base,
-                  commandType: input.operation,
-                  cause: "All 32 subagent lifecycle command IDs were rejected.",
-                });
+                yield* visit(child, base, [...path, child.id], archiveCommandId);
               }),
             );
             // Finish healthy siblings before reporting a failure to the durable worker.
@@ -1931,7 +1953,12 @@ const make = Effect.gen(function* () {
           }),
         );
       });
-      const walk = visit({ id: input.threadId, deletedAt: null }, input.commandId, []);
+      const walk = visit(
+        { id: input.threadId, deletedAt: null },
+        input.commandId,
+        [],
+        input.commandId,
+      );
       const cascade =
         parentThreadId === undefined ? walk : threadDispatch.withLock(parentThreadId, walk);
       yield* input.operation === "thread.delete" &&

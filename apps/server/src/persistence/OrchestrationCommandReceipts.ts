@@ -22,6 +22,7 @@ export const OrchestrationCommandReceipt = Schema.Struct({
   resultSequence: NonNegativeInt,
   status: Schema.Literals(["accepted", "rejected"]),
   error: Schema.NullOr(Schema.String),
+  archiveSourceCommandId: Schema.optional(Schema.NullOr(CommandId)),
 });
 export type OrchestrationCommandReceipt = typeof OrchestrationCommandReceipt.Type;
 
@@ -83,7 +84,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           accepted_at,
           result_sequence,
           status,
-          error
+          error,
+          archive_source_command_id
         )
         VALUES (
           ${receipt.commandId},
@@ -93,7 +95,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           ${receipt.acceptedAt},
           ${receipt.resultSequence},
           ${receipt.status},
-          ${receipt.error}
+          ${receipt.error},
+          ${receipt.archiveSourceCommandId ?? null}
         )
         ON CONFLICT (command_id)
         DO UPDATE SET
@@ -103,7 +106,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           accepted_at = excluded.accepted_at,
           result_sequence = excluded.result_sequence,
           status = excluded.status,
-          error = excluded.error
+          error = excluded.error,
+          archive_source_command_id = excluded.archive_source_command_id
       `,
   });
 
@@ -120,7 +124,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           accepted_at AS "acceptedAt",
           result_sequence AS "resultSequence",
           status,
-          error
+          error,
+          archive_source_command_id AS "archiveSourceCommandId"
         FROM orchestration_command_receipts
         WHERE command_id = ${commandId}
       `,
@@ -132,7 +137,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
     execute: ({ threadId, commandTypes }) => sql`
       SELECT command_id AS "commandId", aggregate_kind AS "aggregateKind",
         aggregate_id AS "aggregateId", command_type AS "commandType",
-        accepted_at AS "acceptedAt", result_sequence AS "resultSequence", status, error
+        accepted_at AS "acceptedAt", result_sequence AS "resultSequence", status, error,
+        archive_source_command_id AS "archiveSourceCommandId"
       FROM orchestration_command_receipts
       WHERE aggregate_kind = 'thread' AND aggregate_id = ${threadId}
         AND status = 'accepted' AND command_type IN ('thread.archive', 'thread.unarchive', 'thread.delete')
@@ -158,7 +164,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
         accepted_at,
         result_sequence,
         status,
-        error
+        error,
+        archive_source_command_id
       )
       VALUES (
         ${receipt.commandId},
@@ -168,7 +175,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
         ${receipt.acceptedAt},
         ${receipt.resultSequence},
         ${receipt.status},
-        ${receipt.error}
+        ${receipt.error},
+        ${receipt.archiveSourceCommandId ?? null}
       )
       ON CONFLICT(command_id) DO NOTHING
       RETURNING command_id

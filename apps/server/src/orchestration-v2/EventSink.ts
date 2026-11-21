@@ -211,6 +211,7 @@ export interface EventSinkV2Shape {
     readonly acceptedAt: DateTime.Utc;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
+    readonly archiveSourceCommandId?: CommandId;
     readonly cancelUnsettledEffects?: {
       readonly effectTypes: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
       readonly reason: string;
@@ -219,7 +220,7 @@ export interface EventSinkV2Shape {
     readonly updateDelegatedCompletionOnlyRunId?: RunId;
   }) => Effect.Effect<
     {
-      readonly receipt: CommandReceiptStore.CommandReceiptV2;
+      readonly receipt: CommandReceiptStore.AnyCommandReceiptV2;
       readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
       readonly committed: boolean;
       readonly cancelledEffectCount: number;
@@ -772,12 +773,13 @@ const layerBase: Layer.Layer<
     const existingCommandResult =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (commandId: CommandId) {
-        const existing = yield* commandReceipts.getByCommandId(commandId);
+        const existing = yield* commandReceipts.getAnyByCommandId(commandId);
         if (Option.isNone(existing)) {
           return yield* Effect.die(
             new Error(`Command receipt ${commandId} disappeared during its transaction.`),
           );
         }
+        if ("projectId" in existing.value) return { receipt: existing.value, storedEvents: [] };
         const storedEvents = yield* eventStore.readByCommandId({ commandId }).pipe(
           Stream.runCollect,
           Effect.map((events): ReadonlyArray<OrchestrationV2StoredEvent> => Array.from(events)),
@@ -868,6 +870,9 @@ const layerBase: Layer.Layer<
             resultSequence: sequence,
             status: "accepted",
             error: null,
+            ...(input.archiveSourceCommandId === undefined
+              ? {}
+              : { archiveSourceCommandId: input.archiveSourceCommandId }),
           };
           yield* commandReceipts.upsert(receipt);
           // Generated side-chat cascades need archive ownership after their outbox entries are pruned.
@@ -882,6 +887,9 @@ const layerBase: Layer.Layer<
                 commandId: effect.commandId,
                 threadId: effect.threadId,
                 commandType: effect.request.operation,
+                ...(effect.request.operation === "thread.archive"
+                  ? { archiveSourceCommandId: effect.commandId }
+                  : {}),
               });
               if (!reserved) {
                 return yield* new CommandReceiptStore.CommandReceiptStoreWriteError({

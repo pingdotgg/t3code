@@ -693,6 +693,7 @@ export const make = Effect.gen(function* () {
       effects: plan.effects,
     });
     if (
+      "projectId" in committed.receipt ||
       committed.receipt.threadId !== command.threadId ||
       committed.receipt.commandType !== command.type
     ) {

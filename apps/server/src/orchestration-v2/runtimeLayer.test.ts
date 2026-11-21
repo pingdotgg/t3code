@@ -14931,6 +14931,135 @@ describe("subagent lifecycle cascade", () => {
       assert.isTrue(Option.isNone(yield* receipt("archive-deleted:subagent:native")));
     }).pipe(Effect.provide(layerTest)),
   );
+  it.effect.each(["existing thread", "late project"] as const)(
+    "skips a %s receipt at the child lifecycle command ID",
+    (collision) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const commandId = CommandId.make("archive:parent:subagent:app");
+        const receipts = yield* Receipts.CommandReceiptStoreV2;
+        const existing = Option.getOrThrow(yield* receipt("create:parent"));
+        const projectId = ProjectId.make("other-project");
+        const sink = yield* EventSink.EventSinkV2;
+        const commit = sink.commitCommand;
+        if (collision === "existing thread") {
+          yield* f.run("archive", ThreadId.make("fork"), commandId);
+        }
+        using _collision = vi.spyOn(sink, "commitCommand").mockImplementation((input) =>
+          collision === "late project" && input.commandId === commandId
+            ? receipts
+                .insertIfAbsent({
+                  commandId,
+                  projectId,
+                  commandType: "project.create",
+                  acceptedAt: existing.acceptedAt,
+                  resultSequence: existing.resultSequence,
+                  status: "accepted",
+                  error: null,
+                })
+                .pipe(Effect.orDie, Effect.andThen(commit(input)))
+            : commit(input),
+        );
+        yield* f.run("archive");
+        assert.equal(yield* f.archived(app, grandchild, native), "111");
+        assert.equal(Option.getOrThrow(yield* receipt(`${commandId}:retry:1`)).threadId, app);
+        if (collision === "late project") {
+          assert.equal(
+            Option.getOrThrow(yield* receipts.getProjectByCommandId(commandId)).projectId,
+            projectId,
+          );
+        } else {
+          assert.isTrue((yield* f.run("archive", ThreadId.make("fork"), commandId)).replayed);
+          assert.equal(Option.getOrThrow(yield* receipt(commandId)).threadId, "fork");
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["existing", "late"] as const)(
+    "deletes a used subagent after a conditional close with a %s receipt",
+    (timing) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        yield* f.markUsed(native);
+        const conditional = {
+          type: "thread.delete",
+          commandId: CommandId.make("delete:parent:subagent:native"),
+          threadId: native,
+          onlyIfUnused: true,
+        } as const;
+        const receipts = yield* Receipts.CommandReceiptStoreV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const commit = sink.commitCommand;
+        const create = Option.getOrThrow(yield* receipt("create:parent"));
+        if (timing === "existing")
+          assert.isEmpty((yield* f.threads.dispatch(conditional)).storedEvents);
+        const original = Option.getOrElse(yield* receipt(conditional.commandId), () => ({
+          ...create,
+          commandId: conditional.commandId,
+          commandType: conditional.type,
+          threadId: native,
+        }));
+        using _conditional = vi
+          .spyOn(sink, "commitCommand")
+          .mockImplementation((input) =>
+            timing === "late" && input.commandId === conditional.commandId
+              ? receipts.insertIfAbsent(original).pipe(Effect.orDie, Effect.andThen(commit(input)))
+              : commit(input),
+          );
+        yield* f.run("delete");
+        assert.equal(yield* f.state("deletedAt", parent, native), "11");
+        assert.equal(
+          Option.getOrThrow(yield* receipt(`${conditional.commandId}:retry:1`)).threadId,
+          native,
+        );
+        const replay = yield* f.threads.dispatch(conditional);
+        assert.isTrue(replay.replayed);
+        assert.isEmpty(replay.storedEvents);
+        assert.deepEqual(Option.getOrThrow(yield* receipt(conditional.commandId)), original);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["fresh", "legacy"] as const)(
+    "preserves an independent archive while restoring a %s cascade receipt",
+    (history) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        yield* f.commit("archive");
+        yield* f.run("archive", app, "archive:parent:subagent:app");
+        yield* f.drain;
+        assert.equal(yield* f.archived(parent, app, grandchild, native), "1111");
+        if (history === "legacy") {
+          const receipts = yield* Receipts.CommandReceiptStoreV2;
+          const { archiveSourceCommandId: _source, ...legacy } = Option.getOrThrow(
+            yield* receipt("archive:parent:subagent:native"),
+          );
+          yield* receipts.upsert(legacy);
+        }
+        yield* TestClock.adjust("8 days");
+        assert.isAbove(yield* f.outbox.pruneSettled, 0);
+        yield* f.run("unarchive");
+        yield* f.drain;
+        assert.equal(yield* f.archived(parent, app, grandchild, native), "0110");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["before restore", "before delivery"] as const)(
+    "restores a used intermediate after a conditional close %s",
+    (when) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        yield* f.markUsed(app);
+        yield* f.run("archive");
+        yield* f.drain;
+        if (when === "before delivery") yield* f.commit("unarchive");
+        yield* f.renameAndKeep(app, when);
+        if (when === "before restore") yield* f.commit("unarchive");
+        yield* f.drain;
+        assert.equal(yield* f.state("deletedAt", app), "0");
+        assert.equal(yield* f.archived(app, grandchild), "00");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each([31, 32])("bounds child retries at 32 IDs with %i rejected", (count) =>
     Effect.gen(function* () {
       const f = yield* fixture;
@@ -14948,7 +15077,10 @@ describe("subagent lifecycle cascade", () => {
       if (count === 32) {
         const { status, attemptCount, lastError } = yield* f.cascade;
         assert.deepEqual([status, attemptCount], ["pending", 1]);
-        assert.include(lastError, "All 32 subagent lifecycle command IDs were rejected.");
+        assert.include(
+          lastError,
+          "All 32 subagent lifecycle command IDs were occupied or rejected.",
+        );
       } else {
         assert.equal(Option.getOrThrow(accepted).status, "accepted");
         assert.equal((yield* f.cascade).status, "running");

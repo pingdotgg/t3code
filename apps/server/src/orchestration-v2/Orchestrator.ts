@@ -129,6 +129,7 @@ import {
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
 import {
+  type AnyCommandReceiptV2,
   archivedByCascade,
   CommandReceiptStoreV2,
   type CommandReceiptV2,
@@ -405,6 +406,7 @@ export interface OrchestratorV2DispatchResult {
   readonly sequence: number;
   readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
   readonly subagentCascades?: ReadonlyArray<EffectOutbox.SubagentCascadeEffect>;
+  readonly cascadeIdOccupied?: true;
   /** The command id was already accepted; analytics skip it. */
   readonly replayed?: true;
 }
@@ -16219,24 +16221,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.thread_id": commandThreadId(command),
     });
 
-    const existingReceipt = yield* commandReceipts.getByCommandId(command.commandId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause,
-          }),
-      ),
-    );
+    const cascade = yield* EffectOutbox.SubagentCascade;
+    const read = mapDispatchError(command);
+    const cascadeThread =
+      cascade !== undefined &&
+      (command.type === "thread.archive" ||
+        command.type === "thread.unarchive" ||
+        command.type === "thread.delete")
+        ? yield* projectionStore.getThread(command.threadId).pipe(read)
+        : undefined;
+    if (cascadeThread !== undefined) {
+      const parentId = cascadeThread.lineage.parentThreadId;
+      const parent =
+        parentId === null ? null : yield* projectionStore.getThread(parentId).pipe(read);
+      if (parent?.projectId !== cascadeThread.projectId)
+        return { sequence: cascade?.source?.cutoff ?? 0, storedEvents: [] };
+      yield* refuseAboveDispatchModeLimit(command, cascadeThread.id, cascadeThread);
+    }
+    const occupiedCascadeId = (receipt: AnyCommandReceiptV2) =>
+      cascadeThread !== undefined &&
+      ("projectId" in receipt ||
+        receipt.threadId !== cascadeThread.id ||
+        receipt.status !== "accepted" ||
+        receipt.commandType !== command.type ||
+        (command.type === "thread.delete" && cascadeThread.deletedAt === null) ||
+        (command.type === "thread.archive" &&
+          receipt.archiveSourceCommandId !== undefined &&
+          receipt.archiveSourceCommandId !== cascade?.parentArchiveCommandId));
 
+    const existingReceipt = yield* read(
+      cascadeThread === undefined
+        ? commandReceipts.getByCommandId(command.commandId)
+        : commandReceipts.getAnyByCommandId(command.commandId),
+    );
     if (Option.isSome(existingReceipt)) {
-      return yield* replayCommandReceipt(command, existingReceipt.value);
+      const receipt = existingReceipt.value;
+      if (occupiedCascadeId(receipt))
+        return { sequence: receipt.resultSequence, storedEvents: [], cascadeIdOccupied: true };
+      if ("threadId" in receipt) return yield* replayCommandReceipt(command, receipt);
     }
 
     // Recheck under the lock; the user may have raised modes since sender preflight.
     const limit = yield* DispatchModeLimit;
-    if (limit !== undefined) {
+    if (cascadeThread === undefined && limit !== undefined) {
       // Fork and merge-back sources are unlocked; validate the modes copied by their dispatch.
       const threadId = commandThreadId(command);
       const shell = yield* projectionStore
@@ -16265,40 +16292,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     // Decided under the child's lock, so a newer independent choice on it always wins.
-    const cascade = yield* EffectOutbox.SubagentCascade;
     if (
-      cascade !== undefined &&
-      (command.type === "thread.archive" ||
-        command.type === "thread.unarchive" ||
-        command.type === "thread.delete")
+      cascadeThread !== undefined &&
+      cascade?.source !== undefined &&
+      command.type !== "thread.delete"
     ) {
       const { source, path } = cascade;
-      const read = mapDispatchError(command);
-      const thread = yield* projectionStore.getThread(command.threadId).pipe(read);
-      const parentThreadId = thread.lineage.parentThreadId;
-      const parent =
-        parentThreadId === null
-          ? null
-          : yield* projectionStore.getThread(parentThreadId).pipe(read);
-      // A child moved to another project since the walk found it is no longer this subtree's.
-      let applies = parent?.projectId === thread.projectId;
-      if (applies && source !== undefined && command.type !== "thread.delete") {
-        const latest = yield* commandReceipts.getLatestLifecycle(command.threadId).pipe(read);
-        applies =
-          thread.deletedAt === null &&
-          (command.type === "thread.archive"
-            ? thread.archivedAt === null &&
-              !supersedesCascade(latest, source.cutoff, command.commandId)
-            : thread.archivedAt !== null &&
-              (yield* archivedByCascade(
-                commandReceipts,
-                latest,
-                source.threadId,
-                path,
-                source.archiveCommandId,
-              ).pipe(read)));
-      }
-      if (!applies) return { sequence: source?.cutoff ?? 0, storedEvents: [] };
+      const latest = yield* commandReceipts
+        .getLatestLifecycle(cascadeThread.id, ["thread.archive", "thread.unarchive"])
+        .pipe(read);
+      const applies =
+        cascadeThread.deletedAt === null &&
+        (command.type === "thread.archive"
+          ? cascadeThread.archivedAt === null &&
+            !supersedesCascade(latest, source.cutoff, command.commandId)
+          : cascadeThread.archivedAt !== null &&
+            (yield* archivedByCascade(
+              commandReceipts,
+              latest,
+              source.threadId,
+              path,
+              source.archiveCommandId,
+            ).pipe(read)));
+      if (!applies) return { sequence: source.cutoff, storedEvents: [] };
     }
 
     const plan = yield* dispatchOnce(command, sideChatIds).pipe(
@@ -16446,6 +16462,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 }).pipe(mapDispatchError(command)),
               ],
         effects: plan.effects,
+        ...(command.type === "thread.archive"
+          ? { archiveSourceCommandId: cascade?.parentArchiveCommandId ?? command.commandId }
+          : {}),
         ...(plan.cancelUnsettledEffects === undefined
           ? {}
           : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),
@@ -16464,6 +16483,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
 
+    if (!committed.committed && occupiedCascadeId(committed.receipt))
+      return {
+        sequence: committed.receipt.resultSequence,
+        storedEvents: [],
+        cascadeIdOccupied: true,
+      };
+    if ("projectId" in committed.receipt)
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Conflicting receipt is not a thread command receipt.",
+      });
     if (committed.receipt.status === "rejected") {
       return yield* new OrchestratorCommandPreviouslyRejectedError({
         commandId: command.commandId,

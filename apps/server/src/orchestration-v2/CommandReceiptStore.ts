@@ -58,6 +58,7 @@ export const CommandReceiptV2 = Schema.Struct({
   resultSequence: NonNegativeInt,
   status: CommandReceiptV2Status,
   error: Schema.NullOr(Schema.String),
+  archiveSourceCommandId: Schema.optional(CommandId),
 });
 export type CommandReceiptV2 = typeof CommandReceiptV2.Type;
 
@@ -72,7 +73,7 @@ export const ProjectCommandReceiptV2 = Schema.Struct({
 });
 export type ProjectCommandReceiptV2 = typeof ProjectCommandReceiptV2.Type;
 
-type AnyCommandReceiptV2 = CommandReceiptV2 | ProjectCommandReceiptV2;
+export type AnyCommandReceiptV2 = CommandReceiptV2 | ProjectCommandReceiptV2;
 
 export interface CommandReceiptStoreV2Shape {
   readonly getLatestLifecycle: (
@@ -85,6 +86,9 @@ export interface CommandReceiptStoreV2Shape {
   readonly upsert: (
     receipt: AnyCommandReceiptV2,
   ) => Effect.Effect<void, CommandReceiptStoreV2Error>;
+  readonly getAnyByCommandId: (
+    commandId: CommandId,
+  ) => Effect.Effect<Option.Option<AnyCommandReceiptV2>, CommandReceiptStoreV2Error>;
   /** None for project command ids. */
   readonly getByCommandId: (
     commandId: CommandId,
@@ -122,6 +126,23 @@ function fromApplicationReceipt(receipt: OrchestrationCommandReceipts.Orchestrat
     resultSequence: receipt.resultSequence,
     status: receipt.status,
     error: receipt.error,
+    ...(receipt.archiveSourceCommandId == null
+      ? {}
+      : { archiveSourceCommandId: receipt.archiveSourceCommandId }),
+  });
+}
+
+function fromProjectApplicationReceipt(
+  receipt: OrchestrationCommandReceipts.OrchestrationCommandReceipt,
+) {
+  return decodeProjectReceipt({
+    commandId: receipt.commandId,
+    projectId: receipt.aggregateId,
+    commandType: receipt.commandType,
+    acceptedAt: receipt.acceptedAt,
+    resultSequence: receipt.resultSequence,
+    status: receipt.status,
+    error: receipt.error,
   });
 }
 
@@ -132,7 +153,11 @@ function toApplicationReceipt(
     commandId: receipt.commandId,
     ...("projectId" in receipt
       ? { aggregateKind: "project" as const, aggregateId: receipt.projectId }
-      : { aggregateKind: "thread" as const, aggregateId: receipt.threadId }),
+      : {
+          aggregateKind: "thread" as const,
+          aggregateId: receipt.threadId,
+          archiveSourceCommandId: receipt.archiveSourceCommandId,
+        }),
     commandType: receipt.commandType,
     acceptedAt: DateTime.formatIso(receipt.acceptedAt),
     resultSequence: receipt.resultSequence,
@@ -180,6 +205,19 @@ const layerBase: Layer.Layer<
               }),
           ),
         ),
+      getAnyByCommandId: Effect.fn("CommandReceiptStore.getAnyByCommandId")((commandId) =>
+        receipts.getByCommandId({ commandId }).pipe(
+          Effect.flatMap((receipt) => {
+            if (Option.isNone(receipt)) return Effect.succeedNone;
+            const decode: Effect.Effect<AnyCommandReceiptV2, Schema.SchemaError> =
+              receipt.value.aggregateKind === "project"
+                ? fromProjectApplicationReceipt(receipt.value)
+                : fromApplicationReceipt(receipt.value);
+            return decode.pipe(Effect.asSome);
+          }),
+          Effect.mapError((cause) => new CommandReceiptStoreReadError({ commandId, cause })),
+        ),
+      ),
       getByCommandId: (commandId) =>
         receipts.getByCommandId({ commandId }).pipe(
           Effect.flatMap(
@@ -204,15 +242,7 @@ const layerBase: Layer.Layer<
           Effect.flatMap((receipt) =>
             Option.isNone(receipt) || receipt.value.aggregateKind !== "project"
               ? Effect.succeedNone
-              : decodeProjectReceipt({
-                  commandId: receipt.value.commandId,
-                  projectId: receipt.value.aggregateId,
-                  commandType: receipt.value.commandType,
-                  acceptedAt: receipt.value.acceptedAt,
-                  resultSequence: receipt.value.resultSequence,
-                  status: receipt.value.status,
-                  error: receipt.value.error,
-                }).pipe(Effect.asSome),
+              : fromProjectApplicationReceipt(receipt.value).pipe(Effect.asSome),
           ),
           Effect.mapError((cause) => new CommandReceiptStoreReadError({ commandId, cause })),
         ),
@@ -224,13 +254,18 @@ export const layer = layerBase.pipe(Layer.provide(OrchestrationCommandReceipts.l
 
 export const layerFromApplicationReceipts = layerBase;
 
-/** Rejections are permanent, so a cascade retry takes the first unused or accepted suffix. */
-export const cascadeCommandId = Effect.fn("CommandReceiptStore.cascadeCommandId")(function* (
+export const cascadeCommandIdLimit = 32;
+
+export const cascadeCommandIdAt = (base: CommandId, retry: number) =>
+  retry === 0 ? base : CommandId.make(`${base}:retry:${retry}`);
+
+/** Older receipts encode cascade ownership in the command ID. */
+const cascadeCommandId = Effect.fn("CommandReceiptStore.cascadeCommandId")(function* (
   receipts: CommandReceiptStoreV2Shape,
   base: CommandId,
 ) {
-  for (let retry = 0; retry < 32; retry++) {
-    const id = retry === 0 ? base : CommandId.make(`${base}:retry:${retry}`);
+  for (let retry = 0; retry < cascadeCommandIdLimit; retry++) {
+    const id = cascadeCommandIdAt(base, retry);
     const receipt = yield* receipts.getByCommandId(id);
     if (Option.isNone(receipt) || receipt.value.status === "accepted") return id;
   }
@@ -253,8 +288,36 @@ export const archivedByCascade = Effect.fn("CommandReceiptStore.archivedByCascad
   expectedArchiveCommandId?: CommandId,
 ) {
   if (latest?.commandType !== "thread.archive") return false;
-  let rootCommandId: string = latest.commandId;
-  for (const threadId of path.toReversed()) {
+  let archive = latest;
+  let depth = path.length;
+  while (depth > 0 && archive.archiveSourceCommandId !== undefined) {
+    if (archive.archiveSourceCommandId === archive.commandId) return false;
+    const source = Option.getOrUndefined(
+      yield* receipts.getByCommandId(archive.archiveSourceCommandId),
+    );
+    if (
+      source?.status !== "accepted" ||
+      source.commandType !== "thread.archive" ||
+      source.resultSequence > archive.resultSequence
+    )
+      return false;
+    // A cascade can pass through an already archived thread without claiming its archive.
+    const ancestor =
+      source.threadId === rootThreadId
+        ? 0
+        : depth < 2
+          ? -1
+          : path.lastIndexOf(source.threadId, depth - 2) + 1;
+    if (ancestor <= 0 && source.threadId !== rootThreadId) return false;
+    depth = ancestor;
+    archive = source;
+  }
+  if (depth === 0)
+    return expectedArchiveCommandId === undefined || archive.commandId === expectedArchiveCommandId;
+
+  const legacyPath = path.slice(0, depth);
+  let rootCommandId: string = archive.commandId;
+  for (const threadId of legacyPath.toReversed()) {
     const segment = `:subagent:${threadId}`;
     if (!rootCommandId.endsWith(segment)) rootCommandId = rootCommandId.replace(/:retry:\d+$/, "");
     if (!rootCommandId.endsWith(segment)) return false;
@@ -266,9 +329,9 @@ export const archivedByCascade = Effect.fn("CommandReceiptStore.archivedByCascad
   const valid = root?.status === "accepted" && root.threadId === rootThreadId;
   // Derive the IDs again, so a user ID only shaped like a cascade retry is not counted.
   let derived = valid && root.commandType === "thread.archive" ? root.commandId : undefined;
-  for (const threadId of path) {
+  for (const threadId of legacyPath) {
     if (derived === undefined) return false;
     derived = yield* cascadeCommandId(receipts, CommandId.make(`${derived}:subagent:${threadId}`));
   }
-  return derived === latest.commandId && (root?.resultSequence ?? 0) <= latest.resultSequence;
+  return derived === archive.commandId && (root?.resultSequence ?? 0) <= archive.resultSequence;
 });
