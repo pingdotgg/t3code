@@ -42,6 +42,7 @@ import {
   mergeRestartCancelledBackgroundWork,
   latestStartedRun,
   neverStarted,
+  rosterTaskEnded,
 } from "./RestartBackgroundNote.ts";
 
 export class ProviderRuntimeRecoveryError extends Schema.TaggedError<ProviderRuntimeRecoveryError>()(
@@ -922,7 +923,8 @@ export const make = Effect.gen(function* () {
             if (
               cancelledBackgroundNativeIds.has(task.taskId) ||
               (task.parentTaskId !== undefined &&
-                cancelledBackgroundNativeIds.has(task.parentTaskId))
+                cancelledBackgroundNativeIds.has(task.parentTaskId)) ||
+              rosterTaskEnded(task, providerThread.id, projection)
             )
               continue;
             cancelledBackgroundNativeIds.add(task.taskId);
