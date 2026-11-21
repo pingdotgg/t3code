@@ -17,6 +17,7 @@ import {
   providerSectionIsCollapsed,
   providerSectionPreferenceKey,
   savedProviderSectionCollapsed,
+  toggleProviderSection,
 } from "./thread-settings-sheet-state";
 
 function modelOption(
@@ -200,10 +201,35 @@ describe("thread settings sheet state", () => {
   });
 
   it("keeps saved provider sections apart per environment", () => {
-    const saved = { [providerSectionPreferenceKey("work", "codex")]: true };
+    const stored = { [providerSectionPreferenceKey("work", "codex")]: true };
+    const saved = (environmentId: string, sectionKey: string) =>
+      savedProviderSectionCollapsed({ sessionChoices: {}, stored, environmentId, sectionKey });
 
-    expect(savedProviderSectionCollapsed(saved, "work", "codex")).toBe(true);
-    expect(savedProviderSectionCollapsed(saved, "home", "codex")).toBeUndefined();
-    expect(savedProviderSectionCollapsed(saved, "work", "constructor")).toBeUndefined();
+    expect(saved("work", "codex")).toBe(true);
+    expect(saved("home", "codex")).toBeUndefined();
+    expect(saved("work", "constructor")).toBeUndefined();
+  });
+
+  it("toggles twice when both taps land before the header re-renders", () => {
+    const key = providerSectionPreferenceKey("work", "codex");
+    const first = toggleProviderSection({}, key, false);
+    const second = toggleProviderSection(first.sessionChoices, key, false);
+
+    expect(first.collapsed).toBe(true);
+    expect(second.collapsed).toBe(false);
+  });
+
+  it("keeps a tap for the open sheet when saving it failed", () => {
+    const key = providerSectionPreferenceKey("work", "codex");
+    const { sessionChoices } = toggleProviderSection({}, key, false);
+
+    expect(
+      savedProviderSectionCollapsed({
+        sessionChoices,
+        stored: { [key]: false },
+        environmentId: "work",
+        sectionKey: "codex",
+      }),
+    ).toBe(true);
   });
 });

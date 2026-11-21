@@ -125,6 +125,7 @@ import {
   providerSectionIsCollapsed,
   providerSectionPreferenceKey,
   savedProviderSectionCollapsed,
+  toggleProviderSection,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import type { MessageResolver } from "../../i18n/messages";
@@ -517,7 +518,6 @@ function ThreadSettingsSessionProvider(
   const providerSectionsCollapsed = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelProviderSectionsCollapsed ?? EMPTY_PROVIDER_SECTIONS_COLLAPSED)
     : EMPTY_PROVIDER_SECTIONS_COLLAPSED;
-  // This session's choices win over stored ones, so a failed save never undoes a tap.
   const sectionChoices = useRef<Readonly<Record<string, boolean>>>(
     EMPTY_PROVIDER_SECTIONS_COLLAPSED,
   );
@@ -525,8 +525,12 @@ function ThreadSettingsSessionProvider(
     EMPTY_PROVIDER_SECTIONS_COLLAPSED,
   );
   const savedSectionCollapsed = (sectionKey: string) =>
-    savedProviderSectionCollapsed(sessionSectionChoices, props.environmentId, sectionKey) ??
-    savedProviderSectionCollapsed(providerSectionsCollapsed, props.environmentId, sectionKey);
+    savedProviderSectionCollapsed({
+      sessionChoices: sessionSectionChoices,
+      stored: providerSectionsCollapsed,
+      environmentId: props.environmentId,
+      sectionKey,
+    });
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const displayedPrompt = pendingModel ? (pendingPrompt ?? props.prompt) : props.prompt;
@@ -617,15 +621,12 @@ function ThreadSettingsSessionProvider(
     }
   };
 
-  // The ref sees earlier taps before React re-renders the header, so quick taps each toggle.
   const toggleProvider = (sectionKey: string, collapsed: boolean) => {
     const preferenceKey = providerSectionPreferenceKey(props.environmentId, sectionKey);
-    const choices = sectionChoices.current;
-    const nextCollapsed = !(Object.hasOwn(choices, preferenceKey)
-      ? choices[preferenceKey]
-      : collapsed);
-    sectionChoices.current = { ...choices, [preferenceKey]: nextCollapsed };
-    setSessionSectionChoices(sectionChoices.current);
+    const next = toggleProviderSection(sectionChoices.current, preferenceKey, collapsed);
+    const nextCollapsed = next.collapsed;
+    sectionChoices.current = next.sessionChoices;
+    setSessionSectionChoices(next.sessionChoices);
     void savePreferences({
       transform: (current) => ({
         modelProviderSectionsCollapsed: {
