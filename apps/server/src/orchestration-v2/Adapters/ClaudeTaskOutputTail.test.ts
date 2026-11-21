@@ -6,7 +6,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
-import * as TestClock from "effect/testing/TestClock";
 
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 
@@ -129,7 +128,7 @@ describe("tailClaudeTaskOutput", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("checks the cwd project slug before scanning root and reuses cached project dirs", () =>
+  it.live("checks the cwd project slug before scanning root and reuses cached project dirs", () =>
     Effect.gen(function* () {
       const baseFs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -145,6 +144,10 @@ describe("tailClaudeTaskOutput", () => {
       yield* baseFs.makeDirectory(tasks, { recursive: true });
       yield* baseFs.writeFileString(file, "from-cwd\n");
 
+      const lateTaskId = "blatetask";
+      const lateFile = path.join(tasks, `${lateTaskId}.output`);
+      // The late file appears right after the first probe misses it, so the next poll must find it.
+      let createLateFileOnProbe = false;
       let readDirCount = 0;
       let existsCount = 0;
       const countingFs: FileSystem.FileSystem = {
@@ -155,6 +158,10 @@ describe("tailClaudeTaskOutput", () => {
         },
         exists: (target) => {
           existsCount += 1;
+          if (createLateFileOnProbe && target === lateFile) {
+            createLateFileOnProbe = false;
+            return baseFs.writeFileString(lateFile, "late\n").pipe(Effect.as(false));
+          }
           return baseFs.exists(target);
         },
       };
@@ -187,8 +194,7 @@ describe("tailClaudeTaskOutput", () => {
       // Missing output file when session dir already exists under cwd slug should not scan root.
       readDirCount = 0;
       existsCount = 0;
-      const lateTaskId = "blatetask";
-      const lateFile = path.join(tasks, `${lateTaskId}.output`);
+      createLateFileOnProbe = true;
       const lateChunks: Array<string> = [];
       const lateStop = yield* Deferred.make<void>();
       const lateFirst = yield* Deferred.make<void>();
@@ -204,9 +210,6 @@ describe("tailClaudeTaskOutput", () => {
             Effect.andThen(Deferred.succeed(lateFirst, undefined)),
           ),
       }).pipe(Effect.provideService(FileSystem.FileSystem, countingFs), Effect.forkScoped);
-      yield* TestClock.adjust("250 millis");
-      yield* baseFs.writeFileString(lateFile, "late\n");
-      yield* TestClock.adjust("250 millis");
       yield* Deferred.await(lateFirst);
       yield* Deferred.succeed(lateStop, undefined);
       yield* Fiber.join(lateFiber);
