@@ -267,7 +267,7 @@ function publishedThemeColors(
   const base =
     appearance === theme.appearance && theme.canvas !== undefined && theme.accent !== undefined
       ? createVividThemeColors(appearance, theme.canvas, theme.accent)
-      : getDefaultThemeColors(appearance);
+      : getStandardPaintedThemeColors(appearance);
   return { ...base, ...lenientThemeColorOverrides(colors ?? {}) };
 }
 
