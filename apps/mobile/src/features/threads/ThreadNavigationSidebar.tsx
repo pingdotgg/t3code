@@ -55,6 +55,7 @@ import {
   resolveHomeProjectFilterScope,
   sortHomeProjectScopes,
 } from "../home/homeThreadList";
+import { ProjectFilterSheet } from "../home/ProjectFilterSheet";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -188,6 +189,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       ),
     [projects, options.selectedEnvironmentId, options.projectGroupingMode, messages],
   );
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const projectFilterOptions = pickableProjectGroups(
     sortHomeProjectScopes({
       scopes: projectScopes,
@@ -198,6 +200,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   ).map((scope) => ({
     key: scope.key,
     label: scope.title,
+    pinned: scope.pinned,
+    project: scope.representative,
+    members: scope.projects,
   }));
   const projectTitleByProjectKey = useMemo(
     () =>
@@ -535,36 +540,46 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     }
   };
   const header = (
-    <WorkspaceListHeader
-      accessibilityLabel={gt("{appName}, Threads", { appName: "T3 Code" })}
-      onOpenEnvironments={props.onOpenEnvironmentSettings}
-      onOpenSettings={props.onOpenSettings}
-      search={{
-        value: props.searchQuery,
-        onChangeText: props.onSearchQueryChange,
-        placeholder: gt("Search", { $context: "search field placeholder" }),
-        accessibilityLabel: gt("Search threads"),
-      }}
-      filter={{
-        customized: options.selectedEnvironmentId !== null || selectedProjectKey !== null,
-        items: buildHomeListFilterMenuItems(
-          {
-            environments,
-            projects: projectFilterOptions,
-            selectedEnvironmentId: options.selectedEnvironmentId,
-            selectedProjectKey,
-            onEnvironmentChange: setSelectedEnvironmentId,
-            onProjectChange: setSelectedProjectKey,
-          },
-          messages,
-        ),
-      }}
-      sidebar={{
-        width: props.width,
-        visible: props.visible,
-        onRequestVisibility: props.onRequestVisibility,
-      }}
-    />
+    <>
+      {projectPickerOpen ? (
+        <ProjectFilterSheet
+          projects={projectFilterOptions}
+          selectedProjectKey={selectedProjectKey}
+          onProjectChange={setSelectedProjectKey}
+          onClose={() => setProjectPickerOpen(false)}
+        />
+      ) : null}
+      <WorkspaceListHeader
+        accessibilityLabel={gt("{appName}, Threads", { appName: "T3 Code" })}
+        onOpenEnvironments={props.onOpenEnvironmentSettings}
+        onOpenSettings={props.onOpenSettings}
+        search={{
+          value: props.searchQuery,
+          onChangeText: props.onSearchQueryChange,
+          placeholder: gt("Search", { $context: "search field placeholder" }),
+          accessibilityLabel: gt("Search threads"),
+        }}
+        filter={{
+          customized: options.selectedEnvironmentId !== null || selectedProjectKey !== null,
+          items: buildHomeListFilterMenuItems(
+            {
+              environments,
+              projects: projectFilterOptions,
+              selectedEnvironmentId: options.selectedEnvironmentId,
+              selectedProjectKey,
+              onEnvironmentChange: setSelectedEnvironmentId,
+              onOpenProjectPicker: () => setProjectPickerOpen(true),
+            },
+            messages,
+          ),
+        }}
+        sidebar={{
+          width: props.width,
+          visible: props.visible,
+          onRequestVisibility: props.onRequestVisibility,
+        }}
+      />
+    </>
   );
   const showAddEnvironment =
     !catalogState.isLoadingConnections &&
