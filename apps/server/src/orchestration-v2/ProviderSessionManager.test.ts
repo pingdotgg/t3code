@@ -457,7 +457,7 @@ const makeNativeChildFixture = Effect.fnUntraced(function* () {
     modelSelection,
     runtimePolicy,
   });
-  return { manager, parent, resumeChild };
+  return { manager, parent, runtime, resumeChild };
 });
 
 function unimplemented(detail: string) {
@@ -485,6 +485,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+    readonly shouldUnloadThreadPromptly?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
@@ -604,6 +605,11 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             : {
                 hasPendingBackgroundWorkForThread: () => options.hasPendingBackgroundWorkForThread!,
               }),
+          ...(options.shouldUnloadThreadPromptly === undefined
+            ? {}
+            : {
+                shouldUnloadThreadPromptly: () => options.shouldUnloadThreadPromptly!,
+              }),
           ensureThread: () => unimplemented("ensureThread unused in test"),
           resumeThread: (threadInput) =>
             Ref.update(state, (current) => ({
@@ -673,6 +679,7 @@ function layerTest(input: {
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+  readonly shouldUnloadThreadPromptly?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
@@ -721,6 +728,9 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWorkForThread === undefined
         ? {}
         : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
+      ...(input.shouldUnloadThreadPromptly === undefined
+        ? {}
+        : { shouldUnloadThreadPromptly: input.shouldUnloadThreadPromptly }),
       ...(input.backgroundTasksEndWithProcess === undefined
         ? {}
         : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
@@ -5409,6 +5419,78 @@ it.effect(
     }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 promptly unloads an unattached native child after its parent",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const unloads = yield* Queue.unbounded<string>();
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const { parent, runtime } = yield* makeNativeChildFixture();
+        const now = yield* DateTime.now;
+        const providerThread = makeProviderThread({ idAllocator, ...parent, now });
+        const runId = idAllocator.derive.run({ threadId: parent.threadId, ordinal: 1 });
+        yield* runtime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(parent.threadId)).thread,
+          threadId: parent.threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({
+              threadId: parent.threadId,
+              ordinal: 1,
+            }),
+            text: "Delegate to a child that uses the computer",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const subscription = yield* runtime.subscribeEvents!;
+        yield* Queue.offer(
+          (yield* Ref.get(state)).eventQueues.get(String(parent.providerSessionId))!,
+          {
+            type: "turn.terminal",
+            driver: CODEX_DRIVER,
+            providerThreadId: providerThread.id,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: CODEX_DRIVER,
+              nativeTurnId: "native-parent-turn",
+            }),
+            runOrdinal: 1,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          },
+        );
+        yield* subscription.events.pipe(Stream.runHead);
+
+        yield* TestClock.adjust("5 seconds");
+        assert.equal(yield* Queue.take(unloads), "unload:native-thread");
+        assert.equal(yield* Queue.take(unloads), "unload:native-child-thread");
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 30 * 60 * 1000,
+            unloads,
+            shouldUnloadThreadPromptly: Effect.succeed(true),
+            hasPendingBackgroundWork: Effect.succeed(true),
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+);
+
 it.effect.each([
   { keptOpen: true, archive: "succeeds" },
   { keptOpen: false, archive: "succeeds" },
@@ -5566,6 +5648,148 @@ it.effect.each([
                 : {}),
             // Another thread's work keeps the shared session open past the children's idle unloads.
             hasPendingBackgroundWork: Effect.succeed(keptOpen),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect.each([
+  "prompt",
+  "idle",
+  "prompt after pending work",
+  "prompt once a child finishes",
+] as const)(
+  "ProviderSessionManagerV2 unloads an idle thread after a short delay only when its runtime asks (%s)",
+  (scenario) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const unloads = yield* Queue.unbounded<string>();
+      const pendingWork = yield* Ref.make(scenario === "prompt after pending work");
+      const prompt = yield* Ref.make(
+        scenario === "prompt" || scenario === "prompt after pending work",
+      );
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-prompt-unload");
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "Use the computer",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const subscription = yield* runtime.subscribeEvents!;
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+        yield* Queue.offer(queue, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-turn-prompt-unload",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* subscription.events.pipe(Stream.runHead);
+
+        yield* TestClock.adjust("5 seconds");
+        if (scenario === "prompt once a child finishes") {
+          assert.isTrue(Option.isNone(yield* Queue.poll(unloads)));
+          // The child first used Computer Use after the parent's 30 minute timer started.
+          yield* Ref.set(prompt, true);
+          const childFinished = yield* runtime.subscribeEvents!;
+          yield* Queue.offer(queue, {
+            type: "subagent.updated",
+            driver: CODEX_DRIVER,
+            subagent: {
+              id: idAllocator.derive.nodeFromProviderItem({
+                driver: CODEX_DRIVER,
+                nativeItemId: "native-child-task",
+              }),
+              threadId,
+              runId,
+              parentNodeId: idAllocator.derive.rootNode({ runId }),
+              origin: "provider_native",
+              createdBy: "agent",
+              driver: CODEX_DRIVER,
+              providerInstanceId: modelSelection.instanceId,
+              providerThreadId: null,
+              childThreadId: null,
+              nativeTaskRef: {
+                driver: CODEX_DRIVER,
+                nativeId: "native-child-task",
+                strength: "strong",
+              },
+              prompt: "Use the computer",
+              title: null,
+              model: null,
+              status: "completed",
+              result: "done",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+          yield* childFinished.events.pipe(Stream.runHead);
+          yield* TestClock.adjust("5 seconds");
+        } else if (scenario !== "prompt") {
+          assert.isTrue(Option.isNone(yield* Queue.poll(unloads)));
+          yield* Ref.set(pendingWork, false);
+          // A deferred prompt unload rechecks after the short delay, not the idle timeout.
+          yield* TestClock.adjust(scenario === "idle" ? "30 minutes" : "5 seconds");
+        }
+        assert.equal(yield* Queue.take(unloads), "unload:native-thread");
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 30 * 60 * 1000,
+            unloads,
+            shouldUnloadThreadPromptly: Ref.get(prompt),
+            hasPendingBackgroundWorkForThread: Ref.get(pendingWork),
+            // Another thread's work keeps the session open, so only the thread unloads.
+            hasPendingBackgroundWork: Effect.succeed(true),
           }),
         ),
       );

@@ -828,6 +828,10 @@ export interface ProviderAdapterV2SessionRuntime {
     /** Also hide it from the provider's own clients where it can; resuming it must restore it. */
     readonly archive?: boolean;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /** True when the loaded thread holds a resource that only unloading releases, such as Computer Use. */
+  readonly shouldUnloadThreadPromptly?: (
+    providerThread: OrchestrationV2ProviderThread,
+  ) => Effect.Effect<boolean>;
   readonly respondToRuntimeRequest: (
     input: ProviderAdapterV2RuntimeRequestResponseInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
