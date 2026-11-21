@@ -21,7 +21,7 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
-import { classifyToolActivity } from "@t3tools/shared/toolActivity";
+import { classifyToolActivity, collectToolFilePaths } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
@@ -466,22 +466,26 @@ function computeToolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   return workLogEntryIsToolLike(entry) ? "other" : "update";
 }
 
-export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): string | null {
-  const viewedImagePath = entry.viewedImagePath?.trim();
-  if (
-    viewedImagePath !== undefined &&
-    !/[\r\n]/.test(viewedImagePath) &&
-    isWorkspaceImagePreviewPath(viewedImagePath)
-  ) {
-    return viewedImagePath;
-  }
-  const detail = entry.detail?.trim();
-  return toolGroupAction(entry) === "read" &&
-    detail !== undefined &&
-    !/[\r\n]/.test(detail) &&
-    isWorkspaceImagePreviewPath(detail)
-    ? detail
+function previewableImagePath(path: string | undefined): string | null {
+  const trimmed = path?.trim();
+  return trimmed !== undefined &&
+    trimmed.length > 0 &&
+    trimmed.length <= 4096 &&
+    !/[\r\n]/.test(trimmed) &&
+    isWorkspaceImagePreviewPath(trimmed)
+    ? trimmed
     : null;
+}
+
+export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): string | null {
+  const viewedImagePath = previewableImagePath(entry.viewedImagePath);
+  if (viewedImagePath !== null) return viewedImagePath;
+  if (toolGroupAction(entry) !== "read") return null;
+  // Cursor image reads store the path on the tool input and the file bytes are not in the output.
+  const detail = previewableImagePath(entry.detail);
+  if (detail !== null) return detail;
+  const [readPath] = collectToolFilePaths(workEntryToolInput(entry));
+  return previewableImagePath(readPath);
 }
 
 /** Distinct images the agent opened across a tool group, in viewing order. */

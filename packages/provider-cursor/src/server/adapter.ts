@@ -9,6 +9,7 @@ import type {
   SettingSource,
   ToolCall,
 } from "@cursor/sdk";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -446,6 +447,17 @@ function cursorToolName(toolCall: ToolCall): string {
   const provider = toolCall.args.providerIdentifier ?? "mcp";
   const tool = toolCall.args.toolName ?? "unknown";
   return `mcp__${provider}__${tool}`;
+}
+
+/** Image reads preview from the file, the same way Claude and Pi tag `viewedImagePath`. */
+function cursorViewedImagePath(path: string | undefined): string | undefined {
+  const readPath = path?.trim();
+  return readPath &&
+    readPath.length <= 4096 &&
+    !/[\r\n]/.test(readPath) &&
+    isWorkspaceImagePreviewPath(readPath)
+    ? readPath
+    : undefined;
 }
 
 function cursorToolFileName(toolCall: ToolCall): string {
@@ -1612,7 +1624,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ...(toolCall.type === "write" ? { newStr: toolCall.args.fileText } : {}),
               };
               break;
-            case "read":
+            case "read": {
+              const viewedImagePath = cursorViewedImagePath(toolCall.args.path);
               turnItem = {
                 ...base,
                 title: formatReadToolLabel(toolCall.args.path),
@@ -1622,8 +1635,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ...(cursorToolOutput(toolCall) === undefined
                   ? {}
                   : { output: cursorToolOutput(toolCall) }),
+                ...(viewedImagePath === undefined ? {} : { viewedImagePath }),
               };
               break;
+            }
             case "glob":
             case "grep":
             case "ls":
