@@ -9720,6 +9720,49 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("publishes a new branch at the same commit as its local upstream", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        const remoteBase = yield* git(remote, [
+          "--git-dir=.",
+          "rev-parse",
+          `refs/heads/${initialBranch}`,
+        ]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        const { commitSha } = yield* driver.commit(cwd, "Add feature", "");
+        yield* git(cwd, ["config", "branch.autoSetupMerge", "always"]);
+        yield* driver.createRef({ cwd, refName: "feature/push" });
+        yield* driver.switchRef({ cwd, refName: "feature/push" });
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--symbolic-full-name", "@{upstream}"]),
+          `refs/heads/${initialBranch}`,
+        );
+
+        const pushed = yield* driver.pushCurrentBranch(cwd, null);
+
+        assert.deepInclude(pushed, {
+          status: "pushed",
+          upstreamBranch: "origin/feature/push",
+          setUpstream: true,
+        });
+        assert.equal(
+          yield* git(remote, ["--git-dir=.", "rev-parse", "refs/heads/feature/push"]),
+          commitSha,
+        );
+        assert.equal(
+          yield* git(remote, ["--git-dir=.", "rev-parse", `refs/heads/${initialBranch}`]),
+          remoteBase,
+        );
+      }),
+    );
+
     it.effect("republishes a branch whose upstream was deleted", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

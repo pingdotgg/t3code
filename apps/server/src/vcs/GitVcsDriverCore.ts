@@ -3733,8 +3733,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const destination = yield* resolvePushDestination(cwd, branch, details.hasUpstream);
     if (hasNoLocalDelta && details.hasUpstream) {
       if (!destination?.pushRemote) {
-        // The tracking ref reflects the fetch URL, so it says nothing about a separate push URL.
-        if (!destination || (yield* pushesOnlyToFetchUrl(cwd, destination.remoteName))) {
+        // A local upstream and a separate push URL both leave the publish destination unchecked.
+        if (
+          !destination ||
+          (destination.upstream?.remoteName !== "." &&
+            (yield* pushesOnlyToFetchUrl(cwd, destination.remoteName)))
+        ) {
           return {
             status: "skipped_up_to_date" as const,
             branch,
