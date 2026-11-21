@@ -486,7 +486,7 @@ function QueuedMessage(props: {
           icon: CalendarClockIcon,
           label: gt("Automation"),
           fitLabel: true,
-          summary: taskTitle ?? props.previewText.split(/\r?\n/, 1)[0] ?? "",
+          summary: taskTitle ?? (expanded ? "" : (props.previewText.split(/\r?\n/, 1)[0] ?? "")),
         }
       : attribution === "agent"
         ? {
@@ -495,7 +495,9 @@ function QueuedMessage(props: {
               senderTitle ||
               gt("Agent", { $context: "fallback name of the agent that sent a message" }),
             fitLabel: !senderTitle,
-            summary: props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "",
+            summary: expanded
+              ? ""
+              : (props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? ""),
           }
         : null;
   const bodyVisible = fold === null || expanded;
