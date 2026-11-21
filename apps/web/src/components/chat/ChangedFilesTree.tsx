@@ -16,7 +16,7 @@ import {
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
-import { Button } from "../ui/button";
+import { Button, ContentButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeResize } from "~/lib/observeResize";
@@ -227,11 +227,11 @@ function ChangedFilesGroupSection(props: {
   const syncTimelineLayout = useSyncLayout();
   return (
     <section data-changed-files-group={group.name}>
-      <button
-        type="button"
+      <ContentButton
+        variant="action-row"
         data-scroll-anchor-ignore
         aria-expanded={!collapsed}
-        className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="group w-full"
         onClick={() => {
           setCollapsed(!collapsed);
           syncTimelineLayout();
@@ -245,15 +245,15 @@ function ChangedFilesGroupSection(props: {
           )}
         />
         <FolderGit2Icon className="size-3.5 shrink-0 text-muted-foreground/75" />
-        <span className="truncate font-mono text-2xs text-foreground/90">{group.name}</span>
+        <span className="truncate font-mono text-caption text-foreground/90">{group.name}</span>
         {hasNonZeroStat(group.totals) && (
-          <span className="ml-auto shrink-0 font-mono text-3xs tabular-nums">
+          <span className="ml-auto shrink-0 font-mono text-micro tabular-nums">
             <DiffStatLabel additions={group.totals.additions} deletions={group.totals.deletions} />
           </span>
         )}
-      </button>
+      </ContentButton>
       {collapsed ? null : group.note !== undefined ? (
-        <p className="py-1.5 pr-2 pl-9.5 text-2xs text-muted-foreground">{group.note}</p>
+        <p className="py-1.5 pr-2 pl-9.5 text-caption text-muted-foreground">{group.note}</p>
       ) : (
         <ChangedFilesTree
           key={`${runId}:${allDirectoriesExpanded}`}

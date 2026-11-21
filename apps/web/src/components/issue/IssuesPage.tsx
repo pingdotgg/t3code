@@ -528,7 +528,7 @@ export function IssuesPage() {
         </EmptyTitle>
       </EmptyHeader>
       <EmptyContent>
-        <Button variant="outline" onClick={() => updateSearch({ hideProjects: undefined })}>
+        <Button variant="secondary" onClick={() => updateSearch({ hideProjects: undefined })}>
           <T>Show all projects</T>
         </Button>
       </EmptyContent>

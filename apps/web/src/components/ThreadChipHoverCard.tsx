@@ -46,7 +46,7 @@ export function ThreadChipHoverCard(props: {
       title={props.title}
       footer={
         supportsMultiplePullRequests && shell && shell.pullRequests.length > 0 ? (
-          <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
+          <div className="border-t border-border/60 pt-2 pl-0.5 text-meta text-muted-foreground">
             <ThreadPullRequestsMiniList pullRequests={shell.pullRequests} />
           </div>
         ) : null

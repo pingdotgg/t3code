@@ -3753,7 +3753,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           type="button"
                           tabIndex={-1}
                           aria-label={gt("Use suggested prompt")}
-                          className="pointer-events-auto ml-2 inline-flex cursor-pointer rounded align-[1px] [&:hover_kbd]:text-foreground"
+                          className="pointer-events-auto ml-2 inline-flex cursor-pointer align-[1px]"
                           onPointerDown={(event) => event.preventDefault()}
                           onClick={() => {
                             const accepted = promptSuggestionToAccept(

@@ -276,7 +276,11 @@ export function RevertConfirmHost(props: {
           <AlertDialogClose render={<Button variant="secondary" />}>
             <T>Cancel</T>
           </AlertDialogClose>
-          <Button variant="destructive" disabled={fileRestore === null} onClick={() => confirm(true)}>
+          <Button
+            variant="destructive"
+            disabled={fileRestore === null}
+            onClick={() => confirm(true)}
+          >
             {fileRestore === "repositories" ? (
               <T>Revert repositories too</T>
             ) : (

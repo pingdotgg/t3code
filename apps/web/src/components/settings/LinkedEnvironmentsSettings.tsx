@@ -531,7 +531,7 @@ export function LinkEnvironmentDialog({
               </p>
             ) : null}
             {through !== null ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 {gt(
                   "{via} links to {target} at full access, so it gets the pairing code. No code to paste.",
                   { via: via?.label ?? "", target: through.label },
@@ -599,20 +599,20 @@ export function LinkEnvironmentDialog({
             )}
             <LinkAccessPicker value={access} onChange={setAccess} disabled={busy} />
             {machine === null || source === null ? null : backOffer.kind === "offered" ? (
-              <label className="flex cursor-pointer items-start gap-2.5 text-sm has-data-disabled:cursor-default">
+              <label className="flex cursor-pointer items-start gap-2.5 text-body has-data-disabled:cursor-default">
                 <Checkbox
                   checked={alsoLinkBack}
                   disabled={busy}
                   onCheckedChange={setAlsoLinkBack}
                 />
                 <span className="min-w-0 space-y-0.5">
-                  <span className="block font-medium text-foreground">
+                  <span className="block text-label text-foreground">
                     {gt("Also link {target} back to {source}", {
                       source: source.label,
                       target: machine.label,
                     })}
                   </span>
-                  <span className="block text-xs text-muted-foreground">
+                  <span className="block text-meta text-muted-foreground">
                     {gt("Agents on {target} can then work on {source} too.", {
                       source: source.label,
                       target: machine.label,
@@ -621,7 +621,7 @@ export function LinkEnvironmentDialog({
                 </span>
               </label>
             ) : backOffer.kind === "blocked" ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 {linkBackBlockLabel(
                   backOffer.reason,
                   { source: source.label, target: machine.label },

@@ -250,12 +250,7 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
-import {
-  composerDraftHasUserContent,
-  DraftId,
-  useComposerDraftStore,
-  usePromotingDraftThreadKeys,
-} from "../composerDraftStore";
+import { DraftId, useComposerDraftStore, usePromotingDraftThreadKeys } from "../composerDraftStore";
 import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
 import {
   SidebarSearchResultRow,

@@ -98,7 +98,7 @@ export function IssueFiltersMenu(props: {
             <MenuSubTrigger>
               <FolderGit2Icon aria-hidden className="size-3.5" />
               <span className="flex-1">{gt("Projects")}</span>
-              <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+              <span className="min-w-0 max-w-32 truncate text-meta text-muted-foreground">
                 {props.hiddenProjects.size === 0
                   ? gt("All projects")
                   : gt("{hidden} hidden", { hidden: props.hiddenProjects.size })}

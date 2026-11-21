@@ -70,7 +70,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { connectionPhaseDotClassName } from "../ConnectionStatusDot";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { Button } from "../ui/button";
+import { Button, ContentButton } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -171,12 +171,14 @@ function healthDash(health: PeerLinkHealth): string | undefined {
 const byTrouble = (left: FleetLinkEdge, right: FleetLinkEdge) =>
   linkTroubleRank(left.health) - linkTroubleRank(right.health);
 
-/** A machine's outline carries its link's health too. */
-function healthBorder(health: PeerLinkHealth): string {
-  if (health.kind === "expired") return "border-dotted border-destructive/70";
-  if (health.kind === "failing") return "border-destructive/70";
-  if (health.kind === "unreachable") return "border-dashed border-foreground/35";
-  return health.expiresInDays === null ? "border-border" : "border-warning/70";
+/** A link's health as the map's controls style it: a machine's outline and a name's colour. */
+function healthState(
+  health: PeerLinkHealth,
+): "expired" | "failing" | "unreachable" | "expiring" | "ok" {
+  if (health.kind === "expired" || health.kind === "failing" || health.kind === "unreachable") {
+    return health.kind;
+  }
+  return health.expiresInDays === null ? "ok" : "expiring";
 }
 
 /** How each route state is drawn: the one in use stands out, the rest stay quiet. */
@@ -187,7 +189,7 @@ const ROUTE_STYLES: Record<
   "in-use": {
     wire: "text-success",
     width: 1.75,
-    pill: "border-success/70 font-medium text-foreground",
+    pill: "border-success/70 text-foreground",
   },
   standby: { wire: "text-muted-foreground/60", width: 1, pill: "border-border" },
   trying: { wire: "text-warning", width: 1, dash: "1 4", pill: "border-warning/60" },
@@ -906,7 +908,7 @@ function FleetCanvas({
             />
           </InputGroup>
         </div>
-        <p role="status" className="min-w-0 text-2xs text-muted-foreground">
+        <p role="status" className="min-w-0 text-caption text-muted-foreground">
           {matches === null
             ? null
             : matchIds.length === 0
@@ -918,7 +920,7 @@ function FleetCanvas({
         </p>
         <div className="ml-auto flex items-center gap-2">
           {selected.size > 0 ? (
-            <span className="flex items-center gap-1 text-2xs text-foreground">
+            <span className="flex items-center gap-1 text-caption text-foreground">
               <span role="status" className="tabular-nums">
                 {gt("{count, plural, one {# selected} other {# selected}}", {
                   count: selected.size,
@@ -934,7 +936,7 @@ function FleetCanvas({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <Button size="xs" variant="outline" onClick={() => onLinkSeveral(source.id)}>
+                  <Button size="xs" variant="secondary" onClick={() => onLinkSeveral(source.id)}>
                     {gt("Link several…")}
                   </Button>
                 }
@@ -948,7 +950,7 @@ function FleetCanvas({
                   render={
                     <MenuTrigger
                       render={
-                        <Button size="xs" variant="outline">
+                        <Button size="xs" variant="secondary">
                           {gt("Link several…")}
                         </Button>
                       }
@@ -978,7 +980,7 @@ function FleetCanvas({
               }
             />
             <PopoverPopup align="end" width="sm" padding="compact">
-              <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              <ul className="list-disc space-y-1 pl-4 text-meta text-muted-foreground">
                 <li>{gt("Select a machine to manage it.")}</li>
                 {sources.length === 0 ? null : (
                   <>
@@ -1094,7 +1096,7 @@ function FleetLegend({ twoWay }: { readonly twoWay: boolean }) {
   return (
     <ul
       aria-label={gt("How to read the lines")}
-      className="flex min-w-0 items-center gap-x-3 overflow-clip pb-1 text-2xs whitespace-nowrap text-muted-foreground"
+      className="flex min-w-0 items-center gap-x-3 overflow-clip pb-1 text-caption whitespace-nowrap text-muted-foreground"
     >
       <li className="flex items-center gap-1.5">
         {sample("in-use")}
@@ -1253,7 +1255,7 @@ function CodeOnlyNotice({
   return (
     <div
       role="status"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border/60 bg-background/50 px-3 py-2 text-xs"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border/60 bg-background/50 px-3 py-2 text-meta"
     >
       <p className="min-w-0 flex-1 basis-64 text-muted-foreground">
         {needsCodeText(machines.length, gt)}
@@ -1262,7 +1264,7 @@ function CodeOnlyNotice({
       <Menu>
         <MenuTrigger
           render={
-            <Button size="xs" variant="outline">
+            <Button size="xs" variant="secondary">
               {gt("Link one with a code…")}
             </Button>
           }
@@ -1409,7 +1411,7 @@ const FleetScene = memo(function FleetScene({
   const fadeName = (dimmed: boolean) =>
     cn(
       "transition-colors duration-150 motion-reduce:transition-none",
-      dimmed && "border-border/50 font-normal text-muted-foreground/45",
+      dimmed && "border-border/50 text-muted-foreground/45",
     );
   const routeLit = (edge: FleetRouteEdge) => lit === null || lit.edges.has(edge.id);
   // Painted last, so the routes in focus lie over the ones that are not.
@@ -1452,7 +1454,7 @@ const FleetScene = memo(function FleetScene({
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const direction = ARROW_ROVE[event.key];
     const from = (event.target as HTMLElement).closest<HTMLElement>("[data-fleet-node]");
-    if (event.key === " " && from !== null && tickable(from.dataset.fleetNode ?? "")) {
+    if (event.key === "" && from !== null && tickable(from.dataset.fleetNode ?? "")) {
       // Space ticks the machine for a batch link; Enter still opens its details.
       event.preventDefault();
       if (!event.repeat) onTick([from.dataset.fleetNode ?? ""], "toggle");
@@ -1473,6 +1475,8 @@ const FleetScene = memo(function FleetScene({
     type: "button" as const,
     "data-fleet-item": "",
     "data-fleet-node": target.id,
+    "data-drop-over": linkDrag?.overId === target.id ? "" : undefined,
+    "data-faded": nodeDimmed(target.id) ? "" : undefined,
     "aria-label": selected.has(target.id)
       ? gt("{label}, selected", { label, $context: "a machine ticked on a map" })
       : label,
@@ -1488,7 +1492,7 @@ const FleetScene = memo(function FleetScene({
     },
     // The keydown ticked the machine; without this the button would also click.
     onKeyUp: (event: KeyboardEvent<HTMLElement>) => {
-      if (event.key === " " && tickable(target.id)) event.preventDefault();
+      if (event.key === "" && tickable(target.id)) event.preventDefault();
     },
     onFocus: (event: FocusEvent<HTMLElement>) => {
       setRoving(target.id);
@@ -1499,12 +1503,6 @@ const FleetScene = memo(function FleetScene({
     onBlur: () => setHover(null),
     ...hoverProps(target),
   });
-  const nodeClass = (id: string) =>
-    cn(
-      "absolute flex cursor-pointer items-center text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-pressed:ring-2 aria-pressed:ring-primary aria-pressed:ring-inset forced-colors:focus-visible:outline-2 forced-colors:aria-pressed:outline-2",
-      fade(nodeDimmed(id)),
-      linkDrag?.overId === id && "ring-2 ring-primary ring-inset",
-    );
 
   const toScene = (event: PointerEvent<HTMLElement>) => {
     const bounds = event.currentTarget.closest("[data-fleet-scene]")?.getBoundingClientRect();
@@ -1585,7 +1583,7 @@ const FleetScene = memo(function FleetScene({
           key={column.id}
           aria-hidden
           style={{ left: column.x }}
-          className="absolute top-0 text-2xs font-medium whitespace-nowrap text-muted-foreground"
+          className="absolute top-0 text-caption whitespace-nowrap text-muted-foreground"
         >
           {titles[column.id]}
         </p>
@@ -1739,7 +1737,7 @@ const FleetScene = memo(function FleetScene({
             aria-hidden
             style={{ left: pill.x, top: pill.y, width: pill.width, height: pill.height }}
             className={cn(
-              "absolute flex items-center justify-center rounded-full border bg-background px-1.5 text-2xs leading-none text-muted-foreground",
+              "absolute flex items-center justify-center rounded-full border bg-background px-1.5 text-caption leading-none text-muted-foreground",
               routeLit(edge) && ROUTE_STYLES[edge.state].pill,
               // Lit routes sit over the others, whose wires pass beside them on the way in.
               routeLit(edge) && "z-1",
@@ -1767,10 +1765,11 @@ const FleetScene = memo(function FleetScene({
           return null;
         }
         return (
-          <button
+          <ContentButton
+            variant="fleet-route-pill"
             key={edge.id}
-            type="button"
             data-fleet-item=""
+            data-on-demand={badge.onDemand ? "" : undefined}
             tabIndex={-1}
             aria-pressed={isSelected("edge", edge.id)}
             aria-label={linkName(edge, back, labelOf, gt, m)}
@@ -1783,12 +1782,9 @@ const FleetScene = memo(function FleetScene({
                 ? { left: badge.x }
                 : { right: layout.width - badge.x - badge.width }),
             }}
-            className={cn(
-              "absolute flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-1.5 text-2xs leading-none outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-pressed:border-primary aria-pressed:text-primary",
-              lit === null || lit.edges.has(edge.id) ? healthTone(health) : null,
-              badge.onDemand && "z-10 shadow-sm/5",
-              fadeName(lit !== null && !lit.edges.has(edge.id)),
-            )}
+            data-health={lit === null || lit.edges.has(edge.id) ? healthState(health) : undefined}
+            data-faded={lit !== null && !lit.edges.has(edge.id) ? "" : undefined}
+            className="absolute"
             onClick={() => onSelect(isSelected("edge", edge.id) ? null : target)}
             onFocus={() => setHover(target)}
             onBlur={() => setHover(null)}
@@ -1802,7 +1798,7 @@ const FleetScene = memo(function FleetScene({
               className={cn(lit !== null && !lit.edges.has(edge.id) && "opacity-45")}
             />
             <span className="truncate">{m(accessConfig[edge.link.access].label)}</span>
-          </button>
+          </ContentButton>
         );
       })}
       {stacks.map((stack) => {
@@ -1838,7 +1834,7 @@ const FleetScene = memo(function FleetScene({
                 count,
                 sources: stack.sources
                   .map((source) => nodeById.get(source.sourceId)?.label ?? "")
-                  .join(", "),
+                  .join(","),
                 summary,
               });
         const partial = fleetStackPartial(stack);
@@ -1876,33 +1872,31 @@ const FleetScene = memo(function FleetScene({
                 )}
               />
             )}
-            <button
+            <ContentButton
+              variant="fleet-stack"
               {...focusProps({ kind: "stack", id: stack.id }, face, spoken)}
-              className={cn(
-                nodeClass(stack.id),
-                "flex-col items-stretch overflow-clip rounded-lg border bg-card hover:border-foreground/50",
-                partialBand > 0 ? "border-warning/60" : "border-foreground/25",
-                group !== null && "border-dashed",
-                holdsSelection(stack) && "ring-2 ring-primary ring-inset forced-colors:outline-2",
-              )}
+              data-partial={partialBand > 0 ? "" : undefined}
+              data-grouped={group !== null ? "" : undefined}
+              data-holds-selection={holdsSelection(stack) ? "" : undefined}
+              className="absolute"
             >
               <span className="flex min-h-0 min-w-0 flex-1 flex-col justify-center px-2.5 pr-8">
                 <span className="flex items-center gap-1.5">
-                  <span className="truncate text-xs leading-4 font-semibold text-foreground">
+                  <span className="truncate text-meta leading-4 text-foreground">
                     {group ?? range}
                   </span>
                   {group === null ? null : (
-                    <span className="shrink-0 rounded-full bg-muted px-1.5 text-2xs leading-4 text-muted-foreground tabular-nums forced-colors:border">
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 text-caption leading-4 text-muted-foreground tabular-nums forced-colors:border">
                       {count}
                     </span>
                   )}
                 </span>
                 {group !== null ? (
-                  <span className="block truncate text-2xs leading-4 text-muted-foreground">
+                  <span className="block truncate text-caption leading-4 text-muted-foreground">
                     {range}
                   </span>
                 ) : (
-                  <span className="flex items-center gap-1.5 text-2xs leading-4 text-muted-foreground">
+                  <span className="flex items-center gap-1.5 text-caption leading-4 text-muted-foreground">
                     {only !== undefined && stack.sources.length === 1 ? (
                       <AccessMeter access={only.access} className="text-foreground/70" />
                     ) : null}
@@ -1918,7 +1912,7 @@ const FleetScene = memo(function FleetScene({
                 // The headline of a stack that is partly down: its own band, never cut short.
                 <span
                   style={{ height: partialBand }}
-                  className="flex shrink-0 items-center gap-1.5 border-t border-warning/30 bg-warning/16 px-2.5 text-2xs leading-none font-semibold text-warning-foreground forced-colors:border-t-2"
+                  className="flex shrink-0 items-center gap-1.5 border-t border-warning/30 bg-warning/16 px-2.5 text-caption leading-none text-warning-foreground forced-colors:border-t-2"
                 >
                   <TriangleAlertIcon aria-hidden className="size-3 shrink-0 text-warning" />
                   <span className="shrink-0 whitespace-nowrap tabular-nums">
@@ -1936,9 +1930,9 @@ const FleetScene = memo(function FleetScene({
                   </span>
                 </span>
               )}
-            </button>
-            <button
-              type="button"
+            </ContentButton>
+            <ContentButton
+              variant="fleet-toggle"
               data-fleet-item=""
               tabIndex={stack.id === tabStop ? 0 : -1}
               aria-label={
@@ -1955,23 +1949,21 @@ const FleetScene = memo(function FleetScene({
                 left: face.x + face.width - 28,
                 top: face.y + (face.height - partialBand) / 2 - 11,
               }}
-              className="absolute flex size-5.5 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+              className="absolute"
               onClick={() => onToggleStack(stack.id)}
             >
               <ToggleIcon aria-hidden className="size-3.5" />
-            </button>
+            </ContentButton>
             {more === null ? null : (
               // The rest are never drawn: the details list every machine, and can be searched.
-              <button
-                type="button"
+              <ContentButton
+                variant="fleet-more"
                 data-fleet-item=""
                 data-fleet-node={fleetMoreNodeId(stack.id)}
                 tabIndex={fleetMoreNodeId(stack.id) === tabStop ? 0 : -1}
                 style={{ left: more.x, top: more.y, width: more.width, height: more.height }}
-                className={cn(
-                  "absolute flex cursor-pointer items-center rounded-md border border-dashed border-foreground/30 px-2 text-2xs leading-none text-muted-foreground outline-none hover:border-foreground/55 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                  APPEAR,
-                )}
+                data-appear=""
+                className="absolute"
                 onClick={() => onSelect({ kind: "stack", id: stack.id })}
                 onFocus={() => setRoving(fleetMoreNodeId(stack.id))}
               >
@@ -1981,7 +1973,7 @@ const FleetScene = memo(function FleetScene({
                     $context: "a card standing for the machines of a group that are not drawn",
                   })}
                 </span>
-              </button>
+              </ContentButton>
             )}
           </div>
         );
@@ -1993,17 +1985,15 @@ const FleetScene = memo(function FleetScene({
         if (node.kind === "client") {
           const ClientIcon = isElectron ? AppWindowIcon : GlobeIcon;
           return (
-            <button
+            <ContentButton
+              variant="fleet-client"
               key={node.id}
               {...focusProps(target, rect, node.label)}
-              className={cn(
-                nodeClass(node.id),
-                "gap-2 rounded-full border border-foreground/25 bg-card px-3.5 text-foreground hover:border-foreground/50",
-              )}
+              className="absolute"
             >
               <ClientIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-              <span className="truncate text-xs font-semibold">{node.label}</span>
-            </button>
+              <span className="truncate text-meta">{node.label}</span>
+            </ContentButton>
           );
         }
         const incoming = links.filter((edge) => edge.to === node.id);
@@ -2016,7 +2006,8 @@ const FleetScene = memo(function FleetScene({
           const first = shown ?? incoming.toSorted(byTrouble)[0];
           const compact = rect.height < 32;
           return (
-            <button
+            <ContentButton
+              variant="fleet-target"
               key={node.id}
               {...focusProps(
                 target,
@@ -2030,14 +2021,12 @@ const FleetScene = memo(function FleetScene({
                       summary: linkSummary(edge, gt, m),
                     }),
                   ),
-                ].join(", "),
+                ].join(","),
               )}
-              className={cn(
-                nodeClass(node.id),
-                "gap-2 border bg-card text-foreground/90 hover:border-foreground/50 hover:text-foreground",
-                compact ? cn("rounded-md px-2", APPEAR) : "rounded-lg px-2.5",
-                first ? healthBorder(first.health) : "border-border",
-              )}
+              data-compact={compact ? "" : undefined}
+              data-appear={compact ? "" : undefined}
+              data-health={first ? healthState(first.health) : undefined}
+              className="absolute"
             >
               <span className="flex w-3 shrink-0 justify-center">
                 {first ? <HealthGlyph health={first.health} /> : null}
@@ -2046,7 +2035,7 @@ const FleetScene = memo(function FleetScene({
                 <span
                   className={cn(
                     "block truncate",
-                    compact ? "text-2xs leading-none" : "text-xs leading-4 font-medium",
+                    compact ? "text-caption leading-none" : "text-meta leading-4",
                   )}
                 >
                   {node.label}
@@ -2054,28 +2043,33 @@ const FleetScene = memo(function FleetScene({
                 {compact || !first ? null : (
                   <span
                     className={cn(
-                      "block truncate text-2xs leading-4",
+                      "block truncate text-caption leading-4",
                       first.health.kind === "reachable" && first.health.expiresInDays === null
                         ? "text-muted-foreground"
                         : healthTone(first.health),
                     )}
                   >
-                    {shown === undefined
-                      ? gt("{count, plural, one {# link in} other {# links in}}", {
-                          count: incoming.length,
-                          $context:
-                            "how many machines hold a link to this machine; pairs with '# links out'",
-                        })
-                      : first.health.kind === "reachable" && first.health.expiresInDays === null
-                        ? m(accessConfig[first.link.access].label)
-                        : `${m(accessConfig[first.link.access].label)} · ${healthLabel(first.health, gt)}`}
+                    {shown === undefined ? (
+                      gt("{count, plural, one {# link in} other {# links in}}", {
+                        count: incoming.length,
+                        $context:
+                          "how many machines hold a link to this machine; pairs with '# links out'",
+                      })
+                    ) : first.health.kind === "reachable" && first.health.expiresInDays === null ? (
+                      m(accessConfig[first.link.access].label)
+                    ) : (
+                      <>
+                        {m(accessConfig[first.link.access].label)}
+                        <span className="ms-1.5">{healthLabel(first.health, gt)}</span>
+                      </>
+                    )}
                   </span>
                 )}
               </span>
               {compact || !shown ? null : (
                 <AccessMeter access={shown.link.access} className="text-foreground/70" />
               )}
-            </button>
+            </ContentButton>
           );
         }
         if (rect.height < 32) {
@@ -2085,14 +2079,12 @@ const FleetScene = memo(function FleetScene({
               ? connectAvailabilityText(node.availability, gt)
               : connectionStateText(node, environmentById.get(node.id), false, gt);
           return (
-            <button
+            <ContentButton
+              variant="fleet-available"
               key={node.id}
               {...focusProps(target, rect, `${node.label}, ${state}`)}
-              className={cn(
-                nodeClass(node.id),
-                "gap-1.5 rounded-md border border-dashed border-foreground/25 bg-card px-2 text-foreground/90 hover:border-foreground/50 hover:text-foreground",
-                APPEAR,
-              )}
+              data-appear=""
+              className="absolute"
             >
               <span
                 aria-hidden
@@ -2103,14 +2095,20 @@ const FleetScene = memo(function FleetScene({
                     : "bg-muted-foreground/40",
                 )}
               />
-              <span className="truncate text-2xs leading-none">{node.label}</span>
-            </button>
+              <span className="truncate text-caption leading-none">{node.label}</span>
+            </ContentButton>
           );
         }
         if (node.kind === "connect") {
-          const status = `${gt("Not added")} · ${connectAvailabilityText(node.availability, gt)}`;
+          const status = (
+            <>
+              {gt("Not added")}
+              <span className="ms-1.5">{connectAvailabilityText(node.availability, gt)}</span>
+            </>
+          );
           return (
-            <button
+            <ContentButton
+              variant="fleet-account"
               key={node.id}
               {...focusProps(
                 target,
@@ -2120,21 +2118,18 @@ const FleetScene = memo(function FleetScene({
                   status: connectAvailabilityText(node.availability, gt),
                 }),
               )}
-              className={cn(
-                nodeClass(node.id),
-                "gap-2 rounded-lg border border-dashed border-foreground/30 bg-card/60 px-2.5 hover:border-foreground/55",
-              )}
+              className="absolute"
             >
               <CloudIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs leading-4 font-semibold text-foreground">
+                <span className="block truncate text-meta leading-4 text-foreground">
                   {node.label}
                 </span>
-                <span className="block truncate text-2xs leading-4 text-muted-foreground">
+                <span className="block truncate text-caption leading-4 text-muted-foreground">
                   {status}
                 </span>
               </span>
-            </button>
+            </ContentButton>
           );
         }
         const environment = environmentById.get(node.id);
@@ -2158,7 +2153,8 @@ const FleetScene = memo(function FleetScene({
         const over = linkDrag?.overId === node.id;
         return (
           <div key={node.id}>
-            <button
+            <ContentButton
+              variant="fleet-this"
               {...focusProps(
                 target,
                 rect,
@@ -2169,14 +2165,11 @@ const FleetScene = memo(function FleetScene({
                     (edge) =>
                       `${edge.routeLabel ?? routeKindLabel(edge.routeKind, gt)}: ${routeStateLabel(edge.state, gt)}`,
                   ),
-                ].join(", "),
+                ].join(","),
               )}
-              className={cn(
-                nodeClass(node.id),
-                "gap-2 rounded-lg border bg-card px-2.5 text-card-foreground shadow-sm/5 hover:border-foreground/45",
-                dimmed ? "border-dashed border-foreground/25" : "border-foreground/20",
-                over && "border-primary",
-              )}
+              data-dimmed={dimmed ? "" : undefined}
+              data-over={over ? "" : undefined}
+              className="absolute"
             >
               <span
                 className={cn(
@@ -2196,12 +2189,12 @@ const FleetScene = memo(function FleetScene({
                 />
               </span>
               <span className={cn("min-w-0 flex-1 pr-1.5", dimmed && "opacity-70")}>
-                <span className="line-clamp-2 text-xs leading-4 font-semibold [overflow-wrap:anywhere]">
+                <span className="line-clamp-2 text-meta leading-4 [overflow-wrap:anywhere]">
                   {node.label}
                 </span>
                 <span
                   className={cn(
-                    "block truncate text-2xs leading-4",
+                    "block truncate text-caption leading-4",
                     node.outgoing === "error" && node.phase === "connected"
                       ? "text-destructive"
                       : "text-muted-foreground",
@@ -2210,10 +2203,10 @@ const FleetScene = memo(function FleetScene({
                   {status}
                 </span>
               </span>
-            </button>
+            </ContentButton>
             {handle !== undefined && node.linking === "ready" ? (
-              <button
-                type="button"
+              <ContentButton
+                variant="fleet-handle"
                 data-fleet-item=""
                 tabIndex={node.id === tabStop ? 0 : -1}
                 aria-label={gt("Link {label} to another machine", { label: node.label })}
@@ -2225,14 +2218,12 @@ const FleetScene = memo(function FleetScene({
                     onReveal({ x: handle.x - 9, y: handle.y - 9, width: 18, height: 18 });
                   }
                 }}
-                className={cn(
-                  "absolute flex size-4.5 cursor-crosshair touch-none items-center justify-center rounded-full bg-primary text-primary-foreground outline-none hover:scale-110 focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-inset motion-safe:transition-transform motion-safe:duration-150 forced-colors:border",
-                  fade(nodeDimmed(node.id)),
-                )}
+                data-faded={nodeDimmed(node.id) ? "" : undefined}
+                className="absolute"
                 {...handleProps(node.id)}
               >
                 <PlusIcon aria-hidden className="size-3" strokeWidth={2.5} />
-              </button>
+              </ContentButton>
             ) : null}
           </div>
         );
@@ -2274,7 +2265,7 @@ function DragHint({ x, y, children }: { x: number; y: number; children: ReactNod
     <p
       role="status"
       style={{ left: x + 14, top: y + 14 }}
-      className="pointer-events-none absolute z-10 rounded-md border border-border bg-popover px-2 py-1 text-2xs whitespace-nowrap text-popover-foreground shadow-sm/5"
+      className="pointer-events-none absolute z-10 rounded-md border border-border bg-popover px-2 py-1 text-caption whitespace-nowrap text-popover-foreground shadow-sm/5"
     >
       {children}
     </p>

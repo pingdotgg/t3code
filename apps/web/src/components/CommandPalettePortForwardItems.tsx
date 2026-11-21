@@ -148,7 +148,7 @@ export function useCommandPalettePortForwardItem(input: {
       kind: "action",
       value: `port-forward:start:${environmentId}:${server.port}`,
       title: gt("Forward localhost:{port}", { port: server.port }),
-      description: [labelOf(environmentId), server.processName].filter(Boolean).join(" · "),
+      description: labelOf(environmentId),
       searchTerms: [String(server.port), server.processName ?? "", "forward"],
       icon: <CableIcon className={ITEM_ICON_CLASS} />,
       run: () => start(environmentId, server.port),

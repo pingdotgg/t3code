@@ -30,7 +30,7 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { getEnvironmentBrowsePlatform } from "../CommandPalette.logic";
 import { resolveTrackedFolderInput, trackedFolderDisplayPath } from "./trackedFolders.logic";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
+import { Button, ContentButton } from "../ui/button";
 import {
   Dialog,
   DialogDescription,
@@ -145,7 +145,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
         control={
           <Button
             size="xs"
-            variant="outline"
+            variant="secondary"
             disabled={disabled || folders.length >= PROJECT_TRACKED_FOLDERS_MAX}
             onClick={() => setIsAddingFolder(true)}
           >
@@ -155,7 +155,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
         }
       />
       {folders.length === 0 ? (
-        <p className="px-3 py-2 text-base text-muted-foreground sm:px-4 sm:text-sm">
+        <p className="px-3 py-2 text-body text-muted-foreground sm:px-4">
           <T>
             Repositories inside this folder are part of the project as soon as they are there. Add a
             folder to bring in one from somewhere else.
@@ -205,7 +205,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
           title={
             <span className="flex min-w-0 items-center gap-2">
               <span className="min-w-0 truncate text-muted-foreground">{folder.name}</span>
-              <Badge size="sm" variant="outline">
+              <Badge size="sm" variant="secondary">
                 <T>In workspace file</T>
               </Badge>
             </span>
@@ -229,7 +229,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
         />
       ))}
       {listQuery.error ? (
-        <p role="alert" className="px-3 py-2 text-xs text-warning-foreground sm:px-4">
+        <p role="alert" className="px-3 py-2 text-meta text-warning-foreground sm:px-4">
           {listQuery.error}
         </p>
       ) : null}
@@ -285,8 +285,6 @@ function AddTrackedFolderDialog(props: {
   });
   const parentPath = browsePath.canBrowseUp ? browsePath.parentPath : null;
   const hiddenCount = Math.max(0, visibleEntries.length - BROWSE_SUGGESTION_LIMIT);
-  const rowClassName =
-    "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-muted/50 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
   return (
     <Dialog
@@ -328,45 +326,49 @@ function AddTrackedFolderDialog(props: {
           <DialogPanel>
             <div className="-mx-2 flex min-h-40 flex-col">
               {parentPath !== null ? (
-                <button type="button" className={rowClassName} onClick={() => setQuery(parentPath)}>
+                <ContentButton
+                  variant="action-row"
+                  className="w-full"
+                  onClick={() => setQuery(parentPath)}
+                >
                   <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
                   ..
-                </button>
+                </ContentButton>
               ) : null}
               {visibleEntries.slice(0, BROWSE_SUGGESTION_LIMIT).map((entry) => (
-                <button
+                <ContentButton
                   key={entry.fullPath}
-                  type="button"
-                  className={rowClassName}
+                  variant="action-row"
+                  className="w-full"
                   onClick={() => setQuery(appendBrowsePathSegment(query, entry.name))}
                 >
                   <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 truncate">{entry.name}</span>
-                </button>
+                </ContentButton>
               ))}
               {browseQuery.error ? (
-                <p role="alert" className="px-2 py-1.5 text-sm text-muted-foreground">
+                <p role="alert" className="px-2 py-1.5 text-body text-muted-foreground">
                   {browseQuery.error}
                 </p>
               ) : browseQuery.isPending && browseQuery.data === null ? (
-                <p role="status" className="px-2 py-1.5 text-sm text-muted-foreground">
+                <p role="status" className="px-2 py-1.5 text-body text-muted-foreground">
                   <T>Loading folders…</T>
                 </p>
               ) : hiddenCount > 0 ? (
-                <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                <p className="px-2 py-1.5 text-meta text-muted-foreground">
                   <T>
                     <Var>{hiddenCount}</Var> more. Keep typing to narrow the list.
                   </T>
                 </p>
               ) : !props.canBrowse ? (
-                <p className="px-2 py-1.5 text-sm text-muted-foreground">
+                <p className="px-2 py-1.5 text-body text-muted-foreground">
                   <T>This connection cannot browse folders. Enter an absolute path.</T>
                 </p>
               ) : null}
             </div>
           </DialogPanel>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={props.onClose}>
+            <Button type="button" variant="secondary" onClick={props.onClose}>
               <T>Cancel</T>
             </Button>
             <Button type="submit" disabled={folder === null || props.busy}>

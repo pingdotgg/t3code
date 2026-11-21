@@ -49,7 +49,7 @@ export function LinkSeveralEnvironmentsAction({
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button size="xs" variant="outline" onClick={() => setOpen(true)}>
+      <Button size="xs" variant="secondary" onClick={() => setOpen(true)}>
         <T>Link several…</T>
       </Button>
       <LinkSeveralEnvironmentsDialog
@@ -233,7 +233,7 @@ export function LinkSeveralEnvironmentsDialog({
             }}
           >
             {candidates.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-body text-muted-foreground">
                 {presetOnly ? (
                   <T>This app is not connected to any of the machines you picked.</T>
                 ) : (
@@ -243,7 +243,7 @@ export function LinkSeveralEnvironmentsDialog({
             ) : (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-foreground">
+                  <span className="text-meta text-foreground">
                     <T>Machines</T>
                   </span>
                   <Button
@@ -267,7 +267,7 @@ export function LinkSeveralEnvironmentsDialog({
                 {linksState === "loaded" ? null : (
                   <div
                     role="status"
-                    className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
+                    className="flex items-center justify-between gap-2 text-meta text-muted-foreground"
                   >
                     {linksState === "loading" ? (
                       <T>Checking which machines are already linked…</T>
@@ -282,7 +282,7 @@ export function LinkSeveralEnvironmentsDialog({
                         <Button
                           type="button"
                           size="xs"
-                          variant="outline"
+                          variant="secondary"
                           disabled={links.isPending}
                           onClick={links.refresh}
                         >
@@ -319,7 +319,7 @@ export function LinkSeveralEnvironmentsDialog({
                             : linkBatchBlockLabel(blocked, m);
                     return (
                       <li key={id}>
-                        <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm has-data-disabled:cursor-default">
+                        <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-body has-data-disabled:cursor-default">
                           <Checkbox
                             checked={available && selected.has(id)}
                             disabled={busy || !available}
@@ -330,14 +330,14 @@ export function LinkSeveralEnvironmentsDialog({
                             className="size-4 shrink-0 text-muted-foreground"
                           />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate font-medium">{machine.label}</span>
+                            <span className="block truncate text-label">{machine.label}</span>
                             {outcome?.kind === "failed" && outcome.detail !== null ? (
-                              <span className="block text-xs text-destructive">
+                              <span className="block text-meta text-destructive">
                                 {outcome.detail}
                               </span>
                             ) : null}
                             {back?.kind === "failed" ? (
-                              <span className="block text-xs text-destructive">
+                              <span className="block text-meta text-destructive">
                                 {gt("Could not link back: {reason}", {
                                   reason: back.detail ?? linkBatchFailureLabel(back.failure, m),
                                 })}
@@ -348,8 +348,8 @@ export function LinkSeveralEnvironmentsDialog({
                             <span
                               className={
                                 outcome?.kind === "failed" || back?.kind === "failed"
-                                  ? "shrink-0 text-xs text-destructive"
-                                  : "shrink-0 text-xs text-muted-foreground"
+                                  ? "shrink-0 text-meta text-destructive"
+                                  : "shrink-0 text-meta text-muted-foreground"
                               }
                             >
                               {status}
@@ -363,7 +363,7 @@ export function LinkSeveralEnvironmentsDialog({
               </div>
             )}
             {unlisted > 0 ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 {gt(
                   "{count, plural, one {# machine needs a pairing code, so it is not listed.} other {# machines need a pairing code, so they are not listed.}}",
                   { count: unlisted },
@@ -371,7 +371,7 @@ export function LinkSeveralEnvironmentsDialog({
               </p>
             ) : null}
             {outcomes.size > 0 && !busy ? (
-              <p role="status" className="text-xs text-muted-foreground">
+              <p role="status" className="text-meta text-muted-foreground">
                 {summary.failed.length === 0
                   ? gt("{linked, plural, one {Linked # machine.} other {Linked # machines.}}", {
                       linked: summary.linked,
@@ -390,17 +390,17 @@ export function LinkSeveralEnvironmentsDialog({
             ) : null}
             <LinkAccessPicker value={access} onChange={setAccess} disabled={busy} />
             {backOffered && sourceLabel !== undefined ? (
-              <label className="flex cursor-pointer items-start gap-2.5 text-sm has-data-disabled:cursor-default">
+              <label className="flex cursor-pointer items-start gap-2.5 text-body has-data-disabled:cursor-default">
                 <Checkbox
                   checked={alsoLinkBack}
                   disabled={busy}
                   onCheckedChange={setAlsoLinkBack}
                 />
                 <span className="min-w-0 space-y-0.5">
-                  <span className="block font-medium text-foreground">
+                  <span className="block text-label text-foreground">
                     {gt("Also link each machine back to {source}", { source: sourceLabel })}
                   </span>
-                  <span className="block text-xs text-muted-foreground">
+                  <span className="block text-meta text-muted-foreground">
                     {gt("Agents there can then work on {source} too.", { source: sourceLabel })}
                     {alsoLinkBack && oneWayOnly > 0
                       ? ` ${gt(
@@ -415,7 +415,7 @@ export function LinkSeveralEnvironmentsDialog({
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
-          <DialogClose disabled={busy} render={<Button variant="outline" type="button" />}>
+          <DialogClose disabled={busy} render={<Button variant="secondary" type="button" />}>
             {outcomes.size > 0 ? gt("Done") : gt("Cancel")}
           </DialogClose>
           {outcomes.size > 0 && !busy && chosen.length === 0 ? null : (

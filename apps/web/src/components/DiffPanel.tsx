@@ -1117,7 +1117,7 @@ export default function DiffPanel({
                             >
                               <span className="flex items-center gap-3">
                                 <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
-                                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                                <span className="shrink-0 text-meta tabular-nums text-muted-foreground">
                                   {formatRelativeTimeLabel(commit.committedAt, undefined, messages)}
                                 </span>
                               </span>
@@ -1141,12 +1141,12 @@ export default function DiffPanel({
                               }
                               onClick={(event) => openCommitUrl(event, commitUrl)}
                             >
-                              <span className="font-mono text-xs text-muted-foreground underline underline-offset-4">
+                              <span className="font-mono text-meta text-muted-foreground underline underline-offset-4">
                                 {commit.sha.slice(0, 7)}
                               </span>
                             </DropdownMenuItem>
                           ) : (
-                            <span className="shrink-0 px-2 font-mono text-xs text-muted-foreground">
+                            <span className="shrink-0 px-2 font-mono text-meta text-muted-foreground">
                               {commit.sha.slice(0, 7)}
                             </span>
                           )}
@@ -1245,7 +1245,7 @@ export default function DiffPanel({
                     <span className="flex min-w-0 items-center gap-3">
                       <span className="min-w-0 truncate">{section.name}</span>
                       {section.relativePath !== "" && section.relativePath !== section.name ? (
-                        <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">
+                        <span className="ml-auto min-w-0 truncate text-meta text-muted-foreground">
                           {section.relativePath}
                         </span>
                       ) : null}
@@ -1415,7 +1415,7 @@ export default function DiffPanel({
               font="mono"
               additions={diffLineStat.additions}
               deletions={diffLineStat.deletions}
-              className="mr-1 text-2xs"
+              className="mr-1 text-caption"
               layout="inline"
             />
           </span>

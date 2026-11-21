@@ -235,8 +235,8 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                           })
                         : (server.processName ??
                           (server.terminal === null
-                          ? gt("Agent", { $context: "who started a dev server" })
-                          : gt("Terminal", { $context: "who started a dev server" })))}
+                            ? gt("Agent", { $context: "who started a dev server" })
+                            : gt("Terminal", { $context: "who started a dev server" })))}
                     </span>
                   </span>
                 </TooltipTrigger>

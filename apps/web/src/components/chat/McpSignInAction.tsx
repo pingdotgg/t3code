@@ -106,7 +106,7 @@ export function McpSignInAction({
   return (
     <>
       {signedIn ? (
-        <span className="shrink-0 text-sm text-success-foreground">
+        <span className="shrink-0 text-body text-success-foreground">
           <T>Signed in</T>
         </span>
       ) : (
@@ -139,7 +139,7 @@ export function McpSignInAction({
           </DialogHeader>
           <DialogPanel>
             {signIn?.phase === "starting" ? (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-body text-muted-foreground">
                 <T>Starting the sign-in…</T>
               </p>
             ) : null}
@@ -154,7 +154,7 @@ export function McpSignInAction({
               >
                 <div className="flex flex-wrap gap-2">
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     onClick={() => void ensureLocalApi().shell.openExternal(url)}
                   >
@@ -166,7 +166,7 @@ export function McpSignInAction({
                     <T>Copy link</T>
                   </Button>
                 </div>
-                <label className="grid gap-1.5 text-sm">
+                <label className="grid gap-1.5 text-body">
                   <T>Address of the page your browser opened</T>
                   <Input
                     // Browsers can hide `http://`, which the environment adds back.
@@ -182,13 +182,13 @@ export function McpSignInAction({
               </form>
             ) : null}
             {signIn?.phase === "failed" ? (
-              <p role="alert" className="mt-3 text-sm text-destructive-foreground">
+              <p role="alert" className="mt-3 text-body text-destructive-foreground">
                 {signIn.message}
               </p>
             ) : null}
           </DialogPanel>
           <DialogFooter variant="bare">
-            <Button variant="outline" onClick={close}>
+            <Button variant="secondary" onClick={close}>
               <T>Cancel</T>
             </Button>
             {url === null && signIn?.phase === "failed" ? (

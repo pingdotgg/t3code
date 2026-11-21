@@ -146,7 +146,7 @@ export default function SideThreadPane(props: {
     >
       {isSideChat ? (
         <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
-          <h2 className="min-w-0 flex-1 truncate text-xs font-medium">{title}</h2>
+          <h2 className="min-w-0 flex-1 truncate text-meta">{title}</h2>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -186,7 +186,7 @@ export default function SideThreadPane(props: {
         </div>
       ) : null}
       {renderState === "missing" ? (
-        <p className="p-3 text-xs text-muted-foreground">
+        <p className="p-3 text-meta text-muted-foreground">
           {isSideChat ? (
             <T>This side chat was deleted.</T>
           ) : (
