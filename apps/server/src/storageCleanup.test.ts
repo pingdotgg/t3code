@@ -3925,6 +3925,36 @@ describe("storage cleanup reports and local file policies", () => {
     ),
   );
   it.live.each([
+    { kind: "logs", name: "server.log.1", label: "rotated logs" },
+    { kind: "browser-artifacts", name: "capture.png", label: "browser artifacts" },
+  ] as const)("skips dangling symlinks during $kind cleanup", ({ kind, name, label }) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, config, enableFiles, disable } = yield* cleanupFixture();
+        disable();
+        enableFiles();
+        const directory = kind === "logs" ? `${config.logsDir}/nested` : config.browserArtifactsDir;
+        yield* fs.makeDirectory(directory, { recursive: true });
+        const expired = `${directory}/${name}`;
+        const dangling = `${directory}/00-dangling-${name}`;
+        const linked = `${directory}/01-linked-${name}`;
+        yield* fs.symlink("missing", dangling);
+        yield* fs.symlink(directory, linked);
+        yield* fs.writeFileString(expired, "expired");
+        yield* fs.utimes(expired, 1, 1);
+
+        const report = yield* service.runNow;
+        expect(report.entries.filter((entry) => entry.kind === kind)).toMatchObject([
+          { outcome: "removed", reason: `Removed 1 ${label}`, files: 1, bytes: 7 },
+        ]);
+        expect((yield* fs.readDirectory(directory)).toSorted()).toEqual([
+          `00-dangling-${name}`,
+          `01-linked-${name}`,
+        ]);
+      }),
+    ),
+  );
+  it.live.each([
     { linked: "home", outcome: "removed", reason: "Removed 1 rotated logs" },
     { linked: "logs folder", outcome: "kept", reason: "No expired files" },
   ] as const)(
