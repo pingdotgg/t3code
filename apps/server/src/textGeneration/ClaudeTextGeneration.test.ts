@@ -62,8 +62,10 @@ function withFakeClaudeEnv<A, E, R>(
     exitCode?: number;
     stderr?: string;
     argsMustContain?: string;
+    expectedTools?: string;
     argsMustNotContain?: string;
     stdinMustContain?: string;
+    rejectsImages?: boolean;
     configDirMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
@@ -83,9 +85,11 @@ function withFakeClaudeEnv<A, E, R>(
         : undefined,
       T3_FAKE_CLAUDE_EXIT_CODE: input.exitCode === undefined ? undefined : String(input.exitCode),
       T3_FAKE_CLAUDE_STDERR: input.stderr,
+      T3_FAKE_CLAUDE_EXPECTED_TOOLS: input.expectedTools,
       T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN: input.argsMustContain,
       T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN: input.argsMustNotContain,
       T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN: input.stdinMustContain,
+      T3_FAKE_CLAUDE_REJECTS_IMAGES: input.rejectsImages ? "1" : undefined,
       T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
       T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
     };
@@ -110,6 +114,30 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
+  it.effect("loads only user settings when generating review guides", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { stops: [] } }),
+        argsMustContain: "--setting-sources user",
+        expectedTools: "Read,Grep,Glob,Bash",
+      },
+      (textGeneration) =>
+        textGeneration.generateReviewGuide({
+          cwd: process.cwd(),
+          number: 12,
+          title: "Review a change",
+          description: "",
+          baseBranch: "main",
+          baseCommit: "base",
+          settledReview: "",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          ),
+        }),
+    ),
+  );
+
   it.effect(
     "keeps canonical built-in capabilities when a custom model collides with its alias",
     () =>
@@ -199,6 +227,86 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             instanceId: ProviderInstanceId.make("claudeAgent"),
             model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
           },
+        }),
+    ),
+  );
+
+  it.effect("sends image attachments to Claude, not only their metadata", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { branch: "fix/login-button" } }),
+        stdinMustContain: Buffer.from("hello").toString("base64"),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+          const attachmentId = "thread-1-claude-attachment";
+          const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
+          yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+          yield* fs.writeFile(imagePath, Buffer.from("hello"));
+
+          yield* textGeneration
+            .generateBranchName({
+              cwd: process.cwd(),
+              message: "fix this",
+              attachments: [
+                {
+                  type: "image",
+                  id: attachmentId,
+                  name: "screen.png",
+                  mimeType: "image/png",
+                  sizeBytes: 5,
+                },
+              ],
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            })
+            .pipe(Effect.ensuring(fs.remove(imagePath).pipe(Effect.ignore)));
+        }),
+    ),
+  );
+
+  it.effect("still generates text when a text-only model rejects image attachments", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { branch: "fix/login-button" } }),
+        rejectsImages: true,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+          const attachmentId = "thread-1-claude-text-only-attachment";
+          const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
+          yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+          yield* fs.writeFile(imagePath, Buffer.from("hello"));
+
+          const result = yield* textGeneration
+            .generateBranchName({
+              cwd: process.cwd(),
+              message: "fix this",
+              attachments: [
+                {
+                  type: "image",
+                  id: attachmentId,
+                  name: "screen.png",
+                  mimeType: "image/png",
+                  sizeBytes: 5,
+                },
+              ],
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            })
+            .pipe(Effect.ensuring(fs.remove(imagePath).pipe(Effect.ignore)));
+
+          expect(result.branch).toBe("fix/login-button");
         }),
     ),
   );
