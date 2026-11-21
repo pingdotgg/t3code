@@ -149,6 +149,50 @@ it.effect.skipIf(windowsHost)("opens home-relative targets using the server home
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+for (const exitCode of [0, 1]) {
+  it.effect.skipIf(windowsHost)(
+    `handles exit status ${exitCode} when revealing a file in Finder`,
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+        const open = path.join(binDir, "open");
+        yield* fileSystem.writeFileString(open, "#!/bin/sh\n");
+        yield* fileSystem.chmod(open, 0o755);
+        const target = path.join(binDir, "linked-file.txt");
+        if (exitCode === 0) yield* fileSystem.writeFileString(target, "");
+
+        const exit = yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          return yield* launcher
+            .launchEditor({ editor: "file-manager", cwd: target, reveal: true })
+            .pipe(Effect.exit);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "darwin",
+              env: { PATH: binDir },
+              spawnResult: (command) => {
+                assert.deepEqual(command.args, ["-R", target]);
+                return { exitCode };
+              },
+            }),
+          ),
+        );
+
+        if (exitCode === 0) {
+          assert.isTrue(Exit.isSuccess(exit));
+        } else {
+          assert.ok(Exit.isFailure(exit));
+          const error = Cause.squash(exit.cause);
+          assert.instanceOf(error, ExternalLauncher.ExternalLauncherEditorSpawnError);
+          assert.include(String(error), target);
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
 it.effect.skipIf(windowsHost)(
   "launched browsers and editors do not inherit ELECTRON_RUN_AS_NODE",
   () =>
