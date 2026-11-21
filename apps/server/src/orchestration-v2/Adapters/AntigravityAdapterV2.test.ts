@@ -516,6 +516,23 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(viaInsideLink.content, "inside");
+      const relativeInside = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.join("src", "inside.ts") },
+        context("fs/read_text_file"),
+      );
+      assert.equal(relativeInside.content, "inside");
+      const dotDotFile = path.join(workspace, "..notes.txt");
+      yield* fileSystem.writeFileString(dotDotFile, "dotdot");
+      const dotDotRead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: dotDotFile },
+        context("fs/read_text_file"),
+      );
+      assert.equal(dotDotRead.content, "dotdot");
+      const relativeEscape = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.relative(workspace, outsideFile) },
+        context("fs/read_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(relativeEscape), "a relative path escaping cwd is denied");
     }).pipe(Effect.provide(layerSession)),
   );
 });
