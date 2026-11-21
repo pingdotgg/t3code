@@ -1833,7 +1833,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends O1 to the base-branch stack and the operator lands it bottom-up.
 
-## Send tickets to a Warp factory and work with them from the board (X1)
+## Send tickets or a whole board to a Warp factory and work with them from the board (X1)
 
 **Depends on.** O1.
 
@@ -1841,38 +1841,41 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 - [ ] Create `apps/board/electron/warp.ts` and `apps/board/electron/warp.test.ts`.
 - [ ] Create `apps/board/src/warp/WarpCard.tsx`, `apps/board/src/warp/SendToWarp.tsx`, `apps/board/src/warp/WarpBadge.tsx`, and `apps/board/src/warp/WarpTaskTab.tsx`.
-- [ ] Create `apps/board/src/warp/warpTasks.ts` and `apps/board/src/warp/warpTasks.test.ts`.
-- [ ] Edit L1's `apps/board/src/settings/IntegrationsPage.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/files/MainTabs.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and the IPC, preload, and bridge files that carry Warp calls.
+- [ ] Create `apps/board/src/warp/warpTasks.ts`, `apps/board/src/warp/warpTasks.test.ts`, and `apps/board/docs/warp-review.md`.
+- [ ] Edit L1's `apps/board/src/settings/IntegrationsPage.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/files/MainTabs.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/board.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and the IPC, preload, and bridge files that carry Warp calls.
 
 **Build.**
 
 - [ ] Call the Warp Platform API at `https://app.warp.dev/api/v1` from the main process in `electron/warp.ts`, with `fetch` and no SDK. Warp is the one outside service the board calls itself, because T3 has no Warp support. Take paths and fields from Warp's OpenAPI spec at `https://docs.warp.dev/openapi.json`, and record the spec's date in the client. The API key lives in the board's `safeStorage` token store. It never reaches the renderer, the engine, an agent, chat, or a log, and no agent gets Factory MCP, because a Warp key has no read-only or per-factory scope.
 - [ ] Add a **Warp** card to L1's Integrations page in Orca's card style, copied from `src/renderer/src/components/integrations/task-trackers/linear-integration-card.tsx` and `linear-api-key-dialog.tsx` in Orca's source. Connect takes the key, lists the account's factories from `GET /factory`, and Disconnect deletes the key.
-- [ ] Add **Send to Warp** to the ticket frame's menu and the orchestrator card. It opens a dialog with a factory picker searched through `GET /factory?search=`, and a title and prompt filled from the ticket's goal, with L1's linked issue as `ticket_ref` (for example `linear:XEO-123`) and `ticket_url`. Send calls `POST /factory/{uid}/runs` and stores the factory, task, and run IDs in an optional `warp` field on the ticket.
-- [ ] Let the orchestrator propose a send. `brief.md` tells it to ask with a For-you item of a new `warp_send` kind that names the factory and the exact prompt. **Approve** dispatches it, **Hold** sends nothing. Nothing is ever dispatched without the operator.
+- [ ] Only the operator sends work to Warp, from the UI. The orchestrator never sends and never proposes a send.
+- [ ] Add **Send to Warp** to the ticket frame's menu. It opens a dialog with a factory picker searched through `GET /factory?search=`, and a title and prompt filled from the ticket's goal, with L1's linked issue as `ticket_ref` (for example `linear:XEO-123`) and `ticket_url`. Send calls `POST /factory/{uid}/runs` and stores the factory, task, and run IDs in an optional `warp` field on the ticket.
+- [ ] Add **Send board to Warp** to the orchestrator card. The same dialog fills the prompt with the board's goal and every open ticket's title, goal, and linked issue. Send dispatches one run and stores the factory and run IDs in an optional `warp` field in `board.json`. The board then shows the factory's tasks from that run as frames with Warp badges. Before building this, dispatch one run in the test factory and record in `warp-review.md` how the foreman's tasks link back to that run.
+- [ ] `brief.md` tells the orchestrator that a ticket with a `warp` field, or every ticket on a board sent to Warp, runs in Warp. It starts no local agent on that work and plans the rest around it.
+- [ ] Research how cloud tickets get reviewed before building that part. Compare Warp's own Review stage, R2's review templates, and whether the review skills reach Warp's agents from the repo. Record the findings and a proposed fit in `warp-review.md`, and bring it to the operator for a decision.
 - [ ] In `WarpBadge.tsx`, show a sent ticket's task state from `GET /factory/{uid}/tasks/{task_uid}` on its frame. Poll every 10 s while the board is visible, and stop while it is hidden. A pull request the task opens shows as B10's PR chip, so checks and merge readiness work as they do for a local ticket.
 - [ ] In `WarpTaskTab.tsx`, open a main-view tab per Warp task. It shows the conversation from `GET /agent/runs/{runId}/conversation` through C2's markdown, a reply box that calls `POST /agent/runs/{runId}/followups`, **Interrupt** through `POST /agent/runs/{runId}/interrupt`, **Stop** through `POST /factory/{uid}/tasks/{task_uid}/cancel`, and **Open in Warp**, which opens the run's session link in B11's panel.
 - [ ] Turn the factory inbox from `GET /factory-inbox` into For-you cards for this board's tasks, such as a foreman's plan-review question. Answering sends a follow-up and marks the notification read through `POST /factory-inbox/notifications/read`.
-- [ ] In `warpTasks.ts`, keep the pure pieces: map task and run states to the frame's badge, build the dispatch body from a ticket, and turn inbox notifications into For-you items.
+- [ ] In `warpTasks.ts`, keep the pure pieces: map task and run states to the frame's badge, build the dispatch body from a ticket or a board, and turn inbox notifications into For-you items.
 
 **You see.**
 
-- [ ] Settings connects Warp, any ticket can go to a Warp factory after the operator approves, and the board shows the task's state, conversation, questions, and pull request, with reply, interrupt, and stop.
+- [ ] Settings connects Warp. The operator sends a ticket or a whole board to a Warp factory from the UI, and the board shows each task's state, conversation, questions, and pull request, with reply, interrupt, and stop.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `warpTasks.test.ts` maps fixed task and run states to literal badges, builds a literal `POST /factory/{uid}/runs` body from a fixed ticket with a Linear issue, and turns fixed inbox notifications into literal For-you items. `electron/warp.test.ts` runs the client against a local HTTP server and checks the bearer header, the error text for a rejected key and for missing credits, and that no error message contains the key. Run `vp test run src/warp/warpTasks.test.ts electron/warp.test.ts` from `apps/board`.
+- [ ] `warpTasks.test.ts` maps fixed task and run states to literal badges, builds literal `POST /factory/{uid}/runs` bodies from a fixed ticket with a Linear issue and from a fixed board, and turns fixed inbox notifications into literal For-you items. `electron/warp.test.ts` runs the client against a local HTTP server and checks the bearer header, the error text for a rejected key and for missing credits, and that no error message contains the key. Run `vp test run src/warp/warpTasks.test.ts electron/warp.test.ts` from `apps/board`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. The operator creates one test factory in Warp's web app connected only to `13kparkin/agent-board-lanes`, and enters the key into the board's Warp card when the lane asks. Lanes share one small dispatched task to keep credit use low.
 
-- [ ] Lane 1. Regression lane against trunk. Trunk has no Warp card, so record that fact. Connect Warp at head. Save `x1-connect.png`. Pass when the card lists the factories `GET /factory` returns and the key appears in no board file, log, or renderer storage.
-- [ ] Lane 2. Have a real Claude orchestrator propose a `warp_send`. Hold it, then approve it. Save `x1-send.png`. Pass when Hold leaves `GET /factory/{uid}/tasks` unchanged and Approve creates exactly one task carrying the ticket's `ticket_ref`.
+- [ ] Lane 1. Regression lane against trunk. Trunk has no Warp card, so record that fact. Connect Warp at head, then enter a revoked key. Save `x1-connect.png` and `x1-bad-key.png`. Pass when the card lists the factories `GET /factory` returns, the key appears in no board file, log, or renderer storage, and the revoked key is rejected with nothing dispatched.
+- [ ] Lane 2. Send a ticket from its frame menu on a board with a real Claude orchestrator. Save `x1-send.png`. Pass when exactly one task carries the ticket's `ticket_ref`, and the orchestrator starts no local agent on that ticket.
 - [ ] Lane 3. Watch the sent ticket. Save `x1-status.png`. Pass when its badge follows the task through at least two states that match the API, with no reload.
 - [ ] Lane 4. Reply in the Warp tab. Save `x1-reply.png`. Pass when the follow-up appears in the run's conversation from the API and the foreman responds to it.
 - [ ] Lane 5. Answer a foreman question from its For-you card. Save `x1-needs-you.png`. Pass when the card matches the inbox item, the answer reaches the conversation, and the notification reads as read.
 - [ ] Lane 6. Let the task open its pull request on the lane repo. Save `x1-pr.png`. Pass when the PR chip and its checks match `gh pr view`.
 - [ ] Lane 7. Stop the task. Save `x1-stop.txt`. Pass when the API reports it stopped and the badge shows it.
-- [ ] Lane 8. Enter a revoked key. Save `x1-bad-key.png`. Pass when the card says the key was rejected and nothing is dispatched.
+- [ ] Lane 8. Send a two-ticket board from the orchestrator card. Save `x1-board.png`. Pass when the factory's tasks from that run show as frames whose badges match `GET /factory/{uid}/tasks`, and the orchestrator starts no local agent.
 - [ ] Lane 9. Run the Windows app with a Warp tab open beside the board. Save `x1-windows.png` from a full-window capture. Pass when the tab fits beside the board and the Warp card matches Orca's integration cards.
 - [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `x1-checks.txt`. Pass when all three exit 0.
 - [ ] Cleanup. Stop the test task, close its pull request and delete its branches on the lane repo, disconnect Warp in the board, and tell the operator to revoke the key.
@@ -1886,7 +1889,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Review gate.** The operator reviews at merge.
 
-- [ ] Copy lane 2, 4, and 5 screenshots into `apps/board/docs/media/x1-review-<slug>.png`.
+- [ ] Copy lane 2, 5, and 8 screenshots into `apps/board/docs/media/x1-review-<slug>.png`.
 - [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/x1-review.mp4`.
 - [ ] Post the screenshots and the video in chat for the operator at merge.
 
