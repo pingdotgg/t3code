@@ -1223,6 +1223,68 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect(
+    "falls back to session/load when resumeMethod is resume but the agent only advertises loadSession",
+    () =>
+      Effect.gen(function* () {
+        const requestMethods: Array<string> = [];
+        const v1LoadOnlyScript = [
+          'const rl = require("node:readline").createInterface({ input: process.stdin });',
+          "rl.on('line', (line) => {",
+          "  if (!line.trim()) return;",
+          "  const msg = JSON.parse(line);",
+          "  if (msg.method === 'initialize') {",
+          "    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [] } }) + '\\n');",
+          "  } else if (msg.method === 'session/load') {",
+          "    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\\n');",
+          "  }",
+          "});",
+        ].join("\n");
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          spawn: { command: process.execPath, args: ["-e", v1LoadOnlyScript] },
+          resumeSessionId: "mock-session-1",
+          resumeMethod: "resume",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              if (event.status === "started") requestMethods.push(event.method);
+            }),
+        });
+        const started = yield* runtime.start();
+        expect(started.sessionId).toBe("mock-session-1");
+        expect(requestMethods).toContain("session/load");
+        expect(requestMethods).not.toContain("session/resume");
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
+    "fails with -32601 when resumeMethod is resume and the agent advertises neither loadSession nor resume",
+    () =>
+      Effect.gen(function* () {
+        const v1NoResumeScript = [
+          'const rl = require("node:readline").createInterface({ input: process.stdin });',
+          "rl.on('line', (line) => {",
+          "  if (!line.trim()) return;",
+          "  const msg = JSON.parse(line);",
+          "  if (msg.method === 'initialize') {",
+          "    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } }) + '\\n');",
+          "  }",
+          "});",
+        ].join("\n");
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          spawn: { command: process.execPath, args: ["-e", v1NoResumeScript] },
+          resumeSessionId: "mock-session-1",
+          resumeMethod: "resume",
+        });
+        const error = yield* runtime.start().pipe(Effect.flip);
+        expect(error._tag).toBe("AcpRequestError");
+        if (error._tag === "AcpRequestError") {
+          expect(error.code).toBe(-32601);
+        }
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   // Live clock: the replay-idle gap must elapse in real time against the mock agent process.
   it.live("adopts config options from a session/load response that arrives after replay idle", () =>
     Effect.gen(function* () {

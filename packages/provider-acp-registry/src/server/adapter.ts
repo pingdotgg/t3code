@@ -139,6 +139,7 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
 function makeAcpRegistryRuntime(
   options: AcpRegistryAdapterV2Options,
   catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"],
+  resumeMethod?: AcpSessionRuntime.AcpSessionRuntimeOptions["resumeMethod"],
 ) {
   return (
     input: AcpAdapterV2RuntimeInput,
@@ -171,6 +172,7 @@ function makeAcpRegistryRuntime(
                   env: { ...resolved.spawn.env, ...processEnvironment },
                 },
           ...(options.settings.authMethodId ? { authMethodId: options.settings.authMethodId } : {}),
+          ...(resumeMethod !== undefined ? { resumeMethod } : {}),
           customModels: readCustomModelEntries(options.settings.customModels).map(
             (entry) => entry.slug,
           ),
@@ -197,9 +199,12 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
   const isDevin = registryAgentId === "devin";
-  const isAntigravityCli =
-    options.settings.source === "local" &&
-    /^agy(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
+  const isAntigravity =
+    registryAgentId === "antigravity-acp" ||
+    (options.settings.source === "local" &&
+      /^(?:agy|antigravity(?:-acp)?)(\.exe|\.cmd)?$/i.test(
+        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
+      ));
   const isOmp =
     options.settings.source === "local" &&
     /^omp(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
@@ -273,7 +278,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     compactViaAdvertisedCommand: true,
-    ...(isAntigravityCli ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true } : {}),
+    ...(isAntigravity ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true } : {}),
     promptFailure: (cause) =>
       acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause),
     ...(isDroid
@@ -311,11 +316,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     // Hermes replies on the root session when a background process it started exits; no
     // prompt response follows, so the continuation ends on the deferred-finalize debounce.
     // Hermes is not in the public registry and may run through a wrapper, so only its
-    // initialize reply identifies it. agy does the same and is known by its command.
-    enablePostSettleContinuation: (initializeResult) =>
-      isAntigravityCli || isHermes(initializeResult),
+    // initialize reply identifies it. Antigravity does the same and is known by id or command.
+    enablePostSettleContinuation: (initializeResult) => isAntigravity || isHermes(initializeResult),
     deferFinalizeForBackgroundWork: (initializeResult) =>
-      isAntigravityCli || isHermes(initializeResult),
+      isAntigravity || isHermes(initializeResult),
     ...(isDevin
       ? {
           clientCapabilitiesMeta: {
@@ -343,7 +347,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           alwaysSetModel: true,
         }),
     mcpOverHttp: useHttpMcpServers,
-    makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(runtimeOptions, catalog),
+    // Antigravity's session/load streams unmarked history after answering, which leaks into the
+    // next turn; session/resume reopens the session without replay.
+    makeRuntime:
+      options.makeRuntime ??
+      makeAcpRegistryRuntime(runtimeOptions, catalog, isAntigravity ? "resume" : undefined),
     ...(runtimeCoordinator === undefined
       ? {}
       : {

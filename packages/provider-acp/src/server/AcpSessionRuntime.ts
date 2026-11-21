@@ -2424,18 +2424,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       const additionalDirectories = sessionSetupFields(initializeResult);
       if (options.resumeSessionId) {
         sessionId = options.resumeSessionId;
-        if (
-          initializeResult.agentCapabilities?.loadSession === true &&
-          options.resumeMethod !== "resume"
-        ) {
-          const loadPayload = {
-            sessionId,
-            cwd: options.cwd,
-            ...additionalDirectories,
-            mcpServers: sessionMcpServers(initializeResult),
-          } satisfies EffectAcpSchema.LoadSessionRequest;
-          sessionSetupResult = yield* runLoadSessionWithReplayIdle(loadPayload, initializeResult);
-        } else if (initializeResult.agentCapabilities?.sessionCapabilities?.resume != null) {
+        const canLoad = initializeResult.agentCapabilities?.loadSession === true;
+        const canResume = initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;
+        if (canResume && (options.resumeMethod === "resume" || !canLoad)) {
           const resumePayload = {
             sessionId,
             cwd: options.cwd,
@@ -2447,6 +2438,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             resumePayload,
             acp.agent.resumeSession(resumePayload),
           );
+        } else if (canLoad) {
+          const loadPayload = {
+            sessionId,
+            cwd: options.cwd,
+            ...additionalDirectories,
+            mcpServers: sessionMcpServers(initializeResult),
+          } satisfies EffectAcpSchema.LoadSessionRequest;
+          sessionSetupResult = yield* runLoadSessionWithReplayIdle(loadPayload, initializeResult);
         } else {
           return yield* new EffectAcpErrors.AcpRequestError({
             code: -32601,

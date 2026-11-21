@@ -453,10 +453,27 @@ const claudeUnrelatedChildren = [
 
 describe("AcpRegistryAdapterV2", () => {
   it.effect.each([
-    { commandPath: "/root/.local/bin/agy", offers: 1 },
-    { commandPath: "C:\\tools\\agy.exe", offers: 1 },
-    { commandPath: "/opt/bin/other-agent", offers: 0 },
-  ])("continues late output only for agy ($commandPath)", ({ commandPath, offers }) =>
+    {
+      label: "/root/.local/bin/agy",
+      settings: { source: "local", commandPath: "/root/.local/bin/agy", commandArgs: ["acp"] },
+      offers: 1,
+    },
+    {
+      label: "C:\\tools\\agy.exe",
+      settings: { source: "local", commandPath: "C:\\tools\\agy.exe", commandArgs: ["acp"] },
+      offers: 1,
+    },
+    {
+      label: "registry antigravity-acp",
+      settings: { agentId: "antigravity-acp" },
+      offers: 1,
+    },
+    {
+      label: "/opt/bin/other-agent",
+      settings: { source: "local", commandPath: "/opt/bin/other-agent", commandArgs: ["acp"] },
+      offers: 0,
+    },
+  ])("continues late output only for Antigravity ($label)", ({ settings, offers }) =>
     Effect.gen(function* () {
       const gate = makeProviderReplayGate(["wake"]);
       const update = (sessionUpdate: Record<string, unknown>) =>
@@ -504,7 +521,7 @@ describe("AcpRegistryAdapterV2", () => {
         ],
         gate,
         true,
-        { source: "local", commandPath, commandArgs: ["acp"] },
+        settings,
       );
       yield* session.runtime.startTurn(session.turnInput(1));
       assert.equal((yield* session.terminal).status, "completed");
@@ -3942,6 +3959,96 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(yield* runTurn(1), "failed");
       assert.equal(yield* runTurn(2), "completed");
       assert.equal(spawned, restarts ? 2 : 1);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      label: "local agy",
+      config: { source: "local", commandPath: "/root/.local/bin/agy", commandArgs: ["acp"] },
+      expectedMethod: "session/resume",
+    },
+    {
+      label: "local agy.exe",
+      config: { source: "local", commandPath: "C:\\tools\\agy.exe", commandArgs: ["acp"] },
+      expectedMethod: "session/resume",
+    },
+    {
+      label: "local antigravity",
+      config: {
+        source: "local",
+        commandPath: "/Users/test/.t3/tools/antigravity",
+        commandArgs: ["acp"],
+      },
+      expectedMethod: "session/resume",
+    },
+    {
+      label: "registry antigravity-acp",
+      config: { agentId: "antigravity-acp" },
+      expectedMethod: "session/resume",
+    },
+    {
+      label: "non-Antigravity local agent",
+      config: { source: "local", commandPath: "/opt/bin/other-agent", commandArgs: ["acp"] },
+      expectedMethod: "session/load",
+    },
+    {
+      label: "non-Antigravity registry agent",
+      config: { agentId: "gemini" },
+      expectedMethod: "session/load",
+    },
+  ])("reopens an existing session with $expectedMethod for $label", ({ config, expectedMethod }) =>
+    Effect.gen(function* () {
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* (yield* Path.Path).fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const requests: Array<string> = [];
+      const instanceId = ProviderInstanceId.make("acp-registry-antigravity-resume");
+      const threadId = ThreadId.make("thread-acp-registry-antigravity-resume");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        selfInvocation,
+        instanceId,
+        settings: yield* decodeAcpRegistryAdapterSettings(config),
+        environment: {},
+        nativeLogging: () => ({
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              if (event.status === "started") requests.push(event.method);
+            }),
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+            resolve: () =>
+              Effect.succeed({
+                distribution: "local" as const,
+                spawn: {
+                  command: process.execPath,
+                  args: [mockAgentPath],
+                  env: { T3_ACP_SESSION_LIFECYCLE: "1" },
+                },
+              }),
+          }),
+        ),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-registry-resume"),
+        initialNativeThreadId: "mock-session-1",
+        modelSelection: { instanceId, model: "default" },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      });
+      assert.isDefined(runtime);
+      assert.include(requests, expectedMethod);
+      assert.notInclude(
+        requests,
+        expectedMethod === "session/resume" ? "session/load" : "session/resume",
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 });
