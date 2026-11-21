@@ -8831,13 +8831,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS latest_user_authored_message_at
             FROM orchestration_v2_projection_threads t
-            LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
-              SELECT latest.run_id FROM orchestration_v2_projection_runs latest
-              WHERE latest.thread_id = t.thread_id
-                AND NOT ${isSilentShellRun("latest")}
-              ORDER BY latest.ordinal DESC, latest.run_id DESC
-              LIMIT 1
-            )
+            LEFT JOIN orchestration_v2_projection_runs r
+              ON r.run_id = ${presentedShellRunId(sql.literal("t.thread_id"))}
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}
               AND json_extract(t.payload_json, '$.archivedAt') IS NULL
               AND json_extract(t.payload_json, '$.settledOverride') IS NULL
