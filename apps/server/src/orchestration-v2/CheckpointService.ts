@@ -388,28 +388,40 @@ export const layer: Layer.Layer<
       capacity: 128,
       lookup: () => Effect.succeed(0),
     });
-    // The timeout streak seen before queueing for the lock, so a capture knows whether another
-    // capture of its folder timed out while it waited.
-    const withCaptureLock = <A, E, R>(
+    // Unlike the streak, a success never rewinds the count, so a waiter can order outcomes.
+    const lastCaptures = new Map<string, { readonly count: number; readonly timedOut: boolean }>();
+    const noteCapture = (cwd: string, timedOut: boolean) =>
+      Effect.sync(() => {
+        lastCaptures.set(cwd, { count: (lastCaptures.get(cwd)?.count ?? 0) + 1, timedOut });
+      });
+    const withCaptureLock = Effect.fn("CheckpointService.withCaptureLock")(function* <A, E, R>(
       cwd: string,
-      effect: (timeoutsBeforeLock: number) => Effect.Effect<A, E, R>,
-    ) =>
-      Effect.flatMap(Cache.get(captureTimeouts, cwd), (timeouts) =>
-        withWorkspaceLock(cwd, effect(timeouts)),
-      );
+      effect: (capturesBeforeLock: number) => Effect.Effect<A, E, R>,
+    ) {
+      return yield* withWorkspaceLock(cwd, effect(lastCaptures.get(cwd)?.count ?? 0));
+    });
     // Both callers hold the workspace lock; post-turn captures always probe for recovery.
     const captureWorkspaceCheckpoint = Effect.fn("CheckpointService.captureWorkspaceCheckpoint")(
       function* (input: CheckpointStore.CaptureCheckpointInput, baseline = false) {
         const capture = checkpointStore.captureCheckpoint(input);
         yield* (baseline ? capture.pipe(Effect.timeout(BASELINE_CAPTURE_BUDGET)) : capture).pipe(
-          Effect.tap(() => Cache.invalidate(captureTimeouts, input.cwd)),
+          Effect.tap(() =>
+            Effect.andThen(
+              Cache.invalidate(captureTimeouts, input.cwd),
+              noteCapture(input.cwd, false),
+            ),
+          ),
           Effect.tapError((error) =>
             error._tag === "VcsProcessTimeoutError" || error._tag === "TimeoutError"
               ? Effect.gen(function* () {
                   const previous = yield* Cache.get(captureTimeouts, input.cwd);
                   yield* Cache.set(captureTimeouts, input.cwd, previous + 1);
+                  yield* noteCapture(input.cwd, true);
                 })
-              : Cache.invalidate(captureTimeouts, input.cwd),
+              : Effect.andThen(
+                  Cache.invalidate(captureTimeouts, input.cwd),
+                  noteCapture(input.cwd, false),
+                ),
           ),
         );
       },
@@ -599,7 +611,7 @@ export const layer: Layer.Layer<
         readonly cleanHead?: string;
       },
     ) =>
-      withCaptureLock(input.scope.cwd, (timeoutsBeforeLock) =>
+      withCaptureLock(input.scope.cwd, (capturesBeforeLock) =>
         Effect.gen(function* () {
           const checkpointId = yield* checkpointIdForScopeOrdinal(idAllocator, {
             scopeId: input.scope.id,
@@ -644,9 +656,12 @@ export const layer: Layer.Layer<
 
           // Threads sharing a folder queue on its lock. One that waited out another's timeout
           // would only time out again while its own queued messages wait behind it.
+          const lastCapture = lastCaptures.get(input.scope.cwd);
           const timedOutWhileWaiting =
             input.cleanHead === undefined &&
-            (yield* Cache.get(captureTimeouts, input.scope.cwd)) > timeoutsBeforeLock;
+            lastCapture !== undefined &&
+            lastCapture.timedOut &&
+            lastCapture.count > capturesBeforeLock;
           const captureStatus = timedOutWhileWaiting
             ? yield* Effect.logWarning(
                 "orchestration V2 checkpoint capture skipped after a capture timed out in its folder",

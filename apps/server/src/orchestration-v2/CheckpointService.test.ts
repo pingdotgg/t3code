@@ -566,6 +566,8 @@ it.effect("skips post-turn captures that waited out another capture's timeout in
       createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
     });
     const attempts = yield* Ref.make(0);
+    // Outcomes for upcoming attempts; an attempt with none scripted times out.
+    const script = yield* Ref.make<ReadonlyArray<"ready" | "timeout">>([]);
     const firstStarted = yield* Deferred.make<void>();
     const layerTest = CheckpointService.layer.pipe(
       Layer.provide(
@@ -580,6 +582,9 @@ it.effect("skips post-turn captures that waited out another capture's timeout in
                 yield* Ref.update(attempts, (count) => count + 1);
                 yield* Deferred.succeed(firstStarted, undefined);
                 yield* Effect.sleep("30 seconds");
+                const [next = "timeout", ...rest] = yield* Ref.get(script);
+                yield* Ref.set(script, rest);
+                if (next === "ready") return;
                 return yield* new VcsProcessTimeoutError({
                   operation: "GitVcsDriver.checkpoints.captureCheckpoint",
                   command: "git",
@@ -626,6 +631,22 @@ it.effect("skips post-turn captures that waited out another capture's timeout in
       yield* TestClock.adjust("30 seconds");
       assert.strictEqual((yield* Fiber.join(later)).status, "error");
       assert.strictEqual(yield* Ref.get(attempts), 2);
+
+      // A success ahead in the queue does not hide a timeout that follows it.
+      yield* Ref.set(script, ["ready", "timeout"]);
+      const recovered = yield* captureTurn(scopeFor("recovered"));
+      const relapsed = yield* captureTurn(scopeFor("relapsed"));
+      const queuedBehind = yield* captureTurn(scopeFor("queued-behind"));
+      yield* TestClock.adjust("90 seconds");
+      assert.deepEqual(
+        [
+          (yield* Fiber.join(recovered)).status,
+          (yield* Fiber.join(relapsed)).status,
+          (yield* Fiber.join(queuedBehind)).status,
+        ],
+        ["ready", "error", "error"],
+      );
+      assert.strictEqual(yield* Ref.get(attempts), 4, "the waiter probed after a later timeout");
     }).pipe(Effect.provide(layerTest));
   }),
 );
