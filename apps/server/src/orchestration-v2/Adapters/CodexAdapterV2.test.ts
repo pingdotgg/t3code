@@ -9649,6 +9649,74 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // regression: #40582 a native subagent keeps its MCP servers after its root thread unloads
+  it.effect("unsubscribes native subagent threads when their root thread unloads", () =>
+    Effect.gen(function* () {
+      const entries = resumeSubagentTranscript.entries;
+      const rootCompleted = entries.findIndex(
+        (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/root",
+      );
+      const unsubscribe = (
+        id: number,
+        threadId: string,
+      ): CodexReplay.CodexAppServerReplayEntry[] => [
+        {
+          type: "expect_outbound",
+          label: `thread/unsubscribe/${threadId}`,
+          frame: { id, method: "thread/unsubscribe", params: { threadId } },
+        },
+        {
+          type: "emit_inbound",
+          label: `thread/unsubscribe/${threadId}`,
+          frame: { id, result: { status: "unsubscribed" } },
+        },
+      ];
+      const unsubscribed: Array<unknown> = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: RESUME_SCENARIO,
+          entries: [
+            ...entries.slice(0, rootCompleted + 1),
+            ...unsubscribe(4, RESUME_NATIVE_THREAD),
+            ...unsubscribe(5, RESUME_CHILD_THREAD),
+          ],
+        }),
+        undefined,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/unsubscribe") unsubscribed.push(params);
+          }),
+      );
+
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-unload-subtree"),
+          text: RESUME_PROMPT,
+        }),
+      );
+      yield* TestClock.adjust("1 second");
+      yield* harness.awaitTerminal(1);
+      yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+
+      assert.deepEqual(unsubscribed, [
+        { threadId: RESUME_NATIVE_THREAD },
+        { threadId: RESUME_CHILD_THREAD },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   const lateChildPrefix = () => {
     const entries = resumeSubagentTranscript.entries;
     const labelIndex = (label: string) =>
