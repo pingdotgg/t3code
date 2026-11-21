@@ -54,6 +54,7 @@ import {
   hasSavedBearerRoute,
   mergeLearnedRoutes,
   routesAfterRemoving,
+  savedRoutes,
   upsertRoute,
   type ReportedEndpoint,
 } from "./routes.ts";
@@ -528,7 +529,7 @@ export const make = Effect.gen(function* () {
     );
 
   const persistedRoutes = (entry: ConnectionCatalogEntry) =>
-    connectionRoutes(entry).map((route) => route.target as PersistedConnectionTarget);
+    savedRoutes(entry).map((route) => route.target as PersistedConnectionTarget);
 
   /**
    * Pull request routing trust and an unsupported verdict both belong to the saved addresses: a changed set may
@@ -952,7 +953,7 @@ export const make = Effect.gen(function* () {
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
         const next = entryWithRoutes(entry, routes);
         const previousProfiles = new Map(
-          connectionRoutes(entry).map((route) => [
+          savedRoutes(entry).map((route) => [
             connectionRouteId(route.target),
             Option.getOrNull(route.profile),
           ]),

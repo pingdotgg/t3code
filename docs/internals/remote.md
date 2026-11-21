@@ -52,7 +52,9 @@ bearer token. A paired token only learns a plain HTTP address off the tailnet
 when it was itself paired over plain HTTP, so a token paired over HTTPS never
 starts travelling unencrypted. Learned routes the server stops reporting are
 dropped, which is how a changed LAN address replaces the old one; routes the
-user saved are never touched. The reported addresses are hints like any advertised endpoint, so a
+user saved are never touched. A dropped route the user had moved stays saved as
+withdrawn, unused and hidden, so it returns to that place: the server leaves out
+its Tailscale Serve URL after a restart or one slow probe. The reported addresses are hints like any advertised endpoint, so a
 learned route still has to answer as this environment before it is used.
 
 A background service with no configured host is what makes this work for
