@@ -488,6 +488,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
+    id: "woke-indicator",
+    title: msg("Woke indicator"),
+    to: "/settings/general",
+    searchTerms: [msg("snooze wake woken alarm badge label icon hide sidebar")],
+  },
+  {
     id: "boring-sidebar",
     title: msg("Boring sidebar (group by project)"),
     to: "/settings/labs",
