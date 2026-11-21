@@ -7167,6 +7167,61 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("skips the MCP status request when init lists only plugins and connectors", () =>
+    Effect.gen(function* () {
+      let statusRequests = 0;
+      const harness = yield* makeWakeHarnessWithOptions({
+        mcp: {
+          mcpServerStatus: Effect.sync(() => {
+            statusRequests += 1;
+            return [];
+          }),
+          readMcpResource: () => Effect.die("unexpected MCP resource read"),
+          callMcpTool: () => Effect.die("unexpected MCP tool call"),
+        },
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-plugin-init"),
+          text: "Plan the sprint",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          uuid: "mcp-plugin-init",
+          session_id: WAKE_NATIVE_SESSION,
+          mcp_servers: [
+            { name: "plugin:legal:slack", status: "pending" },
+            { name: "plugin:design:figma", status: "needs-auth" },
+            { name: "claude.ai Gmail", status: "needs-auth" },
+          ],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "mcp-plugin-init-result", result: "Planned" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.strictEqual(statusRequests, 0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #38284 an MCP app's update-model-context note must reach Claude's next turn
   it.effect("sends MCP app model context with the next Claude turn", () =>
     Effect.gen(function* () {
