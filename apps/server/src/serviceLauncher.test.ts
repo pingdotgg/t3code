@@ -479,12 +479,12 @@ setInterval(() => {}, 1_000);
         return { stdout: task };
       };
 
-      yield* Effect.promise(() => registerServiceTask(unitPath, "t3code-PC-theo", schtasks));
+      yield* Effect.promise(() => registerServiceTask(unitPath, "lathe-PC-theo", schtasks));
       assert.equal(task, disabledServiceTask(unit));
       assert.deepEqual(yield* fs.readDirectory(root), ["t3code-task.xml"]);
 
       task = unit.replace("1.1.0", "1.0.0");
-      yield* Effect.promise(() => registerServiceTask(unitPath, "t3code-PC-theo", schtasks));
+      yield* Effect.promise(() => registerServiceTask(unitPath, "lathe-PC-theo", schtasks));
       assert.equal(task, unit);
     }),
   );

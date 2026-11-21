@@ -234,6 +234,17 @@ describe("FORK_RENAME_RULES", () => {
     ["apps/server/src/provider/model-manifest.json", '"t3CodeRange": ">=0.0.44",', "kept"],
     ["apps/server/src/provider/x.ts", "satisfies(version, entry.t3CodeRange)", "kept"],
     ["scripts/install.test.ts", 'pack(root, "legacy", { t3: "t3 v1.2.3" })', "kept"],
+    // A Windows task name follows serviceTaskName; the repository name beside it stays.
+    [
+      "apps/server/src/cloud/bootService.test.ts",
+      '        "schtasks /Run /TN t3code-PC-theo",',
+      "identifier",
+    ],
+    [
+      "apps/server/src/cloud/bootService.test.ts",
+      'path.join(home, "Local", "t3code")',
+      "upstream-reference",
+    ],
     // The server's install tests follow the renamed launcher, unlike scripts/install.test.ts.
     [
       "apps/server/src/cli/install.test.ts",

@@ -36,6 +36,7 @@ import {
 } from "./serviceProtocol.ts";
 
 const UNIT_FILE = `${FORK_IDENTITY.bootService.systemdName}.service`;
+const TASK_FILE = `${FORK_IDENTITY.bootService.systemdName}-task.xml`;
 const LAUNCHD_LABEL = FORK_IDENTITY.bootService.launchdLabel;
 const LAUNCHD_PLIST_FILE = `${LAUNCHD_LABEL}.plist`;
 
@@ -407,7 +408,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                   : { PATH: environmentPath }),
                 ...(insideService
                   ? {
-                      T3_BOOT_SERVICE_UNIT: platform === "win32" ? "t3code-task.xml" : UNIT_FILE,
+                      T3_BOOT_SERVICE_UNIT: platform === "win32" ? TASK_FILE : UNIT_FILE,
                     }
                   : {}),
                 ...(underSudo ? { SUDO_USER: "julius" } : {}),
@@ -1547,7 +1548,7 @@ process.disconnect();
       const task = decodeServiceUnit(yield* fs.readFile(plan.unitPath));
 
       expect(plan.unitPath).toBe(
-        path.join(path.dirname(plan.baseDir), "AppData", "Local", "t3code", "t3code-task.xml"),
+        path.join(path.dirname(plan.baseDir), "AppData", "Local", "t3code", TASK_FILE),
       );
       expect(BootService.bootServiceProgramOf(task)).toBe(runtime.entryPath);
       expect(BootService.bootServiceBaseDirOf(task)).toBe(plan.baseDir);
@@ -1560,8 +1561,8 @@ process.disconnect();
         activeVersion: "1.2.3",
       });
       expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual([
-        `schtasks /Create /XML ${plan.unitPath} /TN t3code-PC-theo /F`,
-        "schtasks /Run /TN t3code-PC-theo",
+        `schtasks /Create /XML ${plan.unitPath} /TN lathe-PC-theo /F`,
+        "schtasks /Run /TN lathe-PC-theo",
       ]);
       // No launcher holds the lock here.
       expect(yield* service.status).toMatchObject({
@@ -1571,7 +1572,7 @@ process.disconnect();
       });
 
       // A task that Task Scheduler refuses to delete stays installed, so a retry finds it.
-      control.failCommand = "schtasks /Delete /TN t3code-PC-theo /F";
+      control.failCommand = "schtasks /Delete /TN lathe-PC-theo /F";
       expect((yield* service.uninstall.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
       expect((yield* service.status).installed).toBe(true);
       control.failCommand = undefined;
@@ -1579,9 +1580,9 @@ process.disconnect();
       commands.length = 0;
       expect(yield* service.uninstall).toBe(true);
       expect(commands).toEqual([
-        "schtasks /Change /TN t3code-PC-theo /DISABLE",
-        "schtasks /End /TN t3code-PC-theo",
-        "schtasks /Delete /TN t3code-PC-theo /F",
+        "schtasks /Change /TN lathe-PC-theo /DISABLE",
+        "schtasks /End /TN lathe-PC-theo",
+        "schtasks /Delete /TN lathe-PC-theo /F",
       ]);
       expect(control.task).toBeUndefined();
       expect((yield* service.status).installed).toBe(false);
@@ -1621,11 +1622,11 @@ process.disconnect();
       commands.length = 0;
       yield* service.withStopped(Effect.sync(() => commands.push("repair")));
       expect(commands.filter((command) => !command.includes("/Query"))).toEqual([
-        "schtasks /Change /TN t3code-PC-theo /DISABLE",
-        "schtasks /End /TN t3code-PC-theo",
+        "schtasks /Change /TN lathe-PC-theo /DISABLE",
+        "schtasks /End /TN lathe-PC-theo",
         "repair",
-        "schtasks /Change /TN t3code-PC-theo /ENABLE",
-        "schtasks /Run /TN t3code-PC-theo",
+        "schtasks /Change /TN lathe-PC-theo /ENABLE",
+        "schtasks /Run /TN lathe-PC-theo",
       ]);
     }),
   );
@@ -1646,9 +1647,9 @@ process.disconnect();
       const inside = yield* makeService(undefined, "1.2.4", undefined, true);
       const relayMarker = `${plan.baseDir}/runtime/${DESKTOP_UPDATE_RESTART_MARKER_FILE}`;
       const handoff = [
-        `schtasks /Create /XML ${plan.unitPath} /TN t3code-PC-theo /F`,
-        "schtasks /End /TN t3code-PC-theo",
-        "schtasks /Run /TN t3code-PC-theo",
+        `schtasks /Create /XML ${plan.unitPath} /TN lathe-PC-theo /F`,
+        "schtasks /End /TN lathe-PC-theo",
+        "schtasks /Run /TN lathe-PC-theo",
       ];
       commands.length = 0;
 

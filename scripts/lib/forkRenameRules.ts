@@ -1149,6 +1149,8 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
       !/attribution|user-?agent|userAgent|DISPLAY/i.test(o.line) &&
       !/\.slice\b|-protect\.conf|:update-everything-result|t3code\/compile-cache/.test(o.token) &&
       !/^t3code\/no-/.test(o.token.slice(o.offset)) &&
+      // Windows task names, which serviceTaskName renames.
+      !/^t3code-PC-/.test(o.token.slice(o.offset)) &&
       !o.token.startsWith("--") &&
       !/^oxlint-plugin-/.test(o.path),
   },
