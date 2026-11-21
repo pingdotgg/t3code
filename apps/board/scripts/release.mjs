@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Cuts a GitHub release of the board: gates, build, installer and zip, SHA256SUMS, notes, release.
+// Cuts a GitHub release of the board: gates, build, installer, SHA256SUMS, notes, release.
 // Run it from a clean checkout of origin/main, or of a pushed branch for a test pre-release.
 // Usage: node apps/board/scripts/release.mjs <version> [--prerelease]
 import * as NodeChildProcess from "node:child_process";
@@ -79,7 +79,7 @@ run("vp", ["run", "--filter", "@agent-board/app", "build"], root);
 NodeFS.rmSync(releaseDir, { recursive: true, force: true });
 run("pnpm", ["run", "package", `-c.extraMetadata.version=${version}`], boardDir);
 
-const assets = [`Agent-Board-Setup-${version}.exe`, `Agent-Board-${version}-win-x64.zip`];
+const assets = [`Agent-Board-Setup-${version}.exe`];
 NodeFS.writeFileSync(
   NodePath.join(releaseDir, "SHA256SUMS"),
   assets

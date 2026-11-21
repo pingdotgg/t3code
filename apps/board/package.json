@@ -16,8 +16,7 @@
     "start:windows": "node scripts/launch-windows.mjs",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run && node --test scripts/*.test.mjs",
-    "package": "electron-builder --config electron-builder.yml --win nsis zip --x64 --publish never",
-    "release": "node scripts/release.mjs",
+    "package": "electron-builder --config electron-builder.yml --win --publish never",
     "check:boundary": "node scripts/check-engine-untouched.mjs",
     "standards": "node ../../standards/check-added-diagnostics.mjs",
     "standards:deps": "cd ../.. && depcruise --config standards/.dependency-cruiser.cjs --ignore-known standards/dependency-baseline.json apps packages"

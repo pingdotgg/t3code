@@ -30,9 +30,9 @@ On a Windows machine, run the same commands from WSL with `dev:windows` and `sta
 ## Releases
 
 Releases are on the fork's Releases page as `board-v<version>`.
-Download `Agent-Board-Setup-<version>.exe` and run it for a per-user install with Start menu and desktop shortcuts, or unzip `Agent-Board-<version>-win-x64.zip` and run `Agent Board.exe`.
-Neither is code signed, so Windows SmartScreen warns on first run, and neither updates itself.
-`SHA256SUMS` lists the hash of each file.
+Download `Agent-Board-Setup-<version>.exe` and run it for a per-user install with Start menu and desktop shortcuts.
+It is not code signed, so Windows SmartScreen warns on first run, and it does not update itself.
+`SHA256SUMS` lists the hash of the installer.
 
 To cut a release, check out a clean `origin/main` and run this.
 
@@ -40,8 +40,8 @@ To cut a release, check out a clean `origin/main` and run this.
 node apps/board/scripts/release.mjs 0.1.0
 ```
 
-It stops if the tag exists, runs the same gates as CI, builds, packages with electron-builder from Linux with no Wine, writes `SHA256SUMS` and the release notes, and runs `gh release create`.
-A test release comes from a pushed branch and is marked with `--prerelease`.
+It stops if the tag exists, runs the same gates as CI, builds, packages the installer with electron-builder from Linux with no Wine, writes `SHA256SUMS` and the release notes, and runs `gh release create`.
+A test release comes from a pushed branch and is marked with `--prerelease`. Give its version a suffix such as `0.0.3-test`, so it never uses up a real version tag.
 With `ANTHROPIC_API_KEY` set, the notes open with a Claude summary of the pull requests since the previous `board-v*` tag, over GitHub's generated list. Without it, the notes are GitHub's list alone.
 
 When Actions is available on the repo, `gh workflow run agent-board.yml -f version=0.1.0` runs the same script in a `release` job, using the `ANTHROPIC_API_KEY` repo secret. Add `-f prerelease=true` for a pre-release.

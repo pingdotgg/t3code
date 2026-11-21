@@ -9,14 +9,10 @@ files:
   - package.json
   - "!node_modules/**/*"
 asar: false
-artifactName: Agent-Board-${version}-win-x64.${ext}
 win:
   target:
     - target: nsis
       arch: x64
-    - target: zip
-      arch: x64
-  signAndEditExecutable: true
 nsis:
   include: installer.nsh
   artifactName: Agent-Board-Setup-${version}.exe
