@@ -7,13 +7,19 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import {
+  DATABASE_REWRITE_FINISHED_MESSAGE,
+  DATABASE_REWRITE_STARTED_MESSAGE,
+} from "@t3tools/shared/databaseMigrationLog";
 
 import { hasPendingMigrations, runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
+import { needsNoCopyOnWriteRewrite, rewriteNoCopyOnWrite } from "../noCopyOnWrite.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
 
 const WAL_SIZE_LIMIT_BYTES = 128 * 1024 * 1024;
+const BUSY_TIMEOUT_MS = 5_000;
 
 export class ServerOwnsDatabaseError extends Schema.TaggedError<ServerOwnsDatabaseError>()(
   "ServerOwnsDatabaseError",
@@ -21,6 +27,15 @@ export class ServerOwnsDatabaseError extends Schema.TaggedError<ServerOwnsDataba
 ) {
   override get message(): string {
     return `Another T3 Code process, usually a running server, owns ${this.stateDir}, and this CLI would change its database schema. Use the \`t3\` that matches the running server, or stop that server, then retry. The database was not changed.`;
+  }
+}
+
+class NoCopyOnWriteRewriteError extends Schema.TaggedError<NoCopyOnWriteRewriteError>()(
+  "NoCopyOnWriteRewriteError",
+  { dbPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not rewrite the database at ${this.dbPath} as a No_COW file. It stays copy-on-write, unchanged, and the next start tries again.`;
   }
 }
 
@@ -64,12 +79,34 @@ const runMigrationsAsOwner = Effect.fn("SqlitePersistence.runMigrationsAsOwner")
   yield* runMigrations();
 }, Effect.scoped);
 
+/** Run while owning the T3 home and before anything opens the database. */
+export const useNoCopyOnWriteDatabase = Effect.fn("SqlitePersistence.useNoCopyOnWriteDatabase")(
+  function* (dbPath: string) {
+    const attempt = <A>(run: () => Promise<A>) =>
+      Effect.tryPromise({
+        try: run,
+        catch: (cause) => new NoCopyOnWriteRewriteError({ dbPath, cause }),
+      });
+    if (!(yield* attempt(() => needsNoCopyOnWriteRewrite(dbPath)))) return;
+    // The desktop waits past its readiness budget between these two lines.
+    yield* Effect.log(DATABASE_REWRITE_STARTED_MESSAGE).pipe(
+      Effect.annotateLogs({ reason: "btrfs fragments copy-on-write databases; this runs once" }),
+    );
+    yield* attempt(() => rewriteNoCopyOnWrite(dbPath, BUSY_TIMEOUT_MS + 1_000)).pipe(
+      Effect.ensuring(Effect.log(DATABASE_REWRITE_FINISHED_MESSAGE)),
+    );
+  },
+  Effect.catchTags({
+    NoCopyOnWriteRewriteError: (error) => Effect.logWarning(error.message, { cause: error.cause }),
+  }),
+);
+
 const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       // CLI and server write from separate processes; wait rather than fail with SQLITE_BUSY.
-      yield* sql`PRAGMA busy_timeout = 5000;`;
+      yield* sql.unsafe(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
       yield* sql`PRAGMA foreign_keys = ON;`;
       // Existing databases need doctor's offline VACUUM to add pointer maps for this mode.
       const tables = yield* sql<{
