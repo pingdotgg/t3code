@@ -51,8 +51,7 @@ const makeDebuggee = (
     /** The guest is still loading its first page. */
     readonly loading?: boolean;
     /** Like a guest of a hidden window: it answers a capture only once Electron captures it. */
-    readonly drawsOnlyWhenCaptured?: boolean;
-    readonly windowDrawing?: () => boolean;
+    readonly drawsOnlyWhenCaptured?: () => boolean;
     readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
   } = {},
 ) => {
@@ -97,7 +96,7 @@ const makeDebuggee = (
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
     capturePage: () => {
       nativeCaptures += 1;
-      if (options.drawsOnlyWhenCaptured) pending.splice(0).forEach((resolve) => resolve());
+      if (options.drawsOnlyWhenCaptured?.()) pending.splice(0).forEach((resolve) => resolve());
       return Promise.resolve({});
     },
     getURL: () => "http://localhost/",
@@ -110,7 +109,6 @@ const makeDebuggee = (
     tab: {
       webContents: webContents as unknown as Electron.WebContents,
       debugger: debuggee as unknown as Electron.Debugger,
-      ...(options.windowDrawing ? { windowDrawing: options.windowDrawing } : {}),
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     navigate: () => webContents.emit("did-navigate"),
@@ -377,9 +375,9 @@ describe("DesktopBrowserHost", () => {
 
   it.effect("prods a guest its window stopped drawing until what waits on it settles", () =>
     Effect.gen(function* () {
-      let drawing = false;
+      let drawsWhenCaptured = true;
       const host = yield* makeDrawnHost;
-      const debuggee = makeDebuggee({ drawsOnlyWhenCaptured: true, windowDrawing: () => drawing });
+      const debuggee = makeDebuggee({ drawsOnlyWhenCaptured: () => drawsWhenCaptured });
       host.attach(key, debuggee.tab);
       const replies = yield* watchReplies(host);
 
@@ -405,14 +403,24 @@ describe("DesktopBrowserHost", () => {
       yield* TestClock.adjust("1 second");
       expect(debuggee.nativeCaptures()).toBe(2);
 
-      // Nor is a guest whose window draws it, however long the wait.
-      drawing = true;
-      yield* command(host, 4, "Page.captureScreenshot");
+      // A long wait, such as a page awaiting a timer, is prodded less often as it goes on.
+      drawsWhenCaptured = false;
+      yield* command(host, 4, "Runtime.evaluate");
       yield* settle;
-      yield* TestClock.adjust("5 seconds");
-      expect(debuggee.nativeCaptures()).toBe(2);
+      for (const [wait, prods] of [
+        ["250 millis", 3],
+        ["500 millis", 4],
+        ["1 second", 5],
+        ["2 seconds", 6],
+        ["2 seconds", 7],
+      ] as const) {
+        yield* TestClock.adjust(wait);
+        expect(debuggee.nativeCaptures()).toBe(prods);
+      }
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(4);
+      yield* TestClock.adjust("10 seconds");
+      expect(debuggee.nativeCaptures()).toBe(7);
     }).pipe(Effect.scoped),
   );
 

@@ -33,7 +33,9 @@ const FOCUS_IDLE = "5 seconds";
 /** How long a screenshot waits for the client to draw its guest at full detail. */
 const CAPTURE_DRAW_WAIT = "1 second";
 /** Most waits settle within a frame or two of this, so a quick one is never prodded. */
-const PAINT_NUDGE_INTERVAL = "250 millis";
+const PAINT_NUDGE_FIRST_MS = 250;
+/** A long wait, such as a page awaiting a timer, is prodded less often as it goes on. */
+const PAINT_NUDGE_LONGEST_MS = 2_000;
 /** A cold guest can stall Electron's capture; the next prod goes out regardless. */
 const PAINT_NUDGE_TIMEOUT = "2 seconds";
 /** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
@@ -50,8 +52,6 @@ export interface DesktopBrowserTabDebugger {
   readonly debugger: Electron.Debugger;
   /** Runs after the server clears the tab's cookies, so state kept beside them goes too. */
   readonly cookiesCleared?: () => Promise<void>;
-  /** Whether the window hosting the guest draws it; one that cannot is prodded to. */
-  readonly windowDrawing?: () => boolean;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
@@ -265,15 +265,16 @@ export const make = Effect.gen(function* () {
   };
 
   /**
-   * A hidden or minimized window stops drawing its guest even while unthrottled, so a
-   * capture, or a command that waits on a frame, never settles. Electron's own capture still
-   * draws one, so a wait that outlasts a frame prods the guest until it settles.
+   * A hidden, minimized or covered window stops drawing its guest even while unthrottled, and
+   * Electron reports a covered one as visible, so a capture, or a command that waits on a frame,
+   * can wait forever. Electron's own capture still draws one, so a wait that outlasts a frame
+   * prods the guest, less often as it goes on.
    */
-  const nudgePaint = ({ webContents, windowDrawing }: DesktopBrowserTabDebugger) =>
-    Effect.sleep(PAINT_NUDGE_INTERVAL).pipe(
+  const nudgePaint = (webContents: Electron.WebContents, delayMs: number): Effect.Effect<void> =>
+    Effect.sleep(delayMs).pipe(
       Effect.andThen(
         Effect.suspend(() =>
-          webContents.isDestroyed() || windowDrawing?.() === true
+          webContents.isDestroyed()
             ? Effect.void
             : Effect.promise(() =>
                 webContents.capturePage().then(
@@ -283,11 +284,15 @@ export const make = Effect.gen(function* () {
               ).pipe(Effect.timeoutOption(PAINT_NUDGE_TIMEOUT)),
         ),
       ),
-      Effect.forever,
+      Effect.andThen(
+        Effect.suspend(() =>
+          nudgePaint(webContents, Math.min(delayMs * 2, PAINT_NUDGE_LONGEST_MS)),
+        ),
+      ),
     );
 
   const nudgedUntilSettled = <A>(tab: AttachedTab, work: () => Promise<A>) => {
-    const nudging = runFork(nudgePaint(tab.debuggee));
+    const nudging = runFork(nudgePaint(tab.debuggee.webContents, PAINT_NUDGE_FIRST_MS));
     return work().finally(() => runFork(Fiber.interrupt(nudging)));
   };
 
