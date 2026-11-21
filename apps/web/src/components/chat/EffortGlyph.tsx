@@ -1,5 +1,6 @@
 import type { ProviderOptionDescriptor } from "@t3tools/contracts";
 import { ZapIcon } from "lucide-react";
+import { useId } from "react";
 
 import type { ComposerControlSize } from "./ComposerControl";
 
@@ -88,20 +89,43 @@ export function EffortGlyph(props: { count: number; filled: number; size?: Compo
   );
 }
 
-/** One bolt for Fast. Ultrafast adds an outlined echo behind it, cut away by the surface color. */
+// lucide's `zap` path, on its 24-unit grid.
+const ZAP_PATH =
+  "M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z";
+
+/** One bolt for Fast. Ultrafast adds an outlined echo behind it, masked clear of the front bolt. */
 export function FastBolt(props: { ultra: boolean }) {
+  const maskId = useId();
   if (!props.ultra) {
     return (
       <ZapIcon aria-hidden="true" data-composer-control-icon className="size-3 fill-current" />
     );
   }
+  // A mask rather than a surface-colored stroke, so the gap shows on any background (popups too).
   return (
-    <span aria-hidden="true" className="relative h-3 w-3.75 shrink-0">
-      <ZapIcon className="absolute top-0 left-0.75 size-3" />
-      <ZapIcon
-        strokeWidth={4}
-        className="absolute top-0 left-0 size-3 fill-current stroke-(--chat-composer-glass-surface) [paint-order:stroke]"
-      />
-    </span>
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 30 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      // Inline size and the icon marker keep the composer control CSS from resizing or shifting it.
+      style={{ width: 15, height: 12 }}
+      className="shrink-0"
+      data-composer-control-icon
+    >
+      <mask id={maskId}>
+        {/* oxlint-disable-next-line shadcn/no-raw-colors -- mask luminance, never painted */}
+        <rect width={30} height={24} fill="white" stroke="none" />
+        {/* oxlint-disable-next-line shadcn/no-raw-colors -- mask luminance, never painted */}
+        <path d={ZAP_PATH} fill="black" stroke="black" strokeWidth={4} />
+      </mask>
+      <g mask={`url(#${maskId})`}>
+        <path d={ZAP_PATH} transform="translate(6 0)" />
+      </g>
+      <path d={ZAP_PATH} fill="currentColor" stroke="none" />
+    </svg>
   );
 }
