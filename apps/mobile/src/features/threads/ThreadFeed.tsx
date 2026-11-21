@@ -3752,7 +3752,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         environmentId={media.source.environmentId}
         resource={media.source.resource}
         alt={image.alt}
-        srcFragment={media.source.srcFragment ?? ""}
+        srcFragment={media.source.srcFragment}
         actionsSource={media.source.actionsSource}
         onPressPreview={onPressPreview}
       />
