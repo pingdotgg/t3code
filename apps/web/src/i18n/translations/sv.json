@@ -2595,6 +2595,7 @@
   "55f4078f7fe8e597": "{term, select, mr {MR} cr {Ändringsbegäran} other {PR}} #{number}, status väntande",
   "3260b22f72f7effb": "{tooltipLead}: {title}",
   "feac8e54b30c5a03": "Terminalprocess körs",
+  "a50c626faf82b4d1": "{count, plural, one {+{count} till} other {+{count} till}}",
   "fc2c9a91f498ad6b": "{count, plural, one {{count} terminalprocess körs. Öppna terminalen} other {{count} terminalprocesser körs. Öppna terminalen}}",
   "643c4b50feadc874": "Worktree: {path} ({branch})",
   "fb7c44da0f0825ea": "Worktree: {path}",

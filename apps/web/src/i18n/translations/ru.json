@@ -2595,6 +2595,7 @@
   "55f4078f7fe8e597": "{term, select, mr {MR} cr {Запрос на изменение} other {PR}} #{number}, статус ожидается",
   "3260b22f72f7effb": "{tooltipLead}: {title}",
   "feac8e54b30c5a03": "Процесс в терминале запущен",
+  "a50c626faf82b4d1": "{count, plural, one {+{count} ещё} few {+{count} ещё} many {+{count} ещё} other {+{count} ещё}}",
   "fc2c9a91f498ad6b": "{count, plural, one {Запущен {count} процесс в терминале. Открыть терминал} few {Запущено {count} процесса в терминале. Открыть терминал} many {Запущено {count} процессов в терминале. Открыть терминал} other {Запущено {count} процесса в терминале. Открыть терминал}}",
   "643c4b50feadc874": "Рабочее дерево: {path} ({branch})",
   "fb7c44da0f0825ea": "Рабочее дерево: {path}",

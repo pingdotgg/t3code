@@ -4,7 +4,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { render } from "../../test/render";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { makeThreadFixture } from "../test-fixtures";
-import { ThreadRowLeadingStatus } from "./ThreadStatusIndicators";
+import { ThreadPullRequestsMiniList, ThreadRowLeadingStatus } from "./ThreadStatusIndicators";
 
 const environmentId = EnvironmentId.make("environment-test");
 
@@ -63,4 +63,23 @@ it("updates palette PR status from linked snapshots without a legacy link or bra
   );
   await expect.element(screen.getByLabelText("PR #7 - Draft: Linked change")).toBeVisible();
   await expect.element(screen.getByLabelText("PR #7, status pending")).not.toBeInTheDocument();
+});
+
+it("mounts only the first rows of a limited PR list and counts the rest", async () => {
+  const pullRequests = Array.from({ length: 8 }, (_, index): ThreadPullRequestLink => ({
+    host: "github.com",
+    repository: "example/repo",
+    number: index + 1,
+    url: `https://github.com/example/repo/pull/${index + 1}`,
+    source: "manual",
+    linkedAt: "2026-01-01T00:00:00Z",
+    stack: null,
+    snapshot: null,
+  }));
+  await using screen = await render(
+    <ThreadPullRequestsMiniList pullRequests={pullRequests} limit={5} />,
+  );
+  await expect.element(screen.getByText("+3 more")).toBeVisible();
+  expect(screen.container.querySelectorAll("li")).toHaveLength(6);
+  await expect.element(screen.getByText("#6")).not.toBeInTheDocument();
 });
