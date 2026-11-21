@@ -203,6 +203,7 @@ import {
   resolveSidebarReorderableThreadKeys,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
+  resolveScopedNewThreadProjectRef,
   shouldNavigateAfterThreadPark,
   sidebarListItemId,
   sidebarThreadKeyAtY,
@@ -2617,17 +2618,30 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
 
   const handleThreadContextMenu = useStableCallback(
-    (threadRef: ScopedThreadRef, position: { x: number; y: number }, source: ContextMenuSource) => {
+    (
+      threadRef: ScopedThreadRef,
+      position: { x: number; y: number },
+      source: ContextMenuSource,
+      fromSearch = false,
+    ) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
         const threadKey = scopedThreadKey(threadRef);
         const selectionState = useThreadSelectionStore.getState();
-        if (selectionState.hasSelection() && selectionState.selectedThreadKeys.has(threadKey)) {
+        // Search results are not selectable rows, so they always act on their own thread.
+        if (
+          !fromSearch &&
+          selectionState.hasSelection() &&
+          selectionState.selectedThreadKeys.has(threadKey)
+        ) {
           await handleMultiSelectContextMenu(position, source);
           return;
         }
-        const thread = threadByKeyRef.current.get(threadKey);
+        // Search results also reach threads in collapsed shelves, which are not rendered rows.
+        const thread =
+          threadByKeyRef.current.get(threadKey) ??
+          searchableThreads.find((candidate) => threadShellKey(candidate) === threadKey);
         if (!thread) return;
         const threadWorkspacePath =
           thread.worktreePath ??
@@ -2681,6 +2695,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              canRename: !fromSearch,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2907,6 +2922,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       })();
     },
   );
+  const handleSearchResultContextMenu = useStableCallback(
+    (threadRef: ScopedThreadRef, position: { x: number; y: number }, source: ContextMenuSource) =>
+      handleThreadContextMenu(threadRef, position, source, true),
+  );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation shortcuts using the current thread list
   useEffect(() => {
@@ -2969,6 +2988,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     : null;
 
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
+    const scopedProjectRef = resolveScopedNewThreadProjectRef({
+      shiftKey: event?.shiftKey ?? false,
+      // The folder sidebar's header button always opens the picker.
+      scopedProjectGroups: boringSidebarEnabled ? [] : scopedProjectGroups,
+      viewed: newThreadContext.activeThread ?? newThreadContext.activeDraftThread,
+    });
+    if (scopedProjectRef) {
+      if (isMobile) setOpenMobile(false);
+      void handleNewThread(scopedProjectRef);
+      return;
+    }
     if (
       shouldCreateNewThreadInCurrentProject(
         event?.shiftKey ?? false,
@@ -3307,6 +3337,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           searchMatchQuery={threadSearch.query}
                           onHighlight={() => setActiveSearchResultIndex(index)}
                           onSelect={() => selectThreadSearchResult(thread)}
+                          onContextMenu={handleSearchResultContextMenu}
                           onFileDropThreads={handleThreadFileDrop}
                         />
                       );

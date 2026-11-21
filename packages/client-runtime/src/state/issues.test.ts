@@ -8,10 +8,13 @@ import {
   ProjectId,
   type IssueComment,
   type IssueCommentsPage,
+  type IssueDetail,
   type IssueListEntry,
   type IssueListResult,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -84,7 +87,34 @@ const comment = (id: string): IssueComment => ({
 });
 
 describe("createIssueCommentPager", () => {
-  it("drops older pages on refresh, including one still loading, and pauses paging until it ends", async () => {
+  it("keeps older pages through a failed refresh", async () => {
+    const loaded = AsyncResult.success({ comments: [comment("newest")], commentsCursor: "first" });
+    const detail =
+      Atom.make<AsyncResult.AsyncResult<Pick<IssueDetail, "comments" | "commentsCursor">, string>>(
+        loaded,
+      );
+    const pager = createIssueCommentPager(detail);
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(pager.view);
+    try {
+      await pager.loadOlder(registry, async () =>
+        AsyncResult.success({ comments: [comment("older")], nextCursor: null }),
+      );
+      await pager.refresh(registry, async () => {
+        registry.set(detail, AsyncResult.waiting(loaded));
+        registry.set(
+          detail,
+          AsyncResult.failure(Cause.fail("rate limited"), { previousSuccess: Option.some(loaded) }),
+        );
+      });
+      expect(registry.get(pager.view).comments.map(({ id }) => id)).toEqual(["older", "newest"]);
+    } finally {
+      unmount();
+      registry.dispose();
+    }
+  });
+
+  it("drops older pages once a refresh lands, including one still loading, and pauses paging until it ends", async () => {
     // The refreshed detail hands back the same cursor, so only the refresh itself can tell pages apart.
     const detail = Atom.make(
       AsyncResult.success({ comments: [comment("newest")], commentsCursor: "first-page" }),
@@ -109,18 +139,56 @@ describe("createIssueCommentPager", () => {
       const pending = Promise.withResolvers<typeof page>();
       const inFlight = pager.loadOlder(registry, () => pending.promise);
       const refreshed = Promise.withResolvers<void>();
-      const refresh = pager.refresh(registry, () => refreshed.promise);
+      const refresh = pager.refresh(registry, async () => {
+        await refreshed.promise;
+        registry.set(
+          detail,
+          AsyncResult.success({ comments: [comment("newest")], commentsCursor: "first-page" }),
+        );
+      });
       pending.resolve(page);
       await inFlight;
-      expect(ids()).toEqual(["newest"]);
 
       await pager.loadOlder(registry, read);
       expect(registry.get(pager.view).canLoadOlder).toBe(false);
       refreshed.resolve();
       await refresh;
+      expect(ids()).toEqual(["newest"]);
       await pager.loadOlder(registry, read);
       expect(cursors).toEqual(["first-page", "first-page"]);
       expect(ids()).toEqual(["older", "newest"]);
+    } finally {
+      unmount();
+      registry.dispose();
+    }
+  });
+
+  it("discards loaded and late older pages after refreshing unchanged detail", async () => {
+    const value = { comments: [comment("newest")], commentsCursor: "first" };
+    const detail = Atom.make(AsyncResult.success(value));
+    const pager = createIssueCommentPager(detail);
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(pager.view);
+    const pending = Promise.withResolvers<AsyncResult.Success<IssueCommentsPage>>();
+    try {
+      await pager.loadOlder(registry, async () =>
+        AsyncResult.success({ comments: [comment("older")], nextCursor: "second" }),
+      );
+      const inFlight = pager.loadOlder(registry, () => pending.promise);
+      await pager.refresh(registry, async () => {
+        registry.set(detail, AsyncResult.waiting(registry.get(detail)));
+        registry.set(detail, AsyncResult.success(value));
+      });
+      const afterRefresh = registry.get(pager.view);
+
+      pending.resolve(AsyncResult.success({ comments: [comment("oldest")], nextCursor: null }));
+      await inFlight;
+
+      expect(afterRefresh.comments.map(({ id }) => id)).toEqual(["newest"]);
+      const settled = registry.get(pager.view);
+      expect(settled.comments.map(({ id }) => id)).toEqual(["newest"]);
+      expect(settled.nextCursor).toBe("first");
+      expect(settled.canLoadOlder).toBe(true);
     } finally {
       unmount();
       registry.dispose();
@@ -189,7 +257,7 @@ describe("createMergedIssueListAtoms", () => {
   it("refreshes the open listings of the environment written to", () => {
     const reads = new Map<string, number>();
     const lists = new Map<string, Atom.Atom<AsyncResult.AsyncResult<IssueListResult>>>();
-    const listings = createMergedIssueListAtoms((target) => {
+    const list = (target: IssueListTarget) => {
       const key = `${target.environmentId}:${target.input.query}`;
       const existing = lists.get(key);
       if (existing !== undefined) return existing;
@@ -199,7 +267,11 @@ describe("createMergedIssueListAtoms", () => {
       });
       lists.set(key, atom);
       return atom;
-    }, String);
+    };
+    const listings = createMergedIssueListAtoms(
+      { list, refreshList: (registry, target) => registry.refresh(list(target)) },
+      String,
+    );
     const registry = AtomRegistry.make();
     const written = EnvironmentId.make("written");
     const other = EnvironmentId.make("other");
@@ -218,11 +290,44 @@ describe("createMergedIssueListAtoms", () => {
     }
   });
 
+  it("retries only failed environments, leaving one still loading to finish", () => {
+    const registry = AtomRegistry.make();
+    const targets = ["slow", "flaky"].map((environmentId) => ({
+      environmentId: EnvironmentId.make(environmentId),
+      input: { state: "open" as const },
+    }));
+    const requests: string[] = [];
+    const lists = Atom.family((environmentId: string) =>
+      Atom.make(
+        Effect.suspend(() => {
+          requests.push(environmentId);
+          return environmentId === "flaky" ? Effect.fail("Tracker unavailable") : Effect.never;
+        }),
+      ),
+    );
+    const listings = createMergedIssueListAtoms(
+      { list: (target) => lists(target.environmentId), refreshList: () => {} },
+      () => "Tracker unavailable",
+    );
+    const view = listings.atom(targets);
+    const unmount = registry.mount(view);
+    try {
+      expect(registry.get(view)).toMatchObject({ error: "Tracker unavailable", isPending: true });
+
+      listings.retry(registry, targets);
+
+      expect(requests).toEqual(["slow", "flaky", "flaky"]);
+    } finally {
+      unmount();
+      registry.dispose();
+    }
+  });
+
   it("releases historical search targets when the list closes", async () => {
     NodeV8.setFlagsFromString("--expose-gc");
     const gc = NodeVM.runInNewContext("gc") as () => void;
     const listings = createMergedIssueListAtoms(
-      () => Atom.make(AsyncResult.success(answer)),
+      { list: () => Atom.make(AsyncResult.success(answer)), refreshList: () => {} },
       String,
     );
     const registry = AtomRegistry.make();
