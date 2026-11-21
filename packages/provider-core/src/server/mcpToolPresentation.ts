@@ -1,4 +1,5 @@
 import type { ToolActivityIcon, ToolActivitySource } from "@t3tools/contracts";
+import { isPublicFaviconHost } from "@t3tools/shared/hostClassification";
 import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
 
 export function normalizeMcpText(value: unknown, maxLength = 160): string | undefined {
@@ -19,6 +20,67 @@ export function normalizeMcpHttpUrl(value: unknown): string | undefined {
   }
 }
 
+/** What the provider reports about the MCP server behind a tool call. */
+export interface McpServerPresentation {
+  /** MCP `Implementation.icons` from the server's initialize result. */
+  readonly icons?: unknown;
+  /** MCP `Tool.icons` of the called tool. */
+  readonly toolIcons?: unknown;
+  readonly websiteUrl?: unknown;
+  /** The server's HTTP address. Only its origin reaches clients. */
+  readonly url?: unknown;
+}
+
+const MAX_DECLARED_ICONS = 32;
+// Leading host labels dropped to reach the brand site, as in mcp.higgsfield.ai → higgsfield.ai.
+const MCP_SERVICE_HOST_LABELS: ReadonlySet<string> = new Set(["mcp", "api"]);
+
+/** Picks MCP `Icon` entries for light and dark backgrounds; `data:` URIs are skipped to keep rows small. */
+function declaredMcpIcon(value: unknown): ToolActivityIcon | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const icons = value.slice(0, MAX_DECLARED_ICONS).flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const src = normalizeMcpHttpUrl(Reflect.get(entry, "src"));
+    const mimeType = Reflect.get(entry, "mimeType");
+    if (!src || (typeof mimeType === "string" && !mimeType.startsWith("image/"))) return [];
+    const theme = Reflect.get(entry, "theme");
+    const sizes = Reflect.get(entry, "sizes");
+    return [
+      {
+        src,
+        theme: theme === "light" || theme === "dark" ? theme : undefined,
+        scalable: mimeType === "image/svg+xml" || (Array.isArray(sizes) && sizes.includes("any")),
+      },
+    ];
+  });
+  const pick = (theme: "light" | "dark" | undefined) => {
+    const matches = icons.filter((icon) => icon.theme === theme);
+    return (matches.find((icon) => icon.scalable) ?? matches[0])?.src;
+  };
+  const themedLight = pick("light");
+  const logoUrl = themedLight ?? pick(undefined) ?? pick("dark");
+  if (!logoUrl) return undefined;
+  const logoUrlDark = pick("dark") ?? (themedLight ? pick(undefined) : undefined);
+  return {
+    _tag: "themed-logo",
+    logoUrl,
+    ...(logoUrlDark && logoUrlDark !== logoUrl ? { logoUrlDark } : {}),
+  };
+}
+
+/** The site icon for a public HTTP address, sent as an origin so paths and query secrets stay home. */
+function siteIcon(value: unknown): ToolActivityIcon | undefined {
+  const href = normalizeMcpHttpUrl(value);
+  if (!href) return undefined;
+  const url = new URL(href);
+  if (!isPublicFaviconHost(url.hostname)) return undefined;
+  const labels = url.hostname.split(".");
+  if (labels.length > 2 && MCP_SERVICE_HOST_LABELS.has(labels[0]!.toLowerCase())) {
+    url.hostname = labels.slice(1).join(".");
+  }
+  return { _tag: "website", pageUrl: url.origin };
+}
+
 export function mcpToolPresentation(input: {
   readonly toolName?: unknown;
   readonly serverName?: unknown;
@@ -27,6 +89,7 @@ export function mcpToolPresentation(input: {
   readonly iconUrl?: unknown;
   readonly iconUrlDark?: unknown;
   readonly source?: unknown;
+  readonly server?: McpServerPresentation | undefined;
 }): {
   readonly title?: string;
   readonly toolIcon?: ToolActivityIcon;
@@ -54,12 +117,18 @@ export function mcpToolPresentation(input: {
   const logoUrlDark =
     normalizeMcpHttpUrl(input.iconUrlDark) ??
     normalizeMcpHttpUrl(source && Reflect.get(source, "logoUrlDark"));
-  const icon = logoUrl
+  const providerIcon = logoUrl
     ? { _tag: "themed-logo" as const, logoUrl, ...(logoUrlDark ? { logoUrlDark } : {}) }
     : undefined;
+  const icon =
+    declaredMcpIcon(input.server?.icons) ??
+    providerIcon ??
+    siteIcon(input.server?.websiteUrl) ??
+    siteIcon(input.server?.url);
+  const toolIcon = declaredMcpIcon(input.server?.toolIcons) ?? icon;
   return {
     ...(title ? { title } : {}),
-    ...(icon ? { toolIcon: icon } : {}),
+    ...(toolIcon ? { toolIcon } : {}),
     toolSource: {
       key: `mcp:${server.toLowerCase()}`,
       name,

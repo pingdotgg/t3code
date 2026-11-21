@@ -809,6 +809,32 @@ export function summarizeToolGroup(
   return { summary, hasFailure: summaries.some((group) => group.failedCount > 0) };
 }
 
+const MAX_TOOL_GROUP_SOURCE_ICONS = 4;
+
+/** Distinct logos of the sources a tool group's summary names, in the summary's order. */
+export function toolGroupSourceIcons(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+): ReadonlyArray<ToolActivityIcon> {
+  const icons = new Map<string, ToolActivityIcon | undefined>();
+  for (const entry of entries) {
+    const source = entry.toolSource;
+    if (
+      source === undefined ||
+      entry.itemType === "reasoning" ||
+      resolveT3McpSummaryAction(workEntryToolName(entry), t3ToolSummaryCall(entry).input) !== null
+    ) {
+      continue;
+    }
+    icons.set(source.name, icons.get(source.name) ?? source.icon ?? entry.toolIcon);
+  }
+  // Clients key each logo by its JSON, so two sources sharing one logo must show it once.
+  const distinct = new Map<string, ToolActivityIcon>();
+  for (const icon of icons.values()) {
+    if (icon !== undefined) distinct.set(JSON.stringify(icon), icon);
+  }
+  return [...distinct.values()].slice(0, MAX_TOOL_GROUP_SOURCE_ICONS);
+}
+
 export function toolGroupSummaryKind(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): ToolGroupSummaryKind {

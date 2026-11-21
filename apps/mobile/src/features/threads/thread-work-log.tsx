@@ -1410,6 +1410,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly themeAppearance: "light" | "dark";
   readonly toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
+  readonly sourceIcons?: ReadonlyArray<ToolActivityIcon> | undefined;
   readonly hasFailure: boolean;
   readonly shimmer: boolean;
   readonly thought?: string | undefined;
@@ -1479,19 +1480,34 @@ export function ThreadWorkGroupToggle(props: {
                 label={props.summary}
                 showIcon
                 themeAppearance={props.themeAppearance}
-                toolIcon={props.toolIcon}
+                toolIcon={props.toolIcon ?? props.sourceIcons?.[0]}
               />
             ) : (
               <>
-                <WorkLogIconSlot>
-                  <ToolActivityIconView
-                    environmentId={props.environmentId}
-                    icon={props.toolIcon}
-                    fallback={icon}
-                    fallbackColor={props.iconSubtleColor}
-                    themeAppearance={props.themeAppearance}
-                  />
-                </WorkLogIconSlot>
+                {props.sourceIcons ? (
+                  <View className="h-6 shrink-0 flex-row items-center">
+                    {props.sourceIcons.slice(0, 3).map((sourceIcon, index) => (
+                      <View key={JSON.stringify(sourceIcon)} className={index > 0 ? "-ml-1" : ""}>
+                        <ToolActivityIconView
+                          environmentId={props.environmentId}
+                          icon={sourceIcon}
+                          fallbackColor={props.iconSubtleColor}
+                          themeAppearance={props.themeAppearance}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <WorkLogIconSlot>
+                    <ToolActivityIconView
+                      environmentId={props.environmentId}
+                      icon={props.toolIcon}
+                      fallback={icon}
+                      fallbackColor={props.iconSubtleColor}
+                      themeAppearance={props.themeAppearance}
+                    />
+                  </WorkLogIconSlot>
+                )}
                 <WorkLogLabel>{props.summary}</WorkLogLabel>
               </>
             )}
@@ -1535,15 +1551,18 @@ export function ThreadThinkingRow(props: {
   );
 }
 
+/** Without `fallback`, a missing or broken image renders nothing. */
 function ToolActivityIconView(props: {
   readonly environmentId: EnvironmentId;
   readonly icon?: ToolActivityIcon;
-  readonly fallback: WorkContentIcon;
+  readonly fallback?: WorkContentIcon | undefined;
   readonly fallbackColor: ColorValue;
   readonly themeAppearance: "light" | "dark";
 }) {
   if (!props.icon) {
-    return <WorkLogIcon icon={props.fallback} color={props.fallbackColor} />;
+    return props.fallback ? (
+      <WorkLogIcon icon={props.fallback} color={props.fallbackColor} />
+    ) : null;
   }
   if (props.icon._tag === "website") {
     const source = toolActivityFaviconUrl(props.icon, props.themeAppearance, 32);
@@ -1555,9 +1574,9 @@ function ToolActivityIconView(props: {
         color={props.fallbackColor}
         themeAppearance={props.themeAppearance}
       />
-    ) : (
+    ) : props.fallback ? (
       <WorkLogIcon icon={props.fallback} color={props.fallbackColor} />
-    );
+    ) : null;
   }
   if (props.icon._tag === "themed-logo") {
     const source =
@@ -1588,7 +1607,7 @@ function ToolActivityIconView(props: {
 function NativeAppToolActivityIcon(props: {
   readonly environmentId: EnvironmentId;
   readonly app: Extract<ToolActivityIcon, { readonly _tag: "native-app" }>["app"];
-  readonly fallback: WorkContentIcon;
+  readonly fallback: WorkContentIcon | undefined;
   readonly color: ColorValue;
   readonly themeAppearance: "light" | "dark";
 }) {
@@ -1604,14 +1623,14 @@ function NativeAppToolActivityIcon(props: {
       color={props.color}
       themeAppearance={props.themeAppearance}
     />
-  ) : (
+  ) : props.fallback ? (
     <WorkLogIcon icon={props.fallback} color={props.color} />
-  );
+  ) : null;
 }
 
 function ToolActivityImage(props: {
   readonly source: string;
-  readonly fallback: WorkContentIcon;
+  readonly fallback: WorkContentIcon | undefined;
   readonly color: ColorValue;
   readonly themeAppearance: "light" | "dark";
 }) {
@@ -1619,7 +1638,9 @@ function ToolActivityImage(props: {
   const [failed, setFailed] = useState(false);
   return (
     <View className="h-4 w-4 items-center justify-center overflow-hidden rounded-[3px] bg-screen">
-      {!loaded || failed ? <WorkLogIcon icon={props.fallback} color={props.color} /> : null}
+      {(!loaded || failed) && props.fallback ? (
+        <WorkLogIcon icon={props.fallback} color={props.color} />
+      ) : null}
       {!failed ? (
         <View
           style={[

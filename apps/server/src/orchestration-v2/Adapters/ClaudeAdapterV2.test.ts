@@ -6957,6 +6957,53 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
+    {
+      name: "the icons its server declares",
+      status: {
+        serverInfo: {
+          name: "probe",
+          version: "1.0.0",
+          icons: [
+            { src: "https://probe.dev/light.svg", mimeType: "image/svg+xml", theme: "light" },
+            { src: "https://probe.dev/dark.svg", mimeType: "image/svg+xml", theme: "dark" },
+          ],
+        },
+        config: { type: "http", url: "https://mcp.probe.dev/mcp" },
+      },
+      icon: {
+        _tag: "themed-logo",
+        logoUrl: "https://probe.dev/light.svg",
+        logoUrlDark: "https://probe.dev/dark.svg",
+      },
+    },
+    {
+      name: "its HTTP server's site icon",
+      status: { config: { type: "http", url: "https://mcp.probe.dev/mcp?key=secret" } },
+      icon: { _tag: "website", pageUrl: "https://probe.dev" },
+    },
+  ] as const)("shows an MCP tool row with $name", ({ status, icon }) =>
+    Effect.gen(function* () {
+      const { item } = yield* runClaudeMcpAppToolTurn([], {
+        mcpServerStatus: Effect.succeed([{ ...PROBE_SERVER_STATUS, ...status }]),
+      });
+      assert.equal(item.type, "dynamic_tool");
+      if (item.type !== "dynamic_tool") return;
+      assert.deepEqual(item.toolSource?.icon, icon);
+      assert.deepEqual(item.toolIcon, icon);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
     { case: "no permission rules", rules: [], called: true, readOnly: true },
     {
       case: "an exact ask rule",
@@ -7263,7 +7310,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     Effect.gen(function* () {
       const { harness, item, mcpRequests } = yield* runClaudeMcpAppToolTurn([]);
       assert.isUndefined(mcpAppFromToolItem(item));
-      assert.deepEqual(mcpRequests, []);
+      // The one status read is the tool icon's; no app resource is read.
+      assert.deepEqual(mcpRequests, ["mcpServerStatus"]);
       const exit = yield* Effect.exit(
         harness.runtime.mcpApps!.callTool({
           providerThread: harness.providerThread,
@@ -7273,7 +7321,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       assert.isTrue(Exit.isFailure(exit));
-      assert.deepEqual(mcpRequests, []);
+      assert.deepEqual(mcpRequests, ["mcpServerStatus"]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -24782,6 +24830,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001372", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("shows a workflow member's MCP tool row with its server's icon", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWorkflowHarnessWithOptions({
+        mcp: {
+          mcpServerStatus: Effect.succeed([
+            {
+              ...PROBE_SERVER_STATUS,
+              tools: [{ name: "lookup" }],
+              config: { type: "http", url: "https://mcp.probe.dev/mcp" },
+            },
+          ]),
+          readMcpResource: () => Effect.die("unexpected MCP resource read"),
+          callMcpTool: () => Effect.die("unexpected MCP tool call"),
+        },
+      });
+      NodeFS.writeFileSync(
+        NodePath.join(harness.transcriptDir, "agent-a1.jsonl"),
+        memberAssistantLine("line-mcp", "msg_a1", [
+          { type: "tool_use", id: "toolu_a1_mcp", name: "mcp__probe_server__lookup", input: {} },
+        ]),
+      );
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-workflow-member-mcp-icon"),
+          text: "Run the alpha workflow.",
+          attachments: [],
+        }),
+      );
+      yield* launchWorkflow({ harness, snapshotUuid: "00000000-0000-4000-8000-000000009810" });
+      const threadId = workflowMemberEvents(harness.events, 1)[0]?.subagent.childThreadId;
+      const tool = latestMemberThreadItems(harness.events, threadId).find(
+        (item) => item.type === "dynamic_tool",
+      );
+      assert.deepEqual(tool?.type === "dynamic_tool" ? tool.toolIcon : undefined, {
+        _tag: "website",
+        pageUrl: "https://probe.dev",
+      });
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000009811", result: "Done." }),
       );
       yield* Queue.take(harness.terminalReceipts);
     }).pipe(
