@@ -31,7 +31,11 @@ import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironment
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
-import { environmentStatusText } from "./environmentStatusText";
+import {
+  PAUSED_SWITCH_OPACITY,
+  environmentStatusText,
+  offStatusText,
+} from "./environmentStatusText";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
 interface CloudEnvironmentRowsProps {
@@ -184,7 +188,7 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly onOpen?: (() => void) | undefined;
   readonly onToggleError: () => void;
 }) {
-  const gt = useGT();
+  const m = useMessages();
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
@@ -223,8 +227,9 @@ function ConnectedCloudEnvironmentRow(props: {
         ? diagnosis
           ? { statusText: diagnosis.headline }
           : {}
-        : { statusText: gt("Off", { $context: "environment is switched off" }) })}
-      value={enabled}
+        : { statusText: offStatusText(props.environment, m) })}
+      dimmed={props.environment.isPausedByFocus}
+      value={(enabled || props.environment.isPausedByFocus) && !unsupported}
     />
   );
 }
@@ -285,6 +290,7 @@ function CloudEnvironmentRowShell(props: {
   /** Waiting on the host to approve this device: say so plainly, not as a failure. */
   readonly awaitingApproval?: boolean;
   readonly disabled?: boolean;
+  readonly dimmed?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
   readonly machine: EnvironmentMachineKind;
@@ -316,6 +322,12 @@ function CloudEnvironmentRowShell(props: {
     props.connectionError && props.connectionState !== "unsupported" && !props.awaitingApproval
       ? "text-danger-foreground"
       : "text-foreground-muted";
+  const removalHint = props.onRemove ? gt("Long press to remove from this device") : undefined;
+  const accessibilityHint = props.dimmed
+    ? removalHint
+      ? `${statusText}. ${removalHint}`
+      : statusText
+    : removalHint;
   const [errorMeasurement, setErrorMeasurement] = useState<{
     readonly text: string;
     readonly lineCount: number;
@@ -352,7 +364,7 @@ function CloudEnvironmentRowShell(props: {
     <View collapsable={false} className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5">
       <ContentContainer
         className="min-w-0 flex-1 gap-0.5 active:opacity-70"
-        accessibilityHint={props.onRemove ? gt("Long press to remove from this device") : undefined}
+        accessibilityHint={accessibilityHint}
         accessibilityRole={props.onOpen ? "button" : undefined}
         accessibilityLabel={rowActionLabel}
         onPress={props.onOpen}
@@ -420,8 +432,9 @@ function CloudEnvironmentRowShell(props: {
         </StatusContainer>
       </ContentContainer>
       <ThemedSwitch
+        accessibilityHint={props.dimmed ? statusText : undefined}
         accessibilityLabel={gt("Enable {environment}", { environment: props.label })}
-        style={{ alignSelf: "center" }}
+        style={{ alignSelf: "center", opacity: props.dimmed ? PAUSED_SWITCH_OPACITY : 1 }}
         disabled={props.disabled}
         onValueChange={props.onValueChange}
         value={props.value}

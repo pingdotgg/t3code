@@ -9,6 +9,7 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
+import { isPausedByFocus, shouldConnect } from "../connection/catalog.ts";
 import { AVAILABLE_CONNECTION_STATE, type SupervisorConnectionState } from "../connection/model.ts";
 import {
   connectionCatalogDisplayUrl,
@@ -78,7 +79,8 @@ export function createEnvironmentPresentationAtoms<E>(input: {
 }) {
   const presentationAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
-      const entry = get(input.catalogValueAtom).entries.get(environmentId);
+      const catalog = get(input.catalogValueAtom);
+      const entry = catalog.entries.get(environmentId);
       if (entry === undefined) {
         return null;
       }
@@ -91,7 +93,8 @@ export function createEnvironmentPresentationAtoms<E>(input: {
       const connection: EnvironmentConnectionPresentation =
         entry.unsupportedReason !== undefined
           ? { phase: "unsupported", error: entry.unsupportedReason, traceId: null }
-          : state === AVAILABLE_CONNECTION_STATE && entry.enabled
+          : state === AVAILABLE_CONNECTION_STATE &&
+              shouldConnect(entry, catalog.focusAllowlist ?? null)
             ? { phase: "connecting", error: null, traceId: null }
             : presentConnectionState(state);
       const next = {
@@ -108,12 +111,14 @@ export function createEnvironmentPresentationAtoms<E>(input: {
           previous !== null && sameRouteIds(previous.refusedRouteIds, state.refusedRouteIds)
             ? previous.refusedRouteIds
             : state.refusedRouteIds,
+        pausedByFocus: isPausedByFocus(entry, catalog.focusAllowlist ?? null),
       } satisfies EnvironmentPresentation;
       return previous !== null &&
         previous.entry === next.entry &&
         previous.connection === next.connection &&
         previous.serverConfig === next.serverConfig &&
-        previous.refusedRouteIds === next.refusedRouteIds
+        previous.refusedRouteIds === next.refusedRouteIds &&
+        previous.pausedByFocus === next.pausedByFocus
         ? previous
         : next;
     }).pipe(Atom.withLabel(`environment-presentation:${environmentId}`)),
@@ -184,6 +189,7 @@ export function createEnvironmentPresentationAtoms<E>(input: {
           prior.entry === presentation.entry &&
           prior.connection === presentation.connection &&
           prior.refusedRouteIds === presentation.refusedRouteIds &&
+          prior.pausedByFocus === presentation.pausedByFocus &&
           prior.serverConfig === serverConfig
           ? prior
           : { ...presentation, serverConfig },
@@ -206,7 +212,9 @@ export interface EnvironmentConnectionSummary {
   readonly environmentLabel: string;
   readonly displayUrl: string;
   readonly isRelayManaged: boolean;
+  /** Switched on and not paused by a Focus filter. */
   readonly isEnabled: boolean;
+  readonly isPausedByFocus: boolean;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   /** `connectionError` as marked text; display sites resolve it with `resolveMarkedText`. */
@@ -223,7 +231,8 @@ export function projectEnvironmentConnectionSummary(
     environmentLabel: environment.entry.target.label,
     displayUrl: connectionCatalogDisplayUrl(environment.entry) ?? "",
     isRelayManaged: hasRelayRoute(environment.entry),
-    isEnabled: environment.entry.enabled,
+    isEnabled: environment.entry.enabled && !environment.pausedByFocus,
+    isPausedByFocus: environment.pausedByFocus,
     connectionState: environment.connection.phase,
     connectionError: environment.connection.error,
     ...(environment.connection.i18nError === undefined
@@ -279,6 +288,7 @@ export function createEnvironmentSummaryAtoms(input: {
         previous.displayUrl === next.displayUrl &&
         previous.isRelayManaged === next.isRelayManaged &&
         previous.isEnabled === next.isEnabled &&
+        previous.isPausedByFocus === next.isPausedByFocus &&
         previous.connectionState === next.connectionState &&
         previous.connectionError === next.connectionError &&
         previous.connectionErrorTraceId === next.connectionErrorTraceId

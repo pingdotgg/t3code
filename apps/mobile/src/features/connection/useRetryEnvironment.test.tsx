@@ -4,6 +4,7 @@ import {
   EnvironmentRegistry,
   PrimaryConnectionTarget,
   type ConnectionCatalogEntry,
+  type FocusAllowlist,
 } from "@t3tools/client-runtime/connection";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -18,7 +19,7 @@ const fixture = vi.hoisted(() => ({
   environment: undefined as
     | Pick<
         EnvironmentRegistry.EnvironmentRegistry["Service"],
-        "entries" | "retryNow" | "setEnabled"
+        "entries" | "focusAllowlist" | "retryNow" | "setEnabled"
       >
     | undefined,
 }));
@@ -62,6 +63,7 @@ describe("useRetryEnvironment", () => {
       let retryCount = 0;
       fixture.environment = {
         entries,
+        focusAllowlist: yield* SubscriptionRef.make<FocusAllowlist>(null),
         retryNow: () =>
           Effect.sync(() => {
             retryCount += 1;
