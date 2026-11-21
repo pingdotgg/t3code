@@ -1335,17 +1335,16 @@ export const make = Effect.gen(function* () {
     cwd: string,
   ): shared is SharedPrLookupGitReads =>
     shared !== null && shared.open && shared.cwd === cwd && prLookupEpoch(cwd) === shared.epoch;
-  // Branch remote and remote URLs that local status just read, handed once to the PR lookup that
-  // follows it (turn end runs both) so it does not spawn the same git reads again.
+  // Branch remote and remote URLs that local status just read, reused by the PR lookups that
+  // follow it (turn end runs the status lookup and the thread's PR backfill) instead of reading again.
   const localStatusGitReads = new Map<
     string,
     Pick<SharedPrLookupGitReads, "epoch" | "configValues" | "remoteUrls">
   >();
-  const takeLocalStatusGitReads = (cwd: string) =>
+  const recentLocalStatusGitReads = (cwd: string) =>
     Clock.currentTimeMillis.pipe(
       Effect.map((now) => {
         const handoff = localStatusGitReads.get(cwd);
-        localStatusGitReads.delete(cwd);
         if (handoff === undefined || handoff.epoch !== prLookupEpoch(cwd)) return undefined;
         const isFresh = (entry: RememberedPrLookupValue) =>
           now - entry.readAtMs < Duration.toMillis(LOCAL_STATUS_GIT_READS_HANDOFF_TTL);
@@ -1385,14 +1384,13 @@ export const make = Effect.gen(function* () {
     });
   const withPrLookupGitReads = <A, E, R>(effect: Effect.Effect<A, E, R>, cwd: string) =>
     openPrLookupGitReads(effect, cwd, undefined);
-  // Only status lookups take the handoff: a fresh identity check (branchPullRequest) must read git.
+  const withRecentLocalStatusGitReads = <A, E, R>(effect: Effect.Effect<A, E, R>, cwd: string) =>
+    Effect.flatMap(recentLocalStatusGitReads(cwd), (handoff) =>
+      openPrLookupGitReads(effect, cwd, handoff),
+    );
   const withActivePrLookupGitReads = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     Effect.flatMap(prLookupGitReads, (shared) =>
-      isActivePrLookupGitReads(shared, cwd)
-        ? effect
-        : Effect.flatMap(takeLocalStatusGitReads(cwd), (handoff) =>
-            openPrLookupGitReads(effect, cwd, handoff),
-          ),
+      isActivePrLookupGitReads(shared, cwd) ? effect : withRecentLocalStatusGitReads(effect, cwd),
     );
   const prLookupCacheKey = (
     cwd: string,
@@ -3152,6 +3150,16 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: "unbounded" },
     ).pipe(Effect.map((parts) => parts.join("\u0000")));
+  // A fresh identity check, which confirms terminal results, must read git itself.
+  const withBranchPullRequestGitReads = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    cacheCwd: string,
+    _branch: string,
+    options: { readonly freshGitState: boolean },
+  ) =>
+    options.freshGitState
+      ? withPrLookupGitReads(effect, cacheCwd)
+      : withRecentLocalStatusGitReads(effect, cacheCwd);
   const lookupBranchPullRequest = Effect.fn("lookupBranchPullRequest")(function* (
     cacheCwd: string,
     branch: string,
@@ -3320,7 +3328,7 @@ export const make = Effect.gen(function* () {
       // Hosting CLIs may target upstream; the PR URL identifies its actual repository.
       repositoryKey: pullRequestRepositoryKey(latest.url),
     };
-  }, withPrLookupGitReads);
+  }, withBranchPullRequestGitReads);
 
   const checkedOutPullRequestKey = (branch: string) => `branch.${branch}.t3-pull-request`;
 
