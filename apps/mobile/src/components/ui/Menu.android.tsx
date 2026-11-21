@@ -28,6 +28,7 @@ export function Menu(props: MenuProps) {
   return (
     <AndroidAnchoredMenu
       actions={props.actions}
+      accessibilityLabel={props.accessibilityLabel}
       className={props.className}
       title={props.title}
       style={props.style}

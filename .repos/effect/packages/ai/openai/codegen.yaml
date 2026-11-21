@@ -37,7 +37,7 @@ patches:
 excludeAnnotations:
   - examples
   - default
-disableAdditionalProperties: true
+closeObjects: true
 replacements:
   # Schema.Unknown doesn't work with Schema.toCodecJson (used by HttpClientResponse.schemaBodyJson)
   # Replace with Schema.Json which properly handles arbitrary JSON values

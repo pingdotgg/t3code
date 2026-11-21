@@ -126,6 +126,8 @@ export interface IssueTrackerApi {
         readonly sort: IssueListSort;
         /** A cursor this tracker handed back from an earlier page. Absent asks for the first. */
         readonly cursor?: string | undefined;
+        /** Whether to re-read tracker metadata for a first page. */
+        readonly refresh?: boolean | undefined;
       },
   ) => Effect.Effect<TrackerIssuePage, IssueTrackerError>;
 
@@ -210,10 +212,13 @@ export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
    * Who a credential signs in as and which scopes it reaches, asked of the tracker itself. Run on
    * a credential before it is stored, and on the stored one to report connection status.
    */
-  readonly probeCredential: (
-    token: string,
-  ) => Effect.Effect<
-    { readonly account: string; readonly scopes: ReadonlyArray<IssueTrackerScope> },
+  readonly probeCredential: (token: string) => Effect.Effect<
+    {
+      readonly account: string;
+      /** What the tracker's issue URLs name the credential's workspace by, where they name one. */
+      readonly workspace?: string | undefined;
+      readonly scopes: ReadonlyArray<IssueTrackerScope>;
+    },
     IssueTrackerError
   >;
 }
