@@ -70,7 +70,6 @@ import {
   serverConfigForCwd,
   type ModelOption,
   type ProviderGroup,
-  withStoredThreadModelOptions,
 } from "../../lib/modelOptions";
 import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
@@ -92,7 +91,7 @@ import {
 } from "../../state/use-composer-drafts";
 import { useQuietThreadStructure } from "../../state/use-thread-detail";
 import { activeComposerDraftKey, useQueuedRunEdit } from "../../state/queued-run-edit";
-import { selectThreadModel } from "../../state/thread-model-selection";
+import { selectThreadModel, selectThreadModelFromPicker } from "../../state/thread-model-selection";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { providerWorkspaceSnapshotRefresh } from "../../state/provider-workspace-snapshot-refresh";
@@ -1553,14 +1552,7 @@ export function ExistingThreadSettingsRouteScreen({
       prompt={prompt}
       onPromptChange={(text) => setComposerDraftText(draftKey, text)}
       reportedModelSelection={reportedModelSelection}
-      onSelectModel={(option) =>
-        updateModelSelection(
-          withStoredThreadModelOptions(
-            withRememberedModelOptions(option.selection),
-            selectedThread.modelSelection,
-          ),
-        )
-      }
+      onSelectModel={(option) => selectThreadModelFromPicker(route.params, option.selection)}
       restoreSelection={withRememberedModelOptions}
       optionDescriptors={resolveProviderOptionDescriptors({
         capabilities: currentModelOption?.capabilities,

@@ -97,6 +97,12 @@ messages while disconnected. Uploads resume when you reconnect. Drafts and queue
 messages survive app restarts. Signing out of T3 Connect keeps that work on your
 device until you sign back into the same account.
 
+## Quickly pick a favorite model on mobile
+
+Tap the model button in the composer to open the picker and star your favorites.
+Hold the same button to show up to five available favorites above it. Slide to
+a model and lift your finger to select it. Lift outside the fan to cancel.
+
 ## Custom models
 
 On web and desktop, use Settings → Providers → **Models** to add an unlisted model with a custom

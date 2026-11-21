@@ -55,6 +55,8 @@ import { useProject, useVisibleThreadShells } from "../../state/entities";
 import { useMentionableEnvironments } from "../../state/environments";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { useEnvironmentScopeDenied } from "../../state/session";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import { selectThreadModelFromPicker } from "../../state/thread-model-selection";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -82,6 +84,7 @@ import {
 } from "../../components/ComposerToolbar";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import { ComposerModelControl } from "../../components/ComposerModelControl";
+import { resolveFanModels } from "../../components/modelFavoriteFan";
 import {
   composerStripAttachments,
   type DraftComposerFileAttachment,
@@ -135,6 +138,7 @@ const NO_MACHINES: ReadonlyArray<ComposerEnvironmentCandidate> = [];
 
 export interface ThreadComposerProps {
   readonly isDraft?: boolean;
+  readonly onSelectDraftModel?: ((key: string) => void) | undefined;
   readonly canOperateThread: boolean;
   readonly placeholder: string;
   readonly contentMaxWidth?: number;
@@ -610,6 +614,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         option.selection.instanceId === currentModelSelection.instanceId &&
         option.selection.model === currentModelSelection.model,
     ) ?? null;
+  const legacyFavorites = useAtomValue(mobilePreferencesAtom, (result) =>
+    AsyncResult.isSuccess(result) ? result.value.modelFavorites : undefined,
+  );
+  const favoriteModels = resolveFanModels(
+    props.serverConfig?.settings.favorites ?? legacyFavorites ?? [],
+    modelOptions,
+  );
   const openSettings = () => {
     settingsSheetPresentation.open();
   };
@@ -684,6 +695,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     // Only the expanded label can truncate; shrinking the icon-only control clips the icon.
     <View className={compactEditor.isExpanded ? "min-w-0 shrink" : "shrink-0"}>
       <ComposerModelControl
+        key={composerDraftKey}
         size={usesLargeControls ? "large" : "regular"}
         modelOption={currentModelOption}
         selection={currentModelSelection}
@@ -692,6 +704,18 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         prompt={draftMessage}
         surfaceColor={composerPanel}
         iconOnly={!compactEditor.isExpanded}
+        favorites={isSubmissionLocked || operateDenied || props.hidden ? [] : favoriteModels}
+        onSelectFavorite={(option) => {
+          if (option.key === currentModelOption?.key) return;
+          if (props.isDraft) {
+            props.onSelectDraftModel?.(option.key);
+          } else {
+            selectThreadModelFromPicker(
+              { environmentId: props.environmentId, threadId: props.selectedThread.id },
+              option.selection,
+            );
+          }
+        }}
         onPress={openSettings}
       />
     </View>

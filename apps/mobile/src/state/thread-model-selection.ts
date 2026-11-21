@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
+import { withStoredThreadModelOptions } from "../lib/modelOptions";
 import * as Dialog from "../components/ui/Dialog";
 import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
@@ -18,6 +19,19 @@ import {
   releaseComposerDraftModelSelection,
   updateComposerDraftSettings,
 } from "./use-composer-drafts";
+import { withRememberedModelOptions } from "./use-model-option-memory";
+
+export function selectThreadModelFromPicker(
+  ref: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
+  value: ModelSelection,
+): void {
+  const thread = appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
+  const selection = withRememberedModelOptions(value);
+  selectThreadModel(
+    ref,
+    thread ? withStoredThreadModelOptions(selection, thread.modelSelection) : selection,
+  );
+}
 
 /** Sets an existing thread's pick on the thread, so any next turn runs on it. */
 export function selectThreadModel(
