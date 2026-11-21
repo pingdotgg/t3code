@@ -591,6 +591,26 @@ export interface ProjectionStoreV2Shape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, ProjectionStoreV2Error>;
+  /** Preserve an existing turn's ordinal or pick the next free ordinal for a runless provider turn. */
+  readonly resolveProviderTurnOrdinal: (input: {
+    readonly threadId: ThreadId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly providerThreadId: ProviderThreadId;
+    readonly ordinal: number;
+  }) => Effect.Effect<number, ProjectionStoreV2Error>;
+  /** Resolve a persisted subagent row and turn item by ID, child thread, or provider thread. */
+  readonly findSubagentIdentity: (input: {
+    readonly threadId: ThreadId;
+    readonly subagentId: NodeId;
+    readonly childThreadId: ThreadId | null;
+    readonly providerThreadId: ProviderThreadId | null;
+  }) => Effect.Effect<
+    {
+      readonly subagent: OrchestrationV2Subagent;
+      readonly turnItem: Extract<OrchestrationV2TurnItem, { type: "subagent" }> | null;
+    } | null,
+    ProjectionStoreV2Error
+  >;
   readonly getMessagesById: (
     threadId: ThreadId,
     messageIds: ReadonlyArray<MessageId>,
@@ -1364,7 +1384,7 @@ const encodeRunOutput = Schema.encodeEffect(
 const encodeRunAttemptPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2RunAttemptJsonSchema),
 );
-const encodeNodePayload = Schema.encodeEffect(
+export const encodeNodePayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ExecutionNodeJsonSchema),
 );
 export const encodeSubagentPayload = Schema.encodeEffect(
@@ -6801,6 +6821,80 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
+    const resolveProviderTurnOrdinal: ProjectionStoreV2Shape["resolveProviderTurnOrdinal"] =
+      Effect.fn("ProjectionStore.resolveProviderTurnOrdinal")(function* (input) {
+        const existingRows = yield* sql<{ ordinal: number }>`
+          SELECT ordinal
+          FROM orchestration_v2_projection_provider_turns
+          WHERE provider_turn_id = ${input.providerTurnId}
+          LIMIT 1
+        `.pipe(Effect.mapError(controlReadError(input.threadId)));
+        if (existingRows[0] !== undefined) return existingRows[0].ordinal;
+        const occupantRows = yield* sql<{ provider_turn_id: string }>`
+          SELECT provider_turn_id
+          FROM orchestration_v2_projection_provider_turns
+          WHERE provider_thread_id = ${input.providerThreadId} AND ordinal = ${input.ordinal}
+          LIMIT 1
+        `.pipe(Effect.mapError(controlReadError(input.threadId)));
+        if (occupantRows[0] === undefined) return input.ordinal;
+        const maxRows = yield* sql<{ max_ordinal: number | null }>`
+          SELECT MAX(ordinal) AS max_ordinal
+          FROM orchestration_v2_projection_provider_turns
+          WHERE provider_thread_id = ${input.providerThreadId}
+        `.pipe(Effect.mapError(controlReadError(input.threadId)));
+        return (maxRows[0]?.max_ordinal ?? input.ordinal) + 1;
+      });
+
+    const findSubagentIdentity: ProjectionStoreV2Shape["findSubagentIdentity"] = Effect.fn(
+      "ProjectionStore.findSubagentIdentity",
+    )(function* (input) {
+      let rows = yield* sql<{ payload_json: string }>`
+        SELECT payload_json
+        FROM orchestration_v2_projection_subagents
+        WHERE subagent_id = ${input.subagentId} AND thread_id = ${input.threadId}
+        LIMIT 1
+      `.pipe(Effect.mapError(controlReadError(input.threadId)));
+      if (rows[0] === undefined && input.childThreadId !== null) {
+        rows = yield* sql<{ payload_json: string }>`
+          SELECT payload_json
+          FROM orchestration_v2_projection_subagents
+          WHERE child_thread_id = ${input.childThreadId} AND thread_id = ${input.threadId}
+          ORDER BY rowid ASC
+          LIMIT 1
+        `.pipe(Effect.mapError(controlReadError(input.threadId)));
+      }
+      if (rows[0] === undefined && input.providerThreadId !== null) {
+        rows = yield* sql<{ payload_json: string }>`
+          SELECT payload_json
+          FROM orchestration_v2_projection_subagents
+          WHERE provider_thread_id = ${input.providerThreadId} AND thread_id = ${input.threadId}
+          ORDER BY rowid ASC
+          LIMIT 1
+        `.pipe(Effect.mapError(controlReadError(input.threadId)));
+      }
+      if (rows[0] === undefined) return null;
+      const subagent = yield* decodeSubagentPayload(rows[0].payload_json).pipe(
+        Effect.mapError(controlReadError(input.threadId)),
+      );
+      const itemRows = yield* sql<{ payload_json: string }>`
+        SELECT payload_json
+        FROM orchestration_v2_projection_turn_items
+        WHERE node_id = ${subagent.id} AND thread_id = ${input.threadId} AND type = 'subagent'
+        ORDER BY ordinal ASC
+        LIMIT 1
+      `.pipe(Effect.mapError(controlReadError(input.threadId)));
+      const decodedItem =
+        itemRows[0] === undefined
+          ? null
+          : yield* decodeTurnItemPayload(itemRows[0].payload_json).pipe(
+              Effect.mapError(controlReadError(input.threadId)),
+            );
+      return {
+        subagent,
+        turnItem: decodedItem?.type === "subagent" ? decodedItem : null,
+      };
+    });
+
     // A run fork shows its source's history through the fork run without copying it, and every
     // run fork below it shows that history too. Returns the last source run live forks show, with
     // and without `leavingForkId`.
@@ -9871,6 +9965,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       hasPendingDelegatedCompletion: readOnReader(hasPendingDelegatedCompletion),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       getTurnItem: readOnReader(getTurnItem),
+      resolveProviderTurnOrdinal: readOnReader(resolveProviderTurnOrdinal),
+      findSubagentIdentity: readOnReader(findSubagentIdentity),
       getMessagesById: readOnReader(getMessagesById),
       getThreadRecords: (threadId, fields, filter) =>
         getThreadRecords(threadId, fields, filter).pipe(NodeSqliteClient.readOnly),

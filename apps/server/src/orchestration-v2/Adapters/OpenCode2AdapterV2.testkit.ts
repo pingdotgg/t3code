@@ -124,12 +124,20 @@ const operationOf = (
       return { type: "session.revert.commit", input };
     }
     if (method === "DELETE" && rest === "/revert") return { type: "session.revert.clear", input };
+    if (method === "GET" && rest === "/inbox") return { type: "session.inbox.list", input };
     const inbox = /^\/inbox\/([^/]+)$/.exec(rest);
     if (method === "DELETE" && inbox !== null) {
       const inboxID = decodeURIComponent(inbox[1] ?? "");
       return { type: "session.inbox.cancel", input: { ...input, inboxID } };
     }
     if (method === "GET" && rest === "/message") return { type: "message.list", input };
+    const message = /^\/message\/([^/]+)$/.exec(rest);
+    if (method === "GET" && message !== null) {
+      return {
+        type: "session.message.get",
+        input: { ...input, messageID: decodeURIComponent(message[1] ?? "") },
+      };
+    }
     if (method === "GET" && rest === "/permission") return { type: "permission.list", input };
     if (method === "GET" && rest === "/form") return { type: "session.form.list", input };
     const form = /^\/form\/([^/]+)(\/reply)?$/.exec(rest);

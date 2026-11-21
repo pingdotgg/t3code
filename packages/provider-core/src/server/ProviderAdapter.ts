@@ -116,6 +116,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     pendingBackgroundWork: Schema.optional(Schema.Boolean),
     /** Persist idle background snapshots before a run subscriber exists. */
     sessionScoped: Schema.optional(Schema.Boolean),
+    /** Reuse an existing persisted subagent owner node ID when cold-resuming an uncached child. */
+    preserveIdentity: Schema.optional(Schema.Boolean),
     retainedNativeTurnIds: Schema.optional(Schema.Array(Schema.String)),
   }),
   Schema.Struct({
@@ -130,11 +132,15 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("node.updated"),
     driver: ProviderDriverKind,
     node: OrchestrationV2ExecutionNode,
+    /** Reuse an existing persisted subagent node ID when cold-resuming an uncached child. */
+    preserveIdentity: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("subagent.updated"),
     driver: ProviderDriverKind,
     subagent: OrchestrationV2Subagent,
+    /** Keep previously persisted title, prompt, and model when cold-resuming an uncached child. */
+    preserveIdentity: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("message.updated"),
@@ -147,6 +153,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     turnItem: OrchestrationV2TurnItem,
     /** Persist recovered activity independently of a run subscription. */
     sessionScoped: Schema.optional(Schema.Boolean),
+    /** Keep previously persisted title and prompt when cold-resuming an uncached child. */
+    preserveIdentity: Schema.optional(Schema.Boolean),
   }),
   /** A steer the provider queued stays `pending` until the agent reads it; `cancelled` if dropped unread. */
   Schema.Struct({

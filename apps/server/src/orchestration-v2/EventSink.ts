@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type OrchestrationV2ExecutionNode,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
@@ -193,9 +194,11 @@ export interface EventSinkV2Shape {
     },
     EventSinkV2Error
   >;
-  /** Commits only if the stored subagent still equals expected. */
+  /** Commits only if the stored subagent (and optional nodes and turn items) still equal expected. */
   readonly writeIfSubagentUnchanged: (input: {
     readonly expected: OrchestrationV2Subagent;
+    readonly expectedNodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
+    readonly expectedTurnItems?: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<
     {
@@ -681,21 +684,25 @@ const layerBase: Layer.Layer<
       );
     });
 
-    // Appends the events only if the stored payload still matches, in one transaction.
-    const writeIfStoredPayloadMatches = <E>(
-      readStoredPayload: Effect.Effect<ReadonlyArray<{ readonly payload_json: string }>, E>,
-      expectedJson: string,
+    // Appends the events only if every stored payload still matches, in one transaction.
+    const writeIfStoredPayloadsMatch = <E>(
+      checks: ReadonlyArray<{
+        readonly read: Effect.Effect<ReadonlyArray<{ readonly payload_json: string }>, E>;
+        readonly expectedJson: string;
+      }>,
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
     ) =>
       commitThenPublish(
         projectedThreadIds(events),
         Effect.gen(function* () {
-          const rows = yield* readStoredPayload;
-          if (rows[0]?.payload_json !== expectedJson) {
-            return {
-              committed: false as const,
-              storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
-            };
+          for (const check of checks) {
+            const rows = yield* check.read;
+            if (rows[0]?.payload_json !== check.expectedJson) {
+              return {
+                committed: false as const,
+                storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+              };
+            }
           }
 
           const normalized = yield* normalizeEvents(events);
@@ -717,14 +724,18 @@ const layerBase: Layer.Layer<
         "orchestration_v2.provider_thread_id": input.expected.id,
       });
       const expectedJson = yield* ProjectionStore.encodeProviderThreadPayload(input.expected);
-      return yield* writeIfStoredPayloadMatches(
-        sql<{ readonly payload_json: string }>`
-          SELECT payload_json
-          FROM orchestration_v2_projection_provider_threads
-          WHERE provider_thread_id = ${input.expected.id}
-          LIMIT 1
-        `,
-        expectedJson,
+      return yield* writeIfStoredPayloadsMatch(
+        [
+          {
+            read: sql<{ readonly payload_json: string }>`
+              SELECT payload_json
+              FROM orchestration_v2_projection_provider_threads
+              WHERE provider_thread_id = ${input.expected.id}
+              LIMIT 1
+            `,
+            expectedJson,
+          },
+        ],
         input.events,
       );
     });
@@ -737,14 +748,18 @@ const layerBase: Layer.Layer<
         "orchestration_v2.turn_item_id": input.expected.id,
       });
       const expectedJson = yield* ProjectionStore.encodeTurnItemPayload(input.expected);
-      return yield* writeIfStoredPayloadMatches(
-        sql<{ readonly payload_json: string }>`
-          SELECT payload_json
-          FROM orchestration_v2_projection_turn_items
-          WHERE turn_item_id = ${input.expected.id}
-          LIMIT 1
-        `,
-        expectedJson,
+      return yield* writeIfStoredPayloadsMatch(
+        [
+          {
+            read: sql<{ readonly payload_json: string }>`
+              SELECT payload_json
+              FROM orchestration_v2_projection_turn_items
+              WHERE turn_item_id = ${input.expected.id}
+              LIMIT 1
+            `,
+            expectedJson,
+          },
+        ],
         input.events,
       );
     });
@@ -757,16 +772,46 @@ const layerBase: Layer.Layer<
         "orchestration_v2.subagent_id": input.expected.id,
       });
       const expectedJson = yield* ProjectionStore.encodeSubagentPayload(input.expected);
-      return yield* writeIfStoredPayloadMatches(
-        sql<{ readonly payload_json: string }>`
-          SELECT payload_json
-          FROM orchestration_v2_projection_subagents
-          WHERE subagent_id = ${input.expected.id}
-          LIMIT 1
-        `,
-        expectedJson,
-        input.events,
-      );
+      const checks: Array<{
+        readonly read: Effect.Effect<
+          ReadonlyArray<{ readonly payload_json: string }>,
+          SqlError.SqlError
+        >;
+        readonly expectedJson: string;
+      }> = [
+        {
+          read: sql<{ readonly payload_json: string }>`
+            SELECT payload_json
+            FROM orchestration_v2_projection_subagents
+            WHERE subagent_id = ${input.expected.id}
+            LIMIT 1
+          `,
+          expectedJson,
+        },
+      ];
+      for (const expectedNode of input.expectedNodes ?? []) {
+        checks.push({
+          read: sql<{ readonly payload_json: string }>`
+            SELECT payload_json
+            FROM orchestration_v2_projection_nodes
+            WHERE node_id = ${expectedNode.id}
+            LIMIT 1
+          `,
+          expectedJson: yield* ProjectionStore.encodeNodePayload(expectedNode),
+        });
+      }
+      for (const expectedTurnItem of input.expectedTurnItems ?? []) {
+        checks.push({
+          read: sql<{ readonly payload_json: string }>`
+            SELECT payload_json
+            FROM orchestration_v2_projection_turn_items
+            WHERE turn_item_id = ${expectedTurnItem.id}
+            LIMIT 1
+          `,
+          expectedJson: yield* ProjectionStore.encodeTurnItemPayload(expectedTurnItem),
+        });
+      }
+      return yield* writeIfStoredPayloadsMatch(checks, input.events);
     });
 
     const existingCommandResult =

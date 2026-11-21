@@ -2451,6 +2451,32 @@ layer("ProviderEventIngestorV2", (it) => {
         (yield* projectionStore.getThread(childThreadId)).modelSelection,
         reportedSelection,
       );
+
+      // A persistent model-sync failure must still return the committed subagent update.
+      const failingSyncSink = EventSink.EventSinkV2.of({
+        ...eventSink,
+        write: (writeInput) =>
+          writeInput.events.some((event) => event.type === "thread.model-selection-updated")
+            ? Effect.fail(constraintFailure)
+            : eventSink.write(writeInput),
+      });
+      const failingSyncIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
+        Effect.provide(Layer.fresh(ProviderEventIngestor.layer)),
+        Effect.provideService(EventSink.EventSinkV2, failingSyncSink),
+      );
+      const committedDespiteSyncFailure = yield* failingSyncIngestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+        event: {
+          ...subagentUpdated,
+          subagent: { ...subagentUpdated.subagent, model: "gpt-6.2-sol", status: "completed" },
+        },
+      });
+      assert.deepEqual(
+        committedDespiteSyncFailure.map((stored) => stored.event.type),
+        ["subagent.updated"],
+      );
     }).pipe(
       // Fresh: the shared test layer has already built the ingestor this replaces.
       Effect.provide(
@@ -2461,6 +2487,699 @@ layer("ProviderEventIngestorV2", (it) => {
         ),
       ),
     ),
+  );
+
+  it.effect.each(["session-keyed", "legacy-call-keyed", "legacy-duplicate-rows"] as const)(
+    "preserves subagent row identity and prior child turns across a cold restart resume (%s)",
+    (initialKeying) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const t2 = DateTime.add(now, { seconds: 5 });
+        const t3 = DateTime.add(now, { seconds: 10 });
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const threadEvent = yield* threadCreatedEvent(now);
+        const parentThread = threadEvent.payload as OrchestrationV2AppThread;
+        const parentThreadId = parentThread.id;
+        const parentProviderThreadId = parentThread.activeProviderThreadId!;
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: parentThreadId,
+        });
+        yield* eventSink.write({ events: [threadEvent] });
+
+        const driver = ProviderDriverKind.make("opencode");
+        const instanceId = ProviderInstanceId.make("opencode");
+        const childSessionId = `ses_cold_resume_child_${initialKeying}`;
+        const initialNativeItemId =
+          initialKeying === "session-keyed" ? childSessionId : "call-launch-1";
+        const initialNodeId = idAllocator.derive.nodeFromProviderItem({
+          driver,
+          nativeItemId: initialNativeItemId,
+        });
+        const initialItemId = idAllocator.derive.turnItemFromProviderItem({
+          driver,
+          nativeItemId: initialNativeItemId,
+        });
+        const sessionNodeId = idAllocator.derive.nodeFromProviderItem({
+          driver,
+          nativeItemId: childSessionId,
+        });
+        const sessionItemId = idAllocator.derive.turnItemFromProviderItem({
+          driver,
+          nativeItemId: childSessionId,
+        });
+        const childThreadId = idAllocator.derive.subagentThread({
+          driver,
+          nativeThreadId: childSessionId,
+          providerInstanceId: instanceId,
+        });
+        const childProviderThreadId = idAllocator.derive.providerThread({
+          driver,
+          nativeThreadId: childSessionId,
+          providerInstanceId: instanceId,
+        });
+        const run1Id = RunId.make("run:cold-resume:1");
+        const run2Id = RunId.make("run:cold-resume:2");
+        const parentTurn1Id = ProviderTurnId.make("provider-turn:parent:1");
+        const parentTurn2Id = ProviderTurnId.make("provider-turn:parent:2");
+        const parentRoot1 = NodeId.make("node:parent:root:1");
+        const parentRoot2 = NodeId.make("node:parent:root:2");
+        const childTurn1Id = idAllocator.derive.providerTurn({
+          driver,
+          nativeTurnId: `${childSessionId}:turn:1`,
+        });
+        const childRoot1 = idAllocator.derive.nodeFromProviderItem({
+          driver,
+          nativeItemId: `${childSessionId}:turn:1:root`,
+        });
+        const childTurn2Id = idAllocator.derive.providerTurn({
+          driver,
+          nativeTurnId: `${childSessionId}:resume:call-2:turn:1`,
+        });
+        const childRoot2 = idAllocator.derive.nodeFromProviderItem({
+          driver,
+          nativeItemId: `${childSessionId}:resume:call-2:turn:1:root`,
+        });
+        const ingest = (runId: RunId, event: ProviderAdapter.ProviderAdapterV2Event) =>
+          ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: instanceId,
+            threadId: parentThreadId,
+            runId,
+            event,
+          });
+        const childAppThread = (title: string): OrchestrationV2AppThread => ({
+          ...parentThread,
+          id: childThreadId,
+          title,
+          providerInstanceId: instanceId,
+          modelSelection: { instanceId, model: "opencode/big-pickle" },
+          activeProviderThreadId: childProviderThreadId,
+          lineage: {
+            parentThreadId,
+            relationshipToParent: "subagent",
+            rootThreadId: parentThreadId,
+          },
+          createdBy: "agent",
+          creationSource: "provider",
+        });
+
+        // Run 1: initial launch persists the subagent row and child turn 1 (ordinals 101, 102).
+        yield* ingest(run1Id, {
+          type: "app_thread.created",
+          driver,
+          appThread: childAppThread("Sleep"),
+        });
+        yield* ingest(run1Id, {
+          type: "node.updated",
+          driver,
+          node: {
+            id: initialNodeId,
+            threadId: parentThreadId,
+            runId: run1Id,
+            parentNodeId: parentRoot1,
+            rootNodeId: parentRoot1,
+            kind: "subagent",
+            status: "completed",
+            countsForRun: false,
+            providerThreadId: childProviderThreadId,
+            providerTurnId: parentTurn1Id,
+            nativeItemRef: { driver, nativeId: initialNativeItemId, strength: "strong" },
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: now,
+          },
+        });
+        yield* ingest(run1Id, {
+          type: "subagent.updated",
+          driver,
+          subagent: {
+            id: initialNodeId,
+            threadId: parentThreadId,
+            runId: run1Id,
+            parentNodeId: parentRoot1,
+            origin: "provider_native",
+            createdBy: "agent",
+            driver,
+            providerInstanceId: instanceId,
+            providerThreadId: childProviderThreadId,
+            childThreadId,
+            nativeTaskRef: { driver, nativeId: initialNativeItemId, strength: "strong" },
+            prompt: "sleep 180",
+            title: "Sleep",
+            model: "opencode/big-pickle",
+            modelSelection: {
+              instanceId,
+              model: "opencode/big-pickle",
+              options: [{ id: "variant", value: "high" }],
+            },
+            status: "completed",
+            result: "FIRST_OK",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* ingest(run1Id, {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            id: initialItemId,
+            threadId: parentThreadId,
+            runId: run1Id,
+            nodeId: initialNodeId,
+            providerThreadId: parentProviderThreadId,
+            providerTurnId: parentTurn1Id,
+            nativeItemRef: { driver, nativeId: initialNativeItemId, strength: "strong" },
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: "Sleep",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "subagent",
+            subagentId: initialNodeId,
+            origin: "provider_native",
+            driver,
+            providerInstanceId: instanceId,
+            childThreadId,
+            prompt: "sleep 180",
+            result: "FIRST_OK",
+          },
+        });
+        if (initialKeying === "legacy-duplicate-rows") {
+          const duplicateNodeId = idAllocator.derive.nodeFromProviderItem({
+            driver,
+            nativeItemId: "call-legacy-dup-2",
+          });
+          const duplicateItemId = idAllocator.derive.turnItemFromProviderItem({
+            driver,
+            nativeItemId: "call-legacy-dup-2",
+          });
+          yield* ingest(run1Id, {
+            type: "node.updated",
+            driver,
+            node: {
+              id: duplicateNodeId,
+              threadId: parentThreadId,
+              runId: run1Id,
+              parentNodeId: parentRoot1,
+              rootNodeId: parentRoot1,
+              kind: "subagent",
+              status: "completed",
+              countsForRun: false,
+              providerThreadId: childProviderThreadId,
+              providerTurnId: parentTurn1Id,
+              nativeItemRef: { driver, nativeId: "call-legacy-dup-2", strength: "strong" },
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: t2,
+              completedAt: t2,
+            },
+          });
+          yield* ingest(run1Id, {
+            type: "subagent.updated",
+            driver,
+            subagent: {
+              id: duplicateNodeId,
+              threadId: parentThreadId,
+              runId: run1Id,
+              parentNodeId: parentRoot1,
+              origin: "provider_native",
+              createdBy: "agent",
+              driver,
+              providerInstanceId: instanceId,
+              providerThreadId: childProviderThreadId,
+              childThreadId,
+              nativeTaskRef: { driver, nativeId: "call-legacy-dup-2", strength: "strong" },
+              prompt: "old redirect",
+              title: "Old redirect",
+              model: null,
+              status: "completed",
+              result: "FIRST_OK",
+              startedAt: t2,
+              completedAt: t2,
+              updatedAt: t2,
+            },
+          });
+          yield* ingest(run1Id, {
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: duplicateItemId,
+              threadId: parentThreadId,
+              runId: run1Id,
+              nodeId: duplicateNodeId,
+              providerThreadId: parentProviderThreadId,
+              providerTurnId: parentTurn1Id,
+              nativeItemRef: { driver, nativeId: "call-legacy-dup-2", strength: "strong" },
+              parentItemId: null,
+              ordinal: 2,
+              status: "completed",
+              title: "Old redirect",
+              startedAt: t2,
+              completedAt: t2,
+              updatedAt: t2,
+              type: "subagent",
+              subagentId: duplicateNodeId,
+              origin: "provider_native",
+              driver,
+              providerInstanceId: instanceId,
+              childThreadId,
+              prompt: "old redirect",
+              result: "FIRST_OK",
+            },
+          });
+        }
+        yield* ingest(run1Id, {
+          type: "provider_turn.updated",
+          driver,
+          threadId: childThreadId,
+          providerTurn: {
+            id: childTurn1Id,
+            providerThreadId: childProviderThreadId,
+            nodeId: childRoot1,
+            runAttemptId: null,
+            nativeTurnRef: { driver, nativeId: `${childSessionId}:turn:1`, strength: "weak" },
+            ordinal: 1,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+          },
+        });
+        yield* ingest(run1Id, {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            id: TurnItemId.make("turn-item:z:child:prompt:1"),
+            threadId: childThreadId,
+            runId: null,
+            nodeId: childRoot1,
+            providerThreadId: childProviderThreadId,
+            providerTurnId: childTurn1Id,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 101,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            createdBy: "agent",
+            creationSource: "provider",
+            type: "user_message",
+            messageId: MessageId.make("message:z:child:prompt:1"),
+            inputIntent: "turn_start",
+            text: "sleep 180",
+            attachments: [],
+          },
+        });
+        yield* ingest(run1Id, {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            id: TurnItemId.make("turn-item:z:child:reply:1"),
+            threadId: childThreadId,
+            runId: null,
+            nodeId: childRoot1,
+            providerThreadId: childProviderThreadId,
+            providerTurnId: childTurn1Id,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 102,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "assistant_message",
+            messageId: MessageId.make("message:z:child:reply:1"),
+            text: "FIRST_OK",
+            streaming: false,
+          },
+        });
+
+        // Run 2: cold restart resumes the same child at t3 > t2 with session-keyed IDs, running then completed.
+        yield* ingest(run2Id, {
+          type: "app_thread.created",
+          driver,
+          createOnly: true,
+          appThread: childAppThread("Resume after restart"),
+        });
+        for (const phase of ["running", "completed"] as const) {
+          yield* ingest(run2Id, {
+            type: "node.updated",
+            driver,
+            preserveIdentity: true,
+            node: {
+              id: sessionNodeId,
+              threadId: parentThreadId,
+              runId: run2Id,
+              parentNodeId: parentRoot2,
+              rootNodeId: parentRoot2,
+              kind: "subagent",
+              status: phase,
+              countsForRun: false,
+              providerThreadId: childProviderThreadId,
+              providerTurnId: parentTurn2Id,
+              nativeItemRef: { driver, nativeId: childSessionId, strength: "strong" },
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: t3,
+              completedAt: phase === "completed" ? t3 : null,
+            },
+          });
+          yield* ingest(run2Id, {
+            type: "subagent.updated",
+            driver,
+            preserveIdentity: true,
+            subagent: {
+              id: sessionNodeId,
+              threadId: parentThreadId,
+              runId: run2Id,
+              parentNodeId: parentRoot2,
+              origin: "provider_native",
+              createdBy: "agent",
+              driver,
+              providerInstanceId: instanceId,
+              providerThreadId: childProviderThreadId,
+              childThreadId,
+              nativeTaskRef: { driver, nativeId: childSessionId, strength: "strong" },
+              prompt: "keep going",
+              title: "Resume after restart",
+              model: phase === "running" ? "opencode/redirect-hint" : null,
+              ...(phase === "running"
+                ? { modelSelection: { instanceId, model: "opencode/redirect-hint" } }
+                : {}),
+              status: phase,
+              result: phase === "completed" ? "SECOND_OK" : null,
+              startedAt: t3,
+              completedAt: phase === "completed" ? t3 : null,
+              updatedAt: t3,
+            },
+          });
+          yield* ingest(run2Id, {
+            type: "turn_item.updated",
+            driver,
+            preserveIdentity: true,
+            turnItem: {
+              id: sessionItemId,
+              threadId: parentThreadId,
+              runId: run2Id,
+              nodeId: sessionNodeId,
+              providerThreadId: parentProviderThreadId,
+              providerTurnId: parentTurn2Id,
+              nativeItemRef: { driver, nativeId: childSessionId, strength: "strong" },
+              parentItemId: null,
+              ordinal: 1,
+              status: phase,
+              title: "Resume after restart",
+              startedAt: t3,
+              completedAt: phase === "completed" ? t3 : null,
+              updatedAt: t3,
+              type: "subagent",
+              subagentId: sessionNodeId,
+              origin: "provider_native",
+              driver,
+              providerInstanceId: instanceId,
+              childThreadId,
+              prompt: "keep going",
+              result: phase === "completed" ? "SECOND_OK" : null,
+            },
+          });
+          yield* ingest(run2Id, {
+            type: "provider_thread.updated",
+            driver,
+            preserveIdentity: true,
+            providerThread: {
+              id: childProviderThreadId,
+              driver,
+              providerInstanceId: instanceId,
+              providerSessionId,
+              appThreadId: childThreadId,
+              ownerNodeId: sessionNodeId,
+              nativeThreadRef: { driver, nativeId: childSessionId, strength: "strong" },
+              nativeConversationHeadRef: null,
+              status: phase === "running" ? "active" : "idle",
+              firstRunOrdinal: null,
+              lastRunOrdinal: null,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: t3,
+              updatedAt: t3,
+            },
+          });
+        }
+        yield* ingest(run2Id, {
+          type: "provider_turn.updated",
+          driver,
+          threadId: childThreadId,
+          providerTurn: {
+            id: childTurn2Id,
+            providerThreadId: childProviderThreadId,
+            nodeId: childRoot2,
+            runAttemptId: null,
+            nativeTurnRef: {
+              driver,
+              nativeId: `${childSessionId}:resume:call-2:turn:1`,
+              strength: "weak",
+            },
+            ordinal: 1,
+            status: "running",
+            startedAt: t3,
+            completedAt: null,
+          },
+        });
+        yield* ingest(run2Id, {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            id: TurnItemId.make("turn-item:a:child:prompt:2"),
+            threadId: childThreadId,
+            runId: null,
+            nodeId: childRoot2,
+            providerThreadId: childProviderThreadId,
+            providerTurnId: childTurn2Id,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 101,
+            status: "completed",
+            title: null,
+            startedAt: t3,
+            completedAt: t3,
+            updatedAt: t3,
+            createdBy: "agent",
+            creationSource: "provider",
+            type: "user_message",
+            messageId: MessageId.make("message:a:child:prompt:2"),
+            inputIntent: "turn_start",
+            text: "keep going",
+            attachments: [],
+          },
+        });
+        yield* ingest(run2Id, {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            id: TurnItemId.make("turn-item:a:child:reply:2"),
+            threadId: childThreadId,
+            runId: null,
+            nodeId: childRoot2,
+            providerThreadId: childProviderThreadId,
+            providerTurnId: childTurn2Id,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 102,
+            status: "completed",
+            title: null,
+            startedAt: t3,
+            completedAt: t3,
+            updatedAt: t3,
+            type: "assistant_message",
+            messageId: MessageId.make("message:a:child:reply:2"),
+            text: "SECOND_OK",
+            streaming: false,
+          },
+        });
+        yield* ingest(run2Id, {
+          type: "provider_turn.updated",
+          driver,
+          threadId: childThreadId,
+          providerTurn: {
+            id: childTurn2Id,
+            providerThreadId: childProviderThreadId,
+            nodeId: childRoot2,
+            runAttemptId: null,
+            nativeTurnRef: {
+              driver,
+              nativeId: `${childSessionId}:resume:call-2:turn:1`,
+              strength: "weak",
+            },
+            ordinal: 1,
+            status: "completed",
+            startedAt: t3,
+            completedAt: t3,
+          },
+        });
+
+        const parentProjection = yield* projectionStore.getThreadProjection(parentThreadId);
+        const childProjection = yield* projectionStore.getThreadProjection(childThreadId);
+        const subagentNodes = parentProjection.nodes.filter((node) => node.kind === "subagent");
+        const subagentItems = parentProjection.turnItems.filter((item) => item.type === "subagent");
+        const expectedCount = initialKeying === "legacy-duplicate-rows" ? 2 : 1;
+        assert.lengthOf(subagentNodes, expectedCount);
+        assert.lengthOf(parentProjection.subagents, expectedCount);
+        assert.lengthOf(subagentItems, expectedCount);
+        const canonicalNode = subagentNodes.find((node) => node.id === initialNodeId);
+        const canonicalSubagent = parentProjection.subagents.find(
+          (subagent) => subagent.id === initialNodeId,
+        );
+        const canonicalItem = subagentItems.find((item) => item.id === initialItemId);
+        assert.equal(canonicalNode?.runId, run2Id);
+        assert.equal(canonicalNode?.status, "completed");
+        assert.equal(canonicalSubagent?.runId, run2Id);
+        assert.equal(canonicalSubagent?.title, "Sleep");
+        assert.equal(canonicalSubagent?.prompt, "sleep 180");
+        assert.equal(canonicalSubagent?.model, "opencode/big-pickle");
+        assert.deepEqual(canonicalSubagent?.modelSelection, {
+          instanceId,
+          model: "opencode/big-pickle",
+          options: [{ id: "variant", value: "high" }],
+        });
+        assert.equal(canonicalSubagent?.result, "SECOND_OK");
+        assert.equal(canonicalItem?.nodeId, initialNodeId);
+        assert.equal(canonicalItem?.subagentId, initialNodeId);
+        assert.equal(canonicalItem?.runId, run2Id);
+        assert.equal(canonicalItem?.title, "Sleep");
+        assert.equal(canonicalItem?.prompt, "sleep 180");
+        assert.equal(canonicalItem?.result, "SECOND_OK");
+        if (initialKeying !== "legacy-duplicate-rows") {
+          assert.isFalse(subagentItems.some((item) => item.runId === run1Id));
+        }
+        assert.equal(childProjection.thread.title, "Sleep");
+        assert.equal(childProjection.thread.modelSelection.model, "opencode/big-pickle");
+        assert.equal(childProjection.providerThreads[0]?.ownerNodeId, initialNodeId);
+        assert.deepEqual(
+          childProjection.providerTurns.map((turn) => ({
+            id: turn.id,
+            ordinal: turn.ordinal,
+            status: turn.status,
+          })),
+          [
+            { id: childTurn1Id, ordinal: 1, status: "completed" },
+            { id: childTurn2Id, ordinal: 2, status: "completed" },
+          ],
+        );
+        assert.deepEqual(
+          childProjection.turnItems
+            .filter(
+              (
+                item,
+              ): item is Extract<
+                OrchestrationV2TurnItem,
+                { type: "user_message" | "assistant_message" }
+              > => item.type === "user_message" || item.type === "assistant_message",
+            )
+            .map((item) => item.text),
+          ["sleep 180", "FIRST_OK", "keep going", "SECOND_OK"],
+        );
+
+        if (initialKeying === "legacy-call-keyed") {
+          // Nested root -> child -> legacy grandchild: provider_thread.updated is ingested with
+          // root `threadId: parentThreadId`, yet must resolve the grandchild's ownerNodeId on childThreadId.
+          const grandchildSessionId = "ses_cold_resume_grandchild";
+          const legacyGrandchildNodeId = idAllocator.derive.nodeFromProviderItem({
+            driver,
+            nativeItemId: "call-legacy-grandchild",
+          });
+          const sessionGrandchildNodeId = idAllocator.derive.nodeFromProviderItem({
+            driver,
+            nativeItemId: grandchildSessionId,
+          });
+          const grandchildThreadId = idAllocator.derive.subagentThread({
+            driver,
+            nativeThreadId: grandchildSessionId,
+            providerInstanceId: instanceId,
+          });
+          const grandchildProviderThreadId = idAllocator.derive.providerThread({
+            driver,
+            nativeThreadId: grandchildSessionId,
+            providerInstanceId: instanceId,
+          });
+          yield* ingest(run1Id, {
+            type: "app_thread.created",
+            driver,
+            appThread: {
+              ...childAppThread("Grandchild"),
+              id: grandchildThreadId,
+              activeProviderThreadId: grandchildProviderThreadId,
+              lineage: {
+                parentThreadId: childThreadId,
+                relationshipToParent: "subagent",
+                rootThreadId: parentThreadId,
+              },
+            },
+          });
+          yield* ingest(run1Id, {
+            type: "subagent.updated",
+            driver,
+            subagent: {
+              id: legacyGrandchildNodeId,
+              threadId: childThreadId,
+              runId: null,
+              parentNodeId: childRoot1,
+              origin: "provider_native",
+              createdBy: "agent",
+              driver,
+              providerInstanceId: instanceId,
+              providerThreadId: grandchildProviderThreadId,
+              childThreadId: grandchildThreadId,
+              nativeTaskRef: { driver, nativeId: "call-legacy-grandchild", strength: "strong" },
+              prompt: "nested work",
+              title: "Grandchild",
+              model: "opencode/big-pickle",
+              status: "completed",
+              result: "NESTED_OK",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+          yield* ingest(run2Id, {
+            type: "provider_thread.updated",
+            driver,
+            preserveIdentity: true,
+            providerThread: {
+              id: grandchildProviderThreadId,
+              driver,
+              providerInstanceId: instanceId,
+              providerSessionId,
+              appThreadId: grandchildThreadId,
+              ownerNodeId: sessionGrandchildNodeId,
+              nativeThreadRef: { driver, nativeId: grandchildSessionId, strength: "strong" },
+              nativeConversationHeadRef: null,
+              status: "active",
+              firstRunOrdinal: null,
+              lastRunOrdinal: null,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: t2,
+              updatedAt: t2,
+            },
+          });
+          const grandchildProjection =
+            yield* projectionStore.getThreadProjection(grandchildThreadId);
+          assert.equal(
+            grandchildProjection.providerThreads[0]?.ownerNodeId,
+            legacyGrandchildNodeId,
+          );
+        }
+      }),
   );
 });
 

@@ -228,6 +228,13 @@ function withLinkedChildThreadId(
   return { ...current, linkedChildThreadIds };
 }
 
+function isOwnedByRun(
+  row: { readonly runId: OrchestrationV2Run["id"] | null; readonly threadId: ThreadId },
+  run: OrchestrationV2Run,
+): boolean {
+  return row.runId === run.id || (row.threadId !== run.threadId && row.runId === null);
+}
+
 export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
   "RunExecutionService.cascadeTerminalizeRunOwnedSubagents",
 )(function* (input: {
@@ -244,8 +251,13 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
   // Prefer lifetime linkage over currently-open rows: subagent/turn-item
   // snapshots may terminalize before the linked child-thread node settles.
   const childThreadIds = new Set(input.open.linkedChildThreadIds);
-  for (const item of [...input.open.subagents.values(), ...input.open.turnItems.values()]) {
-    if (item.childThreadId !== null) {
+  for (const subagent of input.open.subagents.values()) {
+    if (isOwnedByRun(subagent, input.run) && subagent.childThreadId !== null) {
+      childThreadIds.add(subagent.childThreadId);
+    }
+  }
+  for (const item of input.open.turnItems.values()) {
+    if (item.runId === input.run.id && item.childThreadId !== null) {
       childThreadIds.add(item.childThreadId);
     }
   }
@@ -256,18 +268,20 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
   ]);
   for (const key of keys) {
     const subagent = input.open.subagents.get(key);
-    if (subagent !== undefined && !isSettledSubagentStatus(subagent.status)) {
+    const ownedSubagent =
+      subagent !== undefined && isOwnedByRun(subagent, input.run) ? subagent : undefined;
+    if (ownedSubagent !== undefined && !isSettledSubagentStatus(ownedSubagent.status)) {
       events.push({
         id: yield* input.allocateEventId(),
         type: "subagent.updated",
-        threadId: subagent.threadId,
+        threadId: ownedSubagent.threadId,
         runId: input.run.id,
-        nodeId: subagent.id,
-        driver: subagent.driver,
-        providerInstanceId: subagent.providerInstanceId,
+        nodeId: ownedSubagent.id,
+        driver: ownedSubagent.driver,
+        providerInstanceId: ownedSubagent.providerInstanceId,
         occurredAt: input.completedAt,
         payload: {
-          ...subagent,
+          ...ownedSubagent,
           status: input.status,
           completedAt: input.completedAt,
           updatedAt: input.completedAt,
@@ -277,7 +291,9 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
     const node = input.open.nodes.get(key);
     if (
       node !== undefined &&
-      ((node.threadId === input.run.threadId && node.runId === input.run.id) ||
+      isOwnedByRun(node, input.run) &&
+      (ownedSubagent !== undefined ||
+        (node.threadId === input.run.threadId && node.runId === input.run.id) ||
         childThreadIds.has(node.threadId)) &&
       isOpenExecutionNodeStatus(node.status)
     ) {
@@ -320,7 +336,14 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
     }
   }
   for (const turnItem of input.open.childTurnItems.values()) {
-    if (!childThreadIds.has(turnItem.threadId) || isSettledTurnItemStatus(turnItem.status)) {
+    const owner =
+      turnItem.type === "subagent" ? input.open.subagents.get(turnItem.subagentId) : undefined;
+    const ownedByOpenSubagent = owner !== undefined && isOwnedByRun(owner, input.run);
+    if (
+      (turnItem.runId !== null && turnItem.runId !== input.run.id) ||
+      (!childThreadIds.has(turnItem.threadId) && !ownedByOpenSubagent) ||
+      isSettledTurnItemStatus(turnItem.status)
+    ) {
       continue;
     }
     events.push({
@@ -1334,13 +1357,15 @@ export const layer: Layer.Layer<
           const open = yield* Ref.get(openRunOwnedSubagents);
           const subagents = new Map<NodeId, OrchestrationV2Subagent>();
           const nodes = new Map<NodeId, OrchestrationV2ExecutionNode>();
+          // Owned node per tracked subagent, even if settled, so a concurrent claim still conflicts.
+          const guardedSubagentNodes = new Map<NodeId, OrchestrationV2ExecutionNode>();
           const turnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
-          if (input.loadUnsettledWork === undefined) return { subagents, nodes, turnItems };
-          const trackedItemIds = new Set<TurnItemId>([
-            ...openRootToolCalls.keys(),
-            ...open.childTurnItems.keys(),
-            ...[...open.turnItems.values()].map((item) => item.id),
-          ]);
+          if (input.loadUnsettledWork === undefined) {
+            return { subagents, nodes, guardedSubagentNodes, turnItems };
+          }
+          const trackedSubagentItemIds = new Set<TurnItemId>(
+            [...open.turnItems.values()].map((item) => item.id),
+          );
           for (const threadId of new Set(threadIds)) {
             const stored = yield* input.loadUnsettledWork(
               threadId,
@@ -1348,23 +1373,57 @@ export const layer: Layer.Layer<
                 .filter((record) => record.threadId === threadId)
                 .map((record) => record.id),
             );
-            for (const subagent of stored.subagents) {
-              if (open.subagents.has(subagent.id) && !isSettledSubagentStatus(subagent.status)) {
-                subagents.set(subagent.id, subagent);
-              }
-            }
+            const foreignOwnedSubagentIds = new Set<NodeId>();
             for (const node of stored.nodes) {
+              if (!isOwnedByRun(node, input.run)) {
+                foreignOwnedSubagentIds.add(node.id);
+                continue;
+              }
+              if (open.subagents.has(node.id)) {
+                guardedSubagentNodes.set(node.id, node);
+              }
               if (open.nodes.has(node.id) && isOpenExecutionNodeStatus(node.status)) {
                 nodes.set(node.id, node);
               }
             }
             for (const item of stored.turnItems) {
-              if (trackedItemIds.has(item.id) && !isSettledTurnItemStatus(item.status)) {
+              if (isSettledTurnItemStatus(item.status)) continue;
+              if (
+                trackedSubagentItemIds.has(item.id) &&
+                item.type === "subagent" &&
+                !isOwnedByRun(item, input.run)
+              ) {
+                foreignOwnedSubagentIds.add(item.subagentId);
+                continue;
+              }
+              const trackedRootToolCall =
+                openRootToolCalls.has(item.id) &&
+                item.threadId === input.run.threadId &&
+                (item.runId === input.run.id ||
+                  (item.runId !== null &&
+                    inheritedBackgroundTurnItemsById.get(item.id) === item.runId));
+              const trackedSubagentItem =
+                trackedSubagentItemIds.has(item.id) && item.runId === input.run.id;
+              const trackedChildItem =
+                open.childTurnItems.has(item.id) &&
+                item.threadId !== input.run.threadId &&
+                (item.runId === null || item.runId === input.run.id);
+              if (trackedRootToolCall || trackedSubagentItem || trackedChildItem) {
                 turnItems.set(item.id, item);
               }
             }
+            for (const subagent of stored.subagents) {
+              if (
+                open.subagents.has(subagent.id) &&
+                !foreignOwnedSubagentIds.has(subagent.id) &&
+                isOwnedByRun(subagent, input.run) &&
+                !isSettledSubagentStatus(subagent.status)
+              ) {
+                subagents.set(subagent.id, subagent);
+              }
+            }
           }
-          return { subagents, nodes, turnItems };
+          return { subagents, nodes, guardedSubagentNodes, turnItems };
         });
         const loadLostRootToolCalls = loadTrackedWork([input.run.threadId]).pipe(
           Effect.map(({ turnItems }) =>
@@ -1372,43 +1431,73 @@ export const layer: Layer.Layer<
           ),
         );
         // Subagents and tool calls that outlived the root run die with the provider runtime. Stop
-        // can settle them meanwhile, so each write holds only while its stored row is unchanged.
-        const endWorkLostAfterRootRun = Effect.fn("RunExecutionService.endWorkLostAfterRootRun")(
-          function* (completedAt: DateTime.Utc) {
-            const allocateEventId = () =>
-              idAllocator.allocate.event({ threadId: input.run.threadId });
-            const open = yield* Ref.get(openRunOwnedSubagents);
-            const stored = yield* loadTrackedWork([
-              input.run.threadId,
-              ...[
-                ...open.subagents.values(),
-                ...open.nodes.values(),
-                ...open.childTurnItems.values(),
-              ].map((record) => record.threadId),
-            ]);
+        // can settle them meanwhile, so each write holds only while its stored rows are unchanged.
+        const endLostWorkOnce = Effect.fn("RunExecutionService.endLostWork")(function* (
+          completedAt: DateTime.Utc,
+          options: { readonly includeToolCalls: boolean },
+        ) {
+          const allocateEventId = () =>
+            idAllocator.allocate.event({ threadId: input.run.threadId });
+          const open = yield* Ref.get(openRunOwnedSubagents);
+          const hasSubagents = open.subagents.size > 0;
+          const hasToolCalls = options.includeToolCalls && openRootToolCalls.size > 0;
+          if (!hasSubagents && !hasToolCalls) {
+            yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
+            return;
+          }
+          const trackedThreadIds = [
+            input.run.threadId,
+            ...[
+              ...open.subagents.values(),
+              ...open.nodes.values(),
+              ...open.childTurnItems.values(),
+            ].map((record) => record.threadId),
+          ];
+          const maxConflictPasses = 4;
+          let conflictedSubagents = 0;
+          let conflictedToolCalls = 0;
+          for (let pass = 0; pass < maxConflictPasses; pass++) {
+            const stored = yield* loadTrackedWork(trackedThreadIds);
+            conflictedSubagents = 0;
+            conflictedToolCalls = 0;
             for (const subagent of stored.subagents.values()) {
               const subagentItemId = open.turnItems.get(subagent.id)?.id;
-              const subagentItem =
+              const rawSubagentItem =
                 subagentItemId === undefined ? undefined : stored.turnItems.get(subagentItemId);
+              const subagentItem =
+                rawSubagentItem?.type === "subagent" ? rawSubagentItem : undefined;
+              const batchChildTurnItems = new Map(
+                [...stored.turnItems].filter(
+                  ([id, item]) =>
+                    open.childTurnItems.has(id) &&
+                    id !== subagentItem?.id &&
+                    (item.threadId === subagent.childThreadId ||
+                      (item.type === "subagent" && item.subagentId === subagent.id)) &&
+                    !(
+                      item.type === "subagent" &&
+                      item.subagentId !== subagent.id &&
+                      open.subagents.has(item.subagentId)
+                    ),
+                ),
+              );
+              const batchNodes = new Map(
+                [...stored.nodes].filter(
+                  ([id, node]) =>
+                    id === subagent.id ||
+                    (subagent.childThreadId !== null &&
+                      node.threadId === subagent.childThreadId &&
+                      !open.subagents.has(id)),
+                ),
+              );
               const events = yield* cascadeTerminalizeRunOwnedSubagents({
                 run: input.run,
                 open: {
                   subagents: new Map([[subagent.id, subagent]]),
                   turnItems: new Map(
-                    subagentItem?.type === "subagent" ? [[subagent.id, subagentItem]] : [],
+                    subagentItem === undefined ? [] : [[subagent.id, subagentItem]],
                   ),
-                  childTurnItems: new Map(
-                    [...stored.turnItems].filter(
-                      ([id, item]) =>
-                        open.childTurnItems.has(id) && item.threadId === subagent.childThreadId,
-                    ),
-                  ),
-                  nodes: new Map(
-                    [...stored.nodes].filter(
-                      ([id, node]) =>
-                        id === subagent.id || node.threadId === subagent.childThreadId,
-                    ),
-                  ),
+                  childTurnItems: batchChildTurnItems,
+                  nodes: batchNodes,
                   linkedChildThreadIds: new Set(
                     subagent.childThreadId === null ? [] : [subagent.childThreadId],
                   ),
@@ -1417,35 +1506,59 @@ export const layer: Layer.Layer<
                 completedAt,
                 allocateEventId,
               });
-              yield* eventSink.writeIfSubagentUnchanged({ expected: subagent, events });
-            }
-            for (const toolCall of stored.turnItems.values()) {
-              if (!openRootToolCalls.has(toolCall.id)) continue;
-              yield* eventSink.writeIfTurnItemUnchanged({
-                expected: toolCall,
-                events: yield* interruptLostToolCalls({
-                  run: input.run,
-                  toolCalls: [toolCall],
-                  completedAt,
-                  allocateEventId,
-                }),
+              const guardedNode = stored.guardedSubagentNodes.get(subagent.id);
+              const expectedNodes =
+                guardedNode !== undefined && !batchNodes.has(guardedNode.id)
+                  ? [...batchNodes.values(), guardedNode]
+                  : [...batchNodes.values()];
+              const expectedTurnItems = [
+                ...(subagentItem === undefined ? [] : [subagentItem]),
+                ...batchChildTurnItems.values(),
+              ];
+              const result = yield* eventSink.writeIfSubagentUnchanged({
+                expected: subagent,
+                expectedNodes,
+                expectedTurnItems,
+                events,
               });
+              if (!result.committed) {
+                conflictedSubagents++;
+              }
             }
-            yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
+            if (options.includeToolCalls) {
+              for (const toolCall of stored.turnItems.values()) {
+                if (!openRootToolCalls.has(toolCall.id)) continue;
+                const result = yield* eventSink.writeIfTurnItemUnchanged({
+                  expected: toolCall,
+                  events: yield* interruptLostToolCalls({
+                    run: input.run,
+                    toolCalls: [toolCall],
+                    completedAt,
+                    allocateEventId,
+                  }),
+                });
+                if (!result.committed) {
+                  conflictedToolCalls++;
+                }
+              }
+            }
+            if (conflictedSubagents === 0 && conflictedToolCalls === 0) {
+              break;
+            }
+          }
+          if (conflictedSubagents > 0 || conflictedToolCalls > 0) {
+            yield* Effect.logWarning("orchestration V2 lost-work cleanup conflict", {
+              runId: input.run.id,
+              attemptId: input.attempt.id,
+              conflictedSubagents,
+              conflictedToolCalls,
+            });
+          }
+          if (options.includeToolCalls) {
             openRootToolCalls.clear();
-          },
-          (effect) =>
-            effect.pipe(
-              Effect.catchCauseIf(
-                (cause) => !Cause.hasInterruptsOnly(cause),
-                (cause) =>
-                  Effect.logWarning(
-                    "orchestration V2 failed to end work lost with the provider runtime",
-                    { runId: input.run.id, cause },
-                  ),
-              ),
-            ),
-        );
+          }
+          yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
+        });
         // Runs for every provider event, including streamed text updates; avoid a per-event span.
         const trackChildLifecycle = Effect.fnUntraced(function* (
           event: ProviderAdapter.ProviderAdapterV2Event,
@@ -1682,21 +1795,48 @@ export const layer: Layer.Layer<
           ) {
             const moved = event.subagent;
             const detached = yield* Ref.modify(openRunOwnedSubagents, (current) => {
-              const subagentIds = new Set([moved.id]);
+              const subagentIds = new Set<NodeId>([moved.id]);
               for (const subagent of current.subagents.values()) {
-                if (subagent.threadId === moved.childThreadId) subagentIds.add(subagent.id);
+                if (subagent.childThreadId === moved.childThreadId) {
+                  subagentIds.add(subagent.id);
+                }
+              }
+              for (const item of current.turnItems.values()) {
+                if (item.childThreadId === moved.childThreadId) {
+                  subagentIds.add(item.subagentId);
+                  if (item.nodeId !== null) subagentIds.add(item.nodeId);
+                }
+              }
+              // Nested subagents launched by the moved child keep their own child threads in this
+              // run's routing, so keep their row/node/item entries for lost-work cleanup.
+              const keptNestedSubagentIds = new Set<NodeId>();
+              for (const subagent of current.subagents.values()) {
+                if (!subagentIds.has(subagent.id) && subagent.threadId === moved.childThreadId) {
+                  keptNestedSubagentIds.add(subagent.id);
+                }
               }
               const childTurnItems = new Map(
                 [...current.childTurnItems].filter(
-                  ([, item]) => item.threadId !== moved.childThreadId,
+                  ([, item]) =>
+                    item.threadId !== moved.childThreadId ||
+                    (item.type === "subagent" && keptNestedSubagentIds.has(item.subagentId)),
                 ),
               );
-              const turnItems = new Map(current.turnItems);
-              turnItems.delete(moved.id);
+              const turnItems = new Map(
+                [...current.turnItems].filter(
+                  ([subagentId, item]) =>
+                    !subagentIds.has(subagentId) && item.childThreadId !== moved.childThreadId,
+                ),
+              );
               const detachedItems = new Set(
                 [...current.childTurnItems.values(), ...current.turnItems.values()]
                   .filter(
-                    (item) => item.threadId === moved.childThreadId || item.nodeId === moved.id,
+                    (item) =>
+                      item.threadId === moved.childThreadId ||
+                      (item.nodeId !== null && subagentIds.has(item.nodeId)) ||
+                      (item.type === "subagent" &&
+                        (item.childThreadId === moved.childThreadId ||
+                          subagentIds.has(item.subagentId))),
                   )
                   .map((item) => item.id),
               );
@@ -1708,7 +1848,12 @@ export const layer: Layer.Layer<
                   childTurnItems,
                   nodes: new Map(
                     [...current.nodes].filter(
-                      ([id, node]) => id !== moved.id && node.threadId !== moved.childThreadId,
+                      ([id, node]) =>
+                        keptNestedSubagentIds.has(id) ||
+                        (!subagentIds.has(id) &&
+                          node.threadId !== moved.childThreadId &&
+                          (moved.providerThreadId === null ||
+                            node.providerThreadId !== moved.providerThreadId)),
                     ),
                   ),
                   linkedChildThreadIds: new Set(
@@ -1805,7 +1950,7 @@ export const layer: Layer.Layer<
           if (isRootProviderThreadUpdate && rootTerminalAlreadySeen && storedEvents.length === 0) {
             yield* Ref.set(providerThreadOwnerLost, true);
           }
-          return storedEvents.length;
+          return storedEvents;
         });
         // The timer only wakes ingestion. The flush runs as an ingestion step outside any provider
         // batch, so it stays ordered with routing and snapshots, and a write has committed when
@@ -1841,6 +1986,29 @@ export const layer: Layer.Layer<
           idleFlushWake = undefined;
           return wake === undefined ? Effect.void : Fiber.interrupt(wake.fiber);
         });
+        const trackedEventFromStored = (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+          storedEvents: Effect.Success<ReturnType<typeof ingestDelivered>>,
+        ): ProviderAdapter.ProviderAdapterV2Event => {
+          if (storedEvents.length === 0) return event;
+          if (event.type === "subagent.updated") {
+            const stored = storedEvents.find((item) => item.event.type === "subagent.updated");
+            if (stored?.event.type === "subagent.updated") {
+              return { ...event, subagent: stored.event.payload };
+            }
+          } else if (event.type === "node.updated") {
+            const stored = storedEvents.find((item) => item.event.type === "node.updated");
+            if (stored?.event.type === "node.updated") {
+              return { ...event, node: stored.event.payload };
+            }
+          } else if (event.type === "turn_item.updated") {
+            const stored = storedEvents.find((item) => item.event.type === "turn-item.updated");
+            if (stored?.event.type === "turn-item.updated") {
+              return { ...event, turnItem: stored.event.payload };
+            }
+          }
+          return event;
+        };
         // Per-tick ingestion avoids adding a span for every idle wake.
         const flushIdleAssistantText = Effect.fnUntraced(function* (wokeAt: number) {
           // A tick means its timer slept until `wokeAt`, but the wall clock can still read up
@@ -1857,8 +2025,8 @@ export const layer: Layer.Layer<
             if (!routeProviderEvent(event, routeIdentity, yield* Ref.get(eventRouting))[0])
               continue;
             // A failed write fails ingestion like any provider write.
-            yield* ingestDelivered(event, event);
-            yield* trackChildLifecycle(event, true);
+            const stored = yield* ingestDelivered(event, event);
+            yield* trackChildLifecycle(trackedEventFromStored(event, stored), true);
           }
           yield* scheduleIdleFlush;
         });
@@ -1877,7 +2045,7 @@ export const layer: Layer.Layer<
           ) {
             yield* Ref.set(latestRootProviderTurn, event.providerTurn);
           }
-          let storedEventCount = 0;
+          let storedEvents: Effect.Success<ReturnType<typeof ingestDelivered>> = [];
           const deliveredEvent = assistantStreaming.filter(
             event,
             DateTime.toEpochMillis(yield* DateTime.now),
@@ -1902,7 +2070,7 @@ export const layer: Layer.Layer<
                 shouldStartProviderTurn().pipe(Effect.orElseSucceed(() => true)),
               ]),
             );
-            storedEventCount = stored;
+            storedEvents = stored;
             if (!owned) {
               yield* Ref.get(latestProviderThread).pipe(
                 Effect.flatMap((providerThread) =>
@@ -1923,7 +2091,7 @@ export const layer: Layer.Layer<
               );
             }
           } else if (deliveredEvent) {
-            storedEventCount = yield* ingestDelivered(event, deliveredEvent);
+            storedEvents = yield* ingestDelivered(event, deliveredEvent);
           } else if (
             event.type === "turn_item.updated" &&
             (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning") &&
@@ -1937,6 +2105,8 @@ export const layer: Layer.Layer<
             });
             reservedHeldTurnItemIds.add(event.turnItem.id);
           }
+          const storedEventCount = storedEvents.length;
+          const trackedEvent = trackedEventFromStored(event, storedEvents);
           if (event.type === "provider_thread.updated") {
             if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
               yield* Ref.set(latestProviderThread, event.providerThread);
@@ -1971,7 +2141,17 @@ export const layer: Layer.Layer<
               pendingBackgroundProviderTurns.delete(event.providerTurnId);
             }
           }
-          yield* trackChildLifecycle(event, deliveredEvent !== null);
+          // A deduplicated preserveIdentity node.updated matched the stored node, so skip tracking its raw ID.
+          if (
+            !(
+              event.type === "node.updated" &&
+              event.preserveIdentity === true &&
+              deliveredEvent !== null &&
+              storedEventCount === 0
+            )
+          ) {
+            yield* trackChildLifecycle(trackedEvent, deliveredEvent !== null);
+          }
           yield* scheduleIdleFlush;
         });
         const providerEventFiber = yield* eventSink
@@ -2024,6 +2204,47 @@ export const layer: Layer.Layer<
                   const routing = yield* Ref.get(eventRouting);
                   const rootProviderTurn = yield* Ref.get(latestRootProviderTurn);
                   const squashed = Cause.squash(cause);
+                  const retryRecoveryWrite = <A, E, R>(
+                    effect: Effect.Effect<A, E, R>,
+                    warningMessage: string,
+                  ) => {
+                    let nextRetryWarningAt = completedAt;
+                    return effect.pipe(
+                      // Storage failures can be defects; retry both failure channels.
+                      Effect.catchCause((writeCause) =>
+                        Effect.gen(function* () {
+                          if (Cause.hasInterruptsOnly(writeCause)) {
+                            return yield* Effect.failCause(writeCause);
+                          }
+                          const now = yield* DateTime.now;
+                          if (DateTime.isGreaterThanOrEqualTo(now, nextRetryWarningAt)) {
+                            yield* Effect.logWarning(warningMessage, {
+                              runId: input.run.id,
+                              attemptId: input.attempt.id,
+                              cause: writeCause,
+                            });
+                            // Persistent storage failures must not flood the same disk.
+                            nextRetryWarningAt = DateTime.add(now, { minutes: 10 });
+                          }
+                          return yield* Effect.fail(writeCause);
+                        }),
+                      ),
+                      Effect.retry({
+                        schedule: Schedule.exponential("1 second").pipe(
+                          Schedule.modifyDelay(({ duration }) =>
+                            Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                          ),
+                        ),
+                      }),
+                    );
+                  };
+                  const runInRecoveryScope = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+                    effect.pipe(
+                      // Startup may cancel the consumer and fail its own terminal
+                      // write. Only service shutdown or the atomic gate ends recovery.
+                      Effect.forkIn(scope),
+                      Effect.flatMap(Fiber.join),
+                    );
                   // An exclusive session closes when its thread detaches, and no terminal
                   // follows. The process is gone, so a handoff settles here with no interrupt.
                   if (
@@ -2060,7 +2281,12 @@ export const layer: Layer.Layer<
                     );
                     if (handedOff) {
                       // Its tool calls, the handoff's own among them, died with that process.
-                      yield* endWorkLostAfterRootRun(completedAt);
+                      yield* runInRecoveryScope(
+                        retryRecoveryWrite(
+                          endLostWorkOnce(completedAt, { includeToolCalls: true }),
+                          "orchestration V2 lost-work cleanup retry",
+                        ),
+                      );
                       return;
                     }
                   }
@@ -2075,7 +2301,14 @@ export const layer: Layer.Layer<
                     isProviderEventStreamError(squashed.cause) &&
                     squashed.cause.raisedByT3 !== true;
                   if (yield* Ref.get(rootRunFinalized)) {
-                    if (runtimeLost) yield* endWorkLostAfterRootRun(completedAt);
+                    if (runtimeLost) {
+                      yield* runInRecoveryScope(
+                        retryRecoveryWrite(
+                          endLostWorkOnce(completedAt, { includeToolCalls: true }),
+                          "orchestration V2 lost-work cleanup retry",
+                        ),
+                      );
+                    }
                     return;
                   }
                   const providerThread = yield* Ref.get(latestProviderThread);
@@ -2128,67 +2361,46 @@ export const layer: Layer.Layer<
                         ),
                       )
                     : [];
-                  let nextRetryWarningAt = completedAt;
-                  yield* writeFinalRunEvents({
-                    run: input.run,
-                    rootNode: input.rootNode,
-                    checkpointScope: input.checkpointScope,
-                    providerThread,
-                    attempt: input.attempt,
-                    writeIfRunCurrent: {
-                      activeAttemptId: input.attempt.id,
-                      expectedStatus: "running",
-                    },
-                    openRunOwnedSubagents: openSubagents,
-                    ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
-                    lostToolCalls,
-                    completedAt,
-                    terminal: makeFailedTerminalEvent(
-                      makeProviderFailure({
-                        cause: squashed,
-                        message:
-                          knownProviderFailureMessage(squashed) ??
-                          userFacingDatabaseErrorMessage(squashed),
-                        class: "unknown",
-                      }),
-                      latestItemOrdinal + 1,
-                    ),
-                    failureItemPersisted: false,
-                    refreshAfterTurn,
-                  }).pipe(
-                    // Storage failures can be defects; retry both failure channels.
-                    Effect.catchCause((writeCause) =>
-                      Effect.gen(function* () {
-                        if (Cause.hasInterruptsOnly(writeCause)) {
-                          return yield* Effect.failCause(writeCause);
-                        }
-                        const now = yield* DateTime.now;
-                        if (DateTime.isGreaterThanOrEqualTo(now, nextRetryWarningAt)) {
-                          yield* Effect.logWarning(
-                            "orchestration V2 run failure finalization retry",
-                            {
-                              runId: input.run.id,
-                              attemptId: input.attempt.id,
-                              cause: writeCause,
-                            },
-                          );
-                          // Persistent storage failures must not flood the same disk.
-                          nextRetryWarningAt = DateTime.add(now, { minutes: 10 });
-                        }
-                        return yield* Effect.fail(writeCause);
-                      }),
-                    ),
-                    Effect.retry({
-                      schedule: Schedule.exponential("1 second").pipe(
-                        Schedule.modifyDelay(({ duration }) =>
-                          Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-                        ),
-                      ),
+                  const reloadSubagents = input.loadUnsettledWork !== undefined;
+                  yield* runInRecoveryScope(
+                    Effect.gen(function* () {
+                      const finalized = yield* retryRecoveryWrite(
+                        writeFinalRunEvents({
+                          run: input.run,
+                          rootNode: input.rootNode,
+                          checkpointScope: input.checkpointScope,
+                          providerThread,
+                          attempt: input.attempt,
+                          writeIfRunCurrent: {
+                            activeAttemptId: input.attempt.id,
+                            expectedStatus: "running",
+                          },
+                          ...(reloadSubagents ? {} : { openRunOwnedSubagents: openSubagents }),
+                          ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
+                          lostToolCalls,
+                          completedAt,
+                          terminal: makeFailedTerminalEvent(
+                            makeProviderFailure({
+                              cause: squashed,
+                              message:
+                                knownProviderFailureMessage(squashed) ??
+                                userFacingDatabaseErrorMessage(squashed),
+                              class: "unknown",
+                            }),
+                            latestItemOrdinal + 1,
+                          ),
+                          failureItemPersisted: false,
+                          refreshAfterTurn,
+                        }),
+                        "orchestration V2 run failure finalization retry",
+                      );
+                      if (finalized && reloadSubagents) {
+                        yield* retryRecoveryWrite(
+                          endLostWorkOnce(completedAt, { includeToolCalls: false }),
+                          "orchestration V2 lost-subagent cleanup retry",
+                        );
+                      }
                     }),
-                    // Startup may cancel the consumer and fail its own terminal
-                    // write. Only service shutdown or the atomic gate ends recovery.
-                    Effect.forkIn(scope),
-                    Effect.flatMap(Fiber.join),
                   );
                 }),
             ),

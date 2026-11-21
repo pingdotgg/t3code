@@ -18,6 +18,7 @@ import {
   type RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -505,11 +506,28 @@ export const layer: Layer.Layer<
                 }),
               ];
             case "provider_thread.updated": {
-              const threadId = input.event.providerThread.appThreadId ?? input.threadId;
+              let providerThread = input.event.providerThread;
+              const threadId = providerThread.appThreadId ?? input.threadId;
+              if (input.event.preserveIdentity === true && providerThread.ownerNodeId !== null) {
+                const ownerThreadId =
+                  providerThread.appThreadId === null
+                    ? input.threadId
+                    : ((yield* projections.findThread(providerThread.appThreadId))?.lineage
+                        .parentThreadId ?? input.threadId);
+                const existing = yield* projections.findSubagentIdentity({
+                  threadId: ownerThreadId,
+                  subagentId: providerThread.ownerNodeId,
+                  childThreadId: providerThread.appThreadId,
+                  providerThreadId: providerThread.id,
+                });
+                if (existing !== null && existing.subagent.id !== providerThread.ownerNodeId) {
+                  providerThread = { ...providerThread, ownerNodeId: existing.subagent.id };
+                }
+              }
               const updated = yield* makeDomainEvent(input, {
                 type: "provider-thread.updated",
                 threadId,
-                payload: input.event.providerThread,
+                payload: providerThread,
               });
               return input.event.retainedNativeTurnIds === undefined
                 ? [updated]
@@ -517,19 +535,32 @@ export const layer: Layer.Layer<
                     updated,
                     ...(yield* rollBackRewoundRuns(input, {
                       threadId,
-                      providerThreadId: input.event.providerThread.id,
+                      providerThreadId: providerThread.id,
                       retainedNativeTurnIds: new Set(input.event.retainedNativeTurnIds),
                     })),
                   ];
             }
-            case "provider_turn.updated":
+            case "provider_turn.updated": {
+              let providerTurn = input.event.providerTurn;
+              if (providerTurn.runAttemptId === null) {
+                // Runless child turns can restart from ordinal 1 after a restart; keep SQLite ordinals unique.
+                const ordinal = yield* projections.resolveProviderTurnOrdinal({
+                  threadId: input.event.threadId ?? input.threadId,
+                  providerTurnId: providerTurn.id,
+                  providerThreadId: providerTurn.providerThreadId,
+                  ordinal: providerTurn.ordinal,
+                });
+                if (ordinal !== providerTurn.ordinal) {
+                  providerTurn = { ...providerTurn, ordinal };
+                }
+              }
               return [
                 ...(["completed", "interrupted", "failed", "cancelled"].includes(
-                  input.event.providerTurn.status,
+                  providerTurn.status,
                 )
                   ? yield* dismissNativeUserInputs(
                       input,
-                      input.event.providerTurn.id,
+                      providerTurn.id,
                       input.event.threadId,
                       input.event.retainedRuntimeRequestIds,
                     )
@@ -537,33 +568,75 @@ export const layer: Layer.Layer<
                 yield* makeDomainEvent(input, {
                   type: "provider-turn.updated",
                   ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
-                  payload: input.event.providerTurn,
-                  nodeId: input.event.providerTurn.nodeId,
+                  payload: providerTurn,
+                  nodeId: providerTurn.nodeId,
                 }),
               ];
-            case "node.updated":
+            }
+            case "node.updated": {
+              let node = input.event.node;
+              if (input.event.preserveIdentity === true && node.kind === "subagent") {
+                const existing = yield* projections.findSubagentIdentity({
+                  threadId: node.threadId,
+                  subagentId: node.id,
+                  childThreadId: null,
+                  providerThreadId: node.providerThreadId,
+                });
+                if (existing !== null && existing.subagent.id !== node.id) {
+                  node = { ...node, id: existing.subagent.id };
+                }
+              }
               // Adapters send an unchanged node again with each text delta. Compare with the
               // stored node, not the last one sent, because the server also writes nodes.
-              if (yield* projections.isNodeStored(input.event.node)) return [];
+              if (yield* projections.isNodeStored(node)) return [];
               return [
                 yield* makeDomainEvent(input, {
                   type: "node.updated",
-                  threadId: input.event.node.threadId,
-                  payload: input.event.node,
-                  runId: input.event.node.runId,
-                  nodeId: input.event.node.id,
+                  threadId: node.threadId,
+                  payload: node,
+                  runId: node.runId,
+                  nodeId: node.id,
                 }),
               ];
-            case "subagent.updated":
+            }
+            case "subagent.updated": {
+              let subagent = input.event.subagent;
+              if (input.event.preserveIdentity === true) {
+                const existing = yield* projections.findSubagentIdentity({
+                  threadId: subagent.threadId,
+                  subagentId: subagent.id,
+                  childThreadId: subagent.childThreadId,
+                  providerThreadId: subagent.providerThreadId,
+                });
+                if (existing !== null) {
+                  const { modelSelection: incomingSelection, ...rest } = subagent;
+                  const hasStoredModel =
+                    existing.subagent.model !== null ||
+                    existing.subagent.modelSelection !== undefined;
+                  const model = hasStoredModel ? existing.subagent.model : subagent.model;
+                  const modelSelection = hasStoredModel
+                    ? existing.subagent.modelSelection
+                    : incomingSelection;
+                  subagent = {
+                    ...rest,
+                    id: existing.subagent.id,
+                    title: existing.subagent.title ?? subagent.title,
+                    prompt: existing.subagent.prompt || subagent.prompt,
+                    model,
+                    ...(modelSelection === undefined ? {} : { modelSelection }),
+                  };
+                }
+              }
               return [
                 yield* makeDomainEvent(input, {
                   type: "subagent.updated",
-                  threadId: input.event.subagent.threadId,
-                  payload: input.event.subagent,
-                  runId: input.event.subagent.runId,
-                  nodeId: input.event.subagent.id,
+                  threadId: subagent.threadId,
+                  payload: subagent,
+                  runId: subagent.runId,
+                  nodeId: subagent.id,
                 }),
               ];
+            }
             case "message.updated":
               return [
                 yield* makeDomainEvent(input, {
@@ -574,18 +647,37 @@ export const layer: Layer.Layer<
                   nodeId: input.event.message.nodeId,
                 }),
               ];
-            case "turn_item.updated":
+            case "turn_item.updated": {
+              let turnItem = input.event.turnItem;
+              if (input.event.preserveIdentity === true && turnItem.type === "subagent") {
+                const existing = yield* projections.findSubagentIdentity({
+                  threadId: turnItem.threadId,
+                  subagentId: turnItem.subagentId,
+                  childThreadId: turnItem.childThreadId,
+                  providerThreadId: null,
+                });
+                if (existing !== null) {
+                  turnItem = {
+                    ...turnItem,
+                    ...(existing.turnItem === null ? {} : { id: existing.turnItem.id }),
+                    nodeId: existing.subagent.id,
+                    subagentId: existing.subagent.id,
+                    title: existing.turnItem?.title ?? existing.subagent.title ?? turnItem.title,
+                    prompt:
+                      existing.turnItem?.prompt || existing.subagent.prompt || turnItem.prompt,
+                  };
+                }
+              }
               return [
                 yield* makeDomainEvent(input, {
                   type: "turn-item.updated",
-                  threadId: input.event.turnItem.threadId,
-                  payload: boundFileChangeForStorage(
-                    stripUnservedToolOutputImageBytes(input.event.turnItem),
-                  ),
-                  runId: input.event.turnItem.runId,
-                  nodeId: input.event.turnItem.nodeId,
+                  threadId: turnItem.threadId,
+                  payload: boundFileChangeForStorage(stripUnservedToolOutputImageBytes(turnItem)),
+                  runId: turnItem.runId,
+                  nodeId: turnItem.nodeId,
                 }),
               ];
+            }
             case "runtime_request.updated":
               return [
                 yield* makeDomainEvent(input, {
@@ -837,22 +929,31 @@ export const layer: Layer.Layer<
                   ),
                 ),
               ),
-              // @effect-diagnostics-next-line flatMapConditionalToFilterOrFail:off - The predicate narrows the captured event for the subagent update.
-              Effect.flatMap((storedEvents) =>
-                storedEvents.length === 0 || input.event.type !== "subagent.updated"
-                  ? Effect.succeed(storedEvents)
-                  : syncSubagentThreadModel(input, input.event.subagent).pipe(
-                      Effect.map((synced) => [...storedEvents, ...synced]),
-                      Effect.mapError(
-                        (cause) =>
-                          new ProviderEventPublishError({
-                            providerSessionId: input.providerSessionId,
-                            eventCount: 1,
-                            cause,
-                          }),
-                      ),
-                    ),
-              ),
+              Effect.flatMap((storedEvents) => {
+                if (storedEvents.length === 0 || input.event.type !== "subagent.updated") {
+                  return Effect.succeed(storedEvents);
+                }
+                const persisted = storedEvents.find(
+                  (stored) => stored.event.type === "subagent.updated",
+                );
+                const subagent =
+                  persisted?.event.type === "subagent.updated"
+                    ? persisted.event.payload
+                    : input.event.subagent;
+                return syncSubagentThreadModel(input, subagent).pipe(
+                  Effect.map((synced) => [...storedEvents, ...synced]),
+                  Effect.catchCauseIf(
+                    (cause) => !Cause.hasInterruptsOnly(cause),
+                    (cause) =>
+                      Effect.logWarning("Native subagent thread model sync failed", {
+                        threadId: subagent.childThreadId ?? input.threadId,
+                        subagentId: subagent.id,
+                        cause,
+                      }).pipe(Effect.as(storedEvents)),
+                  ),
+                  Effect.orDie,
+                );
+              }),
               Effect.tap((storedEvents) =>
                 Effect.gen(function* () {
                   if (storedEvents.length === 0 || input.event.type !== "provider_turn.updated")

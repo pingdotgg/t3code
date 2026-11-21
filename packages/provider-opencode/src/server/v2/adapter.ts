@@ -105,6 +105,28 @@ import {
   openCodeToolTurnItem,
 } from "../toolItems.ts";
 
+const SUBAGENT_PROMPT_WRAPPER = "You are a subagent spawned by another session.\n";
+
+function takeMatchingPendingPrompt(
+  pendingPrompts: Array<{ readonly call: SubagentCall; readonly text: string }>,
+  text: string,
+): string {
+  const unwrapped = text.startsWith(SUBAGENT_PROMPT_WRAPPER)
+    ? text.slice(SUBAGENT_PROMPT_WRAPPER.length)
+    : undefined;
+  const matchedTexts = new Set<string>();
+  let matchIndex = -1;
+  for (let i = 0; i < pendingPrompts.length; i += 1) {
+    const candidate = pendingPrompts[i]!.text;
+    if (candidate === text || (unwrapped !== undefined && candidate === unwrapped)) {
+      matchedTexts.add(candidate);
+      if (matchIndex === -1) matchIndex = i;
+    }
+  }
+  if (matchedTexts.size !== 1) return text;
+  return pendingPrompts.splice(matchIndex, 1)[0]!.text;
+}
+
 const NativeGoal = Schema.NullOr(
   Schema.Struct({
     objective: Schema.NonEmptyString,
@@ -259,6 +281,7 @@ interface ActiveTurn {
   readonly models: Set<string>;
   lastStep: Tokens | undefined;
   before: string | null | undefined;
+  launchPromptId: string | undefined;
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
   todoPlanId: PlanId | undefined;
@@ -273,6 +296,7 @@ interface ActiveTurn {
   unsent: boolean;
   readonly steers: Set<string>;
   readonly settledInbox: Set<string>;
+  readonly settledCalls: Set<string>;
   // Reconnects replay finished tools, so each nested html_render takes a page only once.
   readonly takenPages: Set<string>;
   heldEnd: TurnTerminal | undefined;
@@ -280,6 +304,24 @@ interface ActiveTurn {
   /** Scope child tool IDs because model-generated IDs can repeat parent IDs. */
   readonly scope: string;
   usedSubagents: boolean;
+}
+
+interface SubagentRow {
+  readonly nativeId: string;
+  readonly state: ThreadState;
+  readonly preserveIdentity: boolean;
+  turn: ActiveTurn;
+  ordinal: number;
+  startedAt: DateTime.Utc;
+  prompt: string;
+  title: string | null;
+  model: string | null;
+  status: OrchestrationV2Subagent["status"];
+  result: string | null;
+  resultRun: number;
+  resultStatus: OrchestrationV2Subagent["status"] | null;
+  completedAt: DateTime.Utc | null;
+  emitted: boolean;
 }
 
 interface SubagentCall {
@@ -294,14 +336,14 @@ interface SubagentCall {
   agent: string | undefined;
   model: string | null;
   background: boolean;
+  targetSessionId: string | undefined;
+  row: SubagentRow | undefined;
   /** The child's turn this call prompted or steered; unset until that turn starts. */
   run: number | undefined;
   /** That turn's last text once it ended, which OpenCode sends as the run's report. */
   answer: string | undefined;
   child: ThreadState | undefined;
   status: OrchestrationV2Subagent["status"];
-  result: string | null;
-  completedAt: DateTime.Utc | null;
 }
 
 interface Wake {
@@ -367,11 +409,16 @@ interface ThreadState {
   readonly calls: Map<string, SubagentCall>;
   subagent:
     | {
+        readonly row: SubagentRow;
         call: SubagentCall;
         readonly appThread: OrchestrationV2AppThread;
+        readonly coldResumeKey: string | undefined;
         turns: number;
-        prompt: string | undefined;
+        readonly pendingPrompts: Array<{ readonly call: SubagentCall; readonly text: string }>;
+        queuedPrompt: { readonly inboxId: string; readonly text: string } | undefined;
         queued: string | undefined;
+        readonly steers: Map<string, string>;
+        readonly deliveredSteers: Array<{ readonly inboxId: string; readonly text: string }>;
       }
     | undefined;
   readonly wakes: Array<Wake>;
@@ -959,14 +1006,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const rootOf = (state: ThreadState): ThreadState => {
       let current = state;
-      while (current.subagent !== undefined) current = current.subagent.call.state;
+      while (current.subagent !== undefined) current = current.subagent.row.state;
       return current;
     };
 
     const sessionsOf = (thread: ThreadState): ReadonlyArray<ThreadState> => [
       thread,
       ...[...threads.values()].filter((state) => {
-        for (let above = state.subagent?.call.state; above; above = above.subagent?.call.state) {
+        for (let above = state.subagent?.row.state; above; above = above.subagent?.row.state) {
           if (above === thread) return true;
         }
         return false;
@@ -981,7 +1028,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * the ones that joined it while it ran.
      */
     const callsAttachedTo = (child: ThreadState): ReadonlyArray<SubagentCall> => {
-      const parent = child.subagent?.call.state;
+      const parent = child.subagent?.row.state;
       if (parent === undefined) return [];
       return [...parent.calls.values()].filter((candidate) => candidate.child === child);
     };
@@ -990,8 +1037,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const calls: Array<SubagentCall> = [];
       let current = threads.get(sessionId);
       while (current?.subagent !== undefined) {
-        calls.push(current.subagent.call);
-        current = current.subagent.call.state;
+        const attached = callsAttachedTo(current);
+        calls.push(
+          attached.findLast((call) => call.background) ?? attached.at(-1) ?? current.subagent.call,
+        );
+        current = current.subagent.row.state;
       }
       return calls;
     };
@@ -1079,6 +1129,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         providerThread: state.providerThread,
         pendingBackgroundWork,
         ...(state.sessionScopedBackground === true ? { sessionScoped: true } : {}),
+        ...(state.subagent?.row.preserveIdentity === true ? { preserveIdentity: true } : {}),
       });
     });
 
@@ -1353,6 +1404,36 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           attachments: [],
         },
       });
+    });
+
+    // Mid-turn steers delivered to a running child never start a new turn; project them in place.
+    const emitChildSteer = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      inboxId: string,
+      text: string,
+    ) {
+      const subagent = state.subagent;
+      if (subagent === undefined || text.trim().length === 0) return;
+      turn.closingText = undefined;
+      const now = yield* DateTime.now;
+      const artifacts = makeSubagentConversationArtifacts({
+        messageId: idAllocator.derive.messageFromProviderItem({ driver, nativeItemId: inboxId }),
+        senderThreadId: subagent.call.turn.input.threadId,
+        turnItemId: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId: inboxId }),
+        threadId: turn.input.threadId,
+        rootNodeId: turn.input.rootNodeId,
+        providerThreadId: state.providerThread.id,
+        providerTurnId: turn.providerTurn.id,
+        nativeItemRef: ref(inboxId),
+        role: "user",
+        inputIntent: "steer",
+        text,
+        ordinal: ordinalOf(turn, inboxId),
+        now,
+      });
+      yield* emit({ type: "message.updated", driver, message: artifacts.message });
+      yield* emit({ type: "turn_item.updated", driver, turnItem: artifacts.turnItem });
     });
 
     // Todo updates share the provider event span.
@@ -1671,6 +1752,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       models: new Set(),
       lastStep: undefined,
       before: undefined,
+      launchPromptId: undefined,
       compaction: undefined,
       compactions: 0,
       todoPlanId: undefined,
@@ -1679,6 +1761,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       unsent: false,
       steers: new Set(),
       settledInbox: new Set(),
+      settledCalls: new Set(),
       takenPages: new Set(),
       heldEnd: undefined,
       awaitingStart: options.awaitingStart,
@@ -1686,21 +1769,48 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       usedSubagents: false,
     });
 
-    const emitSubagent = Effect.fnUntraced(function* (call: SubagentCall) {
+    const makeSubagentRow = (
+      call: SubagentCall,
+      nativeId: string,
+      preserveIdentity: boolean,
+    ): SubagentRow => ({
+      nativeId,
+      state: call.state,
+      preserveIdentity,
+      turn: call.turn,
+      ordinal: call.ordinal,
+      startedAt: call.startedAt,
+      prompt: call.prompt,
+      title: call.title,
+      model: preserveIdentity ? null : call.model,
+      status: call.status,
+      result: null,
+      resultRun: -1,
+      resultStatus: null,
+      completedAt: null,
+      emitted: false,
+    });
+
+    const emitSubagentRow = Effect.fnUntraced(function* (
+      row: SubagentRow,
+      child: ThreadState | undefined,
+    ) {
+      row.emitted = true;
       const updatedAt = yield* DateTime.now;
-      const { turn, state } = call;
+      const { turn, state } = row;
       const nodeId = idAllocator.derive.nodeFromProviderItem({
         driver,
-        nativeItemId: call.nativeId,
+        nativeItemId: row.nativeId,
       });
-      const completedAt = isOrchestrationV2WorkActive(call.status)
+      const completedAt = isOrchestrationV2WorkActive(row.status)
         ? null
-        : (call.completedAt ?? updatedAt);
-      const childProviderThreadId = call.child?.providerThread.id ?? null;
-      const childThreadId = call.child?.subagent?.appThread.id ?? null;
+        : (row.completedAt ?? updatedAt);
+      const childProviderThreadId = child?.providerThread.id ?? null;
+      const childThreadId = child?.subagent?.appThread.id ?? null;
       yield* emit({
         type: "node.updated",
         driver,
+        ...(row.preserveIdentity ? { preserveIdentity: true } : {}),
         node: {
           id: nodeId,
           threadId: turn.input.threadId,
@@ -1708,20 +1818,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           parentNodeId: turn.input.rootNodeId,
           rootNodeId: turn.input.rootNodeId,
           kind: "subagent",
-          status: call.status,
+          status: row.status,
           countsForRun: false,
           providerThreadId: childProviderThreadId ?? state.providerThread.id,
           providerTurnId: turn.providerTurn.id,
-          nativeItemRef: ref(call.nativeId),
+          nativeItemRef: ref(row.nativeId),
           runtimeRequestId: null,
           checkpointScopeId: null,
-          startedAt: call.startedAt,
+          startedAt: row.startedAt,
           completedAt,
         },
       });
       yield* emit({
         type: "subagent.updated",
         driver,
+        ...(row.preserveIdentity ? { preserveIdentity: true } : {}),
         subagent: {
           id: nodeId,
           threadId: turn.input.threadId,
@@ -1733,13 +1844,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           providerInstanceId: instanceId,
           providerThreadId: childProviderThreadId,
           childThreadId,
-          nativeTaskRef: ref(call.nativeId),
-          prompt: call.prompt,
-          title: call.title,
-          model: call.model,
-          status: call.status,
-          result: call.result,
-          startedAt: call.startedAt,
+          nativeTaskRef: ref(row.nativeId),
+          prompt: row.prompt,
+          title: row.title,
+          model: row.model,
+          status: row.status,
+          result: row.result,
+          startedAt: row.startedAt,
           completedAt,
           updatedAt,
         },
@@ -1747,19 +1858,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* emit({
         type: "turn_item.updated",
         driver,
+        ...(row.preserveIdentity ? { preserveIdentity: true } : {}),
         turnItem: {
-          id: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId: call.nativeId }),
+          id: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId: row.nativeId }),
           threadId: turn.input.threadId,
           runId: turn.input.runId,
           nodeId,
           providerThreadId: state.providerThread.id,
           providerTurnId: turn.providerTurn.id,
-          nativeItemRef: ref(call.nativeId),
+          nativeItemRef: ref(row.nativeId),
           parentItemId: null,
-          ordinal: call.ordinal,
-          status: call.status,
-          title: call.title,
-          startedAt: call.startedAt,
+          ordinal: row.ordinal,
+          status: row.status,
+          title: row.title,
+          startedAt: row.startedAt,
           completedAt,
           updatedAt,
           type: "subagent",
@@ -1768,25 +1880,34 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           driver,
           providerInstanceId: instanceId,
           childThreadId,
-          prompt: call.prompt,
-          result: call.result,
+          prompt: row.prompt,
+          result: row.result,
         },
       });
-      yield* syncRosterAncestors(call.state);
+      yield* syncRosterAncestors(row.state);
     });
 
     const syncRoster = Effect.fnUntraced(function* (state: ThreadState) {
-      const roster: Array<import("@t3tools/contracts").OrchestrationV2PendingBackgroundTask> =
-        runningCalls(state)
-          .filter((call) => call.background)
-          .map((call) => ({
-            taskId: call.nativeId,
-            kind: "subagent" as const,
-            ...(call.title?.trim() ? { description: call.title.trim() } : {}),
-            ...(call.child?.subagent === undefined
-              ? {}
-              : { childThreadId: call.child.subagent.appThread.id }),
-          }));
+      const subagentTasks = new Map<
+        string,
+        import("@t3tools/contracts").OrchestrationV2PendingBackgroundTask
+      >();
+      for (const call of runningCalls(state)) {
+        if (!call.background || call.row === undefined) continue;
+        const { row } = call;
+        const taskId = row.nativeId;
+        if (subagentTasks.has(taskId)) continue;
+        const title = row.preserveIdentity ? undefined : row.title?.trim();
+        subagentTasks.set(taskId, {
+          taskId,
+          kind: "subagent" as const,
+          ...(title ? { description: title } : {}),
+          ...(call.child?.subagent === undefined
+            ? {}
+            : { childThreadId: call.child.subagent.appThread.id }),
+        });
+      }
+      const roster = [...subagentTasks.values()];
       for (const [taskId, shell] of shells) {
         if (shell.running && sessionsOf(state).includes(shell.state)) {
           roster.push({
@@ -1796,7 +1917,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ...(shell.awaited === true ? { awaited: true } : {}),
             ...(shell.state.subagent === undefined
               ? {}
-              : { parentTaskId: shell.state.subagent.call.nativeId }),
+              : { parentTaskId: shell.state.subagent.row.nativeId }),
           });
         }
       }
@@ -1841,7 +1962,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       let current: ThreadState | undefined = state;
       while (current !== undefined) {
         yield* syncRoster(current);
-        current = current.subagent?.call.state;
+        current = current.subagent?.row.state;
       }
     });
 
@@ -2111,9 +2232,81 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const info = announced.get(childId);
       announced.delete(childId);
       const now = yield* DateTime.now;
+      const previous = threads.get(childId);
+      const existing =
+        previous?.subagent !== undefined && previous.subagent.row.state === call.state
+          ? previous.subagent
+          : undefined;
+      if (existing !== undefined) {
+        const child = previous!;
+        const { row } = existing;
+        const needsReopen = !isOrchestrationV2WorkActive(row.status);
+        // A call to a running child steers that run; OpenCode reports it once for all its calls.
+        if (child.active !== undefined) call.run = existing.turns;
+        const childModel = info?.model ?? child.model;
+        if (childModel !== undefined) call.model ??= `${childModel.providerID}/${childModel.id}`;
+        const nextTitle = call.title ?? info?.title ?? null;
+        const filledMeta =
+          (row.model === null && call.model !== null) || (row.title === null && nextTitle !== null);
+        row.model ??= call.model;
+        row.title ??= nextTitle;
+        call.row = row;
+        call.child = child;
+        existing.call = call;
+        if (child.active === undefined && call.prompt.length > 0) {
+          existing.pendingPrompts.push({ call, text: call.prompt });
+        }
+        child.sessionScopedBackground = false;
+        child.model = childModel;
+        const nextProviderThread = withReportedModel(
+          { ...child.providerThread, status: "active", updatedAt: now },
+          child.model,
+        );
+        const providerChanged =
+          child.providerThread.status !== "active" ||
+          nextProviderThread.nativeMetadata !== child.providerThread.nativeMetadata;
+        child.providerThread = nextProviderThread;
+        child.directory = call.state.directory;
+        child.agent = info?.agent ?? call.agent ?? child.agent;
+        child.rules = info?.permissions ?? child.rules;
+        childOwners.set(childId, rootOf(call.state));
+        const movedTurn = row.turn !== call.turn;
+        if (movedTurn) {
+          row.turn = call.turn;
+          row.ordinal = call.ordinal;
+        }
+        if (needsReopen) {
+          row.startedAt = call.startedAt;
+          row.status = "running";
+          row.result = null;
+          row.resultRun = -1;
+          row.resultStatus = null;
+          row.completedAt = null;
+          yield* emitSubagentRow(row, child);
+          yield* emitProviderThread(child);
+        } else {
+          if (movedTurn || filledMeta || !row.emitted) yield* emitSubagentRow(row, child);
+          else yield* syncRosterAncestors(call.state);
+          if (providerChanged) yield* emitProviderThread(child);
+        }
+        // Reused child sessions may retain old mode rules; refresh policy as soon as the call identifies them.
+        if (info === undefined) {
+          yield* writeRules(child, rootOf(call.state).policy).pipe(
+            Effect.timeout(REQUEST_REPLY_TIMEOUT),
+            Effect.ignore({ log: true }),
+          );
+        }
+        return;
+      }
+      const coldResume = info === undefined && previous?.subagent === undefined;
+      const rowNativeId =
+        previous?.subagent !== undefined && previous.subagent.row.state !== call.state
+          ? call.nativeId
+          : childId;
+      const row = (call.row ??= makeSubagentRow(call, rowNativeId, coldResume));
       const nodeId = idAllocator.derive.nodeFromProviderItem({
         driver,
-        nativeItemId: call.nativeId,
+        nativeItemId: row.nativeId,
       });
       const childThreadId = idAllocator.derive.subagentThread({
         driver,
@@ -2125,8 +2318,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         nativeThreadId: childId,
         providerInstanceId: instanceId,
       });
-      if (info?.model !== undefined) call.model = `${info.model.providerID}/${info.model.id}`;
-      call.title = call.title ?? info?.title ?? null;
+      const childModel = info?.model ?? previous?.model;
+      if (childModel !== undefined) {
+        const slug = `${childModel.providerID}/${childModel.id}`;
+        call.model = slug;
+        row.model = slug;
+      }
+      row.title ??= call.title ?? info?.title ?? null;
+      call.title = row.title;
       const parentThread = call.turn.input.appThread;
       const appThread = makeSubagentChildThread({
         parentThread,
@@ -2136,13 +2335,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         providerInstanceId: instanceId,
         modelSelection: {
           instanceId,
-          model: call.model ?? call.turn.input.modelSelection.model,
+          model: row.model ?? call.turn.input.modelSelection.model,
         },
         title: subagentThreadTitle({
           parentTitle: parentThread.title,
-          title: call.title,
-          prompt: call.prompt,
-          ordinal: call.ordinal,
+          title: row.title,
+          prompt: row.prompt,
+          ordinal: row.ordinal,
         }),
         now,
         createdBy: "agent",
@@ -2165,21 +2364,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         createdAt: now,
         updatedAt: now,
       };
-      const previous = threads.get(childId);
-      // A call to a running child steers that run; OpenCode reports it once for all its calls.
       if (previous?.active !== undefined) call.run = previous.subagent?.turns;
       const subagent = {
+        row,
         call,
         appThread,
+        coldResumeKey: coldResume ? call.nativeId : previous?.subagent?.coldResumeKey,
         turns: previous?.subagent?.turns ?? 0,
-        prompt: call.prompt,
+        pendingPrompts: call.prompt.length > 0 ? [{ call, text: call.prompt }] : [],
+        queuedPrompt: undefined,
         queued: undefined,
+        steers: new Map<string, string>(),
+        deliveredSteers: [],
       };
       const child =
         previous ?? newThreadState(childId, providerThread, call.state.directory, subagent);
       child.subagent = subagent;
       child.sessionScopedBackground = false;
-      child.model = info?.model ?? child.model;
+      child.model = childModel;
       child.providerThread = withReportedModel(providerThread, child.model);
       child.directory = call.state.directory;
       child.agent = info?.agent ?? call.agent ?? child.agent;
@@ -2187,9 +2389,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       threads.set(childId, child);
       childOwners.set(childId, rootOf(call.state));
       call.child = child;
-      yield* emit({ type: "app_thread.created", driver, appThread });
+      yield* emit({
+        type: "app_thread.created",
+        driver,
+        appThread,
+        ...(info === undefined ? { createOnly: true } : {}),
+      });
+      yield* emitSubagentRow(row, child);
       yield* emitProviderThread(child);
-      yield* emitSubagent(call);
       // Reused child sessions may retain old mode rules; refresh policy as soon as the call identifies them.
       if (info === undefined) {
         yield* writeRules(child, rootOf(call.state).policy).pipe(
@@ -2205,12 +2412,36 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       result?: string,
     ) => Effect.Effect<void> = Effect.fnUntraced(function* (call, status, result) {
       if (!isOrchestrationV2WorkActive(call.status)) return;
+      const now = yield* DateTime.now;
       call.status = status;
-      call.completedAt = yield* DateTime.now;
-      if (result !== undefined) call.result = result;
+      call.turn.settledCalls.add(call.toolId);
       call.state.calls.delete(call.toolId);
       const child = call.child;
-      if (child !== undefined) {
+      const remaining = child === undefined ? [] : callsAttachedTo(child);
+      if (child?.subagent !== undefined) {
+        for (let i = child.subagent.pendingPrompts.length - 1; i >= 0; i -= 1) {
+          if (child.subagent.pendingPrompts[i]?.call === call) {
+            child.subagent.pendingPrompts.splice(i, 1);
+          }
+        }
+        if (child.subagent.call === call && remaining.length > 0) {
+          child.subagent.call = remaining.at(-1)!;
+        }
+      }
+      const row = call.row;
+      if (row !== undefined) {
+        const callRun = call.run ?? child?.subagent?.turns ?? 0;
+        const supersededByLiveCall = remaining.some(
+          (other) => (other.run ?? child?.subagent?.turns ?? 0) >= callRun,
+        );
+        if ((!supersededByLiveCall || status === "completed") && callRun >= row.resultRun) {
+          if (callRun > row.resultRun) row.result = null;
+          row.resultRun = callRun;
+          row.resultStatus = status;
+          if (result !== undefined) row.result = result;
+        }
+      }
+      if (child !== undefined && remaining.length === 0) {
         for (const nested of Array.from(child.calls.values())) {
           if (nested.background && status !== "failed") continue;
           yield* settleCall(nested, status === "completed" ? "interrupted" : status);
@@ -2218,15 +2449,38 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (child.active !== undefined && status !== "completed") {
           yield* finishTurn(child, { status: "interrupted" });
         }
+        if (child.active === undefined && child.subagent !== undefined) {
+          child.subagent.pendingPrompts.length = 0;
+          child.subagent.queuedPrompt = undefined;
+          child.subagent.queued = undefined;
+          child.subagent.steers.clear();
+          child.subagent.deliveredSteers.length = 0;
+        }
         child.sessionScopedBackground = false;
         child.providerThread = {
           ...child.providerThread,
           status: "idle",
-          updatedAt: call.completedAt,
+          updatedAt: now,
         };
         yield* emitProviderThread(child);
       }
-      yield* emitSubagent(call);
+      if (row !== undefined && remaining.length === 0) {
+        row.status = row.resultStatus ?? status;
+        row.completedAt = now;
+        yield* emitSubagentRow(row, child);
+      } else if (
+        row === undefined &&
+        (call.targetSessionId === undefined ||
+          (status !== "completed" && !threads.has(call.targetSessionId)))
+      ) {
+        const fallbackRow = makeSubagentRow(call, call.nativeId, false);
+        fallbackRow.status = status;
+        fallbackRow.completedAt = now;
+        if (result !== undefined) fallbackRow.result = result;
+        yield* emitSubagentRow(fallbackRow, undefined);
+      } else {
+        yield* syncRosterAncestors(call.state);
+      }
     });
 
     const startChildTurn = Effect.fnUntraced(function* (child: ThreadState) {
@@ -2235,7 +2489,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       subagent.turns += 1;
       for (const call of callsAttachedTo(child)) call.run ??= subagent.turns;
       const startedAt = yield* DateTime.now;
-      const nativeTurnId = `${child.sessionId}:turn:${subagent.turns}`;
+      const nativeTurnId =
+        subagent.coldResumeKey === undefined
+          ? `${child.sessionId}:turn:${subagent.turns}`
+          : `${child.sessionId}:resume:${subagent.coldResumeKey}:turn:${subagent.turns}`;
       const rootNodeId = idAllocator.derive.nodeFromProviderItem({
         driver,
         nativeItemId: `${nativeTurnId}:root`,
@@ -2290,8 +2547,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         },
       });
       yield* emitProviderTurn(child, turn, providerTurn);
-      const prompt = subagent.prompt;
-      subagent.prompt = undefined;
+      turn.launchPromptId = subagent.queuedPrompt?.inboxId;
+      const prompt = subagent.queuedPrompt?.text ?? subagent.pendingPrompts[0]?.text;
+      subagent.queuedPrompt = undefined;
+      subagent.pendingPrompts.length = 0;
       if (prompt !== undefined && prompt.length > 0) {
         const nativeId = `${nativeTurnId}:prompt`;
         const artifacts = makeSubagentConversationArtifacts({
@@ -2313,6 +2572,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         });
         yield* emit({ type: "message.updated", driver, message: artifacts.message });
         yield* emit({ type: "turn_item.updated", driver, turnItem: artifacts.turnItem });
+      }
+      for (const steer of subagent.deliveredSteers.splice(0)) {
+        yield* emitChildSteer(child, turn, steer.inboxId, steer.text);
       }
     });
 
@@ -2423,19 +2685,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       });
       // Subagent turns are runless; their calls own settlement.
       if (state.subagent !== undefined) {
-        const call = state.subagent.call;
         for (const attached of callsAttachedTo(state)) {
           if (attached.run === state.subagent.turns) attached.answer = turn.answer;
         }
-        if (!call.background && terminal.status !== "completed") {
-          yield* settleCall(call, terminal.status);
-        }
-        if (terminal.status === "failed") {
+        if (terminal.status !== "completed") {
           // Background calls settle when the parent reads a report; failed children have no report.
           // Fail every attached call so earlier background calls cannot leave phantom work,
           // regardless of which call joined last or is still foreground.
           for (const attached of callsAttachedTo(state)) {
-            yield* settleCall(attached, terminal.status, terminal.failure.message);
+            if (terminal.status === "failed" || !attached.background) {
+              yield* settleCall(
+                attached,
+                terminal.status,
+                terminal.status === "failed" ? terminal.failure.message : undefined,
+              );
+            }
           }
         }
         return;
@@ -2816,16 +3080,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         agent: undefined,
         model: null,
         background: false,
+        targetSessionId: undefined,
+        row: undefined,
         run: undefined,
         answer: undefined,
         child: undefined,
         status: "running",
-        result: null,
-        completedAt: null,
       };
       turn.usedSubagents = true;
       state.calls.set(toolId, call);
-      yield* emitSubagent(call);
     });
 
     const onTurnEvent = Effect.fnUntraced(function* (
@@ -2872,7 +3135,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             call.agent = stringField(input, "agent");
             call.model = stringField(input, "model") ?? call.model;
             call.background = input["background"] === true;
-            return yield* emitSubagent(call);
+            call.targetSessionId =
+              stringField(input, "sessionID") ?? stringField(input, "session_id");
+            return;
           }
           const tool = turn.tools.get(event.data.id);
           if (tool !== undefined) tool.input = event.data.input;
@@ -2893,7 +3158,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             if (event.data.metadata?.["status"] === "running") {
               if (call.background) return;
               call.background = true;
-              return yield* emitSubagent(call);
+              return yield* syncRosterAncestors(call.state);
             }
             return yield* settleCall(call, "completed", subagentOutput(textOf(event.data.content)));
           }
@@ -3245,14 +3510,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         written !== undefined && candidate.run < written ? [candidate.call] : [],
       );
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
+      const existingChild = threads.get(childId);
+      const labelRow = call?.row ?? existingChild?.subagent?.row;
       state.reports.set(inboxId, {
         inboxId,
         childId,
         text: payload.text,
         report: {
           kind: "subagent",
-          label: call?.title ?? stringField(payload.metadata, "description"),
-          childThreadId: call?.child?.subagent?.appThread.id,
+          label:
+            labelRow?.preserveIdentity === true
+              ? undefined
+              : (labelRow?.title ?? call?.title ?? stringField(payload.metadata, "description")),
+          childThreadId:
+            call?.child?.subagent?.appThread.id ?? existingChild?.subagent?.appThread.id,
           outcome,
         },
       });
@@ -3502,6 +3773,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           state.providerThread = { ...providerThread, updatedAt: yield* DateTime.now };
           yield* emitProviderThread(state);
         }
+        if (state.subagent !== undefined && state.subagent.row.model === null) {
+          state.subagent.row.model = `${event.data.model.providerID}/${event.data.model.id}`;
+          if (state.subagent.row.emitted) {
+            yield* emitSubagentRow(state.subagent.row, state);
+          }
+        }
       }
       if (
         event.type === "session.inbox.enqueued" &&
@@ -3518,10 +3795,38 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.reports.delete(event.data.inboxID);
         const external = state.externalPrompts.get(event.data.inboxID);
         state.externalPrompts.delete(event.data.inboxID);
+        const childSteer = state.subagent?.steers.get(event.data.inboxID);
+        state.subagent?.steers.delete(event.data.inboxID);
+        if (event.type === "session.inbox.cancelled" && state.subagent !== undefined) {
+          if (state.subagent.queued === event.data.inboxID) {
+            state.subagent.queued = undefined;
+          }
+          if (state.subagent.queuedPrompt?.inboxId === event.data.inboxID) {
+            state.subagent.queuedPrompt = undefined;
+            if (state.active === undefined) {
+              const next = state.subagent.steers.entries().next();
+              if (!next.done) {
+                const [nextId, nextText] = next.value;
+                state.subagent.steers.delete(nextId);
+                state.subagent.queuedPrompt = {
+                  inboxId: nextId,
+                  text: takeMatchingPendingPrompt(state.subagent.pendingPrompts, nextText),
+                };
+                state.subagent.queued ??= nextId;
+              }
+            }
+          }
+        }
         const turn = state.active;
         if (turn !== undefined && turn.steers.delete(event.data.inboxID)) {
           turn.settledInbox.add(event.data.inboxID);
           if (event.type === "session.inbox.cancelled") yield* endIfSettled(state, turn);
+        } else if (event.type === "session.inbox.delivered" && childSteer !== undefined) {
+          if (turn !== undefined) {
+            yield* emitChildSteer(state, turn, event.data.inboxID, childSteer);
+          } else if (state.subagent !== undefined) {
+            state.subagent.deliveredSteers.push({ inboxId: event.data.inboxID, text: childSteer });
+          }
         } else if (
           event.type === "session.inbox.delivered" &&
           external !== undefined &&
@@ -3537,22 +3842,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         return;
       }
-      // No T3 turn existed while a wake held these, so its user items came from another client.
-      if (
-        event.type === "session.inbox.enqueued" &&
-        event.data.item.type === "user" &&
-        (state.active === undefined || (held && state.subagent === undefined))
-      ) {
+      if (event.type === "session.inbox.enqueued" && event.data.item.type === "user") {
         const text = event.data.item.payload.text;
-        if (state.subagent !== undefined) state.subagent.prompt ??= text;
-        // T3's own prompts can be admitted after a failed submit ended their turn.
-        else if (!isOwnPrompt(event.data.inboxID)) {
-          state.externalPrompts.set(event.data.inboxID, {
-            text,
-            leads: !held && state.reports.size === 0,
-          });
+        if (state.subagent !== undefined) {
+          if (state.active === undefined && state.subagent.queuedPrompt === undefined) {
+            state.subagent.queuedPrompt = {
+              inboxId: event.data.inboxID,
+              text: takeMatchingPendingPrompt(state.subagent.pendingPrompts, text),
+            };
+          } else {
+            state.subagent.steers.set(event.data.inboxID, text);
+          }
+          return;
         }
-        return;
+        // No T3 turn existed while a wake held these, so its user items came from another client.
+        if (state.active === undefined || held) {
+          // T3's own prompts can be admitted after a failed submit ended their turn.
+          if (!isOwnPrompt(event.data.inboxID)) {
+            state.externalPrompts.set(event.data.inboxID, {
+              text,
+              leads: !held && state.reports.size === 0,
+            });
+          }
+          return;
+        }
       }
       const started =
         event.type === "session.execution.started" || event.type === "unreadable.execution.started";
@@ -3603,24 +3916,93 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (turn === undefined) return undefined;
       const promptId = promptOf(turn.providerTurn);
       const { before } = turn;
-      if (promptId === undefined && before === undefined) return undefined;
+      const pendingSteers =
+        state.subagent !== undefined && state.subagent.steers.size > 0
+          ? new Set(state.subagent.steers.keys())
+          : undefined;
+      if (promptId === undefined && before === undefined && pendingSteers === undefined) {
+        return undefined;
+      }
       const start = before !== undefined ? before : promptId;
-      const read = yield* OpenCode2Client.paginate(
-        { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 50 },
-        client.message.list,
-      ).pipe(
-        Stream.takeUntil((message) => message.id === start),
-        Stream.runCollect,
-        Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }),
-      );
+      const oldestSteer = pendingSteers?.values().next().value;
+      const read = yield* Effect.gen(function* () {
+        const sessionID = Session.ID.make(sessionId);
+        if (start !== undefined) {
+          return yield* OpenCode2Client.paginate(
+            { sessionID, order: "desc" as const, limit: 50 },
+            client.message.list,
+          ).pipe(
+            Stream.takeUntil((message) => message.id === start),
+            Stream.runCollect,
+            Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }),
+          );
+        }
+        const firstPage = yield* client.message
+          .list({ sessionID, order: "desc", limit: 50 })
+          .pipe(Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }));
+        if (firstPage === null) return null;
+        if (
+          firstPage.cursor.next === undefined ||
+          firstPage.data.some((message) => message.id === oldestSteer)
+        ) {
+          return firstPage.data;
+        }
+        // Only scan past page 1 when a pending steer is proven to exist in message history.
+        const inbox = yield* client.session.inbox
+          .list({ sessionID })
+          .pipe(Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }));
+        if (inbox === null) return null;
+        const unread = new Set<string>(inbox.map((item) => item.id));
+        const seen = new Set<string>(firstPage.data.map((message) => message.id));
+        let deliveredAnchor: string | undefined;
+        for (const steerId of pendingSteers!) {
+          if (seen.has(steerId)) break;
+          if (unread.has(steerId)) continue;
+          const probe = yield* client.session.message
+            .get({ sessionID, messageID: SessionMessage.ID.make(steerId) })
+            .pipe(
+              Effect.as("found" as const),
+              Effect.catchTags({
+                MessageNotFoundError: () => Effect.succeed("absent" as const),
+                SessionNotFoundError: () => Effect.succeed("missing" as const),
+              }),
+            );
+          if (probe === "missing") return null;
+          if (probe === "found") {
+            deliveredAnchor = steerId;
+            break;
+          }
+        }
+        if (deliveredAnchor === undefined) return firstPage.data;
+        const rest = yield* OpenCode2Client.paginate(
+          {
+            sessionID,
+            limit: 50,
+            cursor: firstPage.cursor.next as string | undefined,
+          },
+          client.message.list,
+        ).pipe(
+          Stream.takeUntil((message) => message.id === deliveredAnchor),
+          Stream.runCollect,
+          Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }),
+        );
+        return rest === null ? null : [...firstPage.data, ...rest];
+      });
       return yield* lock.withPermit(
         Effect.gen(function* () {
           if (state.active !== turn) return undefined;
           if (read === null) return { outcome: "missing" as const };
-          // Without this turn's start in history, all retrieved turns are older.
-          const found = start === null || read.at(-1)?.id === start;
-          if (!found) return undefined;
-          const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
+          let recent: ReadonlyArray<(typeof read)[number]>;
+          if (start !== undefined) {
+            // Without this turn's start in history, all retrieved turns are older.
+            const found = start === null || read.at(-1)?.id === start;
+            if (!found) return undefined;
+            recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
+          } else {
+            const anchorIndex = read.findLastIndex((message) => pendingSteers!.has(message.id));
+            if (anchorIndex === -1) return undefined;
+            recent = read.slice(0, anchorIndex + 1);
+          }
           for (const message of recent) {
             if (message.type === "user" && turn.steers.delete(message.id)) {
               turn.settledInbox.add(message.id);
@@ -3647,6 +4029,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             turn.retry = undefined;
           }
           for (const message of recent.toReversed()) {
+            if (message.type === "user" && state.subagent !== undefined && state.active === turn) {
+              if (message.id === turn.launchPromptId) continue;
+              const steer = state.subagent.steers.get(message.id) ?? message.text;
+              state.subagent.steers.delete(message.id);
+              yield* emitChildSteer(state, turn, message.id, steer);
+              continue;
+            }
             if (message.type !== "assistant" || state.active !== turn) continue;
             const ordinals = { text: 0, reasoning: 0 };
             for (const [index, part] of message.content.entries()) {
@@ -3668,6 +4057,49 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               }
               if (part.type !== "tool") continue;
               turn.closingText = undefined;
+              if (part.name === "subagent") {
+                if (turn.settledCalls.has(part.id)) continue;
+                const input =
+                  typeof part.state.input === "object" && part.state.input !== null
+                    ? (part.state.input as Record<string, unknown>)
+                    : {};
+                const childId =
+                  part.state.status === "streaming"
+                    ? undefined
+                    : stringField(part.state.metadata, "sessionID");
+                let call = state.calls.get(part.id);
+                if (call === undefined) {
+                  yield* startCall(state, turn, part.id);
+                  call = state.calls.get(part.id);
+                }
+                if (call !== undefined) {
+                  call.prompt ||= stringField(input, "prompt") ?? "";
+                  call.title ??= stringField(input, "description") ?? null;
+                  call.agent ??= stringField(input, "agent");
+                  call.model ??= stringField(input, "model") ?? null;
+                  if (input["background"] === true) call.background = true;
+                  call.targetSessionId ??=
+                    stringField(input, "sessionID") ?? stringField(input, "session_id");
+                  if (childId !== undefined) yield* attachChild(call, childId);
+                  if (part.state.status === "completed") {
+                    if (part.state.metadata?.["status"] === "running") {
+                      if (!call.background) {
+                        call.background = true;
+                        yield* syncRosterAncestors(call.state);
+                      }
+                    } else {
+                      yield* settleCall(
+                        call,
+                        "completed",
+                        subagentOutput(textOf(part.state.content)),
+                      );
+                    }
+                  } else if (part.state.status === "error") {
+                    yield* settleCall(call, "failed", part.state.error.message);
+                  }
+                }
+                continue;
+              }
               if (!turn.tools.has(part.id)) {
                 turn.tools.set(part.id, { name: part.name, input: {} });
                 turn.startedAt.set(part.id, yield* DateTime.now);
@@ -3794,6 +4226,26 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                     }
                   : { status: "interrupted" };
             yield* endExecution(state, turn, terminal);
+          }),
+        );
+      }
+      // A locally idle child listed as active started in the gap while a call awaited execution.
+      for (const state of threads.values()) {
+        if (
+          state.subagent === undefined ||
+          state.active !== undefined ||
+          state.unsettled ||
+          !(state.sessionId in active)
+        ) {
+          continue;
+        }
+        yield* lock.withPermit(
+          Effect.gen(function* () {
+            if (state.subagent === undefined || state.active !== undefined || state.unsettled) {
+              return;
+            }
+            if (!callsAttachedTo(state).some((call) => call.run === undefined)) return;
+            yield* startChildTurn(state);
           }),
         );
       }
@@ -4602,7 +5054,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         (caller) =>
           caller.subagent !== undefined &&
           busy.has(caller.sessionId) &&
-          !isOrchestrationV2WorkActive(caller.subagent.call.status),
+          callsAttachedTo(caller).length === 0,
       );
       // Child sessions are announced before call progress names them; use announcements to stop unnamed children.
       const announcedTo = (caller: ThreadState) =>
@@ -4995,9 +5447,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 Effect.timeout(REQUEST_REPLY_TIMEOUT),
                 Effect.ignore({ log: true }),
               );
+              const runningChildren = new Set<ThreadState>();
               for (const call of runningCalls(state)) {
-                if (call.child === undefined) continue;
-                yield* writeRules(call.child, turnInput.runtimePolicy).pipe(
+                if (call.child !== undefined) runningChildren.add(call.child);
+              }
+              for (const child of runningChildren) {
+                yield* writeRules(child, turnInput.runtimePolicy).pipe(
                   Effect.timeout(REQUEST_REPLY_TIMEOUT),
                   Effect.ignore({ log: true }),
                 );
