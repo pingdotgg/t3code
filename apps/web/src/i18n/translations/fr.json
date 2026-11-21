@@ -9079,7 +9079,7 @@
     "dans votre navigateur."
   ],
   "a11d2816a2b3106c": "Chargement du terminal de connexion…",
-  "b2f7638eb3def111": "Si la dernière page localhost ne se charge pas, collez son URL complète ici.",
+  "e0c856a60b186c9f": "Si la connexion ne se termine pas d'elle-même, collez ici le code ou l'URL complète de la dernière page.",
   "c749e91a6fec5cf9": "Effacer {field}",
   "95e568730bdde867": "Variables",
   "134c2eb478dce8d9": "Clés d’API, URL de base et autres paramètres CLI propres à chaque instance.",

@@ -9079,7 +9079,7 @@
     "in deinem Browser ein."
   ],
   "a11d2816a2b3106c": "Anmeldeterminal wird geladen…",
-  "b2f7638eb3def111": "Falls die abschließende localhost-Seite nicht lädt, füge hier ihre vollständige URL ein.",
+  "e0c856a60b186c9f": "Falls die Anmeldung nicht von selbst abgeschlossen wird, füge hier den Code oder die vollständige URL der letzten Seite ein.",
   "c749e91a6fec5cf9": "{field} leeren",
   "95e568730bdde867": "Variablen",
   "134c2eb478dce8d9": "API-Schlüssel, Basis-URLs und andere CLI-Einstellungen pro Instanz.",

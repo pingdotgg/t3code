@@ -492,7 +492,7 @@ function ProviderAccount({
           ) : null}
           {showCallback ? (
             <>
-              {field("callback", gt("Final localhost URL"), false)}
+              {field("callback", gt("Sign-in code or final page URL"), false)}
               <SettingsActionRow
                 icon="arrow.right"
                 label={gt("Continue")}
