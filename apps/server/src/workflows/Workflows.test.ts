@@ -387,6 +387,8 @@ const control = [
       payload: Schema.Struct({
         project: Schema.String,
         timeout: Schema.optional(Schema.Literal("1 minute")),
+        /** Says which thread the first agent's failure came back with. */
+        thread: Schema.optional(Schema.Boolean),
       }),
       returns: Schema.String,
     },
@@ -406,7 +408,8 @@ const control = [
           returns: output,
         });
         if (second.outcome === "failed") return yield* stop(second.reason);
-        return `${second.value.head} after: ${first.reason}`;
+        const where = payload.thread === true ? ` in ${first.thread?.threadId ?? "no thread"}` : "";
+        return `${second.value.head} after: ${first.reason}${where}`;
       }),
   ),
 ];
@@ -428,6 +431,7 @@ const fakeAgents = () => {
   let refusals = 0;
   const unreadable = new Set<string>();
   const unanswered = new Set<string>();
+  const unstartable = new Set<string>();
   const turn = (key: string) => {
     const known = turns.get(key);
     if (known !== undefined) return known;
@@ -446,7 +450,7 @@ const fakeAgents = () => {
           if (yield* SqlClient.SafeIntegers) {
             return yield* new WorkflowAgentError({ reason: "SafeIntegers leaked into a step" });
           }
-          if (input.project === "nowhere") {
+          if (input.project === "nowhere" || unstartable.delete(input.key)) {
             return yield* new WorkflowAgentError({ reason: "No project is registered there." });
           }
           yield* Deferred.succeed(turn(input.key).started, input);
@@ -488,6 +492,10 @@ const fakeAgents = () => {
     /** The next read of a turn with this key never answers, as one that is waited past. */
     unansweredResult: (key: string) => {
       unanswered.add(key);
+    },
+    /** The turn of `runId` with this key cannot be started. */
+    unstartable: (runId: string, key: string) => {
+      unstartable.add(`${runId}/${key}`);
     },
     /** Turns down the next `count` stops. */
     refuseStops: (count: number) => {
@@ -1839,6 +1847,38 @@ it.effect("a workflow can take an agent's failure as an answer and go on", () =>
         yield* agents.end(owing.runId, "second/0", { output: { head: "stu" } });
         const owed = yield* workflows.waitFor(owing.runId, status("completed", "paused"));
         assert.include(owed.result as string, "may still be at work");
+
+        // One that did the work and never gave its result is not given the job again: it may
+        // have acted on it already.
+        const silent = yield* workflows.start(
+          "fallback",
+          { project: "p1", thread: true },
+          { idempotencyKey: "q" },
+        );
+        for (const key of ["first/0", "first/0/correct/0", "first/0/correct/1"]) {
+          yield* agents.started(silent.runId, key);
+          yield* agents.end(silent.runId, key, {});
+        }
+        yield* agents.end(silent.runId, "first/1", { output: { head: "twice" } });
+        yield* agents.end(silent.runId, "second/0", { output: { head: "vwx" } });
+        const once = yield* workflows.waitFor(silent.runId, status("completed", "paused"));
+        assert.match(
+          once.result as string,
+          /^vwx after: the agent did not return a result: .* in thread-\d+$/,
+        );
+
+        // A correction that cannot be sent leaves the failure with the thread the work is in.
+        const unasked = yield* workflows.start(
+          "fallback",
+          { project: "p1", thread: true },
+          { idempotencyKey: "c" },
+        );
+        agents.unstartable(unasked.runId, "first/0/correct/0");
+        yield* agents.started(unasked.runId, "first/0");
+        yield* agents.end(unasked.runId, "first/0", {});
+        yield* agents.end(unasked.runId, "second/0", { output: { head: "yz" } });
+        const kept = yield* workflows.waitFor(unasked.runId, status("completed", "paused"));
+        assert.match(kept.result as string, /could not be asked again: .* in thread-\d+$/);
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
