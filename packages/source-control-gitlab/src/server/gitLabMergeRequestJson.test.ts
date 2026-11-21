@@ -190,6 +190,7 @@ describe("decodeMergeRequestDetailJson", () => {
       {
         name: "Pipeline",
         status: "success",
+        required: true,
         description: "merge_request_event",
         url: "https://gitlab.com/acme/web/-/pipelines/9",
       },
@@ -421,6 +422,7 @@ describe("decodePipelineStageChecksJson", () => {
         status: "failure",
         description: "failed",
         url: "https://gitlab.com/fork/web/-/pipelines/9#test",
+        required: true,
       },
     ]);
   });
