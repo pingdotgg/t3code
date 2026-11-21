@@ -29,7 +29,7 @@ use super::board::pull_request_presentation;
 use super::format::{format_diff_count, live_status_label};
 use crate::chat::markdown::{HeadingStyle, MarkdownOptions, render_markdown};
 use crate::icons::provider_mark;
-use crate::panels::chrome::{self, UI_LINE_HEIGHT_PX, UI_TEXT_PX};
+use crate::panels::chrome::{self, ConnTooltipExt as _, UI_LINE_HEIGHT_PX, UI_TEXT_PX};
 use crate::panels::color::to_hsla;
 use crate::panels::header::superhero_icon;
 
@@ -492,8 +492,10 @@ fn render_key_values(
         "superhero/usage.svg",
         "Usage",
         div()
+            .id("tasks-detail-usage")
             .min_w_0()
             .truncate()
+            .conn_tooltip(usage.description, tokens)
             .child(usage.text)
             .into_any_element(),
     ));

@@ -48,7 +48,7 @@ use self::ui::{
     outline_sm_button,
 };
 use self::workspace::{ToolsInputs, WorkspaceMenu, render_workspace};
-use super::chrome::{self, XS_LINE_HEIGHT_PX, XS_TEXT_PX};
+use super::chrome::{self, ConnTooltipExt as _, XS_LINE_HEIGHT_PX, XS_TEXT_PX};
 use super::color::to_hsla;
 use super::header::{CONTROL_RADIUS_PX, superhero_icon};
 
@@ -1147,20 +1147,23 @@ impl DevicePanel {
                     {
                         let entity_shut = entity.clone();
                         let device_shut = device.clone();
-                        actions = actions.child(chrome::icon_button(
-                            SharedString::from(format!(
-                                "device-shutdown-{}-{}",
-                                device.host_id, device.id
-                            )),
-                            "superhero/power.svg",
-                            tokens,
-                            pending_key.is_some(),
-                            move |_, _, cx| {
-                                let d = device_shut.clone();
-                                entity_shut
-                                    .update(cx, |p, cx| p.shutdown_device_from_picker(d, cx));
-                            },
-                        ));
+                        actions = actions.child(
+                            chrome::icon_button(
+                                SharedString::from(format!(
+                                    "device-shutdown-{}-{}",
+                                    device.host_id, device.id
+                                )),
+                                "superhero/power.svg",
+                                tokens,
+                                pending_key.is_some(),
+                                move |_, _, cx| {
+                                    let d = device_shut.clone();
+                                    entity_shut
+                                        .update(cx, |p, cx| p.shutdown_device_from_picker(d, cx));
+                                },
+                            )
+                            .conn_tooltip("Power off device", tokens),
+                        );
                     }
                     let entity_open = entity.clone();
                     let device_open = device.clone();

@@ -18,13 +18,16 @@ use gpui_kit::{
 };
 
 use super::logic::{
-    IssueDetailSummary, LinkInputResolution, PullRequestListLine, ServerCapabilities,
+    ChainKind, IssueDetailSummary, LinkInputResolution, PullRequestListLine, ServerCapabilities,
     ThreadIssueLink, actor_initial, format_diff_count, format_footer_summary, format_relative_time,
     issue_state_glyph, latest_synced_at, middle_truncate, open_pull_request_count, pr_checks_glyph,
     pr_has_conflict, pr_review_glyph, pr_state_glyph, pull_request_key, resolve_tone_hsla,
     thread_issue_key,
 };
-use crate::panels::chrome::{self, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX};
+use crate::panels::chrome::{
+    self, ConnTooltipExt as _, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX,
+    actor_tooltip_label,
+};
 use crate::panels::color::to_hsla;
 use crate::panels::header::superhero_icon;
 use crate::theme::MONO_FONT;
@@ -411,9 +414,14 @@ fn render_issue_row(
     if let Some(author) = detail.and_then(|d| d.author.as_ref()) {
         line_two = line_two.child(
             h_flex()
+                .id(SharedString::from(format!(
+                    "linked-issue-author-{}-{}-{}",
+                    link.tracker, link.scope, link.key
+                )))
                 .flex_shrink_0()
                 .items_center()
                 .gap(px(6.0))
+                .conn_tooltip(actor_tooltip_label(Some(author)), tokens)
                 .child(render_actor_avatar(tokens, Some(author), 16.0))
                 .child(
                     div()
@@ -458,7 +466,16 @@ fn render_issue_row(
             cx.stop_propagation();
             on_open(link_for_click.clone(), window, cx);
         })
-        .child(superhero_icon(state_spec.icon_path, 16.0, state_color))
+        .child(
+            div()
+                .id(SharedString::from(format!(
+                    "linked-issue-state-{}-{}-{}",
+                    link.tracker, link.scope, link.key
+                )))
+                .flex_shrink_0()
+                .conn_tooltip(state_spec.label, tokens)
+                .child(superhero_icon(state_spec.icon_path, 16.0, state_color)),
+        )
         .child(v_flex().min_w_0().flex_1().child(line_one).child(line_two))
         .into_any_element()
 }
@@ -494,6 +511,7 @@ fn render_pull_request_row(
     let state_spec = pr_state_glyph(snapshot);
     let state_color = resolve_tone_hsla(tokens, state_spec.tone);
     let mut glyph_box = div()
+        .id(SharedString::from(format!("linked-pr-state-{index}")))
         .relative()
         .flex()
         .flex_shrink_0()
@@ -501,11 +519,13 @@ fn render_pull_request_row(
         .h(px(16.0))
         .items_center()
         .justify_center()
+        .conn_tooltip(state_spec.label, tokens)
         .child(superhero_icon(state_spec.icon_path, 16.0, state_color));
 
     if pr_has_conflict(snapshot) {
         glyph_box = glyph_box.child(
             div()
+                .id(SharedString::from(format!("linked-pr-conflict-{index}")))
                 .absolute()
                 .right(px(-4.0))
                 .bottom(px(-4.0))
@@ -515,6 +535,7 @@ fn render_pull_request_row(
                 .flex()
                 .items_center()
                 .justify_center()
+                .conn_tooltip("Has conflicts", tokens)
                 .child(superhero_icon(
                     "superhero/warning.svg",
                     11.0,
@@ -524,6 +545,17 @@ fn render_pull_request_row(
     }
 
     // Line 1: #number, title, open signals (watching, checks, review), diff stat.
+    let source_label = match link.source {
+        ThreadPullRequestLinkSource::Manual => "Linked by you",
+        ThreadPullRequestLinkSource::Created => "Created from this thread",
+        ThreadPullRequestLinkSource::Agent => "Linked by the agent",
+        ThreadPullRequestLinkSource::Stack => "Found in the stack",
+        ThreadPullRequestLinkSource::StackDismissed => "Dismissed",
+    };
+    let number_tip = match format_relative_time(&link.linked_at, now_ms) {
+        Some(rel) => format!("{source_label} · {rel}"),
+        None => source_label.to_owned(),
+    };
     let title = snapshot.map_or(link.repository.as_str(), |s| s.title.as_str());
     let mut line_one = h_flex()
         .w_full()
@@ -532,11 +564,13 @@ fn render_pull_request_row(
         .gap(px(6.0))
         .child(
             div()
+                .id(SharedString::from(format!("linked-pr-number-{index}")))
                 .flex_shrink_0()
                 .font_family(mono.clone())
                 .text_size(px(XS_TEXT_PX))
                 .line_height(px(XS_LINE_HEIGHT_PX))
                 .text_color(muted)
+                .conn_tooltip(number_tip, tokens)
                 .child(format!("#{}", link.number)),
         )
         .child(
@@ -555,24 +589,48 @@ fn render_pull_request_row(
         if watching || checks.is_some() || review.is_some() {
             let mut signals = h_flex().flex_shrink_0().items_center().gap(px(4.0));
             if watching {
-                signals = signals.child(superhero_icon("superhero/show.svg", 14.0, fg));
+                signals = signals.child(
+                    div()
+                        .id(SharedString::from(format!("linked-pr-watch-{index}")))
+                        .flex()
+                        .flex_shrink_0()
+                        .conn_tooltip(
+                            "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts",
+                            tokens,
+                        )
+                        .child(superhero_icon("superhero/show.svg", 14.0, fg)),
+                );
             }
             if let Some(state) = checks {
                 let spec = pr_checks_glyph(state);
-                signals = signals.child(superhero_icon(
-                    spec.icon_path,
-                    14.0,
-                    resolve_tone_hsla(tokens, spec.tone),
-                ));
+                signals = signals.child(
+                    div()
+                        .id(SharedString::from(format!("linked-pr-checks-{index}")))
+                        .flex()
+                        .flex_shrink_0()
+                        .conn_tooltip(spec.label, tokens)
+                        .child(superhero_icon(
+                            spec.icon_path,
+                            14.0,
+                            resolve_tone_hsla(tokens, spec.tone),
+                        )),
+                );
             }
             if let Some(decision) = review {
                 let spec = pr_review_glyph(decision);
                 // Conn: "The person glyphs are drawn short; one step up balances them."
-                signals = signals.child(superhero_icon(
-                    spec.icon_path,
-                    16.0,
-                    resolve_tone_hsla(tokens, spec.tone),
-                ));
+                signals = signals.child(
+                    div()
+                        .id(SharedString::from(format!("linked-pr-review-{index}")))
+                        .flex()
+                        .flex_shrink_0()
+                        .conn_tooltip(spec.label, tokens)
+                        .child(superhero_icon(
+                            spec.icon_path,
+                            16.0,
+                            resolve_tone_hsla(tokens, spec.tone),
+                        )),
+                );
             }
             line_one = line_one.child(signals);
         }
@@ -616,12 +674,21 @@ fn render_pull_request_row(
 
     if let Some(stack) = line.stack {
         let stack_fg = to_hsla(tokens.foreground.with_alpha(0.70));
+        let stack_tip = match stack.kind {
+            ChainKind::Native => format!(
+                "Stack of {}: merging a layer lands the ones below it.",
+                stack.size
+            ),
+            ChainKind::Derived => format!("{} pull requests chained by base branch.", stack.size),
+        };
         line_two = line_two.child(
             h_flex()
+                .id(SharedString::from(format!("linked-pr-stack-{index}")))
                 .flex_shrink_0()
                 .items_center()
                 .gap(px(2.0))
                 .text_color(stack_fg)
+                .conn_tooltip(stack_tip, tokens)
                 .child(superhero_icon("superhero/layers.svg", 12.0, stack_fg))
                 .child(stack.size.to_string()),
         );
@@ -630,9 +697,11 @@ fn render_pull_request_row(
     if let Some(author) = snapshot.and_then(|s| s.author.as_ref().and_then(|a| a.as_ref())) {
         line_two = line_two.child(
             h_flex()
+                .id(SharedString::from(format!("linked-pr-author-{index}")))
                 .flex_shrink_0()
                 .items_center()
                 .gap(px(4.0))
+                .conn_tooltip(actor_tooltip_label(Some(author)), tokens)
                 .child(render_actor_avatar(tokens, Some(author), 14.0))
                 .child(
                     div()
@@ -647,18 +716,22 @@ fn render_pull_request_row(
         line_two = line_two
             .child(
                 div()
+                    .id(SharedString::from(format!("linked-pr-repo-{index}")))
                     .min_w_0()
                     .max_w(px(128.0))
                     .truncate()
                     .font_family(mono.clone())
+                    .conn_tooltip(link.repository.clone(), tokens)
                     .child(middle_truncate(&link.repository, 24)),
             )
             .child(
                 h_flex()
+                    .id(SharedString::from(format!("linked-pr-branches-{index}")))
                     .min_w_0()
                     .items_center()
                     .gap(px(4.0))
                     .font_family(mono)
+                    .conn_tooltip(format!("{} → {}", s.head_branch, s.base_branch), tokens)
                     .child(
                         div()
                             .min_w_0()
@@ -738,6 +811,7 @@ fn render_pull_request_row(
                     let next = (!menu_open).then(|| row_key_for_btn.clone());
                     on_toggle_btn(next, window, cx);
                 })
+                .conn_tooltip(format!("Actions for #{}", link.number), tokens)
                 .child(superhero_icon("superhero/more-horizontal.svg", 14.0, muted)),
         );
 

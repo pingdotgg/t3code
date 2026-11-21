@@ -10,7 +10,7 @@ use conn_desktop::orbit::insights::{
     insight_by_provider, insight_change_text, insight_change_tone, insight_change_trend,
     insight_result, insight_trend,
 };
-use conn_desktop::orbit::tasks::TaskInsights;
+use conn_desktop::orbit::tasks::{InsightsPeriod, TaskInsights};
 use conn_theme::Tokens;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -21,7 +21,7 @@ use gpui_kit::{
 
 use super::charts::{render_sparkline, render_trend_chart};
 use super::format::{TasksSurfaceColors, insight_block_corners, insight_grid_layout, insight_hint};
-use crate::panels::chrome::{self, UI_LINE_HEIGHT_PX, UI_TEXT_PX};
+use crate::panels::chrome::{self, ConnTooltipExt as _, UI_LINE_HEIGHT_PX, UI_TEXT_PX};
 use crate::panels::color::to_hsla;
 use crate::panels::header::superhero_icon;
 
@@ -53,6 +53,8 @@ pub(super) struct InsightsCallbacks {
 pub(super) fn render_insights_strip(
     tokens: &Tokens,
     insights: Option<&TaskInsights>,
+    period: InsightsPeriod,
+    searching: bool,
     hidden: &[InsightId],
     expanded: Option<InsightId>,
     chart_hover: Option<usize>,
@@ -92,6 +94,17 @@ pub(super) fn render_insights_strip(
         );
     }
 
+    let period_scope = match period {
+        InsightsPeriod::Day => "Last 24 hours against the 24 before.",
+        InsightsPeriod::Week => "Last 7 days against the 7 before.",
+        InsightsPeriod::Month => "Last 30 days against the 30 before.",
+    };
+    let scope = if searching {
+        format!("{period_scope} The search does not narrow these numbers.")
+    } else {
+        period_scope.to_owned()
+    };
+
     let grid = insight_grid_layout(shown.len());
     let min_grid_width = grid.columns as f32 * CARD_MIN_WIDTH_PX
         + grid.columns.saturating_sub(1) as f32 * GRID_GAP_PX;
@@ -118,12 +131,14 @@ pub(super) fn render_insights_strip(
             let corners = insight_block_corners(grid, index, shown.len());
             let result = insight_result(insights, spec.id);
             let trend = insight_trend(insights, spec.id);
+            let tooltip_text = format!("{} {scope}", insight_hint(spec.id, insights));
             row = row.child(render_insight_card(
                 tokens,
                 &surface,
                 spec,
                 result,
                 trend,
+                tooltip_text,
                 span,
                 corners,
                 row_idx == 0,
@@ -194,6 +209,7 @@ fn render_insight_card(
     spec: InsightSpec,
     result: InsightResult,
     trend: Option<Vec<conn_desktop::orbit::insights::TrendPoint>>,
+    tooltip_text: String,
     span: usize,
     corners: [bool; 4],
     top_row: bool,
@@ -221,7 +237,8 @@ fn render_insight_card(
         .bg(card_bg)
         .cursor_pointer()
         .hover(move |s| s.bg(card_hover))
-        .on_click(move |_, window, cx| on_expand(Some(spec.id), window, cx));
+        .on_click(move |_, window, cx| on_expand(Some(spec.id), window, cx))
+        .conn_tooltip(tooltip_text, tokens);
 
     if top_row {
         card = card.border_t_1().border_color(top_edge);
@@ -402,17 +419,16 @@ fn render_insight_detail(
         .pt(px(10.0))
         .pb(px(8.0))
         .child(
-            div()
-                .absolute()
-                .top(px(4.0))
-                .right(px(4.0))
-                .child(chrome::icon_button(
+            div().absolute().top(px(4.0)).right(px(4.0)).child(
+                chrome::icon_button(
                     "tasks-insight-close",
                     "superhero/close.svg",
                     tokens,
                     false,
                     move |_, window, cx| on_close(None, window, cx),
-                )),
+                )
+                .conn_tooltip(format!("Close {} chart", spec.label), tokens),
+            ),
         )
         .child(
             h_flex()

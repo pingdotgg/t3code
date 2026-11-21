@@ -6,17 +6,150 @@
 //! 11.5px`, `--toolbar-radius: 9999px`, `--toolbar-group-fill: var(--shell-control)`,
 //! `--toolbar-group-border: var(--shell-divider-header)`) and `components/ui/*.tsx`.
 
+use std::time::Duration;
+
+use conn_contract::PullRequestActor;
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::component::h_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, BoxShadow, ClickEvent, Div, ElementId, FontWeight, Hsla, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, SharedString, Stateful, Styled, Window, deferred, div,
-    point, px,
+    AnyElement, AnyView, App, BoxShadow, ClickEvent, Context, Div, ElementId, FontWeight, Hsla,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Render, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Window, deferred, div, point, px,
 };
 
 use super::color::to_hsla;
 use super::header::superhero_icon;
+use crate::theme::MONO_FONT;
+
+/// Default tooltip show delay matching Conn's Base UI `TooltipProvider` (`600ms`).
+pub(crate) const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(600);
+/// Shorter tooltip delay used inside Pull request detail views (`delay={150}`).
+pub(crate) const TOOLTIP_FAST_DELAY: Duration = Duration::from_millis(150);
+
+/// Visual variant matching Conn's `TooltipPopup` (`components/ui/tooltip.tsx`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TooltipVariant {
+    /// Standard UI tooltip: `rounded-md px-2 py-1 text-xs leading-snug max-w-80`.
+    Default,
+    /// Monospace code tooltip (`variant="code"`): `font-mono text-[11px] leading-relaxed max-w-120`.
+    Code,
+}
+
+/// Shared Conn `TooltipPopup` view rendered by GPUI's native `.tooltip(...)` hook.
+struct ConnTooltip {
+    text: SharedString,
+    variant: TooltipVariant,
+    bg: Hsla,
+    fg: Hsla,
+    border: Hsla,
+    shadow: BoxShadow,
+}
+
+impl Render for ConnTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let mut popup = div()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(self.border)
+            .bg(self.bg)
+            .text_color(self.fg)
+            .px(px(8.0))
+            .py(px(4.0))
+            .shadow(vec![self.shadow.clone()]);
+
+        popup = match self.variant {
+            TooltipVariant::Default => popup
+                .max_w(px(320.0))
+                .text_size(px(12.0))
+                .line_height(px(16.5)),
+            TooltipVariant::Code => popup
+                .max_w(px(480.0))
+                .font_family(SharedString::from(MONO_FONT))
+                .text_size(px(11.0))
+                .line_height(px(17.875)),
+        };
+
+        // Offset from the pointer so the popup sits clear of the cursor, matching gpui-kit.
+        div().m(px(12.0)).child(popup.child(self.text.clone()))
+    }
+}
+
+/// Extension trait attaching Conn's `TooltipPopup` to any stateful GPUI element.
+pub(crate) trait ConnTooltipExt: StatefulInteractiveElement + Sized {
+    /// Attaches a standard Conn tooltip with the default `600ms` show delay.
+    fn conn_tooltip(self, text: impl Into<SharedString>, tokens: &Tokens) -> Self {
+        self.conn_tooltip_with(text, tokens, TooltipVariant::Default, TOOLTIP_SHOW_DELAY)
+    }
+
+    /// Attaches a standard Conn tooltip with the fast `150ms` PR detail show delay.
+    fn conn_fast_tooltip(self, text: impl Into<SharedString>, tokens: &Tokens) -> Self {
+        self.conn_tooltip_with(text, tokens, TooltipVariant::Default, TOOLTIP_FAST_DELAY)
+    }
+
+    /// Attaches a monospace code Conn tooltip (`variant="code"`) with `150ms` show delay.
+    fn conn_code_tooltip(self, text: impl Into<SharedString>, tokens: &Tokens) -> Self {
+        self.conn_tooltip_with(text, tokens, TooltipVariant::Code, TOOLTIP_FAST_DELAY)
+    }
+
+    /// Attaches a Conn tooltip with an explicit variant and show delay.
+    fn conn_tooltip_with(
+        self,
+        text: impl Into<SharedString>,
+        tokens: &Tokens,
+        variant: TooltipVariant,
+        delay: Duration,
+    ) -> Self {
+        let text: SharedString = text.into();
+        let bg = to_hsla(tokens.popover);
+        let fg = to_hsla(tokens.popover_foreground);
+        let border = to_hsla(tokens.border);
+        let shadow_alpha = match tokens.appearance {
+            Appearance::Dark => 0.24,
+            Appearance::Light => 0.10,
+        };
+        let shadow = BoxShadow {
+            color: gpui_kit::hsla(0.0, 0.0, 0.0, shadow_alpha),
+            offset: point(px(0.0), px(4.0)),
+            blur_radius: px(10.0),
+            spread_radius: px(-2.0),
+            inset: false,
+        };
+        self.tooltip_show_delay(delay)
+            .tooltip(move |_window, cx| -> AnyView {
+                let text = text.clone();
+                let shadow = shadow.clone();
+                cx.new(|_| ConnTooltip {
+                    text,
+                    variant,
+                    bg,
+                    fg,
+                    border,
+                    shadow,
+                })
+                .into()
+            })
+    }
+}
+
+impl<E: StatefulInteractiveElement + Sized> ConnTooltipExt for E {}
+
+/// Formats an actor's tooltip label matching Conn's `PullRequestActorLabel`:
+/// `"Full Name (@login)"` when a distinct display name exists, otherwise `"login"` or `"ghost"`.
+pub(crate) fn actor_tooltip_label(actor: Option<&PullRequestActor>) -> SharedString {
+    match actor {
+        Some(actor) => match actor
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty() && *name != actor.login)
+        {
+            Some(name) => format!("{name} (@{})", actor.login).into(),
+            None => actor.login.clone().into(),
+        },
+        None => "ghost".into(),
+    }
+}
 
 /// `text-ui`: 13px / 20px.
 pub(crate) const UI_TEXT_PX: f32 = 13.0;

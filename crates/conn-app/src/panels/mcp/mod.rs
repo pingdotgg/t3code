@@ -42,8 +42,8 @@ use self::helpers::{
 };
 use self::widgets::{McpMenuEntry, McpMenuRow, dropdown_menu};
 use super::chrome::{
-    self, CONTROL_HEIGHT_PX, ICON_BUTTON_GLYPH_PX, ROW_PAD_START_PX, SectionTab, UI_LINE_HEIGHT_PX,
-    UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX,
+    self, CONTROL_HEIGHT_PX, ConnTooltipExt as _, ICON_BUTTON_GLYPH_PX, ROW_PAD_START_PX,
+    SectionTab, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX,
 };
 use super::color::to_hsla;
 use super::header::superhero_icon;
@@ -708,22 +708,18 @@ impl McpPanel {
         let connecting = session.status == McpStatus::Connecting;
 
         // Saved servers menu button.
-        let mut servers_anchor =
-            div()
-                .relative()
-                .child(chrome::toolbar_group(tokens).child(chrome::icon_button(
-                    "mcp-servers-btn",
-                    "superhero/list.svg",
-                    tokens,
-                    false,
-                    {
-                        let entity = entity.clone();
-                        move |_, _, cx| {
-                            cx.stop_propagation();
-                            entity.update(cx, |p, cx| p.toggle_menu(OpenMenu::Servers, cx));
-                        }
-                    },
-                )));
+        let mut servers_anchor = div().relative().child(
+            chrome::toolbar_group(tokens).child(
+                chrome::icon_button("mcp-servers-btn", "superhero/list.svg", tokens, false, {
+                    let entity = entity.clone();
+                    move |_, _, cx| {
+                        cx.stop_propagation();
+                        entity.update(cx, |p, cx| p.toggle_menu(OpenMenu::Servers, cx));
+                    }
+                })
+                .conn_tooltip("Servers", tokens),
+            ),
+        );
         if self.menu == Some(OpenMenu::Servers) {
             servers_anchor = servers_anchor.child(self.render_servers_menu(server, cx));
         }
@@ -783,18 +779,21 @@ impl McpPanel {
         if connected {
             let sk = session_key.to_owned();
             let entity_reload = entity.clone();
-            conn_group = conn_group.child(chrome::icon_button(
-                "mcp-reload-btn",
-                "superhero/refresh.svg",
-                tokens,
-                false,
-                move |_, _, cx| {
-                    let sk = sk.clone();
-                    entity_reload.update(cx, |p, cx| {
-                        p.load_lists(sk, McpListKind::ALL.to_vec(), cx);
-                    });
-                },
-            ));
+            conn_group = conn_group.child(
+                chrome::icon_button(
+                    "mcp-reload-btn",
+                    "superhero/refresh.svg",
+                    tokens,
+                    false,
+                    move |_, _, cx| {
+                        let sk = sk.clone();
+                        entity_reload.update(cx, |p, cx| {
+                            p.load_lists(sk, McpListKind::ALL.to_vec(), cx);
+                        });
+                    },
+                )
+                .conn_tooltip("Reload tools, resources and prompts", tokens),
+            );
         }
         let connect_icon = if connecting {
             "superhero/spinner.svg"
@@ -803,13 +802,23 @@ impl McpPanel {
         } else {
             "superhero/plug.svg"
         };
-        conn_group = conn_group.child(chrome::icon_button(
-            "mcp-connect-btn",
-            connect_icon,
-            tokens,
-            false,
-            move |_, _, cx| entity.update(cx, |p, cx| p.toggle_connection(cx)),
-        ));
+        let connect_tooltip = if connected {
+            "Disconnect"
+        } else if connecting {
+            "Cancel"
+        } else {
+            "Connect (⌘↵)"
+        };
+        conn_group = conn_group.child(
+            chrome::icon_button(
+                "mcp-connect-btn",
+                connect_icon,
+                tokens,
+                false,
+                move |_, _, cx| entity.update(cx, |p, cx| p.toggle_connection(cx)),
+            )
+            .conn_tooltip(connect_tooltip, tokens),
+        );
 
         chrome::toolbar_row(tokens)
             .child(servers_anchor)
@@ -1051,22 +1060,25 @@ impl Render for McpPanel {
             let entity_clear = entity.clone();
             Some(
                 chrome::toolbar_group(&self.tokens)
-                    .child(chrome::icon_button(
-                        "mcp-clear-log-btn",
-                        "superhero/delete.svg",
-                        &self.tokens,
-                        false,
-                        move |_, _, cx| {
-                            let sk = sk.clone();
-                            entity_clear.update(cx, |panel, cx| {
-                                if let Some(s) = panel.sessions.get_mut(&sk) {
-                                    s.clear_log();
-                                }
-                                panel.expanded_log_ids.clear();
-                                cx.notify();
-                            });
-                        },
-                    ))
+                    .child(
+                        chrome::icon_button(
+                            "mcp-clear-log-btn",
+                            "superhero/delete.svg",
+                            &self.tokens,
+                            false,
+                            move |_, _, cx| {
+                                let sk = sk.clone();
+                                entity_clear.update(cx, |panel, cx| {
+                                    if let Some(s) = panel.sessions.get_mut(&sk) {
+                                        s.clear_log();
+                                    }
+                                    panel.expanded_log_ids.clear();
+                                    cx.notify();
+                                });
+                            },
+                        )
+                        .conn_tooltip("Clear log", &self.tokens),
+                    )
                     .into_any_element(),
             )
         } else {

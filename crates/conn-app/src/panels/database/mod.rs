@@ -30,8 +30,8 @@ use self::views::{
     render_connection_alert, render_connection_menu, render_rows_grid, render_structure_list,
 };
 use super::chrome::{
-    self, ICON_BUTTON_GLYPH_PX, ROW_PAD_START_PX, SectionTab, UI_LINE_HEIGHT_PX, UI_TEXT_PX,
-    XS_LINE_HEIGHT_PX, XS_TEXT_PX,
+    self, ConnTooltipExt as _, ICON_BUTTON_GLYPH_PX, ROW_PAD_START_PX, SectionTab,
+    UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX,
 };
 use super::color::to_hsla;
 use super::header::{CONTROL_RADIUS_PX, superhero_icon};
@@ -664,13 +664,16 @@ impl DatabasePanel {
         } else {
             "superhero/refresh.svg"
         };
-        let refresh_group = chrome::toolbar_group(tokens).child(chrome::icon_button(
-            "db-refresh-btn",
-            refresh_icon,
-            tokens,
-            false,
-            move |_, _, cx| entity.update(cx, |panel, cx| panel.refresh(cx)),
-        ));
+        let refresh_group = chrome::toolbar_group(tokens).child(
+            chrome::icon_button(
+                "db-refresh-btn",
+                refresh_icon,
+                tokens,
+                false,
+                move |_, _, cx| entity.update(cx, |panel, cx| panel.refresh(cx)),
+            )
+            .conn_tooltip("Reload .env and tables", tokens),
+        );
 
         chrome::toolbar_row(tokens)
             .child(connection_anchor)

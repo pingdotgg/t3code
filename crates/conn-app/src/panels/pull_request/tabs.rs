@@ -18,7 +18,9 @@ use gpui_kit::{
     px,
 };
 
-use super::super::chrome::{self, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX};
+use super::super::chrome::{
+    self, ConnTooltipExt as _, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX,
+};
 use super::super::color::to_hsla;
 use super::super::diff_parser::{DiffFile, DiffLineKind};
 use super::super::header::superhero_icon;
@@ -207,6 +209,7 @@ pub(super) fn render_checks_tab_trailing(
             .line_height(px(XS_LINE_HEIGHT_PX))
             .font_weight(FontWeight::MEDIUM)
             .text_color(warn)
+            .conn_fast_tooltip(label, tokens)
             .child(superhero_icon("superhero/play.svg", 13.0, warn))
             .child(label);
         if busy {
@@ -295,6 +298,7 @@ pub(super) fn render_timeline_tab_trailing(
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
             .on_click(move |_, window, cx| on_toggle_filter(window, cx))
+            .conn_fast_tooltip("Filter timeline", tokens)
             .child(superhero_icon(
                 "superhero/filter.svg",
                 14.0,
@@ -473,6 +477,7 @@ pub(super) fn render_code_tab_trailing(
 
     let toggle_btn = |id: &'static str,
                       icon: &'static str,
+                      tooltip: &'static str,
                       active: bool,
                       on_click: Rc<dyn Fn(&mut Window, &mut App)>| {
         div()
@@ -486,6 +491,7 @@ pub(super) fn render_code_tab_trailing(
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
             .on_click(move |_, window, cx| on_click(window, cx))
+            .conn_fast_tooltip(tooltip, tokens)
             .child(superhero_icon(icon, 14.0, if active { fg } else { muted }))
     };
 
@@ -514,18 +520,29 @@ pub(super) fn render_code_tab_trailing(
                 .child(toggle_btn(
                     "pr-code-tree-toggle",
                     "superhero/file-tree.svg",
+                    if tree_open {
+                        "Hide file tree"
+                    } else {
+                        "Show file tree"
+                    },
                     tree_open,
                     on_tree,
                 ))
                 .child(toggle_btn(
                     "pr-code-wrap-toggle",
                     "superhero/wrap-lines.svg",
+                    if word_wrap {
+                        "Disable line wrapping"
+                    } else {
+                        "Enable line wrapping"
+                    },
                     word_wrap,
                     on_wrap,
                 ))
                 .child(toggle_btn(
                     "pr-code-reload",
                     "superhero/refresh.svg",
+                    "Reload diff",
                     false,
                     on_reload,
                 )),
@@ -633,6 +650,7 @@ pub(super) fn render_description_tab(
                     .cursor_pointer()
                     .hover(move |s| s.bg(hover))
                     .on_click(move |_, window, cx| on_edit(window, cx))
+                    .conn_fast_tooltip("Edit description", tokens)
                     .child(superhero_icon("superhero/edit.svg", 13.0, muted)),
             ),
         );
@@ -1080,12 +1098,21 @@ fn render_review_verdict_event(
                                 .text_color(fg)
                                 .child(login),
                         )
-                        .child(
+                        .child({
+                            let stale_tip = stale.then_some(match outcome {
+                                ReviewOutcome::Approved => "Approved before new commits",
+                                ReviewOutcome::ChangesRequested => {
+                                    "Changes requested before new commits"
+                                }
+                                ReviewOutcome::Dismissed => "Review dismissed",
+                            });
                             div()
+                                .id(SharedString::from(format!("pr-verdict-outcome-{idx}")))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(outcome_color)
-                                .child(review_outcome_label(outcome).to_ascii_lowercase()),
-                        ),
+                                .when_some(stale_tip, |el, tip| el.conn_fast_tooltip(tip, tokens))
+                                .child(review_outcome_label(outcome).to_ascii_lowercase())
+                        }),
                 )
                 .child(div().text_size(px(14.0)).text_color(muted).child(rel)),
         );
@@ -1614,6 +1641,7 @@ fn open_external_icon_btn(
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .on_click(move |_, window, cx| on_click(window, cx))
+        .conn_fast_tooltip("Open on host", tokens)
         .child(superhero_icon("superhero/external-link.svg", 13.0, muted))
         .into_any_element()
 }
@@ -1925,11 +1953,21 @@ fn render_file_diff_pane(
                 ))
                 .child(
                     div()
+                        .id(SharedString::from(format!(
+                            "pr-viewed-label-{}",
+                            entry.path
+                        )))
                         .text_size(px(11.0))
                         .text_color(if is_stale {
                             to_hsla(tokens.warning_foreground)
                         } else {
                             muted
+                        })
+                        .when(is_stale, |el| {
+                            el.conn_fast_tooltip(
+                                "This file has been pushed to since you marked it viewed.",
+                                tokens,
+                            )
                         })
                         .child(if is_stale { "Changed" } else { "Viewed" }),
                 ),
@@ -2152,6 +2190,7 @@ pub(super) fn render_floating_composer(
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .on_click(move |_, window, cx| on_toggle(window, cx))
+        .conn_fast_tooltip("Leave a comment", tokens)
         .child(superhero_icon("superhero/thread.svg", 16.0, fg));
 
     let mut wrapper = v_flex()
@@ -2250,6 +2289,7 @@ pub(super) fn render_floating_composer(
                             .cursor_pointer()
                             .hover(move |s| s.bg(hover))
                             .on_click(move |_, window, cx| on_close(window, cx))
+                            .conn_fast_tooltip("Close", tokens)
                             .child(superhero_icon("superhero/close.svg", 14.0, muted)),
                     ),
             )

@@ -15,8 +15,8 @@ use super::McpPanel;
 use super::helpers::capitalize;
 use super::widgets::{McpBadgeVariant, badge, field_box};
 use crate::panels::chrome::{
-    self, ROW_PAD_START_PX, TOOLBAR_PAD_END_PX, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX,
-    XS_TEXT_PX,
+    self, ConnTooltipExt as _, ROW_PAD_START_PX, TOOLBAR_PAD_END_PX, UI_LINE_HEIGHT_PX, UI_TEXT_PX,
+    XS_LINE_HEIGHT_PX, XS_TEXT_PX,
 };
 use crate::panels::color::to_hsla;
 use crate::theme::MONO_FONT;
@@ -291,29 +291,32 @@ impl McpPanel {
                     ))
                     .child(cell(&name_input, !row.enabled))
                     .child(cell(&value_input, false))
-                    .child(div().invisible().group_hover(group, |s| s.visible()).child(
-                        chrome::icon_button(
-                            SharedString::from(format!("mcp-kv-remove-{}", row.id)),
-                            "superhero/close.svg",
-                            &tokens,
-                            false,
-                            move |_, _, cx| {
-                                let id = remove_id.clone();
-                                entity_remove.update(cx, |panel, cx| {
-                                    panel.row_inputs.remove(&id);
-                                    panel.row_subscriptions.remove(&id);
-                                    panel.edit_selected_server(cx, |server| {
-                                        let rows = if is_env {
-                                            &mut server.env
-                                        } else {
-                                            &mut server.headers
-                                        };
-                                        rows.retain(|r| r.id != id);
+                    .child(
+                        div().invisible().group_hover(group, |s| s.visible()).child(
+                            chrome::icon_button(
+                                SharedString::from(format!("mcp-kv-remove-{}", row.id)),
+                                "superhero/close.svg",
+                                &tokens,
+                                false,
+                                move |_, _, cx| {
+                                    let id = remove_id.clone();
+                                    entity_remove.update(cx, |panel, cx| {
+                                        panel.row_inputs.remove(&id);
+                                        panel.row_subscriptions.remove(&id);
+                                        panel.edit_selected_server(cx, |server| {
+                                            let rows = if is_env {
+                                                &mut server.env
+                                            } else {
+                                                &mut server.headers
+                                            };
+                                            rows.retain(|r| r.id != id);
+                                        });
                                     });
-                                });
-                            },
+                                },
+                            )
+                            .conn_tooltip(format!("Remove {noun}"), &tokens),
                         ),
-                    )),
+                    ),
             );
         }
 

@@ -26,7 +26,9 @@ use super::format::{
     task_status_dot,
 };
 use super::insights::{InsightsCallbacks, render_insights_strip};
-use crate::panels::chrome::{self, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX};
+use crate::panels::chrome::{
+    self, ConnTooltipExt as _, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX,
+};
 use crate::panels::color::to_hsla;
 use crate::panels::header::superhero_icon;
 use crate::sidebar::{project_icon_color, render_project_monogram_badge};
@@ -92,6 +94,8 @@ pub(super) fn render_board(
     let insights_el = render_insights_strip(
         tokens,
         insights,
+        settings.insight_period,
+        searching,
         &settings.hidden_insights,
         expanded_insight,
         chart_hover,
@@ -184,13 +188,16 @@ fn render_board_toolbar(
 
     if !query.is_empty() {
         let on_clear = Rc::clone(&callbacks.on_clear_query);
-        search_group = search_group.child(chrome::icon_button(
-            "tasks-search-clear",
-            "superhero/close.svg",
-            tokens,
-            false,
-            move |_, window, cx| on_clear(window, cx),
-        ));
+        search_group = search_group.child(
+            chrome::icon_button(
+                "tasks-search-clear",
+                "superhero/close.svg",
+                tokens,
+                false,
+                move |_, window, cx| on_clear(window, cx),
+            )
+            .conn_tooltip("Clear search", tokens),
+        );
     }
 
     let on_toggle = Rc::clone(&callbacks.on_toggle_settings);
@@ -209,6 +216,7 @@ fn render_board_toolbar(
             cx.stop_propagation();
             on_toggle(window, cx);
         })
+        .conn_tooltip("Board settings", tokens)
         .child(superhero_icon(
             "superhero/adjust.svg",
             16.0,

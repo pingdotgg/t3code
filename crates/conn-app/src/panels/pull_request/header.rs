@@ -18,7 +18,10 @@ use gpui_kit::{
     Window, deferred, div, point, px, relative,
 };
 
-use super::super::chrome::{self, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX};
+use super::super::chrome::{
+    self, ConnTooltipExt as _, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX,
+    actor_tooltip_label,
+};
 use super::super::color::to_hsla;
 use super::super::header::superhero_icon;
 use super::logic::{
@@ -157,6 +160,7 @@ pub(super) fn render_title_header(
             .gap(px(4.0))
             .child(
                 div()
+                    .id("pr-title-text")
                     .flex_1()
                     .min_w_0()
                     .truncate()
@@ -164,6 +168,7 @@ pub(super) fn render_title_header(
                     .line_height(px(24.0))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(fg)
+                    .conn_fast_tooltip(detail.title.clone(), tokens)
                     .child(detail.title.clone()),
             );
         if can_edit {
@@ -181,6 +186,7 @@ pub(super) fn render_title_header(
                         .cursor_pointer()
                         .hover(move |s| s.bg(hover))
                         .on_click(move |_, window, cx| on_edit(window, cx))
+                        .conn_fast_tooltip("Edit title", tokens)
                         .child(superhero_icon("superhero/edit.svg", 13.0, muted)),
                 ),
             );
@@ -209,6 +215,11 @@ pub(super) fn render_title_header(
     );
 
     let on_toggle_menu = cb.on_toggle_actions_menu.clone();
+    let actions_tooltip = if refreshing {
+        "Refreshing pull request"
+    } else {
+        "Pull request actions"
+    };
     let mut overflow_anchor = div().relative().child(
         div()
             .id("pr-actions-menu-btn")
@@ -221,6 +232,7 @@ pub(super) fn render_title_header(
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
             .on_click(move |_, window, cx| on_toggle_menu(window, cx))
+            .conn_fast_tooltip(actions_tooltip, tokens)
             .child(superhero_icon(
                 if refreshing {
                     "superhero/spinner.svg"
@@ -316,6 +328,7 @@ fn render_primary_control(
             let bg = to_hsla(tokens.destructive.with_alpha(0.10));
             Some(
                 h_flex()
+                    .id("pr-primary-conflicts")
                     .h(px(24.0))
                     .px(px(8.0))
                     .gap(px(4.0))
@@ -328,6 +341,7 @@ fn render_primary_control(
                     .line_height(px(XS_LINE_HEIGHT_PX))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(fg)
+                    .conn_fast_tooltip("Resolve conflicts", tokens)
                     .child(superhero_icon("superhero/warning.svg", 14.0, fg))
                     .child("Conflicts")
                     .into_any_element(),
@@ -349,6 +363,7 @@ fn render_primary_control(
             );
             Some(
                 h_flex()
+                    .id("pr-primary-automerge-armed")
                     .h(px(24.0))
                     .px(px(8.0))
                     .gap(px(4.0))
@@ -359,6 +374,10 @@ fn render_primary_control(
                     .line_height(px(XS_LINE_HEIGHT_PX))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(fg)
+                    .conn_fast_tooltip(
+                        format!("{label}: the host will merge this on its own once its requirements are met"),
+                        tokens,
+                    )
                     .child(superhero_icon("superhero/merge.svg", 14.0, fg))
                     .child(label)
                     .into_any_element(),
@@ -941,6 +960,7 @@ pub(super) fn render_header_body(
             .text_color(fg)
             .hover(|s| s.underline())
             .on_click(move |_, window, cx| on_open(url.clone(), window, cx))
+            .conn_fast_tooltip(format!("Open {} repository", detail.repository), tokens)
             .child(detail.repository.clone())
             .into_any_element()
     } else {
@@ -969,6 +989,7 @@ pub(super) fn render_header_body(
                 .text_color(state_color)
                 .hover(|s| s.underline())
                 .on_click(move |_, window, cx| on_open_pr(pr_url.clone(), window, cx))
+                .conn_fast_tooltip(open_on_host_label(&detail.provider), tokens)
                 .child(format!("#{}", detail.number))
                 .child(superhero_icon(
                     "superhero/external-link.svg",
@@ -1001,7 +1022,9 @@ pub(super) fn render_header_body(
     // Updated at value
     let updated_text = format_relative_time(&detail.updated_at, now_ms);
     let updated_el = div()
+        .id("pr-meta-updated-at")
         .text_color(muted)
+        .conn_fast_tooltip(detail.updated_at.clone(), tokens)
         .child(if updated_text.is_empty() {
             detail.updated_at.clone()
         } else {
@@ -1013,6 +1036,15 @@ pub(super) fn render_header_body(
     let head_branch = detail.head_branch.clone();
     let on_copy_branch = cb.on_copy_branch.clone();
     let freshness = resolve_base_freshness(detail);
+    let head_branch_tip = format!(
+        "{}: {}",
+        if copied_branch {
+            "Copied"
+        } else {
+            "Copy branch"
+        },
+        detail.head_branch
+    );
     let mut branch_row = h_flex()
         .ml(px(-4.0))
         .min_w_0()
@@ -1032,6 +1064,7 @@ pub(super) fn render_header_body(
                 .text_color(if copied_branch { fg } else { muted })
                 .hover(move |s| s.bg(hover_bg).text_color(fg))
                 .on_click(move |_, window, cx| on_copy_branch(head_branch.clone(), window, cx))
+                .conn_code_tooltip(head_branch_tip, tokens)
                 .child(if copied_branch {
                     "Copied".to_owned()
                 } else {
@@ -1046,9 +1079,11 @@ pub(super) fn render_header_body(
         )
         .child(
             div()
+                .id("pr-base-branch")
                 .max_w(px(160.0))
                 .truncate()
                 .text_color(muted)
+                .conn_code_tooltip(detail.base_branch.clone(), tokens)
                 .child(detail.base_branch.clone()),
         );
     if let Some(freshness) = freshness {
@@ -1120,13 +1155,32 @@ pub(super) fn render_header_body(
         div().text_color(muted).child("None").into_any_element()
     } else {
         let mut row = h_flex().min_w_0().flex_wrap().items_center().gap(px(6.0));
-        for entry in &reviewer_entries {
+        for (idx, entry) in reviewer_entries.iter().enumerate() {
             let login = entry
                 .actor
                 .as_ref()
                 .map_or("ghost", |a| a.login.as_str())
                 .to_owned();
+            let actor_label = actor_tooltip_label(entry.actor.as_ref());
+            let reviewer_tip = match entry.outcome {
+                Some(outcome) => {
+                    let status = if entry.stale {
+                        match outcome {
+                            ReviewOutcome::Approved => "Approved before new commits",
+                            ReviewOutcome::ChangesRequested => {
+                                "Changes requested before new commits"
+                            }
+                            ReviewOutcome::Dismissed => "Review dismissed",
+                        }
+                    } else {
+                        review_outcome_label(outcome)
+                    };
+                    format!("{actor_label}: {status}")
+                }
+                None => format!("{actor_label}: Review requested"),
+            };
             let mut chip = h_flex()
+                .id(SharedString::from(format!("pr-reviewer-{idx}")))
                 .items_center()
                 .gap(px(4.0))
                 .px(px(6.0))
@@ -1136,6 +1190,7 @@ pub(super) fn render_header_body(
                 .text_size(px(XS_TEXT_PX))
                 .line_height(px(XS_LINE_HEIGHT_PX))
                 .text_color(fg)
+                .conn_fast_tooltip(reviewer_tip, tokens)
                 .child(render_actor_avatar(tokens, entry.actor.as_ref(), 16.0))
                 .child(login);
             if let Some(outcome) = entry.outcome {
@@ -1167,23 +1222,32 @@ pub(super) fn render_header_body(
         div().text_color(muted).child("None").into_any_element()
     } else {
         let mut row = h_flex().min_w_0().flex_wrap().items_center().gap(px(4.0));
-        for label in &detail.labels {
+        for (idx, label) in detail.labels.iter().enumerate() {
             let (bg, label_fg) = label_chip_colors(tokens, label.color.as_deref());
-            row = row.child(
-                div()
-                    .h(px(22.0))
-                    .max_w(px(192.0))
-                    .px(px(8.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(PILL_RADIUS_PX))
-                    .bg(to_hsla(bg))
-                    .text_size(px(XS_TEXT_PX))
-                    .line_height(px(XS_LINE_HEIGHT_PX))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(to_hsla(label_fg))
-                    .child(div().min_w_0().truncate().child(label.name.clone())),
-            );
+            let chip = div()
+                .id(SharedString::from(format!("pr-label-{idx}")))
+                .h(px(22.0))
+                .max_w(px(192.0))
+                .px(px(8.0))
+                .flex()
+                .items_center()
+                .rounded(px(PILL_RADIUS_PX))
+                .bg(to_hsla(bg))
+                .text_size(px(XS_TEXT_PX))
+                .line_height(px(XS_LINE_HEIGHT_PX))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(to_hsla(label_fg))
+                .when_some(
+                    label
+                        .description
+                        .as_ref()
+                        .and_then(|d| d.as_deref())
+                        .map(str::trim)
+                        .filter(|d| !d.is_empty()),
+                    |el, desc| el.conn_fast_tooltip(desc.to_owned(), tokens),
+                )
+                .child(div().min_w_0().truncate().child(label.name.clone()));
+            row = row.child(chip);
         }
         row.into_any_element()
     };
@@ -1289,10 +1353,13 @@ pub(super) fn render_actor_avatar(
 /// Avatar + login label (`PullRequestActorLabel`).
 pub(super) fn render_actor_label(tokens: &Tokens, actor: Option<&PullRequestActor>) -> AnyElement {
     let login = actor.map_or("ghost", |a| a.login.as_str()).to_owned();
+    let tip = actor_tooltip_label(actor);
     h_flex()
+        .id(SharedString::from(format!("pr-actor-{login}")))
         .min_w_0()
         .items_center()
         .gap(px(6.0))
+        .conn_fast_tooltip(tip, tokens)
         .child(render_actor_avatar(tokens, actor, 16.0))
         .child(
             div()
@@ -1653,6 +1720,7 @@ pub(super) fn primary_pill_button(
     let fg = to_hsla(tokens.primary_foreground);
     let bg = to_hsla(tokens.primary);
     let hover = to_hsla(tokens.primary.with_alpha(0.9));
+    let label: SharedString = label.into();
     let mut btn = h_flex()
         .id(id.into())
         .flex_shrink_0()
@@ -1666,8 +1734,9 @@ pub(super) fn primary_pill_button(
         .line_height(px(XS_LINE_HEIGHT_PX))
         .font_weight(FontWeight::MEDIUM)
         .text_color(fg)
+        .conn_fast_tooltip(label.clone(), tokens)
         .child(superhero_icon(icon, 14.0, fg))
-        .child(label.into());
+        .child(label);
     if disabled {
         btn = btn.opacity(0.64);
     } else {

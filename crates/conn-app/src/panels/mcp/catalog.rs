@@ -36,8 +36,8 @@ use super::widgets::{
 };
 use super::{FieldInputKey, McpPanel, OpenMenu, ResultTab};
 use crate::panels::chrome::{
-    self, ICON_BUTTON_GLYPH_PX, ROW_PAD_START_PX, SectionTab, UI_LINE_HEIGHT_PX, UI_TEXT_PX,
-    XS_LINE_HEIGHT_PX, XS_TEXT_PX,
+    self, ConnTooltipExt as _, ICON_BUTTON_GLYPH_PX, ROW_PAD_START_PX, SectionTab,
+    UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX,
 };
 use crate::panels::color::to_hsla;
 use crate::panels::header::superhero_icon;
@@ -901,6 +901,23 @@ impl McpPanel {
                 .cloned()
                 .unwrap_or_else(|| field.default_text.clone());
 
+            let field_name_el = div()
+                .id(SharedString::from(format!(
+                    "mcp-field-name-{call_key}-{}",
+                    field.name
+                )))
+                .min_w_0()
+                .font_family(mono.clone())
+                .text_color(fg)
+                .child(field.name.clone())
+                .when_some(
+                    field
+                        .description
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|d| !d.is_empty()),
+                    |el, desc| el.conn_tooltip(desc.to_owned(), &tokens),
+                );
             let label_col = v_flex()
                 .w(relative(0.30))
                 .min_w(px(96.0))
@@ -913,13 +930,7 @@ impl McpPanel {
                         .gap(px(4.0))
                         .text_size(px(UI_TEXT_PX))
                         .line_height(px(UI_LINE_HEIGHT_PX))
-                        .child(
-                            div()
-                                .min_w_0()
-                                .font_family(mono.clone())
-                                .text_color(fg)
-                                .child(field.name.clone()),
-                        )
+                        .child(field_name_el)
                         .when(field.required, |el| {
                             el.child(div().text_color(destructive).child("*"))
                         }),
@@ -1349,41 +1360,59 @@ impl McpPanel {
             if show_raw_toggle {
                 let vk = view_key;
                 let entity_raw = entity.clone();
-                actions = actions.child(chrome::icon_button(
-                    SharedString::from(format!("mcp-result-raw-{call_key}")),
-                    if view_state.raw {
-                        "superhero/show.svg"
+                let raw_label = if view_state.raw {
+                    "Show formatted"
+                } else {
+                    "Show raw Markdown"
+                };
+                actions = actions.child(
+                    chrome::icon_button(
+                        SharedString::from(format!("mcp-result-raw-{call_key}")),
+                        if view_state.raw {
+                            "superhero/show.svg"
+                        } else {
+                            "superhero/code.svg"
+                        },
+                        &tokens,
+                        false,
+                        move |_, _, cx| {
+                            let vk = vk.clone();
+                            entity_raw.update(cx, |panel, cx| {
+                                let entry = panel.result_views.entry(vk).or_default();
+                                entry.raw = !entry.raw;
+                                cx.notify();
+                            });
+                        },
+                    )
+                    .conn_tooltip(raw_label, &tokens),
+                );
+            }
+            let copy_label = if is_copied {
+                "Copied"
+            } else if !show_raw_toggle && view_state.tab == ResultTab::Json {
+                "Copy JSON"
+            } else {
+                "Copy raw text"
+            };
+            let ck_copy = call_key.to_owned();
+            actions = actions.child(
+                chrome::icon_button(
+                    SharedString::from(format!("mcp-result-copy-{call_key}")),
+                    if is_copied {
+                        "superhero/check.svg"
                     } else {
-                        "superhero/code.svg"
+                        "superhero/copy.svg"
                     },
                     &tokens,
                     false,
                     move |_, _, cx| {
-                        let vk = vk.clone();
-                        entity_raw.update(cx, |panel, cx| {
-                            let entry = panel.result_views.entry(vk).or_default();
-                            entry.raw = !entry.raw;
-                            cx.notify();
-                        });
+                        cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
+                        let ck = ck_copy.clone();
+                        entity.update(cx, |panel, cx| panel.flash_copied(ck, cx));
                     },
-                ));
-            }
-            let ck_copy = call_key.to_owned();
-            actions = actions.child(chrome::icon_button(
-                SharedString::from(format!("mcp-result-copy-{call_key}")),
-                if is_copied {
-                    "superhero/check.svg"
-                } else {
-                    "superhero/copy.svg"
-                },
-                &tokens,
-                false,
-                move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
-                    let ck = ck_copy.clone();
-                    entity.update(cx, |panel, cx| panel.flash_copied(ck, cx));
-                },
-            ));
+                )
+                .conn_tooltip(copy_label, &tokens),
+            );
             body_wrap =
                 body_wrap.child(div().absolute().top(px(8.0)).right(px(8.0)).child(actions));
         }

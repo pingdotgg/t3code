@@ -22,7 +22,9 @@ use gpui_kit::{
     ParentElement, SharedString, Styled, Subscription, Window, div, px,
 };
 
-use super::super::chrome::{self, MenuEntry, MenuRow, XS_LINE_HEIGHT_PX, XS_TEXT_PX};
+use super::super::chrome::{
+    self, ConnTooltipExt as _, MenuEntry, MenuRow, XS_LINE_HEIGHT_PX, XS_TEXT_PX,
+};
 use super::super::color::to_hsla;
 use super::super::header::{CONTROL_RADIUS_PX, superhero_icon};
 use super::DevicePanel;
@@ -429,49 +431,61 @@ fn render_controls_rail(
         .p(px(8.0));
 
     // Home button (input WS required).
-    pill = pill.child(rail_icon_button(
-        "device-rail-home",
-        "superhero/home.svg",
-        tokens,
-        false,
-        input_disabled,
-        |_, _, _| {},
-    ));
+    pill = pill.child(
+        rail_icon_button(
+            "device-rail-home",
+            "superhero/home.svg",
+            tokens,
+            false,
+            input_disabled,
+            |_, _, _| {},
+        )
+        .conn_tooltip("Home", tokens),
+    );
 
     if is_android {
         pill = pill
-            .child(rail_icon_button(
-                "device-rail-back",
-                "superhero/chevron-left.svg",
-                tokens,
-                false,
-                input_disabled,
-                |_, _, _| {},
-            ))
-            .child(rail_icon_button(
-                "device-rail-recents",
-                "superhero/stop.svg",
-                tokens,
-                false,
-                input_disabled,
-                |_, _, _| {},
-            ));
+            .child(
+                rail_icon_button(
+                    "device-rail-back",
+                    "superhero/chevron-left.svg",
+                    tokens,
+                    false,
+                    input_disabled,
+                    |_, _, _| {},
+                )
+                .conn_tooltip("Back", tokens),
+            )
+            .child(
+                rail_icon_button(
+                    "device-rail-recents",
+                    "superhero/stop.svg",
+                    tokens,
+                    false,
+                    input_disabled,
+                    |_, _, _| {},
+                )
+                .conn_tooltip("Recents", tokens),
+            );
         if runs_host_commands {
-            let mut rotate_anchor = div().relative().child(rail_icon_button(
-                "device-rail-rotate",
-                "superhero/retry.svg",
-                tokens,
-                panel.workspace_menu == Some(WorkspaceMenu::RailRotate),
-                controls_disabled,
-                {
-                    let entity = entity.clone();
-                    move |_, _, cx| {
-                        entity.update(cx, |p, cx| {
-                            p.toggle_workspace_menu(WorkspaceMenu::RailRotate, cx);
-                        });
-                    }
-                },
-            ));
+            let mut rotate_anchor = div().relative().child(
+                rail_icon_button(
+                    "device-rail-rotate",
+                    "superhero/retry.svg",
+                    tokens,
+                    panel.workspace_menu == Some(WorkspaceMenu::RailRotate),
+                    controls_disabled,
+                    {
+                        let entity = entity.clone();
+                        move |_, _, cx| {
+                            entity.update(cx, |p, cx| {
+                                p.toggle_workspace_menu(WorkspaceMenu::RailRotate, cx);
+                            });
+                        }
+                    },
+                )
+                .conn_tooltip("Rotate device", tokens),
+            );
             if panel.workspace_menu == Some(WorkspaceMenu::RailRotate) {
                 let host_id = device.host_id.clone();
                 let device_id = device.id.clone();
@@ -537,42 +551,47 @@ fn render_controls_rail(
         }
     } else if !is_simlock {
         // iOS Rotate button (uses host setOrientation when input WS is absent).
-        pill = pill.child(rail_icon_button(
-            "device-rail-rotate-ios",
-            "superhero/retry.svg",
-            tokens,
-            false,
-            controls_disabled,
-            {
-                let entity = entity.clone();
-                let host_id = device.host_id.clone();
-                let device_id = device.id.clone();
-                move |_, _, cx| {
-                    entity.update(cx, |p, cx| {
-                        let next = match p.last_ios_orientation {
-                            DeviceOrientation::Portrait => DeviceOrientation::LandscapeLeft,
-                            DeviceOrientation::LandscapeLeft => {
-                                DeviceOrientation::PortraitUpsideDown
-                            }
-                            DeviceOrientation::PortraitUpsideDown => {
-                                DeviceOrientation::LandscapeRight
-                            }
-                            DeviceOrientation::LandscapeRight => DeviceOrientation::Portrait,
-                        };
-                        p.last_ios_orientation = next;
-                        p.run_device_action(
-                            DeviceActionInput::SetOrientation(DeviceActionInputSetOrientation {
-                                host_id: Some(host_id.clone()),
-                                device_id: device_id.clone(),
-                                r#type: lit::SetOrientation,
-                                value: next,
-                            }),
-                            cx,
-                        );
-                    });
-                }
-            },
-        ));
+        pill = pill.child(
+            rail_icon_button(
+                "device-rail-rotate-ios",
+                "superhero/retry.svg",
+                tokens,
+                false,
+                controls_disabled,
+                {
+                    let entity = entity.clone();
+                    let host_id = device.host_id.clone();
+                    let device_id = device.id.clone();
+                    move |_, _, cx| {
+                        entity.update(cx, |p, cx| {
+                            let next = match p.last_ios_orientation {
+                                DeviceOrientation::Portrait => DeviceOrientation::LandscapeLeft,
+                                DeviceOrientation::LandscapeLeft => {
+                                    DeviceOrientation::PortraitUpsideDown
+                                }
+                                DeviceOrientation::PortraitUpsideDown => {
+                                    DeviceOrientation::LandscapeRight
+                                }
+                                DeviceOrientation::LandscapeRight => DeviceOrientation::Portrait,
+                            };
+                            p.last_ios_orientation = next;
+                            p.run_device_action(
+                                DeviceActionInput::SetOrientation(
+                                    DeviceActionInputSetOrientation {
+                                        host_id: Some(host_id.clone()),
+                                        device_id: device_id.clone(),
+                                        r#type: lit::SetOrientation,
+                                        value: next,
+                                    },
+                                ),
+                                cx,
+                            );
+                        });
+                    }
+                },
+            )
+            .conn_tooltip("Rotate device", tokens),
+        );
     }
 
     if runs_host_commands {
@@ -585,45 +604,56 @@ fn render_controls_rail(
             Some(DeviceAppearance::Dark) => "superhero/theme-light.svg",
             _ => "superhero/theme-dark.svg",
         };
-        pill = pill.child(rail_divider()).child(rail_icon_button(
-            "device-rail-appearance",
-            appearance_icon,
-            tokens,
-            false,
-            controls_disabled || appearance.is_none(),
-            {
-                let entity = entity.clone();
-                let host_id = device.host_id.clone();
-                let device_id = device.id.clone();
-                move |_, _, cx| {
-                    let action = DeviceActionInput::SetAppearance(DeviceActionInputSetAppearance {
-                        host_id: Some(host_id.clone()),
-                        device_id: device_id.clone(),
-                        r#type: lit::SetAppearance,
-                        value: next_appearance,
-                    });
-                    entity.update(cx, |p, cx| p.run_device_action(action, cx));
-                }
-            },
-        ));
+        let appearance_tooltip = match appearance {
+            Some(DeviceAppearance::Dark) => "Switch device to light mode",
+            _ => "Switch device to dark mode",
+        };
+        pill = pill.child(rail_divider()).child(
+            rail_icon_button(
+                "device-rail-appearance",
+                appearance_icon,
+                tokens,
+                false,
+                controls_disabled || appearance.is_none(),
+                {
+                    let entity = entity.clone();
+                    let host_id = device.host_id.clone();
+                    let device_id = device.id.clone();
+                    move |_, _, cx| {
+                        let action =
+                            DeviceActionInput::SetAppearance(DeviceActionInputSetAppearance {
+                                host_id: Some(host_id.clone()),
+                                device_id: device_id.clone(),
+                                r#type: lit::SetAppearance,
+                                value: next_appearance,
+                            });
+                        entity.update(cx, |p, cx| p.run_device_action(action, cx));
+                    }
+                },
+            )
+            .conn_tooltip(appearance_tooltip, tokens),
+        );
 
         // Text size menu (`Type`).
         let current_text_size = settings.and_then(|s| s.text_size);
-        let mut text_size_anchor = div().relative().child(rail_icon_button(
-            "device-rail-text-size",
-            "superhero/type.svg",
-            tokens,
-            panel.workspace_menu == Some(WorkspaceMenu::RailTextSize),
-            controls_disabled || current_text_size.is_none(),
-            {
-                let entity = entity.clone();
-                move |_, _, cx| {
-                    entity.update(cx, |p, cx| {
-                        p.toggle_workspace_menu(WorkspaceMenu::RailTextSize, cx);
-                    });
-                }
-            },
-        ));
+        let mut text_size_anchor = div().relative().child(
+            rail_icon_button(
+                "device-rail-text-size",
+                "superhero/type.svg",
+                tokens,
+                panel.workspace_menu == Some(WorkspaceMenu::RailTextSize),
+                controls_disabled || current_text_size.is_none(),
+                {
+                    let entity = entity.clone();
+                    move |_, _, cx| {
+                        entity.update(cx, |p, cx| {
+                            p.toggle_workspace_menu(WorkspaceMenu::RailTextSize, cx);
+                        });
+                    }
+                },
+            )
+            .conn_tooltip("Device text size", tokens),
+        );
         if panel.workspace_menu == Some(WorkspaceMenu::RailTextSize) {
             let entries = TEXT_SIZES
                 .iter()
@@ -660,53 +690,62 @@ fn render_controls_rail(
                 MenuAnchor::LeftOfRail,
             ));
         }
-        pill = pill.child(text_size_anchor).child(rail_icon_button(
-            "device-rail-tools",
-            "superhero/adjust.svg",
+        pill = pill.child(text_size_anchor).child(
+            rail_icon_button(
+                "device-rail-tools",
+                "superhero/adjust.svg",
+                tokens,
+                panel.tools_open,
+                false,
+                {
+                    let entity = entity.clone();
+                    move |_, _, cx| {
+                        entity.update(cx, |p, cx| {
+                            p.tools_open = !p.tools_open;
+                            p.workspace_menu = None;
+                            cx.notify();
+                        });
+                    }
+                },
+            )
+            .conn_tooltip("Device tools", tokens),
+        );
+    }
+
+    if !is_simlock {
+        // Screenshot button (requires authenticated hub HTTP ticket stream).
+        pill = pill.child(
+            rail_icon_button(
+                "device-rail-screenshot",
+                "superhero/camera.svg",
+                tokens,
+                false,
+                true,
+                |_, _, _| {},
+            )
+            .conn_tooltip("Save screenshot", tokens),
+        );
+    }
+
+    // More actions menu (`MoreHorizontal`).
+    let mut more_anchor = div().relative().child(
+        rail_icon_button(
+            "device-rail-more",
+            "superhero/more-horizontal.svg",
             tokens,
-            panel.tools_open,
+            panel.workspace_menu == Some(WorkspaceMenu::RailMore),
             false,
             {
                 let entity = entity.clone();
                 move |_, _, cx| {
                     entity.update(cx, |p, cx| {
-                        p.tools_open = !p.tools_open;
-                        p.workspace_menu = None;
-                        cx.notify();
+                        p.toggle_workspace_menu(WorkspaceMenu::RailMore, cx);
                     });
                 }
             },
-        ));
-    }
-
-    if !is_simlock {
-        // Screenshot button (requires authenticated hub HTTP ticket stream).
-        pill = pill.child(rail_icon_button(
-            "device-rail-screenshot",
-            "superhero/camera.svg",
-            tokens,
-            false,
-            true,
-            |_, _, _| {},
-        ));
-    }
-
-    // More actions menu (`MoreHorizontal`).
-    let mut more_anchor = div().relative().child(rail_icon_button(
-        "device-rail-more",
-        "superhero/more-horizontal.svg",
-        tokens,
-        panel.workspace_menu == Some(WorkspaceMenu::RailMore),
-        false,
-        {
-            let entity = entity.clone();
-            move |_, _, cx| {
-                entity.update(cx, |p, cx| {
-                    p.toggle_workspace_menu(WorkspaceMenu::RailMore, cx);
-                });
-            }
-        },
-    ));
+        )
+        .conn_tooltip("More device actions", tokens),
+    );
     if panel.workspace_menu == Some(WorkspaceMenu::RailMore) {
         let power_off_label = if is_simlock {
             "Return device to the pool"
@@ -764,22 +803,28 @@ fn render_controls_rail(
     // 3D view / Flat view divider + toggles (3D disabled in GPUI because Three.js WebGL is browser-only).
     pill = pill
         .child(rail_divider())
-        .child(rail_icon_button(
-            "device-rail-view-3d",
-            "superhero/package.svg",
-            tokens,
-            false,
-            true,
-            |_, _, _| {},
-        ))
-        .child(rail_icon_button(
-            "device-rail-view-flat",
-            "superhero/phone.svg",
-            tokens,
-            true,
-            false,
-            |_, _, _| {},
-        ));
+        .child(
+            rail_icon_button(
+                "device-rail-view-3d",
+                "superhero/package.svg",
+                tokens,
+                false,
+                true,
+                |_, _, _| {},
+            )
+            .conn_tooltip("3D view", tokens),
+        )
+        .child(
+            rail_icon_button(
+                "device-rail-view-flat",
+                "superhero/phone.svg",
+                tokens,
+                true,
+                false,
+                |_, _, _| {},
+            )
+            .conn_tooltip("Flat view", tokens),
+        );
 
     div()
         .absolute()
@@ -836,22 +881,27 @@ fn render_tools_panel(
     if panel.action_pending || panel.detail_loading {
         header = header.child(superhero_icon("superhero/spinner.svg", 14.0, muted));
     }
-    header = header.child(div().ml_auto().child(chrome::icon_button(
-        "device-tools-close",
-        "superhero/close.svg",
-        tokens,
-        false,
-        {
-            let entity = entity.clone();
-            move |_, _, cx| {
-                entity.update(cx, |p, cx| {
-                    p.tools_open = false;
-                    p.workspace_menu = None;
-                    cx.notify();
-                });
-            }
-        },
-    )));
+    header = header.child(
+        div().ml_auto().child(
+            chrome::icon_button(
+                "device-tools-close",
+                "superhero/close.svg",
+                tokens,
+                false,
+                {
+                    let entity = entity.clone();
+                    move |_, _, cx| {
+                        entity.update(cx, |p, cx| {
+                            p.tools_open = false;
+                            p.workspace_menu = None;
+                            cx.notify();
+                        });
+                    }
+                },
+            )
+            .conn_tooltip("Close tools", tokens),
+        ),
+    );
 
     let mut content = v_flex().w_full();
 

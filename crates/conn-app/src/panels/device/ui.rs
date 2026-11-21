@@ -15,7 +15,8 @@ use gpui_kit::{
 };
 
 use super::super::chrome::{
-    self, MenuEntry, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX,
+    self, ConnTooltipExt as _, MenuEntry, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX,
+    XS_TEXT_PX,
 };
 use super::super::color::to_hsla;
 use super::super::header::{CONTROL_RADIUS_PX, superhero_icon};
@@ -662,13 +663,16 @@ pub(super) fn device_notice(
                 .max_h(px(128.0))
                 .child(message.into()),
         )
-        .child(chrome::icon_button(
-            "device-notice-dismiss",
-            "superhero/close.svg",
-            tokens,
-            false,
-            on_dismiss,
-        ))
+        .child(
+            chrome::icon_button(
+                "device-notice-dismiss",
+                "superhero/close.svg",
+                tokens,
+                false,
+                on_dismiss,
+            )
+            .conn_tooltip("Dismiss", tokens),
+        )
 }
 
 /// `DeviceDiscoveryWarning` (`DevicePanel.tsx`): inline status bar with Retry, Details popover, Dismiss.
@@ -734,12 +738,15 @@ pub(super) fn device_discovery_warning(
             on_retry,
         ));
     }
-    actions = actions.child(details_anchor).child(micro_icon_button(
-        SharedString::from(format!("device-warn-dismiss-{host_id}")),
-        "superhero/close.svg",
-        tokens,
-        on_dismiss,
-    ));
+    actions = actions.child(details_anchor).child(
+        micro_icon_button(
+            SharedString::from(format!("device-warn-dismiss-{host_id}")),
+            "superhero/close.svg",
+            tokens,
+            on_dismiss,
+        )
+        .conn_tooltip("Dismiss", tokens),
+    );
 
     h_flex()
         .w_full()
@@ -1004,17 +1011,28 @@ pub(super) fn device_host_availability(
         .text_size(px(XS_TEXT_PX))
         .line_height(px(XS_LINE_HEIGHT_PX))
         .text_color(muted);
-    for platform in platforms {
+    for (idx, platform) in platforms.iter().enumerate() {
         let name = platform_name(platform.platform);
         let (icon, color, text) = if platform.available {
             ("superhero/check.svg", success, format!("{name} available"))
         } else {
             ("superhero/remove.svg", muted, format!("{name} unavailable"))
         };
+        let tip = platform
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+            .map_or_else(|| text.clone(), ToOwned::to_owned);
         row = row.child(
             h_flex()
+                .id(SharedString::from(format!(
+                    "device-host-avail-{idx}-{:?}",
+                    platform.platform
+                )))
                 .items_center()
                 .gap(px(4.0))
+                .conn_tooltip(tip, tokens)
                 .child(superhero_icon(icon, 12.0, color))
                 .child(text),
         );
