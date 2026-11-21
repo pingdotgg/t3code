@@ -1089,6 +1089,10 @@ export interface AcpMcpToolCallIdentity {
 
 const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)(?:\s+(.+?))?\s*$/u;
 
+// Windows ACP agents invoke the generated wrapper via T3_ACP_MCP_CALL or acp-mcp-call.cmd.
+const ACP_MCP_WINDOWS_FALLBACK_CALL =
+  /(?:(?:^|[\s"'&|;(])(?:\$(?:env:)?T3_ACP_MCP_CALL|\$\{(?:env:)?T3_ACP_MCP_CALL\}|%T3_ACP_MCP_CALL%)|(?:^|[\s"'&|;(/\\])acp-mcp-call\.cmd)["']?\s+["']?([A-Za-z0-9_.-]+)["']?(?:\s+(.+?))?\s*$/iu;
+
 function acpMcpFallbackInput(value: string | undefined): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
@@ -1245,6 +1249,15 @@ export function extractMcpToolCallIdentity(
     if (match?.[1] !== undefined) {
       const input = acpMcpFallbackInput(match[2]);
       return { server: "t3-code", tool: match[1], ...(input === undefined ? {} : { input }) };
+    }
+    const windowsMatch = ACP_MCP_WINDOWS_FALLBACK_CALL.exec(command);
+    if (windowsMatch?.[1] !== undefined && T3_MCP_TOOL_NAMES.has(windowsMatch[1])) {
+      const input = acpMcpFallbackInput(windowsMatch[2]);
+      return {
+        server: "t3-code",
+        tool: windowsMatch[1],
+        ...(input === undefined ? {} : { input }),
+      };
     }
   }
   return undefined;

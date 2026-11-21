@@ -719,6 +719,11 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         title: "Telemetry",
         height: 411,
       };
+      const winFallback = {
+        html: "<p>Windows fallback</p>",
+        title: "Windows fallback",
+        height: 320,
+      };
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
@@ -849,6 +854,28 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     sessionUpdate: "tool_call_update",
                     toolCallId: "agy-1.5.8",
                     status: "completed",
+                  });
+                  // On Windows, Antigravity falls back to T3_ACP_MCP_CALL when html_render is absent.
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "win-fallback",
+                    title: "Ran command",
+                    kind: "execute",
+                    status: "in_progress",
+                    rawInput: {
+                      CommandLine:
+                        '$payload = @{ title = "Windows fallback"; height = 320; path = "C:\\temp\\win.html" } | ConvertTo-Json -Compress\n$payload | & $env:T3_ACP_MCP_CALL html_render -',
+                    },
+                  });
+                  yield* mcpSessions.recordHtmlRender(threadId, winFallback, page("win-fallback"));
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "win-fallback",
+                    status: "completed",
+                    rawOutput: {
+                      output: `Created At: 2026-11-21T13:05:54+01:00\nCompleted At: 2026-11-21T13:05:56+01:00\nCommand exited with code 0.\n\nCommand output:\n${JSON.stringify({ content: [], structuredContent: { htmlRender: page("win-fallback"), message: "Shown to the reader above your reply." }, isError: false })}\r\n`,
+                      exit_code: 0,
+                    },
                   });
                   return { stopReason: "end_turn" as const };
                 }),
@@ -983,10 +1010,23 @@ describe("AntigravityAdapterV2 html_render pages", () => {
           output: { htmlRender: page(name) },
         });
       }
+      assert.deepEqual(
+        {
+          status: tool("win-fallback")?.status,
+          toolName: tool("win-fallback")?.toolName,
+          page: tool("win-fallback")?.page,
+        },
+        {
+          status: "completed",
+          toolName: "t3-code.html_render",
+          page: page("win-fallback"),
+        },
+      );
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, report), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, failed), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, errored), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, telemetry), undefined);
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, winFallback), undefined);
     }).pipe(Effect.provide(layerSession)),
   );
 });
