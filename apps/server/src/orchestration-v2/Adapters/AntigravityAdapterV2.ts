@@ -45,7 +45,7 @@ import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityCli
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
-  antigravityCommandOutlivesPrompt,
+  antigravityToolOutlivesPrompt,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
@@ -254,7 +254,7 @@ export function makeAntigravityAcpAdapterFlavor(
     deferFinalizeForBackgroundWork: true,
     wakeOnDetachedRequest: true,
     replyEndsWithUsageUpdate: true,
-    toolOutlivesPrompt: antigravityCommandOutlivesPrompt,
+    toolOutlivesPrompt: antigravityToolOutlivesPrompt,
     // session/cancel ends the agent's running commands, so only Stop sends it once the prompt
     // has ended. A message sent while a command runs leaves the command alone.
     preserveRuntimeOnSettledInterrupt: true,

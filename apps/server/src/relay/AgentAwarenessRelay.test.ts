@@ -250,7 +250,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getProjectThreadRecords: () => Effect.die("unused project record read"),
     listProjectThreads: unused,
     sendToThread: unused,
+<<<<<<< origin/main
     postFyi: unused,
+=======
+    submitRunOutput: unused,
+>>>>>>> upstream/main
     assertProviderInstanceEnabled: unused,
     isProviderInstanceEnabledForProject: unused,
     hasReceipt: unused,

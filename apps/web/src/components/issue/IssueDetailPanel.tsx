@@ -828,23 +828,25 @@ export function IssueDetailPanel({
                   key={`c:${item.comment.id}`}
                   className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
                 >
-                  <PullRequestMetaLine className="text-xs text-muted-foreground">
-                    <PullRequestActorLabel actor={item.comment.author} />
-                    {item.comment.url ? (
-                      <InlineButton
-                        tone="muted"
-                        render={
-                          <a href={item.comment.url} target="_blank" rel="noopener noreferrer" />
-                        }
-                      >
-                        {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
-                      </InlineButton>
-                    ) : (
-                      <span>
-                        {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
-                      </span>
-                    )}
-                  </PullRequestMetaLine>
+                  <h3>
+                    <PullRequestMetaLine className="text-xs text-muted-foreground">
+                      <PullRequestActorLabel actor={item.comment.author} />
+                      {item.comment.url ? (
+                        <InlineButton
+                          tone="muted"
+                          render={
+                            <a href={item.comment.url} target="_blank" rel="noopener noreferrer" />
+                          }
+                        >
+                          {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
+                        </InlineButton>
+                      ) : (
+                        <span>
+                          {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
+                        </span>
+                      )}
+                    </PullRequestMetaLine>
+                  </h3>
                   <PullRequestCommentBody
                     text={item.comment.body}
                     cwd={cwd}

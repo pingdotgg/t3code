@@ -38,6 +38,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -623,6 +624,110 @@ it.effect("retains automation and sender attribution while a message waits in th
     });
     assert.equal(fresh.delivery, "queued");
     assert.isTrue(fresh.run.freshContext);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("a run asked for a result stores what its agent submits once it fits the schema", () => {
+  const harness = makeHarness({ runSetup: () => Effect.never });
+  const outputSchema = {
+    type: "object",
+    properties: { verdict: { enum: ["merge", "fix-first"] } },
+    required: ["verdict"],
+  };
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const input = launchInput({
+      command: "command:output:launch",
+      thread: "thread:output",
+      message: "Review it",
+      workspace: { type: "worktree", baseRef: "main" },
+    });
+    const launched = yield* launches.launch({
+      ...input,
+      initialMessage: { ...input.initialMessage!, outputSchema },
+    });
+    const submit = (command: string, json: string) =>
+      threads.submitRunOutput({
+        threadId: launched.threadId,
+        commandId: CommandId.make(command),
+        json,
+      });
+
+    const rejected = yield* submit("command:output:bad", '{"verdict":"maybe"}').pipe(Effect.flip);
+    assert.equal(rejected._tag, "ThreadManagementRunOutputRejectedError");
+    // What did not fit is kept as the cause, for the agent that wrote it and nobody's logs.
+    assert.equal(rejected.message, "The result does not match the schema.");
+    assert.include(
+      String((rejected as { cause?: { message?: string } }).cause?.message),
+      "verdict",
+    );
+    const unparsed = yield* submit("command:output:text", "merge").pipe(Effect.flip);
+    assert.include(unparsed.message, "not valid JSON");
+
+    const accepted = yield* submit("command:output:good", '{"verdict":"merge","note":"kept"}');
+    const stored = (yield* threads.getThreadProjection(launched.threadId)).runs.find(
+      (run) => run.id === accepted.runId,
+    );
+    assert.deepStrictEqual(stored?.outputSchema, outputSchema);
+    // Kept as submitted, including what the schema does not name.
+    assert.deepStrictEqual(stored?.output?.value, { verdict: "merge", note: "kept" });
+
+    // Asking for a result never joins the running turn, and a plain turn has nothing to submit to.
+    const next = yield* threads.sendToThread({
+      projectId,
+      commandId: CommandId.make("command:output:next"),
+      threadId: launched.threadId,
+      messageId: MessageId.make("message:output:next"),
+      text: "Review it again",
+      attachments: [],
+      mode: "steer",
+      outputSchema,
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    assert.equal(next.delivery, "queued");
+    assert.deepStrictEqual(next.run.outputSchema, outputSchema);
+    assert.isUndefined(next.run.output);
+    const unusable = yield* threads
+      .sendToThread({
+        projectId,
+        commandId: CommandId.make("command:output:unusable"),
+        threadId: launched.threadId,
+        messageId: MessageId.make("message:output:unusable"),
+        text: "Review it again",
+        attachments: [],
+        mode: "queue",
+        outputSchema: { $ref: "#/$defs/Missing" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      })
+      .pipe(Effect.result);
+    assert.isTrue(Result.isFailure(unusable));
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("a run that was not asked for a result rejects a submission", () => {
+  const harness = makeHarness({ runSetup: () => Effect.never });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:no-output:launch",
+        thread: "thread:no-output",
+        message: "Just talk",
+        workspace: { type: "worktree", baseRef: "main" },
+      }),
+    );
+    const rejected = yield* threads
+      .submitRunOutput({
+        threadId: launched.threadId,
+        commandId: CommandId.make("command:no-output:submit"),
+        json: "{}",
+      })
+      .pipe(Effect.flip);
+    assert.include(rejected.message, "not asked for a result");
   }).pipe(Effect.provide(harness.layer));
 });
 
@@ -2509,6 +2614,46 @@ it.effect(
         yield* Deferred.succeed(allowSetup, undefined);
       }).pipe(Effect.provide(harness.layer));
     }),
+);
+
+it.effect("prepares a launch whose caller goes away after its first message commits", () =>
+  Effect.gen(function* () {
+    const messageCommitted = yield* Deferred.make<void>();
+    const finishDispatch = yield* Deferred.make<void>();
+    const setupEntered = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      runSetup: () =>
+        Deferred.succeed(setupEntered, undefined).pipe(Effect.as({ status: "no-script" as const })),
+      dispatch: (command, dispatch) =>
+        dispatch(command).pipe(
+          Effect.tap((result) =>
+            result.storedEvents.some((stored) => stored.event.type === "run.created")
+              ? Deferred.succeed(messageCommitted, undefined).pipe(
+                  Effect.andThen(Deferred.await(finishDispatch)),
+                )
+              : Effect.void,
+          ),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launch = yield* Effect.forkChild(
+        launches.launch(
+          launchInput({
+            command: "command:launch:caller-gone",
+            thread: "thread:launch:caller-gone",
+            message: "Prepare without the caller",
+            workspace: { type: "worktree", baseRef: "main" },
+          }),
+        ),
+      );
+      yield* Deferred.await(messageCommitted);
+      yield* Effect.sync(() => launch.interruptUnsafe());
+      yield* Deferred.succeed(finishDispatch, undefined);
+      yield* Fiber.await(launch);
+      yield* Deferred.await(setupEntered);
+    }).pipe(Effect.provide(harness.layer));
+  }),
 );
 
 it.effect("creates a strong provider-thread mapping for an imported native session", () => {

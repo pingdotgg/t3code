@@ -151,7 +151,7 @@ function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupEr
   return (
     error._tag === "ProviderSetupError" &&
     error.operation === "resolve" &&
-    /not installed|missing|incomplete|does not publish/i.test(error.detail)
+    /not installed|missing|incomplete|changed on disk|does not publish/i.test(error.detail)
   );
 }
 

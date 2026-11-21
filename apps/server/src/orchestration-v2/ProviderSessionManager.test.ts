@@ -3422,8 +3422,12 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
         toolName: "mcp__t3-code__t3_worktree_handoff",
         input: {},
       }) satisfies OrchestrationV2TurnItem;
+    const cutOffNodeId = idAllocator.derive.nodeFromProviderItem({
+      driver: CODEX_DRIVER,
+      nativeItemId: "cut-off",
+    });
     const seededToolCalls = {
-      cutOff: toolCall("cut-off", providerThreads[0]!, "running", now),
+      cutOff: { ...toolCall("cut-off", providerThreads[0]!, "running", now), nodeId: cutOffNodeId },
       finished: toolCall("finished", providerThreads[0]!, "completed", now),
       otherSession: toolCall("other-session", providerThreads[1]!, "running", now),
       // Started by a replacement session after the release.
@@ -3449,7 +3453,41 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
           ],
         });
       });
+    yield* eventSink.write({
+      events: [
+        {
+          id: yield* idAllocator.allocate.event({ threadId }),
+          type: "node.updated",
+          threadId,
+          nodeId: cutOffNodeId,
+          driver: CODEX_DRIVER,
+          occurredAt: now,
+          payload: {
+            id: cutOffNodeId,
+            threadId,
+            runId: null,
+            parentNodeId: null,
+            rootNodeId: cutOffNodeId,
+            kind: "tool_call",
+            status: "running",
+            countsForRun: true,
+            providerThreadId: providerThreads[0]!.id,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+      ],
+    });
     yield* Effect.forEach(Object.values(seededToolCalls), writeToolCall);
+    const cutOffNodeStatus = Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      return projection.nodes.find((node) => node.id === cutOffNodeId)?.status;
+    });
     // A background native subagent that outlived its completed run; Claude records no provider thread on it.
     const nativeSubagentRunId = idAllocator.derive.run({ threadId, ordinal: 1 });
     const nativeSubagentId = idAllocator.derive.nodeFromProviderItem({
@@ -3533,6 +3571,7 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
       toolCalls,
       toolCallStatus,
       nativeSubagentStatus,
+      cutOffNodeStatus,
     };
   });
 
@@ -3552,6 +3591,7 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
           seededToolCalls,
           writeToolCall,
           nativeSubagentStatus,
+          cutOffNodeStatus,
         } = yield* openSessionWithBackgroundCommand("provider-session-manager-detach-roster");
         const runtime = Option.getOrThrow(yield* manager.get(providerSessionId));
         const subscription = yield* runtime.subscribeEvents!;
@@ -3636,6 +3676,7 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
           otherSession: "running",
           replacement: "running",
         });
+        assert.equal(yield* cutOffNodeStatus, "interrupted");
         // regression: #36548 a native subagent the dead process ran stayed running after its run completed
         assert.notInclude(["pending", "running", "waiting"], yield* nativeSubagentStatus);
       });
