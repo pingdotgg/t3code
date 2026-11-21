@@ -99,6 +99,7 @@ export interface GitLocalStatusOptions {
 
 export interface GitRemoteStatusDetails {
   isRepo: boolean;
+  hasPrimaryRemote: boolean;
   defaultBranch: string | null;
   isDefaultBranch: boolean;
   branch: string | null;
