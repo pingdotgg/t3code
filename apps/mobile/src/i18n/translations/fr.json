@@ -3731,7 +3731,7 @@
   "b725843fd45b74aa": "Identifiants",
   "b239ba3ce2899a3e": "Ou utilisez vos propres identifiants",
   "f0e6397ab4de588e": "Jeton",
-  "295392927d5c8a84": "Choisissez un ou plusieurs {scope}s {tracker} pour chaque projet. Leurs tickets s'affichent à côté de ceux du dépôt, et les agents créent les nouveaux tickets dans le premier.",
+  "ed83b25c71c98a20": "Choisissez un ou plusieurs {scope}s {tracker} pour chaque projet. Leurs tickets s'affichent à côté de ceux du dépôt, et les agents créent les nouveaux tickets dans le premier, sauf si vous leur indiquez une autre destination.",
   "ce2136b36f87b655": "Connectez cet environnement pour modifier ses paramètres.",
   "a90a441fd0e08de7": "Cet environnement",
   "32fb83554cfd85b4": "Modèles de transcription",
