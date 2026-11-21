@@ -273,6 +273,22 @@ describe("IssueService", () => {
         projectId: "plain",
         host: "gitea.test",
       });
+      expect(
+        yield* ported.resolveUrl("https://gitea.test:9443/acme/web/issues/3").pipe(Effect.result),
+      ).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "IssueUnavailableError", reason: "tracker-unsupported" },
+      });
+      // GitLab bindings drop the remote's port, so a ported link still finds its hostname's project.
+      const gitlab = yield* makeService({
+        projects: [
+          project({ id: "gl", repository: "acme/web", provider: "gitlab", host: "gitlab.corp" }),
+        ],
+        trackers: [fakeTracker({ kind: IssueTrackerKind.make("gitlab") })],
+      });
+      expect(
+        yield* gitlab.resolveUrl("https://gitlab.corp:8443/acme/web/-/issues/3"),
+      ).toMatchObject({ projectId: "gl", host: "gitlab.corp", key: "3", writable: true });
 
       // A GitHub Enterprise Server's hostname need not say "github"; its project vouches for it.
       const enterprise = yield* makeService({

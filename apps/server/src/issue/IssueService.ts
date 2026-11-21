@@ -740,11 +740,15 @@ const make = Effect.gen(function* () {
       }
       const { tracker, link } = parsed;
       // A link names its server's port; a binding does only when its remote or web URL did.
-      const authority = new URL(url).host.toLowerCase();
+      const parsedUrl = new URL(url);
+      const authority = parsedUrl.host.toLowerCase();
       const { supported } = yield* listProjects({ host: link.host, authority });
       const onHost = supported.filter((project) => project.tracker === tracker);
       const onAuthority = onHost.filter((project) => project.host === authority);
-      const onTracker = onAuthority.length > 0 ? onAuthority : onHost;
+      // Only a host with its own `changeRequestHost` keeps ports, so only its ported links are exact.
+      const portIsExact =
+        parsedUrl.port !== "" && gitHost?.definition.changeRequestHost !== undefined;
+      const onTracker = onAuthority.length > 0 || portIsExact ? onAuthority : onHost;
       const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
         projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];
       const scope = link.scope.toLowerCase();
