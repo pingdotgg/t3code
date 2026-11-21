@@ -26,8 +26,10 @@ import type {
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliverySummary,
+  ServerProviderSkill,
   ThreadId,
 } from "@t3tools/contracts";
+import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import {
   DEFAULT_WEBHOOK_PROMPT,
   emptyWebhookFilterDraft,
@@ -143,7 +145,11 @@ import {
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { Textarea } from "../ui/textarea";
+import {
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
+  type ComposerPromptEditorHandle,
+} from "../ComposerPromptEditorTiptap";
+import { EMPTY_COMPOSER_CONTEXT_RECORDS } from "../composerContextPresentation";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useSearchableSetting } from "./settingsSearch";
@@ -1462,6 +1468,50 @@ function ScheduledTaskDestination({
   );
 }
 
+const NO_PROMPT_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+
+function ScheduledTaskPromptEditor({
+  value,
+  richTextEnabled,
+  skills,
+  disabled,
+  onChange,
+}: {
+  readonly value: string;
+  readonly richTextEnabled: boolean;
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
+  // The surrounding fieldset cannot disable a contenteditable.
+  readonly disabled: boolean;
+  readonly onChange: (value: string) => void;
+}) {
+  const gt = useGT();
+  const editorRef = useRef<ComposerPromptEditorHandle>(null);
+  const [cursor, setCursor] = useState(value.length);
+  return (
+    <div className="rounded-lg border border-input bg-background px-3 py-2 shadow-xs/5 transition-shadow focus-within:border-ring focus-within:ring-3 focus-within:ring-inset focus-within:ring-ring/24 dark:bg-input/32">
+      <ComposerPromptEditor
+        ariaLabel={gt("Prompt")}
+        editorRef={editorRef}
+        value={value}
+        cursor={cursor}
+        richTextEnabled={richTextEnabled}
+        contextRecords={EMPTY_COMPOSER_CONTEXT_RECORDS}
+        skills={skills}
+        disabled={disabled}
+        placeholder={gt("What should the agent do each time this runs?")}
+        className="max-h-64"
+        onChange={(nextValue, nextCursor) => {
+          setCursor(nextCursor);
+          onChange(nextValue);
+        }}
+        onPaste={noop}
+      />
+    </div>
+  );
+}
+
+function noop() {}
+
 function ScheduledTaskEditorForm({
   initialEnvironmentId,
   task,
@@ -1580,6 +1630,10 @@ function ScheduledTaskEditorForm({
     : { instanceId: activeInstanceId, model: activeModel };
   const shownInstanceId = shownSelection?.instanceId ?? activeInstanceId;
   const shownModel = shownSelection?.model ?? "";
+  const shownInstance = instanceEntries.find((entry) => entry.instanceId === shownInstanceId);
+  const promptSkills = shownInstance
+    ? resolveProviderSkillsForCwd(shownInstance.snapshot, selectedProject?.workspaceRoot)
+    : NO_PROMPT_SKILLS;
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -1936,15 +1990,13 @@ function ScheduledTaskEditorForm({
             </Field>
           ) : null}
 
-          <Field label={gt("Prompt")} htmlFor="scheduled-task-prompt">
-            <Textarea
-              id="scheduled-task-prompt"
-              className="max-h-64 overflow-y-auto"
-              placeholder={gt("What should the agent do each time this runs?")}
+          <Field label={gt("Prompt")}>
+            <ScheduledTaskPromptEditor
               value={draft.prompt}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, prompt: event.target.value }))
-              }
+              richTextEnabled={settings.composerRichTextEnabled}
+              skills={promptSkills}
+              disabled={saving}
+              onChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
             />
           </Field>
 
