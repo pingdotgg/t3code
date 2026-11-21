@@ -37,6 +37,7 @@ it("opens full command details for short labels and keeps pending tasks current"
     description?: string,
     status: "running" | "completed" = "completed",
     explicitItem = true,
+    nativeItemId?: string,
   ) => (
     <ThreadNow
       attention={null}
@@ -47,7 +48,8 @@ it("opens full command details for short labels and keeps pending tasks current"
         threadId: ThreadId.make("thread"),
         tasks: [
           {
-            taskId: "native-task",
+            taskId: nativeItemId ? "session/task-9" : "native-task",
+            nativeItemId,
             itemId: explicitItem ? TurnItemId.make("bash-1") : undefined,
             kind: "command",
             description,
@@ -92,6 +94,10 @@ it("opens full command details for short labels and keeps pending tasks current"
   await expect.element(page.getByText("Command output stream")).toBeVisible();
   await screen.rerender(view("Native fallback", "completed", false));
   await expect.element(page.getByText("Command output stream")).toBeVisible();
+  await screen.rerender(view("Run tests", "completed", false, "native-task"));
+  const dialog = page.getByRole("dialog");
+  await expect.element(dialog.getByRole("heading", { name: "Run tests" })).toBeVisible();
+  await expect.element(dialog.getByText("Command output stream")).toBeVisible();
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
 });
