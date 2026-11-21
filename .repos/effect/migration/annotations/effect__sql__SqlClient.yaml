@@ -7,7 +7,7 @@
 "@effect/sql/SqlClient#SqlClient":
   include: true
   replacement: "effect/sql/SqlClient#SqlClient"
-  note: "Moved into core Effect. Custom service implementations must expose driver and afterCommit; SqlClient.make supplies both. driver identifies the driver independently of its SQL dialect. afterCommit registers effects to run after the outermost successful commit and connection release attempt, discarding rolled-back work. withTransaction now also defers contextual Reactivity.invalidate and mutation invalidations until that commit. Transactions bypassing makeWithTransaction, such as sqlite-do transactions, run callbacks and invalidations immediately."
+  note: "Moved into core Effect. Custom service implementations must expose driver and afterCommit; SqlClient.make supplies both. driver identifies the driver independently of its SQL dialect. afterCommit registers effects to run after the outermost successful commit and connection release attempt, discarding rolled-back work. withTransaction now also defers contextual Reactivity.invalidate and mutation invalidations until that commit. Transactions bypassing makeWithTransaction, such as sqlite-do transactions, run callbacks and invalidations immediately. Driver-specific client interfaces should extend SqlClient.Base rather than SqlClient, so providing a generic SqlClient does not also remove the driver requirement."
 "@effect/sql/SqlClient#makeWithTransaction":
   include: true
   replacement: "effect/sql/SqlClient#makeWithTransaction"

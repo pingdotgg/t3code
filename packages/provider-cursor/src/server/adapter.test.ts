@@ -38,6 +38,7 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   cursorMcpServers,
@@ -2353,6 +2354,264 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect(
+    "lists background shells, holds for awaited ones, stops them on Stop or rollback and wakes when one exits",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "cursor-v2-background-",
+        });
+        const instanceId = ProviderInstanceId.make("cursor");
+        const threadId = ThreadId.make("cursor-background-thread");
+        const modelSelection = { instanceId, model: "composer-2.5" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const wakes: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const stopped: Array<string> = [];
+        let report: (
+          event: CursorAgentSdk.CursorBackgroundShellEvent,
+        ) => Effect.Effect<void> = () => Effect.void;
+        const shell = (id: string) => ({ id, pid: Number(id) * 10, command: `sleep ${id}` });
+        const adapter = yield* makeCursorAdapterV2({
+          instanceId,
+          environment: { HOME: workspace },
+        }).pipe(
+          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+            assertComplete: Effect.void,
+            open: () =>
+              Effect.succeed({
+                agentId: "native-cursor-background",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                send: (input) =>
+                  Effect.gen(function* () {
+                    report = input.onBackgroundShell!;
+                    for (const id of ["6", "7", "8"]) {
+                      yield* report({
+                        ...shell(id),
+                        type: "started",
+                        stop: () => stopped.push(id),
+                      });
+                    }
+                    return {
+                      agentId: "native-cursor-background",
+                      runId: "native-cursor-run",
+                      // Shell 6 exits after the agent's turn ended, before the run settles.
+                      wait: Effect.gen(function* () {
+                        yield* input.onDelta!({ type: "turn-ended" }).pipe(Effect.orDie);
+                        yield* report({
+                          ...shell("6"),
+                          type: "ended",
+                          stopped: false,
+                          exitCode: 0,
+                          outputPath: undefined,
+                        });
+                        return {
+                          id: "native-cursor-run",
+                          requestId: "native-request",
+                          status: "finished" as const,
+                          durationMs: 1,
+                        };
+                      }),
+                      cancel: Effect.void,
+                    };
+                  }),
+              }),
+          }),
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) => Effect.sync(() => wakes.push(request)),
+            take: Effect.never,
+          }),
+          Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+        );
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-background-session"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("cursor-background-run"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("cursor-background-attempt"),
+          rootNodeId: NodeId.make("cursor-background-root"),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-background-project"),
+            createdBy: "user",
+            creationSource: "web",
+            title: "Cursor shell",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make("cursor-background-message"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "hi",
+            attachments: [],
+          },
+        });
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const listed = (
+          update: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+        ): ReadonlyArray<unknown> =>
+          update.flatMap((event) =>
+            event.type === "provider_thread.updated"
+              ? [
+                  {
+                    tasks: (event.providerThread.pendingBackgroundTasks ?? []).map(
+                      ({ taskId, awaited }) => `${taskId}${awaited === true ? " awaited" : ""}`,
+                    ),
+                    sessionScoped: event.sessionScoped === true,
+                  },
+                ]
+              : [],
+          );
+        const nextUpdate = runtime.events.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.map(listed),
+        );
+        assert.deepStrictEqual(listed(events).at(-1), { tasks: ["7", "8"], sessionScoped: false });
+        // Idle release keeps the session while a shell runs.
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+
+        // The agent names a shell by the pid Cursor showed it.
+        assert.deepStrictEqual(
+          yield* runtime.awaitBackgroundTasks!({
+            providerThread,
+            taskIds: ["70", "missing"],
+            awaited: true,
+          }),
+          { matched: ["70"] },
+        );
+        assert.deepStrictEqual(yield* nextUpdate, [
+          { tasks: ["7 awaited", "8"], sessionScoped: true },
+        ]);
+
+        yield* report({
+          ...shell("8"),
+          type: "ended",
+          stopped: false,
+          exitCode: 1,
+          outputPath: "/terminals/8.txt",
+        });
+        assert.deepStrictEqual(yield* nextUpdate, [{ tasks: ["7 awaited"], sessionScoped: true }]);
+
+        // Rolling back stops what the discarded runs left running, so it cannot wake the thread.
+        yield* runtime.rollbackThread({
+          providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("cursor-background-checkpoint"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [],
+        });
+        assert.deepStrictEqual(stopped, ["7"]);
+        // A wake still queued when the rollback landed is dropped.
+        assert.deepStrictEqual(
+          yield* wakes[0]!.dispatchIfCurrent!(Effect.succeed("woken")),
+          Option.none(),
+        );
+        yield* report({
+          ...shell("7"),
+          type: "ended",
+          stopped: true,
+          exitCode: undefined,
+          outputPath: undefined,
+        });
+        assert.deepStrictEqual(yield* nextUpdate, [{ tasks: [], sessionScoped: true }]);
+
+        const terminal = events.find((event) => event.type === "turn.terminal");
+        assert.ok(terminal?.type === "turn.terminal");
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: terminal.providerTurnId,
+          requestRuntimeRestart: true,
+        });
+        assert.deepStrictEqual(stopped, ["7"]);
+        // A shell of the stopped run that is reported late is stopped, not kept.
+        yield* report({ ...shell("9"), type: "started", stop: () => stopped.push("9") });
+        assert.deepStrictEqual(stopped, ["7", "9"]);
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+
+        assert.deepStrictEqual(
+          wakes.map(({ threadId, providerThreadId, delivery, detail, notification }) => ({
+            threadId,
+            providerThreadId,
+            delivery,
+            detail,
+            notification,
+          })),
+          [
+            {
+              threadId,
+              providerThreadId: providerThread.id,
+              delivery: "message_text",
+              detail: "Background command completed (exit 0): sleep 6",
+              notification: {
+                source: { kind: "command" },
+                outcome: "completed",
+                summary: 'Command "sleep 6" finished (exit 0)',
+                detail: "sleep 6",
+              },
+            },
+            {
+              threadId,
+              providerThreadId: providerThread.id,
+              delivery: "message_text",
+              detail: "Background command completed (exit 1): sleep 8\n\nOutput: /terminals/8.txt",
+              notification: {
+                source: { kind: "command" },
+                outcome: "failed",
+                summary: 'Command "sleep 8" failed (exit 1)',
+                detail: "sleep 8",
+              },
+            },
+          ],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
+  );
+
   it.effect("names a custom model Cursor's account catalog rejects", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3250,6 +3509,143 @@ describe("CursorAdapterV2", () => {
           Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
         ),
       ),
+  );
+
+  it.effect("reopens a fresh session when a cached worker session is no longer alive", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-cursor-dead-worker-",
+      });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-dead-worker-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+
+      let firstAlive = true;
+      let firstClosed = 0;
+      const opens: Array<{ readonly operation: string; readonly agentId?: string }> = [];
+      const sends: Array<number> = [];
+
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: (input) => {
+            const sessionNumber = opens.length + 1;
+            opens.push({
+              operation: input.operation,
+              ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+            });
+            return Effect.succeed({
+              agentId: "native-cursor-reopen",
+              isAlive: () => (sessionNumber === 1 ? firstAlive : true),
+              listMessages: Effect.succeed([]),
+              close: Effect.sync(() => {
+                if (sessionNumber === 1) firstClosed += 1;
+              }),
+              send: () => {
+                sends.push(sessionNumber);
+                return Effect.succeed({
+                  agentId: "native-cursor-reopen",
+                  runId: `run-${sessionNumber}`,
+                  wait: Effect.succeed({
+                    id: `run-${sessionNumber}`,
+                    requestId: `req-${sessionNumber}`,
+                    status: "finished" as const,
+                    result: "ok",
+                    model: { id: "composer-2.5" },
+                    durationMs: 1,
+                  }),
+                  cancel: Effect.void,
+                });
+              },
+            });
+          },
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-dead-worker-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.deepEqual(opens, [{ operation: "create" }]);
+
+      // Simulate the first worker terminating after ensureThread.
+      firstAlive = false;
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-dead-worker-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-dead-worker-attempt"),
+        rootNodeId: NodeId.make("cursor-dead-worker-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-dead-worker-project"),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Dead worker recovery",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-dead-worker-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "Continue on a fresh worker.",
+          attachments: [],
+        },
+      });
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      assert.equal(events.find((event) => event.type === "turn.terminal")?.status, "completed");
+      assert.equal(firstClosed, 1);
+      assert.deepEqual(opens, [
+        { operation: "create" },
+        { operation: "resume", agentId: "native-cursor-reopen" },
+      ]);
+      assert.deepEqual(sends, [2]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it("preserves failed nested read calls when Cursor omits their path", () => {
