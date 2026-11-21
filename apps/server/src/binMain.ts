@@ -8,7 +8,11 @@ export async function runCliCommand() {
   // Install the socket guard before importing code that can open outbound connections.
   const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
   ignoreMacosTypeOfServiceEinval();
-  if (command === "__document-text") {
+  if (command === "__resource-telemetry-history") {
+    const { runResourceTelemetryHistoryWorker } =
+      await import("./resourceTelemetry/ResourceTelemetryHistoryWorker.ts");
+    await runResourceTelemetryHistoryWorker();
+  } else if (command === "__document-text") {
     const { extractDocumentText } = await import("./provider/documentTextWorker.ts");
     try {
       process.stdout.write(await extractDocumentText(process.argv[3]!, process.argv[4]!));
