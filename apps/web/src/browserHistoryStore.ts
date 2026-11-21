@@ -33,6 +33,7 @@ import { readPreparedConnection } from "~/state/session";
 
 import { isLocalLoopbackHost, normalizeHostname } from "./browser/browserTargetResolver";
 import { useComposerDraftStore } from "./composerDraftStore";
+import { subscribeLocalStorageKey } from "./hooks/useLocalStorage";
 import {
   ensureClientSettingsHydrated,
   getClientSettings,
@@ -178,6 +179,7 @@ export function migratePersistedBrowserHistoryState(persistedState: unknown): {
 
 const BROWSER_HISTORY_STORAGE_KEY = "t3code:browser-history:v1";
 
+const MAX_PERSISTED_THREAD_MAPPINGS = 100;
 const PENDING_MAX_PER_THREAD = 10;
 const PENDING_MAX_THREADS = 20;
 
@@ -224,6 +226,27 @@ type PersistedBrowserHistory = Pick<
   "byProjectKey" | "projectKeyByThreadKey"
 >;
 
+type UpdateHistory = (state: PersistedBrowserHistory) => PersistedBrowserHistory;
+
+function boundThreadMappings(
+  previous: PersistedBrowserHistory,
+  next: PersistedBrowserHistory,
+): PersistedBrowserHistory {
+  return {
+    ...next,
+    projectKeyByThreadKey: Object.fromEntries(
+      Object.entries(next.projectKeyByThreadKey)
+        // Keep new registrations for empty projects, but drop projects that lost their history.
+        .filter(
+          ([, projectKey]) =>
+            !Object.hasOwn(previous.byProjectKey, projectKey) ||
+            Object.hasOwn(next.byProjectKey, projectKey),
+        )
+        .slice(-MAX_PERSISTED_THREAD_MAPPINGS),
+    ),
+  };
+}
+
 function getBrowserHistoryStorage(): Storage | undefined {
   try {
     return globalThis.window?.localStorage;
@@ -233,6 +256,47 @@ function getBrowserHistoryStorage(): Storage | undefined {
 }
 
 const browserHistoryStorage = getBrowserHistoryStorage();
+const locks = globalThis.window?.navigator.locks;
+const useIndexedHistory = typeof window !== "undefined" && !locks;
+const HISTORY_OBJECT_STORE = "history";
+let historyDatabase: Promise<IDBDatabase> | undefined;
+
+function openHistoryDatabase() {
+  return (historyDatabase ??= new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(BROWSER_HISTORY_STORAGE_KEY, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(HISTORY_OBJECT_STORE);
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => db.close();
+      resolve(db);
+    };
+    request.onerror = () => reject(request.error);
+  }));
+}
+
+async function transactIndexedHistory(update?: UpdateHistory) {
+  const db = await openHistoryDatabase();
+  return new Promise<{ history: PersistedBrowserHistory; changed: boolean }>((resolve, reject) => {
+    const transaction = db.transaction(HISTORY_OBJECT_STORE, update ? "readwrite" : "readonly");
+    const store = transaction.objectStore(HISTORY_OBJECT_STORE);
+    const request = store.get(BROWSER_HISTORY_STORAGE_KEY);
+    let history: PersistedBrowserHistory;
+    let changed = false;
+    request.onsuccess = () => {
+      // Seed from the legacy snapshot until the first transaction writes a value.
+      const previous =
+        (request.result as PersistedBrowserHistory | undefined) ?? readStoredHistory();
+      const next = update?.(previous) ?? previous;
+      changed = next !== previous;
+      history = changed ? boundThreadMappings(previous, next) : previous;
+      if (changed) store.put(history, BROWSER_HISTORY_STORAGE_KEY);
+    };
+    transaction.oncomplete = () => resolve({ history, changed });
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
+let historyChannel: BroadcastChannel | undefined;
 let lastStoredValue: string | null | undefined;
 let storedHistory: PersistedBrowserHistory = { byProjectKey: {}, projectKeyByThreadKey: {} };
 
@@ -271,16 +335,22 @@ function writeStoredHistory(state: PersistedBrowserHistory): void {
 }
 
 export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()((set, get) => {
-  const updateHistory = (update: (state: PersistedBrowserHistory) => PersistedBrowserHistory) => {
-    const apply = () => {
-      const previous = browserHistoryStorage ? readStoredHistory() : get();
-      const next = update(previous);
-      if (browserHistoryStorage && next !== previous) writeStoredHistory(next);
-      if (next.byProjectKey !== get().byProjectKey) set({ byProjectKey: next.byProjectKey });
-    };
-    const locks = browserHistoryStorage && window.navigator.locks;
-    if (!locks) {
-      apply();
+  const publish = ({ byProjectKey }: PersistedBrowserHistory) => {
+    if (byProjectKey !== get().byProjectKey) set({ byProjectKey });
+  };
+  const updateHistory = (update: UpdateHistory) => {
+    if (useIndexedHistory) {
+      void transactIndexedHistory(update).then(
+        ({ history, changed }) => {
+          publish(history);
+          if (changed) historyChannel?.postMessage(null);
+        },
+        () => publish(update(get())),
+      );
+      return;
+    }
+    if (!locks || !browserHistoryStorage) {
+      publish(update(get()));
       return;
     }
     // Read inside the lock so a write works even before another tab's storage event arrives.
@@ -288,15 +358,18 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()((set, g
     void locks
       .request(BROWSER_HISTORY_STORAGE_KEY, () => {
         started = true;
-        apply();
+        const previous = readStoredHistory();
+        const next = update(previous);
+        if (next !== previous) writeStoredHistory(boundThreadMappings(previous, next));
+        publish(next);
       })
       .catch((error: unknown) => {
         if (started) throw error;
-        apply();
+        publish(update(get()));
       });
   };
 
-  return mergeBrowserHistoryState(readStoredHistory(), {
+  return mergeBrowserHistoryState(useIndexedHistory ? undefined : readStoredHistory(), {
     byProjectKey: {},
     projectKeyByThreadKey: {},
     pendingVisitsByThreadKey: {},
@@ -367,7 +440,6 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()((set, g
       const nextPendingVisits = { ...state.pendingVisitsByThreadKey };
       delete nextPendingVisits[threadKey];
       set({
-        byProjectKey: browserHistoryStorage ? readStoredHistory().byProjectKey : state.byProjectKey,
         projectKeyByThreadKey: { ...state.projectKeyByThreadKey, [threadKey]: projectKey },
         pendingVisitsByThreadKey: nextPendingVisits,
       });
@@ -392,20 +464,49 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()((set, g
   });
 });
 
-if (browserHistoryStorage) {
-  const syncHistory = (event: StorageEvent) => {
-    if (
-      event.storageArea !== browserHistoryStorage ||
-      (event.key !== BROWSER_HISTORY_STORAGE_KEY && event.key !== null)
-    )
-      return;
+if (useIndexedHistory) {
+  try {
+    historyChannel = new BroadcastChannel(BROWSER_HISTORY_STORAGE_KEY);
+  } catch {
+    // History still persists when the browser cannot send change notifications.
+  }
+  if (historyChannel) {
+    historyChannel.onmessage = () => {
+      void transactIndexedHistory().then(
+        ({ history }) => useBrowserHistoryStore.setState({ byProjectKey: history.byProjectKey }),
+        () => undefined,
+      );
+    };
+  }
+  const hydrate = (history: PersistedBrowserHistory) => {
+    useBrowserHistoryStore.setState((state) => ({
+      byProjectKey: history.byProjectKey,
+      projectKeyByThreadKey: {
+        ...migratePersistedThreadProjectKeys(history, history.byProjectKey),
+        ...state.projectKeyByThreadKey,
+      },
+    }));
+  };
+  void transactIndexedHistory().then(
+    ({ history }) => hydrate(history),
+    () => hydrate(readStoredHistory()),
+  );
+  import.meta.hot?.dispose(() => {
+    historyChannel?.close();
+    historyChannel = undefined;
+    void historyDatabase?.then(
+      (db) => db.close(),
+      () => undefined,
+    );
+  });
+} else if (browserHistoryStorage) {
+  const unsubscribe = subscribeLocalStorageKey(BROWSER_HISTORY_STORAGE_KEY, () => {
     const { byProjectKey } = readStoredHistory();
     useBrowserHistoryStore.setState((state) =>
       state.byProjectKey === byProjectKey ? state : { byProjectKey },
     );
-  };
-  window.addEventListener("storage", syncHistory);
-  import.meta.hot?.dispose(() => window.removeEventListener("storage", syncHistory));
+  });
+  import.meta.hot?.dispose(unsubscribe);
 }
 
 export function mergeBrowserHistoryState(
@@ -432,7 +533,7 @@ function migratePersistedThreadProjectKeys(
     (entry): entry is [string, string] =>
       typeof entry[1] === "string" && (!byProjectKey || Object.hasOwn(byProjectKey, entry[1])),
   );
-  return Object.fromEntries(byProjectKey ? entries.slice(-100) : entries);
+  return Object.fromEntries(entries.slice(-MAX_PERSISTED_THREAD_MAPPINGS));
 }
 
 /**
