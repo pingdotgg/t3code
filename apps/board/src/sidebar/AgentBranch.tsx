@@ -3,8 +3,8 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { MessageCircleQuestion } from "lucide-react";
 import { useContext, useState } from "react";
 
+import { chooseTicket } from "../browser/panel";
 import { type AgentNode, type RunState } from "../state/boardModel";
-import { peekAtom } from "../state/boardUi";
 import { openBoard } from "../state/boards";
 import { ProviderGlyph } from "../usage/ProviderGlyph";
 import { CountChip } from "./CountChip";
@@ -51,7 +51,7 @@ export function AgentBranch({
         label={`${agent.title}, ${dot.label.toLowerCase()}`}
         onClick={() => {
           void openBoard(registry, { projectId: project.id, folder });
-          registry.set(peekAtom, { threadId: agent.threadId, ticketKey: agent.ticketKey });
+          chooseTicket(registry, { threadId: agent.threadId, ticketKey: agent.ticketKey });
         }}
         trailing={
           <>

@@ -3,7 +3,7 @@ import { Atom, type AtomRegistry } from "effect/reactivity";
 import { appAtomRegistry } from "../state/registry";
 
 /** The panel's tabs. Later tabs join this list and the strip, and this one does not move. */
-export const PANEL_TABS = ["chat", "explorer", "changes", "checks"] as const;
+export const PANEL_TABS = ["chat", "ticket", "explorer", "changes", "checks"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
 
 export interface PanelState {
@@ -45,6 +45,34 @@ export function markChecksPainted(): void {
   performance.mark("board:checks-painted");
 }
 
+/** The agent the Ticket tab reads, with the ticket whose frame it opened from. */
+export interface TicketChoice {
+  readonly threadId: string | null;
+  readonly ticketKey: string | null;
+}
+
+export const ticketChoiceAtom = Atom.make<TicketChoice | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("ticket-choice"),
+);
+
+let awaitingTicketPaint = false;
+
+/** Shows the Ticket tab for a card, opening the panel when it is closed. */
+export function chooseTicket(registry: AtomRegistry.AtomRegistry, choice: TicketChoice): void {
+  performance.mark("board:ticket-open");
+  awaitingTicketPaint = true;
+  registry.set(ticketChoiceAtom, choice);
+  showPanelTab(registry, "ticket");
+}
+
+/** Marks the frame that drew the Ticket tab after a card was chosen, once for each choice. */
+export function markTicketPainted(): void {
+  if (!awaitingTicketPaint) return;
+  awaitingTicketPaint = false;
+  performance.mark("board:ticket-painted");
+}
+
 export function setPanelTab(registry: AtomRegistry.AtomRegistry, tab: PanelTab): void {
   change(registry, (state) => ({ ...state, tab }));
 }
@@ -69,6 +97,15 @@ export const chatSlotAtom = Atom.make<HTMLElement | null>(null).pipe(
 
 // A stable function, so a re-render does not detach and attach the slot again.
 export const attachChatSlot = (node: HTMLElement | null) => appAtomRegistry.set(chatSlotAtom, node);
+
+/** Where the open board's ticket draws, which needs the board's model. */
+export const ticketSlotAtom = Atom.make<HTMLElement | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("ticket-slot"),
+);
+
+export const attachTicketSlot = (node: HTMLElement | null) =>
+  appAtomRegistry.set(ticketSlotAtom, node);
 
 /** Where the open board's checks draw, which needs the board's pull request context. */
 export const checksSlotAtom = Atom.make<HTMLElement | null>(null).pipe(

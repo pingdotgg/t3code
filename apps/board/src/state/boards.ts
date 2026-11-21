@@ -34,7 +34,7 @@ import {
   type ValidBoard,
 } from "../store/boardFiles";
 import { createLocalState, type LocalState } from "../store/localState";
-import { showPanelTab } from "../browser/panel";
+import { showPanelTab, ticketChoiceAtom } from "../browser/panel";
 import { showBoard } from "./filesView";
 import { failureText } from "../settings/failureText";
 import {
@@ -291,6 +291,10 @@ export function openBoard(
   registry: AtomRegistry.AtomRegistry,
   opened: NonNullable<LocalState["lastOpenedBoard"]>,
 ) {
+  const before = registry.get(lastOpenedBoardAtom);
+  if (before?.projectId !== opened.projectId || before.folder !== opened.folder) {
+    registry.set(ticketChoiceAtom, null);
+  }
   registry.set(lastOpenedBoardAtom, opened);
   showBoard(registry);
   showPanelTab(registry, "chat");

@@ -4,7 +4,7 @@ import type { CheckRun } from "../domain/readiness";
 import { CheckRow } from "./CheckRow";
 import { sortChecks } from "./checkList";
 
-/** The checks as the Checks tab, the peek drawer, and the merge approval card all list them. */
+/** The checks as the Checks tab, the Ticket tab, and the merge approval card all list them. */
 export function CheckRows({ checks, now }: { checks: ReadonlyArray<CheckRun>; now: number }) {
   const rows = useMemo(() => {
     const seen = new Map<string, number>();

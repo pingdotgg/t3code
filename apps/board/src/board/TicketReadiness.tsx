@@ -2,8 +2,8 @@ import type { TicketView } from "../state/boardModel";
 import { useTicketReadiness } from "../state/prStatus";
 import { ReadinessChecklist } from "./ReadinessChecklist";
 
-/** A ticket's merge-ready conditions in the peek drawer, with how many hold. */
-export function DrawerReadiness({ view }: { view: TicketView }) {
+/** A ticket's merge-ready conditions in the Ticket tab, with how many hold. */
+export function TicketReadiness({ view }: { view: TicketView }) {
   const conditions = useTicketReadiness(view) ?? [];
   const met = conditions.filter((condition) => condition.met).length;
   return (

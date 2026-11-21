@@ -4,7 +4,7 @@ import { ChangesPanel } from "../changes/ChangesPanel";
 import { FilesPanel } from "../files/FilesPanel";
 import { lastOpenedBoardAtom } from "../state/boards";
 import { EmptyFiles } from "../files/EmptyFiles";
-import { attachChatSlot, attachChecksSlot, panelAtom } from "./panel";
+import { attachChatSlot, attachChecksSlot, attachTicketSlot, panelAtom } from "./panel";
 import { PanelTabs } from "./PanelTabs";
 import { ResizeHandle } from "./ResizeHandle";
 
@@ -36,6 +36,16 @@ export function PanelHost() {
         {opened === null && <EmptyFiles>Open a board to talk to its orchestrator.</EmptyFiles>}
         {/* The board's own screen draws the chat into this slot, because the chat needs the board's context. */}
         <div ref={attachChatSlot} className="flex min-h-0 flex-1 flex-col" />
+      </div>
+      <div
+        id="panel-ticket"
+        role="tabpanel"
+        aria-labelledby="panel-tab-ticket"
+        className={shown(tab === "ticket")}
+      >
+        {opened === null && <EmptyFiles>Open a board to see its tickets.</EmptyFiles>}
+        {/* The board's own screen draws the ticket into this slot, because it needs the board's tickets and agents. */}
+        <div ref={attachTicketSlot} className="flex min-h-0 flex-1 flex-col" />
       </div>
       <div
         id="panel-explorer"

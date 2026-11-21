@@ -32,7 +32,7 @@ export function AgentLog({
   return (
     <div
       ref={scroller}
-      data-testid="peek-log"
+      data-testid="ticket-log"
       role="log"
       aria-label={`${agent.role} thread log`}
       onScroll={(event) => {
