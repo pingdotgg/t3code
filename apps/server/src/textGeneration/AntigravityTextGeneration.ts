@@ -58,6 +58,8 @@ type AntigravityTextRuntime = Pick<
 
 export interface AntigravityTextGenerationOptions {
   readonly profileDirectory: string;
+  /** True when `makeRuntime` isolates each helper call in its own clean ephemeral GEMINI_HOME. */
+  readonly isolatedProfile?: boolean;
   readonly defaultModel?: Effect.Effect<string | undefined>;
   readonly makeRuntime: (
     cwd: string,
@@ -148,7 +150,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
       const scope = yield* Scope.make();
       yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
       const helper = Effect.gen(function* () {
-        if (!(yield* available)) {
+        if (!options.isolatedProfile && !(yield* available)) {
           return yield* new TextGenerationError({
             operation,
             detail:
@@ -158,16 +160,18 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
 
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-text-" });
         let sessionId: string | undefined;
-        yield* Effect.addFinalizer(() =>
-          removeAntigravitySessionFiles({
-            profileDirectory: options.profileDirectory,
-            sessionId,
-            cwd,
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fs),
-            Effect.provideService(Path.Path, path),
-          ),
-        );
+        if (!options.isolatedProfile) {
+          yield* Effect.addFinalizer(() =>
+            removeAntigravitySessionFiles({
+              profileDirectory: options.profileDirectory,
+              sessionId,
+              cwd,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+            ),
+          );
+        }
 
         const rawResult = yield* Effect.gen(function* () {
           const runtime = yield* options.makeRuntime(cwd);

@@ -93,6 +93,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
       readonly agentVersion?: string;
+      readonly sessionId?: string;
+      readonly promptResponseText?: string;
     } = {},
   ) {
     const directory = path.join(root, name);
@@ -115,6 +117,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         ...(options.initialMode === undefined
           ? []
           : [`export T3_ACP_INITIAL_MODE=${shellQuote(options.initialMode)}`]),
+        ...(options.sessionId === undefined
+          ? []
+          : [`export T3_ACP_SESSION_ID=${shellQuote(options.sessionId)}`]),
+        ...(options.promptResponseText === undefined
+          ? []
+          : [`export T3_ACP_PROMPT_RESPONSE_TEXT=${shellQuote(options.promptResponseText)}`]),
         `export T3_ACP_AGENT_VERSION=${shellQuote(options.agentVersion ?? "1.5.12")}`,
         `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
@@ -662,6 +670,56 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(after.models).toEqual(before.models);
         expect(after.auth).toEqual(before.auth);
         expect(JSON.stringify(after)).not.toContain("sk-secret-123");
+        yield* h.assertClosed;
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "runs text generation in an isolated profile even when the instance profile has hooks and MCP",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const configDirectory = h.path.join(h.profileDirectory, "config");
+        const acpDirectory = h.path.join(h.profileDirectory, "antigravity-acp");
+        yield* h.fs.makeDirectory(configDirectory, { recursive: true });
+        yield* h.fs.makeDirectory(acpDirectory, { recursive: true });
+        yield* h.fs.writeFileString(
+          h.path.join(configDirectory, "hooks.json"),
+          '{"guard":{"PreInvocation":[{"command":"exit 1"}]}}',
+        );
+        yield* h.fs.writeFileString(
+          h.path.join(configDirectory, "mcp_config.json"),
+          '{"mcpServers":{"ai-memory":{"command":"mem"}}}',
+        );
+        yield* h.fs.writeFileString(
+          h.path.join(acpDirectory, "antigravity-oauth-token"),
+          '{"token":{"access_token":"tok"}}',
+        );
+
+        const textExecutable = yield* h.makeExecutable("runtime text-gen", {
+          sessionId: "047c62f6-607b-44db-bfbe-f83b67e9e8b1",
+          promptResponseText: '{"title":"Isolated title"}',
+        });
+        h.controls.selected = textExecutable;
+
+        yield* h.refresh();
+        const snapshot = yield* h.instance.snapshot.getSnapshot;
+        expect(snapshot.supportsTextGeneration).toBe(true);
+
+        const launchesBefore = h.launches.length;
+        const generated = yield* h.instance.textGeneration.generateThreadTitle({
+          cwd: h.profileDirectory,
+          message: "Name this thread",
+          modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-low" },
+        });
+        expect(generated).toEqual({ title: "Isolated title" });
+        const textLaunch = h.launches
+          .slice(launchesBefore)
+          .find((launch) => launch.command === textExecutable.executablePath);
+        expect(textLaunch).toBeDefined();
+        expect(textLaunch?.profileDirectory).toBeDefined();
+        expect(textLaunch?.profileDirectory).not.toBe(h.profileDirectory);
+        expect(yield* h.fs.exists(textLaunch!.profileDirectory!)).toBe(false);
         yield* h.assertClosed;
       }),
   );

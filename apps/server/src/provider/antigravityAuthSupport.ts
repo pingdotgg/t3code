@@ -58,6 +58,12 @@ const browserHelperSource =
   `"${ANTIGRAVITY_AUTH_BROWSER_MARKER}"+JSON.stringify(process.argv[1])+"\\n",` +
   `()=>process.exit(0))`;
 const browserPreflightUrl = "https://example.invalid/t3-antigravity-browser-preflight";
+const ISOLATED_AUTH_FILES = [
+  "antigravity-oauth-token",
+  "acp_token.json",
+  "installation_id",
+] as const;
+const MAX_ISOLATED_AUTH_FILE_BYTES = 64 * 1024;
 
 const removedEnvironmentKeys = new Set([
   "GEMINI_API_KEY",
@@ -160,8 +166,8 @@ export interface AntigravityAuthorizationUrl {
   readonly state: string;
 }
 
-function authSupportError(detail: string) {
-  return new AcpErrors.AcpTransportError({ detail, cause: undefined });
+function authSupportError(detail: string, cause?: unknown) {
+  return new AcpErrors.AcpTransportError({ detail, cause });
 }
 
 // The 1.5 CLI answers `authenticate` with this internal error when it has no sign-in and no display.
@@ -398,6 +404,10 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   readonly auth?: AntigravityAuthConfig;
   readonly userHome?: string;
   readonly tempDirectory?: string;
+  /** Skip linking ~/.gemini rules/skills and write empty config sentinels to prevent migration. */
+  readonly isolateUserConfig?: boolean;
+  /** Copy only whitelisted auth/identity files from this profile into the prepared profile. */
+  readonly copyAuthFromProfileDirectory?: string;
 }) {
   const auth = input.auth ?? ANTIGRAVITY_PERSONAL_AUTH;
   const fs = yield* FileSystem.FileSystem;
@@ -511,7 +521,10 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     ),
   );
 
-  for (const directory of [geminiHome, acpDirectory, tempDirectory]) {
+  const directoriesToCreate = input.isolateUserConfig
+    ? [geminiHome, acpDirectory, tempDirectory, path.join(geminiHome, "config")]
+    : [geminiHome, acpDirectory, tempDirectory];
+  for (const directory of directoriesToCreate) {
     yield* fs
       .makeDirectory(directory, { recursive: true, mode: 0o700 })
       .pipe(
@@ -536,9 +549,95 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         authSupportError("The Antigravity profile settings could not be written."),
       ),
     );
-  yield* linkAntigravityUserConfig({ profileDirectory: geminiHome, userHome, platform });
-  if (platform === "win32") {
-    yield* copyAntigravityUserConfigFiles({ profileDirectory: geminiHome, userHome });
+  if (input.copyAuthFromProfileDirectory !== undefined) {
+    const sourceAcpDirectory = path.join(
+      path.resolve(input.copyAuthFromProfileDirectory),
+      "antigravity-acp",
+    );
+    let copiedCliToken = false;
+    for (const fileName of ISOLATED_AUTH_FILES) {
+      if (copiedCliToken && fileName === "acp_token.json") continue;
+      const sourcePath = path.join(sourceAcpDirectory, fileName);
+      const isLink = yield* fs.readLink(sourcePath).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (isLink) continue;
+      const info = yield* fs.stat(sourcePath).pipe(Effect.option);
+      if (
+        Option.isNone(info) ||
+        info.value.type !== "File" ||
+        Number(info.value.size) > MAX_ISOLATED_AUTH_FILE_BYTES
+      ) {
+        continue;
+      }
+      const contents = yield* fs
+        .readFile(sourcePath)
+        .pipe(
+          Effect.mapError((cause) =>
+            authSupportError(
+              "Could not read Antigravity sign-in credentials for isolated run.",
+              cause,
+            ),
+          ),
+        );
+      const targetPath = path.join(acpDirectory, fileName);
+      yield* fs
+        .writeFile(targetPath, contents)
+        .pipe(
+          Effect.mapError((cause) =>
+            authSupportError(
+              "Could not prepare Antigravity sign-in credentials for isolated run.",
+              cause,
+            ),
+          ),
+        );
+      if (platform !== "win32") {
+        yield* fs
+          .chmod(targetPath, 0o600)
+          .pipe(
+            Effect.mapError((cause) =>
+              authSupportError("Could not protect Antigravity sign-in credentials.", cause),
+            ),
+          );
+      }
+      if (fileName === "antigravity-oauth-token") {
+        copiedCliToken = true;
+      }
+    }
+  }
+  if (input.isolateUserConfig) {
+    const configDirectory = path.join(geminiHome, "config");
+    // `.migrated` stops agy 1.5+ from copying ~/.gemini/config hooks, MCP servers, or plugins.
+    for (const [fileName, contents] of [
+      [".migrated", ""],
+      ["config.json", "{}\n"],
+      ["hooks.json", "{}\n"],
+      ["mcp_config.json", '{"mcpServers":{}}\n'],
+    ] as const) {
+      const targetPath = path.join(configDirectory, fileName);
+      yield* fs
+        .writeFileString(targetPath, contents)
+        .pipe(
+          Effect.mapError((cause) =>
+            authSupportError("Could not initialize isolated Antigravity configuration.", cause),
+          ),
+        );
+      if (platform !== "win32") {
+        yield* fs
+          .chmod(targetPath, 0o600)
+          .pipe(
+            Effect.mapError((cause) =>
+              authSupportError("Could not protect isolated Antigravity configuration.", cause),
+            ),
+          );
+      }
+    }
+  } else {
+    yield* linkAntigravityUserConfig({ profileDirectory: geminiHome, userHome, platform });
+    if (platform === "win32") {
+      yield* copyAntigravityUserConfigFiles({ profileDirectory: geminiHome, userHome });
+    }
   }
   return profile;
 });

@@ -62,6 +62,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     readonly rejectAdmission?: boolean;
     readonly sessionId?: string;
     readonly startupSkills?: boolean;
+    readonly isolatedProfile?: boolean;
     readonly initialModel?: string;
     readonly rejectThinkingUpdate?: boolean;
   } = {},
@@ -292,6 +293,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
 
   const textGeneration = yield* makeAntigravityTextGeneration({
     profileDirectory,
+    ...(options.isolatedProfile === undefined ? {} : { isolatedProfile: options.isolatedProfile }),
     makeRuntime,
     withProcess,
   });
@@ -635,6 +637,48 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       expect(fixture.state.workspaces.length).toBe(available ? 1 : 0);
       yield* fixture.assertCleaned;
     }),
+  );
+
+  it.effect(
+    "allows text generation when isolatedProfile is enabled even if the main profile has hooks or MCP",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({ isolatedProfile: true });
+        const configDirectory = fixture.path.join(fixture.profileDirectory, "config");
+        yield* fixture.fs.makeDirectory(configDirectory, { recursive: true });
+        yield* fixture.fs.writeFileString(
+          fixture.path.join(configDirectory, "hooks.json"),
+          '{"default":{"PreInvocation":[{"command":"do-not-run"}]}}',
+        );
+        yield* fixture.fs.writeFileString(
+          fixture.path.join(configDirectory, "mcp_config.json"),
+          '{"mcpServers":{"ai-memory":{"command":"do-not-run"}}}',
+        );
+        const result = yield* fixture.textGeneration.generateThreadTitle(fixture.titleInput);
+        expect(result).toEqual({ title: "Repair login" });
+        expect(fixture.state.workspaces).toHaveLength(1);
+        expect(yield* fixture.fs.exists(fixture.state.workspaces[0]!)).toBe(false);
+        expect(yield* fixture.fs.readFileString(`${fixture.sessionBase}.db`)).toBe(
+          "helper session",
+        );
+        expect(yield* fixture.fs.readFileString(`${fixture.sessionBase}.db-wal`)).toBe(
+          "helper journal",
+        );
+        expect(yield* fixture.fs.exists(`${fixture.sessionBase}.meta`)).toBe(true);
+        expect(
+          yield* fixture.fs.readFileString(fixture.path.join(fixture.brainDirectory, "output.txt")),
+        ).toBe("helper artifact");
+        expect(
+          yield* fixture.fs.readFileString(
+            fixture.path.join(
+              fixture.profileDirectory,
+              "antigravity-acp",
+              "conversations",
+              "user-session.db",
+            ),
+          ),
+        ).toBe("keep native history");
+      }),
   );
 
   it.effect("does not launch during sign-out or before sign-in", () =>
