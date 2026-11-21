@@ -12,6 +12,7 @@ import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsIssueTracker from "./AzureDevOpsIssueTracker.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
+import * as AzureDevOpsMediaFetch from "./azureDevOpsMediaFetch.ts";
 
 const services = AzureDevOpsPullRequestCli.layer.pipe(Layer.provideMerge(AzureDevOpsCli.layer));
 
@@ -20,6 +21,7 @@ const makeInstance = Effect.all({
   discovery: Effect.succeed(AzureDevOpsSourceControlProvider.discovery),
   pullRequests: AzureDevOpsPullRequestProvider.make,
   issues: AzureDevOpsIssueTracker.make,
+  fetchMedia: AzureDevOpsMediaFetch.make,
 });
 
 export const driver = defineSourceControlDriver({

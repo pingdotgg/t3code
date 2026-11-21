@@ -1898,6 +1898,27 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(Layer.mergeAll(layerTest, layerDrivers, layerIdentities)));
   });
 
+  it.effect("signs an Azure DevOps pull request attachment as that host's media", () =>
+    Effect.gen(function* () {
+      const url =
+        "https://dev.azure.com/Acme/0f6a2c1e-7b3d-4e59-9a84-2d61c3b0e7f5/_apis/git/repositories/5c9e1b72-3a4f-4d08-b6e1-8f2a7d4c9e10/pullRequests/42/attachments/before-after.png";
+      const issued = yield* issueAssetUrl({
+        resource: { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: "/repo", url },
+      });
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+
+      expect(suffix.slice(separator + 1)).toBe("before-after.png");
+      expect(
+        yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+      ).toMatchObject({
+        kind: "source-control-media",
+        url: url.replace("Acme", "acme"),
+      });
+      expect(sourceControlDefinitions.mediaUrl(url)?.definition.kind).toBe("azure-devops");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("refuses media no host keeps behind a credential, without echoing the URL", () =>
     Effect.gen(function* () {
       const encodeAssetAccessError = Schema.encodeEffect(Schema.fromJsonString(AssetAccessError));
