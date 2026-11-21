@@ -50,7 +50,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Run lint and typecheck once before the PR-facing push, as `vp lint apps/board` and `vp run --filter @agent-board/app typecheck`. From S1 on, also run `node standards/check-added-diagnostics.mjs`. Push with hooks on.
 - [ ] Run `skill://unslop` before each commit and `skill://no-comments` before review.
 - [ ] Run `skill://pre-pr-reviewer` on the diff before the code-ready push, with the PR's plan section as its ticket. It covers standards, tests, scope against the section, `skill://simplify`, dead code, defensive code, security, and regressions, and fixes its blockers in the owner's worktree.
-- [ ] A docs-only PR, such as a plan change, runs `skill://planning-doc-reviewer` and `skill://unslop` on its changed sections instead, and applies what they find.
+- [ ] A docs-only PR, such as a plan change, runs `skill://unslop` on its changed sections instead, and applies what it finds.
 - [ ] Triage every Bugbot and security-reviewer comment per `skill://poteto-mode/references/bugbot-triage.md`.
 - [ ] Rebase onto current trunk before the code-ready report and babysit. Keep that merge base in fix rounds. Rebase again only at merge prep, on a `git merge-tree` conflict with trunk, or on a CI failure that comes from a change on trunk.
 - [ ] Run `node apps/board/scripts/check-engine-untouched.mjs` before every push. A non-zero exit blocks the push.
