@@ -20,6 +20,7 @@ import {
   extractXAiMonitorTaskId,
   isXAiMonitorTool,
   makeXAiAskUserQuestionResponse,
+  makeXAiExitPlanModeCapturedResponse,
   makeXAiPromptCompletionRuntime,
   normalizeXAiAcpToolCallState,
   xAiBackgroundTaskLifecycleMutation,
@@ -1503,6 +1504,10 @@ describe("Grok exit_plan_mode capture (#8358)", () => {
     expect(extractXAiExitPlanMarkdown(wrapped, "  # fallback plan  ")).toBe("# fallback plan");
     expect(extractXAiExitPlanMarkdown(wrapped, "")).toBe(XAI_EMPTY_PLAN_MARKDOWN);
     expect(extractXAiExitPlanMarkdown(wrapped)).toBe(XAI_EMPTY_PLAN_MARKDOWN);
+  });
+  it("does not answer the native plan gate as if the user chose Abandon", () => {
+    // Grok tells the model "The user chose to abandon the plan entirely" for this outcome and drops feedback.
+    expect(makeXAiExitPlanModeCapturedResponse().outcome).not.toBe("abandoned");
   });
   it("identifies Grok plan.md paths and extracts markdown from tool call data", () => {
     const home = "/home/ada";

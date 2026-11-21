@@ -196,7 +196,7 @@ const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensi
     ),
   );
 
-// Capture the reverse-requested plan, then abandon the native gate to finish the turn.
+// Capture the reverse-requested plan, then close the native gate so the turn ends.
 const registerGrokExitPlanModeExtensions = ({
   runtime,
   captureProposedPlan,
