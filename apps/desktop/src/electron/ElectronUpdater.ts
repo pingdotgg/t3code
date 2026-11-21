@@ -1,10 +1,10 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import { AppImageUpdater, autoUpdater } from "electron-updater";
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 
 type AutoUpdater = typeof autoUpdater;
 type SpawnLog = (cmd: string, args?: Array<string>, ...rest: Array<unknown>) => Promise<boolean>;
@@ -204,4 +204,4 @@ export const make = ElectronUpdater.of({
   }),
 });
 
-export const layer = Layer.succeed(ElectronUpdater, make);
+export const layer = builtinSucceedLayer("t3.desktop.electron-updater", ElectronUpdater, make);

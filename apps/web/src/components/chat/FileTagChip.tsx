@@ -1,9 +1,10 @@
+import { definePluginComponent } from "~/plugins/features";
 import type { ReactNode } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ContextChipLabel } from "../ContextChip";
 import { WorkspaceEntryIcon } from "./WorkspaceEntryIcon";
 
-export function FileTagChipContent(props: {
+function PluginOriginalFileTagChipContent(props: {
   icon?: ReactNode;
   path: string;
   label: string;
@@ -25,3 +26,8 @@ export function FileTagChipContent(props: {
     </>
   );
 }
+
+export const FileTagChipContent = definePluginComponent(
+  "component:components/chat/FileTagChip/FileTagChipContent",
+  PluginOriginalFileTagChipContent,
+);

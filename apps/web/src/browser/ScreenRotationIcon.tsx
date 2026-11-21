@@ -1,4 +1,5 @@
-export function ScreenRotationIcon() {
+import { definePluginComponent } from "~/plugins/features";
+function PluginOriginalScreenRotationIcon() {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -17,3 +18,8 @@ export function ScreenRotationIcon() {
     </svg>
   );
 }
+
+export const ScreenRotationIcon = definePluginComponent(
+  "component:browser/ScreenRotationIcon/ScreenRotationIcon",
+  PluginOriginalScreenRotationIcon,
+);

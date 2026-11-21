@@ -13,7 +13,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -25,6 +24,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopRendererHistory from "./DesktopRendererHistory.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 const LIVE_SAMPLE_INTERVAL = Duration.seconds(1);
 const BATTERY_SAMPLE_INTERVAL = Duration.seconds(5);
@@ -428,4 +428,8 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopTelemetryPublisher, make());
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-telemetry-publisher",
+  DesktopTelemetryPublisher,
+  make(),
+);

@@ -21,6 +21,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { definePluginComponent } from "~/plugins/features";
 
 import { msg, T, useGT, useMessages } from "gt-react";
 import { useRef, useState } from "react";
@@ -44,7 +45,12 @@ const ARCHIVE_ACTIONS = [
 ] as const;
 type ArchiveAction = (typeof ARCHIVE_ACTIONS)[number]["action"];
 
-export function ArchivedThreadsPanel() {
+export const ArchivedThreadsPanel = definePluginComponent(
+  "component:components/settings/ArchivedThreadsPanel/ArchivedThreadsPanel",
+  PluginOriginalArchivedThreadsPanel,
+);
+
+export function PluginOriginalArchivedThreadsPanel() {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();

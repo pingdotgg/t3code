@@ -11,6 +11,8 @@ import {
   EnvironmentId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
+  PluginAuthoringGuide,
+  PluginManifest,
   PreviewTabId,
   ProjectId,
   ProviderInstanceId,
@@ -21,11 +23,13 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
@@ -66,7 +70,15 @@ import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import { PluginService } from "../plugins/PluginService.ts";
+import { createPluginAuthoringGuide } from "../plugins/PluginAuthoring.ts";
+import { PluginsToolkit } from "./toolkits/plugins/tools.ts";
+import { PluginsHandlersLive } from "./toolkits/plugins/handlers.ts";
 
+const decodePluginAuthoringGuideJson = Schema.decodeEffect(
+  Schema.fromJsonString(PluginAuthoringGuide),
+);
+const decodePluginManifestJson = Schema.decodeEffect(Schema.fromJsonString(PluginManifest));
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
 const alternateTabId = PreviewTabId.make("tab-mcp-alternate");
@@ -115,6 +127,71 @@ const layerPullRequestsTest = McpHttpServer.layerPullRequestsToolkit.pipe(
       Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
       NodeServices.layer,
       NodeCrypto.layer,
+    ),
+  ),
+);
+
+it.effect("returns host-specific plugin starters through the authorized MCP tool", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({
+          name: "plugins_authoring_guide",
+          arguments: { topic: "composer-banner", id: "local.test-banner" },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            ...invocation,
+            thread: undefined,
+            capabilities: new Set(["orchestration"] as const),
+          }),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).not.toBe(true);
+      const content = result.content.find((item) => item.type === "text");
+      if (content?.type !== "text") throw new Error("Missing guide response");
+      const guide = yield* decodePluginAuthoringGuideJson(content.text);
+      expect(guide.pluginDirectory).toBe("/isolated/userdata/plugins");
+      const manifestFile = guide.recipes[0]?.files.find((file) => file.path === "plugin.json");
+      if (!manifestFile) throw new Error("Missing plugin manifest");
+      const manifest = yield* decodePluginManifestJson(manifestFile.content);
+      expect(manifest).toMatchObject({
+        id: "local.test-banner",
+        permissions: ["ui"],
+        entries: { web: "web.tsx" },
+      });
+      expect(guide.recipes[0]?.files.map((file) => file.path)).toEqual(["plugin.json", "web.tsx"]);
+      const denied = yield* server
+        .callTool({ name: "plugins_authoring_guide", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(denied.isError).toBe(true);
+      const deniedText = denied.content.find((item) => item.type === "text");
+      if (deniedText?.type !== "text") throw new Error("Missing permission response");
+      expect(decodeJsonText(deniedText.text)).toMatchObject({
+        _tag: "OrchestratorMcpFailure",
+        code: "capability_denied",
+      });
+    }).pipe(
+      Effect.provide(
+        McpHttpServer.toolkitRegistration(PluginsToolkit, PluginsHandlersLive).pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(PluginService)({
+                authoringGuide: (input) =>
+                  Effect.succeed(
+                    createPluginAuthoringGuide(input ?? {}, "/isolated/userdata/plugins", []),
+                  ),
+              }),
+              Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            ),
+          ),
+        ),
+      ),
     ),
   ),
 );
@@ -292,6 +369,63 @@ it.effect("rejects a metadata-only response when the screenshot is saved", () =>
       expect(result.content).toEqual([
         { type: "text", text: expect.stringContaining("did not contain requested PNG pixels") },
       ]);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps the preview host usable when an optional action icon lookup times out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const tabId = PreviewTabId.make("tab-mcp-slow-icon");
+      const connected = yield* Deferred.make<void>();
+      const iconRequested = yield* Deferred.make<void>();
+      const operations: string[] = [];
+      let skipIcon = true;
+      const events = yield* broker.connect({ clientId: "mcp-slow-icon-client", environmentId });
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        operations.push(event.request.operation);
+        if (event.request.operation === "status" && skipIcon) {
+          skipIcon = false;
+          // The action succeeded, but this optional metadata request never answers.
+          return Deferred.succeed(iconRequested, undefined);
+        }
+        return broker.respond({
+          clientId: "mcp-slow-icon-client",
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ok: true,
+          result:
+            event.request.operation === "status"
+              ? { available: true, tabId, url: "http://example.test/", loading: false }
+              : {},
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const click = server
+        .callTool({ name: "preview_act", arguments: { action: "click", x: 10, y: 10 } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      const firstAction = yield* click.pipe(Effect.forkScoped);
+      yield* Deferred.await(iconRequested);
+      yield* TestClock.adjust(500);
+      const firstResult = yield* Fiber.join(firstAction);
+      expect(firstResult.isError).toBe(false);
+      expect(firstResult.structuredContent).toEqual({});
+
+      // The interrupted metadata request must not evict the host later either.
+      yield* TestClock.adjust(15_000);
+      const nextResult = yield* click;
+      expect(nextResult.isError).toBe(false);
+      expect(nextResult.structuredContent).toEqual({
+        toolIcon: { _tag: "website", pageUrl: "http://example.test/" },
+      });
+      expect(operations).toEqual(["click", "status", "click", "status"]);
     }),
   ).pipe(Effect.provide(layerTest)),
 );

@@ -105,6 +105,15 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverRefreshUsageRates]: "server",
   [WS_METHODS.serverSignalProcess]: "server",
   [WS_METHODS.serverReportClientActivity]: "server",
+  [WS_METHODS.pluginsAuthoringGuide]: "plugins",
+  [WS_METHODS.pluginsRegistryList]: "plugins",
+  [WS_METHODS.pluginsRegistryInstall]: "plugins",
+  [WS_METHODS.pluginsList]: "plugins",
+  [WS_METHODS.pluginsSearch]: "plugins",
+  [WS_METHODS.pluginsSubscribe]: "plugins",
+  [WS_METHODS.pluginsSetEnabled]: "plugins",
+  [WS_METHODS.pluginsReload]: "plugins",
+  [WS_METHODS.pluginsInvoke]: "plugins",
   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",
   [WS_METHODS.scheduledTasksSetEnabled]: "scheduledTasks",
@@ -256,6 +265,14 @@ const RPC_AGGREGATES = {
   [WS_METHODS.deviceDetail]: "device",
   [WS_METHODS.deviceAction]: "device",
   [WS_METHODS.subscribeDeviceState]: "device",
+  [WS_METHODS.canvasList]: "canvas",
+  [WS_METHODS.canvasCreate]: "canvas",
+  [WS_METHODS.canvasDelete]: "canvas",
+  [WS_METHODS.canvasApplyOps]: "canvas",
+  [WS_METHODS.canvasSubscribe]: "canvas",
+  [WS_METHODS.canvasConnectHost]: "canvas",
+  [WS_METHODS.canvasUpdateHost]: "canvas",
+  [WS_METHODS.canvasRespondHost]: "canvas",
   [WS_METHODS.subscribeServerConfig]: "server",
   [WS_METHODS.subscribeServerLifecycle]: "server",
   [WS_METHODS.subscribeAuthAccess]: "auth",
@@ -278,6 +295,7 @@ export class RpcInstrumentation extends RpcMiddleware.Service<RpcInstrumentation
   "t3/server/RpcInstrumentation",
 ) {}
 
+// Runs on every RPC and is provided per socket, so it stays out of the plugin kernel.
 export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect, { rpc }) => {
   const method = rpc._tag;
   const measured = effect.pipe(

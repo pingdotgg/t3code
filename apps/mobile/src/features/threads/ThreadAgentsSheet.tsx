@@ -34,6 +34,7 @@ import { useLinkedThreadReach } from "../../state/linkedThread";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useOpenLinkedThreadRead } from "./useOpenLinkedThread";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 type AgentsTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 
@@ -49,7 +50,7 @@ export function useThreadTurnSubagents(target: AgentsTarget | null): ThreadTurnS
   );
 }
 
-export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
+function BuiltinThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
   const target = route.params;
   const navigation = useNavigation();
   const openInspector = useOpenThreadInspector();
@@ -143,7 +144,7 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
   );
 }
 
-function AgentRow(props: {
+function BuiltinAgentRow(props: {
   readonly environmentId: EnvironmentId;
   readonly subagent: OrchestrationV2Subagent;
   readonly tickSeconds: boolean;
@@ -204,7 +205,7 @@ function AgentRow(props: {
   );
 }
 
-function AgentElapsed(props: {
+function BuiltinAgentElapsed(props: {
   readonly subagent: OrchestrationV2Subagent;
   readonly tickSeconds: boolean;
 }) {
@@ -231,3 +232,18 @@ function useSubagentElapsed(
   );
   return elapsedMs === null || elapsedMs === 0 ? null : formatDuration(elapsedMs, messages);
 }
+
+export const ThreadAgentsSheet = defineNativePluginFeature(
+  "native.features.threads.thread-agents-sheet",
+  BuiltinThreadAgentsSheet,
+);
+
+const AgentRow = defineNativePluginFeature(
+  "native.features.threads.thread-agents-sheet.agent-row",
+  BuiltinAgentRow,
+);
+
+const AgentElapsed = defineNativePluginFeature(
+  "native.features.threads.thread-agents-sheet.agent-elapsed",
+  BuiltinAgentElapsed,
+);

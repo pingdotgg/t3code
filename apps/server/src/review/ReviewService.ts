@@ -1,8 +1,9 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import {
@@ -81,7 +82,19 @@ export const make = Effect.gen(function* () {
     ]);
     if (
       KnownWorkspaces.isWithinRoot(path, candidate, workspaceRoot) ||
-      (yield* knownWorkspaces.contains(candidate))
+      (yield* Effect.suspend(() => knownWorkspaces.contains(candidate)).pipe(
+        Effect.catchCauseIf(
+          (cause) =>
+            cause.reasons.length > 0 &&
+            cause.reasons.every(
+              (reason) =>
+                Cause.isDieReason(reason) &&
+                reason.defect instanceof Error &&
+                reason.defect.message === "Plugin 't3.thread' is disabled.",
+            ),
+          () => Effect.succeed(false),
+        ),
+      ))
     ) {
       return;
     }
@@ -151,4 +164,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ReviewService, make);
+export const layer = builtinServiceLayer("t3.pull-requests")(ReviewService, make);

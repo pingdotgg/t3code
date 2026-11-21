@@ -10,7 +10,6 @@ import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
@@ -28,6 +27,7 @@ import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedError<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -913,4 +913,8 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopBackendConfiguration, make);
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-backend-configuration",
+  DesktopBackendConfiguration,
+  make,
+);

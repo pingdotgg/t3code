@@ -44,6 +44,30 @@ beforeEach(() => {
 });
 
 describe("reopenClosedView", () => {
+  it("restores the closed canvas document while another canvas remains open", async () => {
+    useRightPanelStore.getState().openCanvas(threadRef, "other", "Other");
+    const openPreview = vi.fn();
+    expect(
+      await reopenClosedView(
+        {
+          kind: "panel-tab",
+          threadRef,
+          surface: { kind: "canvas", id: "canvas:closed", documentId: "closed", title: "Closed" },
+        },
+        { openPreview, workspaceAvailable: true },
+      ),
+    ).toBe(true);
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
+    expect(state.activeSurfaceId).toBe("canvas:closed");
+    expect(state.surfaces).toContainEqual({
+      kind: "canvas",
+      id: "canvas:closed",
+      documentId: "closed",
+      title: "Closed",
+    });
+    expect(openPreview).not.toHaveBeenCalled();
+  });
+
   it.each([
     { relativePath: "src/app.ts", line: 18, folderTrail: undefined },
     { relativePath: "apps", line: null, folderTrail: "apps/web/src" },

@@ -7,20 +7,38 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { retryClerkLoad, useClerkLoadFailed } from "./clerkLoadFailure";
 import { T3_CONNECT_ACCOUNT_PAGES } from "./T3ConnectAccountPages";
 import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
+import { definePluginComponent } from "~/plugins/features";
 
-export function T3ConnectSidebarSignIn() {
+export const T3ConnectSidebarSignIn = definePluginComponent(
+  "component:components/clerk/T3ConnectSidebarSignIn/T3ConnectSidebarSignIn",
+  PluginOriginalT3ConnectSidebarSignIn,
+);
+export const T3ConnectSidebarAvatar = definePluginComponent(
+  "component:components/clerk/T3ConnectSidebarSignIn/T3ConnectSidebarAvatar",
+  PluginOriginalT3ConnectSidebarAvatar,
+);
+const ConfiguredT3ConnectSidebarAvatar = definePluginComponent(
+  "component:components/clerk/T3ConnectSidebarSignIn/ConfiguredT3ConnectSidebarAvatar",
+  PluginOriginalConfiguredT3ConnectSidebarAvatar,
+);
+const ConfiguredT3ConnectSidebarSignIn = definePluginComponent(
+  "component:components/clerk/T3ConnectSidebarSignIn/ConfiguredT3ConnectSidebarSignIn",
+  PluginOriginalConfiguredT3ConnectSidebarSignIn,
+);
+
+function PluginOriginalT3ConnectSidebarSignIn() {
   if (!hasCloudPublicConfig()) return null;
 
   return <ConfiguredT3ConnectSidebarSignIn />;
 }
 
-export function T3ConnectSidebarAvatar() {
+function PluginOriginalT3ConnectSidebarAvatar() {
   if (!hasCloudPublicConfig()) return null;
 
   return <ConfiguredT3ConnectSidebarAvatar />;
 }
 
-function ConfiguredT3ConnectSidebarAvatar() {
+function PluginOriginalConfiguredT3ConnectSidebarAvatar() {
   const { isLoaded, isSignedIn } = useAuth();
   const m = useMessages();
 
@@ -50,7 +68,7 @@ function ConfiguredT3ConnectSidebarAvatar() {
   );
 }
 
-function ConfiguredT3ConnectSidebarSignIn() {
+function PluginOriginalConfiguredT3ConnectSidebarSignIn() {
   const { isLoaded, isSignedIn } = useAuth();
   const loadFailed = useClerkLoadFailed();
   const { openAuthPrompt } = useT3ConnectAuthPrompt();

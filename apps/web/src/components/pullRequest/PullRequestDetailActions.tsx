@@ -28,6 +28,12 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 import type { resolvePullRequestState } from "./pullRequestPresentation";
 import type { PickableEnvironment } from "./pullRequestProjectAssignment.logic";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ActOnEnvironmentPicker = definePluginComponent(
+  "component:components/pullRequest/PullRequestDetailActions/ActOnEnvironmentPicker",
+  PluginOriginalActOnEnvironmentPicker,
+);
 
 import type { ChangeRequestTermKind } from "./changeRequestTerm";
 
@@ -37,7 +43,7 @@ export type PerformPullRequestAction = (
   updateMethod?: PullRequestUpdateMethod,
 ) => Promise<boolean>;
 
-export function ActOnEnvironmentPicker({
+function PluginOriginalActOnEnvironmentPicker({
   environments,
   value,
   onChange,

@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import DOMPurify from "dompurify";
 import type { DiagramType, MathResolver } from "pele/lazy";
 import { T, useGT, Var } from "gt-react";
@@ -220,7 +221,12 @@ function diagramImageUrl(svg: SVGSVGElement): string {
   return expandedImageUrl;
 }
 
-export function MermaidDiagram({
+export const MermaidDiagram = definePluginComponent(
+  "component:components/chat/MermaidDiagram/MermaidDiagram",
+  PluginOriginalMermaidDiagram,
+);
+
+function PluginOriginalMermaidDiagram({
   source,
   onExpand,
 }: {

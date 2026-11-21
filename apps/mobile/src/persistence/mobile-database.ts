@@ -1,8 +1,8 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { SQLiteDatabase } from "expo-sqlite";
@@ -358,4 +358,4 @@ export const make = Effect.result(makeAvailable).pipe(
   ),
 );
 
-export const layer = Layer.effect(MobileDatabase, make);
+export const layer = builtinServiceLayer("t3.mobile.mobile-database", MobileDatabase, make);

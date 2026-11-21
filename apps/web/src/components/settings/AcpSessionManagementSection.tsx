@@ -30,6 +30,12 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AcpSessionManagementSection = definePluginComponent(
+  "component:components/settings/AcpSessionManagementSection/AcpSessionManagementSection",
+  PluginOriginalAcpSessionManagementSection,
+);
 
 interface AcpSessionProject {
   readonly id: ProjectId;
@@ -91,7 +97,7 @@ interface AcpSessionManagementProps {
   readonly readOnly: boolean;
 }
 
-export function AcpSessionManagementSection(props: AcpSessionManagementProps) {
+function PluginOriginalAcpSessionManagementSection(props: AcpSessionManagementProps) {
   const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(null);
   const projectId =
     props.projects.find((project) => project.id === selectedProjectId)?.id ??

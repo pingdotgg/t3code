@@ -24,6 +24,12 @@ import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import type { ProjectOverrideEntry, ScopedSettingsTarget } from "./scopedSettings";
 import { isProjectScopedSettingKey } from "./scopedSettings";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SettingInheritance = definePluginComponent(
+  "component:components/settings/SettingInheritance/SettingInheritance",
+  PluginOriginalSettingInheritance,
+);
 
 interface InheritanceLayer {
   readonly key: "project" | "environment" | "t3.json" | "built-in";
@@ -193,7 +199,7 @@ export interface SettingOverridingProject extends ProjectOverrideEntry {
   readonly open: () => void;
 }
 
-export function SettingInheritance({
+function PluginOriginalSettingInheritance({
   state,
   summary,
   targets,

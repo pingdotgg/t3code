@@ -1,6 +1,12 @@
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function QueuedMessageIcon({ selected = false }: { readonly selected?: boolean }) {
+export const QueuedMessageIcon = defineNativePluginFeature(
+  "native.features.threads.queued-message-icon",
+  BuiltinQueuedMessageIcon,
+);
+
+function BuiltinQueuedMessageIcon({ selected = false }: { readonly selected?: boolean }) {
   return (
     <SymbolView
       name="tray.and.arrow.up"

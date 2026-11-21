@@ -133,6 +133,21 @@ import { useStartSideChat } from "./useStartSideChat";
 import { useThreadStatusAnnouncements } from "./useThreadStatusAnnouncements";
 import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspector-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const OpeningThreadLoadingScreen = defineNativePluginFeature(
+  "native.features.threads.thread-route-screen.opening-thread-loading-screen",
+  BuiltinOpeningThreadLoadingScreen,
+);
+const ThreadUnavailableScreen = defineNativePluginFeature(
+  "native.features.threads.thread-route-screen.thread-unavailable-screen",
+  BuiltinThreadUnavailableScreen,
+);
+const ThreadRouteContent = defineNativePluginFeature(
+  "native.features.threads.thread-route-screen.thread-route-content",
+  BuiltinThreadRouteContent,
+);
+export const ThreadRouteScreen = defineNativePluginFeature("chat", BuiltinThreadRouteScreen);
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
@@ -161,7 +176,7 @@ function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
   );
 }
 
-function OpeningThreadLoadingScreen() {
+function BuiltinOpeningThreadLoadingScreen() {
   const gt = useGT();
   return (
     <ThreadRouteFallbackLayout>
@@ -184,7 +199,7 @@ interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
   readonly renderInspector?: () => ReactNode;
 }
 
-function ThreadUnavailableScreen(props: {
+function BuiltinThreadUnavailableScreen(props: {
   readonly actionLabel: string;
   readonly onAction: () => void;
 }) {
@@ -237,7 +252,7 @@ function UnavailableThreadDraftRedirect(props: { readonly environmentId: Environ
   return <OpeningThreadLoadingScreen />;
 }
 
-export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
+function BuiltinThreadRouteScreen(props: ThreadRouteScreenProps) {
   return (
     <ThreadScreenHost>
       {props.route.params?.draft ? (
@@ -359,7 +374,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   );
 }
 
-function ThreadRouteContent(
+function BuiltinThreadRouteContent(
   props: ThreadRouteScreenProps & {
     readonly selectedThreadDetailState: ReturnType<typeof useSelectedThreadDetailState>;
   },

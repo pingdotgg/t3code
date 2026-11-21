@@ -1,4 +1,5 @@
 import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -6,7 +7,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
@@ -301,4 +301,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(GitHubCredentials, make);
+export const layer = builtinServiceLayer("t3.git")(GitHubCredentials, make);

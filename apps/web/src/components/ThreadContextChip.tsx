@@ -14,8 +14,14 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadChipHoverCard } from "./ThreadChipHoverCard";
 import { ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { Tooltip, TooltipTrigger } from "./ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ThreadContextChip(props: {
+export const ThreadContextChip = definePluginComponent(
+  "component:components/ThreadContextChip/ThreadContextChip",
+  PluginOriginalThreadContextChip,
+);
+
+function PluginOriginalThreadContextChip(props: {
   record: Pick<ThreadContextRecord, "environmentId" | "threadId" | "title">;
   projectId?: ProjectId | null;
   copyMarkdown?: string;

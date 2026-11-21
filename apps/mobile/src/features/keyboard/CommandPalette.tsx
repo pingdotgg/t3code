@@ -1,5 +1,6 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useAtomValue } from "@effect/atom-react";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -110,7 +111,7 @@ function itemIcon(item: CommandPaletteItem): AppSymbolName {
   return ACTION_ICONS[item.key] ?? "ellipsis";
 }
 
-function PaletteRow(props: {
+function BuiltinPaletteRow(props: {
   readonly item: CommandPaletteResult;
   readonly index: number;
   readonly selected: boolean;
@@ -221,7 +222,7 @@ function PaletteRow(props: {
 }
 
 /** Mounted only while open, so the app root does not subscribe to the full thread catalog. */
-export function CommandPalette(props: {
+function BuiltinCommandPalette(props: {
   readonly pathname: string;
   readonly onClose: () => void;
   readonly onCommand: (command: HardwareKeyboardCommand) => void;
@@ -761,3 +762,13 @@ export function CommandPalette(props: {
     </Modal>
   );
 }
+
+const PaletteRow = defineNativePluginFeature(
+  "native.features.keyboard.command-palette.palette-row",
+  BuiltinPaletteRow,
+);
+
+export const CommandPalette = defineNativePluginFeature(
+  "native.features.keyboard.command-palette",
+  BuiltinCommandPalette,
+);

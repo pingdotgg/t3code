@@ -1,4 +1,4 @@
-/** Reconcile closes removed/replaced scopes before creating replacements: at most one live instance per id. */
+/** Changed config or driver revisions stop session admission; pinned instances drain before replacement. */
 import type {
   ProviderInstanceConfigMap,
   ProviderInstanceId,

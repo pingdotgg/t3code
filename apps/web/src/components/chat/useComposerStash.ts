@@ -82,6 +82,7 @@ export function useComposerStash(input: {
   readonly readAttachmentDraft: () => Pick<ComposerThreadDraftState, "images" | "files">;
   readonly readTerminalContexts: () => ComposerThreadDraftState["terminalContexts"];
   readonly routeThreadRef: ChatComposerProps["routeThreadRef"];
+  readonly ownsGlobalInput: ChatComposerProps["ownsGlobalInput"];
   readonly projectSelectionRequired: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly activePendingProgress: PendingUserInputProgress | null;
@@ -112,6 +113,7 @@ export function useComposerStash(input: {
     readAttachmentDraft,
     readTerminalContexts,
     routeThreadRef,
+    ownsGlobalInput,
     projectSelectionRequired,
     pendingUserInputs,
     activePendingProgress,
@@ -801,10 +803,12 @@ export function useComposerStash(input: {
       {
         capture: true,
         context: readShortcutContext,
-        when: (event) => !isInSideChatPane(event.target),
+        when: (event) =>
+          !isInSideChatPane(event.target) &&
+          (ownsGlobalInput === undefined || ownsGlobalInput(event.target)),
       },
     );
-  }, [backgroundThread, handleStashShortcut, readShortcutContext]);
+  }, [backgroundThread, handleStashShortcut, ownsGlobalInput, readShortcutContext]);
 
   return {
     stashQueue,

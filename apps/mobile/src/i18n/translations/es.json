@@ -5456,5 +5456,31 @@
   "ad208e3e32c85029": "Ocultar todo",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Llamadas a herramientas en el chat",
-  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran."
+  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
+  "e4fdf2c125bb1a1c": "{count, plural, one {Se usó el lienzo {count} vez} other {Se usó el lienzo {count} veces}}",
+  "2a632164170177a2": "{count, plural, one {Intentó usar el lienzo {count} vez} other {Intentó usar el lienzo {count} veces}}",
+  "c1b7649ac731ed07": "Plugins",
+  "902eee528c565dd9": "Falló el comando del plugin",
+  "c5d071b279c2e90f": "Cerrar la recuperación de plugins",
+  "ea4b0ed7aa9bd760": "Recuperación de plugins",
+  "656854e648c97dca": "Volver a activar un plugin integrado",
+  "ebffe4dabf52835f": "Activar {name}",
+  "ba32f1a6898cf271": "Recargar plugins locales",
+  "37036031afcfce34": "Función incluida",
+  "9608b33769752cbf": "Buscar plugins en {label}",
+  "654234ef26ef1497": "Buscar plugins disponibles",
+  "59375313b87b2aee": "{name} está instalado",
+  "501b9d7d4a10350f": "Instalar {name}",
+  "119fdf3a37955ebd": "Conecta un entorno para gestionar sus plugins.",
+  "4d4a9cccdbcb80b1": "Actualiza este entorno para gestionar plugins.",
+  "2a0fa39b8a84f848": "Este entorno no pudo cargar su catálogo de plugins.",
+  "0fceafde5534f56f": "Cargando plugins...",
+  "7c9ee44d092d4f51": [
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " · Revisado por",
+    " ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" }
+  ],
+  "2bf815f51a9354c3": "Ningún plugin disponible coincide con esta búsqueda.",
+  "16ed41dd430363b8": "No se pudo cargar el catálogo de plugins disponibles."
 }

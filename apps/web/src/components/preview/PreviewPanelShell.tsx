@@ -17,6 +17,20 @@ import { canReturnFocusTo, workspaceAreaProps } from "../../lib/workspaceFocus";
 import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PreviewPanelShell = definePluginComponent(
+  "component:components/preview/PreviewPanelShell/PreviewPanelShell",
+  PluginOriginalPreviewPanelShell,
+);
+const ResizablePreviewPanelShell = definePluginComponent(
+  "component:components/preview/PreviewPanelShell/ResizablePreviewPanelShell",
+  PluginOriginalResizablePreviewPanelShell,
+);
+const PreviewPanelShellFrame = definePluginComponent(
+  "component:components/preview/PreviewPanelShell/PreviewPanelShellFrame",
+  PluginOriginalPreviewPanelShellFrame,
+);
 
 export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 
@@ -36,7 +50,7 @@ interface PreviewPanelShellProps {
   children: ReactNode;
 }
 
-export function PreviewPanelShell(props: PreviewPanelShellProps) {
+function PluginOriginalPreviewPanelShell(props: PreviewPanelShellProps) {
   if (props.inlineSize) {
     return <PreviewPanelShellFrame {...props} inlineSize={props.inlineSize} />;
   }
@@ -44,7 +58,7 @@ export function PreviewPanelShell(props: PreviewPanelShellProps) {
   return <ResizablePreviewPanelShell {...props} />;
 }
 
-function ResizablePreviewPanelShell(props: PreviewPanelShellProps) {
+function PluginOriginalResizablePreviewPanelShell(props: PreviewPanelShellProps) {
   const inlineSize = usePreviewPanelInlineSize({
     enabled: props.mode === "inline" && !props.maximized,
     widthStorageKey: props.widthStorageKey,
@@ -66,7 +80,7 @@ function returnFocus(host: HTMLElement, origin: HTMLElement | null) {
   return toggle !== null && ownerDocument.activeElement === toggle;
 }
 
-function PreviewPanelShellFrame(
+function PluginOriginalPreviewPanelShellFrame(
   props: PreviewPanelShellProps & { inlineSize: PreviewPanelInlineSize },
 ) {
   const gt = useGT();

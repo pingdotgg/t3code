@@ -1,7 +1,13 @@
 import { View } from "react-native";
 import { Progress } from "./Progress";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function LoadingStrip(props: { readonly progress?: number }) {
+export const LoadingStrip = defineNativePluginFeature(
+  "native.components.ui.loading-strip",
+  BuiltinLoadingStrip,
+);
+
+function BuiltinLoadingStrip(props: { readonly progress?: number }) {
   return (
     <View
       pointerEvents="none"

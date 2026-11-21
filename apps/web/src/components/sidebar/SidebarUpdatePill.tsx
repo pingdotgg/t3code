@@ -49,6 +49,24 @@ import {
   useUpdateEverythingRun,
 } from "./updateEverythingRun";
 import { type ReportLocalUpdateError, useUpdateEverything } from "./useUpdateEverything";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SidebarUpdateArchitectureWarning = definePluginComponent(
+  "component:components/sidebar/SidebarUpdatePill/SidebarUpdateArchitectureWarning",
+  PluginOriginalSidebarUpdateArchitectureWarning,
+);
+const SidebarUpdateArchitectureWarningContent = definePluginComponent(
+  "component:components/sidebar/SidebarUpdatePill/SidebarUpdateArchitectureWarningContent",
+  PluginOriginalSidebarUpdateArchitectureWarningContent,
+);
+export const SidebarUpdatePill = definePluginComponent(
+  "component:components/sidebar/SidebarUpdatePill/SidebarUpdatePill",
+  PluginOriginalSidebarUpdatePill,
+);
+const SidebarUpdateControl = definePluginComponent(
+  "component:components/sidebar/SidebarUpdatePill/SidebarUpdateControl",
+  PluginOriginalSidebarUpdateControl,
+);
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
   NonNullable<ComponentProps<typeof Popover>["onOpenChange"]>
@@ -116,11 +134,11 @@ function resolveSidebarUpdatePresentation({
   } as const;
 }
 
-export function SidebarUpdateArchitectureWarning() {
+function PluginOriginalSidebarUpdateArchitectureWarning() {
   return isElectron ? <SidebarUpdateArchitectureWarningContent /> : null;
 }
 
-function SidebarUpdateArchitectureWarningContent() {
+function PluginOriginalSidebarUpdateArchitectureWarningContent() {
   const state = useDesktopUpdateState();
   const messages = useMessages();
   const visible = shouldShowArm64IntelBuildWarning(state);
@@ -196,11 +214,11 @@ export async function installLocalUpdate(
   }
 }
 
-export function SidebarUpdatePill() {
+function PluginOriginalSidebarUpdatePill() {
   return <SidebarUpdateControl />;
 }
 
-function SidebarUpdateControl() {
+function PluginOriginalSidebarUpdateControl() {
   const state = useDesktopUpdateState();
   const gt = useGT();
   const messages = useMessages();

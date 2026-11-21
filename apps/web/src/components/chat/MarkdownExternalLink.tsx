@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { GlobeIcon } from "lucide-react";
 import { Children, memo, useState, type ReactNode } from "react";
@@ -19,7 +20,11 @@ function sourceControlHostIcon(host: string): ReactNode {
   return <Icon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />;
 }
 
-const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: string }) {
+const PluginOriginalMarkdownLinkFavicon = memo(function MarkdownLinkFavicon({
+  host,
+}: {
+  host: string;
+}) {
   const [failedHost, setFailedHost] = useState<string | null>(null);
   const brandIcon = sourceControlHostIcon(host);
   const faviconUrl = brandIcon ? null : faviconUrlForOrigin(`https://${host}`);
@@ -66,7 +71,7 @@ function breakableExternalLinkText(text: string): ReactNode[] {
   );
 }
 
-export function MarkdownExternalLinkContent({
+function PluginOriginalMarkdownExternalLinkContent({
   host,
   plainText,
   children,
@@ -115,3 +120,13 @@ export function MarkdownExternalLinkContent({
     </>
   );
 }
+
+export const MarkdownExternalLinkContent = definePluginComponent(
+  "component:components/chat/MarkdownExternalLink/MarkdownExternalLinkContent",
+  PluginOriginalMarkdownExternalLinkContent,
+);
+
+const MarkdownLinkFavicon = definePluginComponent(
+  "component:components/chat/MarkdownExternalLink/MarkdownLinkFavicon",
+  PluginOriginalMarkdownLinkFavicon,
+);

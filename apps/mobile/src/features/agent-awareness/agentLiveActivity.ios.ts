@@ -1,13 +1,12 @@
-import AgentActivity, { type AgentActivityProps } from "../../widgets/AgentActivity";
+import { getNativeWidgetServices } from "../../widgets/NativeWidgetServices";
+import type { AgentActivityProps } from "../../widgets/AgentActivity";
 
-export function dismissEndedAgentLiveActivities() {
-  AgentActivity.dismissEnded();
-}
+export { dismissEndedAgentLiveActivities } from "./builtinAgentLiveActivity";
 
 export function getAgentLiveActivities() {
-  return AgentActivity.getInstances();
+  return getNativeWidgetServices().getAgentLiveActivities();
 }
 
 export function startAgentLiveActivity(props: AgentActivityProps, staleDate?: Date) {
-  return AgentActivity.start(props, undefined, staleDate);
+  return getNativeWidgetServices().startAgentLiveActivity(props, staleDate);
 }

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -220,6 +221,7 @@ export const make = Effect.gen(function* () {
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     ...(databaseMigration === undefined ? {} : { databaseMigration }),
     capabilities: {
+      plugins: true,
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,
@@ -320,9 +322,13 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layerIdentity = Layer.effect(ServerEnvironmentIdentity, makeIdentity);
+// Persisted host identity is required for auth and plugin recovery.
+export const layerIdentity = builtinServiceLayer("t3.server")(
+  ServerEnvironmentIdentity,
+  makeIdentity,
+);
 
-export const layer = Layer.effect(ServerEnvironment, make).pipe(
+export const layer = builtinServiceLayer("t3.server")(ServerEnvironment, make).pipe(
   Layer.provideMerge(layerIdentity),
   Layer.provide(ProcessRunner.layer),
 );

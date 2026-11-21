@@ -13,12 +13,18 @@ import { DeviceControlsRail } from "./DeviceControlsRail";
 import { DeviceStreamView } from "./DeviceStreamView";
 import { DeviceToolsPanel } from "./DeviceToolsPanel";
 import { useDeviceControls } from "./useDeviceControls";
+import { definePluginComponent } from "~/plugins/features";
 
 const isDeviceScreenshotError = Schema.is(DeviceScreenshotError);
 
 const DOWNLOAD_URL_LIFETIME_MS = 60_000;
 
-export function DeviceWorkspace(props: {
+export const DeviceWorkspace = definePluginComponent(
+  "component:components/device/DeviceWorkspace/DeviceWorkspace",
+  PluginOriginalDeviceWorkspace,
+);
+
+function PluginOriginalDeviceWorkspace(props: {
   environmentId: EnvironmentId;
   device: DeviceSummary;
   hostLabel: string;

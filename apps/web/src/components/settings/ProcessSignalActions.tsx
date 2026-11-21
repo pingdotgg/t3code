@@ -3,10 +3,16 @@ import { T, useGT, Var } from "gt-react";
 
 import { InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ProcessSignalActions = definePluginComponent(
+  "component:components/settings/ProcessSignalActions/ProcessSignalActions",
+  PluginOriginalProcessSignalActions,
+);
 
 const SIGNAL_SHORT_NAMES = { SIGINT: "INT", SIGKILL: "KILL" } as const;
 
-export function ProcessSignalActions({
+function PluginOriginalProcessSignalActions({
   disabled,
   onSignal,
 }: {

@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { collectComposerModelMentions } from "@t3tools/client-runtime/composer-model-mentions";
 import type { EnvironmentId, ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
@@ -12,7 +13,12 @@ import { Button } from "../ui/button";
 import { PopoverClose } from "../ui/popover";
 import { ModelMentionChip } from "./ModelMentionChip";
 
-function SkillInlineText(props: {
+const SkillInlineText = definePluginComponent(
+  "component:components/chat/SkillInlineText/SkillInlineText",
+  PluginOriginalSkillInlineText,
+);
+
+function PluginOriginalSkillInlineText(props: {
   text: string;
   skills: ReadonlyArray<ServerProviderSkill>;
   threadRef: ScopedThreadRef | undefined;
@@ -119,7 +125,12 @@ export function skillInstructionsOpener(
   return () => useRightPanelStore.getState().openFile(threadRef, skill.path);
 }
 
-export function SkillChipPopover(props: {
+export const SkillChipPopover = definePluginComponent(
+  "component:components/chat/SkillInlineText/SkillChipPopover",
+  PluginOriginalSkillChipPopover,
+);
+
+function PluginOriginalSkillChipPopover(props: {
   label: string;
   description: string | null | undefined;
   copyMarkdown?: string | undefined;
@@ -150,7 +161,12 @@ export function SkillChipPopover(props: {
   );
 }
 
-export function SkillChipIcon() {
+export const SkillChipIcon = definePluginComponent(
+  "component:components/chat/SkillInlineText/SkillChipIcon",
+  PluginOriginalSkillChipIcon,
+);
+
+function PluginOriginalSkillChipIcon() {
   return (
     <span
       aria-hidden="true"

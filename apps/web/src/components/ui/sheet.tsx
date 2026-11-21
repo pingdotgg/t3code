@@ -5,8 +5,35 @@ import type { CSSProperties } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/dialog";
+import { definePluginComponent } from "~/plugins/features";
 
-function Sheet<Payload>(props: SheetPrimitive.Root.Props<Payload>) {
+const SheetBackdrop = definePluginComponent(
+  "component:components/ui/sheet/SheetBackdrop",
+  PluginOriginalSheetBackdrop,
+);
+const SheetViewport = definePluginComponent(
+  "component:components/ui/sheet/SheetViewport",
+  PluginOriginalSheetViewport,
+);
+const SheetPopup = definePluginComponent(
+  "component:components/ui/sheet/SheetPopup",
+  PluginOriginalSheetPopup,
+);
+const SheetHeader = definePluginComponent(
+  "component:components/ui/sheet/SheetHeader",
+  PluginOriginalSheetHeader,
+);
+const SheetTitle = definePluginComponent(
+  "component:components/ui/sheet/SheetTitle",
+  PluginOriginalSheetTitle,
+);
+const SheetDescription = definePluginComponent(
+  "component:components/ui/sheet/SheetDescription",
+  PluginOriginalSheetDescription,
+);
+const Sheet = definePluginComponent("component:components/ui/sheet/Sheet", PluginOriginalSheet);
+
+function PluginOriginalSheet<Payload>(props: SheetPrimitive.Root.Props<Payload>) {
   return (
     <ControlledOpenContext value={props.open}>
       <SheetPrimitive.Root {...props} />
@@ -14,9 +41,13 @@ function Sheet<Payload>(props: SheetPrimitive.Root.Props<Payload>) {
   );
 }
 
-const SheetPortal = SheetPrimitive.Portal;
+const PluginOriginalSheetPortal = SheetPrimitive.Portal;
+const SheetPortal = definePluginComponent(
+  "component:components/ui/sheet/SheetPortal",
+  PluginOriginalSheetPortal,
+);
 
-function SheetBackdrop({ className, ...props }: SheetPrimitive.Backdrop.Props) {
+function PluginOriginalSheetBackdrop({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   return (
     <SheetPrimitive.Backdrop
       className={cn(
@@ -29,7 +60,7 @@ function SheetBackdrop({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   );
 }
 
-function SheetViewport({
+function PluginOriginalSheetViewport({
   className,
   side,
   variant = "default",
@@ -55,7 +86,7 @@ function SheetViewport({
   );
 }
 
-function SheetPopup({
+function PluginOriginalSheetPopup({
   className,
   children,
   showCloseButton = true,
@@ -128,7 +159,7 @@ function SheetPopup({
   );
 }
 
-function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalSheetHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
@@ -141,7 +172,7 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
+function PluginOriginalSheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   return (
     <SheetPrimitive.Title
       className={cn("font-semibold text-xl leading-snug", className)}
@@ -151,7 +182,7 @@ function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   );
 }
 
-function SheetDescription({ className, ...props }: SheetPrimitive.Description.Props) {
+function PluginOriginalSheetDescription({ className, ...props }: SheetPrimitive.Description.Props) {
   return (
     <SheetPrimitive.Description
       className={cn("text-muted-foreground text-sm", className)}

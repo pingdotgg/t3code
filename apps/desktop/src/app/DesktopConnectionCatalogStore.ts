@@ -18,7 +18,6 @@ import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -26,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 const EncryptedConnectionCatalogDocument = Schema.Struct({
   version: Schema.Literal(1),
@@ -539,4 +539,8 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopConnectionCatalogStore, make);
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-connection-catalog-store",
+  DesktopConnectionCatalogStore,
+  make,
+);

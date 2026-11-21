@@ -1,3 +1,5 @@
+import { builtinHttpApiGroup } from "../plugins/httpComposition.ts";
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   authScopeRequiredResponse,
   AuthAccessTokenType,
@@ -29,11 +31,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
-import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -241,7 +241,7 @@ export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope"
   return session;
 });
 
-export const layerAuthenticatedAuth = Layer.effect(
+export const layerAuthenticatedAuth = builtinServiceLayer("t3.auth")(
   EnvironmentAuthenticatedAuth,
   Effect.gen(function* () {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -274,7 +274,7 @@ export const layerAuthenticatedAuth = Layer.effect(
   }),
 );
 
-export const layer = HttpApiBuilder.group(
+export const layer = builtinHttpApiGroup("t3.auth")(
   EnvironmentHttpApi,
   "auth",
   Effect.fnUntraced(function* (handlers) {

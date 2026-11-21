@@ -1,4 +1,5 @@
 import { useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 
 import { useNavigation } from "@react-navigation/native";
@@ -14,7 +15,7 @@ import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
 import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
 import { LinkSeveralEnvironmentsAction } from "./LinkSeveralEnvironments";
 
-export function ConnectionsRouteScreen() {
+function BuiltinConnectionsRouteScreen() {
   const gt = useGT();
   const {
     connectedEnvironments,
@@ -82,3 +83,8 @@ export function ConnectionsRouteScreen() {
     </View>
   );
 }
+
+export const ConnectionsRouteScreen = defineNativePluginFeature(
+  "settings.connections",
+  BuiltinConnectionsRouteScreen,
+);

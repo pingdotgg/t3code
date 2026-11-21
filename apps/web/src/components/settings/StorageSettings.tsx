@@ -50,6 +50,20 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
+import { definePluginComponent } from "~/plugins/features";
+
+const RetentionControl = definePluginComponent(
+  "component:components/settings/StorageSettings/RetentionControl",
+  PluginOriginalRetentionControl,
+);
+export const WorktreeCleanupSection = definePluginComponent(
+  "component:components/settings/StorageSettings/WorktreeCleanupSection",
+  PluginOriginalWorktreeCleanupSection,
+);
+export const StorageCleanupSections = definePluginComponent(
+  "component:components/settings/StorageSettings/StorageCleanupSections",
+  PluginOriginalStorageCleanupSections,
+);
 
 export function WorktreesDirectoryRow() {
   const setting = useSearchableSetting();
@@ -115,7 +129,7 @@ export function WorktreesDirectoryRow() {
 
 type SaveOptions = Parameters<ReturnType<typeof useUpdateScopedSettings>>[1];
 
-function RetentionControl({
+function PluginOriginalRetentionControl({
   label,
   value,
   onChange,
@@ -595,7 +609,7 @@ function StorageCleanupScopeNotice() {
   );
 }
 
-export function WorktreeCleanupSection() {
+function PluginOriginalWorktreeCleanupSection() {
   const messages = useMessages();
   const setting = useSearchableSetting();
   const gt = useGT();
@@ -872,7 +886,7 @@ export function WorktreeCleanupSection() {
 }
 
 /** Retention for logs and captures, and the manual cleanup run, which covers worktrees too. */
-export function StorageCleanupSections() {
+function PluginOriginalStorageCleanupSections() {
   const gt = useGT();
   const { scope, connectedEnvironments, targets } = useSettingsScope();
   const scopedSettings = useScopedSettings();

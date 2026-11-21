@@ -1,4 +1,5 @@
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { Button } from "../../components/ui/Button";
 import { LegendList } from "@legendapp/list/react-native";
 import type { ProjectEntry } from "@t3tools/contracts";
@@ -33,7 +34,7 @@ function cachedFileTree(entries: ReadonlyArray<ProjectEntry>): ReadonlyArray<Fil
   return tree;
 }
 
-const FileTreeRow = function FileTreeRow(props: {
+const BuiltinFileTreeRow = function FileTreeRow(props: {
   readonly item: VisibleFileTreeNode;
   readonly selected: boolean;
   readonly expanded: boolean;
@@ -102,7 +103,7 @@ const FileTreeRow = function FileTreeRow(props: {
   );
 };
 
-export function FileTreeBrowser(props: {
+function BuiltinFileTreeBrowser(props: {
   readonly revealSelection: (path: string | null) => void;
   readonly expandedPaths: ReadonlySet<string>;
   readonly setExpandedPaths: (
@@ -296,3 +297,13 @@ export function FileTreeBrowser(props: {
     />
   );
 }
+
+export const FileTreeBrowser = defineNativePluginFeature(
+  "native.features.files.file-tree-browser",
+  BuiltinFileTreeBrowser,
+);
+
+const FileTreeRow = defineNativePluginFeature(
+  "native.features.files.file-tree-browser.file-tree-row",
+  BuiltinFileTreeRow,
+);

@@ -2,8 +2,30 @@ import { NumberField as NumberFieldPrimitive } from "@base-ui/react/number-field
 import { MinusIcon, PlusIcon } from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-export function NumberField({
+export const NumberField = definePluginComponent(
+  "component:components/ui/number-field/NumberField",
+  PluginOriginalNumberField,
+);
+export const NumberFieldGroup = definePluginComponent(
+  "component:components/ui/number-field/NumberFieldGroup",
+  PluginOriginalNumberFieldGroup,
+);
+export const NumberFieldDecrement = definePluginComponent(
+  "component:components/ui/number-field/NumberFieldDecrement",
+  PluginOriginalNumberFieldDecrement,
+);
+export const NumberFieldIncrement = definePluginComponent(
+  "component:components/ui/number-field/NumberFieldIncrement",
+  PluginOriginalNumberFieldIncrement,
+);
+export const NumberFieldInput = definePluginComponent(
+  "component:components/ui/number-field/NumberFieldInput",
+  PluginOriginalNumberFieldInput,
+);
+
+function PluginOriginalNumberField({
   id,
   className,
   size = "default",
@@ -24,7 +46,7 @@ export function NumberField({
   );
 }
 
-export function NumberFieldGroup({
+function PluginOriginalNumberFieldGroup({
   className,
   ...props
 }: NumberFieldPrimitive.Group.Props): React.ReactElement {
@@ -40,7 +62,7 @@ export function NumberFieldGroup({
   );
 }
 
-export function NumberFieldDecrement({
+function PluginOriginalNumberFieldDecrement({
   className,
   ...props
 }: NumberFieldPrimitive.Decrement.Props): React.ReactElement {
@@ -58,7 +80,7 @@ export function NumberFieldDecrement({
   );
 }
 
-export function NumberFieldIncrement({
+function PluginOriginalNumberFieldIncrement({
   className,
   ...props
 }: NumberFieldPrimitive.Increment.Props): React.ReactElement {
@@ -76,7 +98,7 @@ export function NumberFieldIncrement({
   );
 }
 
-export function NumberFieldInput({
+function PluginOriginalNumberFieldInput({
   className,
   ...props
 }: NumberFieldPrimitive.Input.Props): React.ReactElement {

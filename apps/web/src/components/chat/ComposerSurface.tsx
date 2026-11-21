@@ -1,8 +1,9 @@
+import { definePluginComponent } from "~/plugins/features";
 import type { ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
 
-function Shell({
+function PluginOriginalShell({
   contextRow = false,
   className,
   ...props
@@ -33,7 +34,7 @@ function Shell({
 const outlineClasses =
   "after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:border after:border-(--chat-composer-outline) dark:after:inset-shadow-2xs dark:after:inset-shadow-(color:--chat-composer-highlight)";
 
-function Host({ className, ...props }: ComponentProps<"div">) {
+function PluginOriginalHost({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="composer-host"
@@ -49,7 +50,7 @@ function Host({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-function Main({ className, ...props }: ComponentProps<"div">) {
+function PluginOriginalMain({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-chat-composer-main-surface="true"
@@ -69,7 +70,7 @@ function Main({ className, ...props }: ComponentProps<"div">) {
 }
 
 /** A row under the card (environment, worktree, branch); page-coloured glass hides the timeline scrolling behind it. */
-function ContextStrip({ className, ...props }: ComponentProps<"div">) {
+function PluginOriginalContextStrip({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="composer-context-strip"
@@ -82,4 +83,49 @@ function ContextStrip({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-export const ComposerSurface = { Shell, Host, Main, ContextStrip };
+const Shell = definePluginComponent(
+  "component:components/chat/ComposerSurface/Shell",
+  PluginOriginalShell,
+);
+const Host = definePluginComponent(
+  "component:components/chat/ComposerSurface/Host",
+  PluginOriginalHost,
+);
+const Main = definePluginComponent(
+  "component:components/chat/ComposerSurface/Main",
+  PluginOriginalMain,
+);
+const ContextStrip = definePluginComponent(
+  "component:components/chat/ComposerSurface/ContextStrip",
+  PluginOriginalContextStrip,
+);
+const Body = definePluginComponent(
+  "component:components/chat/ComposerSurface/Body",
+  function ComposerBody({ className, ...props }: ComponentProps<"div">) {
+    return (
+      <div
+        data-chat-composer-body="true"
+        className={cn("relative px-3 pb-2 pt-3.5 sm:px-4 sm:pt-4", className)}
+        {...props}
+      />
+    );
+  },
+);
+
+const Toolbar = definePluginComponent(
+  "component:components/chat/ComposerSurface/Toolbar",
+  function ComposerToolbar({ className, ...props }: ComponentProps<"div">) {
+    return (
+      <div
+        data-chat-composer-footer="true"
+        className={cn(
+          "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-3 pb-3 sm:px-4 sm:pb-4",
+          className,
+        )}
+        {...props}
+      />
+    );
+  },
+);
+
+export const ComposerSurface = { Shell, Host, Main, ContextStrip, Body, Toolbar };

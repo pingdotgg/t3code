@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
   ServerSelfUpdateError,
@@ -302,7 +303,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   });
 });
 
-export const layer = Layer.effect(ServerSelfUpdate, make()).pipe(
+export const layer = builtinServiceLayer("t3.connections")(ServerSelfUpdate, make()).pipe(
   Layer.provide(ProcessRunner.layer),
 );
 

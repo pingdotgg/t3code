@@ -1,5 +1,6 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { createContext, type MouseEvent } from "react";
+import type { MouseEvent } from "react";
+import { createPluginContext } from "~/plugins/features";
 
 export interface ComposerContextActions {
   environmentId: EnvironmentId | null;
@@ -12,11 +13,14 @@ export interface ComposerContextActions {
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
 }
 
-export const ComposerContextActionsContext = createContext<ComposerContextActions>({
-  environmentId: null,
-  expandImage: () => {},
-  expandVideo: () => {},
-  openFile: () => {},
-  openMention: () => {},
-  openPullRequest: () => {},
-});
+export const ComposerContextActionsContext = createPluginContext<ComposerContextActions>(
+  "components/composerContextActions/ComposerContextActionsContext",
+  {
+    environmentId: null,
+    expandImage: () => {},
+    expandVideo: () => {},
+    openFile: () => {},
+    openMention: () => {},
+    openPullRequest: () => {},
+  },
+);

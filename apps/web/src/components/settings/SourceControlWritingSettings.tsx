@@ -45,6 +45,12 @@ import {
 } from "./settingsLayout";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { useSearchableSetting } from "./settingsSearch";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SourceControlWritingSettingsSection = definePluginComponent(
+  "component:components/settings/SourceControlWritingSettings/SourceControlWritingSettingsSection",
+  PluginOriginalSourceControlWritingSettingsSection,
+);
 
 const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
   {
@@ -68,7 +74,7 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
     },
   };
 
-export function SourceControlWritingSettingsSection() {
+function PluginOriginalSourceControlWritingSettingsSection() {
   const messages = useMessages();
   const setting = useSearchableSetting();
   const gt = useGT();

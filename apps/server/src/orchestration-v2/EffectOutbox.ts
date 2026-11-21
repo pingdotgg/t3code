@@ -1,3 +1,4 @@
+import { builtinLifecycleLayer, builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CheckpointId,
   CheckpointScopeId,
@@ -316,7 +317,9 @@ const rowToEffect = (row: EffectRow) =>
     })),
   );
 
-export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = Layer.effect(
+export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = builtinServiceLayer(
+  "t3.thread",
+)(
   EffectOutboxV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -795,7 +798,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
   }),
 );
 
-export const layerPruneWorker = Layer.effectDiscard(
+/** Prunes settled effect rows once the server is active, then every hour. */
+export const layerPruneWorker = builtinLifecycleLayer(
+  "t3.thread",
+  "t3/runtime/orchestration-v2/EffectOutbox#prune-worker",
   Effect.gen(function* () {
     const outbox = yield* EffectOutboxV2;
     yield* forkParked(

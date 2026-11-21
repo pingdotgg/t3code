@@ -11,8 +11,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { definePluginComponent } from "~/plugins/features";
 
-export const ModelListRow = memo(function ModelListRow(props: {
+const PluginOriginalModelListRow = memo(function ModelListRow(props: {
   index: number;
   slug: string;
   name: string;
@@ -152,3 +153,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
     </Tooltip>
   );
 });
+export const ModelListRow = definePluginComponent(
+  "component:components/chat/ModelListRow/ModelListRow",
+  PluginOriginalModelListRow,
+);

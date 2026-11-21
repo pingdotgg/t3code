@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import { builtinLifecycleLayer } from "../plugins/PluginKernel.ts";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
@@ -19,7 +19,9 @@ const wakeHeldHooks = Effect.fn("HeldHooksWaker.wake")(function* () {
   return pending;
 });
 
-export const layer = Layer.effectDiscard(
+export const layer = builtinLifecycleLayer(
+  "t3.connections",
+  "t3/runtime/relay/HeldHooksWaker#lifecycle1",
   Effect.gen(function* () {
     const runtime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
     const wake = wakeHeldHooks().pipe(

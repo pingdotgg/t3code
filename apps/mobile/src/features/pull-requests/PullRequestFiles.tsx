@@ -1,4 +1,5 @@
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -400,7 +401,7 @@ function DirectoryRow(props: {
 }
 
 /** The `PullRequestFiles` sheet: a changed-file picker presented over a file diff. */
-export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDiffParams>) {
+function BuiltinPullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDiffParams>) {
   const params = route.params;
   const navigation = useNavigation();
   const gt = useGT();
@@ -520,3 +521,8 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
     </View>
   );
 }
+
+export const PullRequestFilesSheet = defineNativePluginFeature(
+  "native.features.pull-requests.pull-request-files-route-screen",
+  BuiltinPullRequestFilesSheet,
+);

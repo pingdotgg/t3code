@@ -1,7 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Mime from "effect/http/Mime";
@@ -11,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
+import { builtinServiceLayer, builtinLifecycleLayer } from "@t3tools/shared/pluginKernel";
 
 export const DESKTOP_HOST = "app";
 const DESKTOP_PRODUCTION_SCHEME = "t3code";
@@ -76,6 +76,10 @@ function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInpu
     "'wasm-unsafe-eval'",
     ...(clerkOrigin ? [clerkOrigin] : []),
     "https://challenges.cloudflare.com",
+    // Trusted web plugins load as ESM from whichever environment serves them. Only the
+    // token-scoped plugin asset route is executable; other environment paths stay blocked.
+    "http://*:*/api/plugins/assets/",
+    "https://*:*/api/plugins/assets/",
   ];
 
   // User-configured environment origins are unknown here, so allow supported network schemes.
@@ -139,7 +143,11 @@ const registerDesktopSchemePrivileges = Effect.sync(registerDesktopSchemePrivile
   Effect.withSpan("desktop.electron.protocol.registerSchemePrivileges"),
 );
 
-export const layerSchemePrivileges = Layer.effectDiscard(registerDesktopSchemePrivileges);
+export const layerSchemePrivileges = builtinLifecycleLayer(
+  "t3.desktop.electron-protocol",
+  "t3.desktop.electron-protocol.lifecycle.1",
+  registerDesktopSchemePrivileges,
+);
 
 class ElectronProtocolFetchError extends Schema.TaggedError<ElectronProtocolFetchError>()(
   "ElectronProtocolFetchError",
@@ -290,4 +298,4 @@ export const make = Effect.gen(function* () {
   return ElectronProtocol.of({ registerDesktopProtocol });
 });
 
-export const layer = Layer.effect(ElectronProtocol, make);
+export const layer = builtinServiceLayer("t3.desktop.electron-protocol", ElectronProtocol, make);

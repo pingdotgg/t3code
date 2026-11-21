@@ -19,6 +19,12 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { CustomModelEditor } from "./CustomModelEditor";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ProviderModelsSection = definePluginComponent(
+  "component:components/settings/ProviderModelsSection/ProviderModelsSection",
+  PluginOriginalProviderModelsSection,
+);
 
 const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, string>> = {
   [ProviderDriverKind.make("codex")]: "gpt-6.7-codex-ultra-preview",
@@ -123,7 +129,7 @@ interface ProviderModelsSectionProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
 }
 
-export function ProviderModelsSection({
+function PluginOriginalProviderModelsSection({
   instanceId,
   driverKind,
   models,

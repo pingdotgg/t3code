@@ -1,9 +1,9 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 /** Instances sharing a login directory share credits; serialize redemptions on that directory. */
 import type { ProviderConsumeResetCreditOutcome, ServerProvider } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import type * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -101,9 +101,9 @@ export const refreshAfterRedemption = Effect.fn("resetCreditCoordinator.refreshA
   },
 );
 
-export const layer = Layer.effect(ResetCreditCoordinator, make);
+export const layer = builtinServiceLayer("t3.providers")(ResetCreditCoordinator, make);
 
-export const layerTest = Layer.effect(
+export const layerTest = builtinServiceLayer("t3.providers")(
   ResetCreditCoordinator,
   Effect.gen(function* () {
     let counter = 0;

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { CommandId, type RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -102,7 +103,7 @@ export const layerExecutor: Layer.Layer<
   | ThreadManagementService.ThreadManagementService
   | ProjectionStore.ProjectionStoreV2
   | ServerSettings.ServerSettingsService
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
     const runFinalization = yield* RunFinalizationService.RunFinalizationService;
@@ -795,7 +796,7 @@ export const layerWithOptions = (
   never,
   EffectOutbox.EffectOutboxV2 | OrchestrationEffectExecutorV2
 > =>
-  Layer.effect(
+  builtinServiceLayer("t3.thread")(
     OrchestrationEffectWorkerV2,
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;

@@ -2,8 +2,14 @@ import type { DevicePlatformAvailability } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { Check, Minus } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export function DeviceHostAvailability({
+export const DeviceHostAvailability = definePluginComponent(
+  "component:components/device/DeviceHostAvailability/DeviceHostAvailability",
+  PluginOriginalDeviceHostAvailability,
+);
+
+function PluginOriginalDeviceHostAvailability({
   platforms,
 }: {
   platforms: ReadonlyArray<DevicePlatformAvailability>;

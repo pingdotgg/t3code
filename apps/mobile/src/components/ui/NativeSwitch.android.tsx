@@ -4,9 +4,15 @@ import { Pressable, View } from "react-native";
 import type { ThemedSwitchProps } from "./NativeSwitch.types";
 
 import { useControlTheme } from "./useControlTheme";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const NativeSwitch = defineNativePluginFeature(
+  "native.components.ui.native-switch",
+  BuiltinNativeSwitch,
+);
 
 /** RN Pressable must own touch: Compose-handled switch taps can activate the parent row instead. */
-export function NativeSwitch(props: ThemedSwitchProps) {
+function BuiltinNativeSwitch(props: ThemedSwitchProps) {
   const { colors } = useControlTheme();
 
   return (

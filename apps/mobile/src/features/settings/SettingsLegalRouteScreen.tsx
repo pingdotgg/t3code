@@ -1,8 +1,9 @@
 import { useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { SettingsLegalDocumentRouteScreen } from "./components/SettingsLegalDocumentRouteScreen";
 import { LEGAL_URL } from "./lib/legal-document-url";
 
-export function SettingsLegalRouteScreen() {
+function BuiltinSettingsLegalRouteScreen() {
   const gt = useGT();
   return (
     <SettingsLegalDocumentRouteScreen
@@ -11,3 +12,8 @@ export function SettingsLegalRouteScreen() {
     />
   );
 }
+
+export const SettingsLegalRouteScreen = defineNativePluginFeature(
+  "settings.legal",
+  BuiltinSettingsLegalRouteScreen,
+);

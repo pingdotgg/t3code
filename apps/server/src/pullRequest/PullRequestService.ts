@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { parseDiffFilePaths } from "@t3tools/source-control-core/server/diffFileRevisions";
 import * as Cache from "effect/Cache";
@@ -8,7 +9,6 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -4179,4 +4179,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(PullRequestService, make);
+export const layer = builtinServiceLayer("t3.pull-requests")(PullRequestService, make);

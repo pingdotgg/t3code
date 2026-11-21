@@ -40,6 +40,7 @@ import { ThreadScreenFallback } from "./ThreadScreenHost";
 import { NewTaskDraftScreen } from "./NewTaskDraftScreen";
 
 import type { NewTaskDraftRouteParams } from "./thread-route-state";
+import { defineNativePluginFeature } from "../../plugins/features";
 export type { NewTaskDraftRouteParams } from "./thread-route-state";
 
 const branchCheckouts = makeNewTaskBranchCheckouts({
@@ -91,7 +92,7 @@ const idleBranchCheckoutAtom = Atom.make(AsyncResult.initial<BranchCheckoutResul
   Atom.withLabel("mobile:new-task-branch-checkout:idle"),
 );
 
-export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
+function BuiltinNewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
   const gt = useGT();
   const currentRoute = useRoute();
   const goBack = useWorkspaceBackNavigation();
@@ -224,3 +225,8 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     </>
   );
 }
+
+export const NewTaskDraftRouteScreen = defineNativePluginFeature(
+  "native.features.threads.new-task-draft-route-screen",
+  BuiltinNewTaskDraftRouteScreen,
+);

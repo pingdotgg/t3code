@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
@@ -15,7 +16,6 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -1246,4 +1246,4 @@ export const make = Effect.gen(function* () {
   return ProviderRuntimeRecoveryService.of({ reconcile, prepareForShutdown, recover });
 });
 
-export const layer = Layer.effect(ProviderRuntimeRecoveryService, make);
+export const layer = builtinServiceLayer("t3.thread")(ProviderRuntimeRecoveryService, make);

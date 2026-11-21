@@ -1,8 +1,8 @@
+import { builtinServiceLayer, builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -302,7 +302,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
 });
 
 export const layer = (input: { readonly stateDir: string }) =>
-  Layer.effect(
+  builtinServiceLayer("t3.providers")(
     OpenCodeServerLedger,
     Effect.gen(function* () {
       const ledger = yield* make(input);
@@ -311,7 +311,7 @@ export const layer = (input: { readonly stateDir: string }) =>
     }),
   );
 
-export const layerTest = Layer.succeed(
+export const layerTest = builtinSucceedLayer("t3.providers")(
   OpenCodeServerLedger,
   OpenCodeServerLedger.of({
     track: Effect.fn("OpenCodeServerLedger.track")(function () {

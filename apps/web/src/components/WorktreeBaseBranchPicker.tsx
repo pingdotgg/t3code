@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
@@ -12,7 +13,7 @@ import { MiddleTruncate } from "./ui/middle-truncate";
 import { Button } from "./ui/button";
 import { ComboboxTrigger } from "./ui/combobox";
 
-export function WorktreeBaseBranchPicker({
+function PluginOriginalWorktreeBaseBranchPicker({
   environmentId,
   cwd,
   value,
@@ -133,3 +134,8 @@ export function WorktreeBaseBranchPicker({
     </BranchPicker>
   );
 }
+
+export const WorktreeBaseBranchPicker = definePluginComponent(
+  "component:components/WorktreeBaseBranchPicker/WorktreeBaseBranchPicker",
+  PluginOriginalWorktreeBaseBranchPicker,
+);

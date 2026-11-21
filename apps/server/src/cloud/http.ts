@@ -1,3 +1,4 @@
+import { builtinHttpApiGroup } from "../plugins/httpComposition.ts";
 import {
   AuthRelayReadScope,
   AuthRelayConfigureScope,
@@ -13,7 +14,6 @@ import {
 import * as Effect from "effect/Effect";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerResponse } from "effect/http";
-import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -108,7 +108,7 @@ const toHttpErrorOrUnavailable = <A, R>(
     ),
   );
 
-export const layer = HttpApiBuilder.group(
+export const layer = builtinHttpApiGroup("t3.http")(
   EnvironmentHttpApi,
   "connect",
   Effect.fnUntraced(function* (handlers) {

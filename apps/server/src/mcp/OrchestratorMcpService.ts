@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CommandId,
   type RunId,
@@ -3851,4 +3852,4 @@ export const layer: Layer.Layer<
   | SecretRequests.SecretRequests
   | ServerSettings.ServerSettingsService
   | RemoteDelegation.RemoteDelegation
-> = Layer.effect(OrchestratorMcpService, make);
+> = builtinServiceLayer("t3.mcp")(OrchestratorMcpService, make);

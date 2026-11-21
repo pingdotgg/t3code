@@ -57,6 +57,13 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./chat/threadDetailsPanelStyles";
+import { definePluginComponent } from "~/plugins/features";
+
+const ProjectScriptsControl = definePluginComponent(
+  "component:components/ProjectScriptsControl/ProjectScriptsControl",
+  PluginOriginalProjectScriptsControl,
+);
+export default ProjectScriptsControl;
 
 export type { NewProjectScriptInput, ProjectScriptActionResult };
 
@@ -79,7 +86,7 @@ interface ProjectScriptsControlProps {
   onDeleteScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
 }
 
-export default function ProjectScriptsControl({
+function PluginOriginalProjectScriptsControl({
   displayMode = "toolbar",
   presentation = "toolbar",
   onRequestMenuClose,

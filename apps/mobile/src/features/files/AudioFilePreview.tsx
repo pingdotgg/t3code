@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { Button } from "../../components/ui/Button";
 import { useAudioPlayerStatus } from "expo-audio";
 import { T, useGT } from "gt-react-native";
@@ -13,7 +14,7 @@ function timestamp(seconds: number) {
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`;
 }
 
-export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
+function BuiltinAudioFilePreview(props: { uri: string; onRetry: () => void }) {
   const player = usePlaybackAudioPlayer(props.uri);
   const gt = useGT();
   const status = useAudioPlayerStatus(player);
@@ -100,3 +101,8 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
     </View>
   );
 }
+
+export const AudioFilePreview = defineNativePluginFeature(
+  "native.features.files.audio-file-preview",
+  BuiltinAudioFilePreview,
+);

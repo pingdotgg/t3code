@@ -1,5 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { T, useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { ListRow } from "../../components/ui/ListRow";
 import * as Dialog from "../../components/ui/Dialog";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -45,7 +46,7 @@ type ConnectionsNewRouteParams = {
   readonly linked?: string;
 };
 
-export function ConnectionsNewRouteScreen({
+function BuiltinConnectionsNewRouteScreen({
   route,
 }: StaticScreenProps<ConnectionsNewRouteParams | undefined>) {
   const params = route.params ?? {};
@@ -449,3 +450,8 @@ function PairingInputRow({
     </View>
   );
 }
+
+export const ConnectionsNewRouteScreen = defineNativePluginFeature(
+  "native.features.connection.connections-new-route-screen",
+  BuiltinConnectionsNewRouteScreen,
+);

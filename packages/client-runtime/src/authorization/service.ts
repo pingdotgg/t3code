@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
 import {
@@ -41,7 +42,6 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
@@ -814,4 +814,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(RemoteEnvironmentAuthorization, make);
+export const layer = builtinServiceLayer("t3.client")(RemoteEnvironmentAuthorization, make);

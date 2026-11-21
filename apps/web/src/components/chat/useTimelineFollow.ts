@@ -143,6 +143,8 @@ function sameRunObservation(
 }
 
 interface TimelineFollowInput {
+  /** Absent for read-only timelines, which own no chat input. */
+  readonly ownsChatInteraction?: ((target?: EventTarget | null) => boolean) | undefined;
   readonly legendListRef: RefObject<LegendListRef | null>;
   readonly composerTimelineInset: number;
   readonly routeThreadKey: string;
@@ -165,6 +167,7 @@ interface TimelineFollowInput {
  */
 export function useTimelineFollow(input: TimelineFollowInput) {
   const {
+    ownsChatInteraction,
     legendListRef,
     composerTimelineInset,
     routeThreadKey,
@@ -339,6 +342,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   }, [composerTimelineInset, readCurrentFollow, scrollToEndStable]);
 
   const handleNavigation = (navigation: TimelineNavigation) => {
+    // An embedded side thread must not move on keys the main thread owns.
+    if (navigation.source === "key" && ownsChatInteraction?.() === false) return;
     const awayFromEnd = () => resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false;
     const releases = navigationReleasesFollow(navigation, {
       contentScrollsUp: timelineRealContentOverflowsViewport,

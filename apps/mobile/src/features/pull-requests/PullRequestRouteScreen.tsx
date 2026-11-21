@@ -15,6 +15,7 @@ import { T, useGT, useMessages, Var } from "gt-react-native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { Chip } from "../../components/ui/Chip";
 import { pullRequestTabOffset } from "./pullRequestTabScroll";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { guideFocusedRows, type GuideDiffFocus } from "./guide/guideDiffFocus";
 import { PullRequestGuideContent } from "./guide/PullRequestGuideScreen";
 import { useReviewGuidesEnabled } from "./guide/useReviewGuide";
@@ -386,7 +387,12 @@ function usePullRequestToolbarHeight(bottomInset: number) {
   return useState(() => (Platform.OS === "android" ? bottomInset + buttonSize + 40 : 0));
 }
 
-export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestParams>) {
+export const PullRequestRouteScreen = defineNativePluginFeature(
+  "native.features.pull-requests.pull-request-route-screen",
+  BuiltinPullRequestRouteScreen,
+);
+
+function BuiltinPullRequestRouteScreen({ route }: StaticScreenProps<PullRequestParams>) {
   const returnToList = useAndroidWorkspaceBack();
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
@@ -979,6 +985,11 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   );
 }
 
+export const PullRequestFileRouteScreen = defineNativePluginFeature(
+  "native.features.pull-requests.pull-request-file-route-screen",
+  BuiltinPullRequestFileRouteScreen,
+);
+
 type PullRequestFileRouteProps = StaticScreenProps<
   PullRequestDiffParams & {
     readonly path: string;
@@ -987,7 +998,7 @@ type PullRequestFileRouteProps = StaticScreenProps<
   }
 >;
 
-export function PullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
+function BuiltinPullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
   const navigation =
     useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList, "PullRequestFile">>();
   const ready = usePullRequestDiffEntry(navigation);

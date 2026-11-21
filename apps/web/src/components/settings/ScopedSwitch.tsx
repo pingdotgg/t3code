@@ -3,8 +3,14 @@ import type { ComponentProps } from "react";
 
 import { Switch } from "../ui/switch";
 import { useScopedSettingsMixed } from "./useScopedSettings";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ScopedSwitch({
+export const ScopedSwitch = definePluginComponent(
+  "component:components/settings/ScopedSwitch/ScopedSwitch",
+  PluginOriginalScopedSwitch,
+);
+
+function PluginOriginalScopedSwitch({
   settingKeys,
   checked,
   ...props

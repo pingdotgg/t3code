@@ -1,7 +1,17 @@
 import { cn } from "../../lib/utils";
 import type { ThemeCardPreviewColors } from "./ThemePreviewCircles";
+import { definePluginComponent } from "~/plugins/features";
 
-function ThemeWireframePane({
+const ThemeWireframePane = definePluginComponent(
+  "component:components/settings/ThemeWireframe/ThemeWireframePane",
+  PluginOriginalThemeWireframePane,
+);
+export const ThemeWireframe = definePluginComponent(
+  "component:components/settings/ThemeWireframe/ThemeWireframe",
+  PluginOriginalThemeWireframe,
+);
+
+function PluginOriginalThemeWireframePane({
   colors,
   clip,
 }: {
@@ -105,7 +115,7 @@ function ThemeWireframePane({
   );
 }
 
-export function ThemeWireframe({
+function PluginOriginalThemeWireframe({
   className,
   panes,
 }: {

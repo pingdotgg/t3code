@@ -12,8 +12,13 @@ import {
   TerminalAppearancePreview,
 } from "../components/AppearancePreviews";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
+import { defineNativePluginFeature } from "../../../../plugins/features";
+export const TerminalAppearanceSection = defineNativePluginFeature(
+  "native.features.settings.appearance.sections.terminal-appearance-section",
+  BuiltinTerminalAppearanceSection,
+);
 
-export function TerminalAppearanceSection() {
+function BuiltinTerminalAppearanceSection() {
   const gt = useGT();
   const { isReady, appearance, setTerminalFontSize } = useAppearancePreferences();
   const custom = appearance.isTerminalFontSizeCustom;

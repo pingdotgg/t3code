@@ -5,8 +5,9 @@ import { Toast } from "../../components/ui/Toast";
 import { useBarInset } from "../../components/ui/useBarInset";
 import { MOBILE_MOTION } from "../../lib/designTokens";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function GitActionProgressOverlay(props: {
+function BuiltinGitActionProgressOverlay(props: {
   readonly progress: GitActionProgress;
   readonly onDismiss: () => void;
   readonly onOpenPullRequest?: (url: string) => Promise<boolean>;
@@ -61,3 +62,8 @@ export function GitActionProgressOverlay(props: {
     </Animated.View>
   );
 }
+
+export const GitActionProgressOverlay = defineNativePluginFeature(
+  "native.features.threads.git-action-progress-overlay",
+  BuiltinGitActionProgressOverlay,
+);

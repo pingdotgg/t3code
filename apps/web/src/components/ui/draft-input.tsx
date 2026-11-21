@@ -1,5 +1,11 @@
 import { useCommitOnBlur } from "~/hooks/useCommitOnBlur";
 import { Input, type InputProps } from "./input";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DraftInput = definePluginComponent(
+  "component:components/ui/draft-input/DraftInput",
+  PluginOriginalDraftInput,
+);
 
 export type DraftInputProps = Omit<InputProps, "value" | "onChange" | "defaultValue"> & {
   readonly value: string;
@@ -8,7 +14,7 @@ export type DraftInputProps = Omit<InputProps, "value" | "onChange" | "defaultVa
 };
 
 /** Commit drafts without settings-wide rerenders or server round trips per keystroke. */
-export function DraftInput({ value, onCommit, normalizeDraft, ...rest }: DraftInputProps) {
+function PluginOriginalDraftInput({ value, onCommit, normalizeDraft, ...rest }: DraftInputProps) {
   const bag = useCommitOnBlur(value, onCommit, normalizeDraft);
   return <Input {...rest} {...bag} />;
 }

@@ -1,5 +1,6 @@
+import { registerBuiltinRoute, definePluginRouteRenderer } from "~/plugins/routing";
 import { createFileRoute, redirect, useLocation, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
@@ -8,6 +9,12 @@ import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomePage } from "../components/onboarding/WelcomePage";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import { definePluginComponent } from "~/plugins/features";
+
+const WelcomeRouteView = definePluginComponent(
+  "component:routes/welcome/WelcomeRouteView",
+  PluginOriginalWelcomeRouteView,
+);
 
 const decodeEnvironmentId = Schema.decodeOption(EnvironmentId);
 
@@ -18,10 +25,10 @@ export const Route = createFileRoute("/welcome")({
       throw redirect({ to: "/pair", replace: true });
     }
   },
-  component: WelcomeRouteView,
+  component: definePluginRouteRenderer("/welcome", "component", WelcomeRouteView),
 });
 
-function WelcomeRouteView() {
+function PluginOriginalWelcomeRouteView(): ReactElement | null {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
   // A ChatGPT sign-in returns here with the computer it set up.
@@ -38,7 +45,9 @@ function WelcomeRouteView() {
     environments.some((environment) => environment.environmentId === resumeEnvironmentId);
   const environmentId = (resumeKnown ? resumeEnvironmentId : undefined) ?? primaryEnvironmentId;
   // The root can remount this pending outlet after navigation; do not reopen setup.
-  const isWelcomeRoute = useLocation({ select: (location) => location.pathname === "/welcome" });
+  const isWelcomeRoute: boolean = useLocation({
+    select: (location) => location.pathname === "/welcome",
+  });
   const [dismissed, setDismissed] = useState(false);
   const openNewThread = useNewThreadHandler();
   if (waitingForCatalog) return null;
@@ -60,3 +69,5 @@ function WelcomeRouteView() {
     />
   );
 }
+
+registerBuiltinRoute("/welcome", Route);

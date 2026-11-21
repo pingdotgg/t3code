@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { T, useGT } from "gt-react-native";
 import { useState } from "react";
 import { View } from "react-native";
@@ -15,7 +16,7 @@ import { isPdfPreviewUri } from "../../lib/pdfPreview";
 import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
 import { useContentTopInset } from "../../components/ui/useBarInset";
 
-export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) {
+function BuiltinWorkspaceFileWebPreview(props: { readonly uri: string | null }) {
   const gt = useGT();
   if (props.uri === null) {
     return <FilePreviewLoading message={gt("Preparing preview...")} background="card" />;
@@ -112,3 +113,8 @@ function DocumentWebPreview(props: { readonly uri: string }) {
     </View>
   );
 }
+
+export const WorkspaceFileWebPreview = defineNativePluginFeature(
+  "native.features.files.workspace-file-web-preview",
+  BuiltinWorkspaceFileWebPreview,
+);

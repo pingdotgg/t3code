@@ -1,3 +1,4 @@
+import { builtinLifecycleLayer } from "../plugins/PluginKernel.ts";
 import {
   CommandId,
   type MessageId,
@@ -5,7 +6,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -59,7 +59,9 @@ function delegatedCompletionRetryKey(
   return `${request.threadId}:${completion.parentRunId}:${completion.generation}:${completion.messageId}`;
 }
 
-export const layer = Layer.effectDiscard(
+export const layer = builtinLifecycleLayer(
+  "t3.thread",
+  "t3/runtime/orchestration-v2/ProviderContinuationService#lifecycle1",
   Effect.gen(function* () {
     const ids = yield* IdAllocator.IdAllocatorV2;
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;

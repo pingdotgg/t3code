@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 // Carries a remote desktop's preview traffic to this machine's loopback ports, one TCP
 // connection per WebSocket. Raw bytes, so pages keep their own origin, HMR sockets and TLS.
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
@@ -6,7 +7,6 @@ import { allowsPreviewTunnel, AuthTerminalOperateScope } from "@t3tools/contract
 import type * as NodeNet from "node:net";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -121,7 +121,7 @@ const make = Effect.gen(function* () {
   return PreviewTunnel.of({ connect, watchTurnedOff });
 });
 
-export const layer = Layer.effect(PreviewTunnel, make);
+export const layer = builtinServiceLayer("t3.preview")(PreviewTunnel, make);
 
 const SEND_HIGH_WATER_BYTES = 1024 * 1024;
 

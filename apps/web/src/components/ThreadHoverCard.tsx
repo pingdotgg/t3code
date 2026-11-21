@@ -1,8 +1,21 @@
 import type { ComponentProps, ReactNode } from "react";
 import { TooltipPopup } from "./ui/tooltip";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ThreadHoverCardPopup({ className, ...props }: ComponentProps<typeof TooltipPopup>) {
+export const ThreadHoverCardPopup = definePluginComponent(
+  "component:components/ThreadHoverCard/ThreadHoverCardPopup",
+  PluginOriginalThreadHoverCardPopup,
+);
+export const ThreadHoverCard = definePluginComponent(
+  "component:components/ThreadHoverCard/ThreadHoverCard",
+  PluginOriginalThreadHoverCard,
+);
+
+function PluginOriginalThreadHoverCardPopup({
+  className,
+  ...props
+}: ComponentProps<typeof TooltipPopup>) {
   return (
     <TooltipPopup
       {...props}
@@ -12,7 +25,7 @@ export function ThreadHoverCardPopup({ className, ...props }: ComponentProps<typ
   );
 }
 
-export function ThreadHoverCard({
+function PluginOriginalThreadHoverCard({
   title,
   children,
   footer,

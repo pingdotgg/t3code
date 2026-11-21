@@ -1,6 +1,7 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { serverUpdateFailureText } from "@t3tools/client-runtime/state/server";
 import { T, useGT, useMessages, Var } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -44,7 +45,7 @@ import {
 } from "./environment-maintenance";
 import { environmentReleaseCheckAtom, releaseCheckValue } from "./environmentUpdateCheck";
 
-export function SettingsEnvironmentDetailRouteScreen({
+function BuiltinSettingsEnvironmentDetailRouteScreen({
   route,
 }: StaticScreenProps<{
   readonly environmentId: EnvironmentId;
@@ -57,7 +58,7 @@ export function SettingsEnvironmentDetailRouteScreen({
   );
 }
 
-function EnvironmentDetail({ environmentId }: { readonly environmentId: EnvironmentId }) {
+function BuiltinEnvironmentDetail({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const gt = useGT();
   const messages = useMessages();
   const insets = useSafeAreaInsets();
@@ -446,3 +447,13 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
     </SettingsScreen>
   );
 }
+
+const EnvironmentDetail = defineNativePluginFeature(
+  "native.features.settings.settings-environment-detail-route-screen.environment-detail",
+  BuiltinEnvironmentDetail,
+);
+
+export const SettingsEnvironmentDetailRouteScreen = defineNativePluginFeature(
+  "settings.environment",
+  BuiltinSettingsEnvironmentDetailRouteScreen,
+);

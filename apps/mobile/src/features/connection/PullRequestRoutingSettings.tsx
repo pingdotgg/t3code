@@ -1,4 +1,5 @@
 import { msg, useGT, useMessages } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -41,7 +42,7 @@ const options: ReadonlyArray<{
   },
 ];
 
-export function PullRequestRoutingSettings() {
+function BuiltinPullRequestRoutingSettings() {
   const gt = useGT();
   const m = useMessages();
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
@@ -121,3 +122,8 @@ export function PullRequestRoutingSettings() {
     </View>
   );
 }
+
+export const PullRequestRoutingSettings = defineNativePluginFeature(
+  "native.features.connection.pull-request-routing-settings",
+  BuiltinPullRequestRoutingSettings,
+);

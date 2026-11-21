@@ -1,7 +1,7 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Context from "effect/Context";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -636,4 +636,4 @@ export const make = Effect.gen(function* () {
   } satisfies AuthPairingLinkRepository["Service"];
 });
 
-export const layer = Layer.effect(AuthPairingLinkRepository, make);
+export const layer = builtinServiceLayer("t3.persistence")(AuthPairingLinkRepository, make);

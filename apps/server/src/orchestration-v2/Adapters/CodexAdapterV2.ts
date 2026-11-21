@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../../plugins/PluginKernel.ts";
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { brokenRuntimeError } from "../../provider/providerCompatibility.ts";
@@ -49,6 +50,7 @@ import {
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isBuiltinDisabledCause } from "@t3tools/shared/pluginKernel";
 import {
   COMPUTER_USE_TOOL_SOURCE,
   dynamicToolSurface,
@@ -1838,7 +1840,7 @@ export const layerAppServerClientFactory: Layer.Layer<
   | ChildProcessSpawner.ChildProcessSpawner
   | PortScanner.PortDiscovery
   | ProviderEventLoggers.ProviderEventLoggers
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   CodexAppServerClientFactory,
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1954,7 +1956,14 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     idAllocator,
     serverConfig,
     continuationRequests,
-    watchCommandStops: portDiscovery.watchAgentCommandStops,
+    // Port discovery belongs to t3.preview; sessions skip stop watching while it is disabled.
+    watchCommandStops: (watcher) =>
+      Effect.suspend(() => portDiscovery.watchAgentCommandStops(watcher)).pipe(
+        Effect.catchCauseIf(
+          (cause) => isBuiltinDisabledCause(cause, "t3.preview"),
+          () => Effect.void,
+        ),
+      ),
     ...hooks,
   });
 });

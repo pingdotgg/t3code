@@ -51,6 +51,12 @@ import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 
+import { definePluginComponent } from "~/plugins/features";
+
+export const BrowserDocumentFrame = definePluginComponent(
+  "component:components/files/BrowserDocumentFrame/BrowserDocumentFrame",
+  PluginOriginalBrowserDocumentFrame,
+);
 /**
  * The page reports the keys, and a page script can report any key it likes,
  * so only commands that change what the reader sees are here, never one that
@@ -143,7 +149,7 @@ function PdfDocumentRevision(props: {
  * HTML runs in a sandboxed frame with an opaque origin, so a page cannot reach
  * the app's session or storage. PDFs use a native viewer or the lazy PDF.js fallback.
  */
-export function BrowserDocumentFrame(props: {
+function PluginOriginalBrowserDocumentFrame(props: {
   readonly src: string;
   readonly title: string;
   readonly pdf: boolean;

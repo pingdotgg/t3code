@@ -5,8 +5,14 @@ import { useId } from "react";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ChatGptSharingControl({ provider }: { provider: ServerProvider | null }) {
+export const ChatGptSharingControl = definePluginComponent(
+  "component:components/chat/ChatGptSharingControl/ChatGptSharingControl",
+  PluginOriginalChatGptSharingControl,
+);
+
+function PluginOriginalChatGptSharingControl({ provider }: { provider: ServerProvider | null }) {
   const speedNoticeId = useId();
   const gt = useGT();
   const speedNotice = gt(

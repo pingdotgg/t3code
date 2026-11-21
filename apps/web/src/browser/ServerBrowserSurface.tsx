@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import {
   createPreviewFramePainter,
   createPreviewStreamClient,
@@ -145,7 +146,7 @@ function offerDownload(download: PreviewStreamDownload) {
   });
 }
 
-export function ServerBrowserSurface(props: {
+function PluginOriginalServerBrowserSurface(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: string;
   readonly tabId: string;
@@ -1000,3 +1001,8 @@ function placeAgentCursor(
     top: (box.height - height) / 2 + (pointer.y * height) / viewport.height,
   };
 }
+
+export const ServerBrowserSurface = definePluginComponent(
+  "component:browser/ServerBrowserSurface/ServerBrowserSurface",
+  PluginOriginalServerBrowserSurface,
+);

@@ -16,6 +16,24 @@ import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { resolveDiffThemeName, type DiffThemeName } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PromptFontPreview = definePluginComponent(
+  "component:components/settings/SettingsFontPreviews/PromptFontPreview",
+  PluginOriginalPromptFontPreview,
+);
+const StaticDiffHtml = definePluginComponent(
+  "component:components/settings/SettingsFontPreviews/StaticDiffHtml",
+  PluginOriginalStaticDiffHtml,
+);
+export const CodeFontPreview = definePluginComponent(
+  "component:components/settings/SettingsFontPreviews/CodeFontPreview",
+  PluginOriginalCodeFontPreview,
+);
+export const TerminalFontPreview = definePluginComponent(
+  "component:components/settings/SettingsFontPreviews/TerminalFontPreview",
+  PluginOriginalTerminalFontPreview,
+);
 
 const PREVIEW_SKILLS: ReadonlyArray<ServerProviderSkill> = [
   { name: "frontend-design", path: ".agents/skills/frontend-design/SKILL.md", enabled: true },
@@ -28,7 +46,7 @@ const PROMPT_PREVIEW_TEXT =
 
 function noop() {}
 
-export function PromptFontPreview() {
+function PluginOriginalPromptFontPreview() {
   const gt = useGT();
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [prompt, setPrompt] = useState(PROMPT_PREVIEW_TEXT);
@@ -94,7 +112,7 @@ const DIFF_PREVIEW_THEME_BRIDGE = `
 
 // Each host is keyed by its html, so the ref callback runs once per document.
 // React detaches a cleanup-less ref callback with null when an appearance switch drops the host.
-function StaticDiffHtml({ html }: { html: string }) {
+function PluginOriginalStaticDiffHtml({ html }: { html: string }) {
   const attachHtml = (host: HTMLDivElement | null) => {
     if (host === null) return;
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
@@ -113,7 +131,7 @@ const diffPreviewHtmlAtom = Atom.family((theme: DiffThemeName) =>
   ),
 );
 
-export function CodeFontPreview() {
+function PluginOriginalCodeFontPreview() {
   const resolvedTheme = useRenderedAppearance();
   const loadedHtml = AsyncResult.getOrElse(
     useAtomValue(diffPreviewHtmlAtom(resolveDiffThemeName(resolvedTheme))),
@@ -154,7 +172,7 @@ function previewTerminalFont(family: string, size: number): { family?: string; s
   return trimmed.length > 0 ? { family: trimmed, size } : { size };
 }
 
-export function TerminalFontPreview({ family, size }: { family: string; size: number }) {
+function PluginOriginalTerminalFontPreview({ family, size }: { family: string; size: number }) {
   const gt = useGT();
   const mountRef = useRef<HTMLDivElement>(null);
   const [surface, setSurface] = useState<GhosttyTerminalSurface | null>(null);

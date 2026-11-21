@@ -10,8 +10,18 @@ import { getQuestionAnswerText } from "@t3tools/client-runtime/work-log/user-inp
 import { AppText as Text } from "../../components/ui/AppText";
 import { assetImageSource } from "../../lib/assetImageSource";
 import { useAssetUrl } from "../../state/assets";
+import { defineNativePluginFeature } from "../../plugins/features";
+const AnswerFile = defineNativePluginFeature(
+  "native.features.threads.question-answer-history.answer-file",
+  BuiltinAnswerFile,
+);
 
-function AnswerFile(props: {
+export const QuestionAnswerHistory = defineNativePluginFeature(
+  "native.features.threads.question-answer-history",
+  BuiltinQuestionAnswerHistory,
+);
+
+function BuiltinAnswerFile(props: {
   environmentId: EnvironmentId;
   attachment: UserInputAttachments[string][number];
 }) {
@@ -40,7 +50,7 @@ function AnswerFile(props: {
   );
 }
 
-export function QuestionAnswerHistory(props: {
+function BuiltinQuestionAnswerHistory(props: {
   environmentId: EnvironmentId;
   answer: UserInputAttachmentAnswerPayload;
 }) {

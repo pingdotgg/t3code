@@ -1,11 +1,11 @@
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -281,4 +281,4 @@ export const make = Effect.gen(function* () {
   return ConnectionDriver.of({ connect, preflight, checkHost });
 });
 
-export const layer = Layer.effect(ConnectionDriver, make);
+export const layer = builtinServiceLayer("t3.client")(ConnectionDriver, make);

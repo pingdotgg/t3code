@@ -2,8 +2,14 @@ import { T } from "gt-react";
 import { type ReactNode } from "react";
 
 import { Sheet, SheetHeader, SheetPopup, SheetTitle } from "./ui/sheet";
+import { definePluginComponent } from "~/plugins/features";
 
-export function RightPanelSheet(props: {
+export const RightPanelSheet = definePluginComponent(
+  "component:components/RightPanelSheet/RightPanelSheet",
+  PluginOriginalRightPanelSheet,
+);
+
+function PluginOriginalRightPanelSheet(props: {
   animationDurationMs: number;
   children: ReactNode;
   open: boolean;

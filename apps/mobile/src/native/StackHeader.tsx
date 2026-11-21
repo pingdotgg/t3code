@@ -13,6 +13,12 @@ import {
   WorkspaceSlotOptionsContext,
 } from "./v5-workspace-context";
 import type { ColorValue } from "react-native";
+import { defineNativePluginFeature } from "../plugins/features";
+
+export const NativeStackScreenOptions = defineNativePluginFeature(
+  "native.native.stack-header.native-stack-screen-options",
+  BuiltinNativeStackScreenOptions,
+);
 
 export {
   nativeHeaderScrollEdgeEffects,
@@ -181,7 +187,7 @@ export function useScreenOptionsWriter() {
   }, [navigation, routeKey, setSlotOptions]);
 }
 
-export function NativeStackScreenOptions(props: {
+function BuiltinNativeStackScreenOptions(props: {
   readonly options?: AppNativeStackNavigationOptions;
   /** Reapply factories when captured data changes; source equality misses asynchronous menu content. */
   readonly optionsVersion?: unknown;

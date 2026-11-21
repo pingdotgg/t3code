@@ -1,14 +1,40 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+const PopoverTrigger = definePluginComponent(
+  "component:components/ui/popover/PopoverTrigger",
+  PluginOriginalPopoverTrigger,
+);
+const PopoverPopup = definePluginComponent(
+  "component:components/ui/popover/PopoverPopup",
+  PluginOriginalPopoverPopup,
+);
+const PopoverClose = definePluginComponent(
+  "component:components/ui/popover/PopoverClose",
+  PluginOriginalPopoverClose,
+);
+const PopoverTitle = definePluginComponent(
+  "component:components/ui/popover/PopoverTitle",
+  PluginOriginalPopoverTitle,
+);
 
 import { renderClosingPositioner } from "./closing-positioner";
 
 const PopoverCreateHandle = PopoverPrimitive.createHandle;
 
-const Popover = PopoverPrimitive.Root;
+const PluginOriginalPopover = PopoverPrimitive.Root;
+const Popover = definePluginComponent(
+  "component:components/ui/popover/Popover",
+  PluginOriginalPopover,
+);
 
-function PopoverTrigger({ className, children, ...props }: PopoverPrimitive.Trigger.Props) {
+function PluginOriginalPopoverTrigger({
+  className,
+  children,
+  ...props
+}: PopoverPrimitive.Trigger.Props) {
   return (
     <PopoverPrimitive.Trigger className={className} data-slot="popover-trigger" {...props}>
       {children}
@@ -29,7 +55,7 @@ const popoverViewportPaddingClassName = {
   none: "rounded-[calc(var(--radius-lg)-1px)] py-0 [--viewport-inline-padding:0px]",
 } as const;
 
-function PopoverPopup({
+function PluginOriginalPopoverPopup({
   children,
   className,
   padding = "default",
@@ -131,11 +157,11 @@ function PopoverPopup({
   );
 }
 
-function PopoverClose({ ...props }: PopoverPrimitive.Close.Props) {
+function PluginOriginalPopoverClose({ ...props }: PopoverPrimitive.Close.Props) {
   return <PopoverPrimitive.Close data-slot="popover-close" {...props} />;
 }
 
-function PopoverTitle({ className, ...props }: PopoverPrimitive.Title.Props) {
+function PluginOriginalPopoverTitle({ className, ...props }: PopoverPrimitive.Title.Props) {
   return (
     <PopoverPrimitive.Title
       className={cn("font-semibold text-sm leading-none", className)}

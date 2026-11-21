@@ -1,15 +1,29 @@
 import { LoaderCircleIcon, PauseIcon, PlayIcon, TriangleAlertIcon } from "lucide-react";
 import { useGT } from "gt-react";
-import { createContext, useContext, useRef, useState } from "react";
+import { useContext, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { middleTruncateAttachmentName } from "../composerInlineChip";
 import { Spinner } from "../ui/spinner";
+import { createPluginContext, definePluginComponent } from "~/plugins/features";
 
-export const AudioPreviewUnmountContext = createContext<((audio: HTMLAudioElement) => void) | null>(
-  null,
+export const AudioPreview = definePluginComponent(
+  "component:components/files/AudioPreview/AudioPreview",
+  PluginOriginalAudioPreview,
 );
+const StandardAudioPreview = definePluginComponent(
+  "component:components/files/AudioPreview/StandardAudioPreview",
+  PluginOriginalStandardAudioPreview,
+);
+const AudioChip = definePluginComponent(
+  "component:components/files/AudioPreview/AudioChip",
+  PluginOriginalAudioChip,
+);
+
+export const AudioPreviewUnmountContext = createPluginContext<
+  ((audio: HTMLAudioElement) => void) | null
+>("components/files/AudioPreview/AudioPreviewUnmountContext", null);
 
 type AudioPreviewProps = {
   readonly src: string;
@@ -23,7 +37,7 @@ type AudioPreviewProps = {
   readonly onRetry?: () => void;
 };
 
-export function AudioPreview(props: AudioPreviewProps) {
+function PluginOriginalAudioPreview(props: AudioPreviewProps) {
   return props.compact ? (
     <AudioChip key={`${props.revision ?? props.src}:${!!props.failed}`} {...props} />
   ) : (
@@ -31,7 +45,7 @@ export function AudioPreview(props: AudioPreviewProps) {
   );
 }
 
-function StandardAudioPreview(props: AudioPreviewProps) {
+function PluginOriginalStandardAudioPreview(props: AudioPreviewProps) {
   const onUnmount = useContext(AudioPreviewUnmountContext);
   const audioRef = useStableCallback((audio: HTMLAudioElement | null) => {
     if (audio) return () => onUnmount?.(audio);
@@ -73,7 +87,7 @@ function audioTime(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 }
 
-function AudioChip(props: AudioPreviewProps) {
+function PluginOriginalAudioChip(props: AudioPreviewProps) {
   const gt = useGT();
   const audio = useRef<HTMLAudioElement | null>(null);
   const onUnmount = useContext(AudioPreviewUnmountContext);

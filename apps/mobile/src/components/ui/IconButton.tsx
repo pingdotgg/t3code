@@ -3,6 +3,12 @@ import { cn } from "../../lib/cn";
 import { Pressable } from "react-native";
 
 import { SymbolView } from "./AppSymbol";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const IconButton = defineNativePluginFeature(
+  "native.components.ui.icon-button",
+  BuiltinIconButton,
+);
 
 const VARIANT_CLASS_NAMES = {
   standard: ["", "accent-foreground"],
@@ -11,7 +17,7 @@ const VARIANT_CLASS_NAMES = {
   tonal: ["rounded-full bg-secondary", "accent-secondary-foreground"],
 } as const;
 
-export function IconButton(props: IconButtonProps) {
+function BuiltinIconButton(props: IconButtonProps) {
   const variant = props.variant ?? "standard";
   const [containerClassName, iconTintClassName] = VARIANT_CLASS_NAMES[variant];
   return (

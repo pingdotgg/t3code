@@ -5,8 +5,14 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { InlineButton } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export function AboutVersionTitle() {
+export const AboutVersionTitle = definePluginComponent(
+  "component:components/settings/AboutVersionTitle/AboutVersionTitle",
+  PluginOriginalAboutVersionTitle,
+);
+
+function PluginOriginalAboutVersionTitle() {
   const gt = useGT();
   const { copyToClipboard } = useCopyToClipboard<void>({
     target: {

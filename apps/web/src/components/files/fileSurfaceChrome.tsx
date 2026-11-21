@@ -7,6 +7,24 @@ import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+export const FileSurfaceAction = definePluginComponent(
+  "component:components/files/fileSurfaceChrome/FileSurfaceAction",
+  PluginOriginalFileSurfaceAction,
+);
+export const FileSurfaceNotice = definePluginComponent(
+  "component:components/files/fileSurfaceChrome/FileSurfaceNotice",
+  PluginOriginalFileSurfaceNotice,
+);
+export const FileSurfaceLoading = definePluginComponent(
+  "component:components/files/fileSurfaceChrome/FileSurfaceLoading",
+  PluginOriginalFileSurfaceLoading,
+);
+export const FileSurfaceFailure = definePluginComponent(
+  "component:components/files/fileSurfaceChrome/FileSurfaceFailure",
+  PluginOriginalFileSurfaceFailure,
+);
 
 export const FILE_SURFACE_SUBHEADER_CLASS =
   "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent";
@@ -59,7 +77,7 @@ export const FILE_LINK_REVEAL_UNSAFE_CSS = `
   }
 `;
 
-export function FileSurfaceAction(props: {
+function PluginOriginalFileSurfaceAction(props: {
   readonly label: string;
   readonly pressed?: boolean;
   readonly disabled?: boolean;
@@ -103,7 +121,7 @@ export function FileSurfaceAction(props: {
   );
 }
 
-export function FileSurfaceNotice(props: { readonly children: ReactNode }) {
+function PluginOriginalFileSurfaceNotice(props: { readonly children: ReactNode }) {
   return (
     <div
       role="status"
@@ -114,7 +132,7 @@ export function FileSurfaceNotice(props: { readonly children: ReactNode }) {
   );
 }
 
-export function FileSurfaceLoading(props: { readonly className?: string }) {
+function PluginOriginalFileSurfaceLoading(props: { readonly className?: string }) {
   const gt = useGT();
   return (
     <div
@@ -130,7 +148,7 @@ export function FileSurfaceLoading(props: { readonly className?: string }) {
   );
 }
 
-export function FileSurfaceFailure(props: {
+function PluginOriginalFileSurfaceFailure(props: {
   readonly message: string;
   readonly onRetry?: () => void;
 }) {

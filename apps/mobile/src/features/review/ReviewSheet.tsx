@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -61,7 +62,7 @@ import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import type { usePullRequestFileFilter } from "../pull-requests/usePullRequestFileFilter";
 
-function ReviewHeader(
+function BuiltinReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
     readonly sectionMenu: ReturnType<typeof buildReviewSectionMenu>;
     readonly showSectionToolbar: boolean;
@@ -193,7 +194,7 @@ function ReviewHeader(
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
-const ReviewNotice = function ReviewNotice(props: { readonly notice: string }) {
+const BuiltinReviewNotice = function ReviewNotice(props: { readonly notice: string }) {
   return (
     <ContentBand tone="warning">
       <Text className="text-xs font-t3-bold uppercase text-warning-foreground">
@@ -204,7 +205,7 @@ const ReviewNotice = function ReviewNotice(props: { readonly notice: string }) {
   );
 };
 
-function ReviewSelectionActionBar(props: {
+function BuiltinReviewSelectionActionBar(props: {
   readonly bottomInset: number;
   readonly title: string | null;
   readonly onOpenComment: (() => void) | null;
@@ -274,7 +275,7 @@ interface ReviewNavigatorFile {
   readonly deletions: number;
 }
 
-const ReviewFileNavigatorRow = function ReviewFileNavigatorRow(props: {
+const BuiltinReviewFileNavigatorRow = function ReviewFileNavigatorRow(props: {
   readonly file: ReviewNavigatorFile;
   readonly selected: boolean;
   readonly onSelectFile: (fileId: string | null) => void;
@@ -319,7 +320,12 @@ interface ReviewFileNavigatorProps {
   readonly ref?: Ref<ReviewFileNavigatorHandle>;
 }
 
-function ReviewFileNavigator({ files, sectionId, onSelectFile, ref }: ReviewFileNavigatorProps) {
+function BuiltinReviewFileNavigator({
+  files,
+  sectionId,
+  onSelectFile,
+  ref,
+}: ReviewFileNavigatorProps) {
   const [fileSelection, setFileSelection] = useState<{
     readonly sectionId: string | null;
     readonly fileId: string | null;
@@ -395,7 +401,7 @@ type ReviewSheetProps = StaticScreenProps<{
   readonly threadId: ThreadId;
 }>;
 
-export function ReviewSheet(props: ReviewSheetProps) {
+function BuiltinReviewSheet(props: ReviewSheetProps) {
   const gt = useGT();
   const reduceMotion = useReduceMotionEnabled();
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
@@ -874,3 +880,30 @@ export function ReviewSheet(props: ReviewSheetProps) {
     </>
   );
 }
+
+const ReviewHeader = defineNativePluginFeature(
+  "native.features.review.review-sheet.review-header",
+  BuiltinReviewHeader,
+);
+
+const ReviewSelectionActionBar = defineNativePluginFeature(
+  "native.features.review.review-sheet.review-selection-action-bar",
+  BuiltinReviewSelectionActionBar,
+);
+
+const ReviewFileNavigator = defineNativePluginFeature(
+  "native.features.review.review-sheet.review-file-navigator",
+  BuiltinReviewFileNavigator,
+);
+
+export const ReviewSheet = defineNativePluginFeature("diff", BuiltinReviewSheet);
+
+const ReviewNotice = defineNativePluginFeature(
+  "native.features.review.review-sheet.review-notice",
+  BuiltinReviewNotice,
+);
+
+const ReviewFileNavigatorRow = defineNativePluginFeature(
+  "native.features.review.review-sheet.review-file-navigator-row",
+  BuiltinReviewFileNavigatorRow,
+);

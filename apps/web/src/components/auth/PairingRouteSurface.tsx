@@ -16,8 +16,22 @@ import { Input } from "../ui/input";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { m, type MessageResolver } from "../../i18n/messages";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PairingPendingSurface() {
+export const PairingPendingSurface = definePluginComponent(
+  "component:components/auth/PairingRouteSurface/PairingPendingSurface",
+  PluginOriginalPairingPendingSurface,
+);
+export const PairingRouteSurface = definePluginComponent(
+  "component:components/auth/PairingRouteSurface/PairingRouteSurface",
+  PluginOriginalPairingRouteSurface,
+);
+export const HostedPairingRouteSurface = definePluginComponent(
+  "component:components/auth/PairingRouteSurface/HostedPairingRouteSurface",
+  PluginOriginalHostedPairingRouteSurface,
+);
+
+function PluginOriginalPairingPendingSurface() {
   const gt = useGT();
   return (
     <StandalonePage>
@@ -29,7 +43,7 @@ export function PairingPendingSurface() {
   );
 }
 
-export function PairingRouteSurface({
+function PluginOriginalPairingRouteSurface({
   auth,
   initialErrorMessage,
   onAuthenticated,
@@ -141,7 +155,7 @@ export function PairingRouteSurface({
   );
 }
 
-export function HostedPairingRouteSurface() {
+function PluginOriginalHostedPairingRouteSurface() {
   const connectPairingEnvironment = useAtomCommand(connectPairing, {
     reportFailure: false,
   });

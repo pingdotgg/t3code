@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { memo, useRef, useState, type ReactNode, type KeyboardEvent } from "react";
 import { flushSync } from "react-dom";
 import { T, useGT } from "gt-react";
@@ -42,7 +43,7 @@ interface ExpandedImageDialogProps {
 const EXPANDED_MEDIA_STATE_CLASS_NAME =
   "flex aspect-auto h-48 min-h-0 w-[min(var(--media-width),32rem)] flex-col items-center justify-center gap-3 rounded-lg border border-border/70 bg-black p-6 text-center text-sm text-white shadow-2xl";
 
-function ExpandedMediaFailure({ children }: { children: ReactNode }) {
+function PluginOriginalExpandedMediaFailure({ children }: { children: ReactNode }) {
   return (
     <div role="alert" className={EXPANDED_MEDIA_STATE_CLASS_NAME}>
       {children}
@@ -60,7 +61,7 @@ function itemMimeType(item: ExpandedImageItem): string | undefined {
   return mediaMimeType(item.src ?? "") ?? undefined;
 }
 
-function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
+function PluginOriginalExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
   const asset = item.actionsSource?.asset;
   const assetUrl = useAssetUrlState(asset?.environmentId ?? null, asset?.resource ?? null);
   const refreshAssetUrl = useAssetUrlRefresh(asset?.environmentId ?? null, asset?.resource ?? null);
@@ -85,7 +86,7 @@ function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
   );
 }
 
-export const ExpandedImageDialog = memo(function ExpandedImageDialog({
+const PluginOriginalExpandedImageDialog = memo(function ExpandedImageDialog({
   preview,
   onClose,
 }: ExpandedImageDialogProps) {
@@ -356,3 +357,16 @@ export function ExpandedImageDialogHost({ threadKey }: { readonly threadKey: str
     />
   );
 }
+
+const ExpandedMediaFailure = definePluginComponent(
+  "component:components/chat/ExpandedImageDialog/ExpandedMediaFailure",
+  PluginOriginalExpandedMediaFailure,
+);
+const ExpandedVideo = definePluginComponent(
+  "component:components/chat/ExpandedImageDialog/ExpandedVideo",
+  PluginOriginalExpandedVideo,
+);
+export const ExpandedImageDialog = definePluginComponent(
+  "component:components/chat/ExpandedImageDialog/ExpandedImageDialog",
+  PluginOriginalExpandedImageDialog,
+);

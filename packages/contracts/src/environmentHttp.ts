@@ -81,6 +81,7 @@ import {
   OrchestrationV2ThreadTranscript,
 } from "./orchestrationV2.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
+import { CanvasCreateResult, CanvasError, CanvasImportUploadInput } from "./canvasRpc.ts";
 import {
   PullRequestDiffInput,
   PullRequestDiffResult,
@@ -984,6 +985,26 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+/** File uploads must not block heartbeats on the shared RPC connection. */
+class EnvironmentCanvasHttpApi extends HttpApiGroup.make("canvas").add(
+  HttpApiEndpoint.post("import", "/api/canvas/import", {
+    headers: Schema.Struct({
+      ...OptionalBearerHeaders.fields,
+      "content-encoding": Schema.optionalKey(Schema.Literal("gzip")),
+    }),
+    query: CanvasImportUploadInput,
+    payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+    success: CanvasCreateResult,
+    error: [
+      CanvasError,
+      EnvironmentRequestInvalidError,
+      EnvironmentAuthInvalidError,
+      EnvironmentScopeRequiredError,
+      EnvironmentInternalError,
+    ],
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -1099,6 +1120,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)
+  .add(EnvironmentCanvasHttpApi)
   .add(EnvironmentConnectHttpApi)
   .add(EnvironmentWebhooksHttpApi)
   .add(EnvironmentPeerLinkHttpApi) {}

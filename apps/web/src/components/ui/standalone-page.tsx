@@ -1,8 +1,18 @@
 import type { ReactNode } from "react";
+import { definePluginComponent } from "~/plugins/features";
+
+export const StandalonePage = definePluginComponent(
+  "component:components/ui/standalone-page/StandalonePage",
+  PluginOriginalStandalonePage,
+);
+export const StandalonePageHeader = definePluginComponent(
+  "component:components/ui/standalone-page/StandalonePageHeader",
+  PluginOriginalStandalonePageHeader,
+);
 
 import { T3Wordmark } from "../T3Wordmark";
 
-export function StandalonePage({ children }: { readonly children: ReactNode }) {
+function PluginOriginalStandalonePage({ children }: { readonly children: ReactNode }) {
   return (
     // The page owns scrolling because root cannot scroll; safe centering keeps oversized cards top-aligned.
     <div className="flex h-full items-center-safe justify-center overflow-y-auto scrollbar-gutter-both bg-background px-4 py-10 text-foreground sm:px-6">
@@ -11,7 +21,7 @@ export function StandalonePage({ children }: { readonly children: ReactNode }) {
   );
 }
 
-export function StandalonePageHeader({
+function PluginOriginalStandalonePageHeader({
   context,
   title,
   description,

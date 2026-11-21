@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import type {
   AgentMessage,
   AgentOptions,
@@ -19,7 +20,6 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -1164,7 +1164,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
   });
 });
 
-export const layer = Layer.effect(
+export const layer = builtinServiceLayer("t3.thread")(
   CursorAgentSdkRunner,
   Effect.gen(function* () {
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;

@@ -3,6 +3,12 @@ import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "~/lib/utils";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
+import { definePluginComponent } from "~/plugins/features";
+
+export const RefreshIcon = definePluginComponent(
+  "component:components/ui/refresh-icon/RefreshIcon",
+  PluginOriginalRefreshIcon,
+);
 
 // No default size: inside a Button the parent's svg rule sizes the glyph.
 const refreshIconVariants = cva("", {
@@ -16,7 +22,7 @@ const refreshIconVariants = cva("", {
   },
 });
 
-export function RefreshIcon({
+function PluginOriginalRefreshIcon({
   refreshing = false,
   className,
   size,

@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { BookmarkIcon, FileIcon, FileTextIcon } from "lucide-react";
 import { memo, useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
@@ -56,7 +57,7 @@ export function stashEntrySnippet(entry: PromptStashEntry, resolve: MessageResol
 }
 
 /** Window capture gives the open menu priority over composer key handlers. */
-export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
+const PluginOriginalComposerStashMenu = memo(function ComposerStashMenu(props: {
   entries: ReadonlyArray<PromptStashEntry>;
   stashShortcutLabel: string | null;
   composerFormRef: RefObject<HTMLFormElement | null>;
@@ -283,3 +284,8 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
     </ComposerBanner.Root>
   );
 });
+
+export const ComposerStashMenu = definePluginComponent(
+  "component:components/chat/ComposerStashMenu/ComposerStashMenu",
+  PluginOriginalComposerStashMenu,
+);

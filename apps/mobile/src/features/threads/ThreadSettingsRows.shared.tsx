@@ -5,6 +5,16 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import type { ModelOption } from "../../lib/modelOptions";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const ModelRowContent = defineNativePluginFeature(
+  "native.features.threads.thread-settings-rows.shared.model-row-content",
+  BuiltinModelRowContent,
+);
+export const ChoiceRowContent = defineNativePluginFeature(
+  "native.features.threads.thread-settings-rows.shared.choice-row-content",
+  BuiltinChoiceRowContent,
+);
 
 export type ModelRowProps = {
   readonly option: ModelOption;
@@ -34,7 +44,7 @@ type RowSelectionProps = {
   readonly minimumHeight?: number;
 };
 
-export function ModelRowContent(
+function BuiltinModelRowContent(
   props: ModelRowProps &
     RowSelectionProps & {
       readonly labelNumberOfLines: number;
@@ -164,7 +174,7 @@ export function ModelRowContent(
   );
 }
 
-export function ChoiceRowContent(props: ChoiceRowProps & RowSelectionProps) {
+function BuiltinChoiceRowContent(props: ChoiceRowProps & RowSelectionProps) {
   return (
     <Pressable
       accessibilityLabel={props.description ? `${props.label}. ${props.description}` : props.label}

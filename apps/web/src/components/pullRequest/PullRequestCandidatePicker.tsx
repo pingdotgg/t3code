@@ -12,8 +12,14 @@ import {
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestPeopleGhost } from "./PullRequestGhosts";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PullRequestCandidatePicker<T>({
+export const PullRequestCandidatePicker = definePluginComponent(
+  "component:components/pullRequest/PullRequestCandidatePicker/PullRequestCandidatePicker",
+  PluginOriginalPullRequestCandidatePicker,
+);
+
+function PluginOriginalPullRequestCandidatePicker<T>({
   icon,
   label,
   allowed,

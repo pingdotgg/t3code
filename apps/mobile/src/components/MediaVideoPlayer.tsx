@@ -16,8 +16,22 @@ import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { useMediaVideoPlayback } from "../lib/useMediaVideoPlayback";
 import { MediaActionsMenu } from "./MediaActionsMenu";
 import { createAudioPlaybackSession } from "../lib/audioSession";
+import { defineNativePluginFeature } from "../plugins/features";
 
-function LoadedMediaVideo(props: {
+const LoadedMediaVideo = defineNativePluginFeature(
+  "native.components.media-video-player.loaded-media-video",
+  BuiltinLoadedMediaVideo,
+);
+const MediaVideoPlayerContent = defineNativePluginFeature(
+  "native.components.media-video-player.media-video-player-content",
+  BuiltinMediaVideoPlayerContent,
+);
+export const MediaVideoPlayer = defineNativePluginFeature(
+  "native.components.media-video-player",
+  BuiltinMediaVideoPlayer,
+);
+
+function BuiltinLoadedMediaVideo(props: {
   readonly uri: string;
   readonly resolvePlaybackUri?: () => Promise<string | null>;
   readonly playRequested: boolean;
@@ -155,7 +169,7 @@ interface MediaVideoPlayerProps {
   readonly borderRadius?: number;
 }
 
-function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
+function BuiltinMediaVideoPlayerContent(props: MediaVideoPlayerProps) {
   const gt = useGT();
   const mediaActions = useMediaActions(props.actionsSource);
   const isFocused = useIsFocused();
@@ -273,6 +287,6 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
   );
 }
 
-export function MediaVideoPlayer(props: MediaVideoPlayerProps) {
+function BuiltinMediaVideoPlayer(props: MediaVideoPlayerProps) {
   return <MediaVideoPlayerContent key={props.thumbnailKey} {...props} />;
 }

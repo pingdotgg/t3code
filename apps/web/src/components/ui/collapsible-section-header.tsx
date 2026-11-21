@@ -1,6 +1,16 @@
 import type { ComponentProps, ReactNode } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+export const CollapsibleSectionHeader = definePluginComponent(
+  "component:components/ui/collapsible-section-header/CollapsibleSectionHeader",
+  PluginOriginalCollapsibleSectionHeader,
+);
+export const SectionHeaderStatus = definePluginComponent(
+  "component:components/ui/collapsible-section-header/SectionHeaderStatus",
+  PluginOriginalSectionHeaderStatus,
+);
 
 const tones = {
   muted: { label: "text-sidebar-muted-foreground", line: "bg-sidebar-border/50" },
@@ -8,7 +18,7 @@ const tones = {
   accent: { label: "text-primary", line: "bg-primary/50" },
 } as const;
 
-export function CollapsibleSectionHeader({
+function PluginOriginalCollapsibleSectionHeader({
   children,
   expanded,
   tone = "muted",
@@ -47,7 +57,7 @@ export function CollapsibleSectionHeader({
   );
 }
 
-export function SectionHeaderStatus({ children }: { children: ReactNode }) {
+function PluginOriginalSectionHeaderStatus({ children }: { children: ReactNode }) {
   return (
     <span className="shrink-0 text-3xs leading-none text-destructive-foreground">{children}</span>
   );

@@ -6,10 +6,11 @@ import { Pressable, type ColorValue } from "react-native";
 
 import { useDeadlinePassed } from "../../lib/clock";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 const COPY_FEEDBACK_DURATION_MS = 1200;
 
-export const CopyTextButton = memo(function CopyTextButton(props: {
+const BuiltinCopyTextButton = memo(function CopyTextButton(props: {
   readonly accessibilityLabel: string;
   readonly text: string;
   readonly onCopy?: () => Promise<void>;
@@ -75,3 +76,8 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
     </Pressable>
   );
 });
+
+export const CopyTextButton = defineNativePluginFeature(
+  "native.features.threads.copy-text-button",
+  BuiltinCopyTextButton,
+);

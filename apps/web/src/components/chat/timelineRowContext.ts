@@ -1,3 +1,4 @@
+import { createPluginContext } from "~/plugins/features";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import type {
@@ -20,7 +21,7 @@ import {
 import type { AsyncResult, Atom } from "effect/reactivity";
 import type { CommandOutputView } from "@t3tools/client-runtime/state/command-output";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
-import { useEffect, useRef, createContext, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, type MouseEvent, type ReactNode } from "react";
 import { type LegendListRef } from "@legendapp/list/react";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import type { PendingApproval } from "../../session-logic";
@@ -122,9 +123,15 @@ export interface TimelineRowActivityState {
   liveAnswerPreview: string | null;
 }
 
-export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
+export const TimelineRowCtx = createPluginContext<TimelineRowSharedState>(
+  "components/chat/timelineRowContext/TimelineRowCtx",
+  null!,
+);
 
-export const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
+export const TimelineRowActivityCtx = createPluginContext<TimelineRowActivityState>(
+  "components/chat/timelineRowContext/TimelineRowActivityCtx",
+  null!,
+);
 
 export interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
@@ -137,12 +144,12 @@ export interface WorkGroupViewedImage {
   readonly item: ExpandedImageItem | null;
 }
 
-export const WorkGroupViewCtx = createContext<{
+export const WorkGroupViewCtx = createPluginContext<{
   state: WorkGroupViewState;
   viewedImages: ReadonlyArray<WorkGroupViewedImage>;
   onToggleEntry: (collapsed: boolean, entryId: string) => void;
   onContentReady?: ((entryId: string) => void) | undefined;
-} | null>(null);
+} | null>("components/chat/timelineRowContext/WorkGroupViewCtx", null);
 
 export type TimelineWorkEntry = Extract<
   MessagesTimelineRow,

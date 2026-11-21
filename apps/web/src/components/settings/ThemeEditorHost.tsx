@@ -11,9 +11,19 @@ import {
 } from "../../themePalette";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { useThemeEditorStore } from "./themeEditorStore";
+import { definePluginComponent } from "~/plugins/features";
 
-const ThemeEditorPanel = lazy(() =>
+export const ThemeEditorHost = definePluginComponent(
+  "component:components/settings/ThemeEditorHost/ThemeEditorHost",
+  PluginOriginalThemeEditorHost,
+);
+
+const PluginOriginalThemeEditorPanel = lazy(() =>
   import("./ThemeEditorPanel").then((module) => ({ default: module.ThemeEditorPanel })),
+);
+const ThemeEditorPanel = definePluginComponent(
+  "component:components/settings/ThemeEditorHost/ThemeEditorPanel",
+  PluginOriginalThemeEditorPanel,
 );
 
 function useThemeDefinition(id: string | null | undefined) {
@@ -24,7 +34,7 @@ function useThemeDefinition(id: string | null | undefined) {
   );
 }
 
-export function ThemeEditorHost() {
+function PluginOriginalThemeEditorHost() {
   const session = useThemeEditorStore((store) => store.session);
   const closeThemeEditor = useThemeEditorStore((store) => store.closeThemeEditor);
   const { theme, setTheme, themeHalves, refreshTheme } = useTheme();

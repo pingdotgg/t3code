@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 // T3 ingest retains events and forwards to PostHog; UUIDs deduplicate retries there.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ClientOs } from "@t3tools/contracts";
@@ -9,7 +10,6 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
@@ -361,4 +361,4 @@ export const make = Effect.gen(function* () {
   return AnalyticsService.of({ record, flush, recordOwners });
 });
 
-export const layer = Layer.effect(AnalyticsService, make);
+export const layer = builtinServiceLayer("t3.server")(AnalyticsService, make);

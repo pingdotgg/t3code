@@ -56,6 +56,7 @@ import { retryShowcaseOperation } from "./showcaseRetry";
 import { stageShowcaseAgentActivity } from "./stageShowcaseAgentActivity";
 import { settingsNavigationState } from "../settings/settings-navigation";
 import { selectWorkspaceDetail } from "../layout/workspace/workspace-detail-selection";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 // Native launch requests (pairing links, scene switches) have no change event.
@@ -403,7 +404,7 @@ export function installShowcaseCapture(
 }
 
 /** The capture harness waits for this marker before taking a screenshot. */
-export function ShowcaseReadyMarker() {
+function BuiltinShowcaseReadyMarker() {
   const scene = useSyncExternalStore(subscribeToReadyScene, getReadyScene, getReadyScene);
   if (scene === null) return null;
   return (
@@ -414,3 +415,8 @@ export function ShowcaseReadyMarker() {
     />
   );
 }
+
+export const ShowcaseReadyMarker = defineNativePluginFeature(
+  "native.features.showcase.showcase-capture-coordinator.showcase-ready-marker",
+  BuiltinShowcaseReadyMarker,
+);

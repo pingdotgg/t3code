@@ -8,6 +8,7 @@ export const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   '[contenteditable="plaintext-only"]',
   '[role="textbox"]',
 ].join(",");
+export const CANVAS_STAGE_SELECTOR = "[data-canvas-stage]";
 const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
   "button",
   "a[href]",
@@ -20,6 +21,8 @@ const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
   '[role="radio"]',
   '[role="switch"]',
   '[role="tab"]',
+  // The design canvas uses single keys as tools.
+  CANVAS_STAGE_SELECTOR,
 ].join(",");
 // Closed popups can stay mounted; match only open or closing layers.
 export const TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR = [

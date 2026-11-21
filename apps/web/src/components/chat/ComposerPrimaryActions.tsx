@@ -28,6 +28,7 @@ import {
   alternateComposerDispatchAction,
   resolveComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
+import { definePluginComponent } from "~/plugins/features";
 
 interface PendingActionState {
   questionIndex: number;
@@ -231,7 +232,7 @@ export function CollapsedComposerStopAction({
   );
 }
 
-export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
+const PluginOriginalComposerPrimaryActions = memo(function ComposerPrimaryActions({
   children,
   compact,
   canOperateThread,
@@ -542,3 +543,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     </div>,
   );
 });
+export const ComposerPrimaryActions = definePluginComponent(
+  "component:components/chat/ComposerPrimaryActions/ComposerPrimaryActions",
+  PluginOriginalComposerPrimaryActions,
+);

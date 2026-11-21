@@ -1,6 +1,29 @@
 import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+const Empty = definePluginComponent("component:components/ui/empty/Empty", PluginOriginalEmpty);
+const EmptyHeader = definePluginComponent(
+  "component:components/ui/empty/EmptyHeader",
+  PluginOriginalEmptyHeader,
+);
+const EmptyMedia = definePluginComponent(
+  "component:components/ui/empty/EmptyMedia",
+  PluginOriginalEmptyMedia,
+);
+const EmptyTitle = definePluginComponent(
+  "component:components/ui/empty/EmptyTitle",
+  PluginOriginalEmptyTitle,
+);
+const EmptyDescription = definePluginComponent(
+  "component:components/ui/empty/EmptyDescription",
+  PluginOriginalEmptyDescription,
+);
+const EmptyContent = definePluginComponent(
+  "component:components/ui/empty/EmptyContent",
+  PluginOriginalEmptyContent,
+);
 
 const emptySizeClassName = {
   compact:
@@ -9,7 +32,7 @@ const emptySizeClassName = {
   hero: "gap-6 p-6 md:p-12 [&_[data-slot=empty-title]]:text-2xl sm:[&_[data-slot=empty-title]]:text-3xl",
 } as const;
 
-function Empty({
+function PluginOriginalEmpty({
   className,
   size = "default",
   ...props
@@ -27,7 +50,7 @@ function Empty({
   );
 }
 
-function EmptyHeader({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalEmptyHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn("flex max-w-sm flex-col items-center text-center", className)}
@@ -52,7 +75,7 @@ const emptyMediaVariants = cva(
   },
 );
 
-function EmptyMedia({
+function PluginOriginalEmptyMedia({
   className,
   variant = "default",
   ...props
@@ -87,13 +110,13 @@ function EmptyMedia({
   );
 }
 
-function EmptyTitle({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalEmptyTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div className={cn("font-semibold text-xl", className)} data-slot="empty-title" {...props} />
   );
 }
 
-function EmptyDescription({ className, ...props }: React.ComponentProps<"p">) {
+function PluginOriginalEmptyDescription({ className, ...props }: React.ComponentProps<"p">) {
   return (
     <div
       className={cn(
@@ -106,7 +129,7 @@ function EmptyDescription({ className, ...props }: React.ComponentProps<"p">) {
   );
 }
 
-function EmptyContent({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalEmptyContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(

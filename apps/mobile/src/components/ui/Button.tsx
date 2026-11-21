@@ -3,6 +3,9 @@ import { Pressable } from "react-native";
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import { AppText } from "./AppText";
 import { cn } from "../../lib/cn";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const Button = defineNativePluginFeature("native.components.ui.button", BuiltinButton);
 
 export interface ButtonProps {
   readonly label: string;
@@ -25,7 +28,7 @@ const TONE_CLASS_NAMES = {
   text: ["bg-transparent", "text-primary-text"],
 } as const;
 
-export function Button(props: ButtonProps) {
+function BuiltinButton(props: ButtonProps) {
   const [containerClassName, labelClassName] = TONE_CLASS_NAMES[props.tone ?? "secondary"];
   const disabled = Boolean(props.disabled || props.loading);
   return (

@@ -7,8 +7,9 @@ import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
+import { definePluginComponent } from "~/plugins/features";
 
-export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
+const PluginOriginalCompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   runtimeMode: RuntimeMode;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   showPermissions: boolean;
@@ -54,3 +55,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
     </Menu>
   );
 });
+export const CompactComposerControlsMenu = definePluginComponent(
+  "component:components/chat/CompactComposerControlsMenu/CompactComposerControlsMenu",
+  PluginOriginalCompactComposerControlsMenu,
+);

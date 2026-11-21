@@ -2,7 +2,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -14,6 +13,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+import { builtinLifecycleLayer } from "../plugins/PluginKernel.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Settings from "../serverSettings.ts";
 
@@ -134,7 +134,9 @@ class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExit
   }
 }
 
-export const layer = Layer.effectDiscard(
+export const layer = builtinLifecycleLayer(
+  "t3.thread",
+  "t3/runtime/background/KeepAwake#lifecycle1",
   Effect.gen(function* () {
     const platform = yield* HostProcess.Platform;
     const fileSystem = yield* FileSystem.FileSystem;

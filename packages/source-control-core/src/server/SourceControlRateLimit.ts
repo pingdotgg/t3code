@@ -1,8 +1,8 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import {
@@ -174,4 +174,4 @@ export const make = Effect.gen(function* () {
   return SourceControlRateLimit.of({ check, recordRateLimit, recordSuccess });
 });
 
-export const layer = Layer.effect(SourceControlRateLimit, make);
+export const layer = builtinServiceLayer("t3.git")(SourceControlRateLimit, make);

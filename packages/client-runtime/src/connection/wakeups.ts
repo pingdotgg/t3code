@@ -1,5 +1,5 @@
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import * as Context from "effect/Context";
-import * as Layer from "effect/Layer";
 import type * as Stream from "effect/Stream";
 
 export type ConnectionWakeup =
@@ -50,4 +50,4 @@ export class ConnectionWakeups extends Context.Service<
 const make = (service: ConnectionWakeups["Service"]) => ConnectionWakeups.of(service);
 
 export const layer = (service: ConnectionWakeups["Service"]) =>
-  Layer.succeed(ConnectionWakeups, make(service));
+  builtinSucceedLayer("t3.client")(ConnectionWakeups, make(service));

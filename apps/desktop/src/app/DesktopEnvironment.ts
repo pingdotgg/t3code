@@ -7,7 +7,6 @@ import type {
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
@@ -17,6 +16,7 @@ import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import type { OtlpProtocol } from "@t3tools/shared/observability";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
@@ -275,4 +275,4 @@ const make = Effect.fn("desktop.environment.make")(function* (
 });
 
 export const layer = (input: MakeDesktopEnvironmentInput) =>
-  Layer.effect(DesktopEnvironment, make(input));
+  builtinServiceLayer("t3.desktop.desktop-environment", DesktopEnvironment, make(input));

@@ -120,6 +120,56 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DevicesSettingsPanel = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/DevicesSettingsPanel",
+  PluginOriginalDevicesSettingsPanel,
+);
+export const BrowserSettingsPanel = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/BrowserSettingsPanel",
+  PluginOriginalBrowserSettingsPanel,
+);
+const BrowserViewportSetting = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/BrowserViewportSetting",
+  PluginOriginalBrowserViewportSetting,
+);
+const BrowserZoomSetting = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/BrowserZoomSetting",
+  PluginOriginalBrowserZoomSetting,
+);
+const BrowserAppearanceSetting = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/BrowserAppearanceSetting",
+  PluginOriginalBrowserAppearanceSetting,
+);
+const BrowserRecordingInputSettings = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/BrowserRecordingInputSettings",
+  PluginOriginalBrowserRecordingInputSettings,
+);
+const BrowserRecordingFrameRateSetting = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/BrowserRecordingFrameRateSetting",
+  PluginOriginalBrowserRecordingFrameRateSetting,
+);
+const BrowserLinkTargetSetting = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/BrowserLinkTargetSetting",
+  PluginOriginalBrowserLinkTargetSetting,
+);
+const DeviceIntegrationSettings = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/DeviceIntegrationSettings",
+  PluginOriginalDeviceIntegrationSettings,
+);
+const DeviceIntegrationControls = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/DeviceIntegrationControls",
+  PluginOriginalDeviceIntegrationControls,
+);
+const BrowserAutoShowFloatingPreviewSetting = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/BrowserAutoShowFloatingPreviewSetting",
+  PluginOriginalBrowserAutoShowFloatingPreviewSetting,
+);
+const BrowserProfilesSetting = definePluginComponent(
+  "component:components/settings/IntegrationsSettings/BrowserProfilesSetting",
+  PluginOriginalBrowserProfilesSetting,
+);
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
@@ -328,7 +378,7 @@ const rotateViewport = (
   height: viewport.width,
 });
 
-function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
+function PluginOriginalBrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
@@ -494,7 +544,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
   );
 }
 
-function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
+function PluginOriginalBrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const zoomFactor = useClientSettings((settings) => settings.browserDefaultZoomFactor);
@@ -544,7 +594,7 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
   );
 }
 
-function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) {
+function PluginOriginalBrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
@@ -594,7 +644,7 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
   );
 }
 
-function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolean }) {
+function PluginOriginalBrowserRecordingInputSettings({ disabled }: { readonly disabled: boolean }) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const showKeys = useClientSettings((settings) => settings.browserRecordingShowKeyPresses);
@@ -638,7 +688,11 @@ function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolea
   );
 }
 
-function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boolean }) {
+function PluginOriginalBrowserRecordingFrameRateSetting({
+  disabled,
+}: {
+  readonly disabled: boolean;
+}) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const frameRate = useClientSettings((settings) => settings.browserRecordingFrameRate);
@@ -695,7 +749,7 @@ const LINK_TARGET_LABELS: Readonly<Record<BrowserLinkTarget, string>> = {
   app: "T3 Code",
 };
 
-function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) {
+function PluginOriginalBrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
@@ -866,7 +920,7 @@ export function PullRequestLinksOpenInAppSetting() {
   );
 }
 
-function DeviceIntegrationSettings() {
+function PluginOriginalDeviceIntegrationSettings() {
   const gt = useGT();
   const { search, environment: selected } = useSettingsScope();
   const settings = useScopedSettings();
@@ -893,7 +947,7 @@ function DeviceIntegrationSettings() {
   );
 }
 
-function DeviceIntegrationControls({
+function PluginOriginalDeviceIntegrationControls({
   environmentId,
   enabled,
   agentAccessEnabled,
@@ -1141,7 +1195,11 @@ function AgentBrowserAccessSetting() {
   );
 }
 
-function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled: boolean }) {
+function PluginOriginalBrowserAutoShowFloatingPreviewSetting({
+  disabled,
+}: {
+  readonly disabled: boolean;
+}) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const autoShow = useClientSettings((settings) => settings.browserAutoShowFloatingPreview);
@@ -1180,7 +1238,7 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
-function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
+function PluginOriginalBrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
@@ -1685,7 +1743,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   );
 }
 
-export function BrowserSettingsPanel() {
+export function PluginOriginalBrowserSettingsPanel() {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const desktopOnly = !isElectron;
@@ -1728,7 +1786,7 @@ export function BrowserSettingsPanel() {
   );
 }
 
-export function DevicesSettingsPanel() {
+export function PluginOriginalDevicesSettingsPanel() {
   return (
     <SettingsPageContainer>
       <DeviceIntegrationSettings />

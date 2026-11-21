@@ -1,6 +1,24 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { CheckIcon, CircleArrowUpIcon, DownloadIcon, RotateCwIcon } from "lucide-react";
 import type { AnimationEventHandler } from "react";
+import { definePluginComponent } from "~/plugins/features";
+
+const DesktopUpdateAvailableIcon = definePluginComponent(
+  "component:components/sidebar/DesktopUpdateStatusIcon/DesktopUpdateAvailableIcon",
+  PluginOriginalDesktopUpdateAvailableIcon,
+);
+const DesktopUpdateDownloadingIcon = definePluginComponent(
+  "component:components/sidebar/DesktopUpdateStatusIcon/DesktopUpdateDownloadingIcon",
+  PluginOriginalDesktopUpdateDownloadingIcon,
+);
+const DesktopUpdateDownloadedIcon = definePluginComponent(
+  "component:components/sidebar/DesktopUpdateStatusIcon/DesktopUpdateDownloadedIcon",
+  PluginOriginalDesktopUpdateDownloadedIcon,
+);
+export const DesktopUpdateStatusIcon = definePluginComponent(
+  "component:components/sidebar/DesktopUpdateStatusIcon/DesktopUpdateStatusIcon",
+  PluginOriginalDesktopUpdateStatusIcon,
+);
 
 const DOWNLOAD_PROGRESS_RADIUS = 14;
 const DOWNLOAD_PROGRESS_CIRCUMFERENCE = 2 * Math.PI * DOWNLOAD_PROGRESS_RADIUS;
@@ -40,7 +58,7 @@ export function shouldContinueDesktopUpdateCheckAnimation({
   return isChecking && !prefersReducedMotion;
 }
 
-function DesktopUpdateAvailableIcon() {
+function PluginOriginalDesktopUpdateAvailableIcon() {
   return (
     <span className="relative grid size-4 place-items-center">
       <DownloadIcon className="size-4" />
@@ -52,7 +70,11 @@ function DesktopUpdateAvailableIcon() {
   );
 }
 
-function DesktopUpdateDownloadingIcon({ percent }: { readonly percent: number | null }) {
+function PluginOriginalDesktopUpdateDownloadingIcon({
+  percent,
+}: {
+  readonly percent: number | null;
+}) {
   const normalizedPercent = normalizeDesktopUpdateDownloadPercent(percent);
   const progressOffset = DOWNLOAD_PROGRESS_CIRCUMFERENCE * (1 - normalizedPercent / 100);
 
@@ -89,7 +111,7 @@ function DesktopUpdateDownloadingIcon({ percent }: { readonly percent: number | 
   );
 }
 
-function DesktopUpdateDownloadedIcon() {
+function PluginOriginalDesktopUpdateDownloadedIcon() {
   return (
     <span className="relative grid size-4 place-items-center">
       <RotateCwIcon className="size-4" />
@@ -100,7 +122,7 @@ function DesktopUpdateDownloadedIcon() {
   );
 }
 
-export function DesktopUpdateStatusIcon({
+function PluginOriginalDesktopUpdateStatusIcon({
   downloadPercent,
   isCheckAnimating,
   onCheckAnimationIteration,

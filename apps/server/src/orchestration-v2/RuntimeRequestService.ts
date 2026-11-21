@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   ProviderApprovalDecision,
   ProviderSessionId,
@@ -68,7 +69,7 @@ export const layer: Layer.Layer<
   RuntimeRequestServiceV2,
   never,
   ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   RuntimeRequestServiceV2,
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;

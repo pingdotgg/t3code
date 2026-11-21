@@ -31,10 +31,16 @@ import { PullRequestStackHeader } from "./PullRequestStackHeader";
 import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { readableFailure } from "./pullRequestDetail.logic";
+import { definePluginComponent } from "~/plugins/features";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
-export function PullRequestStackMenu({
+export const PullRequestStackMenu = definePluginComponent(
+  "component:components/pullRequest/PullRequestStackMenu/PullRequestStackMenu",
+  PluginOriginalPullRequestStackMenu,
+);
+
+function PluginOriginalPullRequestStackMenu({
   hostLabel,
   terminology,
   stack,

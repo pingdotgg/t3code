@@ -5,13 +5,26 @@ import * as React from "react";
 
 import { cn } from "~/lib/utils";
 import { Toggle as ToggleComponent, type toggleVariants } from "~/components/ui/toggle";
+import { definePluginComponent, createPluginContext } from "~/plugins/features";
 
-const ToggleGroupContext = React.createContext<VariantProps<typeof toggleVariants>>({
-  size: "default",
-  variant: "default",
-});
+const ToggleGroup = definePluginComponent(
+  "component:components/ui/toggle-group/ToggleGroup",
+  PluginOriginalToggleGroup,
+);
+const Toggle = definePluginComponent(
+  "component:components/ui/toggle-group/Toggle",
+  PluginOriginalToggle,
+);
 
-function ToggleGroup({
+const ToggleGroupContext = createPluginContext<VariantProps<typeof toggleVariants>>(
+  "components/ui/toggle-group/ToggleGroupContext",
+  {
+    size: "default",
+    variant: "default",
+  },
+);
+
+function PluginOriginalToggleGroup({
   className,
   variant = "segmented",
   size: sizeProp,
@@ -49,7 +62,7 @@ function ToggleGroup({
   );
 }
 
-function Toggle({
+function PluginOriginalToggle({
   className,
   children,
   variant,

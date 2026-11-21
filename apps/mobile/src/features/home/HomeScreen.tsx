@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { useGT, useMessages } from "gt-react-native";
 
 import { useContentTopInset } from "../../components/ui/useBarInset";
@@ -161,7 +162,7 @@ const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
 // rows that are already built instead of rows still being rebuilt.
 const THREAD_LIST_V2_DRAW_DISTANCE = 1_000;
 
-function HomeTopContentSpacer() {
+function BuiltinHomeTopContentSpacer() {
   return <View className="h-4" />;
 }
 
@@ -193,7 +194,7 @@ function renderHomeScrollView(props: ScrollViewProps) {
   return <HomeScrollView {...props} />;
 }
 
-export function HomeScreen(props: HomeScreenProps) {
+function BuiltinHomeScreen(props: HomeScreenProps) {
   const gt = useGT();
   const m = useMessages();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
@@ -839,3 +840,13 @@ export function HomeScreen(props: HomeScreenProps) {
     </View>
   );
 }
+
+const HomeTopContentSpacer = defineNativePluginFeature(
+  "native.features.home.home-screen.home-top-content-spacer",
+  BuiltinHomeTopContentSpacer,
+);
+
+export const HomeScreen = defineNativePluginFeature(
+  "native.features.home.home-screen",
+  BuiltinHomeScreen,
+);

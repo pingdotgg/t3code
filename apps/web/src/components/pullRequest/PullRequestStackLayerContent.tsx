@@ -2,8 +2,14 @@ import type { PullRequestStack } from "@t3tools/contracts";
 import { useMessages } from "gt-react";
 import { cn } from "~/lib/utils";
 import { resolvePullRequestState } from "./pullRequestPresentation";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PullRequestStackLayerContent({
+export const PullRequestStackLayerContent = definePluginComponent(
+  "component:components/pullRequest/PullRequestStackLayerContent/PullRequestStackLayerContent",
+  PluginOriginalPullRequestStackLayerContent,
+);
+
+function PluginOriginalPullRequestStackLayerContent({
   layer,
   compact = false,
 }: {

@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { Slider } from "@expo/ui/swift-ui";
 import {
   accessibilityLabel,
@@ -17,7 +18,7 @@ import { useControlTheme } from "./useControlTheme";
 
 export type { SliderRowProps } from "./SliderRow.types";
 
-export function SliderRow(props: SliderRowProps) {
+function BuiltinSliderRow(props: SliderRowProps) {
   const { colors } = useControlTheme();
   // The value of the drag in progress; null until the drag moves.
   const draft = useRef<number | null>(null);
@@ -77,3 +78,8 @@ export function SliderRow(props: SliderRowProps) {
     </View>
   );
 }
+
+export const SliderRow = defineNativePluginFeature(
+  "native.components.ui.slider-row",
+  BuiltinSliderRow,
+);

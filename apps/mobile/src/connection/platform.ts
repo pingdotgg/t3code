@@ -1,3 +1,4 @@
+import { builtinContextLayer, builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import { ClientCapabilities, PlatformConnectionSource } from "@t3tools/client-runtime/platform";
 import {
   ConnectionBlockedError,
@@ -146,7 +147,8 @@ const layerWakeups = Wakeups.layer({
   ),
 });
 
-const layerCapabilities = Layer.effectContext(
+const layerCapabilities = builtinContextLayer(
+  "t3.mobile.platform",
   Effect.gen(function* () {
     const storage = yield* MobileStorage.MobileStorage;
     return Context.make(
@@ -255,7 +257,8 @@ const layerCapabilities = Layer.effectContext(
   }),
 );
 
-const layerPlatformConnectionSource = Layer.succeed(
+const layerPlatformConnectionSource = builtinSucceedLayer(
+  "t3.mobile.platform",
   PlatformConnectionSource.PlatformConnectionSource,
   PlatformConnectionSource.PlatformConnectionSource.of({
     registrations: Stream.empty,

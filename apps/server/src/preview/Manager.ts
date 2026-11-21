@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   type PreviewCloseInput,
   type PreviewEvent,
@@ -22,7 +23,6 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -510,4 +510,4 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   });
 }).pipe(Effect.withSpan("PreviewManager.make"));
 
-export const layer = Layer.effect(PreviewManager, make);
+export const layer = builtinServiceLayer("t3.preview")(PreviewManager, make);

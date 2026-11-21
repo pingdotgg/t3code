@@ -4,6 +4,24 @@ import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
 
 import { Skeleton } from "./ui/skeleton";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DiffPanelShell = definePluginComponent(
+  "component:components/DiffPanelShell/DiffPanelShell",
+  PluginOriginalDiffPanelShell,
+);
+export const DiffFileHeaderSkeleton = definePluginComponent(
+  "component:components/DiffPanelShell/DiffFileHeaderSkeleton",
+  PluginOriginalDiffFileHeaderSkeleton,
+);
+const DiffCodeLineSkeleton = definePluginComponent(
+  "component:components/DiffPanelShell/DiffCodeLineSkeleton",
+  PluginOriginalDiffCodeLineSkeleton,
+);
+export const DiffPanelLoadingState = definePluginComponent(
+  "component:components/DiffPanelShell/DiffPanelLoadingState",
+  PluginOriginalDiffPanelLoadingState,
+);
 
 export type DiffPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 
@@ -18,7 +36,7 @@ function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
   );
 }
 
-export function DiffPanelShell(props: {
+function PluginOriginalDiffPanelShell(props: {
   mode: DiffPanelMode;
   header: ReactNode;
   children: ReactNode;
@@ -46,7 +64,7 @@ export function DiffPanelShell(props: {
   );
 }
 
-export function DiffFileHeaderSkeleton({
+function PluginOriginalDiffFileHeaderSkeleton({
   titleWidth,
 }: {
   titleWidth: "short" | "medium" | "long";
@@ -75,7 +93,7 @@ export function DiffFileHeaderSkeleton({
   );
 }
 
-function DiffCodeLineSkeleton({ width }: { width: "short" | "medium" | "long" }) {
+function PluginOriginalDiffCodeLineSkeleton({ width }: { width: "short" | "medium" | "long" }) {
   return (
     <div className="flex items-center gap-3">
       <Skeleton shape="pill" className="h-2.5 w-5 shrink-0" />
@@ -89,7 +107,7 @@ function DiffCodeLineSkeleton({ width }: { width: "short" | "medium" | "long" })
   );
 }
 
-export function DiffPanelLoadingState(props: { label: string }) {
+function PluginOriginalDiffPanelLoadingState(props: { label: string }) {
   return (
     <div
       className="min-h-0 flex-1 overflow-hidden bg-background"

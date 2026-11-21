@@ -23,6 +23,40 @@ import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
 import { useNowSecond } from "~/hooks/useNowSecond";
 import { WorkLogRow } from "./WorkLog";
+import { definePluginComponent } from "~/plugins/features";
+
+const StageIcon = definePluginComponent(
+  "component:components/chat/WorktreeSetupCard/StageIcon",
+  PluginOriginalStageIcon,
+);
+const ShimmerOverlay = definePluginComponent(
+  "component:components/chat/WorktreeSetupCard/ShimmerOverlay",
+  PluginOriginalShimmerOverlay,
+);
+const SetupHeaderRow = definePluginComponent(
+  "component:components/chat/WorktreeSetupCard/SetupHeaderRow",
+  PluginOriginalSetupHeaderRow,
+);
+const StageRow = definePluginComponent(
+  "component:components/chat/WorktreeSetupCard/StageRow",
+  PluginOriginalStageRow,
+);
+const OutputTail = definePluginComponent(
+  "component:components/chat/WorktreeSetupCard/OutputTail",
+  PluginOriginalOutputTail,
+);
+const SetupDetails = definePluginComponent(
+  "component:components/chat/WorktreeSetupCard/SetupDetails",
+  PluginOriginalSetupDetails,
+);
+const CollapsedSummaryRow = definePluginComponent(
+  "component:components/chat/WorktreeSetupCard/CollapsedSummaryRow",
+  PluginOriginalCollapsedSummaryRow,
+);
+export const WorktreeSetupCard = definePluginComponent(
+  "component:components/chat/WorktreeSetupCard/WorktreeSetupCard",
+  PluginOriginalWorktreeSetupCard,
+);
 
 interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
@@ -64,7 +98,7 @@ function Elapsed({
   return live ? <LiveElapsed startedAt={startedAt} /> : null;
 }
 
-function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
+function PluginOriginalStageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
   const className = "size-4 shrink-0 stroke-2";
   switch (status) {
     case "done":
@@ -97,7 +131,7 @@ function stageRowClassName(status: WorktreeSetupStage["status"]): string {
   }
 }
 
-function ShimmerOverlay({ children }: { children: ReactNode }) {
+function PluginOriginalShimmerOverlay({ children }: { children: ReactNode }) {
   return (
     <span
       aria-hidden
@@ -125,7 +159,7 @@ function headerLabel(snapshot: WorktreeSetupSnapshot, resolve: MessageResolver):
   }
 }
 
-function SetupHeaderRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
+function PluginOriginalSetupHeaderRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   const m = useMessages();
   const running = snapshot.phase === "running";
   const failed = snapshot.phase === "failed";
@@ -160,7 +194,7 @@ function SetupHeaderRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   );
 }
 
-function StageRow({
+function PluginOriginalStageRow({
   stage,
   setupRunning,
   setupEndedAt,
@@ -228,7 +262,13 @@ function StageRow({
 const OUTPUT_TAIL_LINES = 4;
 const OUTPUT_TAIL_SLOTS = Array.from({ length: OUTPUT_TAIL_LINES }, (_, slot) => slot);
 
-function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
+function PluginOriginalOutputTail({
+  lines,
+  failed,
+}: {
+  lines: ReadonlyArray<string>;
+  failed: boolean;
+}) {
   const rows = OUTPUT_TAIL_SLOTS.map((slot) => ({
     slot,
     line: lines[lines.length - OUTPUT_TAIL_LINES + slot] ?? "",
@@ -251,7 +291,7 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
   );
 }
 
-function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
+function PluginOriginalSetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   return (
     <dl className="mt-1 mb-1.5 ml-8 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
       {snapshot.branch ? (
@@ -296,7 +336,7 @@ function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   );
 }
 
-function CollapsedSummaryRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
+function PluginOriginalCollapsedSummaryRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   const m = useMessages();
   const status: WorktreeSetupStage["status"] =
     snapshot.phase === "failed" || snapshot.phase === "cancelled"
@@ -324,7 +364,7 @@ function CollapsedSummaryRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) 
   );
 }
 
-export function WorktreeSetupCard({
+function PluginOriginalWorktreeSetupCard({
   snapshot,
   onCancel,
   onWorkLocally,

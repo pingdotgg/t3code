@@ -35,6 +35,16 @@ import {
   type HardwareKeyboardCommand,
 } from "./hardwareKeyboardCommands";
 import { selectWorkspaceDetail } from "../layout/workspace/workspace-detail-selection";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const HardwareKeyboardCommandOverlay = defineNativePluginFeature(
+  "native.features.keyboard.hardware-keyboard-command-provider.hardware-keyboard-command-overlay",
+  BuiltinHardwareKeyboardCommandOverlay,
+);
+export const HardwareKeyboardCommandProvider = defineNativePluginFeature(
+  "native.features.keyboard.hardware-keyboard-command-provider",
+  BuiltinHardwareKeyboardCommandProvider,
+);
 
 const EMPTY_COPY_FEEDBACK: GitActionProgress = {
   phase: "idle",
@@ -46,11 +56,11 @@ const COPY_FEEDBACK_DISMISS_MS = 3_000;
 const CommandPaletteContext = createContext<ReactNode>(null);
 
 /** Render inside the workspace so palette actions share its navigation and pane state. */
-export function HardwareKeyboardCommandOverlay() {
+function BuiltinHardwareKeyboardCommandOverlay() {
   return use(CommandPaletteContext);
 }
 
-export function HardwareKeyboardCommandProvider({
+function BuiltinHardwareKeyboardCommandProvider({
   children,
   pathname,
 }: PropsWithChildren<{ readonly pathname: string }>) {

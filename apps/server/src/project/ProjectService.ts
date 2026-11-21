@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CommandId,
   type OrchestrationProjectShell,
@@ -814,11 +815,10 @@ export const make = Effect.gen(function* () {
     return yield* Effect.forEach(shells, enrichShell, { concurrency: 16 });
   });
 
-  const listRows = projects
-    .list()
-    .pipe(
-      Effect.mapError((cause) => new ProjectOperationError({ operation: "list-projects", cause })),
-    );
+  // Suspended so a disabled t3.thread store fails per call instead of at construction.
+  const listRows = Effect.suspend(() => projects.list()).pipe(
+    Effect.mapError((cause) => new ProjectOperationError({ operation: "list-projects", cause })),
+  );
 
   const snapshot = Effect.gen(function* () {
     const rows = yield* listRows;
@@ -865,6 +865,6 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ProjectService, make).pipe(
+export const layer = builtinServiceLayer("t3.projects")(ProjectService, make).pipe(
   Layer.provide(ThreadCommandExecutor.layer),
 );

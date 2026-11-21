@@ -3,6 +3,12 @@ import { TerminalIcon } from "lucide-react";
 
 import type { ContextPresentationCapability } from "../contextPresentationRegistry";
 import { ContextChipPopover, ContextChipShell } from "../contextChipParts";
+import { definePluginComponent } from "~/plugins/features";
+
+export const TerminalContextInlineChip = definePluginComponent(
+  "component:components/chat/TerminalContextInlineChip/TerminalContextInlineChip",
+  PluginOriginalTerminalContextInlineChip,
+);
 
 interface TerminalContextInlineChipProps {
   label: string;
@@ -14,7 +20,7 @@ interface TerminalContextInlineChipProps {
   expired?: boolean;
 }
 
-export function TerminalContextInlineChip(props: TerminalContextInlineChipProps) {
+function PluginOriginalTerminalContextInlineChip(props: TerminalContextInlineChipProps) {
   const { label, terminalLabel, lineStart, lineEnd, text, detailsMode, expired = false } = props;
   const gt = useGT();
 

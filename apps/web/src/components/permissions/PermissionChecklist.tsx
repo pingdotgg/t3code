@@ -2,6 +2,16 @@ import { T, useGT } from "gt-react";
 import { CircleCheckIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { Button } from "../ui/button";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PermissionChecklist = definePluginComponent(
+  "component:components/permissions/PermissionChecklist/PermissionChecklist",
+  PluginOriginalPermissionChecklist,
+);
+export const PermissionContinueButton = definePluginComponent(
+  "component:components/permissions/PermissionChecklist/PermissionContinueButton",
+  PluginOriginalPermissionContinueButton,
+);
 
 export interface PermissionItem {
   id: string;
@@ -12,7 +22,7 @@ export interface PermissionItem {
   onAllow: () => void;
 }
 
-export function PermissionChecklist({
+function PluginOriginalPermissionChecklist({
   permissions,
   busy = false,
 }: {
@@ -44,7 +54,7 @@ export function PermissionChecklist({
   );
 }
 
-export function PermissionContinueButton({
+function PluginOriginalPermissionContinueButton({
   ready,
   busy = false,
   children,

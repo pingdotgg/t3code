@@ -13,6 +13,12 @@ import { Switch } from "../ui/switch";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { useSearchableSetting } from "./settingsSearch";
+import { definePluginComponent } from "~/plugins/features";
+
+export const LoadBalancingSettings = definePluginComponent(
+  "component:components/settings/LoadBalancingSettings/LoadBalancingSettings",
+  PluginOriginalLoadBalancingSettings,
+);
 
 const preferences = [
   { value: 100, label: msg("Prefer") },
@@ -49,7 +55,7 @@ function summarizeLoadPreferences(
   return parts.length === 0 ? null : parts.join(" · ");
 }
 
-export function LoadBalancingSettings({
+function PluginOriginalLoadBalancingSettings({
   environments,
 }: {
   environments: ReadonlyArray<EnvironmentPresentation>;

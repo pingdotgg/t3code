@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CommandId,
   isOrchestrationV2WorkActive,
@@ -27,7 +28,6 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
@@ -904,4 +904,4 @@ export const make = Effect.gen(function* () {
   return { start, drain: worker.drain, requestSync } satisfies PullRequestSyncReactor["Service"];
 });
 
-export const layer = Layer.effect(PullRequestSyncReactor, make);
+export const layer = builtinServiceLayer("t3.thread")(PullRequestSyncReactor, make);

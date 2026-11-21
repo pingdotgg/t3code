@@ -1,7 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
@@ -14,6 +13,7 @@ import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "./DesktopWslEnvironment.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export const WSL_INSTANCE_ID_PREFIX = "wsl:";
 const WSL_DEFAULT_DISTRO_ID = `${WSL_INSTANCE_ID_PREFIX}default`;
@@ -56,7 +56,8 @@ const scanForWslPort = Effect.fn("desktop.wslBackend.scanForWslPort")(function* 
   });
 });
 
-export const layer = Layer.effect(
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-wsl-backend",
   DesktopWslBackend,
   Effect.gen(function* () {
     const pool = yield* DesktopBackendPool.DesktopBackendPool;

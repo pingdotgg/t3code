@@ -4,6 +4,7 @@ import {
   type PreviewAnnotationPayload,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { definePluginFeature } from "~/plugins/features";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
@@ -24,7 +25,7 @@ interface Props {
   ) => void;
 }
 
-export function PreviewPanel({
+export function BuiltinPreviewPanel({
   mode,
   threadRef,
   tabId,
@@ -61,3 +62,5 @@ export function PreviewPanel({
     </PreviewPanelShell>
   );
 }
+
+export const PreviewPanel = definePluginFeature("preview", BuiltinPreviewPanel);

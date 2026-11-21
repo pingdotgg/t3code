@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CheckpointScopeId,
   CommandId,
@@ -57,7 +58,7 @@ export const layer: Layer.Layer<
   | EventSink.EventSinkV2
   | IdAllocator.IdAllocatorV2
   | ProjectionStore.ProjectionStoreV2
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   CheckpointCaptureServiceV2,
   Effect.gen(function* () {
     const checkpoints = yield* CheckpointService.CheckpointServiceV2;

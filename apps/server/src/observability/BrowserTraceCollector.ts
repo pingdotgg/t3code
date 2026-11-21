@@ -1,7 +1,7 @@
+import { builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import type { TraceRecord, TraceSink } from "@t3tools/shared/observability";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 export class BrowserTraceCollector extends Context.Service<
   BrowserTraceCollector,
@@ -22,4 +22,5 @@ export const make = (sink: TraceSink): BrowserTraceCollector["Service"] =>
     }),
   });
 
-export const layer = (sink: TraceSink) => Layer.succeed(BrowserTraceCollector, make(sink));
+export const layer = (sink: TraceSink) =>
+  builtinSucceedLayer("t3.server")(BrowserTraceCollector, make(sink));

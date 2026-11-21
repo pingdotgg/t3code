@@ -36,6 +36,7 @@ import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import { m } from "../i18n/messages.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 const { logWarning: logBackendPoolWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-pool");
@@ -116,7 +117,8 @@ type UnregisterAction =
   | { readonly _tag: "Wait"; readonly done: Deferred.Deferred<void> }
   | { readonly _tag: "Close"; readonly entry: ActiveRegisteredInstance };
 
-export const layer = Layer.effect(
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-backend-pool",
   DesktopBackendPool,
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -400,7 +402,8 @@ export const layer = Layer.effect(
 export const layerTest = (
   instances: readonly DesktopBackendInstance[],
 ): Layer.Layer<DesktopBackendPool> =>
-  Layer.effect(
+  builtinServiceLayer(
+    "t3.desktop.desktop-backend-pool",
     DesktopBackendPool,
     Effect.gen(function* () {
       if (instances.length === 0) {

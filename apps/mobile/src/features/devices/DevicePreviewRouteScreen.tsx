@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { SheetCloseButton } from "../../components/ui/SheetHeader";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
@@ -56,7 +57,7 @@ type DevicePreviewRouteScreenProps = StaticScreenProps<{
   readonly deviceKey?: string;
 }>;
 
-export function DevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProps) {
+function BuiltinDevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = () => navigation.goBack();
   const { environmentId, threadId } = route.params;
@@ -76,7 +77,7 @@ export function DevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProp
   );
 }
 
-export function DevicePreviewScreen({
+function BuiltinDevicePreviewScreen({
   environmentId,
   threadId,
   onClose,
@@ -376,7 +377,7 @@ export function DevicePreviewScreen({
   );
 }
 
-function DeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<AppBarMenuItem> }) {
+function BuiltinDeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<AppBarMenuItem> }) {
   const gt = useGT();
   return (
     <Menu
@@ -393,7 +394,7 @@ function DeviceOptionsMenu({ items }: { readonly items: ReadonlyArray<AppBarMenu
   );
 }
 
-function OpenDevicePreview({
+function BuiltinOpenDevicePreview({
   environmentId,
   preview,
   streamRef,
@@ -450,3 +451,23 @@ function OpenDevicePreview({
     </View>
   );
 }
+
+export const DevicePreviewScreen = defineNativePluginFeature(
+  "native.features.devices.device-preview-route-screen.device-preview-screen",
+  BuiltinDevicePreviewScreen,
+);
+
+const DeviceOptionsMenu = defineNativePluginFeature(
+  "native.features.devices.device-preview-route-screen.device-options-menu",
+  BuiltinDeviceOptionsMenu,
+);
+
+const OpenDevicePreview = defineNativePluginFeature(
+  "native.features.devices.device-preview-route-screen.open-device-preview",
+  BuiltinOpenDevicePreview,
+);
+
+export const DevicePreviewRouteScreen = defineNativePluginFeature(
+  "device",
+  BuiltinDevicePreviewRouteScreen,
+);

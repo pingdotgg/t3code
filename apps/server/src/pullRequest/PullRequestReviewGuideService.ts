@@ -1,10 +1,10 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -81,7 +81,21 @@ const make = Effect.gen(function* () {
     input: PullRequestRef,
   ) {
     const project = Option.getOrUndefined(
-      yield* projects.getShell(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
+      yield* Effect.suspend(() => projects.getShell(input.projectId)).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+        Effect.catchCauseIf(
+          (cause) =>
+            cause.reasons.length > 0 &&
+            cause.reasons.every(
+              (reason) =>
+                Cause.isDieReason(reason) &&
+                reason.defect instanceof Error &&
+                (reason.defect.message === "Plugin 't3.projects' is disabled." ||
+                  reason.defect.message === "Plugin 't3.thread' is disabled."),
+            ),
+          () => Effect.succeedNone,
+        ),
+      ),
     );
     const key = pullRequestSyncKey(input, project?.repositoryIdentity ?? undefined);
     if (key === null || project === undefined) {
@@ -521,4 +535,4 @@ const make = Effect.gen(function* () {
   return PullRequestReviewGuideService.of({ get, generate });
 });
 
-export const layer = Layer.effect(PullRequestReviewGuideService, make);
+export const layer = builtinServiceLayer("t3.pull-requests")(PullRequestReviewGuideService, make);

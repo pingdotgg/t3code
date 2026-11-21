@@ -20,6 +20,13 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { definePluginComponent } from "~/plugins/features";
+
+export const RelayClientInstallDialog = definePluginComponent(
+  "component:components/cloud/RelayClientInstallDialog/RelayClientInstallDialog",
+  PluginOriginalRelayClientInstallDialog,
+);
+
 const installSteps: ReadonlyArray<{
   readonly stage: RelayClientInstallProgressStage;
   readonly label: string;
@@ -33,7 +40,7 @@ const installSteps: ReadonlyArray<{
   { stage: "activating", label: msg("Activating installation") },
 ];
 
-export function RelayClientInstallDialog() {
+function PluginOriginalRelayClientInstallDialog() {
   const state = useSyncExternalStore(
     subscribeRelayClientInstallDialog,
     readRelayClientInstallDialogState,

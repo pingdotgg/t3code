@@ -93,9 +93,11 @@ import {
   buildMessageContext,
   previewAnnotationContextReference,
   responseContextReference,
+  threadContextReference,
 } from "../../lib/composerContextRecords";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
+import { useQuietThreadShell } from "../../state/entities";
 import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -125,6 +127,7 @@ import { readEnvironmentScope } from "../../state/session";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  threadContextRecord,
   threadContextsOutsideEnvironment,
 } from "@t3tools/shared/composerContextReferences";
 import {
@@ -197,6 +200,8 @@ type UsageLimitsPanel = ReturnType<typeof useUsageLimitsPanel>;
 type TimelineFollow = ReturnType<typeof useTimelineFollow>;
 
 interface ComposerSendInput {
+  readonly embedded: boolean;
+  readonly contextThreadRef: ScopedThreadRef | undefined;
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
@@ -300,6 +305,8 @@ interface ComposerSendInput {
  */
 export function useComposerSend(input: ComposerSendInput) {
   const {
+    embedded,
+    contextThreadRef,
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -381,6 +388,30 @@ export function useComposerSend(input: ComposerSendInput) {
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
+  const contextThread = useQuietThreadShell(contextThreadRef ?? null);
+  const contextRecord =
+    contextThreadRef !== undefined &&
+    contextThreadRef.environmentId === environmentId &&
+    contextThreadRef.threadId !== activeThread?.id
+      ? threadContextRecord(contextThreadRef, contextThread?.title ?? "Main thread")
+      : null;
+  // The host thread is reference material; it never becomes the send target or a draft record.
+  const withContextThread = (context: ReturnType<typeof buildMessageContext>) =>
+    contextRecord === null
+      ? context
+      : {
+          version: 1 as const,
+          records: [
+            ...(context?.records ?? []).filter(
+              (existing) => existing.contextId !== contextRecord.contextId,
+            ),
+            contextRecord,
+          ],
+        };
+  const withContextThreadText = (text: string) =>
+    contextRecord === null
+      ? text
+      : ensureInlineContextReferences(text, [threadContextReference(contextRecord)]);
   const uploadThreadFeedback = useOrchestrationCommand(threadEnvironment.uploadFeedback, {
     reportFailure: false,
   });
@@ -415,13 +446,15 @@ export function useComposerSend(input: ComposerSendInput) {
   const onSend = async (
     e?: { preventDefault: () => void },
     dispatchMode: ComposerDispatchMode = "auto",
-    submissionIntent: ComposerSubmissionIntent = "foreground",
+    requestedSubmissionIntent: ComposerSubmissionIntent = "foreground",
     directAnnotation?: {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
   ) => {
     e?.preventDefault();
+    // Sending from a side conversation keeps the selected workspace thread in place.
+    const submissionIntent = embedded ? "foreground" : requestedSubmissionIntent;
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     const promptAtSend = promptRef.current;
@@ -999,7 +1032,7 @@ export function useComposerSend(input: ComposerSendInput) {
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server
     // rebinds them to the persisted id.
-    const buildOutgoingMessageContext = (attachmentIds: ReadonlyArray<string>) =>
+    const buildComposerMessageContext = (attachmentIds: ReadonlyArray<string>) =>
       buildMessageContext({
         terminalContexts: composerTerminalContextsSnapshot,
         reviewComments: composerReviewCommentsSnapshot,
@@ -1012,7 +1045,9 @@ export function useComposerSend(input: ComposerSendInput) {
           attachmentId: attachmentIds[index] ?? attachment.id,
         })),
       });
-    const outgoingMessageContext = buildOutgoingMessageContext(
+    const buildOutgoingMessageContext = (attachmentIds: ReadonlyArray<string>) =>
+      withContextThread(buildComposerMessageContext(attachmentIds));
+    const outgoingMessageContext = buildComposerMessageContext(
       composerAttachmentsSnapshot.map((attachment) => attachment.id),
     );
     const messageIdForSend = newMessageId();
@@ -1306,7 +1341,13 @@ export function useComposerSend(input: ComposerSendInput) {
         project: activeProject,
         branch: activeThreadBranch!,
         selections: multipleModelSelections,
-        targets: multipleTargets,
+        targets:
+          contextRecord === null
+            ? multipleTargets
+            : multipleTargets.map((target) => ({
+                ...target,
+                text: withContextThreadText(target.text),
+              })),
         sendSnapshot,
         createdAt: messageCreatedAt,
         attachmentsPromise: turnAttachmentsPromise,
@@ -1426,7 +1467,10 @@ export function useComposerSend(input: ComposerSendInput) {
           message: {
             messageId: newMessageId(),
             role: "user",
-            text: "/compact",
+            ...withMessageContext({
+              text: withContextThreadText("/compact"),
+              context: withContextThread(undefined),
+            }),
             attachments: [],
             idleCompaction: "onReturn",
           },
@@ -1494,7 +1538,7 @@ export function useComposerSend(input: ComposerSendInput) {
             role: "user",
             attachments: turnAttachmentsResult.value,
             ...withMessageContext({
-              text: outgoingMessageText,
+              text: withContextThreadText(outgoingMessageText),
               context: buildOutgoingMessageContext(
                 boundAttachmentIds(turnAttachmentsResult.value, composerAttachmentsSnapshot),
               ),

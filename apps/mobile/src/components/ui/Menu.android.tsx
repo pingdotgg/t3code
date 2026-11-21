@@ -2,8 +2,11 @@ import * as Haptics from "expo-haptics";
 import { cloneElement, isValidElement, type ReactElement } from "react";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
 import type { MenuProps } from "./Menu.types";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function Menu(props: MenuProps) {
+export const Menu = defineNativePluginFeature("native.components.ui.menu", BuiltinMenu);
+
+function BuiltinMenu(props: MenuProps) {
   if (props.shouldOpenOnLongPress && isValidElement(props.children)) {
     const child = props.children as ReactElement<{ onLongPress?: () => void }>;
     return (

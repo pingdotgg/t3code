@@ -1,8 +1,8 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type { HostPowerSnapshot } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -81,7 +81,7 @@ export const make = Effect.fn("background.hostPower.make")(function* (
   });
 });
 
-export const layer = Layer.effect(
+export const layer = builtinServiceLayer("t3.server")(
   HostPowerMonitor,
   Effect.gen(function* () {
     const desktopTelemetry = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;

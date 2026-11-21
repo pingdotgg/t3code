@@ -34,6 +34,7 @@ import { StandaloneStack } from "../layout/nested-stacks";
 import { ScrollView, useWindowDimensions, View } from "react-native";
 
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 const durationAmounts = Array.from({ length: 99 }, (_, index) => index + 1);
 const modes = [
@@ -46,7 +47,7 @@ const units = [
   { value: "days", label: msg("Days") },
 ] as const;
 
-export function CustomSnoozeSheet(props: {
+function BuiltinCustomSnoozeSheet(props: {
   readonly onClose: () => void;
   readonly onSnooze: (snoozedUntil: string) => void;
 }) {
@@ -216,7 +217,7 @@ export function CustomSnoozeSheet(props: {
   );
 }
 
-function SnoozePopoverNavigation(props: {
+function BuiltinSnoozePopoverNavigation(props: {
   readonly width: number;
   readonly height: number;
   readonly onClose: () => void;
@@ -250,3 +251,13 @@ function SnoozePopoverNavigation(props: {
     </VStack>
   );
 }
+
+const SnoozePopoverNavigation = defineNativePluginFeature(
+  "native.features.threads.custom-snooze-sheet.snooze-popover-navigation",
+  BuiltinSnoozePopoverNavigation,
+);
+
+export const CustomSnoozeSheet = defineNativePluginFeature(
+  "native.features.threads.custom-snooze-sheet",
+  BuiltinCustomSnoozeSheet,
+);

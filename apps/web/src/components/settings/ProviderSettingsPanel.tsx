@@ -135,6 +135,40 @@ import {
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
+import { definePluginComponent } from "~/plugins/features";
+
+const ProviderLastChecked = definePluginComponent(
+  "component:components/settings/ProviderSettingsPanel/ProviderLastChecked",
+  PluginOriginalProviderLastChecked,
+);
+const ProviderSettingsPlaceholder = definePluginComponent(
+  "component:components/settings/ProviderSettingsPanel/ProviderSettingsPlaceholder",
+  PluginOriginalProviderSettingsPlaceholder,
+);
+const EnvironmentUnavailablePlaceholder = definePluginComponent(
+  "component:components/settings/ProviderSettingsPanel/EnvironmentUnavailablePlaceholder",
+  PluginOriginalEnvironmentUnavailablePlaceholder,
+);
+export const ProviderSettingsPanel = definePluginComponent(
+  "component:components/settings/ProviderSettingsPanel/ProviderSettingsPanel",
+  PluginOriginalProviderSettingsPanel,
+);
+const ProviderSettingsPanelContent = definePluginComponent(
+  "component:components/settings/ProviderSettingsPanel/ProviderSettingsPanelContent",
+  PluginOriginalProviderSettingsPanelContent,
+);
+const RemoteSessionGatedProviderSettings = definePluginComponent(
+  "component:components/settings/ProviderSettingsPanel/RemoteSessionGatedProviderSettings",
+  PluginOriginalRemoteSessionGatedProviderSettings,
+);
+const AccessGatedProviderSettings = definePluginComponent(
+  "component:components/settings/ProviderSettingsPanel/AccessGatedProviderSettings",
+  PluginOriginalAccessGatedProviderSettings,
+);
+export const EnvironmentProviderSettings = definePluginComponent(
+  "component:components/settings/ProviderSettingsPanel/EnvironmentProviderSettings",
+  PluginOriginalEnvironmentProviderSettings,
+);
 
 function providerInstanceName(instance: ProviderInstanceConfig): string {
   return (
@@ -180,7 +214,7 @@ function configuredBinaryPath(config: unknown): string {
 }
 
 // Subscribe only in the label because every status push restamps all providers' checkedAt.
-function ProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }) {
+function PluginOriginalProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }) {
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const lastCheckedAt =
@@ -239,7 +273,7 @@ function providerEnvironmentDetail(
 const providerCardHeightClassName =
   "@min-[48rem]/providers:h-[min(44rem,calc(100dvh-11rem))] @min-[48rem]/providers:min-h-[32rem]";
 
-function ProviderSettingsPlaceholder({
+function PluginOriginalProviderSettingsPlaceholder({
   deviceTabs,
   icon,
   title,
@@ -278,7 +312,7 @@ function ProviderSettingsPlaceholder({
   );
 }
 
-function EnvironmentUnavailablePlaceholder({
+function PluginOriginalEnvironmentUnavailablePlaceholder({
   environment,
   access,
   deviceTabs,
@@ -330,7 +364,7 @@ interface ProviderSettingsTarget {
   readonly projectIds?: readonly ProjectId[];
 }
 
-export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
+export function PluginOriginalProviderSettingsPanel(target: ProviderSettingsTarget) {
   return (
     <SettingsPageContainer className="@container/providers gap-8">
       <ProviderSettingsPanelContent
@@ -341,7 +375,7 @@ export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
   );
 }
 
-function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
+function PluginOriginalProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
@@ -490,7 +524,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   );
 }
 
-function RemoteSessionGatedProviderSettings({
+function PluginOriginalRemoteSessionGatedProviderSettings({
   environment,
   deviceTabs,
   targetInstanceId,
@@ -518,7 +552,7 @@ function RemoteSessionGatedProviderSettings({
   );
 }
 
-function AccessGatedProviderSettings({
+function PluginOriginalAccessGatedProviderSettings({
   environment,
   operateAccess,
   deviceTabs,
@@ -560,7 +594,7 @@ function AccessGatedProviderSettings({
 const NO_PROJECT_IDS: readonly ProjectId[] = [];
 const NO_FAVORITES: UnifiedSettings["favorites"] = [];
 
-export function EnvironmentProviderSettings({
+export function PluginOriginalEnvironmentProviderSettings({
   environmentId,
   environmentLabel,
   readOnly = false,

@@ -73,6 +73,7 @@ it("keeps the draft when stashing while a pasted image is still compressing", as
     setComposerTrigger: vi.fn(),
     importContextRecords: () => new Map(),
     expandMobileComposer: vi.fn(),
+    ownsGlobalInput: undefined,
   } satisfies StashInput;
   await using _screen = await render(<Harness input={input} />);
 

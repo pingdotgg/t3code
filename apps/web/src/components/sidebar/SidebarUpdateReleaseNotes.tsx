@@ -9,6 +9,16 @@ import {
 import type { MessageResolver } from "../../i18n/messages";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
+import { definePluginComponent } from "~/plugins/features";
+
+const ReleaseLink = definePluginComponent(
+  "component:components/sidebar/SidebarUpdateReleaseNotes/ReleaseLink",
+  PluginOriginalReleaseLink,
+);
+export const SidebarUpdateReleaseNotes = definePluginComponent(
+  "component:components/sidebar/SidebarUpdateReleaseNotes/SidebarUpdateReleaseNotes",
+  PluginOriginalSidebarUpdateReleaseNotes,
+);
 
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
 
@@ -33,7 +43,7 @@ function formatReleaseAge(releasedAt: string, resolve: MessageResolver): string 
   return days <= 0 ? resolve(msg("today")) : resolve(msg("{days}d ago", { days }));
 }
 
-function ReleaseLink({
+function PluginOriginalReleaseLink({
   children,
   releaseUrl,
   shell,
@@ -57,7 +67,7 @@ function ReleaseLink({
   );
 }
 
-export function SidebarUpdateReleaseNotes({
+function PluginOriginalSidebarUpdateReleaseNotes({
   shell,
   state,
   tooltip,

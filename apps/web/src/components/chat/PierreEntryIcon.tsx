@@ -3,6 +3,7 @@ import { memo } from "react";
 
 import { ensurePierreIconSprite, resolvePierreIconForEntry } from "../../pierre-icons";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
 const ICON_COLORS: Record<string, readonly [light: string, dark: string]> = {
   astro: ["#a631be", "#d568ea"],
@@ -62,7 +63,7 @@ const ICON_COLORS: Record<string, readonly [light: string, dark: string]> = {
 // Every icon references the one shared sprite, so it is in the document before any renders.
 ensurePierreIconSprite();
 
-export const PierreEntryIcon = memo(function PierreEntryIcon(props: {
+const PluginOriginalPierreEntryIcon = memo(function PierreEntryIcon(props: {
   pathValue: string;
   kind: "file" | "directory";
   mimeType?: string | undefined;
@@ -93,3 +94,7 @@ export const PierreEntryIcon = memo(function PierreEntryIcon(props: {
     </svg>
   );
 });
+export const PierreEntryIcon = definePluginComponent(
+  "component:components/chat/PierreEntryIcon/PierreEntryIcon",
+  PluginOriginalPierreEntryIcon,
+);

@@ -12,8 +12,13 @@ import {
   CodeAppearancePreview,
 } from "../components/AppearancePreviews";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
+import { defineNativePluginFeature } from "../../../../plugins/features";
+export const CodeAppearanceSection = defineNativePluginFeature(
+  "native.features.settings.appearance.sections.code-appearance-section",
+  BuiltinCodeAppearanceSection,
+);
 
-export function CodeAppearanceSection() {
+function BuiltinCodeAppearanceSection() {
   const gt = useGT();
   const { isReady, appearance, setCodeFontSize, setCodeWordBreak } = useAppearancePreferences();
   const custom = appearance.isCodeFontSizeCustom;

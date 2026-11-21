@@ -1,3 +1,9 @@
+import {
+  definePluginComponent,
+  definePluginFeature,
+  PluginEnvironmentContext,
+} from "~/plugins/features";
+import { useRegisteredPaletteItems } from "~/plugins/contributions";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { decodeMsg, msg, T, useGT, useMessages, Var } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
@@ -88,6 +94,7 @@ import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
 import {
+  useContext,
   useDeferredValue,
   useEffect,
   useId,
@@ -326,7 +333,7 @@ function openIntentView(
 
 const NEW_THREAD_NO_PROJECT_VALUE = "new-thread-in:no-project";
 
-export function CommandPalette({ children }: { children: ReactNode }) {
+export function BuiltinCommandPalette({ children }: { children: ReactNode }) {
   useCommandPaletteMount();
   const state = useCommandPaletteStore();
   const setOpen = (open: boolean) => dispatchCommandPalette({ _tag: "SetOpen", open });
@@ -364,7 +371,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   );
 }
 
-function CommandPaletteDialog(props: {
+function PluginOriginalCommandPaletteDialog(props: {
   readonly mode: SearchOverlayMode;
   readonly session: number;
   readonly openIntent: CommandPaletteOpenIntent | null;
@@ -422,7 +429,7 @@ function CommandPaletteDialog(props: {
   );
 }
 
-function OpenCommandPaletteDialog(props: {
+function PluginOriginalOpenCommandPaletteDialog(props: {
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;
   readonly openChildSearch: (
@@ -436,6 +443,7 @@ function OpenCommandPaletteDialog(props: {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { openChildSearch, setOpen } = props;
+  const pluginEnvironmentId = useContext(PluginEnvironmentContext);
   // Keyed by palette session: the intent and restored search only seed this
   // mount, and closing must not change what the closing palette shows.
   const [initialSearch] = useState(
@@ -1844,7 +1852,47 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  const rootGroups = buildRootGroups({ actionItems, recentThreadItems }, messages);
+  const paletteEnvironmentId =
+    pluginEnvironmentId ??
+    activeThread?.environmentId ??
+    activeDraftThread?.environmentId ??
+    primaryEnvironmentId;
+  const registeredActions = useRegisteredPaletteItems(
+    actionItems,
+    paletteEnvironmentId,
+    executeItem,
+  );
+  const externalActions: CommandPaletteActionItem[] = registeredActions.external
+    .filter(
+      (action) =>
+        !action.requiresThread ||
+        (referenceThreadRef !== null &&
+          referenceThreadRef !== undefined &&
+          referenceThreadRef.environmentId === paletteEnvironmentId),
+    )
+    .map((action) => ({
+      kind: "action",
+      value: `plugin-action:${action.id}`,
+      title: action.title,
+      ...(action.description === undefined ? {} : { description: action.description }),
+      searchTerms: [action.title, action.description ?? "", action.id],
+      icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        if (paletteEnvironmentId)
+          await action.run({
+            environmentId: paletteEnvironmentId,
+            threadRef: referenceThreadRef,
+            navigate: (path) => navigate({ href: path }),
+          });
+      },
+    }));
+  const rootGroups = buildRootGroups(
+    {
+      actionItems: [...registeredActions.builtin, ...externalActions],
+      recentThreadItems,
+    },
+    messages,
+  );
   // Every setting goes to the palette's own matcher, so settings get the same
   // word starts and typo tolerance as threads.
   const settingsSearchItems: CommandPaletteActionItem[] = settingsForThisPlatform(
@@ -3191,3 +3239,13 @@ function OpenCommandPaletteDialog(props: {
     </CommandPaletteContent>
   );
 }
+
+export const CommandPalette = definePluginFeature("command-palette", BuiltinCommandPalette);
+const CommandPaletteDialog = definePluginComponent(
+  "component:components/CommandPalette/CommandPaletteDialog",
+  PluginOriginalCommandPaletteDialog,
+);
+const OpenCommandPaletteDialog = definePluginComponent(
+  "component:components/CommandPalette/OpenCommandPaletteDialog",
+  PluginOriginalOpenCommandPaletteDialog,
+);

@@ -19,10 +19,16 @@ import {
 } from "./PullRequestMarkdownTextarea";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+import { definePluginComponent } from "~/plugins/features";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
-export function PullRequestCommentForm({
+export const PullRequestCommentForm = definePluginComponent(
+  "component:components/pullRequest/PullRequestCommentForm/PullRequestCommentForm",
+  PluginOriginalPullRequestCommentForm,
+);
+
+function PluginOriginalPullRequestCommentForm({
   environmentId,
   active,
   reference,

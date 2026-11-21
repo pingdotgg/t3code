@@ -3,6 +3,9 @@ import { Alert } from "react-native";
 
 import { m } from "../../i18n/messages";
 import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const Host = defineNativePluginFeature("native.components.ui.dialog.host", BuiltinHost);
 
 export type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
 
@@ -34,6 +37,6 @@ export function prompt(request: TextInputDialogRequest): void {
   );
 }
 
-export function Host() {
+function BuiltinHost() {
   return null;
 }

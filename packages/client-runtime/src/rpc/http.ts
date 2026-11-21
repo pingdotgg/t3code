@@ -1,5 +1,6 @@
 import { MarkedText, markedTextEnglish, translatableMessage } from "../errors/translatable.ts";
 import { msg } from "gt-i18n";
+import { builtinServiceLayer, builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import {
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
@@ -101,7 +102,13 @@ export const layerRemoteHttpClient = (
   fetchFn: typeof globalThis.fetch,
 ): Layer.Layer<HttpClient.HttpClient> =>
   Layer.merge(
-    FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn))),
+    builtinServiceLayer("t3.client")(HttpClient.HttpClient, HttpClient.HttpClient).pipe(
+      Layer.provide(
+        FetchHttpClient.layer.pipe(
+          Layer.provide(builtinSucceedLayer("t3.client")(FetchHttpClient.Fetch, fetchFn)),
+        ),
+      ),
+    ),
     HttpObservability.layer,
   );
 

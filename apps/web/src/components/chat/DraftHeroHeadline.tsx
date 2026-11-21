@@ -48,6 +48,12 @@ import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
 import { TriageDraftHero } from "./TriageDraftHero";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DraftHeroHeadline = definePluginComponent(
+  "component:components/chat/DraftHeroHeadline/DraftHeroHeadline",
+  PluginOriginalDraftHeroHeadline,
+);
 
 const ADD_PROJECT_VALUE = "add-project";
 
@@ -62,7 +68,7 @@ interface DraftHeroHeadlineProps {
   readonly activeProjectTitle: string | null;
 }
 
-export function DraftHeroHeadline({
+function PluginOriginalDraftHeroHeadline({
   draftId,
   activeProjectRef,
   activeProjectTitle,

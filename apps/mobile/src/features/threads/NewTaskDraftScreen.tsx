@@ -101,13 +101,14 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { mobilePreferencesAtom } from "../../state/preferences";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 // Below this (keyboard up on iPad, phone landscape) the hero cannot fit above the composer,
 // so the project and environment pickers move into the composer controls instead.
 const SHORT_DRAFT_VIEWPORT_HEIGHT = 380;
 const HEADING_PROJECT_SLOT = "\uE000";
 
-function NewTaskWorkspaceIcon(props: {
+function BuiltinNewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
   readonly worktreePath: string | null;
   readonly size: number;
@@ -152,7 +153,7 @@ function NewTaskWorkspaceIcon(props: {
   );
 }
 
-export function NewTaskDraftScreen(props: {
+function BuiltinNewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
     readonly environmentId?: string;
     readonly projectId?: string;
@@ -1136,3 +1137,13 @@ export function NewTaskDraftScreen(props: {
     </>
   );
 }
+
+const NewTaskWorkspaceIcon = defineNativePluginFeature(
+  "native.features.threads.new-task-draft-screen.new-task-workspace-icon",
+  BuiltinNewTaskWorkspaceIcon,
+);
+
+export const NewTaskDraftScreen = defineNativePluginFeature(
+  "native.features.threads.new-task-draft-screen",
+  BuiltinNewTaskDraftScreen,
+);

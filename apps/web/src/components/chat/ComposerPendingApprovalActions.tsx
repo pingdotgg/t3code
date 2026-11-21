@@ -10,6 +10,7 @@ import { Button, InlineButton } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { definePluginComponent } from "~/plugins/features";
 
 interface ComposerPendingApprovalActionsProps {
   presentation?: "composer" | "inline";
@@ -40,7 +41,7 @@ const DEFAULT_APPROVAL_OPTIONS = [
   },
 ] satisfies ReadonlyArray<ProviderApprovalOption>;
 
-export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
+const PluginOriginalComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   presentation = "composer",
   requestId,
   isResponding,
@@ -159,3 +160,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
     </>
   );
 });
+export const ComposerPendingApprovalActions = definePluginComponent(
+  "component:components/chat/ComposerPendingApprovalActions/ComposerPendingApprovalActions",
+  PluginOriginalComposerPendingApprovalActions,
+);

@@ -1,5 +1,6 @@
 import { msg } from "gt-i18n";
 import { MarkedText, translatableMessage } from "../errors/translatable.ts";
+import { builtinServiceLayer, builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import {
   ORCHESTRATION_PROTOCOL_VERSION,
   type EnvironmentId,
@@ -126,7 +127,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     const result = yield* Effect.scoped(
       Effect.gen(function* () {
         const protocolContext = yield* Layer.build(
-          Layer.effect(
+          builtinServiceLayer("t3.client")(
             RpcClient.Protocol,
             RpcClient.makeProtocolSocket({
               pingTimeout: PING_TIMEOUT,
@@ -136,12 +137,23 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
           ).pipe(
             Layer.provide(
               Layer.mergeAll(
-                Socket.layerWebSocket(prepared.socketUrl, {
-                  openTimeout: SOCKET_OPEN_TIMEOUT,
-                }).pipe(
-                  Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)),
+                builtinServiceLayer("t3.client")(Socket.Socket, Socket.Socket).pipe(
+                  Layer.provide(
+                    Socket.layerWebSocket(prepared.socketUrl, {
+                      openTimeout: SOCKET_OPEN_TIMEOUT,
+                    }),
+                  ),
+                  Layer.provide(
+                    builtinSucceedLayer("t3.client")(
+                      Socket.WebSocketConstructor,
+                      webSocketConstructor,
+                    ),
+                  ),
                 ),
-                RpcSerialization.layerJson,
+                builtinServiceLayer("t3.client")(
+                  RpcSerialization.RpcSerialization,
+                  RpcSerialization.RpcSerialization,
+                ).pipe(Layer.provide(RpcSerialization.layerJson)),
               ),
             ),
           ),

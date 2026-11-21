@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import {
   navigationCustomizationAvailable,
   overflowNavigationTabs,
@@ -35,7 +36,7 @@ import { filterSettingsSections } from "./settings-search";
 import { usePaneRole } from "../../components/ui/Pane";
 import { useGT, useMessages } from "gt-react-native";
 
-export function SettingsRouteScreen() {
+function BuiltinSettingsRouteScreen() {
   const list = useSettingsListPlacement();
   return <SettingsListScreen sidebar={list.sidebar} selected={list.selected} />;
 }
@@ -109,7 +110,7 @@ interface SettingsListSection {
   readonly rows: readonly SettingsListRow[];
 }
 
-function ConfiguredSettingsRouteScreen() {
+function BuiltinConfiguredSettingsRouteScreen() {
   const gt = useGT();
   const navigation = useNavigation();
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
@@ -144,7 +145,7 @@ function ConfiguredSettingsRouteScreen() {
   );
 }
 
-function LocalSettingsRouteScreen() {
+function BuiltinLocalSettingsRouteScreen() {
   const gt = useGT();
   const { savedConnectionsById } = useSavedRemoteConnections();
   return (
@@ -259,6 +260,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
       rows: [
         page("SettingsOrganization", "gearshape", gt("General")),
         page("SettingsAppearance", "paintbrush", gt("Appearance")),
+        page("SettingsPlugins", "square.grid.2x2", gt("Plugins")),
         page("SettingsFollowUp", "bubble.left.and.bubble.right", gt("Chat")),
         ...(navigationCustomizationAvailable()
           ? [page("SettingsNavigation", "line.3.horizontal", gt("Navigation tabs"))]
@@ -318,3 +320,18 @@ function useOverflowRows(): SettingsListRow[] {
     onPress: () => selectTab(tab),
   }));
 }
+
+const ConfiguredSettingsRouteScreen = defineNativePluginFeature(
+  "native.features.settings.settings-route-screen.configured-settings-route-screen",
+  BuiltinConfiguredSettingsRouteScreen,
+);
+
+const LocalSettingsRouteScreen = defineNativePluginFeature(
+  "native.features.settings.settings-route-screen.local-settings-route-screen",
+  BuiltinLocalSettingsRouteScreen,
+);
+
+export const SettingsRouteScreen = defineNativePluginFeature(
+  "settings",
+  BuiltinSettingsRouteScreen,
+);

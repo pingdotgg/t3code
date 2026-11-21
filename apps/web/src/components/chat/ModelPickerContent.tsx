@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { T, useGT, useLocale, useMessages } from "gt-react";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import {
@@ -179,7 +180,12 @@ const ROW_UNITS = 8;
 const ROW_SEPARATOR_UNITS = 0.5;
 const LIST_CHROME_UNITS = 15.5;
 
-function ModelListSeparator() {
+const ModelListSeparator = definePluginComponent(
+  "component:components/chat/ModelPickerContent/ModelListSeparator",
+  PluginOriginalModelListSeparator,
+);
+
+function PluginOriginalModelListSeparator() {
   return <div className="h-0.5" />;
 }
 
@@ -344,7 +350,7 @@ function WindowKeyDownListener({ onKeyDown }: { onKeyDown: (event: KeyboardEvent
   return null;
 }
 
-export const ModelPickerContent = memo(function ModelPickerContent(props: {
+const PluginOriginalModelPickerContent = memo(function ModelPickerContent(props: {
   environmentId: EnvironmentId | null;
   /** Keeps the open provider tab's catalog fresh for this directory. */
   workspaceCwd?: string | null;
@@ -1259,3 +1265,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     </TooltipProvider>
   );
 });
+export const ModelPickerContent = definePluginComponent(
+  "component:components/chat/ModelPickerContent/ModelPickerContent",
+  PluginOriginalModelPickerContent,
+);

@@ -8,8 +8,13 @@ import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const ChatGptUsageSummary = defineNativePluginFeature(
+  "native.features.usage.chat-gpt-usage-summary",
+  BuiltinChatGptUsageSummary,
+);
 
-export function ChatGptUsageSummary({
+function BuiltinChatGptUsageSummary({
   selectedEnvironmentIds,
 }: {
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;

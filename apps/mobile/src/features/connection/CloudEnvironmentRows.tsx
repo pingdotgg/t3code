@@ -1,4 +1,5 @@
 import { T, useGT, useMessages } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ConnectionTraceId } from "./ConnectionTraceId";
@@ -44,7 +45,7 @@ interface CloudEnvironmentRowsProps {
   readonly showHeader?: boolean;
 }
 
-export function CloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
+function BuiltinCloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
   // Showcase lacks ClerkProvider; use fixture auth state to avoid a throwing useAuth call.
   if (props.showcaseSignedIn !== undefined) {
     return props.showcaseSignedIn ? <CloudEnvironmentRowsContent {...props} /> : null;
@@ -56,18 +57,18 @@ export function CloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
   return <SignedInCloudEnvironmentRows {...props} />;
 }
 
-function SignedInCloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
+function BuiltinSignedInCloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
   const { isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   if (!isSignedIn) return <ConnectedOnlyCloudEnvironmentRows {...props} />;
   return <CloudEnvironmentRowsContent {...props} />;
 }
 
-function ConnectedOnlyCloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
+function BuiltinConnectedOnlyCloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
   if (props.connectedCloudEnvironments.length === 0) return null;
   return <CloudEnvironmentRowsContent {...props} discoveryAvailable={false} />;
 }
 
-function CloudEnvironmentRowsContent(
+function BuiltinCloudEnvironmentRowsContent(
   props: CloudEnvironmentRowsProps & { readonly discoveryAvailable?: boolean },
 ) {
   const gt = useGT();
@@ -175,7 +176,7 @@ function CloudEnvironmentRowsContent(
   );
 }
 
-function ConnectedCloudEnvironmentRow(props: {
+function BuiltinConnectedCloudEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   readonly descriptor: ExecutionEnvironmentDescriptor | undefined;
   readonly errorExpanded: boolean;
@@ -229,7 +230,7 @@ function ConnectedCloudEnvironmentRow(props: {
   );
 }
 
-function CloudEnvironmentRow(props: {
+function BuiltinCloudEnvironmentRow(props: {
   readonly environment: RelayEnvironmentView;
   readonly showChevron: boolean;
   readonly errorExpanded: boolean;
@@ -273,7 +274,7 @@ function CloudEnvironmentRow(props: {
   );
 }
 
-function CloudEnvironmentRowShell(props: {
+function BuiltinCloudEnvironmentRowShell(props: {
   readonly showChevron?: boolean;
   readonly opensDetails?: boolean;
   readonly onOpen?: (() => void) | undefined;
@@ -448,7 +449,7 @@ function CloudEnvironmentRowShell(props: {
   );
 }
 
-function CopyTraceIdButton(props: { readonly traceId: string }) {
+function BuiltinCopyTraceIdButton(props: { readonly traceId: string }) {
   const gt = useGT();
   return (
     <Button
@@ -461,3 +462,43 @@ function CopyTraceIdButton(props: { readonly traceId: string }) {
     />
   );
 }
+
+const SignedInCloudEnvironmentRows = defineNativePluginFeature(
+  "native.features.connection.cloud-environment-rows.signed-in-cloud-environment-rows",
+  BuiltinSignedInCloudEnvironmentRows,
+);
+
+const ConnectedOnlyCloudEnvironmentRows = defineNativePluginFeature(
+  "native.features.connection.cloud-environment-rows.connected-only-cloud-environment-rows",
+  BuiltinConnectedOnlyCloudEnvironmentRows,
+);
+
+const CloudEnvironmentRowsContent = defineNativePluginFeature(
+  "native.features.connection.cloud-environment-rows.cloud-environment-rows-content",
+  BuiltinCloudEnvironmentRowsContent,
+);
+
+const ConnectedCloudEnvironmentRow = defineNativePluginFeature(
+  "native.features.connection.cloud-environment-rows.connected-cloud-environment-row",
+  BuiltinConnectedCloudEnvironmentRow,
+);
+
+const CloudEnvironmentRowShell = defineNativePluginFeature(
+  "native.features.connection.cloud-environment-rows.cloud-environment-row-shell",
+  BuiltinCloudEnvironmentRowShell,
+);
+
+const CopyTraceIdButton = defineNativePluginFeature(
+  "native.features.connection.cloud-environment-rows.copy-trace-id-button",
+  BuiltinCopyTraceIdButton,
+);
+
+const CloudEnvironmentRow = defineNativePluginFeature(
+  "native.features.connection.cloud-environment-rows.cloud-environment-row",
+  BuiltinCloudEnvironmentRow,
+);
+
+export const CloudEnvironmentRows = defineNativePluginFeature(
+  "native.features.connection.cloud-environment-rows",
+  BuiltinCloudEnvironmentRows,
+);

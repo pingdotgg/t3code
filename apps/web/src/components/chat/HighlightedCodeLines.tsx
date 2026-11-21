@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { toHtml } from "hast-util-to-html";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
 import { cloneElement, isValidElement, memo, type DOMAttributes } from "react";
@@ -17,7 +18,11 @@ function elementShell(node: Extract<HighlightedNode, { type: "element" }>) {
   return element;
 }
 
-const HighlightedLine = memo(function HighlightedLine({ node }: { node: HighlightedNode }) {
+const PluginOriginalHighlightedLine = memo(function HighlightedLine({
+  node,
+}: {
+  node: HighlightedNode;
+}) {
   if (node.type !== "element") return toJsxRuntime(node, runtime);
   return cloneElement(elementShell(node), {
     dangerouslySetInnerHTML: { __html: toHtml({ type: "root", children: node.children }) },
@@ -25,7 +30,7 @@ const HighlightedLine = memo(function HighlightedLine({ node }: { node: Highligh
 });
 
 /** Preserve completed lines' DOM to avoid reparsing unchanged tokens. */
-export function HighlightedCodeLines({ root }: { root: HighlightedRoot }) {
+function PluginOriginalHighlightedCodeLines({ root }: { root: HighlightedRoot }) {
   const pre = root.children[0];
   if (pre?.type !== "element" || pre.tagName !== "pre") return toJsxRuntime(root, runtime);
   const code = pre.children[0];
@@ -44,3 +49,12 @@ export function HighlightedCodeLines({ root }: { root: HighlightedRoot }) {
     ),
   );
 }
+
+export const HighlightedCodeLines = definePluginComponent(
+  "component:components/chat/HighlightedCodeLines/HighlightedCodeLines",
+  PluginOriginalHighlightedCodeLines,
+);
+const HighlightedLine = definePluginComponent(
+  "component:components/chat/HighlightedCodeLines/HighlightedLine",
+  PluginOriginalHighlightedLine,
+);

@@ -18,12 +18,30 @@ import {
   PROJECT_FILE_PICKER_RESULT_LIMIT,
 } from "./ProjectFilePicker.logic";
 import { useProjectFilePickerQuery } from "./projectFilesQueryState";
+import { definePluginComponent } from "~/plugins/features";
+
+const HighlightedFuzzyText = definePluginComponent(
+  "component:components/files/ProjectFilePicker/HighlightedFuzzyText",
+  PluginOriginalHighlightedFuzzyText,
+);
+const EmptyProjectFilePicker = definePluginComponent(
+  "component:components/files/ProjectFilePicker/EmptyProjectFilePicker",
+  PluginOriginalEmptyProjectFilePicker,
+);
+const OpenProjectFilePicker = definePluginComponent(
+  "component:components/files/ProjectFilePicker/OpenProjectFilePicker",
+  PluginOriginalOpenProjectFilePicker,
+);
+export const ProjectFilePicker = definePluginComponent(
+  "component:components/files/ProjectFilePicker/ProjectFilePicker",
+  PluginOriginalProjectFilePicker,
+);
 
 interface ProjectFilePickerProps {
   readonly setOpen: (open: boolean) => void;
 }
 
-function HighlightedFuzzyText(props: {
+function PluginOriginalHighlightedFuzzyText(props: {
   readonly active: boolean;
   readonly indices: ReadonlyArray<number>;
   readonly value: string;
@@ -61,7 +79,7 @@ function getEmptyStateMessage(
   return isSearching ? resolve(msg("No matching files.")) : resolve(msg("No files found."));
 }
 
-function EmptyProjectFilePicker() {
+function PluginOriginalEmptyProjectFilePicker() {
   const gt = useGT();
   return (
     <CommandPaletteContent
@@ -80,7 +98,9 @@ function EmptyProjectFilePicker() {
   );
 }
 
-function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveProjectTarget }) {
+function PluginOriginalOpenProjectFilePicker(
+  props: ProjectFilePickerProps & { target: ActiveProjectTarget },
+) {
   const { target } = props;
   const gt = useGT();
   const messages = useMessages();
@@ -161,7 +181,7 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
   );
 }
 
-export function ProjectFilePicker(props: ProjectFilePickerProps) {
+function PluginOriginalProjectFilePicker(props: ProjectFilePickerProps) {
   const target = useActiveProjectTarget();
 
   if (!target) {

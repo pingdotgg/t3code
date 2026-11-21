@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { resolvePullRequestDetailChecks } from "@t3tools/client-runtime/pull-request-checks";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../pullRequest/changeRequestTerm";
@@ -85,7 +86,12 @@ import {
 const isSettledWithoutChecks = (result: AsyncResult.AsyncResult<unknown, unknown>) =>
   result._tag === "Success" && result.value === null;
 
-export function ThreadDetailsPrRow({
+export const ThreadDetailsPrRow = definePluginComponent(
+  "component:components/chat/ThreadDetailsPrRow/ThreadDetailsPrRow",
+  PluginOriginalThreadDetailsPrRow,
+);
+
+function PluginOriginalThreadDetailsPrRow({
   environmentId,
   pr,
   number,

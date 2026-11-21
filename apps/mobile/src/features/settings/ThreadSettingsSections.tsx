@@ -26,6 +26,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { defineNativePluginFeature } from "../../plugins/features";
 import {
   managedSettingReason,
   resolveMobileSettingsTargets,
@@ -74,7 +75,7 @@ const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterD
  * Usage-limit and auto-settle rows. The Threads page owns their writes, so they share its queue
  * with the page's other project overrides, and their project override reset.
  */
-export function AutoSettleSettingsRows(props: {
+function BuiltinAutoSettleSettingsRows(props: {
   readonly write: (patch: ServerSettingsPatch) => void;
   readonly pending: boolean;
 }) {
@@ -209,7 +210,7 @@ export function AutoSettleSettingsRows(props: {
   );
 }
 
-export function WorkingSectionSettings() {
+function BuiltinWorkingSectionSettings() {
   const gt = useGT();
   const savePreferences = useAtomCommand(saveMobilePreferences);
   const preferences = useAtomValue(mobilePreferencesAtom);
@@ -329,3 +330,13 @@ function MachineBetaSection({
     </View>
   );
 }
+
+export const AutoSettleSettingsRows = defineNativePluginFeature(
+  "native.features.settings.thread-settings-sections.auto-settle-settings-rows",
+  BuiltinAutoSettleSettingsRows,
+);
+
+export const WorkingSectionSettings = defineNativePluginFeature(
+  "native.features.settings.thread-settings-sections.working-section-settings",
+  BuiltinWorkingSectionSettings,
+);

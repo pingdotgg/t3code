@@ -13,6 +13,16 @@ import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
 import { ComposerBanner } from "./ComposerBanner";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
+import { definePluginComponent } from "~/plugins/features";
+
+const AccountSummary = definePluginComponent(
+  "component:components/chat/ComposerUsageLimits/AccountSummary",
+  PluginOriginalAccountSummary,
+);
+const UsageLimitsBannerBody = definePluginComponent(
+  "component:components/chat/ComposerUsageLimits/UsageLimitsBannerBody",
+  PluginOriginalUsageLimitsBannerBody,
+);
 
 function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
   if (!account.instanceId) return account.label;
@@ -25,7 +35,11 @@ function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
     : driver;
 }
 
-function AccountSummary({ account }: { readonly account: UsageLimitsReport["accounts"][number] }) {
+function PluginOriginalAccountSummary({
+  account,
+}: {
+  readonly account: UsageLimitsReport["accounts"][number];
+}) {
   const gt = useGT();
   const label = accountLabel(account);
   return (
@@ -126,7 +140,7 @@ export function modelFallbackBannerItem(
   };
 }
 
-function UsageLimitsBannerBody({
+function PluginOriginalUsageLimitsBannerBody({
   report,
   environmentId,
 }: {

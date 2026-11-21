@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
@@ -6,6 +7,7 @@ import {
   authScopeRequiredResponse,
   AssetCreateUrlInput,
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   ServerSettingsPatch,
   ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
@@ -35,7 +37,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import { isProviderSignOutPrompt } from "../orchestration-v2/CommandPolicy.ts";
 
@@ -43,6 +44,15 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
   ...CLIENT_GUARDED_RPC_SCOPES,
+  [WS_METHODS.pluginsRegistryList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsRegistryInstall]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsAuthoringGuide]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsSearch]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsSetEnabled]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsReload]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsInvoke]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: AuthOrchestrationReadScope,
@@ -238,6 +248,14 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.deviceDetail]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeDeviceState]: AuthOrchestrationReadScope,
+  [WS_METHODS.canvasList]: AuthOrchestrationReadScope,
+  [WS_METHODS.canvasCreate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.canvasDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.canvasApplyOps]: AuthOrchestrationOperateScope,
+  [WS_METHODS.canvasSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.canvasConnectHost]: AuthOrchestrationOperateScope,
+  [WS_METHODS.canvasUpdateHost]: AuthOrchestrationOperateScope,
+  [WS_METHODS.canvasRespondHost]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
@@ -352,7 +370,7 @@ export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
 ) =>
-  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+  builtinSucceedLayer("t3.auth")(RpcScopeAuthorization)((effect, { rpc, payload }) => {
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
     if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));

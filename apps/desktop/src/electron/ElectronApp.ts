@@ -1,11 +1,11 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 
 export interface ElectronAppMetadata {
   readonly appVersion: string;
@@ -252,4 +252,4 @@ export const make = ElectronApp.of({
   on: addScopedAppListener,
 });
 
-export const layer = Layer.succeed(ElectronApp, make);
+export const layer = builtinSucceedLayer("t3.desktop.electron-app", ElectronApp, make);

@@ -1,10 +1,10 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -294,4 +294,4 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
   });
 });
 
-export const layer = Layer.effect(PtyAdapter.PtyAdapter, make());
+export const layer = builtinServiceLayer("t3.terminal")(PtyAdapter.PtyAdapter, make());

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   PREVIEW_URL_MAX_LENGTH,
@@ -1262,7 +1263,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   });
 }).pipe(Effect.withSpan("PortDiscovery.make"));
 
-export const layer = Layer.effect(PortDiscovery, make);
+export const layer = builtinServiceLayer("t3.preview")(PortDiscovery, make);
 
 /** A scanner that tracks nothing, for tests that build provider runners without a host. */
 export const layerTest = Layer.mock(PortDiscovery)({

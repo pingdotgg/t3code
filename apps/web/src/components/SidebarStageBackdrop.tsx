@@ -5,6 +5,28 @@ import { useId } from "react";
 import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 import { primaryServerConfigAtom } from "../state/server";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SidebarStageBackdrop = definePluginComponent(
+  "component:components/SidebarStageBackdrop/SidebarStageBackdrop",
+  PluginOriginalSidebarStageBackdrop,
+);
+const StageBackdropArt = definePluginComponent(
+  "component:components/SidebarStageBackdrop/StageBackdropArt",
+  PluginOriginalStageBackdropArt,
+);
+export const StageBackdropButtonArt = definePluginComponent(
+  "component:components/SidebarStageBackdrop/StageBackdropButtonArt",
+  PluginOriginalStageBackdropButtonArt,
+);
+const NightlySkyArt = definePluginComponent(
+  "component:components/SidebarStageBackdrop/NightlySkyArt",
+  PluginOriginalNightlySkyArt,
+);
+const DevBlueprintArt = definePluginComponent(
+  "component:components/SidebarStageBackdrop/DevBlueprintArt",
+  PluginOriginalDevBlueprintArt,
+);
 
 export type SidebarStageBackdropVariant = "nightly" | "dev";
 export type EnvironmentIdentificationPillLabel = "Dev" | "Nightly";
@@ -51,7 +73,7 @@ export function useSidebarStageBackdropVariant(
   return resolveSidebarStageBackdropVariant(useEnvironmentStageLabel(), mode);
 }
 
-export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdropVariant }) {
+function PluginOriginalSidebarStageBackdrop({ variant }: { variant: SidebarStageBackdropVariant }) {
   return (
     <div
       aria-hidden
@@ -62,11 +84,15 @@ export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdro
   );
 }
 
-function StageBackdropArt({ variant }: { variant: SidebarStageBackdropVariant }) {
+function PluginOriginalStageBackdropArt({ variant }: { variant: SidebarStageBackdropVariant }) {
   return variant === "nightly" ? <NightlySkyArt /> : <DevBlueprintArt />;
 }
 
-export function StageBackdropButtonArt({ variant }: { variant: SidebarStageBackdropVariant }) {
+function PluginOriginalStageBackdropButtonArt({
+  variant,
+}: {
+  variant: SidebarStageBackdropVariant;
+}) {
   return variant === "nightly" ? <NightlySkyArt compact /> : <DevBlueprintArt compact />;
 }
 
@@ -101,7 +127,7 @@ const NIGHTLY_SPARKLES: ReadonlyArray<{ x: number; y: number }> = [
   { x: 246, y: 26 },
 ];
 
-function NightlySkyArt({ compact = false }: { compact?: boolean }) {
+function PluginOriginalNightlySkyArt({ compact = false }: { compact?: boolean }) {
   const idPrefix = useId().replaceAll(":", "");
   const skyId = `${idPrefix}-stage-night-sky`;
   const glowId = `${idPrefix}-stage-night-glow`;
@@ -213,7 +239,7 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
+function PluginOriginalDevBlueprintArt({ compact = false }: { compact?: boolean }) {
   const idPrefix = useId().replaceAll(":", "");
   const paperId = `${idPrefix}-stage-bp-paper`;
   const glowId = `${idPrefix}-stage-bp-glow`;

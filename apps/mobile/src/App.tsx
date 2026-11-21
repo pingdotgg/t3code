@@ -109,8 +109,16 @@ import {
 import { pruneNewTaskFlowStates } from "./features/threads/new-task-flow-state";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
 import { installAppUpdateChecks } from "./features/updates/app-updates";
+import { NativePluginRecoveryHost, NativePluginsProvider } from "./plugins/runtime";
+import { defineNativePluginFeature, NativePluginBanner } from "./plugins/features";
 
 import "../global.css";
+
+const SplashScreenCoordinator = defineNativePluginFeature(
+  "native.app.splash-screen-coordinator",
+  BuiltinSplashScreenCoordinator,
+);
+const AppContent = defineNativePluginFeature("native.app.app-content", BuiltinAppContent);
 
 if (process.env.EXPO_PUBLIC_SHOWCASE === "1") {
   prepareNativeShowcaseCapture();
@@ -174,7 +182,10 @@ function linkToAppPath(href: string): void {
   linkToRootPath(href, appLinkAction);
 }
 
-const Navigation = createStaticNavigation(RootStack);
+const Navigation = defineNativePluginFeature(
+  "native.navigation",
+  createStaticNavigation(RootStack),
+);
 
 function handleNavigationStateChange(state: NavigationState | undefined): void {
   recordWorkspaceSelections(state);
@@ -226,7 +237,7 @@ disposeOnFoundationReplace(typeof module === "undefined" ? undefined : module.ho
 // read, or a list that does not lay out, from holding the splash screen.
 const SPLASH_WAIT_MS = 1_500;
 
-function SplashScreenCoordinator() {
+function BuiltinSplashScreenCoordinator() {
   const { isReady } = useAppearancePreferences();
   const shellCachesRead = useAtomValue(shellCachesReadAtom);
   const homeRowsPending = useLaunchSplashHomeRowsPending();
@@ -274,18 +285,21 @@ function QuickActionsLanguage() {
 export default function App() {
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
-      <CloudAuthProvider>
-        <AppearancePreferencesProvider>
-          <I18nProvider>
-            <AppContent />
-          </I18nProvider>
-        </AppearancePreferencesProvider>
-      </CloudAuthProvider>
+      <NativePluginsProvider>
+        <CloudAuthProvider>
+          <AppearancePreferencesProvider>
+            <I18nProvider>
+              <AppContent />
+              <NativePluginRecoveryHost />
+            </I18nProvider>
+          </AppearancePreferencesProvider>
+        </CloudAuthProvider>
+      </NativePluginsProvider>
     </RegistryContext.Provider>
   );
 }
 
-function AppContent() {
+function BuiltinAppContent() {
   const { themeAppearance } = useAppearancePreferences();
   const navigationTheme = useMobileNavigationTheme();
 
@@ -301,6 +315,7 @@ function AppContent() {
     <>
       <SplashScreenCoordinator />
       <QuickActionsLanguage />
+      <NativePluginBanner />
       <SubscriptionUsageCoordinator />
       <ConnectDeviceApprovalCoordinator />
       <GestureHandlerRootView className="flex-1">

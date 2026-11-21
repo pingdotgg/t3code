@@ -76,6 +76,12 @@ import { ComposerControl } from "./chat/ComposerControl";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { definePluginComponent } from "~/plugins/features";
+
+export const BranchToolbarBranchSelector = definePluginComponent(
+  "component:components/BranchToolbarBranchSelector/BranchToolbarBranchSelector",
+  PluginOriginalBranchToolbarBranchSelector,
+);
 
 export interface BranchToolbarBranchSelectorHandle {
   open: () => void;
@@ -101,7 +107,7 @@ interface BranchToolbarBranchSelectorProps {
 
 const WORKTREE_CHANGE_BLOCKED_MESSAGE = msg("Stop the current turn to switch worktrees.");
 
-export function BranchToolbarBranchSelector({
+function PluginOriginalBranchToolbarBranchSelector({
   forceNewWorktree = false,
   ref,
   className,

@@ -38,6 +38,7 @@ import {
   PanelRightIcon,
 } from "lucide-react";
 import {
+  type ComponentProps,
   lazy,
   Suspense,
   useEffect,
@@ -167,8 +168,15 @@ import { resolveFilterOptions } from "./pullRequestListOptions";
 import { PullRequestGuideTab } from "./PullRequestGuideTab";
 import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
+import { definePluginComponent, definePluginFeature } from "~/plugins/features";
+import { EnvironmentPluginHost } from "~/plugins/PluginHost";
 
 import { changeRequestTermKind, type ChangeRequestTermKind } from "./changeRequestTerm";
+
+export const PullRequestDetailPanel = definePluginComponent(
+  "component:components/pullRequest/PullRequestDetailPanel/PullRequestDetailPanel",
+  PluginOriginalPullRequestDetailPanel,
+);
 
 const actionFailureLabels = (term: ChangeRequestTermKind): Record<PullRequestAction, string> => ({
   merge: m(
@@ -269,7 +277,11 @@ const TABS: ReadonlyArray<{ value: PullRequestDetailTab; label: string }> = [
 
 // Defer the diff viewer's worker pool until Code is approached.
 const loadCodeTab = () => import("./PullRequestCodeTab");
-const PullRequestCodeTab = lazy(loadCodeTab);
+const PluginOriginalPullRequestCodeTab = lazy(loadCodeTab);
+const PullRequestCodeTab = definePluginComponent(
+  "component:components/pullRequest/PullRequestDetailPanel/PullRequestCodeTab",
+  PluginOriginalPullRequestCodeTab,
+);
 
 function reportCheckoutCommandError(error: Error) {
   toastManager.add({
@@ -334,7 +346,7 @@ function linkedTab(anchor: PullRequestAnchor | null): PullRequestDetailTab | nul
   }
 }
 
-export function PullRequestDetailPanel({
+export function BuiltinPullRequestDetailPanel({
   environmentId,
   shortcutsEnabled,
   getShortcutContext,
@@ -2231,5 +2243,20 @@ export function PullRequestDetailPanel({
         </div>
       ) : null}
     </div>
+  );
+}
+
+const PullRequestDetailFeature = definePluginFeature(
+  "pull-request.detail",
+  BuiltinPullRequestDetailPanel,
+);
+
+function PluginOriginalPullRequestDetailPanel(
+  props: ComponentProps<typeof BuiltinPullRequestDetailPanel>,
+) {
+  return (
+    <EnvironmentPluginHost environmentId={props.environmentId}>
+      <PullRequestDetailFeature {...props} />
+    </EnvironmentPluginHost>
   );
 }

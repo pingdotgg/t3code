@@ -16,9 +16,19 @@ import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import type { MenuPopupProps } from "./MenuPopup";
 import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol.android";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const MenuIcon = defineNativePluginFeature(
+  "native.components.ui.menu-popup.menu-icon",
+  BuiltinMenuIcon,
+);
+export const MenuPopup = defineNativePluginFeature(
+  "native.components.ui.menu-popup",
+  BuiltinMenuPopup,
+);
 
 // The Compose glyph host consumes touches; run the action here and keep accessibility on the row.
-function MenuIcon(props: {
+function BuiltinMenuIcon(props: {
   readonly name: AppSymbolName;
   readonly color?: MenuAction["imageColor"];
   readonly onPress: () => void;
@@ -150,7 +160,7 @@ export function MenuPopupItems(
   );
 }
 
-export function MenuPopup(props: MenuPopupProps) {
+function BuiltinMenuPopup(props: MenuPopupProps) {
   const { themeVariables: colors } = useAppearancePreferences();
   const items = <MenuPopupItems {...props} />;
   if (props.inline) {

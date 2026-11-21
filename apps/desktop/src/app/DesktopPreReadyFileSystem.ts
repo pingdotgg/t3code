@@ -2,8 +2,8 @@
 import * as NodeFS from "node:fs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 
 const systemErrorTag = (cause: unknown): PlatformError.SystemErrorTag => {
   switch ((cause as NodeJS.ErrnoException | undefined)?.code) {
@@ -62,4 +62,8 @@ export const make = FileSystem.makeNoop({
     ),
 });
 
-export const layer = Layer.succeed(FileSystem.FileSystem, make);
+export const layer = builtinSucceedLayer(
+  "t3.desktop.desktop-pre-ready-file-system",
+  FileSystem.FileSystem,
+  make,
+);

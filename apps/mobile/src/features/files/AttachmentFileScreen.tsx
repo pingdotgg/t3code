@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -37,7 +38,7 @@ export type AttachmentFileRouteParams = {
 
 type AttachmentFileScreenProps = StaticScreenProps<AttachmentFileRouteParams>;
 
-export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
+function BuiltinAttachmentFileScreen(props: AttachmentFileScreenProps) {
   const navigation = useNavigation();
   const gt = useGT();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
@@ -278,3 +279,8 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     </View>
   );
 }
+
+export const AttachmentFileScreen = defineNativePluginFeature(
+  "attachment-preview",
+  BuiltinAttachmentFileScreen,
+);

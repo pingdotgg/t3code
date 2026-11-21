@@ -12,6 +12,12 @@ import { cn } from "../../lib/utils";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { InlineButton } from "../ui/button";
 import { SidebarMenuItem } from "../ui/sidebar";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SidebarThreadUndoNotice = definePluginComponent(
+  "component:components/sidebar/SidebarThreadUndoNotice/SidebarThreadUndoNotice",
+  PluginOriginalSidebarThreadUndoNotice,
+);
 
 const SHORT_SUMMARY = {
   Settled: msg("{count, plural, =1 {Settled,} other {Settled {count},}}"),
@@ -22,7 +28,7 @@ const SHORT_SUMMARY = {
 };
 
 /** Fills the free space in the sidebar footer's utility row, so it never moves or covers the list. */
-export function SidebarThreadUndoNotice() {
+function PluginOriginalSidebarThreadUndoNotice() {
   const notice = useThreadUndoNotice((state) => state.notice);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const m = useMessages();

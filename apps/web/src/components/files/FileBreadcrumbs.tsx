@@ -30,6 +30,28 @@ import {
   isListableHostFolder,
 } from "./filePath";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
+import { definePluginComponent } from "~/plugins/features";
+
+const BreadcrumbLabel = definePluginComponent(
+  "component:components/files/FileBreadcrumbs/BreadcrumbLabel",
+  PluginOriginalBreadcrumbLabel,
+);
+const BreadcrumbMenuContent = definePluginComponent(
+  "component:components/files/FileBreadcrumbs/BreadcrumbMenuContent",
+  PluginOriginalBreadcrumbMenuContent,
+);
+const FolderContentsMenu = definePluginComponent(
+  "component:components/files/FileBreadcrumbs/FolderContentsMenu",
+  PluginOriginalFolderContentsMenu,
+);
+export const FileBreadcrumbs = definePluginComponent(
+  "component:components/files/FileBreadcrumbs/FileBreadcrumbs",
+  PluginOriginalFileBreadcrumbs,
+);
+const FolderBreadcrumb = definePluginComponent(
+  "component:components/files/FileBreadcrumbs/FolderBreadcrumb",
+  PluginOriginalFolderBreadcrumb,
+);
 
 interface FileBreadcrumbsProps {
   readonly cwd: string;
@@ -49,7 +71,7 @@ function pathLabel(path: string, projectName: string): string {
   return path.slice(path.lastIndexOf("/") + 1) || projectName;
 }
 
-function BreadcrumbLabel(props: {
+function PluginOriginalBreadcrumbLabel(props: {
   readonly current?: boolean;
   readonly label: string;
   readonly pathLabel: string;
@@ -73,7 +95,7 @@ function BreadcrumbLabel(props: {
   );
 }
 
-function BreadcrumbMenuContent(props: {
+function PluginOriginalBreadcrumbMenuContent(props: {
   readonly cwd: string;
   readonly currentFilePath: string;
   readonly directoryPath: string;
@@ -228,7 +250,9 @@ function BreadcrumbMenuContent(props: {
   );
 }
 
-function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: FileBreadcrumb }) {
+function PluginOriginalFolderContentsMenu(
+  props: FileBreadcrumbsProps & { readonly crumb: FileBreadcrumb },
+) {
   const gt = useGT();
   const [open, setOpen] = useState(false);
   const [directoryPath, setDirectoryPath] = useState(props.crumb.path);
@@ -278,7 +302,7 @@ function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: File
   );
 }
 
-function FolderBreadcrumb(props: {
+function PluginOriginalFolderBreadcrumb(props: {
   readonly crumb: FileBreadcrumb;
   /** Whether this crumb is below the current folder. */
   readonly descendant: boolean;
@@ -307,7 +331,7 @@ function FolderBreadcrumb(props: {
 }
 
 /** Host paths outside the workspace omit contents menus; the browser already lists their destination. */
-export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
+function PluginOriginalFileBreadcrumbs(props: FileBreadcrumbsProps) {
   const hostPath = isHostPath(props.relativePath);
   const breadcrumbs = fileBreadcrumbs(props.projectName, props.trail);
   const currentPath = breadcrumbPathOf(props.relativePath);

@@ -8,6 +8,12 @@ import {
 } from "../../lib/windowControlsOverlay";
 
 import { AttachmentImage } from "../media/AttachmentImage";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ZoomableImage = definePluginComponent(
+  "component:components/chat/ZoomableImage/ZoomableImage",
+  PluginOriginalZoomableImage,
+);
 
 const MAX_ZOOM = 8;
 
@@ -39,7 +45,7 @@ export interface ZoomableImageHandle {
   pan: (key: string) => boolean;
 }
 
-export function ZoomableImage({
+function PluginOriginalZoomableImage({
   src,
   name,
   mimeType,

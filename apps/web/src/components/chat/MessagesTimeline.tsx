@@ -1,3 +1,4 @@
+import { definePluginComponent, definePluginFeature } from "~/plugins/features";
 import { T, useGT, useMessages, Var } from "gt-react";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import { threadErrorText } from "@t3tools/client-runtime/state/threads";
@@ -18,6 +19,7 @@ import {
   type MessageId,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
+  type ScopedThreadRef,
   type ServerProviderSkill,
   type RunId,
   ThreadId,
@@ -165,7 +167,12 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = (
   <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
 );
-function TimelineListFooter({
+const TimelineListFooter = definePluginComponent(
+  "component:components/chat/MessagesTimeline/TimelineListFooter",
+  PluginOriginalTimelineListFooter,
+);
+
+function PluginOriginalTimelineListFooter({
   composerInset,
   onGrow,
   children,
@@ -222,6 +229,8 @@ export interface MessagesTimelineHistoryControls {
 }
 
 interface MessagesTimelineProps {
+  /** A separate plugin conversation has no durable thread to cite or mutate. */
+  threadRef?: ScopedThreadRef | null;
   pendingApprovals?: ReadonlyArray<PendingApproval>;
   heldApprovalRequestIds?: ReadonlySet<string> | undefined;
   respondingRequestIds?: TimelineRowSharedState["respondingRequestIds"];
@@ -335,7 +344,7 @@ interface MessagesTimelineProps {
   findNavigationId?: number;
 }
 
-export function MessagesTimeline(props: MessagesTimelineProps) {
+export function BuiltinMessagesTimeline(props: MessagesTimelineProps) {
   const find = useContext(ThreadFindTimelineContext);
   const findOpen = find?.findOpen ?? props.findOpen;
   return (
@@ -348,6 +357,7 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
 }
 
 const ConversationTimeline = memo(function ConversationTimeline({
+  threadRef,
   pendingApprovals = EMPTY_PENDING_APPROVALS,
   heldApprovalRequestIds,
   respondingRequestIds = EMPTY_RESPONDING_REQUEST_IDS,
@@ -484,7 +494,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setExpandedWorkGroupIds(paintedExpandedWorkGroupIds);
     setExpandedAttemptIds(paintedExpandedAttemptIds);
   }
-  const citationThreadRef = parseScopedThreadKey(routeThreadKey);
+  const citationThreadRef =
+    threadRef === undefined ? parseScopedThreadKey(routeThreadKey) : threadRef;
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const normalizedFindQuery = findQuery.trim();
@@ -1527,7 +1538,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
 });
 
-function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
+const TimelineHistoryControl = definePluginComponent(
+  "component:components/chat/MessagesTimeline/TimelineHistoryControl",
+  PluginOriginalTimelineHistoryControl,
+);
+
+function PluginOriginalTimelineHistoryControl(props: MessagesTimelineHistoryControls) {
   const gt = useGT();
   const messages = useMessages();
   if (!props.hasMoreHistory && props.error === null) {
@@ -1625,7 +1641,11 @@ function getItemType(item: MessagesTimelineRow) {
     : `message:${item.message.id}`;
 }
 
-const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
+const PluginOriginalTimelineRowContent = memo(function TimelineRowContent({
+  row,
+}: {
+  row: TimelineRow;
+}) {
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isSubagentGroup = row.kind === "event" && row.projectedItem.item.type === "subagent";
   const isWorkLogRow =
@@ -1713,8 +1733,17 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     </div>
   );
 });
+const TimelineRowContent = definePluginComponent(
+  "component:components/chat/MessagesTimeline/TimelineRowContent",
+  PluginOriginalTimelineRowContent,
+);
 
-function WorktreeSetupTimelineRow({
+const WorktreeSetupTimelineRow = definePluginComponent(
+  "component:components/chat/MessagesTimeline/WorktreeSetupTimelineRow",
+  PluginOriginalWorktreeSetupTimelineRow,
+);
+
+function PluginOriginalWorktreeSetupTimelineRow({
   row,
 }: {
   row: Extract<TimelineRow, { kind: "worktree-setup" }>;
@@ -1736,7 +1765,12 @@ function WorktreeSetupTimelineRow({
   );
 }
 
-function ContextCompactionTimelineRow({
+const ContextCompactionTimelineRow = definePluginComponent(
+  "component:components/chat/MessagesTimeline/ContextCompactionTimelineRow",
+  PluginOriginalContextCompactionTimelineRow,
+);
+
+function PluginOriginalContextCompactionTimelineRow({
   row,
 }: {
   row: Extract<TimelineRow, { kind: "context-compaction" }>;
@@ -1859,7 +1893,16 @@ function WorkHistorySkeleton() {
   );
 }
 
-function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
+const TurnFoldTimelineRow = definePluginComponent(
+  "component:components/chat/MessagesTimeline/TurnFoldTimelineRow",
+  PluginOriginalTurnFoldTimelineRow,
+);
+
+function PluginOriginalTurnFoldTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "turn-fold" }>;
+}) {
   const ctx = use(TimelineRowCtx);
   const { loading, error, toggle } = useDeferredWorkLoading(row, () =>
     ctx.onToggleTurnFold(row.runId),
@@ -1897,7 +1940,16 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   );
 }
 
-function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "attempt-fold" }> }) {
+const AttemptFoldTimelineRow = definePluginComponent(
+  "component:components/chat/MessagesTimeline/AttemptFoldTimelineRow",
+  PluginOriginalAttemptFoldTimelineRow,
+);
+
+function PluginOriginalAttemptFoldTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "attempt-fold" }>;
+}) {
   const ctx = use(TimelineRowCtx);
   const { loading, error, toggle } = useDeferredWorkLoading(row, () =>
     ctx.onToggleAttemptFold(row.attemptId),
@@ -1931,3 +1983,5 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
     </div>
   );
 }
+
+export const MessagesTimeline = definePluginFeature("chat.timeline", BuiltinMessagesTimeline);

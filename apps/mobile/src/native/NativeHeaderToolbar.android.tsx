@@ -1,18 +1,56 @@
 import type { NativeHeaderToolbar as IosNativeHeaderToolbar } from "./NativeHeaderToolbar";
+import { defineNativePluginFeature } from "../plugins/features";
 
-function NativeHeaderToolbarRoot(_props: Parameters<typeof IosNativeHeaderToolbar>[0]) {
+const NativeHeaderToolbarRoot = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-root",
+  BuiltinNativeHeaderToolbarRoot,
+);
+
+const NativeHeaderToolbarButton = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-button",
+  BuiltinNativeHeaderToolbarButton,
+);
+
+const NativeHeaderToolbarMenu = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-menu",
+  BuiltinNativeHeaderToolbarMenu,
+);
+
+const NativeHeaderToolbarMenuAction = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-menu-action",
+  BuiltinNativeHeaderToolbarMenuAction,
+);
+
+const NativeHeaderToolbarLabel = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-label",
+  BuiltinNativeHeaderToolbarLabel,
+);
+
+const NativeHeaderToolbarSpacer = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-spacer",
+  BuiltinNativeHeaderToolbarSpacer,
+);
+
+const NativeHeaderToolbarSearchBarSlot = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-search-bar-slot",
+  BuiltinNativeHeaderToolbarSearchBarSlot,
+);
+
+function BuiltinNativeHeaderToolbarRoot(_props: Parameters<typeof IosNativeHeaderToolbar>[0]) {
   return null;
 }
 
-function NativeHeaderToolbarButton(_props: Parameters<typeof IosNativeHeaderToolbar.Button>[0]) {
+function BuiltinNativeHeaderToolbarButton(
+  _props: Parameters<typeof IosNativeHeaderToolbar.Button>[0],
+) {
   return null;
 }
 
-function NativeHeaderToolbarMenu(_props: Parameters<typeof IosNativeHeaderToolbar.Menu>[0]) {
+function BuiltinNativeHeaderToolbarMenu(_props: Parameters<typeof IosNativeHeaderToolbar.Menu>[0]) {
   return null;
 }
 
-function NativeHeaderToolbarMenuAction(
+function BuiltinNativeHeaderToolbarMenuAction(
   _props: Parameters<typeof IosNativeHeaderToolbar.MenuAction>[0],
 ) {
   return null;
@@ -22,15 +60,19 @@ function NativeHeaderToolbarCustom(_props: Parameters<typeof IosNativeHeaderTool
   return null;
 }
 
-function NativeHeaderToolbarLabel(_props: Parameters<typeof IosNativeHeaderToolbar.Label>[0]) {
+function BuiltinNativeHeaderToolbarLabel(
+  _props: Parameters<typeof IosNativeHeaderToolbar.Label>[0],
+) {
   return null;
 }
 
-function NativeHeaderToolbarSpacer(_props: Parameters<typeof IosNativeHeaderToolbar.Spacer>[0]) {
+function BuiltinNativeHeaderToolbarSpacer(
+  _props: Parameters<typeof IosNativeHeaderToolbar.Spacer>[0],
+) {
   return null;
 }
 
-function NativeHeaderToolbarSearchBarSlot() {
+function BuiltinNativeHeaderToolbarSearchBarSlot() {
   return null;
 }
 

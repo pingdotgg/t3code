@@ -1,6 +1,7 @@
 import {
   lazy,
   Suspense,
+  useContext,
   useEffect,
   useRef,
   useState,
@@ -9,6 +10,7 @@ import {
 } from "react";
 import {
   ArchiveIcon,
+  BlocksIcon,
   FlaskConicalIcon,
   BotIcon,
   createLucideIcon,
@@ -62,8 +64,19 @@ import {
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { handleSettingsSectionKeyDown } from "./settingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { registerBuiltinNavigation, usePluginContributions } from "~/plugins/contributions";
+import {
+  definePluginComponent,
+  definePluginFeature,
+  PluginEnvironmentContext,
+} from "~/plugins/features";
 
-const SnapShotIcon = createLucideIcon("snap-shot", [
+const SettingsSectionIcon = definePluginComponent(
+  "component:components/settings/SettingsSidebarNav/SettingsSectionIcon",
+  PluginOriginalSettingsSectionIcon,
+);
+
+const PluginOriginalSnapShotIcon = createLucideIcon("snap-shot", [
   [
     "path",
     {
@@ -74,16 +87,28 @@ const SnapShotIcon = createLucideIcon("snap-shot", [
   ["rect", { width: "10", height: "8", x: "7", y: "8", rx: "2", key: "window" }],
   ["circle", { cx: "12", cy: "12", r: "1.5", key: "lens" }],
 ]);
+const SnapShotIcon = definePluginComponent(
+  "component:components/settings/SettingsSidebarNav/SnapShotIcon",
+  PluginOriginalSnapShotIcon,
+);
 
-const T3ConnectSidebarSignIn = lazy(() =>
+const PluginOriginalT3ConnectSidebarSignIn = lazy(() =>
   import("../clerk/T3ConnectSidebarSignIn").then((module) => ({
     default: module.T3ConnectSidebarSignIn,
   })),
 );
-const T3ConnectSidebarAvatar = lazy(() =>
+const T3ConnectSidebarSignIn = definePluginComponent(
+  "component:components/settings/SettingsSidebarNav/T3ConnectSidebarSignIn",
+  PluginOriginalT3ConnectSidebarSignIn,
+);
+const PluginOriginalT3ConnectSidebarAvatar = lazy(() =>
   import("../clerk/T3ConnectSidebarSignIn").then((module) => ({
     default: module.T3ConnectSidebarAvatar,
   })),
+);
+const T3ConnectSidebarAvatar = definePluginComponent(
+  "component:components/settings/SettingsSidebarNav/T3ConnectSidebarAvatar",
+  PluginOriginalT3ConnectSidebarAvatar,
 );
 
 const SETTINGS_SECTION_ICONS: Readonly<
@@ -102,6 +127,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/threads": MessagesSquareIcon,
   "/settings/browser": GlobeIcon,
   "/settings/devices": SmartphoneIcon,
+  "/settings/plugins": BlocksIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/worktrees": FolderTreeIcon,
@@ -125,18 +151,44 @@ function scrollResultIntoView(row: HTMLElement | null) {
   row?.scrollIntoView({ block: "nearest" });
 }
 
-function SettingsSectionIcon({ to }: { to: SettingsPath }) {
+// Builtin titles are gt message ids; the nav resolves them with `m`.
+registerBuiltinNavigation(
+  "t3.settings",
+  SETTINGS_NAV_GROUPS.flatMap((group) => group.paths).map((to) => ({
+    id: to,
+    title: SETTINGS_NAV_LABELS[to],
+    path: to,
+    icon: SETTINGS_SECTION_ICONS[to],
+    location: "settings",
+  })),
+);
+
+function isBuiltinSettingsPath(path: string): path is SettingsPath {
+  return Object.hasOwn(SETTINGS_SECTION_ICONS, path);
+}
+
+function PluginOriginalSettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
   return <Icon className="size-4 h-5 shrink-0 text-(--sidebar-icon-color)" />;
 }
 
-export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+export function BuiltinSettingsSidebarNav({ pathname }: { pathname: string }) {
   const gt = useGT();
   const m = useMessages();
   const navArea = workspaceAreaProps("settings-nav", 0, gt("Settings sections"));
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
+  const environmentId = useContext(PluginEnvironmentContext);
+  const settingsNavigation = usePluginContributions("navigation", environmentId).filter(
+    (item) => item.location === "settings",
+  );
+  const contributedPaths = new Set(settingsNavigation.map((item) => item.path));
+  const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
+    ...group,
+    paths: group.paths.filter((to) => contributedPaths.has(to)),
+  })).filter((group) => group.paths.length > 0);
+  const extensionNavItems = settingsNavigation.filter((item) => !isBuiltinSettingsPath(item.path));
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
@@ -197,10 +249,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     if (compactSearchOpen) searchInputRef.current?.focus();
   }, [compactSearchOpen]);
 
-  const handleSectionClick = (to: SettingsPath) => {
+  const handleSectionClick = (to: string) => {
     void navigate({
-      to,
-      hash: "",
+      href: to,
       replace: true,
       hashScrollIntoView: false,
     });
@@ -379,7 +430,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   </SidebarMenu>
                 )}
                 <div onKeyDown={handleSettingsSectionKeyDown} className="flex flex-col gap-4">
-                  {SETTINGS_NAV_GROUPS.map((group, index) => (
+                  {navGroups.map((group, index) => (
                     <div
                       key={group.heading}
                       className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
@@ -424,6 +475,48 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       </div>
                     </div>
                   ))}
+                  {extensionNavItems.length > 0 ? (
+                    <div className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4">
+                      <h3
+                        id="settings-nav-group-extensions"
+                        className={cn(
+                          "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
+                          !compactSearchOpen && "max-md:sr-only",
+                        )}
+                      >
+                        {gt("Extensions")}
+                      </h3>
+                      <div role="group" aria-labelledby="settings-nav-group-extensions">
+                        <SidebarMenu>
+                          {extensionNavItems.map((item) => {
+                            const Icon = item.icon ?? BlocksIcon;
+                            const isActive =
+                              activePath === item.path || activePath.startsWith(`${item.path}/`);
+                            return (
+                              <SidebarMenuItem key={item.path}>
+                                <SidebarMenuButton
+                                  data-settings-section={item.path}
+                                  aria-current={isActive ? "page" : undefined}
+                                  isActive={isActive}
+                                  onClick={() => handleSectionClick(item.path)}
+                                >
+                                  <Icon />
+                                  <span
+                                    className={cn(
+                                      "truncate",
+                                      !compactSearchOpen && "max-md:sr-only",
+                                    )}
+                                  >
+                                    {item.title}
+                                  </span>
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            );
+                          })}
+                        </SidebarMenu>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             )}
@@ -441,3 +534,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     </nav>
   );
 }
+
+export const SettingsSidebarNav = definePluginFeature(
+  "sidebar.settings",
+  BuiltinSettingsSidebarNav,
+);

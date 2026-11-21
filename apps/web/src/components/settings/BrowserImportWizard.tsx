@@ -39,6 +39,44 @@ import {
   type WizardTargetSelection,
   type WizardStep,
 } from "./browserImportWizard.logic";
+import { definePluginComponent } from "~/plugins/features";
+
+export const BrowserImportWizard = definePluginComponent(
+  "component:components/settings/BrowserImportWizard/BrowserImportWizard",
+  PluginOriginalBrowserImportWizard,
+);
+const QuitStep = definePluginComponent(
+  "component:components/settings/BrowserImportWizard/QuitStep",
+  PluginOriginalQuitStep,
+);
+const FullDiskAccessStep = definePluginComponent(
+  "component:components/settings/BrowserImportWizard/FullDiskAccessStep",
+  PluginOriginalFullDiskAccessStep,
+);
+const ConfigureStep = definePluginComponent(
+  "component:components/settings/BrowserImportWizard/ConfigureStep",
+  PluginOriginalConfigureStep,
+);
+const SelectableTile = definePluginComponent(
+  "component:components/settings/BrowserImportWizard/SelectableTile",
+  PluginOriginalSelectableTile,
+);
+const ImportingStep = definePluginComponent(
+  "component:components/settings/BrowserImportWizard/ImportingStep",
+  PluginOriginalImportingStep,
+);
+const CheckingStep = definePluginComponent(
+  "component:components/settings/BrowserImportWizard/CheckingStep",
+  PluginOriginalCheckingStep,
+);
+const DoneStep = definePluginComponent(
+  "component:components/settings/BrowserImportWizard/DoneStep",
+  PluginOriginalDoneStep,
+);
+const BlockedStep = definePluginComponent(
+  "component:components/settings/BrowserImportWizard/BlockedStep",
+  PluginOriginalBlockedStep,
+);
 
 export type { WizardTarget } from "./browserImportWizard.logic";
 
@@ -57,7 +95,7 @@ interface BrowserImportWizardProps {
   readonly onClose: () => void;
 }
 
-export function BrowserImportWizard({
+function PluginOriginalBrowserImportWizard({
   source: initialSource,
   destinationEnvironmentName,
   targetProfiles,
@@ -186,7 +224,7 @@ export function BrowserImportWizard({
   );
 }
 
-function QuitStep({
+function PluginOriginalQuitStep({
   source,
   onCancel,
   onRechecked,
@@ -247,7 +285,7 @@ type ConfigureStepProps = {
   readonly onImport: () => void;
 };
 
-function FullDiskAccessStep({
+function PluginOriginalFullDiskAccessStep({
   source,
   onCancel,
   onOpenSettings,
@@ -346,7 +384,7 @@ function FullDiskAccessStep({
     </>
   );
 }
-function ConfigureStep({
+function PluginOriginalConfigureStep({
   source,
   destinationEnvironmentName,
   targetProfiles,
@@ -450,7 +488,7 @@ function ConfigureStep({
   );
 }
 
-function SelectableTile({
+function PluginOriginalSelectableTile({
   selected,
   title,
   subtitle,
@@ -493,7 +531,7 @@ function SelectableTile({
   );
 }
 
-function ImportingStep() {
+function PluginOriginalImportingStep() {
   return (
     <>
       <DialogHeader>
@@ -516,7 +554,7 @@ function ImportingStep() {
   );
 }
 
-function CheckingStep({
+function PluginOriginalCheckingStep({
   sourceName,
   check,
 }: {
@@ -550,7 +588,7 @@ function CheckingStep({
   );
 }
 
-function DoneStep({
+function PluginOriginalDoneStep({
   imported,
   skipped,
   skippedDomains,
@@ -619,7 +657,7 @@ function DoneStep({
   );
 }
 
-function BlockedStep({
+function PluginOriginalBlockedStep({
   source,
   reason,
   message,

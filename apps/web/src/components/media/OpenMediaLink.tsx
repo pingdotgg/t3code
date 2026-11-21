@@ -4,8 +4,14 @@ import { DownloadIcon, ExternalLinkIcon } from "lucide-react";
 import { resolveExternalWebLinkHost } from "../chat/externalLinkContextMenu";
 import { Button } from "../ui/button";
 import { resolveProtocolRelativeMediaUrl } from "./mediaContent";
+import { definePluginComponent } from "~/plugins/features";
 
-export function OpenMediaLink(props: {
+export const OpenMediaLink = definePluginComponent(
+  "component:components/media/OpenMediaLink/OpenMediaLink",
+  PluginOriginalOpenMediaLink,
+);
+
+function PluginOriginalOpenMediaLink(props: {
   readonly originalUrl?: string | undefined;
   readonly src?: string | null | undefined;
   readonly fileName?: string | undefined;

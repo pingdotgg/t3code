@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -2992,7 +2993,7 @@ export const layer = (
   AcpSessionRuntime,
   EffectAcpErrors.AcpError,
   ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
-> => Layer.effect(AcpSessionRuntime, make(options));
+> => builtinServiceLayer("t3.providers")(AcpSessionRuntime, make(options));
 
 function sessionConfigOptionsFromSetup(
   response:

@@ -1,9 +1,9 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 
 export type ElectronThermalState = ReturnType<Electron.PowerMonitor["getCurrentThermalState"]>;
 export type ElectronIdleState = ReturnType<Electron.PowerMonitor["getSystemIdleState"]>;
@@ -90,4 +90,8 @@ export const make = ElectronPowerMonitor.of({
   onSpeedLimitChange,
 });
 
-export const layer = Layer.succeed(ElectronPowerMonitor, make);
+export const layer = builtinSucceedLayer(
+  "t3.desktop.electron-power-monitor",
+  ElectronPowerMonitor,
+  make,
+);

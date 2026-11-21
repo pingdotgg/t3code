@@ -654,6 +654,22 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./plugins/runtime": {
+      "types": "./src/plugins/runtime.ts",
+      "default": "./src/plugins/runtime.ts"
+    },
+    "./plugins": {
+      "types": "./src/plugins/index.ts",
+      "default": "./src/plugins/index.ts"
+    },
+    "./state/plugins": {
+      "types": "./src/state/plugins.ts",
+      "default": "./src/state/plugins.ts"
+    },
+    "./state/canvas": {
+      "types": "./src/state/canvas.ts",
+      "default": "./src/state/canvas.ts"
     }
   },
   "scripts": {

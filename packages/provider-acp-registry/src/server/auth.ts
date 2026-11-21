@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import {
   ProviderSetupError,
   type ProviderAuthMethod,
@@ -119,8 +120,11 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           }).pipe(
             Layer.provide(
               Layer.mergeAll(
-                Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                Layer.succeed(SecureRandom.SecureRandom, random),
+                builtinSucceedLayer("t3.providers")(
+                  ChildProcessSpawner.ChildProcessSpawner,
+                  spawner,
+                ),
+                builtinSucceedLayer("t3.providers")(SecureRandom.SecureRandom, random),
               ),
             ),
           ),

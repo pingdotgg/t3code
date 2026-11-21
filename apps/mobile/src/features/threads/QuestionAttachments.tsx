@@ -30,8 +30,9 @@ import {
   pickQuestionAttachments,
   startQuestionImagePreparation,
 } from "../../state/question-attachment-preparation";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function QuestionAttachments(props: {
+function BuiltinQuestionAttachments(props: {
   requestId: string;
   question: UserInputQuestion;
   questions: ReadonlyArray<UserInputQuestion>;
@@ -218,3 +219,8 @@ export function QuestionAttachments(props: {
     </View>
   );
 }
+
+export const QuestionAttachments = defineNativePluginFeature(
+  "native.features.threads.question-attachments",
+  BuiltinQuestionAttachments,
+);

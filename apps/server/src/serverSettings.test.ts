@@ -19,6 +19,7 @@ import {
   type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { PluginKernel, layerWithEnabled } from "@t3tools/shared/pluginKernel";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -221,6 +222,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }),
     ).pipe(Effect.provide(layerServerSettings())),
   );
+  it.effect("keeps persisted host settings available while the settings plugin is disabled", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const kernel = yield* PluginKernel;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      yield* service.start;
+      yield* service.ready;
+      yield* service.updateSettings({ responseStreamingMode: "turn" });
+      assert.equal((yield* service.getSettings).responseStreamingMode, "turn");
+
+      yield* kernel.setEnabled("t3.settings", true);
+      yield* kernel.setEnabled("t3.settings", false);
+      assert.equal((yield* service.getSettings).responseStreamingMode, "turn");
+      yield* service.updateSettings({ responseStreamingMode: "paragraph" });
+      const persisted = yield* decodeServerSettingsJson(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.equal(persisted.responseStreamingMode, "paragraph");
+    }).pipe(
+      Effect.provide(
+        layerServerSettings().pipe(Layer.provideMerge(layerWithEnabled({ "t3.settings": false }))),
+      ),
+    ),
+  );
+
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

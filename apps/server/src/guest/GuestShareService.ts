@@ -281,7 +281,9 @@ const make = Effect.gen(function* () {
     return decodeSessionClaims(base64UrlDecodeUtf8(parts.payload));
   });
 
-  const connectHostname = managedEndpoint.inspectConnector.pipe(
+  // The connector belongs to the connections feature; read it per call so a disabled feature
+  // fails the lookup instead of guest sharing construction.
+  const connectHostname = Effect.suspend(() => managedEndpoint.inspectConnector).pipe(
     Effect.map((facts) => facts?.hostname ?? null),
   );
   // A beta: while it is off, no link opens and every guest request is refused.

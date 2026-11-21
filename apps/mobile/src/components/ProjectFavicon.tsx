@@ -31,67 +31,91 @@ import {
   markProjectFaviconFailed,
   markProjectFaviconLoaded,
 } from "../lib/projectFaviconRequests";
+import { defineNativePluginFeature } from "../plugins/features";
+
+const ProjectIconGlyphView = defineNativePluginFeature(
+  "native.components.project-favicon.project-icon-glyph-view",
+  BuiltinProjectIconGlyphView,
+);
+const ProjectFaviconImage = defineNativePluginFeature(
+  "native.components.project-favicon.project-favicon-image",
+  BuiltinProjectFaviconImage,
+);
 
 const EMPTY_FAVICON_URL = Atom.make<string | null>(null);
 
-export const ProjectFavicon = memo(function ProjectFavicon(props: {
-  readonly environmentId: EnvironmentId;
-  readonly open?: boolean;
-  readonly size?: number;
-  readonly projectTitle: string;
-  readonly workspaceRoot?: string | null;
-  readonly faviconPath?: string | null;
-  readonly projectIcon?: ProjectIconOverride | null;
-}) {
-  const size = props.size ?? 42;
-  const symbol = resolveProjectIconSymbol(props.projectIcon);
-  const glyph = resolveProjectIconGlyph(props.projectIcon, props.projectTitle);
-  const faviconUrl = useAtomValue(
-    props.workspaceRoot == null || glyph !== null
-      ? EMPTY_FAVICON_URL
-      : projectFaviconUrlAtom({
-          environmentId: props.environmentId,
-          cwd: props.workspaceRoot,
-          faviconPath: props.faviconPath,
-        }),
-  );
-  const renderableFaviconUrl = isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl;
-  // Key remote images by revision so token rotation reuses the cache while changed icons reload.
-  const cacheKey =
-    renderableFaviconUrl && props.workspaceRoot
-      ? renderableFaviconUrl.startsWith("data:")
-        ? getProjectFaviconResourceKey(props.environmentId, props.workspaceRoot, props.faviconPath)
-        : getProjectFaviconCacheKey(props.environmentId, props.workspaceRoot, renderableFaviconUrl)
-      : null;
+export const ProjectFavicon = defineNativePluginFeature(
+  "native.components.project-favicon",
+  memo(function ProjectFavicon(props: {
+    readonly environmentId: EnvironmentId;
+    readonly open?: boolean;
+    readonly size?: number;
+    readonly projectTitle: string;
+    readonly workspaceRoot?: string | null;
+    readonly faviconPath?: string | null;
+    readonly projectIcon?: ProjectIconOverride | null;
+  }) {
+    const size = props.size ?? 42;
+    const symbol = resolveProjectIconSymbol(props.projectIcon);
+    const glyph = resolveProjectIconGlyph(props.projectIcon, props.projectTitle);
+    const faviconUrl = useAtomValue(
+      props.workspaceRoot == null || glyph !== null
+        ? EMPTY_FAVICON_URL
+        : projectFaviconUrlAtom({
+            environmentId: props.environmentId,
+            cwd: props.workspaceRoot,
+            faviconPath: props.faviconPath,
+          }),
+    );
+    const renderableFaviconUrl = isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl;
+    // Key remote images by revision so token rotation reuses the cache while changed icons reload.
+    const cacheKey =
+      renderableFaviconUrl && props.workspaceRoot
+        ? renderableFaviconUrl.startsWith("data:")
+          ? getProjectFaviconResourceKey(
+              props.environmentId,
+              props.workspaceRoot,
+              props.faviconPath,
+            )
+          : getProjectFaviconCacheKey(
+              props.environmentId,
+              props.workspaceRoot,
+              renderableFaviconUrl,
+            )
+        : null;
 
-  if (symbol !== null) {
+    if (symbol !== null) {
+      return (
+        <SymbolView
+          name={symbol.name}
+          size={size}
+          tintColorClassName={projectIconColorClassNames(symbol.color).tint}
+          type="monochrome"
+        />
+      );
+    }
+
+    if (glyph !== null) {
+      return <ProjectIconGlyphView glyph={glyph} size={size} />;
+    }
+
     return (
-      <SymbolView
-        name={symbol.name}
+      <ProjectFaviconImage
+        key={cacheKey}
+        cacheKey={cacheKey}
+        faviconUrl={renderableFaviconUrl}
+        open={props.open}
+        projectTitle={props.projectTitle}
         size={size}
-        tintColorClassName={projectIconColorClassNames(symbol.color).tint}
-        type="monochrome"
       />
     );
-  }
+  }),
+);
 
-  if (glyph !== null) {
-    return <ProjectIconGlyphView glyph={glyph} size={size} />;
-  }
-
-  return (
-    <ProjectFaviconImage
-      key={cacheKey}
-      cacheKey={cacheKey}
-      faviconUrl={renderableFaviconUrl}
-      open={props.open}
-      projectTitle={props.projectTitle}
-      size={size}
-    />
-  );
-});
-
-function ProjectIconGlyphView(props: { readonly glyph: ProjectIconGlyph; readonly size: number }) {
+function BuiltinProjectIconGlyphView(props: {
+  readonly glyph: ProjectIconGlyph;
+  readonly size: number;
+}) {
   const { glyph, size } = props;
   if (glyph.kind === "emoji") {
     return (
@@ -141,7 +165,7 @@ function ProjectIconGlyphView(props: { readonly glyph: ProjectIconGlyph; readonl
   );
 }
 
-function ProjectFaviconImage(props: {
+function BuiltinProjectFaviconImage(props: {
   readonly cacheKey: string | null;
   readonly faviconUrl: string | null;
   readonly open?: boolean;

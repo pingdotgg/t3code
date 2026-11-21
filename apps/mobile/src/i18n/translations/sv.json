@@ -5462,5 +5462,31 @@
   "ad208e3e32c85029": "Dölj alla",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
-  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid."
+  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "e4fdf2c125bb1a1c": "{count, plural, one {Använde canvas {count} gång} other {Använde canvas {count} gånger}}",
+  "2a632164170177a2": "{count, plural, one {Försökte använda canvas {count} gång} other {Försökte använda canvas {count} gånger}}",
+  "c1b7649ac731ed07": "Plugins",
+  "902eee528c565dd9": "Pluginkommandot misslyckades",
+  "c5d071b279c2e90f": "Stäng pluginåterställning",
+  "ea4b0ed7aa9bd760": "Pluginåterställning",
+  "656854e648c97dca": "Aktivera ett inbyggt plugin igen",
+  "ebffe4dabf52835f": "Aktivera {name}",
+  "ba32f1a6898cf271": "Läs in lokala plugins igen",
+  "37036031afcfce34": "Medföljande funktion",
+  "9608b33769752cbf": "Sök plugins i {label}",
+  "654234ef26ef1497": "Sök tillgängliga plugins",
+  "59375313b87b2aee": "{name} är installerat",
+  "501b9d7d4a10350f": "Installera {name}",
+  "119fdf3a37955ebd": "Anslut en miljö för att hantera dess plugins.",
+  "4d4a9cccdbcb80b1": "Uppdatera den här miljön för att hantera plugins.",
+  "2a0fa39b8a84f848": "Den här miljön kunde inte läsa in sin pluginkatalog.",
+  "0fceafde5534f56f": "Läser in plugins...",
+  "7c9ee44d092d4f51": [
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " · Granskad av",
+    " ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" }
+  ],
+  "2bf815f51a9354c3": "Inga tillgängliga plugins matchar sökningen.",
+  "16ed41dd430363b8": "Katalogen med tillgängliga plugins kunde inte läsas in."
 }

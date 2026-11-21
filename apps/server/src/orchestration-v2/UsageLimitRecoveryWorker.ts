@@ -1,7 +1,7 @@
+import { builtinLifecycleLayer, isBuiltinDisabledCause } from "../plugins/PluginKernel.ts";
 import { CommandId, MessageId, type OrchestrationV2Command } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as DueHint from "../scheduling/DueHint.ts";
@@ -146,10 +146,18 @@ const makeSweep = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effectDiscard(
+export const layer = builtinLifecycleLayer(
+  "t3.thread",
+  "t3/runtime/orchestration-v2/UsageLimitRecoveryWorker#lifecycle1",
   Effect.gen(function* () {
     const sweep = yield* makeSweep;
     const scheduler = yield* Scheduler.Scheduler;
-    yield* scheduler.register("usage-limit-recovery", sweep());
+    // The sweep runs on t3.scheduler's ticks; with that plugin disabled there is nothing to register.
+    yield* Effect.suspend(() => scheduler.register("usage-limit-recovery", sweep())).pipe(
+      Effect.catchCauseIf(
+        (cause) => isBuiltinDisabledCause(cause, "t3.scheduler"),
+        () => Effect.void,
+      ),
+    );
   }),
 );

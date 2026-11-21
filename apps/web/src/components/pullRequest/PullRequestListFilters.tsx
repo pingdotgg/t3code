@@ -59,6 +59,36 @@ import {
 import { resolveFilterOptions } from "./pullRequestListOptions";
 import { PullRequestActorAvatar } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PullRequestFilterOptionIcon = definePluginComponent(
+  "component:components/pullRequest/PullRequestListFilters/PullRequestFilterOptionIcon",
+  PluginOriginalPullRequestFilterOptionIcon,
+);
+export const PullRequestSearchInput = definePluginComponent(
+  "component:components/pullRequest/PullRequestListFilters/PullRequestSearchInput",
+  PluginOriginalPullRequestSearchInput,
+);
+const PullRequestFilterRadioGroup = definePluginComponent(
+  "component:components/pullRequest/PullRequestListFilters/PullRequestFilterRadioGroup",
+  PluginOriginalPullRequestFilterRadioGroup,
+);
+export const PullRequestFilterRadioSubmenu = definePluginComponent(
+  "component:components/pullRequest/PullRequestListFilters/PullRequestFilterRadioSubmenu",
+  PluginOriginalPullRequestFilterRadioSubmenu,
+);
+const PullRequestAuthorFilter = definePluginComponent(
+  "component:components/pullRequest/PullRequestListFilters/PullRequestAuthorFilter",
+  PluginOriginalPullRequestAuthorFilter,
+);
+const PullRequestLabelFilter = definePluginComponent(
+  "component:components/pullRequest/PullRequestListFilters/PullRequestLabelFilter",
+  PluginOriginalPullRequestLabelFilter,
+);
+export const PullRequestFiltersMenu = definePluginComponent(
+  "component:components/pullRequest/PullRequestListFilters/PullRequestFiltersMenu",
+  PluginOriginalPullRequestFiltersMenu,
+);
 
 export interface PullRequestFilterOption<Value extends string> {
   readonly value: Value;
@@ -68,7 +98,7 @@ export interface PullRequestFilterOption<Value extends string> {
   readonly unavailable?: string | undefined;
 }
 
-export function PullRequestFilterOptionIcon<Value extends string>({
+function PluginOriginalPullRequestFilterOptionIcon<Value extends string>({
   option,
 }: {
   option: PullRequestFilterOption<Value>;
@@ -95,7 +125,7 @@ export function pullRequestHostLabel(
     : getSourceControlPresentationForKind(entry.kind).providerName;
 }
 
-export function PullRequestSearchInput({
+function PluginOriginalPullRequestSearchInput({
   value,
   busy,
   label,
@@ -186,7 +216,7 @@ const CHECKS_OPTIONS = [
   { value: "failing", label: msg("Failing", { $context: "checks filter" }), Icon: CircleXIcon },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
 
-function PullRequestFilterRadioGroup<Value extends string>({
+function PluginOriginalPullRequestFilterRadioGroup<Value extends string>({
   label,
   value,
   options,
@@ -238,7 +268,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
   );
 }
 
-export function PullRequestFilterRadioSubmenu<Value extends string>({
+function PluginOriginalPullRequestFilterRadioSubmenu<Value extends string>({
   label,
   value,
   options,
@@ -361,7 +391,7 @@ function PullRequestAuthorChoices({
   );
 }
 
-function PullRequestAuthorFilter({
+function PluginOriginalPullRequestAuthorFilter({
   value,
   options,
   scope,
@@ -468,7 +498,7 @@ function PullRequestLabelChoices({
   );
 }
 
-function PullRequestLabelFilter({
+function PluginOriginalPullRequestLabelFilter({
   value,
   options,
   scope,
@@ -507,7 +537,7 @@ function PullRequestLabelFilter({
   );
 }
 
-export function PullRequestFiltersMenu({
+function PluginOriginalPullRequestFiltersMenu({
   onOpenChange,
   state,
   stateOptions,

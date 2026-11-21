@@ -155,6 +155,12 @@ import {
   type ConnectDeviceRevokeRequest,
   RevokeConnectDeviceDialog,
 } from "./RevokeConnectDeviceDialog";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ConnectionsSettings = definePluginComponent(
+  "component:components/settings/ConnectionsSettings/ConnectionsSettings",
+  PluginOriginalConnectionsSettings,
+);
 
 // Sessions T3 Connect minted for a device signed in to the linked account.
 const CLOUD_CONNECT_SESSION_SUBJECT = "cloud-connect";
@@ -177,7 +183,11 @@ function LocalVersionStatusLabel() {
 }
 
 /** Environments lists the machines this app connects to; access covers who may reach one of them. */
-export function ConnectionsSettings({ view }: { readonly view: "environments" | "access" }) {
+export function PluginOriginalConnectionsSettings({
+  view,
+}: {
+  readonly view: "environments" | "access";
+}) {
   return view === "access" ? (
     <AccessSettings />
   ) : (

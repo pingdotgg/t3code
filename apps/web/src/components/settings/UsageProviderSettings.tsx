@@ -17,10 +17,20 @@ import { Button } from "../ui/button";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { useSearchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { definePluginComponent } from "~/plugins/features";
 
 const CLI_PROXY_NAME = "CLI Proxy";
 
-export function UsageProviderSettings({
+export const UsageProviderSettings = definePluginComponent(
+  "component:components/settings/UsageProviderSettings/UsageProviderSettings",
+  PluginOriginalUsageProviderSettings,
+);
+const RemoveUsageProviderButton = definePluginComponent(
+  "component:components/settings/UsageProviderSettings/RemoveUsageProviderButton",
+  PluginOriginalRemoveUsageProviderButton,
+);
+
+function PluginOriginalUsageProviderSettings({
   environmentId,
   environmentLabel,
   sources,
@@ -93,7 +103,7 @@ export function UsageProviderSettings({
   );
 }
 
-function RemoveUsageProviderButton({
+function PluginOriginalRemoveUsageProviderButton({
   label,
   onConfirm,
 }: {

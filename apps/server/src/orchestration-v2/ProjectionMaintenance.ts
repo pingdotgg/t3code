@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -50,12 +51,13 @@ type MetadataRow = {
   readonly updated_at: string;
 };
 
-export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlClient> = Layer.effect(
-  ProjectionMaintenanceV2,
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlClient> =
+  builtinServiceLayer("t3.thread")(
+    ProjectionMaintenanceV2,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
 
-    const writeMetadata = (name: string, sequence: number, at: DateTime.Utc) => sql`
+      const writeMetadata = (name: string, sequence: number, at: DateTime.Utc) => sql`
       INSERT INTO orchestration_v2_projection_metadata (
         projection_name, schema_version, last_sequence, updated_at
       )
@@ -70,16 +72,16 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         updated_at = excluded.updated_at
     `;
 
-    // Collects anchors whose prompt later rows borrow through promptSequence.
-    const readPromptReferences = Effect.fnUntraced(function* (
-      afterSequence: number,
-      throughSequence: number,
-      betweenPages: Effect.Effect<void>,
-    ) {
-      const referenced = new Set<number>();
-      for (let cursor = afterSequence; cursor < throughSequence;) {
-        const windowEnd = Math.min(cursor + REFERENCE_SCAN_WINDOW, throughSequence);
-        const rows = yield* sql<{ readonly prompt_sequence: number }>`
+      // Collects anchors whose prompt later rows borrow through promptSequence.
+      const readPromptReferences = Effect.fnUntraced(function* (
+        afterSequence: number,
+        throughSequence: number,
+        betweenPages: Effect.Effect<void>,
+      ) {
+        const referenced = new Set<number>();
+        for (let cursor = afterSequence; cursor < throughSequence;) {
+          const windowEnd = Math.min(cursor + REFERENCE_SCAN_WINDOW, throughSequence);
+          const rows = yield* sql<{ readonly prompt_sequence: number }>`
           SELECT json_extract(payload_json, '$.promptSequence') AS prompt_sequence
           FROM orchestration_events
           WHERE sequence > ${cursor}
@@ -87,21 +89,21 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             AND event_type IN ('subagent.updated', 'turn-item.updated')
             AND json_type(payload_json, '$.promptSequence') = 'integer'
         `.pipe(NodeSqliteClient.readOnly);
-        for (const row of rows) referenced.add(row.prompt_sequence);
-        cursor = windowEnd;
-        yield* betweenPages;
-      }
-      return referenced;
-    });
+          for (const row of rows) referenced.add(row.prompt_sequence);
+          cursor = windowEnd;
+          yield* betweenPages;
+        }
+        return referenced;
+      });
 
-    const pruneEvents = Effect.fnUntraced(function* (
-      throughSequence: number,
-      head: number,
-      betweenPages: Effect.Effect<void>,
-    ) {
-      const referenced = yield* readPromptReferences(throughSequence, head, betweenPages);
-      // Stream heads at or below the boundary are kept, so the anchors they borrow must stay too.
-      const keptHeadReferences = yield* sql<{ readonly prompt_sequence: number }>`
+      const pruneEvents = Effect.fnUntraced(function* (
+        throughSequence: number,
+        head: number,
+        betweenPages: Effect.Effect<void>,
+      ) {
+        const referenced = yield* readPromptReferences(throughSequence, head, betweenPages);
+        // Stream heads at or below the boundary are kept, so the anchors they borrow must stay too.
+        const keptHeadReferences = yield* sql<{ readonly prompt_sequence: number }>`
         SELECT json_extract(event.payload_json, '$.promptSequence') AS prompt_sequence
         FROM (
           SELECT MAX(sequence) AS sequence FROM orchestration_events
@@ -112,13 +114,13 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           AND event.event_type IN ('subagent.updated', 'turn-item.updated')
           AND json_type(event.payload_json, '$.promptSequence') = 'integer'
       `.pipe(NodeSqliteClient.readOnly);
-      for (const row of keptHeadReferences) referenced.add(row.prompt_sequence);
-      yield* betweenPages;
-      let referencesThrough = head;
-      let deleted = 0;
-      let cursor = 0;
-      while (cursor < throughSequence) {
-        const rows = yield* sql<{ readonly sequence: number; readonly prunable: number }>`
+        for (const row of keptHeadReferences) referenced.add(row.prompt_sequence);
+        yield* betweenPages;
+        let referencesThrough = head;
+        let deleted = 0;
+        let cursor = 0;
+        while (cursor < throughSequence) {
+          const rows = yield* sql<{ readonly sequence: number; readonly prunable: number }>`
           SELECT
             event.sequence,
             CASE
@@ -142,17 +144,17 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           ORDER BY event.sequence ASC
           LIMIT ${PAGE_SIZE}
         `.pipe(NodeSqliteClient.readOnly);
-        const candidates = rows.filter((row) => row.prunable === 1).map((row) => row.sequence);
-        // Never hold a transaction or the reader lock across a yield or a rest.
-        yield* Effect.yieldNow;
-        if (candidates.length > 0) {
-          deleted += yield* sql.withTransaction(
-            Effect.gen(function* () {
-              // Rows appended since the reference scan may borrow a prompt from a candidate.
-              const appended = yield* sql<{
-                readonly sequence: number;
-                readonly prompt_sequence: number | null;
-              }>`
+          const candidates = rows.filter((row) => row.prunable === 1).map((row) => row.sequence);
+          // Never hold a transaction or the reader lock across a yield or a rest.
+          yield* Effect.yieldNow;
+          if (candidates.length > 0) {
+            deleted += yield* sql.withTransaction(
+              Effect.gen(function* () {
+                // Rows appended since the reference scan may borrow a prompt from a candidate.
+                const appended = yield* sql<{
+                  readonly sequence: number;
+                  readonly prompt_sequence: number | null;
+                }>`
                 SELECT
                   sequence,
                   CASE
@@ -163,36 +165,36 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
                 FROM orchestration_events
                 WHERE sequence > ${referencesThrough}
               `;
-              for (const row of appended) {
-                if (row.prompt_sequence !== null) referenced.add(row.prompt_sequence);
-                referencesThrough = Math.max(referencesThrough, row.sequence);
-              }
-              const obsolete = candidates.filter((sequence) => !referenced.has(sequence));
-              if (obsolete.length === 0) return 0;
-              yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
-              return obsolete.length;
-            }),
-          );
-          yield* Effect.yieldNow;
+                for (const row of appended) {
+                  if (row.prompt_sequence !== null) referenced.add(row.prompt_sequence);
+                  referencesThrough = Math.max(referencesThrough, row.sequence);
+                }
+                const obsolete = candidates.filter((sequence) => !referenced.has(sequence));
+                if (obsolete.length === 0) return 0;
+                yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
+                return obsolete.length;
+              }),
+            );
+            yield* Effect.yieldNow;
+          }
+          // Rest after every page, including the last, so the next loop starts a fresh slice.
+          yield* betweenPages;
+          if (rows.length < PAGE_SIZE) break;
+          cursor = rows.at(-1)?.sequence ?? throughSequence;
         }
-        // Rest after every page, including the last, so the next loop starts a fresh slice.
-        yield* betweenPages;
-        if (rows.length < PAGE_SIZE) break;
-        cursor = rows.at(-1)?.sequence ?? throughSequence;
-      }
-      return deleted;
-    });
+        return deleted;
+      });
 
-    // Imported legacy threads are served from v2 rows; their v1 events and receipts have no reader.
-    const pruneImportedLegacyHistory = Effect.fnUntraced(function* (
-      throughSequence: number,
-      throughReceiptRowId: number,
-      betweenPages: Effect.Effect<void>,
-    ) {
-      let deletedEventCount = 0;
-      let deletedReceiptCount = 0;
-      for (let cursor = 0; ;) {
-        const rows = yield* sql<{ readonly sequence: number; readonly imported: number }>`
+      // Imported legacy threads are served from v2 rows; their v1 events and receipts have no reader.
+      const pruneImportedLegacyHistory = Effect.fnUntraced(function* (
+        throughSequence: number,
+        throughReceiptRowId: number,
+        betweenPages: Effect.Effect<void>,
+      ) {
+        let deletedEventCount = 0;
+        let deletedReceiptCount = 0;
+        for (let cursor = 0; ;) {
+          const rows = yield* sql<{ readonly sequence: number; readonly imported: number }>`
           SELECT
             event.sequence,
             event.aggregate_kind = 'thread' AND EXISTS (
@@ -208,23 +210,23 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           ORDER BY event.sequence ASC
           LIMIT ${PAGE_SIZE}
         `.pipe(NodeSqliteClient.readOnly);
-        const obsolete = rows.filter((row) => row.imported === 1).map((row) => row.sequence);
-        yield* Effect.yieldNow;
-        if (obsolete.length > 0) {
-          yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
-          deletedEventCount += obsolete.length;
+          const obsolete = rows.filter((row) => row.imported === 1).map((row) => row.sequence);
           yield* Effect.yieldNow;
+          if (obsolete.length > 0) {
+            yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
+            deletedEventCount += obsolete.length;
+            yield* Effect.yieldNow;
+          }
+          yield* betweenPages;
+          if (rows.length < PAGE_SIZE) break;
+          cursor = rows.at(-1)?.sequence ?? cursor;
         }
-        yield* betweenPages;
-        if (rows.length < PAGE_SIZE) break;
-        cursor = rows.at(-1)?.sequence ?? cursor;
-      }
-      for (let cursor = 0; ;) {
-        const rows = yield* sql<{
-          readonly row_id: number;
-          readonly command_id: string;
-          readonly imported: number;
-        }>`
+        for (let cursor = 0; ;) {
+          const rows = yield* sql<{
+            readonly row_id: number;
+            readonly command_id: string;
+            readonly imported: number;
+          }>`
           SELECT
             receipt.rowid AS row_id,
             receipt.command_id,
@@ -238,82 +240,88 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           ORDER BY receipt.rowid ASC
           LIMIT ${PAGE_SIZE}
         `.pipe(NodeSqliteClient.readOnly);
-        const obsolete = rows.filter((row) => row.imported === 1).map((row) => row.command_id);
-        yield* Effect.yieldNow;
-        if (obsolete.length > 0) {
-          yield* sql`DELETE FROM orchestration_command_receipts WHERE command_id IN ${sql.in(obsolete)}`;
-          deletedReceiptCount += obsolete.length;
+          const obsolete = rows.filter((row) => row.imported === 1).map((row) => row.command_id);
           yield* Effect.yieldNow;
+          if (obsolete.length > 0) {
+            yield* sql`DELETE FROM orchestration_command_receipts WHERE command_id IN ${sql.in(obsolete)}`;
+            deletedReceiptCount += obsolete.length;
+            yield* Effect.yieldNow;
+          }
+          yield* betweenPages;
+          if (rows.length < PAGE_SIZE) break;
+          cursor = rows.at(-1)?.row_id ?? cursor;
         }
-        yield* betweenPages;
-        if (rows.length < PAGE_SIZE) break;
-        cursor = rows.at(-1)?.row_id ?? cursor;
-      }
-      return { deletedEventCount, deletedReceiptCount };
-    });
+        return { deletedEventCount, deletedReceiptCount };
+      });
 
-    // A pass prunes through the mark the previous pass left once that mark is a day old, so
-    // at least RETAINED_EVENT_HISTORY of events always remains. Receipts stay for idempotency.
-    const pruneEventStore = Effect.fn("ProjectionMaintenance.pruneEventStore")(
-      function* (betweenPages: Effect.Effect<void> = Effect.void) {
-        const now = yield* DateTime.now;
-        const metadata = yield* sql<MetadataRow>`
+      // A pass prunes through the mark the previous pass left once that mark is a day old, so
+      // at least RETAINED_EVENT_HISTORY of events always remains. Receipts stay for idempotency.
+      const pruneEventStore = Effect.fn("ProjectionMaintenance.pruneEventStore")(
+        function* (betweenPages: Effect.Effect<void> = Effect.void) {
+          const now = yield* DateTime.now;
+          const metadata = yield* sql<MetadataRow>`
           SELECT projection_name, last_sequence, updated_at
           FROM orchestration_v2_projection_metadata
           WHERE projection_name IN (
             'thread-projections', ${EVENT_LOG_PRUNE_MARK}, ${EVENT_LOG_PRUNED_THROUGH}
           )
         `.pipe(NodeSqliteClient.readOnly);
-        const read = (name: string) => metadata.find((row) => row.projection_name === name);
-        const projected = read("thread-projections")?.last_sequence ?? 0;
-        const mark = read(EVENT_LOG_PRUNE_MARK);
-        const prunedThrough = read(EVENT_LOG_PRUNED_THROUGH)?.last_sequence ?? 0;
-        // Fixed bounds: foreground commits during the pass wait for the next one.
-        const bounds = yield* sql<{ readonly sequence: number; readonly receipt_row_id: number }>`
+          const read = (name: string) => metadata.find((row) => row.projection_name === name);
+          const projected = read("thread-projections")?.last_sequence ?? 0;
+          const mark = read(EVENT_LOG_PRUNE_MARK);
+          const prunedThrough = read(EVENT_LOG_PRUNED_THROUGH)?.last_sequence ?? 0;
+          // Fixed bounds: foreground commits during the pass wait for the next one.
+          const bounds = yield* sql<{ readonly sequence: number; readonly receipt_row_id: number }>`
           SELECT
             COALESCE((SELECT MAX(sequence) FROM orchestration_events), 0) AS sequence,
             COALESCE((SELECT MAX(rowid) FROM orchestration_command_receipts), 0) AS receipt_row_id
         `.pipe(NodeSqliteClient.readOnly);
-        const head = bounds[0]?.sequence ?? 0;
+          const head = bounds[0]?.sequence ?? 0;
 
-        let deletedEventCount = 0;
-        const markIsDue =
-          mark !== undefined &&
-          DateTime.toEpochMillis(now) - Date.parse(mark.updated_at) >=
-            Duration.toMillis(RETAINED_EVENT_HISTORY);
-        if (mark !== undefined && markIsDue) {
-          const throughSequence = Math.max(Math.min(mark.last_sequence, projected), prunedThrough);
-          if (throughSequence > prunedThrough) {
-            // Publish the boundary first so resuming clients take a snapshot, never a partial replay.
-            yield* writeMetadata(EVENT_LOG_PRUNED_THROUGH, throughSequence, now);
+          let deletedEventCount = 0;
+          const markIsDue =
+            mark !== undefined &&
+            DateTime.toEpochMillis(now) - Date.parse(mark.updated_at) >=
+              Duration.toMillis(RETAINED_EVENT_HISTORY);
+          if (mark !== undefined && markIsDue) {
+            const throughSequence = Math.max(
+              Math.min(mark.last_sequence, projected),
+              prunedThrough,
+            );
+            if (throughSequence > prunedThrough) {
+              // Publish the boundary first so resuming clients take a snapshot, never a partial replay.
+              yield* writeMetadata(EVENT_LOG_PRUNED_THROUGH, throughSequence, now);
+            }
+            deletedEventCount += yield* pruneEvents(throughSequence, head, betweenPages);
           }
-          deletedEventCount += yield* pruneEvents(throughSequence, head, betweenPages);
-        }
-        if (mark === undefined || markIsDue) yield* writeMetadata(EVENT_LOG_PRUNE_MARK, head, now);
+          if (mark === undefined || markIsDue)
+            yield* writeMetadata(EVENT_LOG_PRUNE_MARK, head, now);
 
-        const legacy = yield* pruneImportedLegacyHistory(
-          head,
-          bounds[0]?.receipt_row_id ?? 0,
-          betweenPages,
-        );
-        deletedEventCount += legacy.deletedEventCount;
+          const legacy = yield* pruneImportedLegacyHistory(
+            head,
+            bounds[0]?.receipt_row_id ?? 0,
+            betweenPages,
+          );
+          deletedEventCount += legacy.deletedEventCount;
 
-        const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
-        const pageSizeRows = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
-        const reclaimableBytes =
-          (freelistRows[0]?.freelist_count ?? 0) * (pageSizeRows[0]?.page_size ?? 0);
+          const freelistRows = yield* sql<{
+            readonly freelist_count: number;
+          }>`PRAGMA freelist_count`;
+          const pageSizeRows = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
+          const reclaimableBytes =
+            (freelistRows[0]?.freelist_count ?? 0) * (pageSizeRows[0]?.page_size ?? 0);
 
-        return {
-          deletedEventCount,
-          deletedReceiptCount: legacy.deletedReceiptCount,
-          reclaimableBytes,
-        };
-      },
-      Effect.mapError(
-        (cause) => new ProjectionMaintenanceError({ operation: "prune event store", cause }),
-      ),
-    );
+          return {
+            deletedEventCount,
+            deletedReceiptCount: legacy.deletedReceiptCount,
+            reclaimableBytes,
+          };
+        },
+        Effect.mapError(
+          (cause) => new ProjectionMaintenanceError({ operation: "prune event store", cause }),
+        ),
+      );
 
-    return ProjectionMaintenanceV2.of({ pruneEventStore });
-  }),
-);
+      return ProjectionMaintenanceV2.of({ pruneEventStore });
+    }),
+  );

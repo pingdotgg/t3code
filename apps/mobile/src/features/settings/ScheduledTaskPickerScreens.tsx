@@ -29,8 +29,26 @@ import {
   useScheduledTaskEditor,
 } from "./scheduled-task-editor";
 import { moveDraftToThread, unbindDraftFromThread } from "./scheduledTaskDraft";
+import { defineNativePluginFeature } from "../../plugins/features";
+const MissingTaskDraft = defineNativePluginFeature(
+  "native.features.settings.scheduled-task-picker-screens.missing-task-draft",
+  BuiltinMissingTaskDraft,
+);
 
-function MissingTaskDraft() {
+export const ScheduledTaskModelPickerRouteScreen = defineNativePluginFeature(
+  "native.features.settings.scheduled-task-picker-screens.scheduled-task-model-picker-route-screen",
+  BuiltinScheduledTaskModelPickerRouteScreen,
+);
+export const ScheduledTaskBranchPickerRouteScreen = defineNativePluginFeature(
+  "native.features.settings.scheduled-task-picker-screens.scheduled-task-branch-picker-route-screen",
+  BuiltinScheduledTaskBranchPickerRouteScreen,
+);
+export const ScheduledTaskThreadPickerRouteScreen = defineNativePluginFeature(
+  "native.features.settings.scheduled-task-picker-screens.scheduled-task-thread-picker-route-screen",
+  BuiltinScheduledTaskThreadPickerRouteScreen,
+);
+
+function BuiltinMissingTaskDraft() {
   const gt = useGT();
   return (
     <SettingsScreen title={gt("Scheduled task")}>
@@ -41,7 +59,7 @@ function MissingTaskDraft() {
   );
 }
 
-export function ScheduledTaskModelPickerRouteScreen() {
+function BuiltinScheduledTaskModelPickerRouteScreen() {
   const navigation = useNavigation();
   const { editor, setEditor } = useScheduledTaskEditor();
   const config = useEnvironmentServerConfig(editor?.environmentId ?? null);
@@ -126,7 +144,7 @@ export function ScheduledTaskModelPickerRouteScreen() {
   );
 }
 
-export function ScheduledTaskBranchPickerRouteScreen() {
+function BuiltinScheduledTaskBranchPickerRouteScreen() {
   const gt = useGT();
   const navigation = useNavigation();
   const { editor, setEditor } = useScheduledTaskEditor();
@@ -194,7 +212,7 @@ export function ScheduledTaskBranchPickerRouteScreen() {
 
 const THREAD_SEARCH_PLACEHOLDER = msg("Search threads, including older ones");
 
-export function ScheduledTaskThreadPickerRouteScreen() {
+function BuiltinScheduledTaskThreadPickerRouteScreen() {
   const gt = useGT();
   const m = useMessages();
   const navigation = useNavigation();

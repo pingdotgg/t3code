@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -5,7 +6,6 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -364,4 +364,4 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   });
 });
 
-export const layer = Layer.effect(ProjectEnrichmentService, make());
+export const layer = builtinServiceLayer("t3.projects")(ProjectEnrichmentService, make());

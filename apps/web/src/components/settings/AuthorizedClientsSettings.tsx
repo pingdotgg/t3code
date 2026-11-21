@@ -76,8 +76,18 @@ import {
   isHostedAppPairingUrl,
   endpointShareHint,
 } from "./ConnectionsSettings.logic";
+import { definePluginComponent } from "~/plugins/features";
 
-function AccessScopeSummary({
+const AccessScopeSummary = definePluginComponent(
+  "component:components/settings/AuthorizedClientsSettings/AccessScopeSummary",
+  PluginOriginalAccessScopeSummary,
+);
+export const NetworkAccessDescription = definePluginComponent(
+  "component:components/settings/AuthorizedClientsSettings/NetworkAccessDescription",
+  PluginOriginalNetworkAccessDescription,
+);
+
+function PluginOriginalAccessScopeSummary({
   scopes,
   label,
 }: {
@@ -147,7 +157,7 @@ type PairingLinkListRowProps = {
   canRevoke: boolean;
 };
 
-const PairingLinkListRow = memo(function PairingLinkListRow({
+const PluginOriginalPairingLinkListRow = memo(function PairingLinkListRow({
   pairingLink,
   credential,
   defaultShareOpen,
@@ -501,6 +511,10 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     </div>
   );
 });
+const PairingLinkListRow = definePluginComponent(
+  "component:components/settings/AuthorizedClientsSettings/PairingLinkListRow",
+  PluginOriginalPairingLinkListRow,
+);
 
 type ConnectedClientListRowProps = {
   clientSession: ServerClientSessionRecord;
@@ -509,7 +523,7 @@ type ConnectedClientListRowProps = {
   canRevoke: boolean;
 };
 
-const ConnectedClientListRow = memo(function ConnectedClientListRow({
+const PluginOriginalConnectedClientListRow = memo(function ConnectedClientListRow({
   clientSession,
   revokingClientSessionId,
   onRevokeSession,
@@ -585,6 +599,10 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
     </div>
   );
 });
+const ConnectedClientListRow = definePluginComponent(
+  "component:components/settings/AuthorizedClientsSettings/ConnectedClientListRow",
+  PluginOriginalConnectedClientListRow,
+);
 
 type AuthorizedClientsHeaderActionProps = {
   environmentId: EnvironmentId;
@@ -595,7 +613,7 @@ type AuthorizedClientsHeaderActionProps = {
   delegatableScopes: ReadonlyArray<AuthEnvironmentScope>;
 };
 
-export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderAction({
+const PluginOriginalAuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderAction({
   environmentId,
   onPairingLinkCreated,
   clientSessions,
@@ -848,6 +866,10 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
     </div>
   );
 });
+export const AuthorizedClientsHeaderAction = definePluginComponent(
+  "component:components/settings/AuthorizedClientsSettings/AuthorizedClientsHeaderAction",
+  PluginOriginalAuthorizedClientsHeaderAction,
+);
 
 type PairingClientsListProps = {
   servedByEnvironment: boolean;
@@ -866,7 +888,7 @@ type PairingClientsListProps = {
   canRevoke: boolean;
 };
 
-export const PairingClientsList = memo(function PairingClientsList({
+const PluginOriginalPairingClientsList = memo(function PairingClientsList({
   servedByEnvironment,
   endpointUrl,
   endpoints,
@@ -920,6 +942,10 @@ export const PairingClientsList = memo(function PairingClientsList({
     </>
   );
 });
+export const PairingClientsList = definePluginComponent(
+  "component:components/settings/AuthorizedClientsSettings/PairingClientsList",
+  PluginOriginalPairingClientsList,
+);
 
 type AdvertisedEndpointListRowProps = {
   endpoint: AdvertisedEndpoint;
@@ -930,7 +956,7 @@ type AdvertisedEndpointListRowProps = {
   isUpdatingTailscaleServe: boolean;
 };
 
-export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
+const PluginOriginalAdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
   endpoint,
   isDefault,
   onSetDefault,
@@ -1012,8 +1038,12 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
     </div>
   );
 });
+export const AdvertisedEndpointListRow = definePluginComponent(
+  "component:components/settings/AuthorizedClientsSettings/AdvertisedEndpointListRow",
+  PluginOriginalAdvertisedEndpointListRow,
+);
 
-export function NetworkAccessDescription({
+function PluginOriginalNetworkAccessDescription({
   endpoint,
   hiddenEndpointCount,
   expanded,

@@ -33,8 +33,22 @@ import { AppText as Text } from "./ui/AppText";
 import { Sheet } from "./ui/Sheet";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { getMobileTerminalTheme } from "../features/terminal/terminalTheme";
+import { defineNativePluginFeature } from "../plugins/features";
 
-function ContextField(props: {
+const ContextField = defineNativePluginFeature(
+  "native.components.composer-context-sheet.context-field",
+  BuiltinContextField,
+);
+const ContextSource = defineNativePluginFeature(
+  "native.components.composer-context-sheet.context-source",
+  BuiltinContextSource,
+);
+export const ComposerContextSheet = defineNativePluginFeature(
+  "native.components.composer-context-sheet",
+  BuiltinComposerContextSheet,
+);
+
+function BuiltinContextField(props: {
   label: string;
   value: string | null | undefined;
   code?: boolean;
@@ -68,7 +82,7 @@ function ContextField(props: {
   );
 }
 
-function ContextSource(props: { source: ElementContextSource | null }) {
+function BuiltinContextSource(props: { source: ElementContextSource | null }) {
   const gt = useGT();
   const source = props.source;
   if (!source) return null;
@@ -84,7 +98,7 @@ function ContextSource(props: { source: ElementContextSource | null }) {
   );
 }
 
-export function ComposerContextSheet(props: {
+function BuiltinComposerContextSheet(props: {
   readonly label: string;
   readonly record: ComposerContextRecord | undefined;
   readonly onClose: () => void;

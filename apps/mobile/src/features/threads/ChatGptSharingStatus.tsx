@@ -6,8 +6,9 @@ import { Pressable, View } from "react-native";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function ChatGptSharingStatus({ provider }: { provider: ServerProvider | null }) {
+function BuiltinChatGptSharingStatus({ provider }: { provider: ServerProvider | null }) {
   const gt = useGT();
   if (!usesChatGptSharing(provider)) return null;
   return (
@@ -50,3 +51,8 @@ export function ChatGptSharingStatus({ provider }: { provider: ServerProvider | 
     </View>
   );
 }
+
+export const ChatGptSharingStatus = defineNativePluginFeature(
+  "native.features.threads.chat-gpt-sharing-status",
+  BuiltinChatGptSharingStatus,
+);

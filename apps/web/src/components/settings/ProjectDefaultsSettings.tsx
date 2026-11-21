@@ -43,13 +43,23 @@ import {
   useScopedSettingSource,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ProjectDefaultsSettings = definePluginComponent(
+  "component:components/settings/ProjectDefaultsSettings/ProjectDefaultsSettings",
+  PluginOriginalProjectDefaultsSettings,
+);
 
 const WORKTREE_SUBMODULES_OPTIONS = ["recursive", "top-level", "none"] as const;
 function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules {
   return value !== null && (WORKTREE_SUBMODULES_OPTIONS as readonly string[]).includes(value);
 }
 
-export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
+function PluginOriginalProjectDefaultsSettings({
+  category,
+}: {
+  category: ProjectSettingsCategory;
+}) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();

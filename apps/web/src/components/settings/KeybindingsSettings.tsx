@@ -99,8 +99,110 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { keybindingSearchAnchorId, useSearchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { definePluginComponent } from "~/plugins/features";
 
-function KeybindingPill({ value }: { value: string }) {
+const KeybindingPill = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingPill",
+  PluginOriginalKeybindingPill,
+);
+const KeybindingsSearchInput = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingsSearchInput",
+  PluginOriginalKeybindingsSearchInput,
+);
+const WarningTooltipIcon = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/WarningTooltipIcon",
+  PluginOriginalWarningTooltipIcon,
+);
+const UnknownWhenVariableWarning = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/UnknownWhenVariableWarning",
+  PluginOriginalUnknownWhenVariableWarning,
+);
+const KeybindingConflictWarning = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingConflictWarning",
+  PluginOriginalKeybindingConflictWarning,
+);
+const WhenVariableSelect = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/WhenVariableSelect",
+  PluginOriginalWhenVariableSelect,
+);
+const WhenExpressionRemoveButton = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/WhenExpressionRemoveButton",
+  PluginOriginalWhenExpressionRemoveButton,
+);
+const WhenExpressionNodeEditor = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/WhenExpressionNodeEditor",
+  PluginOriginalWhenExpressionNodeEditor,
+);
+const WhenExpressionBuilder = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/WhenExpressionBuilder",
+  PluginOriginalWhenExpressionBuilder,
+);
+const KeybindingKeyControl = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingKeyControl",
+  PluginOriginalKeybindingKeyControl,
+);
+const WhenClauseControl = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/WhenClauseControl",
+  PluginOriginalWhenClauseControl,
+);
+const KeybindingRowMenu = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingRowMenu",
+  PluginOriginalKeybindingRowMenu,
+);
+const KeybindingSourceBadge = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingSourceBadge",
+  PluginOriginalKeybindingSourceBadge,
+);
+const KeybindingRowTitle = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingRowTitle",
+  PluginOriginalKeybindingRowTitle,
+);
+const KeybindingRowWhen = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingRowWhen",
+  PluginOriginalKeybindingRowWhen,
+);
+const KeybindingHoverRowMenu = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingHoverRowMenu",
+  PluginOriginalKeybindingHoverRowMenu,
+);
+const KeybindingSettingsRow = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingSettingsRow",
+  PluginOriginalKeybindingSettingsRow,
+);
+const NewKeybindingCommandSelect = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/NewKeybindingCommandSelect",
+  PluginOriginalNewKeybindingCommandSelect,
+);
+const NewKeybindingKeyInput = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/NewKeybindingKeyInput",
+  PluginOriginalNewKeybindingKeyInput,
+);
+const NewKeybindingWhen = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/NewKeybindingWhen",
+  PluginOriginalNewKeybindingWhen,
+);
+const NewKeybindingCancelIcon = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/NewKeybindingCancelIcon",
+  PluginOriginalNewKeybindingCancelIcon,
+);
+const NewKeybindingSettingsRow = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/NewKeybindingSettingsRow",
+  PluginOriginalNewKeybindingSettingsRow,
+);
+const KeybindingsGroups = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingsGroups",
+  PluginOriginalKeybindingsGroups,
+);
+const BrowserKeybindingNotice = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/BrowserKeybindingNotice",
+  PluginOriginalBrowserKeybindingNotice,
+);
+export const KeybindingsSettingsPanel = definePluginComponent(
+  "component:components/settings/KeybindingsSettings/KeybindingsSettingsPanel",
+  PluginOriginalKeybindingsSettingsPanel,
+);
+
+function PluginOriginalKeybindingPill({ value }: { value: string }) {
   // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
   const seenParts = new Map<string, number>();
   const parts = value.split("+").map((part) => {
@@ -133,7 +235,7 @@ function KeybindingPill({ value }: { value: string }) {
   );
 }
 
-function KeybindingsSearchInput({
+function PluginOriginalKeybindingsSearchInput({
   query,
   onChange,
   inputRef,
@@ -232,7 +334,7 @@ function defaultWhenGroup(operator: BooleanOperator = "and"): KeybindingWhenNode
   };
 }
 
-function WarningTooltipIcon({
+function PluginOriginalWarningTooltipIcon({
   label,
   focusable = true,
   className,
@@ -264,7 +366,7 @@ function WarningTooltipIcon({
   );
 }
 
-function UnknownWhenVariableWarning({
+function PluginOriginalUnknownWhenVariableWarning({
   identifiers,
   focusable = true,
 }: {
@@ -288,7 +390,7 @@ function UnknownWhenVariableWarning({
   );
 }
 
-function KeybindingConflictWarning({ labels }: { labels: ReadonlyArray<string> }) {
+function PluginOriginalKeybindingConflictWarning({ labels }: { labels: ReadonlyArray<string> }) {
   const gt = useGT();
   if (labels.length === 0) return null;
   const description =
@@ -305,7 +407,7 @@ function KeybindingConflictWarning({ labels }: { labels: ReadonlyArray<string> }
   );
 }
 
-function WhenVariableSelect({
+function PluginOriginalWhenVariableSelect({
   value,
   variables,
   unknownIdentifiers,
@@ -340,7 +442,7 @@ function WhenVariableSelect({
   );
 }
 
-function WhenExpressionRemoveButton({
+function PluginOriginalWhenExpressionRemoveButton({
   label,
   className,
   onRemove,
@@ -371,7 +473,7 @@ function WhenExpressionRemoveButton({
   );
 }
 
-function WhenExpressionNodeEditor({
+function PluginOriginalWhenExpressionNodeEditor({
   node,
   variables,
   depth = 0,
@@ -592,7 +694,7 @@ function WhenExpressionNodeEditor({
   );
 }
 
-function WhenExpressionBuilder({
+function PluginOriginalWhenExpressionBuilder({
   value,
   variables,
   onChange,
@@ -857,7 +959,7 @@ type KeybindingRowProps = KeybindingRowActions & {
   anchorId?: string | undefined;
 };
 
-function KeybindingKeyControl({
+function PluginOriginalKeybindingKeyControl({
   row,
   editor,
   isSaving,
@@ -938,7 +1040,7 @@ function KeybindingKeyControl({
   );
 }
 
-function WhenClauseControl({
+function PluginOriginalWhenClauseControl({
   editLabel,
   expression,
   value,
@@ -986,7 +1088,7 @@ function WhenClauseControl({
   );
 }
 
-function KeybindingRowMenu({
+function PluginOriginalKeybindingRowMenu({
   row,
   isSaving,
   onReset,
@@ -1042,7 +1144,7 @@ function KeybindingRowMenu({
   );
 }
 
-function KeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) {
+function PluginOriginalKeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) {
   const gt = useGT();
   if (source === "Default") return null;
   return (
@@ -1054,7 +1156,7 @@ function KeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) 
   );
 }
 
-function KeybindingRowTitle({ row }: { row: KeybindingRow }) {
+function PluginOriginalKeybindingRowTitle({ row }: { row: KeybindingRow }) {
   const m = useMessages();
   return (
     <Tooltip>
@@ -1067,7 +1169,7 @@ function KeybindingRowTitle({ row }: { row: KeybindingRow }) {
   );
 }
 
-function KeybindingRowWhen({
+function PluginOriginalKeybindingRowWhen({
   row,
   editor,
   variables,
@@ -1095,7 +1197,7 @@ function KeybindingRowWhen({
   );
 }
 
-function KeybindingHoverRowMenu(props: {
+function PluginOriginalKeybindingHoverRowMenu(props: {
   row: KeybindingRow;
   isSaving: boolean;
   onReset: (row: KeybindingRow) => void;
@@ -1109,7 +1211,7 @@ function KeybindingHoverRowMenu(props: {
   );
 }
 
-function KeybindingSettingsRow(props: KeybindingRowProps) {
+function PluginOriginalKeybindingSettingsRow(props: KeybindingRowProps) {
   const { row, isSaving, anchorId, allRows, variables, onSave, onReset, onUnassign, onRemove } =
     props;
   const editor = useKeybindingRowEditor({ row, allRows, onSave });
@@ -1231,7 +1333,7 @@ interface NewKeybindingProps {
   onCancel: () => void;
 }
 
-function NewKeybindingCommandSelect({
+function PluginOriginalNewKeybindingCommandSelect({
   draft,
   commandOptions,
   allRows,
@@ -1307,7 +1409,7 @@ function NewKeybindingCommandSelect({
   );
 }
 
-function NewKeybindingKeyInput({
+function PluginOriginalNewKeybindingKeyInput({
   draft,
   autoFocus = false,
   className,
@@ -1339,7 +1441,7 @@ function NewKeybindingKeyInput({
   );
 }
 
-function NewKeybindingWhen({
+function PluginOriginalNewKeybindingWhen({
   draft,
   variables,
 }: {
@@ -1363,7 +1465,7 @@ function NewKeybindingWhen({
   );
 }
 
-function NewKeybindingCancelIcon({
+function PluginOriginalNewKeybindingCancelIcon({
   isSaving,
   onCancel,
 }: {
@@ -1394,7 +1496,7 @@ function NewKeybindingCancelIcon({
   );
 }
 
-function NewKeybindingSettingsRow(props: NewKeybindingProps) {
+function PluginOriginalNewKeybindingSettingsRow(props: NewKeybindingProps) {
   const { commandOptions, allRows, variables, isSaving, onSave, onCancel } = props;
   const draft = useNewKeybindingDraft({ allRows, onSave });
   const gt = useGT();
@@ -1437,7 +1539,7 @@ interface KeybindingsGroupsProps extends KeybindingRowActions {
   savingCommand: KeybindingCommand | null;
 }
 
-function KeybindingsGroups(props: KeybindingsGroupsProps) {
+function PluginOriginalKeybindingsGroups(props: KeybindingsGroupsProps) {
   const { groups, anchorIds, savingCommand, ...rowActions } = props;
   const m = useMessages();
   return groups.map((group) => (
@@ -1455,7 +1557,7 @@ function KeybindingsGroups(props: KeybindingsGroupsProps) {
   ));
 }
 
-function BrowserKeybindingNotice() {
+function PluginOriginalBrowserKeybindingNotice() {
   const gt = useGT();
   const message = gt(
     "The browser may claim some shortcuts first. The desktop app receives them all.",
@@ -1500,7 +1602,7 @@ function useKeybindingCatalog() {
   };
 }
 
-export function KeybindingsSettingsPanel() {
+export function PluginOriginalKeybindingsSettingsPanel() {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();

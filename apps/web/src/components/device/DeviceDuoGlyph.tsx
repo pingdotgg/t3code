@@ -1,5 +1,11 @@
 import type { DuoPose } from "@t3tools/client-runtime/device/duo-control";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DeviceDuoGlyph = definePluginComponent(
+  "component:components/device/DeviceDuoGlyph/DeviceDuoGlyph",
+  PluginOriginalDeviceDuoGlyph,
+);
 
 const stancePaths = {
   laptop:
@@ -7,7 +13,13 @@ const stancePaths = {
   tent: "M3.2522 2.7267 L18.7478 1.4816 L16.696 9.7017 C16.3782 10.9748 15.0649 12.0915 13.7626 12.1962 L2.983 13.0623 C1.6807 13.167 0.8826 12.2199 1.2004 10.9468 L3.2522 2.7267 Z M3.2522 2.7267 L18.7478 1.4816 L20.7996 10.6909 C21.1174 12.1172 20.3193 13.3581 19.017 13.4628 L8.2374 14.3289 C6.9351 14.4336 5.6218 13.3623 5.304 11.936 L3.2522 2.7267 Z",
 } as const;
 
-export function DeviceDuoGlyph({ pose, rotated = false }: { pose: DuoPose; rotated?: boolean }) {
+function PluginOriginalDeviceDuoGlyph({
+  pose,
+  rotated = false,
+}: {
+  pose: DuoPose;
+  rotated?: boolean;
+}) {
   const stance = pose === "laptop" || pose === "tent";
   return (
     <svg

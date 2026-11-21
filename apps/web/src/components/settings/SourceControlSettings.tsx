@@ -55,6 +55,32 @@ import { sourceControlInstallHintText } from "@t3tools/client-runtime/contract-l
 import { isSourceControlProviderOffered } from "@t3tools/client-runtime/operations/projects";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { sourceControlIcon } from "~/sourceControlPresentation";
+import { definePluginComponent } from "~/plugins/features";
+
+const RedactedAccount = definePluginComponent(
+  "component:components/settings/SourceControlSettings/RedactedAccount",
+  PluginOriginalRedactedAccount,
+);
+const SourceControlItemMark = definePluginComponent(
+  "component:components/settings/SourceControlSettings/SourceControlItemMark",
+  PluginOriginalSourceControlItemMark,
+);
+const DiscoveryItemRow = definePluginComponent(
+  "component:components/settings/SourceControlSettings/DiscoveryItemRow",
+  PluginOriginalDiscoveryItemRow,
+);
+const SourceControlSectionSkeleton = definePluginComponent(
+  "component:components/settings/SourceControlSettings/SourceControlSectionSkeleton",
+  PluginOriginalSourceControlSectionSkeleton,
+);
+const EmptySourceControlDiscovery = definePluginComponent(
+  "component:components/settings/SourceControlSettings/EmptySourceControlDiscovery",
+  PluginOriginalEmptySourceControlDiscovery,
+);
+export const SourceControlSettingsPanel = definePluginComponent(
+  "component:components/settings/SourceControlSettings/SourceControlSettingsPanel",
+  PluginOriginalSourceControlSettingsPanel,
+);
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -97,7 +123,7 @@ function authPresentation(
   return { label: resolve(msg("Status unknown")), badge: null };
 }
 
-function RedactedAccount(props: { readonly account: string | null }) {
+function PluginOriginalRedactedAccount(props: { readonly account: string | null }) {
   const gt = useGT();
   return (
     <RedactedSensitiveText
@@ -130,7 +156,7 @@ function sourceControlItemIcon(
   return Icon ? <Icon className="size-4.5 text-foreground/80" aria-hidden /> : null;
 }
 
-function SourceControlItemMark({
+function PluginOriginalSourceControlItemMark({
   item,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
@@ -265,7 +291,7 @@ function itemSummary({
   );
 }
 
-function DiscoveryItemRow({
+function PluginOriginalDiscoveryItemRow({
   item,
   offered,
   children,
@@ -378,7 +404,7 @@ function DiscoveryItemRow({
   );
 }
 
-function SourceControlSectionSkeleton({
+function PluginOriginalSourceControlSectionSkeleton({
   title,
   headerAction,
 }: {
@@ -416,7 +442,7 @@ function SourceControlSectionSkeleton({
   );
 }
 
-function EmptySourceControlDiscovery({
+function PluginOriginalEmptySourceControlDiscovery({
   error,
   isPending,
   onScan,
@@ -458,7 +484,7 @@ function EmptySourceControlDiscovery({
   );
 }
 
-export function SourceControlSettingsPanel() {
+export function PluginOriginalSourceControlSettingsPanel() {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const { scope, environment, connectedEnvironments } = useSettingsScope();

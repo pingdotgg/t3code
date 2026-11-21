@@ -107,6 +107,21 @@ import {
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../appearanceFonts";
+import { definePluginComponent } from "~/plugins/features";
+
+export const TerminalViewport = definePluginComponent(
+  "component:components/ThreadTerminalDrawer/TerminalViewport",
+  PluginOriginalTerminalViewport,
+);
+const TerminalActionButton = definePluginComponent(
+  "component:components/ThreadTerminalDrawer/TerminalActionButton",
+  PluginOriginalTerminalActionButton,
+);
+const ThreadTerminalDrawer = definePluginComponent(
+  "component:components/ThreadTerminalDrawer/ThreadTerminalDrawer",
+  PluginOriginalThreadTerminalDrawer,
+);
+export default ThreadTerminalDrawer;
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -491,7 +506,7 @@ interface TerminalLaunchLocation {
   readonly runtimeEnv?: Record<string, string>;
 }
 
-export function TerminalViewport(props: TerminalViewportProps) {
+function PluginOriginalTerminalViewport(props: TerminalViewportProps) {
   const sessionKey = JSON.stringify([
     props.threadRef.environmentId,
     props.threadId,
@@ -1261,7 +1276,7 @@ interface TerminalActionButtonProps {
   disabled?: boolean;
 }
 
-function TerminalActionButton({
+function PluginOriginalTerminalActionButton({
   label,
   className,
   onClick,
@@ -1485,7 +1500,7 @@ function TerminalSidebarGroup({
   );
 }
 
-export default function ThreadTerminalDrawer({
+function PluginOriginalThreadTerminalDrawer({
   mode = "drawer",
   threadRef,
   threadId,

@@ -7,10 +7,73 @@ import { buttonVariants } from "./button";
 import { renderClosingPositioner } from "./closing-positioner";
 import { Input, type InputProps } from "./input";
 import { Spinner } from "./spinner";
+import { definePluginComponent } from "~/plugins/features";
 
-const Menu = MenuPrimitive.Root;
+const MenuTrigger = definePluginComponent(
+  "component:components/ui/menu/MenuTrigger",
+  PluginOriginalMenuTrigger,
+);
+const MenuPopup = definePluginComponent(
+  "component:components/ui/menu/MenuPopup",
+  PluginOriginalMenuPopup,
+);
+const MenuGroup = definePluginComponent(
+  "component:components/ui/menu/MenuGroup",
+  PluginOriginalMenuGroup,
+);
+const MenuItem = definePluginComponent(
+  "component:components/ui/menu/MenuItem",
+  PluginOriginalMenuItem,
+);
+const MenuItemLabel = definePluginComponent(
+  "component:components/ui/menu/MenuItemLabel",
+  PluginOriginalMenuItemLabel,
+);
+const MenuCheckboxItem = definePluginComponent(
+  "component:components/ui/menu/MenuCheckboxItem",
+  PluginOriginalMenuCheckboxItem,
+);
+const MenuRadioGroup = definePluginComponent(
+  "component:components/ui/menu/MenuRadioGroup",
+  PluginOriginalMenuRadioGroup,
+);
+const MenuRadioItem = definePluginComponent(
+  "component:components/ui/menu/MenuRadioItem",
+  PluginOriginalMenuRadioItem,
+);
+const MenuRadioItemIndicator = definePluginComponent(
+  "component:components/ui/menu/MenuRadioItemIndicator",
+  PluginOriginalMenuRadioItemIndicator,
+);
+const MenuGroupLabel = definePluginComponent(
+  "component:components/ui/menu/MenuGroupLabel",
+  PluginOriginalMenuGroupLabel,
+);
+const MenuSeparator = definePluginComponent(
+  "component:components/ui/menu/MenuSeparator",
+  PluginOriginalMenuSeparator,
+);
+const MenuShortcut = definePluginComponent(
+  "component:components/ui/menu/MenuShortcut",
+  PluginOriginalMenuShortcut,
+);
+const MenuSub = definePluginComponent(
+  "component:components/ui/menu/MenuSub",
+  PluginOriginalMenuSub,
+);
+const MenuSubTrigger = definePluginComponent(
+  "component:components/ui/menu/MenuSubTrigger",
+  PluginOriginalMenuSubTrigger,
+);
+const MenuSubPopup = definePluginComponent(
+  "component:components/ui/menu/MenuSubPopup",
+  PluginOriginalMenuSubPopup,
+);
 
-function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Props) {
+const PluginOriginalMenu = MenuPrimitive.Root;
+const Menu = definePluginComponent("component:components/ui/menu/Menu", PluginOriginalMenu);
+
+function PluginOriginalMenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Props) {
   return (
     <MenuPrimitive.Trigger className={className} data-slot="menu-trigger" {...props}>
       {children}
@@ -18,7 +81,7 @@ function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Pr
   );
 }
 
-function MenuPopup({
+function PluginOriginalMenuPopup({
   children,
   className,
   sideOffset = 4,
@@ -111,11 +174,11 @@ function MenuSearchInput({
   );
 }
 
-function MenuGroup(props: MenuPrimitive.Group.Props) {
+function PluginOriginalMenuGroup(props: MenuPrimitive.Group.Props) {
   return <MenuPrimitive.Group data-slot="menu-group" {...props} />;
 }
 
-function MenuItem({
+function PluginOriginalMenuItem({
   className,
   inset,
   density = "default",
@@ -148,7 +211,7 @@ function MenuItem({
   );
 }
 
-function MenuItemLabel({ className, ...props }: React.ComponentProps<"span">) {
+function PluginOriginalMenuItemLabel({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
       data-slot="menu-item-label"
@@ -161,7 +224,7 @@ function MenuItemLabel({ className, ...props }: React.ComponentProps<"span">) {
   );
 }
 
-function MenuCheckboxItem({
+function PluginOriginalMenuCheckboxItem({
   className,
   children,
   checked,
@@ -221,11 +284,11 @@ function MenuCheckboxItem({
   );
 }
 
-function MenuRadioGroup(props: MenuPrimitive.RadioGroup.Props) {
+function PluginOriginalMenuRadioGroup(props: MenuPrimitive.RadioGroup.Props) {
   return <MenuPrimitive.RadioGroup data-slot="menu-radio-group" {...props} />;
 }
 
-function MenuRadioItem({
+function PluginOriginalMenuRadioItem({
   className,
   children,
   hideIndicator: _hideIndicator = false,
@@ -247,7 +310,7 @@ function MenuRadioItem({
   );
 }
 
-function MenuRadioItemIndicator({
+function PluginOriginalMenuRadioItemIndicator({
   className,
   children,
   ...props
@@ -264,7 +327,7 @@ function MenuRadioItemIndicator({
   );
 }
 
-function MenuGroupLabel({
+function PluginOriginalMenuGroupLabel({
   className,
   inset,
   ...props
@@ -284,7 +347,7 @@ function MenuGroupLabel({
   );
 }
 
-function MenuSeparator({ className, ...props }: MenuPrimitive.Separator.Props) {
+function PluginOriginalMenuSeparator({ className, ...props }: MenuPrimitive.Separator.Props) {
   return (
     <MenuPrimitive.Separator
       className={cn("mx-2 my-1 h-px bg-border", className)}
@@ -294,7 +357,7 @@ function MenuSeparator({ className, ...props }: MenuPrimitive.Separator.Props) {
   );
 }
 
-function MenuShortcut({ className, ...props }: React.ComponentProps<"kbd">) {
+function PluginOriginalMenuShortcut({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
       className={cn(
@@ -319,11 +382,11 @@ function MenuItemDetail({ className, ...props }: React.ComponentProps<"span">) {
   );
 }
 
-function MenuSub(props: MenuPrimitive.SubmenuRoot.Props) {
+function PluginOriginalMenuSub(props: MenuPrimitive.SubmenuRoot.Props) {
   return <MenuPrimitive.SubmenuRoot data-slot="menu-sub" {...props} />;
 }
 
-function MenuSubTrigger({
+function PluginOriginalMenuSubTrigger({
   className,
   inset,
   density = "default",
@@ -352,7 +415,7 @@ function MenuSubTrigger({
   );
 }
 
-function MenuSubPopup({
+function PluginOriginalMenuSubPopup({
   className,
   sideOffset = 0,
   alignOffset,

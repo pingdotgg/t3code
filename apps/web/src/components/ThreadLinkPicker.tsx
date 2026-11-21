@@ -8,11 +8,17 @@ import { useThreadSearch } from "~/state/queries";
 
 import { threadLinkMatcher } from "./ThreadLinkPicker.logic";
 import { Command, CommandInput, CommandItem, CommandList } from "./ui/command";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ThreadLinkPicker = definePluginComponent(
+  "component:components/ThreadLinkPicker/ThreadLinkPicker",
+  PluginOriginalThreadLinkPicker,
+);
 
 type ThreadShell = ReturnType<typeof useVisibleThreadShells>[number];
 
 /** Search over an environment's unarchived threads, to link one to a pull request or an issue. */
-export function ThreadLinkPicker({
+function PluginOriginalThreadLinkPicker({
   environmentId,
   pending,
   isLinked,

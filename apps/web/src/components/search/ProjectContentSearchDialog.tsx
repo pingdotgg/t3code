@@ -17,6 +17,24 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HighlightedSearchLine } from "./HighlightedSearchLine";
+import { definePluginComponent } from "~/plugins/features";
+
+const SearchOptionButton = definePluginComponent(
+  "component:components/search/ProjectContentSearchDialog/SearchOptionButton",
+  PluginOriginalSearchOptionButton,
+);
+const EmptyContentSearchDialog = definePluginComponent(
+  "component:components/search/ProjectContentSearchDialog/EmptyContentSearchDialog",
+  PluginOriginalEmptyContentSearchDialog,
+);
+const OpenContentSearchDialog = definePluginComponent(
+  "component:components/search/ProjectContentSearchDialog/OpenContentSearchDialog",
+  PluginOriginalOpenContentSearchDialog,
+);
+export const ProjectContentSearchDialog = definePluginComponent(
+  "component:components/search/ProjectContentSearchDialog/ProjectContentSearchDialog",
+  PluginOriginalProjectContentSearchDialog,
+);
 
 interface ProjectContentSearchDialogProps {
   readonly onOpenChange: (open: boolean) => void;
@@ -51,7 +69,7 @@ function groupMatches(matches: ReadonlyArray<ProjectContentMatch>): MatchGroup[]
   return [...groups].map(([path, groupedMatches]) => ({ path, matches: groupedMatches }));
 }
 
-function SearchOptionButton(props: {
+function PluginOriginalSearchOptionButton(props: {
   readonly active: boolean;
   readonly disabled: boolean;
   readonly label: string;
@@ -79,7 +97,7 @@ function SearchOptionButton(props: {
   );
 }
 
-function EmptyContentSearchDialog() {
+function PluginOriginalEmptyContentSearchDialog() {
   const gt = useGT();
   return (
     <CommandPaletteContent
@@ -103,7 +121,7 @@ const scrollSelectedRowIntoView = (row: HTMLElement | null) => {
   row?.scrollIntoView({ block: "nearest" });
 };
 
-function OpenContentSearchDialog(props: {
+function PluginOriginalOpenContentSearchDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly target: ActiveProjectTarget;
 }) {
@@ -333,7 +351,7 @@ function OpenContentSearchDialog(props: {
   );
 }
 
-export function ProjectContentSearchDialog(props: ProjectContentSearchDialogProps) {
+function PluginOriginalProjectContentSearchDialog(props: ProjectContentSearchDialogProps) {
   const target = useActiveProjectTarget();
 
   return target ? (

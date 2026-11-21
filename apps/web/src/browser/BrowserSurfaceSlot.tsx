@@ -2,8 +2,14 @@ import { useLayoutEffect, useRef } from "react";
 
 import { acquireBrowserSurface } from "./browserSurfaceStore";
 import { observeResize } from "../lib/observeResize";
+import { definePluginComponent } from "~/plugins/features";
 
-export function BrowserSurfaceSlot(props: {
+export const BrowserSurfaceSlot = definePluginComponent(
+  "component:browser/BrowserSurfaceSlot/BrowserSurfaceSlot",
+  PluginOriginalBrowserSurfaceSlot,
+);
+
+function PluginOriginalBrowserSurfaceSlot(props: {
   readonly tabId: string;
   readonly visible: boolean;
   readonly cornerRadius?: number;

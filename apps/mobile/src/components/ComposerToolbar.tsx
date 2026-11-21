@@ -19,12 +19,34 @@ import { cn } from "../lib/cn";
 import { AppText as Text } from "./ui/AppText";
 import { SymbolView } from "./ui/AppSymbol";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
+import { defineNativePluginFeature } from "../plugins/features";
+
+export const ComposerInlineControl = defineNativePluginFeature(
+  "native.components.composer-toolbar.composer-inline-control",
+  BuiltinComposerInlineControl,
+);
+export const ComposerToolbarRow = defineNativePluginFeature(
+  "native.components.composer-toolbar.composer-toolbar-row",
+  BuiltinComposerToolbarRow,
+);
+export const ComposerToolbarScroller = defineNativePluginFeature(
+  "native.components.composer-toolbar.composer-toolbar-scroller",
+  BuiltinComposerToolbarScroller,
+);
+export const ComposerActionButton = defineNativePluginFeature(
+  "native.components.composer-toolbar.composer-action-button",
+  BuiltinComposerActionButton,
+);
+export const ComposerToolbarButton = defineNativePluginFeature(
+  "native.components.composer-toolbar.composer-toolbar-button",
+  BuiltinComposerToolbarButton,
+);
 
 const COMPOSER_TOOLBAR_GAP = 8;
 const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
 const COMPOSER_TOOLBAR_SCROLL_EPSILON = 4;
 const INLINE_CONTROL_LABEL_ENTERING = FadeIn.duration(160);
-export function ComposerInlineControl(props: {
+function BuiltinComposerInlineControl(props: {
   readonly size?: "regular" | "large";
   readonly accessibilityHint?: string;
   readonly accessibilityLabel?: string;
@@ -136,7 +158,7 @@ export function ComposerInlineControl(props: {
   );
 }
 
-export function ComposerToolbarRow(props: {
+function BuiltinComposerToolbarRow(props: {
   readonly children: ReactNode;
   readonly paddingBottom?: number;
   readonly paddingHorizontal?: number;
@@ -160,7 +182,7 @@ export function ComposerToolbarRow(props: {
   );
 }
 
-export function ComposerToolbarScroller(props: {
+function BuiltinComposerToolbarScroller(props: {
   readonly children: ReactNode;
   readonly align?: "start" | "end";
   readonly fadeOpaque?: string;
@@ -283,7 +305,7 @@ export function ComposerToolbarScroller(props: {
   );
 }
 
-export function ComposerActionButton(props: {
+function BuiltinComposerActionButton(props: {
   readonly size?: "regular" | "large";
   readonly accessibilityLabel: string;
   readonly disabled?: boolean;
@@ -345,7 +367,7 @@ export function ComposerActionButton(props: {
   );
 }
 
-export function ComposerToolbarButton(props: {
+function BuiltinComposerToolbarButton(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly iconNode?: ReactNode;
   readonly label?: string;

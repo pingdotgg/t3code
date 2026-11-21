@@ -1,5 +1,8 @@
 /** Keep bundler externals aligned with the staged production dependency list. */
 const DESKTOP_RUNTIME_EXTERNAL_PREFIXES = [
+  // Desktop plugins compile captured source with a disk-backed executable.
+  "esbuild",
+  "@esbuild/",
   "@napi-rs/keyring",
   "@crowecawcaw/xa11y",
   "@clerk/electron-passkeys",

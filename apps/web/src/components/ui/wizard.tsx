@@ -6,8 +6,30 @@ import { cn } from "../../lib/utils";
 import { AnimatedHeight } from "../AnimatedHeight";
 import { DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./dialog";
 import { ScrollArea } from "./scroll-area";
+import { definePluginComponent } from "~/plugins/features";
 
-export function WizardPopup({
+export const WizardPopup = definePluginComponent(
+  "component:components/ui/wizard/WizardPopup",
+  PluginOriginalWizardPopup,
+);
+export const WizardHeader = definePluginComponent(
+  "component:components/ui/wizard/WizardHeader",
+  PluginOriginalWizardHeader,
+);
+export const WizardFooter = definePluginComponent(
+  "component:components/ui/wizard/WizardFooter",
+  PluginOriginalWizardFooter,
+);
+export const WizardSteps = definePluginComponent(
+  "component:components/ui/wizard/WizardSteps",
+  PluginOriginalWizardSteps,
+);
+export const WizardPanel = definePluginComponent(
+  "component:components/ui/wizard/WizardPanel",
+  PluginOriginalWizardPanel,
+);
+
+function PluginOriginalWizardPopup({
   children,
   size = "default",
   ...props
@@ -23,7 +45,7 @@ export function WizardPopup({
   );
 }
 
-export function WizardHeader({
+function PluginOriginalWizardHeader({
   title,
   description,
   identity,
@@ -44,7 +66,7 @@ export function WizardHeader({
   );
 }
 
-export function WizardFooter({
+function PluginOriginalWizardFooter({
   children,
   leading,
 }: {
@@ -63,7 +85,7 @@ export function WizardFooter({
   );
 }
 
-export function WizardSteps({
+function PluginOriginalWizardSteps({
   steps,
   currentStep,
   summaries,
@@ -142,7 +164,7 @@ export function WizardSteps({
   );
 }
 
-export function WizardPanel({
+function PluginOriginalWizardPanel({
   children,
   holdHeight = false,
   className,

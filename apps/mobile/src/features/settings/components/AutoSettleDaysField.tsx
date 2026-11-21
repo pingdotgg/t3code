@@ -1,4 +1,5 @@
 import { useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../../plugins/features";
 import {
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -11,7 +12,7 @@ export type AutoSettleDaysFieldProps = Pick<
   "value" | "onValueChange" | "disabled"
 >;
 
-export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
+function BuiltinAutoSettleDaysField(props: AutoSettleDaysFieldProps) {
   const gt = useGT();
   return (
     <NumberField
@@ -25,3 +26,8 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
     />
   );
 }
+
+export const AutoSettleDaysField = defineNativePluginFeature(
+  "native.features.settings.components.auto-settle-days-field",
+  BuiltinAutoSettleDaysField,
+);

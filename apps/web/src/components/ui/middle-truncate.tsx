@@ -2,8 +2,14 @@ import { type ComponentProps, useLayoutEffect, useRef } from "react";
 
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-export function MiddleTruncate({
+export const MiddleTruncate = definePluginComponent(
+  "component:components/ui/middle-truncate/MiddleTruncate",
+  PluginOriginalMiddleTruncate,
+);
+
+function PluginOriginalMiddleTruncate({
   value,
   tail,
   showTitle = true,

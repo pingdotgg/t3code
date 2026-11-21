@@ -12,6 +12,12 @@ import type { Ref } from "react";
 
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { definePluginComponent } from "~/plugins/features";
+
+export const StyledDiffCodeView = definePluginComponent(
+  "component:components/diffs/StyledDiffCodeView/StyledDiffCodeView",
+  PluginOriginalStyledDiffCodeView,
+);
 
 export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 /* A 1fr track's automatic minimum grows with the currently mounted lines. In split
@@ -229,7 +235,7 @@ type StyledDiffCodeViewProps<LAnnotation> = (
   readonly unsafeCSSExtra?: string;
 };
 
-export function StyledDiffCodeView<LAnnotation = undefined>({
+function PluginOriginalStyledDiffCodeView<LAnnotation = undefined>({
   options,
   viewerRef,
   className,

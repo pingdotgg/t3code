@@ -34,6 +34,7 @@ import serverPackageJson from "../../../server/package.json" with { type: "json"
 import type * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export type DesktopSshEnvironmentRuntimeServices =
   | ChildProcessSpawner.ChildProcessSpawner
@@ -208,7 +209,7 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
-  Layer.effect(DesktopSshEnvironment, make).pipe(
+  builtinServiceLayer("t3.desktop.desktop-ssh-environment", DesktopSshEnvironment, make).pipe(
     Layer.provide(
       SshTunnel.SshEnvironmentManager.layer({
         ...(options.resolveCliRunner === undefined

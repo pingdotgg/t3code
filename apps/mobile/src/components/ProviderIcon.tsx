@@ -12,6 +12,24 @@ import { useAppearancePreferences } from "../features/settings/appearance/Appear
 import { AppText as Text } from "./ui/AppText";
 import { cn } from "../lib/cn";
 import { getProviderClient, openRouterIcon } from "@t3tools/client-runtime/provider-clients";
+import { defineNativePluginFeature } from "../plugins/features";
+
+const AcpRegistryFallbackIcon = defineNativePluginFeature(
+  "native.components.provider-icon.acp-registry-fallback-icon",
+  BuiltinAcpRegistryFallbackIcon,
+);
+const AcpRegistryProviderIcon = defineNativePluginFeature(
+  "native.components.provider-icon.acp-registry-provider-icon",
+  BuiltinAcpRegistryProviderIcon,
+);
+export const ProviderIcon = defineNativePluginFeature(
+  "native.components.provider-icon",
+  BuiltinProviderIcon,
+);
+export const ProviderInstanceIcon = defineNativePluginFeature(
+  "native.components.provider-icon.provider-instance-icon",
+  BuiltinProviderInstanceIcon,
+);
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
@@ -19,7 +37,7 @@ type ProviderIconProps = {
   readonly size?: number;
 };
 
-function AcpRegistryFallbackIcon(props: { readonly color: string; readonly size: number }) {
+function BuiltinAcpRegistryFallbackIcon(props: { readonly color: string; readonly size: number }) {
   return (
     <Svg width={props.size} height={props.size} viewBox="0 0 576 220" fill="none">
       <Path
@@ -30,7 +48,7 @@ function AcpRegistryFallbackIcon(props: { readonly color: string; readonly size:
   );
 }
 
-function AcpRegistryProviderIcon(props: {
+function BuiltinAcpRegistryProviderIcon(props: {
   readonly color: string;
   readonly iconUrl: string | null | undefined;
   readonly size: number;
@@ -68,7 +86,7 @@ function AcpRegistryProviderIcon(props: {
   );
 }
 
-export function ProviderIcon(props: ProviderIconProps) {
+function BuiltinProviderIcon(props: ProviderIconProps) {
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
   const gradientId = useId();
@@ -167,7 +185,7 @@ export function providerInstanceNameLabel(props: {
     : null;
 }
 
-export function ProviderInstanceIcon(props: {
+function BuiltinProviderInstanceIcon(props: {
   readonly iconUrl?: string | null;
   readonly provider: string | null | undefined;
   readonly size?: number;

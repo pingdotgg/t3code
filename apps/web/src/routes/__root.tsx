@@ -16,6 +16,8 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { PluginActionShortcuts } from "../plugins/contributions";
+import { PluginHost } from "../plugins/PluginHost";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
@@ -61,6 +63,28 @@ import { readProject } from "../state/entities";
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { isChunkLoadError } from "../lib/chunkReloadGuard";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+import { definePluginComponent } from "~/plugins/features";
+
+const RootRouteNotFoundView = definePluginComponent(
+  "component:routes/__root/RootRouteNotFoundView",
+  PluginOriginalRootRouteNotFoundView,
+);
+const RootRouteView = definePluginComponent(
+  "component:routes/__root/RootRouteView",
+  PluginOriginalRootRouteView,
+);
+const RootRouteErrorView = definePluginComponent(
+  "component:routes/__root/RootRouteErrorView",
+  PluginOriginalRootRouteErrorView,
+);
+const CopyErrorButton = definePluginComponent(
+  "component:routes/__root/CopyErrorButton",
+  PluginOriginalCopyErrorButton,
+);
+const EventRouter = definePluginComponent(
+  "component:routes/__root/EventRouter",
+  PluginOriginalEventRouter,
+);
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -115,7 +139,7 @@ export const Route = createRootRoute({
   }),
 });
 
-function RootRouteNotFoundView() {
+function PluginOriginalRootRouteNotFoundView() {
   return (
     <main className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
@@ -136,7 +160,7 @@ function RootRouteNotFoundView() {
   );
 }
 
-function RootRouteView() {
+function PluginOriginalRootRouteView() {
   // Above every branch: app services raise toasts for the whole page, so the surface they write to
   // must not unmount when the root switches branches (for example /welcome to the app shell).
   return (
@@ -209,12 +233,15 @@ function RootRouteBranch() {
     </>
   );
   const appShell = (
-    <CommandPalette>
-      {/* Setup starts with an empty workspace, so the Welcome page has no thread list. */}
-      <AppSidebarLayout showSidebar={!isWelcome}>
-        <Outlet />
-      </AppSidebarLayout>
-    </CommandPalette>
+    <PluginHost>
+      <PluginActionShortcuts />
+      <CommandPalette>
+        {/* Setup starts with an empty workspace, so the Welcome page has no thread list. */}
+        <AppSidebarLayout showSidebar={!isWelcome}>
+          <Outlet />
+        </AppSidebarLayout>
+      </CommandPalette>
+    </PluginHost>
   );
 
   return (
@@ -243,7 +270,7 @@ function RootRouteBranch() {
   );
 }
 
-function RootRouteErrorView({ error }: ErrorComponentProps) {
+function PluginOriginalRootRouteErrorView({ error }: ErrorComponentProps) {
   const router = useRouter();
   const gt = useGT();
   const message = errorMessage(error) ?? gt("An unexpected router error occurred.");
@@ -282,7 +309,7 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
   );
 }
 
-function CopyErrorButton({ report }: { report: string }) {
+function PluginOriginalCopyErrorButton({ report }: { report: string }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: {
       target: "error-report",
@@ -348,7 +375,7 @@ function errorReport(error: unknown, pathname: string): string {
   return lines.join("\n");
 }
 
-function EventRouter({
+function PluginOriginalEventRouter({
   skipInitialBootstrapNavigation,
 }: {
   readonly skipInitialBootstrapNavigation: boolean;

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -30,6 +31,7 @@ export const make = Effect.gen(function* () {
   return fromProviders(drivers.flatMap(({ instance }) => instance.pullRequests ?? []));
 });
 
-export const layer = Layer.effect(PullRequestProviderRegistry, make).pipe(
-  Layer.provide(BuiltInDrivers.layer),
-);
+export const layer = builtinServiceLayer("t3.pull-requests")(
+  PullRequestProviderRegistry,
+  make,
+).pipe(Layer.provide(BuiltInDrivers.layer));

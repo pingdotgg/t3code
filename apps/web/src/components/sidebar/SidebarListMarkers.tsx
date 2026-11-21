@@ -9,8 +9,26 @@ import {
   type SidebarListMarker,
 } from "../Sidebar.logic";
 import { SIDEBAR_SORTABLE_DRAG_DISABLED } from "./SidebarThreadRow";
+import { definePluginComponent } from "~/plugins/features";
 
-function SortableSidebarMarker(props: {
+const SortableSidebarMarker = definePluginComponent(
+  "component:components/sidebar/SidebarListMarkers/SortableSidebarMarker",
+  PluginOriginalSortableSidebarMarker,
+);
+export const SidebarSectionPlaceholder = definePluginComponent(
+  "component:components/sidebar/SidebarListMarkers/SidebarSectionPlaceholder",
+  PluginOriginalSidebarSectionPlaceholder,
+);
+export const SidebarDragBoundary = definePluginComponent(
+  "component:components/sidebar/SidebarListMarkers/SidebarDragBoundary",
+  PluginOriginalSidebarDragBoundary,
+);
+export const SidebarSectionHeader = definePluginComponent(
+  "component:components/sidebar/SidebarListMarkers/SidebarSectionHeader",
+  PluginOriginalSidebarSectionHeader,
+);
+
+function PluginOriginalSortableSidebarMarker(props: {
   marker: SidebarListMarker;
   className?: string;
   children?: ReactNode;
@@ -45,7 +63,7 @@ function SortableSidebarMarker(props: {
   );
 }
 
-export function SidebarSectionPlaceholder(props: {
+function PluginOriginalSidebarSectionPlaceholder(props: {
   marker: "active-placeholder" | "settled-placeholder";
   label: string;
   showHint: boolean;
@@ -75,7 +93,7 @@ export function SidebarSectionPlaceholder(props: {
   );
 }
 
-export function SidebarDragBoundary(props: {
+function PluginOriginalSidebarDragBoundary(props: {
   marker: "pinned-header" | "pinned-divider";
   label: string;
   visible: boolean;
@@ -110,7 +128,7 @@ export function SidebarDragBoundary(props: {
   );
 }
 
-export function SidebarSectionHeader(props: {
+function PluginOriginalSidebarSectionHeader(props: {
   marker: "working-header" | "snoozed-header" | "settled-header";
   label: string;
   /** A muted trailing count. */

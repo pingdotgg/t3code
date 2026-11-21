@@ -1,8 +1,8 @@
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export class DesktopShutdown extends Context.Service<
   DesktopShutdown,
@@ -32,4 +32,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopShutdown, make);
+export const layer = builtinServiceLayer("t3.desktop.desktop-shutdown", DesktopShutdown, make);

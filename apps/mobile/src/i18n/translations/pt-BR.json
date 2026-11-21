@@ -5456,5 +5456,31 @@
   "ad208e3e32c85029": "Ocultar todas",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
-  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem."
+  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
+  "e4fdf2c125bb1a1c": "{count, plural, one {Usou o canvas {count} vez} other {Usou o canvas {count} vezes}}",
+  "2a632164170177a2": "{count, plural, one {Tentou usar o canvas {count} vez} other {Tentou usar o canvas {count} vezes}}",
+  "c1b7649ac731ed07": "Plugins",
+  "902eee528c565dd9": "Falha no comando do plugin",
+  "c5d071b279c2e90f": "Fechar recuperação de plugins",
+  "ea4b0ed7aa9bd760": "Recuperação de plugins",
+  "656854e648c97dca": "Reativar um plugin integrado",
+  "ebffe4dabf52835f": "Ativar {name}",
+  "ba32f1a6898cf271": "Recarregar plugins locais",
+  "37036031afcfce34": "Recurso incluído",
+  "9608b33769752cbf": "Pesquisar plugins em {label}",
+  "654234ef26ef1497": "Pesquisar plugins disponíveis",
+  "59375313b87b2aee": "{name} está instalado",
+  "501b9d7d4a10350f": "Instalar {name}",
+  "119fdf3a37955ebd": "Conecte um ambiente para gerenciar os plugins dele.",
+  "4d4a9cccdbcb80b1": "Atualize este ambiente para gerenciar plugins.",
+  "2a0fa39b8a84f848": "Este ambiente não conseguiu carregar o catálogo de plugins.",
+  "0fceafde5534f56f": "Carregando plugins...",
+  "7c9ee44d092d4f51": [
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " · Revisado por",
+    " ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" }
+  ],
+  "2bf815f51a9354c3": "Nenhum plugin disponível corresponde a esta pesquisa.",
+  "16ed41dd430363b8": "Não foi possível carregar o catálogo de plugins disponíveis."
 }

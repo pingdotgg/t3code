@@ -16,8 +16,14 @@ import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PullRequestMarkdownEditor({
+export const PullRequestMarkdownEditor = definePluginComponent(
+  "component:components/pullRequest/PullRequestMarkdownEditor/PullRequestMarkdownEditor",
+  PluginOriginalPullRequestMarkdownEditor,
+);
+
+function PluginOriginalPullRequestMarkdownEditor({
   value,
   cwd,
   environmentId,

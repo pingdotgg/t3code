@@ -5,13 +5,19 @@ import {
 } from "~/lib/terminalContext";
 import type { ContextPresentationCapability } from "../contextPresentationRegistry";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ComposerPendingTerminalContextChip = definePluginComponent(
+  "component:components/chat/ComposerPendingTerminalContexts/ComposerPendingTerminalContextChip",
+  PluginOriginalComposerPendingTerminalContextChip,
+);
 
 interface ComposerPendingTerminalContextChipProps {
   context: TerminalContextDraft;
   detailsMode: ContextPresentationCapability["details"];
 }
 
-export function ComposerPendingTerminalContextChip({
+function PluginOriginalComposerPendingTerminalContextChip({
   context,
   detailsMode,
 }: ComposerPendingTerminalContextChipProps) {

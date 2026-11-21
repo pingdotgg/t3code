@@ -1,16 +1,17 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export const LinuxBrowserSecretPath = Context.Reference<string | undefined>(
   "@t3tools/desktop/preview/BrowserImport/LinuxBrowserSecretPath",
   { defaultValue: () => undefined },
 );
 
-export const layer = Layer.effect(
+export const layer = builtinServiceLayer(
+  "t3.desktop.linux-browser-secret",
   LinuxBrowserSecretPath,
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;

@@ -3,6 +3,11 @@ import { View } from "react-native";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { themeColorWithAlpha, type MobileThemeVariables } from "../../lib/mobileTheme";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const ConnectionStatusDot = defineNativePluginFeature(
+  "native.features.connection.connection-status-dot",
+  BuiltinConnectionStatusDot,
+);
 
 export type ConnectionStatusDotState = RemoteClientConnectionState;
 
@@ -41,7 +46,7 @@ function statusDotTone(
   }
 }
 
-export function ConnectionStatusDot(props: {
+function BuiltinConnectionStatusDot(props: {
   readonly state: ConnectionStatusDotState;
   readonly pulse: boolean;
   readonly size?: number;

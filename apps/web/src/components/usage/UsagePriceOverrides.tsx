@@ -41,6 +41,12 @@ import {
   type UsagePriceTarget,
   type UsagePriceWriteResult,
 } from "./usagePriceTargets";
+import { definePluginComponent } from "~/plugins/features";
+
+export const UsagePriceOverrides = definePluginComponent(
+  "component:components/usage/UsagePriceOverrides/UsagePriceOverrides",
+  PluginOriginalUsagePriceOverrides,
+);
 
 const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
   [...get(environmentPresentations.presentationsAtom)].map(([environmentId, environment]) => {
@@ -91,7 +97,7 @@ type SaveAttempt = {
   >;
 };
 
-export function UsagePriceOverrides({
+function PluginOriginalUsagePriceOverrides({
   usage,
   initialSelectedEnvironmentIds,
   initialModel,

@@ -25,6 +25,16 @@ import {
 } from "./deviceStreamSession";
 import type { DeviceHardwareButton, DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import { observeResize } from "~/lib/observeResize";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DeviceStreamView = definePluginComponent(
+  "component:components/device/DeviceStreamView/DeviceStreamView",
+  PluginOriginalDeviceStreamView,
+);
+const DeviceControlsSlot = definePluginComponent(
+  "component:components/device/DeviceStreamView/DeviceControlsSlot",
+  PluginOriginalDeviceControlsSlot,
+);
 
 const NO_SESSION_ATOM = Atom.make<DeviceStreamSession | null>(null).pipe(
   Atom.withLabel("device-stream:none"),
@@ -81,7 +91,7 @@ export interface DeviceStreamHandle {
   readonly inputConnected: boolean;
 }
 
-export function DeviceStreamView(props: {
+function PluginOriginalDeviceStreamView(props: {
   readonly environmentId: EnvironmentId;
   readonly platform: DevicePlatform;
   readonly deviceId: string;
@@ -511,7 +521,7 @@ export function DeviceStreamView(props: {
   );
 }
 
-function DeviceControlsSlot(props: {
+function PluginOriginalDeviceControlsSlot(props: {
   renderControls: (view: DeviceViewControls) => ReactNode;
   view: Omit<DeviceViewControls, "resetView">;
   onResetView: () => void;

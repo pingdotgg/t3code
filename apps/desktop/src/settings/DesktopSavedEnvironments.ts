@@ -4,12 +4,12 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 type PersistedSavedEnvironmentDesktopSsh = NonNullable<
   PersistedSavedEnvironmentRecord["desktopSsh"]
@@ -286,4 +286,8 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopSavedEnvironments, make);
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-saved-environments",
+  DesktopSavedEnvironments,
+  make,
+);

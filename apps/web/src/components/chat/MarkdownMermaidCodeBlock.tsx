@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { useGT } from "gt-react";
 import { CodeIcon, WorkflowIcon } from "lucide-react";
 import { Suspense, use, useState, type ReactNode } from "react";
@@ -9,7 +10,7 @@ import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { findRevealRef, MarkdownFindContext } from "./markdownFindContext";
 import { MermaidDiagram } from "./MermaidDiagram";
 
-export function MarkdownMermaidCodeBlock({
+function PluginOriginalMarkdownMermaidCodeBlock({
   code,
   fenceTitle,
   theme,
@@ -84,3 +85,8 @@ export function MarkdownMermaidCodeBlock({
     </MarkdownCodeBlock>
   );
 }
+
+export const MarkdownMermaidCodeBlock = definePluginComponent(
+  "component:components/chat/MarkdownMermaidCodeBlock/MarkdownMermaidCodeBlock",
+  PluginOriginalMarkdownMermaidCodeBlock,
+);

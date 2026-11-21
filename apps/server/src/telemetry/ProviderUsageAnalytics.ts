@@ -18,12 +18,12 @@ import type {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
 } from "@t3tools/shared/model";
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 import { catalogModelLabel } from "./ProviderDimensions.ts";
@@ -393,7 +393,7 @@ export class ProviderTurnAnalytics extends Context.Reference<{
   }),
 }) {}
 
-export const layer = Layer.effect(
+export const layer = builtinServiceLayer("t3.thread")(
   ProviderTurnAnalytics,
   Effect.gen(function* () {
     const analytics = yield* AnalyticsService.AnalyticsService;

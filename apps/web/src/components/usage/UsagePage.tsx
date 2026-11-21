@@ -106,6 +106,32 @@ import {
   saveUsagePagePreferences,
   type UsagePagePreferences,
 } from "./usagePagePreferences";
+import { definePluginComponent, definePluginFeature } from "~/plugins/features";
+
+const ProviderMark = definePluginComponent(
+  "component:components/usage/UsagePage/ProviderMark",
+  PluginOriginalProviderMark,
+);
+const Metric = definePluginComponent(
+  "component:components/usage/UsagePage/Metric",
+  PluginOriginalMetric,
+);
+const UsageCoverageNotice = definePluginComponent(
+  "component:components/usage/UsagePage/UsageCoverageNotice",
+  PluginOriginalUsageCoverageNotice,
+);
+const UsageEnvironmentFilter = definePluginComponent(
+  "component:components/usage/UsagePage/UsageEnvironmentFilter",
+  PluginOriginalUsageEnvironmentFilter,
+);
+const UsageSkeleton = definePluginComponent(
+  "component:components/usage/UsagePage/UsageSkeleton",
+  PluginOriginalUsageSkeleton,
+);
+const MetricSkeletons = definePluginComponent(
+  "component:components/usage/UsagePage/MetricSkeletons",
+  PluginOriginalMetricSkeletons,
+);
 
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
@@ -174,7 +200,7 @@ function UsageModelDialogHost({
   );
 }
 
-export function UsagePage() {
+export function BuiltinUsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
@@ -1087,7 +1113,7 @@ function UsageOverview({
   );
 }
 
-function ProviderMark({
+function PluginOriginalProviderMark({
   provider,
   className,
 }: {
@@ -1108,7 +1134,7 @@ function figureClass(loading: boolean) {
   return cn("transition-opacity", loading && "opacity-40 delay-150");
 }
 
-function Metric({
+function PluginOriginalMetric({
   label,
   value,
   loading,
@@ -1129,7 +1155,7 @@ function Metric({
   );
 }
 
-function UsageCoverageNotice({
+function PluginOriginalUsageCoverageNotice({
   environments,
   duplicateSources,
   contractMismatches,
@@ -1178,7 +1204,7 @@ function UsageCoverageNotice({
   );
 }
 
-function UsageEnvironmentFilter({
+function PluginOriginalUsageEnvironmentFilter({
   environments,
   selectedEnvironments,
   selectedEnvironmentIds,
@@ -1382,7 +1408,7 @@ function UsageProviderFilter({
   );
 }
 
-function UsageSkeleton() {
+function PluginOriginalUsageSkeleton() {
   const gt = useGT();
   return (
     <>
@@ -1452,7 +1478,7 @@ function UsageSkeleton() {
   );
 }
 
-function MetricSkeletons({ labels }: { readonly labels: readonly string[] }) {
+function PluginOriginalMetricSkeletons({ labels }: { readonly labels: readonly string[] }) {
   return (
     <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
       {labels.map((label) => (
@@ -1464,3 +1490,5 @@ function MetricSkeletons({ labels }: { readonly labels: readonly string[] }) {
     </div>
   );
 }
+
+export const UsagePage = definePluginFeature("usage", BuiltinUsagePage);

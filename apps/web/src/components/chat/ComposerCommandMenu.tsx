@@ -37,6 +37,12 @@ import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
+import { definePluginComponent } from "~/plugins/features";
+
+const SkillSourceBadge = definePluginComponent(
+  "component:components/chat/ComposerCommandMenu/SkillSourceBadge",
+  PluginOriginalSkillSourceBadge,
+);
 
 export type ComposerCommandItem =
   | {
@@ -52,6 +58,14 @@ export type ComposerCommandItem =
       id: string;
       type: "slash-command";
       command: ComposerSlashCommand;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "plugin-command";
+      actionId: string;
+      command: string;
       label: string;
       description: string;
     }
@@ -106,7 +120,7 @@ export type ComposerCommandItem =
       description: string;
     };
 
-export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
+const PluginOriginalComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   listId: string;
   items: ComposerCommandItem[];
   resolvedTheme: "light" | "dark";
@@ -190,8 +204,12 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
     </Command>
   );
 });
+export const ComposerCommandMenu = definePluginComponent(
+  "component:components/chat/ComposerCommandMenu/ComposerCommandMenu",
+  PluginOriginalComposerCommandMenu,
+);
 
-const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
+const PluginOriginalComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   optionId: string;
   item: ComposerCommandItem;
   triggerKind: ComposerTriggerKind | null;
@@ -303,6 +321,10 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     </CommandItem>
   );
 });
+const ComposerCommandMenuItem = definePluginComponent(
+  "component:components/chat/ComposerCommandMenu/ComposerCommandMenuItem",
+  PluginOriginalComposerCommandMenuItem,
+);
 
 export function composerSuggestionOptionId(listId: string, itemId: string): string {
   // JSON escapes lone UTF-16 surrogates before URI encoding without losing identity.
@@ -355,7 +377,10 @@ const SKILL_SOURCE_LABEL_BY_KIND: Record<
   },
 };
 
-function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffix: boolean }) {
+function PluginOriginalSkillSourceBadge(props: {
+  kind: ProviderSkillSourceKind;
+  showSkillSuffix: boolean;
+}) {
   const m = useMessages();
   const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
   const labels = SKILL_SOURCE_LABEL_BY_KIND[props.kind];

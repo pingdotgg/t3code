@@ -144,6 +144,12 @@ import IconX from "@tabler/icons-react-native/IconX";
 import type { AndroidSymbol, SFSymbol, SymbolViewProps } from "expo-symbols";
 import { StyleSheet, View } from "react-native";
 import { withUniwind } from "uniwind";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const AppSymbolView = defineNativePluginFeature(
+  "native.components.ui.app-symbol.app-symbol-view",
+  BuiltinAppSymbolView,
+);
 
 const ANDROID_ICON_BY_SF_SYMBOL = {
   plusminus: IconPlusMinus,
@@ -368,7 +374,7 @@ export function isAppSymbolName(name: string): name is Extract<AppSymbolName, st
   return Object.prototype.hasOwnProperty.call(ANDROID_ICON_BY_SF_SYMBOL, name);
 }
 
-function AppSymbolView(props: AppSymbolViewProps) {
+function BuiltinAppSymbolView(props: AppSymbolViewProps) {
   const materialName = typeof props.name === "string" ? undefined : props.name.android;
   const sfSymbol = typeof props.name === "string" ? props.name : props.name.ios;
   const AndroidIcon =

@@ -1,3 +1,8 @@
+import {
+  builtinContextLayer,
+  builtinLifecycleLayer,
+  builtinServiceLayer,
+} from "../plugins/PluginKernel.ts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -18,6 +23,7 @@ import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
+  CanvasError,
   DeviceToolError,
   OrchestratorMcpFailure,
   PreviewAutomationError,
@@ -39,6 +45,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as PullRequestWatchService from "../pullRequest/PullRequestWatchService.ts";
+import { PluginService } from "../plugins/PluginService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import {
@@ -49,6 +56,7 @@ import {
   toolOutcome,
 } from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import * as CanvasService from "../canvas/CanvasService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
@@ -60,6 +68,8 @@ import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 import * as ThemeHandlers from "./toolkits/theme/handlers.ts";
+import { PluginsToolkit } from "./toolkits/plugins/tools.ts";
+import { PluginsHandlersLive } from "./toolkits/plugins/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -98,6 +108,12 @@ import * as MessageHandlers from "./toolkits/message/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import { MCP_HTTP_PATH } from "../httpCors.ts";
 import { requestUrl } from "../requestUrl.ts";
+import * as CanvasHandlers from "./toolkits/canvas/handlers.ts";
+import {
+  CanvasScreenshotTool,
+  CanvasScreenshotToolkit,
+  CanvasStandardToolkit,
+} from "./toolkits/canvas/tools.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   requestUrl(request).pipe(
@@ -276,6 +292,7 @@ const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
+  const plugins = yield* Effect.serviceOption(PluginService);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
   const linksEnabled = serverSettings.getSettings.pipe(
@@ -344,6 +361,21 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     // The transport allows no browser Origin; refuse it before credentials, as the MCP spec requires.
     if (request.headers.origin !== undefined) return HttpServerResponse.empty({ status: 403 });
+    // Admission closes before disabled MCP services drain; the HTTP routes remain installed.
+    const registryAvailable = yield* Effect.sync(() => typeof registry.resolve === "function").pipe(
+      Effect.catchDefect(() => Effect.succeed(false)),
+    );
+    if (
+      !registryAvailable ||
+      (Option.isSome(plugins) &&
+        !(yield* plugins.value.list({ query: "t3.mcp" })).plugins.some(
+          (plugin) => plugin.manifest.id === "t3.mcp" && plugin.enabled,
+        ))
+    )
+      return HttpServerResponse.jsonUnsafe(
+        { error: "agent_tools_disabled", message: "Agent tools are disabled in this environment." },
+        { status: 503, headers: { "cache-control": "no-store" } },
+      );
     const admitted = yield* authenticateRequest(request);
     if (HttpServerResponse.isHttpServerResponse(admitted)) return admitted;
     if (yield* isUndefinedNotification(request)) return HttpServerResponse.empty({ status: 202 });
@@ -1281,7 +1313,9 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   toolkit: Toolkit.Toolkit<Tools>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(
+  builtinLifecycleLayer(
+    "t3.mcp",
+    `t3/runtime/mcp/toolkit/${Object.keys(toolkit.tools).sort().join(",")}`,
     withToolAnalytics(
       withToolSpans(
         withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
@@ -1298,16 +1332,50 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   );
 
 const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, EX, RX>(
+  key: string,
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(withToolSpans(register))).pipe(
-    Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
-  );
+  builtinLifecycleLayer(
+    "t3.mcp",
+    `t3/runtime/mcp/image/${key}`,
+    withToolAnalytics(withToolSpans(register)),
+  ).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
 
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
-  imageToolRegistration(registerHtmlPreview(), HtmlHandlers.layerPreview),
+  imageToolRegistration("html", registerHtmlPreview(), HtmlHandlers.layerPreview),
+).pipe(Layer.provide(HtmlRender.layer));
+
+const isCanvasError = Schema.is(CanvasError);
+
+const registerCanvasScreenshot = Effect.fn("McpHttpServer.registerCanvasScreenshot")(function* () {
+  const canvas = yield* CanvasService.CanvasService;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const built = yield* decodeAsAdvertised(CanvasScreenshotToolkit);
+  yield* registerImageTool(
+    CanvasScreenshotTool,
+    (payload) =>
+      built
+        .handle("canvas_screenshot", payload)
+        .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+    (effect) =>
+      effect.pipe(
+        Effect.provideService(CanvasService.CanvasService, canvas),
+        Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+      ),
+    "screenshot",
+    // Canvas errors carry server-built messages that tell the agent what to do next.
+    (error) =>
+      isCanvasError(error)
+        ? `Canvas screenshot failed: ${error.message}`
+        : "Canvas screenshot failed.",
+  );
+});
+
+const layerCanvasToolkit = Layer.mergeAll(
+  toolkitRegistration(CanvasStandardToolkit, CanvasHandlers.layerStandard),
+  imageToolRegistration("canvas", registerCanvasScreenshot(), CanvasHandlers.layerScreenshot),
 ).pipe(Layer.provide(HtmlRender.layer));
 
 const layerPreviewStandardToolkitRegistration = toolkitRegistration(
@@ -1316,6 +1384,7 @@ const layerPreviewStandardToolkitRegistration = toolkitRegistration(
 );
 
 const layerPreviewSnapshotRegistration = imageToolRegistration(
+  "preview",
   registerPreviewSnapshot(),
   PreviewHandlers.layerSnapshot,
 );
@@ -1373,6 +1442,7 @@ const layerDeviceStandardToolkitRegistration = toolkitRegistration(
 );
 
 const layerDeviceScreenshotRegistration = imageToolRegistration(
+  "device",
   registerDeviceScreenshot(),
   DeviceHandlers.layerScreenshot,
 );
@@ -1402,17 +1472,28 @@ export const layerInProcessMcpServer = McpServer.middleware<{
 ).pipe(Layer.provideMerge(McpServer.McpServer.layer));
 
 export const layerMcpTransport = <RA, RE, RR>(registrations: Layer.Layer<RA, RE, RR>) =>
-  McpServer.layerHttp({
-    name: "T3 Code",
-    version: packageJson.version,
-    path: MCP_HTTP_PATH,
-    protocols: mcpProtocols,
-    allowSessionTermination: true,
-    registrations,
-  }).pipe(Layer.provide(layerMcpAuthMiddleware));
+  builtinContextLayer(
+    "t3.http",
+    Layer.build(
+      McpServer.layerHttp({
+        name: "T3 Code",
+        version: packageJson.version,
+        path: MCP_HTTP_PATH,
+        protocols: mcpProtocols,
+        allowSessionTermination: true,
+        registrations,
+      }),
+    ),
+    [McpServer.McpServer.key],
+  ).pipe(
+    Layer.provide(layerMcpAuthMiddleware),
+    // Share the server before Layer.build forks its memo map for the wrapped transport.
+    Layer.provideMerge(McpServer.McpServer.layer),
+  );
 
 /** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
 export const layerTools = Layer.mergeAll(
+  toolkitRegistration(PluginsToolkit, PluginsHandlersLive),
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,
@@ -1427,9 +1508,10 @@ export const layerTools = Layer.mergeAll(
   layerDeviceToolkit,
   layerHtmlToolkit,
   layerMessageToolkit,
+  layerCanvasToolkit,
 );
 
-const layerToolExposure = Layer.effect(
+const layerToolExposure = builtinServiceLayer("t3.mcp")(
   McpToolExposure.McpToolExposure,
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;

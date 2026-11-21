@@ -75,6 +75,28 @@ import {
   resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
+import { definePluginComponent, PluginSlot } from "~/plugins/features";
+
+export const ThreadPreviewMiniPlayer = definePluginComponent(
+  "component:components/preview/ThreadPreviewMiniPlayer/ThreadPreviewMiniPlayer",
+  PluginOriginalThreadPreviewMiniPlayer,
+);
+const BrowserMiniPlayer = definePluginComponent(
+  "component:components/preview/ThreadPreviewMiniPlayer/BrowserMiniPlayer",
+  PluginOriginalBrowserMiniPlayer,
+);
+const DeviceMiniPlayer = definePluginComponent(
+  "component:components/preview/ThreadPreviewMiniPlayer/DeviceMiniPlayer",
+  PluginOriginalDeviceMiniPlayer,
+);
+const MiniPlayerShell = definePluginComponent(
+  "component:components/preview/ThreadPreviewMiniPlayer/MiniPlayerShell",
+  PluginOriginalMiniPlayerShell,
+);
+export const CanvasMiniPlayer = definePluginComponent(
+  "component:components/canvas/CanvasMiniPlayer",
+  PluginOriginalCanvasMiniPlayer,
+);
 
 interface Props {
   readonly threadRef: ScopedThreadRef;
@@ -96,6 +118,8 @@ const RESIZE_HANDLES: ReadonlyArray<{
   { direction: "southwest", className: "-bottom-2 -left-2 size-4 cursor-nesw-resize" },
   { direction: "southeast", className: "-bottom-2 -right-2 size-4 cursor-nwse-resize" },
 ];
+
+const CANVAS_MINI_PLAYER_SOURCE_SIZE: PreviewMiniPlayerSize = { width: 1280, height: 800 };
 
 // What the stream reports about its source. It lives outside the player so the
 // chat canvas lays out the frame from the same source size the player uses. One
@@ -196,30 +220,80 @@ export function useThreadPreviewCanvasSource(
       heldSource ??
       (source.kind === "browser"
         ? browser.sourceSize
-        : resolveDeviceMiniPlayerSourceSize(source.platform, screen)),
+        : source.kind === "canvas"
+          ? CANVAS_MINI_PLAYER_SOURCE_SIZE
+          : resolveDeviceMiniPlayerSourceSize(source.platform, screen)),
   };
 }
 
-export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer }: Props) {
+export function PluginOriginalThreadPreviewMiniPlayer({ threadRef, miniPlayer }: Props) {
   const { source } = miniPlayer;
-  return source.kind === "browser" ? (
-    <BrowserMiniPlayer
-      key={source.tabId}
+  switch (source.kind) {
+    case "browser":
+      return (
+        <BrowserMiniPlayer
+          key={source.tabId}
+          threadRef={threadRef}
+          tabId={source.tabId}
+          miniPlayer={miniPlayer}
+        />
+      );
+    case "canvas":
+      return (
+        <PluginSlot
+          key={source.documentId}
+          slot="canvas.mini-player"
+          props={{ threadRef, source, miniPlayer }}
+        />
+      );
+    case "device":
+      return (
+        <DeviceMiniPlayer
+          key={previewMiniPlayerSourceKey(source)}
+          threadRef={threadRef}
+          source={source}
+          miniPlayer={miniPlayer}
+        />
+      );
+  }
+}
+
+function PluginOriginalCanvasMiniPlayer({
+  threadRef,
+  source,
+  miniPlayer,
+}: Props & { readonly source: Extract<PreviewMiniPlayerSource, { kind: "canvas" }> }) {
+  const gt = useGT();
+  const openInPanel = () => {
+    usePreviewMiniPlayerStore.getState().close(threadRef);
+    useRightPanelStore.getState().openCanvas(threadRef, source.documentId, source.name);
+  };
+  return (
+    <MiniPlayerShell
       threadRef={threadRef}
-      tabId={source.tabId}
       miniPlayer={miniPlayer}
-    />
-  ) : (
-    <DeviceMiniPlayer
-      key={previewMiniPlayerSourceKey(source)}
-      threadRef={threadRef}
-      source={source}
-      miniPlayer={miniPlayer}
-    />
+      sourceSize={CANVAS_MINI_PLAYER_SOURCE_SIZE}
+      label={gt("Floating canvas")}
+      onOpenInPanel={openInPanel}
+    >
+      {() => (
+        // The canvas is DOM, so it takes the band the browser's native webview would.
+        <div
+          className="pointer-events-auto absolute inset-0 flex overflow-hidden rounded-[inherit]"
+          style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
+        >
+          <PluginSlot slot="canvas.floating" props={{ threadRef, documentId: source.documentId }} />
+        </div>
+      )}
+    </MiniPlayerShell>
   );
 }
 
-function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly tabId: string }) {
+function PluginOriginalBrowserMiniPlayer({
+  threadRef,
+  tabId,
+  miniPlayer,
+}: Props & { readonly tabId: string }) {
   const gt = useGT();
   const httpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const { serverEpoch, snapshot, desktopOverlay, serverTab, sourceSize } =
@@ -378,7 +452,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
   );
 }
 
-function DeviceMiniPlayer({
+function PluginOriginalDeviceMiniPlayer({
   threadRef,
   source,
   miniPlayer,
@@ -438,7 +512,7 @@ function DeviceMiniPlayer({
 }
 
 /** Match native clipping and DOM radii to align their separately composited edges. */
-function MiniPlayerShell({
+function PluginOriginalMiniPlayerShell({
   threadRef,
   miniPlayer,
   sourceSize,

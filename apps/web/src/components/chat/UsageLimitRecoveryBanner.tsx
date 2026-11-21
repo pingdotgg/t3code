@@ -23,6 +23,12 @@ import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { toastManager } from "../ui/toast";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import { copyAdminRequest } from "./ThreadErrorBanner";
+import { definePluginComponent } from "~/plugins/features";
+
+const RecoveryActions = definePluginComponent(
+  "component:components/chat/UsageLimitRecoveryBanner/RecoveryActions",
+  PluginOriginalRecoveryActions,
+);
 
 type RecoveryProps = {
   runId: RunId;
@@ -149,7 +155,13 @@ export function usageLimitRecoveryBannerItem(
   };
 }
 
-function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {
+function PluginOriginalRecoveryActions({
+  runId,
+  resetAt,
+  recovery,
+  snoozedUntil,
+  onChange,
+}: RecoveryProps) {
   const gt = useGT();
   const [pending, setPending] = useState(false);
 

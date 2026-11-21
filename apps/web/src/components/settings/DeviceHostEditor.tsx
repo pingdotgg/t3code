@@ -23,10 +23,16 @@ import {
   parseDeviceHostDraft,
   type DeviceHostCheckTarget,
 } from "./deviceHostConnectionChecks";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DeviceHostEditor = definePluginComponent(
+  "component:components/settings/DeviceHostEditor/DeviceHostEditor",
+  PluginOriginalDeviceHostEditor,
+);
 
 const EXAMPLE_HOST_NAME = "Mac mini";
 
-export function DeviceHostEditor({
+function PluginOriginalDeviceHostEditor({
   host,
   isNew,
   targets,

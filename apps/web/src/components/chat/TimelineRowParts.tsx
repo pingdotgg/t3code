@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { useMessages } from "gt-react";
 import { type ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -7,11 +8,11 @@ import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../times
 
 export const MESSAGE_HEADING_LEVEL = 3;
 
-export function MessageAuthorHeading({ children }: { children: string }) {
+function PluginOriginalMessageAuthorHeading({ children }: { children: string }) {
   return <h3 className="sr-only select-none">{children}</h3>;
 }
 
-export function TimelineRowTimestamp({
+function PluginOriginalTimelineRowTimestamp({
   createdAt,
   timestampFormat,
   className,
@@ -43,7 +44,7 @@ export function TimelineRowTimestamp({
   );
 }
 
-export function ActivityShimmerOverlay({
+function PluginOriginalActivityShimmerOverlay({
   children,
   className,
 }: {
@@ -63,3 +64,18 @@ export function ActivityShimmerOverlay({
     </span>
   );
 }
+
+export const MessageAuthorHeading = definePluginComponent(
+  "component:components/chat/TimelineRowParts/MessageAuthorHeading",
+  PluginOriginalMessageAuthorHeading,
+);
+
+export const TimelineRowTimestamp = definePluginComponent(
+  "component:components/chat/TimelineRowParts/TimelineRowTimestamp",
+  PluginOriginalTimelineRowTimestamp,
+);
+
+export const ActivityShimmerOverlay = definePluginComponent(
+  "component:components/chat/TimelineRowParts/ActivityShimmerOverlay",
+  PluginOriginalActivityShimmerOverlay,
+);

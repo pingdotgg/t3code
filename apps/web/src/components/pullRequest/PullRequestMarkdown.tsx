@@ -18,21 +18,31 @@ import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequestMarkdown.logic";
+import { definePluginComponent, createPluginContext } from "~/plugins/features";
 
-export const PullRequestMarkdownContext = createContext<{
+const PullRequestHostVideo = definePluginComponent(
+  "component:components/pullRequest/PullRequestMarkdown/PullRequestHostVideo",
+  PluginOriginalPullRequestHostVideo,
+);
+export const PullRequestMarkdown = definePluginComponent(
+  "component:components/pullRequest/PullRequestMarkdown/PullRequestMarkdown",
+  PluginOriginalPullRequestMarkdown,
+);
+
+export const PullRequestMarkdownContext = createPluginContext<{
   /** Stable per repository, so comments share one renderer and its parse cache. */
   remarkPlugins: PluggableList;
   lineBreaks: boolean;
   threadRef: ScopedThreadRef | null;
   /** The change request's `owner/name`, which can differ from the checkout the body renders in. */
   repository: string | null;
-} | null>(null);
+} | null>("components/pullRequest/PullRequestMarkdown/PullRequestMarkdownContext", null);
 
 /** The list page panel that links in thread-less markdown open in; the Issues page provides its own. */
 export const PullRequestMarkdownPanelContext =
   createContext<ScopedThreadRef>(PULL_REQUESTS_PANEL_REF);
 
-function PullRequestHostVideo({
+function PluginOriginalPullRequestHostVideo({
   environmentId,
   cwd,
   url,
@@ -190,7 +200,7 @@ function PullRequestBodySegmentView({
   );
 }
 
-export function PullRequestMarkdown({
+function PluginOriginalPullRequestMarkdown({
   text,
   cwd,
   environmentId,

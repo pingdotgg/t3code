@@ -1,6 +1,7 @@
 import { T, useGT, useMessages } from "gt-react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSearchToolbarInset } from "../../components/ui/useBarInset";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { LegendList } from "@legendapp/list/react-native";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
@@ -33,7 +34,7 @@ function useMobileThirdPartyLicenses() {
   }, []);
 }
 
-function LicenseRow(props: {
+function BuiltinLicenseRow(props: {
   readonly entry: ThirdPartyLicenseEntry;
   readonly onPress: () => void;
 }) {
@@ -48,7 +49,7 @@ function LicenseRow(props: {
   );
 }
 
-export function SettingsOpenSourceLicensesRouteScreen() {
+function BuiltinSettingsOpenSourceLicensesRouteScreen() {
   const gt = useGT();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -118,7 +119,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
 
 type LicenseDetailProps = StaticScreenProps<{ readonly entryKey: string }>;
 
-export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailProps) {
+function BuiltinSettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailProps) {
   const gt = useGT();
   const messages = useMessages();
   const insets = useSafeAreaInsets();
@@ -186,3 +187,18 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
     </SettingsScreen>
   );
 }
+
+const LicenseRow = defineNativePluginFeature(
+  "native.features.settings.settings-open-source-licenses-route-screen.license-row",
+  BuiltinLicenseRow,
+);
+
+export const SettingsOpenSourceLicensesRouteScreen = defineNativePluginFeature(
+  "settings.licenses",
+  BuiltinSettingsOpenSourceLicensesRouteScreen,
+);
+
+export const SettingsOpenSourceLicenseRouteScreen = defineNativePluginFeature(
+  "settings.license",
+  BuiltinSettingsOpenSourceLicenseRouteScreen,
+);

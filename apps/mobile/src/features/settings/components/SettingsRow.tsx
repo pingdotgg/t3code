@@ -9,8 +9,9 @@ import { cn } from "../../../lib/cn";
 import type { SettingsLegalDocumentTarget, SettingsPageTarget } from "./settings-page-targets";
 import { SettingsSidebarContext } from "./SettingsSection";
 import { openSettings } from "../settings-navigation";
+import { defineNativePluginFeature } from "../../../plugins/features";
 
-export function SettingsRow(props: {
+function BuiltinSettingsRow(props: {
   readonly disabled?: boolean;
   readonly icon: ComponentProps<typeof ListRow>["icon"];
   readonly label: string;
@@ -61,3 +62,8 @@ export function SettingsRow(props: {
   }
   return <ListRow {...content} onPress={onPress} />;
 }
+
+export const SettingsRow = defineNativePluginFeature(
+  "native.features.settings.components.settings-row",
+  BuiltinSettingsRow,
+);

@@ -4,8 +4,14 @@ import { GestureDetector } from "react-native-gesture-handler";
 
 import { cn } from "../../lib/cn";
 import { useHoverGesture } from "../../lib/useHoverGesture";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function RowPressable({
+export const RowPressable = defineNativePluginFeature(
+  "native.components.ui.row-pressable",
+  BuiltinRowPressable,
+);
+
+function BuiltinRowPressable({
   children,
   className,
   interactionClassName = "bg-row-hover",

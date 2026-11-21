@@ -113,6 +113,69 @@ import { useAssetUrl } from "../../state/assets";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { startShimmerSteps } from "./work-shimmer-steps";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const WorkLogIcon = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.work-log-icon",
+  BuiltinWorkLogIcon,
+);
+
+const ShimmerWorkContent = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.shimmer-work-content",
+  BuiltinShimmerWorkContent,
+);
+
+const ThreadWorkGroupList = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.thread-work-group-list",
+  BuiltinThreadWorkGroupList,
+);
+
+const EdgeFade = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.edge-fade",
+  BuiltinEdgeFade,
+);
+
+const WorkspacePreparationRetryButton = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.workspace-preparation-retry-button",
+  BuiltinWorkspacePreparationRetryButton,
+);
+
+const ToolActivityIconView = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.tool-activity-icon-view",
+  BuiltinToolActivityIconView,
+);
+
+const NativeAppToolActivityIcon = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.native-app-tool-activity-icon",
+  BuiltinNativeAppToolActivityIcon,
+);
+
+const ToolActivityImage = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.tool-activity-image",
+  BuiltinToolActivityImage,
+);
+
+export const ThreadDisclosureChevron = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.thread-disclosure-chevron",
+  BuiltinThreadDisclosureChevron,
+);
+
+export const ShimmeringWorkContent = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.shimmering-work-content",
+  BuiltinShimmeringWorkContent,
+);
+
+export const ThreadWorkGroupToggle = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.thread-work-group-toggle",
+  BuiltinThreadWorkGroupToggle,
+);
+
+export const ThreadThinkingRow = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.thread-thinking-row",
+  BuiltinThreadThinkingRow,
+);
+
+export const ThreadWorkLog = defineNativePluginFeature("chat.work-log", BuiltinThreadWorkLog);
 
 const SHIMMER_WIDTH = 72;
 const SHIMMER_ICON_AND_GAP_WIDTH = 30;
@@ -128,7 +191,7 @@ type WorkContentIcon =
   | "t3-code"
   | "pull-request";
 
-function WorkLogIcon(props: {
+function BuiltinWorkLogIcon(props: {
   readonly icon: WorkContentIcon;
   readonly color: ColorValue;
   readonly colorClassName?: string;
@@ -167,7 +230,7 @@ function WorkLogIcon(props: {
   );
 }
 
-export function ThreadDisclosureChevron(props: {
+function BuiltinThreadDisclosureChevron(props: {
   readonly expanded: boolean;
   readonly collapsedDirection: "right" | "down";
   readonly size: number;
@@ -208,7 +271,7 @@ export function ThreadDisclosureChevron(props: {
   );
 }
 
-function ShimmerWorkContent(props: {
+function BuiltinShimmerWorkContent(props: {
   readonly textClassName?: string;
   readonly compact?: boolean;
   readonly environmentId?: EnvironmentId;
@@ -258,7 +321,7 @@ function ShimmerWorkContent(props: {
   );
 }
 
-export function ShimmeringWorkContent(props: {
+function BuiltinShimmeringWorkContent(props: {
   readonly className?: string;
   readonly textClassName?: string;
   readonly compact?: boolean;
@@ -483,7 +546,7 @@ interface ThreadWorkLogProps {
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }
 
-export function ThreadWorkLog(props: ThreadWorkLogProps) {
+function BuiltinThreadWorkLog(props: ThreadWorkLogProps) {
   const renderRow = (row: ThreadFeedActivity) => (
     <ThreadWorkLogRow
       key={row.id}
@@ -610,7 +673,7 @@ const WORK_GROUP_MAINTAIN_SCROLL_AT_END = {
   on: { dataAppend: true },
 } as const;
 
-function ThreadWorkGroupList(props: {
+function BuiltinThreadWorkGroupList(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly edgeFadeColor: string;
   readonly expandedRows: Readonly<Record<string, boolean>>;
@@ -745,7 +808,7 @@ function ThreadWorkGroupList(props: {
 }
 
 /** A screen-colored gradient painted over the list edge that still has content past it. */
-function EdgeFade(props: { readonly color: string; readonly direction: "up" | "down" }) {
+function BuiltinEdgeFade(props: { readonly color: string; readonly direction: "up" | "down" }) {
   const gradientId = `work-group-fade-${useId().replaceAll(":", "")}`;
   return (
     <Svg width="100%" height="100%">
@@ -772,7 +835,7 @@ function workLogRowKey(row: ThreadFeedActivity): string {
   return row.id;
 }
 
-function WorkspacePreparationRetryButton(props: {
+function BuiltinWorkspacePreparationRetryButton(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly runId: RunId;
@@ -872,7 +935,7 @@ function HighlightedCodeText({
 // Rows that aren't sign-in notices read this, so every row reads an atom.
 const NOT_SIGNED_IN = Atom.make(false);
 
-const ThreadWorkLogRow = function ThreadWorkLogRow(
+const BuiltinThreadWorkLogRow = function ThreadWorkLogRow(
   props: Omit<
     ThreadWorkLogProps,
     | "continuesWorkLog"
@@ -1398,7 +1461,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   );
 };
 
-export function ThreadWorkGroupToggle(props: {
+function BuiltinThreadWorkGroupToggle(props: {
   readonly environmentId: EnvironmentId;
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly expanded: boolean;
@@ -1509,7 +1572,7 @@ export function ThreadWorkGroupToggle(props: {
   );
 }
 
-export function ThreadThinkingRow(props: {
+function BuiltinThreadThinkingRow(props: {
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly iconSubtleColor: ColorValue;
   readonly label?: string;
@@ -1535,7 +1598,7 @@ export function ThreadThinkingRow(props: {
   );
 }
 
-function ToolActivityIconView(props: {
+function BuiltinToolActivityIconView(props: {
   readonly environmentId: EnvironmentId;
   readonly icon?: ToolActivityIcon;
   readonly fallback: WorkContentIcon;
@@ -1585,7 +1648,7 @@ function ToolActivityIconView(props: {
   );
 }
 
-function NativeAppToolActivityIcon(props: {
+function BuiltinNativeAppToolActivityIcon(props: {
   readonly environmentId: EnvironmentId;
   readonly app: Extract<ToolActivityIcon, { readonly _tag: "native-app" }>["app"];
   readonly fallback: WorkContentIcon;
@@ -1609,7 +1672,7 @@ function NativeAppToolActivityIcon(props: {
   );
 }
 
-function ToolActivityImage(props: {
+function BuiltinToolActivityImage(props: {
   readonly source: string;
   readonly fallback: WorkContentIcon;
   readonly color: ColorValue;
@@ -1682,3 +1745,8 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
       return { ios: "hammer", android: "construction" };
   }
 }
+
+const ThreadWorkLogRow = defineNativePluginFeature(
+  "native.features.threads.thread-work-log.thread-work-log-row",
+  BuiltinThreadWorkLogRow,
+);

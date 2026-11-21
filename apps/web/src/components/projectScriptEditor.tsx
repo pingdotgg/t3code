@@ -55,6 +55,16 @@ import { Label } from "./ui/label";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ScriptIcon = definePluginComponent(
+  "component:components/projectScriptEditor/ScriptIcon",
+  PluginOriginalScriptIcon,
+);
+export const ProjectScriptEditorDialog = definePluginComponent(
+  "component:components/projectScriptEditor/ProjectScriptEditorDialog",
+  PluginOriginalProjectScriptEditorDialog,
+);
 
 const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
   { id: "play", label: msg("Play") },
@@ -65,7 +75,7 @@ const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
   { id: "debug", label: msg("Debug") },
 ];
 
-export function ScriptIcon({
+function PluginOriginalScriptIcon({
   icon,
   className = "size-3.5",
 }: {
@@ -136,7 +146,7 @@ export function editorRequestForScript(
   };
 }
 
-export function ProjectScriptEditorDialog({
+function PluginOriginalProjectScriptEditorDialog({
   environmentId,
   editScope = AuthOrchestrationOperateScope,
   request,

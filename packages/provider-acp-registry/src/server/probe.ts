@@ -1,4 +1,5 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import {
   AcpRegistryListProvidersResult,
   AcpRegistryOperationError,
@@ -492,8 +493,11 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         }).pipe(
           Layer.provide(
             Layer.mergeAll(
-              Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-              Layer.succeed(SecureRandom.SecureRandom, random),
+              builtinSucceedLayer("t3.providers")(
+                ChildProcessSpawner.ChildProcessSpawner,
+                childProcessSpawner,
+              ),
+              builtinSucceedLayer("t3.providers")(SecureRandom.SecureRandom, random),
             ),
           ),
         ),
@@ -668,8 +672,11 @@ const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagem
       }).pipe(
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-            Layer.succeed(SecureRandom.SecureRandom, random),
+            builtinSucceedLayer("t3.providers")(
+              ChildProcessSpawner.ChildProcessSpawner,
+              childProcessSpawner,
+            ),
+            builtinSucceedLayer("t3.providers")(SecureRandom.SecureRandom, random),
           ),
         ),
       ),

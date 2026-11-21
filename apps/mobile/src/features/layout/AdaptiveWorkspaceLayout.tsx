@@ -4,6 +4,7 @@ import {
   WorkspacePresentationHostContext,
 } from "./workspace-presentation-context";
 import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   AdaptiveWorkspaceContext,
@@ -222,7 +223,7 @@ function useStableActions(actions: Required<AdaptiveWorkspaceActions>): Adaptive
   return stable;
 }
 
-export function AdaptiveWorkspaceLayout(props: {
+function BuiltinAdaptiveWorkspaceLayout(props: {
   readonly children: ReactNode;
   readonly pathname: string;
   readonly workspaceRouteKey: string | undefined;
@@ -247,7 +248,7 @@ export function AdaptiveWorkspaceLayout(props: {
   );
 }
 
-function AdaptiveWorkspaceLayoutContent(
+function BuiltinAdaptiveWorkspaceLayoutContent(
   props: {
     readonly children: ReactNode;
     readonly pathname: string;
@@ -1192,3 +1193,13 @@ function AdaptiveWorkspaceLayoutContent(
     </HomeListOptionsProvider>
   );
 }
+
+const AdaptiveWorkspaceLayoutContent = defineNativePluginFeature(
+  "native.features.layout.adaptive-workspace-layout.adaptive-workspace-layout-content",
+  BuiltinAdaptiveWorkspaceLayoutContent,
+);
+
+export const AdaptiveWorkspaceLayout = defineNativePluginFeature(
+  "app-layout",
+  BuiltinAdaptiveWorkspaceLayout,
+);

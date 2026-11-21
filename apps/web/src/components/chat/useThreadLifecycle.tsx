@@ -95,6 +95,9 @@ type PendingThreadRequests = ReturnType<typeof usePendingThreadRequests>;
 type LocalDispatchState = ReturnType<typeof useLocalDispatchState>;
 
 interface ThreadLifecycleInput {
+  readonly startThreadTurn: (
+    request: Parameters<typeof threadEnvironment.startTurn.run>[1],
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
@@ -151,6 +154,7 @@ interface ThreadLifecycleInput {
  */
 export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const {
+    startThreadTurn,
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -198,9 +202,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     reportFailure: false,
   });
   const regenerateThreadTitle = useOrchestrationCommand(threadEnvironment.regenerateTitle, {
-    reportFailure: false,
-  });
-  const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
   const interruptThreadTurn = useOrchestrationCommand(threadEnvironment.interruptTurn, {

@@ -1,3 +1,4 @@
+import { builtinServiceLayer, builtinLifecycleLayer } from "../plugins/PluginKernel.ts";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Equal from "effect/Equal";
@@ -239,7 +240,7 @@ export const layer = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     const path = yield* Path.Path;
     const directory = path.join(config.providerStatusCacheDir, "pull-requests");
-    return Layer.effect(PullRequestReadCache, make).pipe(
+    return builtinServiceLayer("t3.pull-requests")(PullRequestReadCache, make).pipe(
       Layer.provide(
         // Memoize cleanup acquisition with the store; Layer.tap runs per consumer.
         Layer.effectDiscard(
@@ -254,7 +255,9 @@ export const layer = Layer.unwrap(
         ).pipe(
           Layer.provideMerge(KeyValueStore.layerFileSystem(directory)),
           Layer.catch(() =>
-            Layer.effectDiscard(
+            builtinLifecycleLayer(
+              "t3.pull-requests",
+              "t3/runtime/pullRequest/PullRequestReadCache#lifecycle1",
               Effect.logWarning("PR cache directory unavailable; using memory cache"),
             ).pipe(Layer.provideMerge(KeyValueStore.layerMemory)),
           ),

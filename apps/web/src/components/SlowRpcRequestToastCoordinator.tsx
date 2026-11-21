@@ -3,6 +3,12 @@ import { msg, T, Var } from "gt-react";
 import { m } from "../i18n/messages";
 import { type SlowRpcAckRequest, subscribeSlowRpcAckRequests } from "../rpc/requestLatencyState";
 import { toastManager } from "./ui/toast";
+import { definePluginComponent } from "~/plugins/features";
+
+const SlowRequestDetails = definePluginComponent(
+  "component:components/SlowRpcRequestToastCoordinator/SlowRequestDetails",
+  PluginOriginalSlowRequestDetails,
+);
 
 function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
   const count = requests.length;
@@ -18,7 +24,11 @@ function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): strin
   );
 }
 
-function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
+function PluginOriginalSlowRequestDetails({
+  requests,
+}: {
+  requests: ReadonlyArray<SlowRpcAckRequest>;
+}) {
   return (
     <ul className="space-y-2.5 text-xs text-muted-foreground">
       {requests.map((request) => (

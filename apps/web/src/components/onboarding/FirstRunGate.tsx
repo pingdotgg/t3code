@@ -26,6 +26,16 @@ import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../../state/s
 import { environmentShell } from "../../state/shell";
 import { environmentThreadShells } from "../../state/threads";
 import { Button } from "../ui/button";
+import { definePluginComponent } from "~/plugins/features";
+
+export const FirstRunGate = definePluginComponent(
+  "component:components/onboarding/FirstRunGate/FirstRunGate",
+  PluginOriginalFirstRunGate,
+);
+const FirstRunRecovery = definePluginComponent(
+  "component:components/onboarding/FirstRunGate/FirstRunRecovery",
+  PluginOriginalFirstRunRecovery,
+);
 
 /** Pending blocks all rendering, including EventRouter welcome navigation. */
 
@@ -65,7 +75,7 @@ const soleThreadAtom = Atom.make((get) => {
   return threads.length === 1 ? threads[0]! : null;
 }).pipe(Atom.withLabel("web-onboarding-sole-thread"));
 
-export function FirstRunGate({
+function PluginOriginalFirstRunGate({
   enabled,
   hostedStatic,
   children,
@@ -181,7 +191,7 @@ export function FirstRunGate({
   return children;
 }
 
-function FirstRunRecovery({
+function PluginOriginalFirstRunRecovery({
   reason,
   retrying = false,
 }: {

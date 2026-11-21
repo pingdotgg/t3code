@@ -30,8 +30,9 @@ import {
   JUMP_HINT_SLOT_CLASS_NAME,
   JumpHintBadge,
 } from "./SidebarThreadRow";
+import { definePluginComponent } from "~/plugins/features";
 
-const SidebarDraftRow = memo(function SidebarDraftRow(props: {
+const PluginOriginalSidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
   composer: ComposerThreadDraftState;
   project: ProjectFaviconProject | null;
@@ -156,6 +157,10 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
     </li>
   );
 });
+const SidebarDraftRow = definePluginComponent(
+  "component:components/sidebar/SidebarDraftBlock/SidebarDraftRow",
+  PluginOriginalSidebarDraftRow,
+);
 
 function listedDraftComposer(draftId: string | null): ComposerThreadDraftState | null {
   if (draftId === null) return null;
@@ -208,7 +213,7 @@ export function useSidebarDrafts(
   return { draftIds, routeDraftComposer };
 }
 
-export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
+const PluginOriginalSidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   draftIds: readonly DraftId[];
   routeDraftComposer: ComposerThreadDraftState | null;
   jumpLabelByDraftId: ReadonlyMap<DraftId, string> | null;
@@ -266,3 +271,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     </>
   );
 });
+export const SidebarDraftBlock = definePluginComponent(
+  "component:components/sidebar/SidebarDraftBlock/SidebarDraftBlock",
+  PluginOriginalSidebarDraftBlock,
+);

@@ -1,10 +1,21 @@
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { registerBuiltinRoute, definePluginRouteRenderer } from "~/plugins/routing";
 
 import {
   HostedPairingRouteSurface,
   PairingPendingSurface,
   PairingRouteSurface,
 } from "../components/auth/PairingRouteSurface";
+import { definePluginComponent } from "~/plugins/features";
+
+const PairRouteView = definePluginComponent(
+  "component:routes/pair/PairRouteView",
+  PluginOriginalPairRouteView,
+);
+const PairRoutePendingView = definePluginComponent(
+  "component:routes/pair/PairRoutePendingView",
+  PluginOriginalPairRoutePendingView,
+);
 
 export const Route = createFileRoute("/pair")({
   beforeLoad: async ({ context }) => {
@@ -26,11 +37,11 @@ export const Route = createFileRoute("/pair")({
       authGateState,
     };
   },
-  component: PairRouteView,
-  pendingComponent: PairRoutePendingView,
+  component: definePluginRouteRenderer("/pair", "component", PairRouteView),
+  pendingComponent: definePluginRouteRenderer("/pair", "pendingComponent", PairRoutePendingView),
 });
 
-function PairRouteView() {
+function PluginOriginalPairRouteView() {
   const router = useRouter();
   const { authGateState } = Route.useRouteContext();
 
@@ -56,6 +67,8 @@ function PairRouteView() {
   );
 }
 
-function PairRoutePendingView() {
+function PluginOriginalPairRoutePendingView() {
   return <PairingPendingSurface />;
 }
+
+registerBuiltinRoute("/pair", Route);

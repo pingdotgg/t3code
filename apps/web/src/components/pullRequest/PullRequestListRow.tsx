@@ -15,6 +15,24 @@ import {
   PullRequestConflictGlyph,
   PullRequestStateGlyph,
 } from "./pullRequestPresentation";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PullRequestRowGlyph = definePluginComponent(
+  "component:components/pullRequest/PullRequestListRow/PullRequestRowGlyph",
+  PluginOriginalPullRequestRowGlyph,
+);
+export const PullRequestRowLines = definePluginComponent(
+  "component:components/pullRequest/PullRequestListRow/PullRequestRowLines",
+  PluginOriginalPullRequestRowLines,
+);
+export const PullRequestRowAuthor = definePluginComponent(
+  "component:components/pullRequest/PullRequestListRow/PullRequestRowAuthor",
+  PluginOriginalPullRequestRowAuthor,
+);
+export const PullRequestRowBranches = definePluginComponent(
+  "component:components/pullRequest/PullRequestListRow/PullRequestRowBranches",
+  PluginOriginalPullRequestRowBranches,
+);
 
 export const PULL_REQUEST_ROW_CLASS =
   "group/pr-row flex w-full items-center gap-2 rounded-md py-1 pr-1 text-left";
@@ -22,7 +40,7 @@ export const PULL_REQUEST_ROW_CLASS =
 export const PULL_REQUEST_ROW_NUMBER_CLASS =
   "shrink-0 font-mono text-xs tabular-nums text-muted-foreground";
 
-export function PullRequestRowGlyph({
+function PluginOriginalPullRequestRowGlyph({
   state,
   isDraft,
   mergeability,
@@ -57,7 +75,7 @@ export function PullRequestRowGlyph({
   );
 }
 
-export function PullRequestRowLines({
+function PluginOriginalPullRequestRowLines({
   number,
   title,
   status,
@@ -103,7 +121,7 @@ export function PullRequestRowLines({
   );
 }
 
-export function PullRequestRowAuthor({
+function PluginOriginalPullRequestRowAuthor({
   actor,
   className,
   labelClassName,
@@ -128,7 +146,7 @@ export function PullRequestRowAuthor({
   );
 }
 
-export function PullRequestRowBranches({ head, base }: { head: string; base: string }) {
+function PluginOriginalPullRequestRowBranches({ head, base }: { head: string; base: string }) {
   return (
     <span className="flex min-w-0 items-center gap-1 font-mono">
       <MiddleTruncate value={head} />

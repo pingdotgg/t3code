@@ -11,7 +11,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -24,6 +23,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { CLOUD_ENDPOINT_RUNTIME_CONFIG } from "./config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 
 // cloudflared finds the edge through the SRV record `_v2-origintunneld._tcp.argotunnel.com`,
 // which names these two hosts on port 7844. QUIC and HTTP/2 both use that port.
@@ -498,4 +498,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ConnectReachability, make);
+export const layer = builtinServiceLayer("t3.connections")(ConnectReachability, make);

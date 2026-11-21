@@ -10,6 +10,7 @@ import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/proje
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { useMessages } from "gt-react";
 import { memo, useEffect } from "react";
+import { definePluginComponent, definePluginFeature } from "~/plugins/features";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStableCallback } from "../hooks/useStableCallback";
 import type { TerminalContextSelection } from "../lib/terminalContext";
@@ -54,7 +55,7 @@ interface PersistentThreadTerminalDrawerProps {
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
-export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
+const PluginOriginalPersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
   threadRef,
   threadId,
   active,
@@ -243,6 +244,11 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   );
 });
 
+export const PersistentThreadTerminalDrawer = definePluginComponent(
+  "component:components/PersistentThreadTerminals/PersistentThreadTerminalDrawer",
+  PluginOriginalPersistentThreadTerminalDrawer,
+);
+
 export interface PersistentThreadTerminalPanelProps {
   visible: boolean;
   threadRef: ScopedThreadRef;
@@ -261,7 +267,7 @@ export interface PersistentThreadTerminalPanelProps {
   closeShortcutLabel?: string | undefined;
 }
 
-export const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
+export const BuiltinPersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
   visible,
   threadRef,
   surface,
@@ -375,3 +381,8 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
     />
   );
 });
+
+export const PersistentThreadTerminalPanel = definePluginFeature(
+  "chat.terminal",
+  BuiltinPersistentThreadTerminalPanel,
+);

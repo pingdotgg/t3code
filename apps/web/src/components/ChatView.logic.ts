@@ -163,6 +163,12 @@ export function shouldRenderPreviewMiniPlayer(
       renderedRightPanelSurface.resourceId === source.tabId
     );
   }
+  if (source.kind === "canvas") {
+    return !(
+      renderedRightPanelSurface?.kind === "canvas" &&
+      renderedRightPanelSurface.documentId === source.documentId
+    );
+  }
   return !(
     renderedRightPanelSurface?.kind === "device" &&
     renderedRightPanelSurface.target?.hostId === source.hostId &&

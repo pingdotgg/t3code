@@ -1,5 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, useGT, useMessages } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import * as Dialog from "../../components/ui/Dialog";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import {
@@ -187,7 +188,7 @@ function useNotificationsReady(): boolean {
   );
 }
 
-export function SettingsNotificationsRouteScreen() {
+function BuiltinSettingsNotificationsRouteScreen() {
   const gt = useGT();
   if (!hasCloudPublicConfig()) {
     return (
@@ -207,7 +208,7 @@ export function SettingsNotificationsRouteScreen() {
   return <ConfiguredSettingsNotificationsRouteScreen />;
 }
 
-function ConfiguredSettingsNotificationsRouteScreen() {
+function BuiltinConfiguredSettingsNotificationsRouteScreen() {
   const gt = useGT();
   const m = useMessages();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
@@ -631,3 +632,13 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     </SettingsScreen>
   );
 }
+
+const ConfiguredSettingsNotificationsRouteScreen = defineNativePluginFeature(
+  "native.features.settings.settings-notifications-route-screen.configured-settings-notifications-route-screen",
+  BuiltinConfiguredSettingsNotificationsRouteScreen,
+);
+
+export const SettingsNotificationsRouteScreen = defineNativePluginFeature(
+  "settings.notifications",
+  BuiltinSettingsNotificationsRouteScreen,
+);

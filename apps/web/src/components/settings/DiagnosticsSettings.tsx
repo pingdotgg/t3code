@@ -51,6 +51,64 @@ import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { TelemetryExportSettings } from "./TelemetryExportSettings";
+import { definePluginComponent } from "~/plugins/features";
+
+const StatBlock = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/StatBlock",
+  PluginOriginalStatBlock,
+);
+const StatsGrid = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/StatsGrid",
+  PluginOriginalStatsGrid,
+);
+const EmptyRows = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/EmptyRows",
+  PluginOriginalEmptyRows,
+);
+const DiagnosticsTable = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/DiagnosticsTable",
+  PluginOriginalDiagnosticsTable,
+);
+const TraceIdCell = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/TraceIdCell",
+  PluginOriginalTraceIdCell,
+);
+const ProcessNameCell = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/ProcessNameCell",
+  PluginOriginalProcessNameCell,
+);
+const ProcessDiagnosticsTable = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/ProcessDiagnosticsTable",
+  PluginOriginalProcessDiagnosticsTable,
+);
+const ResourceHistoryProcessNameCell = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/ResourceHistoryProcessNameCell",
+  PluginOriginalResourceHistoryProcessNameCell,
+);
+const ProcessResourceHistoryChart = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/ProcessResourceHistoryChart",
+  PluginOriginalProcessResourceHistoryChart,
+);
+const ResourceHistoryWindowSelector = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/ResourceHistoryWindowSelector",
+  PluginOriginalResourceHistoryWindowSelector,
+);
+const ProcessResourceHistoryTable = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/ProcessResourceHistoryTable",
+  PluginOriginalProcessResourceHistoryTable,
+);
+const DiagnosticsLastChecked = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/DiagnosticsLastChecked",
+  PluginOriginalDiagnosticsLastChecked,
+);
+const DiagnosticsRefreshButton = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/DiagnosticsRefreshButton",
+  PluginOriginalDiagnosticsRefreshButton,
+);
+export const DiagnosticsSettingsPanel = definePluginComponent(
+  "component:components/settings/DiagnosticsSettings/DiagnosticsSettingsPanel",
+  PluginOriginalDiagnosticsSettingsPanel,
+);
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
 
@@ -73,7 +131,7 @@ function isStaleProcessSignalMessage(message: string | undefined): boolean {
   return message?.includes("not a live descendant") ?? false;
 }
 
-function StatBlock({
+function PluginOriginalStatBlock({
   label,
   value,
   tooltip,
@@ -118,7 +176,7 @@ function StatBlock({
   );
 }
 
-function StatsGrid({ children }: { children: ReactNode }) {
+function PluginOriginalStatsGrid({ children }: { children: ReactNode }) {
   return (
     <div className="relative grid grid-cols-2 sm:grid-cols-4">
       <span
@@ -142,11 +200,11 @@ function StatsGrid({ children }: { children: ReactNode }) {
   );
 }
 
-function EmptyRows({ label }: { label: string }) {
+function PluginOriginalEmptyRows({ label }: { label: string }) {
   return <div className="px-4 py-4 text-xs text-muted-foreground sm:px-5">{label}</div>;
 }
 
-function DiagnosticsTable({
+function PluginOriginalDiagnosticsTable({
   headers,
   children,
   minTableWidth = "min-w-[640px]",
@@ -196,7 +254,7 @@ function DiagnosticsTable({
   );
 }
 
-function TraceIdCell({ traceId }: { traceId: string }) {
+function PluginOriginalTraceIdCell({ traceId }: { traceId: string }) {
   const gt = useGT();
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
     target: {
@@ -258,7 +316,7 @@ function formatProcessType(
   return resolve(msg("Process", { $context: "process type" }));
 }
 
-function ProcessNameCell({
+function PluginOriginalProcessNameCell({
   process,
   isExpanded,
   onToggle,
@@ -327,7 +385,7 @@ function visibleProcessTree(
   return visible;
 }
 
-function ProcessDiagnosticsTable({
+function PluginOriginalProcessDiagnosticsTable({
   processes,
   canMaintainEnvironment,
   signalingPid,
@@ -467,7 +525,7 @@ function formatShortProcessName(command: string): string {
   return name.length > 42 ? `${name.slice(0, 39)}...` : name;
 }
 
-function ResourceHistoryProcessNameCell({
+function PluginOriginalResourceHistoryProcessNameCell({
   process,
   visualDepth,
 }: {
@@ -506,7 +564,7 @@ function ResourceHistoryProcessNameCell({
   );
 }
 
-function ProcessResourceHistoryChart({
+function PluginOriginalProcessResourceHistoryChart({
   buckets,
 }: {
   buckets: ReadonlyArray<{
@@ -562,7 +620,7 @@ function ProcessResourceHistoryChart({
   );
 }
 
-function ResourceHistoryWindowSelector({
+function PluginOriginalResourceHistoryWindowSelector({
   selectedWindowMs,
   onSelect,
 }: {
@@ -591,7 +649,7 @@ function ResourceHistoryWindowSelector({
   );
 }
 
-function ProcessResourceHistoryTable({
+function PluginOriginalProcessResourceHistoryTable({
   processes,
   emptyLabel,
 }: {
@@ -708,7 +766,7 @@ function ProcessResourceHistoryTable({
   );
 }
 
-function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null }) {
+function PluginOriginalDiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null }) {
   const gt = useGT();
   const relative = useRelativeTimeState(checkedAt ? DateTime.formatIso(checkedAt) : null);
 
@@ -745,7 +803,7 @@ function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null 
   );
 }
 
-function DiagnosticsRefreshButton({
+function PluginOriginalDiagnosticsRefreshButton({
   isPending,
   label,
   onClick,
@@ -774,7 +832,7 @@ function DiagnosticsRefreshButton({
   );
 }
 
-export function DiagnosticsSettingsPanel() {
+export function PluginOriginalDiagnosticsSettingsPanel() {
   const { environment } = useSettingsScope();
   // Signals and pending UI state belong to one environment, so a scope switch starts fresh.
   return <DiagnosticsSettingsBody key={environment?.environmentId ?? ""} />;

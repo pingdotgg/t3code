@@ -6,8 +6,18 @@ import { openCommandPalette } from "../../commandPaletteBus";
 import { Button } from "../ui/button";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
+import { definePluginComponent } from "~/plugins/features";
 
-function BranchMark({ joined }: { joined: boolean }) {
+const BranchMark = definePluginComponent(
+  "component:components/pullRequest/PullRequestListEmptyState/BranchMark",
+  PluginOriginalBranchMark,
+);
+export const PullRequestListEmptyState = definePluginComponent(
+  "component:components/pullRequest/PullRequestListEmptyState/PullRequestListEmptyState",
+  PluginOriginalPullRequestListEmptyState,
+);
+
+function PluginOriginalBranchMark({ joined }: { joined: boolean }) {
   return (
     <svg
       aria-hidden
@@ -46,7 +56,7 @@ function BranchMark({ joined }: { joined: boolean }) {
   );
 }
 
-export function PullRequestListEmptyState({
+function PluginOriginalPullRequestListEmptyState({
   query,
   filtered,
   searching,

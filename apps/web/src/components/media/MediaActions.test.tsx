@@ -28,6 +28,12 @@ const state = vi.hoisted(() => ({
   menuFinished: null as (() => void) | null,
 }));
 
+// Direct renderer tests exercise the builtin behavior without plugin slot routing.
+vi.mock("~/plugins/features", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/plugins/features")>()),
+  definePluginComponent: <Value,>(_slot: string, builtin: Value) => builtin,
+}));
+
 vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
   useCallback: <A,>(callback: A) => callback,

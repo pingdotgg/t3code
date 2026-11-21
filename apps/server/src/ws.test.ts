@@ -40,7 +40,10 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerProvider,
+  UsageLimitSourceId,
+  type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
+import { PluginKernel, layerWithEnabled } from "@t3tools/shared/pluginKernel";
 import { SOCKET_FRAME_PARTS_QUERY_PARAM } from "@t3tools/shared/socketFrameParts";
 import * as Deferred from "effect/Deferred";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -54,6 +57,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers, HttpRouter, HttpServer } from "effect/http";
@@ -70,6 +74,9 @@ import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.ts";
+import * as CanvasHostBroker from "./canvas/CanvasHostBroker.ts";
+import * as CanvasService from "./canvas/CanvasService.ts";
+import * as Plugins from "./plugins/PluginService.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -184,12 +191,158 @@ import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
   layerWsRpc,
+  optionalBuiltinStream,
   resolveOpenDiscoveryForConfig,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
   WS_RPC_SERVER_OPTIONS,
   withLateConfigDiscovery,
+  usageLimitSourcesConfigChanges,
 } from "./ws.ts";
+
+it.effect(
+  "releases and resumes optional plugin subscriptions without opening disabled sources",
+  () =>
+    Effect.gen(function* () {
+      const kernel = yield* PluginKernel;
+      const enabled = yield* Queue.unbounded<boolean>();
+      const seen = yield* Queue.unbounded<string>();
+      const starts = yield* Ref.make(0);
+      const stops = yield* Ref.make(0);
+      const source = yield* kernel.registerBuiltin(
+        "t3.git",
+        "test/vcs-status",
+        Effect.gen(function* () {
+          yield* Ref.update(starts, (value) => value + 1);
+          yield* Effect.addFinalizer(() => Ref.update(stops, (value) => value + 1));
+          return { changes: Stream.concat(Stream.make("actual status"), Stream.never) };
+        }),
+      );
+      yield* optionalBuiltinStream(
+        Stream.concat(Stream.make(false), Stream.fromQueue(enabled)),
+        "t3.git",
+        () => source.changes,
+        Stream.make("disabled"),
+      ).pipe(
+        Stream.runForEach((status) => Queue.offer(seen, status)),
+        Effect.forkScoped,
+      );
+      assert.equal(yield* Queue.take(seen), "disabled");
+      assert.equal(yield* Ref.get(starts), 0);
+      yield* kernel.setEnabled("t3.git", true);
+      yield* Queue.offer(enabled, true);
+      assert.equal(yield* Queue.take(seen), "actual status");
+      yield* kernel.setEnabled("t3.git", false);
+      yield* Queue.offer(enabled, false);
+      assert.equal(yield* Queue.take(seen), "disabled");
+      assert.equal(yield* Ref.get(stops), 1);
+      yield* kernel.setEnabled("t3.git", true);
+      yield* Queue.offer(enabled, true);
+      assert.equal(yield* Queue.take(seen), "actual status");
+      assert.equal(yield* Ref.get(starts), 2);
+    }).pipe(Effect.scoped, Effect.provide(layerWithEnabled({ "t3.git": false }))),
+);
+
+it.effect("recovers only the owning plugin's disabled race and preserves other stream errors", () =>
+  Effect.gen(function* () {
+    const disabled = yield* optionalBuiltinStream<never, never, never>(
+      Stream.make(true),
+      "t3.git",
+      () => {
+        throw new Error("Plugin 't3.git' is disabled.");
+      },
+      Stream.empty,
+    ).pipe(Stream.runCollect);
+    assert.deepEqual(disabled, []);
+    const unexpected = new Error("Plugin 't3.projects' is disabled.");
+    const failed = yield* optionalBuiltinStream<never, never, never>(
+      Stream.make(true),
+      "t3.git",
+      () => {
+        throw unexpected;
+      },
+      Stream.empty,
+    ).pipe(Stream.runCollect, Effect.exit);
+    assert.isTrue(Exit.isFailure(failed));
+    if (Exit.isFailure(failed)) assert.strictEqual(Cause.squash(failed.cause), unexpected);
+    const typedFailure = yield* optionalBuiltinStream(
+      Stream.make(true),
+      "t3.git",
+      () => Stream.fail("git status failed"),
+      Stream.empty,
+    ).pipe(Stream.runCollect, Effect.exit);
+    assert.isTrue(Exit.isFailure(typedFailure));
+    if (Exit.isFailure(typedFailure))
+      assert.equal(Cause.squash(typedFailure.cause), "git status failed");
+  }),
+);
+
+it.effect(
+  "keeps config subscribed across usage disable and re-enable without retaining its worker",
+  () =>
+    Effect.gen(function* () {
+      const kernel = yield* PluginKernel;
+      const enabled = yield* Queue.unbounded<boolean>();
+      const seen = yield* Queue.unbounded<ReadonlyArray<UsageLimitSourceSnapshot>>();
+      const starts = yield* Ref.make(0);
+      const stops = yield* Ref.make(0);
+      const snapshots: ReadonlyArray<UsageLimitSourceSnapshot> = [
+        {
+          id: UsageLimitSourceId.make("hub"),
+          kind: "cliproxy",
+          label: "hub",
+          checkedAt: "2026-10-07T00:00:00.000Z",
+          accounts: [],
+        },
+      ];
+      const sources = yield* kernel.registerBuiltin(
+        "t3.usage",
+        "test/usage-sources",
+        Effect.gen(function* () {
+          yield* Ref.update(starts, (value) => value + 1);
+          yield* Effect.addFinalizer(() => Ref.update(stops, (value) => value + 1));
+          return { streamChanges: Stream.concat(Stream.make(snapshots), Stream.never) };
+        }),
+      );
+      yield* usageLimitSourcesConfigChanges(
+        Stream.concat(Stream.make(false), Stream.fromQueue(enabled)),
+        sources,
+      ).pipe(
+        Stream.runForEach((sources) => Queue.offer(seen, sources)),
+        Effect.forkScoped,
+      );
+      assert.deepEqual(yield* Queue.take(seen), []);
+      assert.equal(yield* Ref.get(starts), 0);
+      yield* kernel.setEnabled("t3.usage", true);
+      yield* Queue.offer(enabled, true);
+      assert.deepEqual(yield* Queue.take(seen), snapshots);
+      yield* kernel.setEnabled("t3.usage", false);
+      yield* Queue.offer(enabled, false);
+      assert.deepEqual(yield* Queue.take(seen), []);
+      assert.equal(yield* Ref.get(stops), 1);
+      yield* kernel.setEnabled("t3.usage", true);
+      yield* Queue.offer(enabled, true);
+      assert.deepEqual(yield* Queue.take(seen), snapshots);
+      assert.equal(yield* Ref.get(starts), 2);
+    }).pipe(Effect.scoped, Effect.provide(layerWithEnabled({ "t3.usage": false }))),
+);
+
+it.effect("handles only the usage-disable race when opening a config subscription", () =>
+  Effect.gen(function* () {
+    const disabled = yield* usageLimitSourcesConfigChanges(Stream.make(true), {
+      get streamChanges(): Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>> {
+        throw new Error("Plugin 't3.usage' is disabled.");
+      },
+    }).pipe(Stream.runCollect);
+    assert.deepEqual(disabled, [[]]);
+    const broken = yield* usageLimitSourcesConfigChanges(Stream.make(true), {
+      get streamChanges(): Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>> {
+        throw new Error("unexpected usage failure");
+      },
+    }).pipe(Stream.runCollect, Effect.exit);
+    assert.isTrue(Exit.isFailure(broken));
+  }),
+);
 
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
@@ -820,6 +973,13 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(DocumentText.DocumentText)({}),
+  Layer.mock(CanvasHostBroker.CanvasHostBroker)({}),
+  Layer.mock(CanvasService.CanvasService)({}),
+  Layer.mock(Plugins.PluginService)({
+    list: () => Effect.succeed({ revision: 0, plugins: [] }),
+    subscribe: () => Stream.make({ revision: 0, plugins: [] }),
+    interceptBuiltin: (_pluginId, _method, _input, next) => next,
+  }),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(SecretCheck.SecretCheck)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),

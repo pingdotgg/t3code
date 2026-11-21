@@ -1,5 +1,6 @@
 import { useId } from "react";
 import type { Icon } from "./Icons";
+import { definePluginComponent } from "~/plugins/features";
 
 const useSvgGradientIds = (prefix: string, count: number) => {
   const id = useId();
@@ -9,7 +10,7 @@ const useSvgGradientIds = (prefix: string, count: number) => {
   );
 };
 
-export const AquaIcon: Icon = (props) => {
+const PluginOriginalAquaIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("aqua", 2);
 
   return (
@@ -58,8 +59,12 @@ export const AquaIcon: Icon = (props) => {
     </svg>
   );
 };
+export const AquaIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/AquaIcon",
+  PluginOriginalAquaIcon,
+);
 
-export const CLionIcon: Icon = (props) => {
+const PluginOriginalCLionIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("clion", 2);
 
   return (
@@ -108,8 +113,12 @@ export const CLionIcon: Icon = (props) => {
     </svg>
   );
 };
+export const CLionIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/CLionIcon",
+  PluginOriginalCLionIcon,
+);
 
-export const DataGripIcon: Icon = (props) => {
+const PluginOriginalDataGripIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("datagrip", 2);
 
   return (
@@ -158,8 +167,12 @@ export const DataGripIcon: Icon = (props) => {
     </svg>
   );
 };
+export const DataGripIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/DataGripIcon",
+  PluginOriginalDataGripIcon,
+);
 
-export const DataSpellIcon: Icon = (props) => {
+const PluginOriginalDataSpellIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("dataspell", 2);
 
   return (
@@ -208,8 +221,12 @@ export const DataSpellIcon: Icon = (props) => {
     </svg>
   );
 };
+export const DataSpellIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/DataSpellIcon",
+  PluginOriginalDataSpellIcon,
+);
 
-export const GoLandIcon: Icon = (props) => {
+const PluginOriginalGoLandIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("goland", 2);
 
   return (
@@ -258,8 +275,12 @@ export const GoLandIcon: Icon = (props) => {
     </svg>
   );
 };
+export const GoLandIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/GoLandIcon",
+  PluginOriginalGoLandIcon,
+);
 
-export const IntelliJIdeaIcon: Icon = (props) => {
+const PluginOriginalIntelliJIdeaIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("intellij-idea", 2);
 
   return (
@@ -308,8 +329,12 @@ export const IntelliJIdeaIcon: Icon = (props) => {
     </svg>
   );
 };
+export const IntelliJIdeaIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/IntelliJIdeaIcon",
+  PluginOriginalIntelliJIdeaIcon,
+);
 
-export const PhpStormIcon: Icon = (props) => {
+const PluginOriginalPhpStormIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("phpstorm", 2);
 
   return (
@@ -358,8 +383,12 @@ export const PhpStormIcon: Icon = (props) => {
     </svg>
   );
 };
+export const PhpStormIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/PhpStormIcon",
+  PluginOriginalPhpStormIcon,
+);
 
-export const PyCharmIcon: Icon = (props) => {
+const PluginOriginalPyCharmIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("pycharm", 2);
 
   return (
@@ -408,8 +437,12 @@ export const PyCharmIcon: Icon = (props) => {
     </svg>
   );
 };
+export const PyCharmIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/PyCharmIcon",
+  PluginOriginalPyCharmIcon,
+);
 
-export const RiderIcon: Icon = (props) => {
+const PluginOriginalRiderIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("rider", 2);
 
   return (
@@ -458,8 +491,12 @@ export const RiderIcon: Icon = (props) => {
     </svg>
   );
 };
+export const RiderIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/RiderIcon",
+  PluginOriginalRiderIcon,
+);
 
-export const RubyMineIcon: Icon = (props) => {
+const PluginOriginalRubyMineIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("rubymine", 2);
 
   return (
@@ -508,8 +545,12 @@ export const RubyMineIcon: Icon = (props) => {
     </svg>
   );
 };
+export const RubyMineIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/RubyMineIcon",
+  PluginOriginalRubyMineIcon,
+);
 
-export const RustRoverIcon: Icon = (props) => {
+const PluginOriginalRustRoverIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("rustrover", 2);
 
   return (
@@ -558,8 +599,12 @@ export const RustRoverIcon: Icon = (props) => {
     </svg>
   );
 };
+export const RustRoverIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/RustRoverIcon",
+  PluginOriginalRustRoverIcon,
+);
 
-export const WebStormIcon: Icon = (props) => {
+const PluginOriginalWebStormIcon: Icon = (props) => {
   const [gradientAId, gradientBId] = useSvgGradientIds("webstorm", 2);
 
   return (
@@ -608,3 +653,7 @@ export const WebStormIcon: Icon = (props) => {
     </svg>
   );
 };
+export const WebStormIcon = definePluginComponent(
+  "component:components/JetBrainsIcons/WebStormIcon",
+  PluginOriginalWebStormIcon,
+);

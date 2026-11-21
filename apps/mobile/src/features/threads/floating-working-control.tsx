@@ -25,6 +25,24 @@ import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
 import type { FloatingStatusAction, FloatingWorkingStatus } from "./floating-working-status";
 import { ShimmeringWorkContent } from "./thread-work-log";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const FloatingStatusLabel = defineNativePluginFeature(
+  "native.features.threads.floating-working-control.floating-status-label",
+  BuiltinFloatingStatusLabel,
+);
+const StatusLabelRow = defineNativePluginFeature(
+  "native.features.threads.floating-working-control.status-label-row",
+  BuiltinStatusLabelRow,
+);
+const ScrollToEndButton = defineNativePluginFeature(
+  "native.features.threads.floating-working-control.scroll-to-end-button",
+  BuiltinScrollToEndButton,
+);
+export const FloatingWorkingControl = defineNativePluginFeature(
+  "native.features.threads.floating-working-control",
+  BuiltinFloatingWorkingControl,
+);
 
 const CONTROL_HEIGHT = 38.5;
 const CONTROL_GAP = 8;
@@ -59,7 +77,7 @@ function settleWidth(next: number) {
 const CONTROL_OVERLAY_OFFSET = CONTROL_HEIGHT + CONTROL_GAP - COMPOSER_CAPSULE_INSET;
 export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_OVERLAY_OFFSET + CONTROL_GAP;
 
-export function FloatingWorkingControl(props: {
+function BuiltinFloatingWorkingControl(props: {
   readonly colorScheme: "light" | "dark";
   readonly status: FloatingWorkingStatus | null;
   readonly extensionStatus?: { readonly label: string; readonly onPress: () => void } | null;
@@ -387,7 +405,7 @@ export function FloatingWorkingControl(props: {
   );
 }
 
-function FloatingStatusLabel(props: {
+function BuiltinFloatingStatusLabel(props: {
   readonly status: FloatingWorkingStatus;
   readonly onLayout: (event: LayoutChangeEvent) => void;
 }) {
@@ -515,7 +533,7 @@ function FloatingStatusLabel(props: {
   );
 }
 
-function StatusLabelRow(props: {
+function BuiltinStatusLabelRow(props: {
   readonly animated?: boolean;
   readonly accessibilityLabel?: string;
   readonly accessibilityRole?: "button";
@@ -551,7 +569,10 @@ function StatusLabelRow(props: {
   );
 }
 
-function ScrollToEndButton(props: { readonly disabled?: boolean; readonly onPress: () => void }) {
+function BuiltinScrollToEndButton(props: {
+  readonly disabled?: boolean;
+  readonly onPress: () => void;
+}) {
   const gt = useGT();
   return (
     <ControlPill

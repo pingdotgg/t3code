@@ -1,8 +1,8 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type { ResourceAttributionEntry, ResourceAttributionSnapshot } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
 export interface ResourceAttributionRecord {
@@ -68,4 +68,5 @@ const make = Effect.fn("resourceTelemetry.resourceAttribution.make")(function* (
   });
 });
 
-export const layer = Layer.effect(ResourceAttribution, make());
+// Host traces and persistence record attribution independently of usage UI.
+export const layer = builtinServiceLayer("t3.server")(ResourceAttribution, make());

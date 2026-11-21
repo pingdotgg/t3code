@@ -18,6 +18,32 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { Sheet } from "../../components/ui/Sheet";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const HeaderLabel = defineNativePluginFeature(
+  "native.features.threads.worktree-setup-card.header-label",
+  BuiltinHeaderLabel,
+);
+
+const SetupDetailsSheet = defineNativePluginFeature(
+  "native.features.threads.worktree-setup-card.setup-details-sheet",
+  BuiltinSetupDetailsSheet,
+);
+
+const StageRow = defineNativePluginFeature(
+  "native.features.threads.worktree-setup-card.stage-row",
+  BuiltinStageRow,
+);
+
+const OutputTail = defineNativePluginFeature(
+  "native.features.threads.worktree-setup-card.output-tail",
+  BuiltinOutputTail,
+);
+
+export const WorktreeSetupCard = defineNativePluginFeature(
+  "native.features.threads.worktree-setup-card",
+  BuiltinWorktreeSetupCard,
+);
 
 export interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
@@ -63,7 +89,7 @@ interface SetupDetailsControl {
   readonly onOpenDetails: () => void;
 }
 
-export function WorktreeSetupCard(props: WorktreeSetupCardProps & SetupDetailsControl) {
+function BuiltinWorktreeSetupCard(props: WorktreeSetupCardProps & SetupDetailsControl) {
   // Once the agent has the turn, running setup is a chip on the live Working row.
   if (worktreeSetupHandedOff(props)) {
     // As on web, only a setup that went wrong stays in view.
@@ -263,7 +289,7 @@ export function WorktreePreparingHeader() {
   );
 }
 
-function HeaderLabel({
+function BuiltinHeaderLabel({
   label,
   active,
   failed = false,
@@ -294,7 +320,7 @@ function HeaderLabel({
   );
 }
 
-function SetupDetailsSheet({
+function BuiltinSetupDetailsSheet({
   snapshot,
   turnStarted,
   onCancel,
@@ -360,7 +386,7 @@ function SetupDetailsSheet({
   );
 }
 
-function StageRow({
+function BuiltinStageRow({
   stage,
   scriptName,
   now,
@@ -452,7 +478,7 @@ function StageRow({
 
 const OUTPUT_TAIL_SLOTS = [0, 1, 2, 3] as const;
 
-function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
+function BuiltinOutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
   const gt = useGT();
   return (
     <View

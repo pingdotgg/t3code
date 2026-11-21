@@ -83,11 +83,15 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
       scope,
       operation: "status",
       input: {},
-      timeoutMs: 500,
       updateCurrentTab: false,
       ...(statusTabId === undefined ? {} : { tabId: statusTabId }),
     })
-    .pipe(Effect.orElseSucceed(() => null));
+    // The icon is optional. Interrupt this lookup without declaring the host
+    // disconnected when a busy page misses the icon's short deadline.
+    .pipe(
+      Effect.timeout(500),
+      Effect.orElseSucceed(() => null),
+    );
   return {
     result,
     ...(page?.url && /^https?:\/\//i.test(page.url) && page.url.length <= 4096

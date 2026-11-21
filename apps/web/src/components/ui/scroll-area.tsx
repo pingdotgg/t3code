@@ -1,6 +1,16 @@
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+const ScrollArea = definePluginComponent(
+  "component:components/ui/scroll-area/ScrollArea",
+  PluginOriginalScrollArea,
+);
+const ScrollBar = definePluginComponent(
+  "component:components/ui/scroll-area/ScrollBar",
+  PluginOriginalScrollBar,
+);
 
 function getVirtualizedScrollFadeClassName({ top, bottom }: { top: boolean; bottom: boolean }) {
   if (!top && !bottom) return undefined;
@@ -19,7 +29,7 @@ function getVirtualizedScrollFadeClassName({ top, bottom }: { top: boolean; bott
   );
 }
 
-function ScrollArea({
+function PluginOriginalScrollArea({
   className,
   children,
   scrollFade = false,
@@ -76,7 +86,7 @@ function ScrollArea({
   );
 }
 
-function ScrollBar({
+function PluginOriginalScrollBar({
   className,
   orientation = "vertical",
   ...props

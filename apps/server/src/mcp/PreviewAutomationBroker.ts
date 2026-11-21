@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   PREVIEW_AUTOMATION_V1_OPERATIONS,
   PreviewAutomationClientDisconnectedError,
@@ -33,7 +34,6 @@ import type * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -713,4 +713,4 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
-export const layer = Layer.effect(PreviewAutomationBroker, make);
+export const layer = builtinServiceLayer("t3.mcp")(PreviewAutomationBroker, make);

@@ -116,6 +116,52 @@ import { toastManager } from "../ui/toast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
+import { definePluginComponent } from "~/plugins/features";
+
+export const WelcomePage = definePluginComponent(
+  "component:components/onboarding/WelcomePage/WelcomePage",
+  PluginOriginalWelcomePage,
+);
+const WelcomeSection = definePluginComponent(
+  "component:components/onboarding/WelcomePage/WelcomeSection",
+  PluginOriginalWelcomeSection,
+);
+const AgentsSection = definePluginComponent(
+  "component:components/onboarding/WelcomePage/AgentsSection",
+  PluginOriginalAgentsSection,
+);
+const ProjectsSection = definePluginComponent(
+  "component:components/onboarding/WelcomePage/ProjectsSection",
+  PluginOriginalProjectsSection,
+);
+const OnboardingCodexSetup = definePluginComponent(
+  "component:components/onboarding/WelcomePage/OnboardingCodexSetup",
+  PluginOriginalOnboardingCodexSetup,
+);
+const AgentRow = definePluginComponent(
+  "component:components/onboarding/WelcomePage/AgentRow",
+  PluginOriginalAgentRow,
+);
+const AgentInstallTerminal = definePluginComponent(
+  "component:components/onboarding/WelcomePage/AgentInstallTerminal",
+  PluginOriginalAgentInstallTerminal,
+);
+const ImportCandidateList = definePluginComponent(
+  "component:components/onboarding/WelcomePage/ImportCandidateList",
+  PluginOriginalImportCandidateList,
+);
+const ImportRepositoryGroup = definePluginComponent(
+  "component:components/onboarding/WelcomePage/ImportRepositoryGroup",
+  PluginOriginalImportRepositoryGroup,
+);
+const ImportCandidateRow = definePluginComponent(
+  "component:components/onboarding/WelcomePage/ImportCandidateRow",
+  PluginOriginalImportCandidateRow,
+);
+const ImportRowMeta = definePluginComponent(
+  "component:components/onboarding/WelcomePage/ImportRowMeta",
+  PluginOriginalImportRowMeta,
+);
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const SCAN_LIMIT_MESSAGE = msg(
@@ -126,7 +172,7 @@ const SCAN_LIMIT_MESSAGE = msg(
  * First-run page for one computer: its agents, the projects found in agent history, and the
  * phone app. Every part is optional except one ready agent to start chatting.
  */
-export function WelcomePage({
+function PluginOriginalWelcomePage({
   environmentId,
   onDone,
 }: {
@@ -383,7 +429,7 @@ function TelemetryNotice({ environmentId }: { readonly environmentId: Environmen
 }
 
 // Each part of the page is one band: its label on the left, its rows on the right.
-function WelcomeSection({
+function PluginOriginalWelcomeSection({
   title,
   children,
 }: {
@@ -442,7 +488,7 @@ const revealOnMount = (node: HTMLElement | null) => node?.scrollIntoView({ block
 
 const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 
-function AgentsSection({
+function PluginOriginalAgentsSection({
   environmentId,
   label,
   isPrimary,
@@ -795,7 +841,7 @@ function AgentLogoStack({
   );
 }
 
-function ProjectsSection({
+function PluginOriginalProjectsSection({
   scan,
   projectImport,
   isImporting,
@@ -1126,7 +1172,7 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
 }
 
 // The ChatGPT card and the CLI card stay one card, so either choice can be undone here.
-function OnboardingCodexSetup({
+function PluginOriginalOnboardingCodexSetup({
   environmentId,
   provider,
   serverConfig,
@@ -1217,7 +1263,7 @@ function TerminalAction({
   );
 }
 
-function AgentRow({
+function PluginOriginalAgentRow({
   provider,
   state,
   action,
@@ -1286,7 +1332,7 @@ function AgentRow({
   );
 }
 
-function AgentInstallTerminal({
+function PluginOriginalAgentInstallTerminal({
   session,
   onCommandFinished,
   onClose,
@@ -1751,7 +1797,7 @@ type ImportCandidate = AgentSessionProjectCandidate & {
   readonly key: string;
 };
 
-function ImportCandidateList({
+function PluginOriginalImportCandidateList({
   candidates,
   selectedKeys,
   onSelectionChange,
@@ -1825,7 +1871,7 @@ function ImportCandidateList({
   );
 }
 
-function ImportRepositoryGroup({
+function PluginOriginalImportRepositoryGroup({
   group,
   selectedKeys,
   onToggle,
@@ -1899,7 +1945,7 @@ function ProjectPathText({
   );
 }
 
-function ImportCandidateRow({
+function PluginOriginalImportCandidateRow({
   candidate,
   label,
   path,
@@ -1958,7 +2004,7 @@ function useImportSourcesLabel() {
   );
 }
 
-function ImportRowMeta({
+function PluginOriginalImportRowMeta({
   sources,
   threadCount,
   lastActiveAt,

@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { ChevronDownIcon, XIcon } from "lucide-react";
@@ -39,7 +40,7 @@ const variantColors: Record<ComposerBannerVariant, string> = {
  * An attached surface tucks its bottom under the card below it. A detached one is a whole card
  * of its own, for a notice that sits apart from the composer.
  */
-function Surface({
+function PluginOriginalSurface({
   variant = "default",
   detached = false,
   className,
@@ -73,7 +74,7 @@ function Surface({
   );
 }
 
-function Attachment({ className, ...props }: ComponentProps<"div">) {
+function PluginOriginalAttachment({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="composer-banner-attachment"
@@ -89,7 +90,7 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-function Dock({ className, ...props }: ComponentProps<"div">) {
+function PluginOriginalDock({ className, ...props }: ComponentProps<"div">) {
   return (
     <Attachment
       className={cn(
@@ -101,7 +102,7 @@ function Dock({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-function Column({ className, ...props }: ComponentProps<"div">) {
+function PluginOriginalColumn({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       className={cn(
@@ -114,7 +115,7 @@ function Column({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-function Root({
+function PluginOriginalRoot({
   className,
   density = "default",
   variant = "default",
@@ -151,7 +152,7 @@ function Root({
   );
 }
 
-function Row({
+function PluginOriginalRow({
   className,
   render,
   layout = "inline",
@@ -179,7 +180,7 @@ function Row({
   });
 }
 
-function Icon({ className, ...props }: ComponentProps<"span">) {
+function PluginOriginalIcon({ className, ...props }: ComponentProps<"span">) {
   return (
     <span
       aria-hidden
@@ -194,7 +195,7 @@ function Icon({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
-function Content({ className, ...props }: ComponentProps<"span">) {
+function PluginOriginalContent({ className, ...props }: ComponentProps<"span">) {
   return (
     <span
       data-slot="composer-banner-content"
@@ -210,7 +211,7 @@ function Content({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
-function Separator() {
+function PluginOriginalSeparator() {
   return (
     <span
       aria-hidden
@@ -222,7 +223,7 @@ function Separator() {
   );
 }
 
-function Actions({ className, ...props }: ComponentProps<"span">) {
+function PluginOriginalActions({ className, ...props }: ComponentProps<"span">) {
   return (
     <span
       data-slot="composer-banner-actions"
@@ -237,7 +238,7 @@ function Actions({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
-function Children({ className, render, ...props }: useRender.ComponentProps<"div">) {
+function PluginOriginalChildren({ className, render, ...props }: useRender.ComponentProps<"div">) {
   return useRender({
     defaultTagName: "div",
     render,
@@ -248,7 +249,11 @@ function Children({ className, render, ...props }: useRender.ComponentProps<"div
   });
 }
 
-function Scroll({ className, children, ...props }: ComponentProps<typeof ScrollArea>) {
+function PluginOriginalScroll({
+  className,
+  children,
+  ...props
+}: ComponentProps<typeof ScrollArea>) {
   return (
     <ScrollArea
       radius="none"
@@ -262,7 +267,7 @@ function Scroll({ className, children, ...props }: ComponentProps<typeof ScrollA
   );
 }
 
-function Count({ className, ...props }: ComponentProps<"span">) {
+function PluginOriginalCount({ className, ...props }: ComponentProps<"span">) {
   return (
     <span
       className={cn(
@@ -274,17 +279,17 @@ function Count({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
-function Body({ className, ...props }: ComponentProps<"div">) {
+function PluginOriginalBody({ className, ...props }: ComponentProps<"div">) {
   return <div className={cn("min-w-0 ps-8 sm:ps-7", className)} {...props} />;
 }
 
-function Dot({ className, ...props }: ComponentProps<"span">) {
+function PluginOriginalDot({ className, ...props }: ComponentProps<"span">) {
   return (
     <span className={cn("size-1.5 flex-none rounded-full bg-current", className)} {...props} />
   );
 }
 
-function ToggleIcon({ expanded }: { expanded: boolean }) {
+function PluginOriginalToggleIcon({ expanded }: { expanded: boolean }) {
   return (
     <Button
       render={<span aria-hidden />}
@@ -298,13 +303,82 @@ function ToggleIcon({ expanded }: { expanded: boolean }) {
   );
 }
 
-function Dismiss({ className, children, ...props }: ComponentProps<typeof Button>) {
+function PluginOriginalDismiss({ className, children, ...props }: ComponentProps<typeof Button>) {
   return (
     <Button size="icon-xs" variant="ghost" className={className} {...props}>
       {children ?? <XIcon className="size-3.5" />}
     </Button>
   );
 }
+
+const Surface = definePluginComponent(
+  "component:components/chat/ComposerBanner/Surface",
+  PluginOriginalSurface,
+);
+const Attachment = definePluginComponent(
+  "component:components/chat/ComposerBanner/Attachment",
+  PluginOriginalAttachment,
+);
+const Dock = definePluginComponent(
+  "component:components/chat/ComposerBanner/Dock",
+  PluginOriginalDock,
+);
+const Column = definePluginComponent(
+  "component:components/chat/ComposerBanner/Column",
+  PluginOriginalColumn,
+);
+const Root = definePluginComponent(
+  "component:components/chat/ComposerBanner/Root",
+  PluginOriginalRoot,
+);
+const Row = definePluginComponent(
+  "component:components/chat/ComposerBanner/Row",
+  PluginOriginalRow,
+);
+const Icon = definePluginComponent(
+  "component:components/chat/ComposerBanner/Icon",
+  PluginOriginalIcon,
+);
+const Content = definePluginComponent(
+  "component:components/chat/ComposerBanner/Content",
+  PluginOriginalContent,
+);
+const Separator = definePluginComponent(
+  "component:components/chat/ComposerBanner/Separator",
+  PluginOriginalSeparator,
+);
+const Actions = definePluginComponent(
+  "component:components/chat/ComposerBanner/Actions",
+  PluginOriginalActions,
+);
+const Children = definePluginComponent(
+  "component:components/chat/ComposerBanner/Children",
+  PluginOriginalChildren,
+);
+const Scroll = definePluginComponent(
+  "component:components/chat/ComposerBanner/Scroll",
+  PluginOriginalScroll,
+);
+const Count = definePluginComponent(
+  "component:components/chat/ComposerBanner/Count",
+  PluginOriginalCount,
+);
+const Body = definePluginComponent(
+  "component:components/chat/ComposerBanner/Body",
+  PluginOriginalBody,
+);
+const Dot = definePluginComponent(
+  "component:components/chat/ComposerBanner/Dot",
+  PluginOriginalDot,
+);
+const ToggleIcon = definePluginComponent(
+  "component:components/chat/ComposerBanner/ToggleIcon",
+  PluginOriginalToggleIcon,
+);
+const Dismiss = definePluginComponent(
+  "component:components/chat/ComposerBanner/Dismiss",
+  PluginOriginalDismiss,
+);
 
 export const ComposerBanner = {
   Surface,

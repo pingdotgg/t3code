@@ -2,6 +2,7 @@ import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import * as Dialog from "../../components/ui/Dialog";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { normalizePreviewUrl, previewPdfAssetUrl } from "@t3tools/shared/preview";
 import * as Option from "effect/Option";
@@ -36,7 +37,12 @@ type BrowserPreviewRouteScreenProps = StaticScreenProps<{
   readonly tabId?: string;
 }>;
 
-export function BrowserPreviewRouteScreen({ route }: BrowserPreviewRouteScreenProps) {
+export const BrowserPreviewRouteScreen = defineNativePluginFeature(
+  "native.features.browser.browser-preview-route-screen",
+  BuiltinBrowserPreviewRouteScreen,
+);
+
+function BuiltinBrowserPreviewRouteScreen({ route }: BrowserPreviewRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = () => navigation.goBack();
   const { environmentId, threadId } = route.params;

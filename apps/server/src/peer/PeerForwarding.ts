@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   type EnvironmentId,
   OrchestratorMcpFailure,
@@ -16,7 +17,6 @@ import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
@@ -320,4 +320,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(PeerForwarding, make);
+export const layer = builtinServiceLayer("t3.connections")(PeerForwarding, make);

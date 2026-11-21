@@ -7,10 +7,10 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as Electron from "electron";
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 
 // Remote editor deep links and local editor file links must reach the OS handler.
 const SAFE_WEB_PROTOCOLS = new Set(["http:", "https:"]);
@@ -103,4 +103,4 @@ export const make = ElectronShell.of({
   }),
 });
 
-export const layer = Layer.succeed(ElectronShell, make);
+export const layer = builtinSucceedLayer("t3.desktop.electron-shell", ElectronShell, make);

@@ -1,6 +1,12 @@
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
 import {
+  builtinService,
+  builtinSucceedLayer,
+  builtinServiceLayer,
+  PluginBindingScope,
+} from "@t3tools/shared/pluginKernel";
+import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   WsSubscribeServerConfigRpc,
@@ -250,7 +256,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     };
     const socketUrl = new URL(connection.socketUrl);
     socketUrl.searchParams.set(SOCKET_FRAME_PARTS_QUERY_PARAM, "1");
-    const layerSocket = Layer.effect(
+    const layerSocket = builtinServiceLayer("t3.client")(
       Socket.Socket,
       Effect.map(Effect.service(Socket.Socket), joinSocketFrameParts),
     ).pipe(
@@ -259,9 +265,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           openTimeout: SOCKET_OPEN_TIMEOUT,
         }),
       ),
-      Layer.provide(Layer.succeed(Socket.WebSocketConstructor, countingWebSocketConstructor)),
+      Layer.provide(
+        builtinSucceedLayer("t3.client")(Socket.WebSocketConstructor, countingWebSocketConstructor),
+      ),
     );
-    const layerProtocol = Layer.effect(
+    const layerProtocol = builtinServiceLayer("t3.client")(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
         pingTimeout: PING_TIMEOUT,
@@ -284,8 +292,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       Layer.provide(
         Layer.mergeAll(
           layerSocket,
-          RpcSerialization.layerJson,
-          Layer.succeed(RpcClient.ConnectionHooks, hooks),
+          builtinServiceLayer("t3.client")(
+            RpcSerialization.RpcSerialization,
+            RpcSerialization.RpcSerialization,
+          ).pipe(Layer.provide(RpcSerialization.layerJson)),
+          builtinSucceedLayer("t3.client")(RpcClient.ConnectionHooks, hooks),
         ),
       ),
     );
@@ -300,7 +311,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       Effect.ignore,
       Effect.forkScoped,
     );
-    const protocolClient = yield* makeWsRpcProtocolClient.pipe(Effect.provide(protocolContext));
+    const protocolClient = yield* builtinService(
+      "t3.client",
+      "t3/client/WsRpcProtocolClient",
+      makeWsRpcProtocolClient.pipe(Effect.provide(protocolContext)),
+    );
     const initialConfigDeferred = yield* Deferred.make<ServerConfig>();
     const serverConfigExit = yield* Deferred.make<void, ServerConfigSubscriptionError>();
     const configSubscriptionClosed = yield* Deferred.make<never, ConnectionAttemptError>();
@@ -485,7 +500,14 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     } satisfies RpcSession;
   });
 
-  return RpcSessionFactory.of({ connect });
+  return RpcSessionFactory.of({
+    connect: Effect.fn("RpcSessionFactory.connect")((connection: PreparedConnection) =>
+      builtinService("t3.client", "t3/client/RpcSession", connect(connection)).pipe(
+        Effect.provideService(PluginBindingScope, `environment:${connection.environmentId}`),
+      ),
+    ),
+  });
 });
 
-export const layer = (options: RpcSessionOptions) => Layer.effect(RpcSessionFactory, make(options));
+export const layer = (options: RpcSessionOptions) =>
+  builtinServiceLayer("t3.client")(RpcSessionFactory, make(options));

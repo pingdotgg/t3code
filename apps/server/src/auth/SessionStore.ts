@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   AuthSessionId,
   AuthAdministrativeClientScopes,
@@ -1361,4 +1362,6 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(SessionStore, make).pipe(Layer.provideMerge(AuthSessions.layer));
+export const layer = builtinServiceLayer("t3.auth")(SessionStore, make).pipe(
+  Layer.provideMerge(AuthSessions.layer),
+);

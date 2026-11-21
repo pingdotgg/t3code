@@ -18,6 +18,12 @@ import {
   usePullRequestActionRunner,
   usePullRequestDefaultMergeMethodResolver,
 } from "./usePullRequestActions";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PullRequestSpeedActions = definePluginComponent(
+  "component:components/pullRequest/PullRequestSpeedActions/PullRequestSpeedActions",
+  PluginOriginalPullRequestSpeedActions,
+);
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
@@ -32,7 +38,7 @@ export interface PullRequestSpeedActionResult<Entry = EnvironmentPullRequestEntr
   readonly reply?: PullRequestSummary | undefined;
 }
 
-export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntry>({
+function PluginOriginalPullRequestSpeedActions<Entry extends PullRequestSpeedActionEntry>({
   entry,
   hostActions,
   terminology,

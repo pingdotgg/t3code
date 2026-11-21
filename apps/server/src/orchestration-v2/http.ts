@@ -1,3 +1,4 @@
+import { builtinHttpApiGroup } from "../plugins/httpComposition.ts";
 import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
@@ -7,7 +8,6 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
-import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import {
@@ -53,7 +53,7 @@ function isThreadNotFound(error: unknown): boolean {
   );
 }
 
-export const layer = HttpApiBuilder.group(
+export const layer = builtinHttpApiGroup("t3.http")(
   EnvironmentHttpApi,
   "orchestration",
   Effect.fnUntraced(function* (handlers) {

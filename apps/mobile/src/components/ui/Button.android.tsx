@@ -17,8 +17,11 @@ import { useControlTheme } from "./useControlTheme";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 import type { ButtonProps } from "./Button";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function Button(props: ButtonProps) {
+export const Button = defineNativePluginFeature("native.components.ui.button", BuiltinButton);
+
+function BuiltinButton(props: ButtonProps) {
   const { colors } = useControlTheme();
   const typography = useScaledTextRole("footnote");
   const { scale, mediumIconSize } = useAndroidControlSizing();

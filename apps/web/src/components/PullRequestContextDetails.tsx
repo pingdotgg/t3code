@@ -7,8 +7,18 @@ import { cn } from "~/lib/utils";
 
 import { changeRequestTermKind } from "./pullRequest/changeRequestTerm";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PullRequestContextDetails({ metadata }: { metadata: PullRequestContextMetadata }) {
+export const PullRequestContextDetails = definePluginComponent(
+  "component:components/PullRequestContextDetails/PullRequestContextDetails",
+  PluginOriginalPullRequestContextDetails,
+);
+
+function PluginOriginalPullRequestContextDetails({
+  metadata,
+}: {
+  metadata: PullRequestContextMetadata;
+}) {
   const gt = useGT();
   const messages = useMessages();
   const state = resolvePullRequestState(metadata, messages);

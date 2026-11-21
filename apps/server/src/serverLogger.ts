@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "./plugins/PluginKernel.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SharedObservability from "@t3tools/shared/observability";
 import * as Cause from "effect/Cause";
@@ -52,7 +53,10 @@ function prettyCauseFields(value: unknown): unknown {
 export const layer = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const hostName = yield* HostProcess.Hostname;
-  const layerMinimumLogLevel = Layer.succeed(References.MinimumLogLevel, config.logLevel);
+  const layerMinimumLogLevel = builtinSucceedLayer("t3.server")(
+    References.MinimumLogLevel,
+    config.logLevel,
+  );
 
   const logs = config.otlpLogsExport;
   const otlpLogger =

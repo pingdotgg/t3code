@@ -48,6 +48,16 @@ import {
   FileSurfaceLoading,
   FileSurfaceNotice,
 } from "./fileSurfaceChrome";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ReadOnlySourcePreview = definePluginComponent(
+  "component:components/files/AttachmentFilePreview/ReadOnlySourcePreview",
+  PluginOriginalReadOnlySourcePreview,
+);
+export const AttachmentFilePreview = definePluginComponent(
+  "component:components/files/AttachmentFilePreview/AttachmentFilePreview",
+  PluginOriginalAttachmentFilePreview,
+);
 
 const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
 
@@ -63,7 +73,11 @@ const MermaidFilePreview = lazy(() =>
   import("./MermaidFilePreview").then((module) => ({ default: module.MermaidFilePreview })),
 );
 
-const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
+const PluginOriginalSourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
+const SourcePreview = definePluginComponent(
+  "component:components/files/AttachmentFilePreview/SourcePreview",
+  PluginOriginalSourcePreview,
+);
 
 const STALE_URL_MS = 5 * 60_000;
 
@@ -76,7 +90,11 @@ function blobKey(blob: Blob) {
   return key;
 }
 
-export function ReadOnlySourcePreview(props: { name: string; text: string; wordWrap?: boolean }) {
+function PluginOriginalReadOnlySourcePreview(props: {
+  name: string;
+  text: string;
+  wordWrap?: boolean;
+}) {
   return (
     <Suspense fallback={<FileSurfaceLoading className="p-4" />}>
       <SourcePreview {...props} />
@@ -97,7 +115,7 @@ function renderedToggleLabel(
   return rendered ? resolve(msg("Show HTML source")) : resolve(msg("Show rendered page"));
 }
 
-export function AttachmentFilePreview(props: {
+function PluginOriginalAttachmentFilePreview(props: {
   name: string;
   mimeType: string;
   sizeBytes: number;

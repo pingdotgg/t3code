@@ -37,6 +37,7 @@ interface ChatShortcutsInput {
    */
   readonly embedded?: boolean;
   readonly composerElement?: HTMLElement | null;
+  readonly ownsChatInteraction?: ((target: EventTarget | null) => boolean) | undefined;
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly scriptKeybindings: ResolvedKeybindingsConfig;
   readonly getShortcutContext: (target: EventTarget | null) => ShortcutMatchContext & {
@@ -61,6 +62,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
   const embedded = input.embedded === true;
   const composerElement = embedded ? (input.composerElement ?? null) : null;
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (input.ownsChatInteraction?.(event.target) === false) return;
     const { keybindings } = input;
     if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
       event.stopPropagation();
@@ -103,6 +105,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
   });
   const dismissFind = useEffectEvent((event: KeyboardEvent) => {
     if (
+      input.ownsChatInteraction?.(event.target) === false ||
       event.key !== "Escape" ||
       !input.threadFindActive ||
       event.defaultPrevented ||

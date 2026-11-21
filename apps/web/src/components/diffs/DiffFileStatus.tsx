@@ -2,8 +2,14 @@ import { useGT } from "gt-react";
 import { InfoIcon, RotateCwIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export function DiffFileStatus({
+export const DiffFileStatus = definePluginComponent(
+  "component:components/diffs/DiffFileStatus/DiffFileStatus",
+  PluginOriginalDiffFileStatus,
+);
+
+function PluginOriginalDiffFileStatus({
   error,
   truncated,
   retry,

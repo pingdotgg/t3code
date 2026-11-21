@@ -1,5 +1,6 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { T, useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -59,7 +60,7 @@ interface SourceFileSurfaceProps {
 
 type SourceHighlightStatus = "highlighting" | "ready" | "error";
 
-const HighlightedSourceLine = function HighlightedSourceLine(props: {
+const BuiltinHighlightedSourceLine = function HighlightedSourceLine(props: {
   readonly codeSurface: ResolvedMobileCodeSurface;
   readonly index: number;
   readonly line: string;
@@ -177,7 +178,7 @@ function useSourceFileModel(props: SourceFileSurfaceProps) {
   return { normalizedContents, lines, rowsJson, status, targetIndex, theme, tokens };
 }
 
-function SourceHighlightStatusView(props: { readonly status: SourceHighlightStatus }) {
+function BuiltinSourceHighlightStatusView(props: { readonly status: SourceHighlightStatus }) {
   if (props.status === "highlighting") {
     return <LoadingStrip />;
   }
@@ -207,7 +208,7 @@ function useSourceFileRefresh(onRefresh: SourceFileSurfaceProps["onRefresh"]) {
   return { isPullRefreshing, handlePullToRefresh };
 }
 
-function NativeSourceFileSurface(
+function BuiltinNativeSourceFileSurface(
   props: SourceFileSurfaceProps & {
     readonly NativeView: ComponentType<NativeReviewDiffViewProps>;
   },
@@ -267,7 +268,7 @@ function NativeSourceFileSurface(
   );
 }
 
-function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+function BuiltinJavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const usesAutomaticInsets = Platform.OS === "ios" && !props.embedded;
   const appTheme = useUniwindTheme();
   const foreground = appTheme["--color-foreground"];
@@ -457,7 +458,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   );
 }
 
-export function SourceFileSurface(props: SourceFileSurfaceProps) {
+function BuiltinSourceFileSurface(props: SourceFileSurfaceProps) {
   const NativeView = resolveNativeReviewDiffView();
   const { codeWordBreak } = useAppearanceCodeSurface();
   const surface =
@@ -468,3 +469,28 @@ export function SourceFileSurface(props: SourceFileSurfaceProps) {
     );
   return surface;
 }
+
+const SourceHighlightStatusView = defineNativePluginFeature(
+  "native.features.files.source-file-surface.source-highlight-status-view",
+  BuiltinSourceHighlightStatusView,
+);
+
+const NativeSourceFileSurface = defineNativePluginFeature(
+  "native.features.files.source-file-surface.native-source-file-surface",
+  BuiltinNativeSourceFileSurface,
+);
+
+const JavaScriptSourceFileSurface = defineNativePluginFeature(
+  "native.features.files.source-file-surface.java-script-source-file-surface",
+  BuiltinJavaScriptSourceFileSurface,
+);
+
+export const SourceFileSurface = defineNativePluginFeature(
+  "native.features.files.source-file-surface",
+  BuiltinSourceFileSurface,
+);
+
+const HighlightedSourceLine = defineNativePluginFeature(
+  "native.features.files.source-file-surface.highlighted-source-line",
+  BuiltinHighlightedSourceLine,
+);

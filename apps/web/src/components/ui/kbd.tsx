@@ -1,8 +1,15 @@
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-function Kbd({
+const Kbd = definePluginComponent("component:components/ui/kbd/Kbd", PluginOriginalKbd);
+const KbdGroup = definePluginComponent(
+  "component:components/ui/kbd/KbdGroup",
+  PluginOriginalKbdGroup,
+);
+
+function PluginOriginalKbd({
   className,
   variant = "default",
   ...props
@@ -25,7 +32,7 @@ function Kbd({
   );
 }
 
-function KbdGroup({ className, ...props }: React.ComponentProps<"kbd">) {
+function PluginOriginalKbdGroup({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
       className={cn("inline-flex items-center gap-1", className)}

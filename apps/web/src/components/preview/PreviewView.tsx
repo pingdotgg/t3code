@@ -113,6 +113,12 @@ import {
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PreviewView = definePluginComponent(
+  "component:components/preview/PreviewView/PreviewView",
+  PluginOriginalPreviewView,
+);
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -173,7 +179,7 @@ function focusPreviewPage(runtimeTabId: string) {
   focusPreviewWebview(runtimeTabId);
 }
 
-export function PreviewView({
+function PluginOriginalPreviewView({
   threadRef,
   tabId: requestedTabId,
   configuredUrls,

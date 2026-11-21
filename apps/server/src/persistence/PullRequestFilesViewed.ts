@@ -1,7 +1,7 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Context from "effect/Context";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
@@ -147,4 +147,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(PullRequestFilesViewedRepository, make);
+export const layer = builtinServiceLayer("t3.persistence")(PullRequestFilesViewedRepository, make);

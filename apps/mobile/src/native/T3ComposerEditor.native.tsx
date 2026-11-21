@@ -41,6 +41,12 @@ import {
   type ComposerNativeEventSnapshot,
 } from "./composerEditorRevision";
 import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerEditor.types";
+import { defineNativePluginFeature } from "../plugins/features";
+
+export const ComposerEditor = defineNativePluginFeature(
+  "native.native.t3-composer-editor.composer-editor",
+  BuiltinComposerEditor,
+);
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
 const EMPTY_SKILLS: NonNullable<ComposerEditorProps["skills"]> = [];
@@ -128,7 +134,7 @@ function basename(path: string): string {
   return separator >= 0 ? path.slice(separator + 1) : path;
 }
 
-export function ComposerEditor({
+function BuiltinComposerEditor({
   ref,
   skills = EMPTY_SKILLS,
   models = EMPTY_MODELS,

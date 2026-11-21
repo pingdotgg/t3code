@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { pruneLocalDeviceTools } from "./deviceToolMaintenance.ts";
 import { deviceToolInstallMessage } from "@t3tools/contracts";
 // The hub runs at origin root; T3 strips its prefix and the Device panel derives stream URLs from it.
@@ -21,7 +22,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
@@ -954,7 +954,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   return host;
 });
 
-export const layer = Layer.effect(DeviceHost.DeviceHost, make());
+export const layer = builtinServiceLayer("t3.server")(DeviceHost.DeviceHost, make());
 
 export const __testing = {
   AgentDeviceDaemonFile,

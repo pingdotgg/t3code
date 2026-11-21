@@ -177,6 +177,10 @@ describe("htmlRenderFromToolItem", () => {
           exit_code: 0,
         },
       ],
+      ["mcp__t3-code__canvas_render", [{ type: "text", text: JSON.stringify(result) }]],
+      ["t3-code.canvas_render", { structuredContent: result, content: [] }],
+      ["t3-code-thread_1_canvas_render", JSON.stringify(result)],
+      ["canvas_render", result],
     ] as const) {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);
     }

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
@@ -118,7 +119,7 @@ export const layer: Layer.Layer<
   | McpAppModelContext.McpAppModelContext
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;

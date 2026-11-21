@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - readdir with file types avoids an lstat per child
 import * as NodeFSP from "node:fs/promises";
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as NodeModule from "node:module";
 
 import type {
@@ -17,7 +18,6 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as LayerMap from "effect/LayerMap";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -1428,7 +1428,7 @@ function parseWorkspaceSearchIndexKey(key: string): {
 /** @public */
 export const layer = (key: string) => {
   const { cwd, variant } = parseWorkspaceSearchIndexKey(key);
-  return Layer.effect(WorkspaceSearchIndex, make(cwd, variant));
+  return builtinServiceLayer("t3.projects")(WorkspaceSearchIndex, make(cwd, variant));
 };
 
 export class WorkspaceSearchIndexMap extends LayerMap.Service<WorkspaceSearchIndexMap>()(

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type {
   ThreadId,
   WorktreeSetupSnapshot,
@@ -15,7 +16,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -334,4 +334,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(WorktreeSetupTracker, make);
+export const layer = builtinServiceLayer("t3.projects")(WorktreeSetupTracker, make);

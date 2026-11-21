@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest or free-space query.
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -19,7 +20,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
@@ -128,7 +128,7 @@ export class AntigravityInstallation extends Context.Service<
   AntigravityInstallation,
   AntigravityInstallationService
 >()("t3/provider/AntigravityInstallation") {
-  static readonly layer = Layer.effect(
+  static readonly layer = builtinServiceLayer("t3.providers")(
     AntigravityInstallation,
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

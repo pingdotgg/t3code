@@ -42,8 +42,26 @@ import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
+import { definePluginComponent } from "~/plugins/features";
 
-export const SidebarChromeHeader = memo(function SidebarChromeHeader({
+export const SidebarBrandWidthProbe = definePluginComponent(
+  "component:components/sidebar/SidebarChrome/SidebarBrandWidthProbe",
+  PluginOriginalSidebarBrandWidthProbe,
+);
+const SidebarBrand = definePluginComponent(
+  "component:components/sidebar/SidebarChrome/SidebarBrand",
+  PluginOriginalSidebarBrand,
+);
+const SidebarBrandMark = definePluginComponent(
+  "component:components/sidebar/SidebarChrome/SidebarBrandMark",
+  PluginOriginalSidebarBrandMark,
+);
+const SidebarUtilityItem = definePluginComponent(
+  "component:components/sidebar/SidebarChrome/SidebarUtilityItem",
+  PluginOriginalSidebarUtilityItem,
+);
+
+const PluginOriginalSidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
 }: {
   isElectron: boolean;
@@ -96,8 +114,12 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     </div>
   );
 });
+export const SidebarChromeHeader = definePluginComponent(
+  "component:components/sidebar/SidebarChrome/SidebarChromeHeader",
+  PluginOriginalSidebarChromeHeader,
+);
 
-export function SidebarBrandWidthProbe({
+function PluginOriginalSidebarBrandWidthProbe({
   isElectron,
   onWidthChange,
 }: {
@@ -167,7 +189,7 @@ function HistoryNavigationButton({
   );
 }
 
-function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+function PluginOriginalSidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   const gt = useGT();
   return (
     <Link
@@ -183,7 +205,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   );
 }
 
-function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
+function PluginOriginalSidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
   return (
     <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
       <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
@@ -200,7 +222,7 @@ function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
   );
 }
 
-function SidebarUtilityItem({
+function PluginOriginalSidebarUtilityItem({
   icon,
   label,
   onClick,
@@ -225,7 +247,7 @@ function SidebarUtilityItem({
   );
 }
 
-const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+const PluginOriginalSidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
   const gt = useGT();
@@ -312,8 +334,12 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     </SidebarMenu>
   );
 });
+const SidebarUtilityMenu = definePluginComponent(
+  "component:components/sidebar/SidebarChrome/SidebarUtilityMenu",
+  PluginOriginalSidebarUtilityMenu,
+);
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+const PluginOriginalSidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter>
       <SidebarProviderUpdatePill />
@@ -322,3 +348,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     </SidebarFooter>
   );
 });
+export const SidebarChromeFooter = definePluginComponent(
+  "component:components/sidebar/SidebarChrome/SidebarChromeFooter",
+  PluginOriginalSidebarChromeFooter,
+);

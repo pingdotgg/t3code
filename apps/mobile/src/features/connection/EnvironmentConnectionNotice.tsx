@@ -1,4 +1,5 @@
 import { msg, useGT, useMessages } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ConnectionTraceId } from "./ConnectionTraceId";
@@ -94,7 +95,7 @@ function noticeDetail(
   }
 }
 
-export function EnvironmentConnectionNotice(props: {
+function BuiltinEnvironmentConnectionNotice(props: {
   readonly environmentLabel: string;
   readonly connection: EnvironmentConnectionPresentation;
   readonly resource: ConnectionNoticeResource;
@@ -149,3 +150,8 @@ export function EnvironmentConnectionNotice(props: {
     </View>
   );
 }
+
+export const EnvironmentConnectionNotice = defineNativePluginFeature(
+  "native.features.connection.environment-connection-notice",
+  BuiltinEnvironmentConnectionNotice,
+);

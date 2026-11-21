@@ -19,6 +19,12 @@ import {
 } from "../ui/combobox";
 import { SelectButton } from "../ui/select";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { definePluginComponent } from "~/plugins/features";
+
+export const FontFamilyPicker = definePluginComponent(
+  "component:components/settings/FontFamilyPicker/FontFamilyPicker",
+  PluginOriginalFontFamilyPicker,
+);
 
 const DEFAULT_FONT_VALUE = "__default__";
 
@@ -84,7 +90,7 @@ export function useFontEnumeration(): FontEnumerationState {
   return useSyncExternalStore(subscribeToEnumeration, readEnumerationState);
 }
 
-export function FontFamilyPicker({
+function PluginOriginalFontFamilyPicker({
   ariaLabel,
   defaultFamily,
   selectedFamily,

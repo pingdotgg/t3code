@@ -144,6 +144,9 @@ const make = Effect.gen(function* () {
     return { instance, manager: instance.acpSessionManagement };
   });
 
+  // Read per call: a disabled t3.providers throws on member access, failing every socket.
+  const withSessionMutation: typeof coordinator.withSessionMutation = (effect) =>
+    coordinator.withSessionMutation(effect);
   const importSession = Effect.fn("AcpRegistrySessions.importSession")(function* (
     input: AcpRegistryImportSessionInput,
   ) {
@@ -263,7 +266,7 @@ const make = Effect.gen(function* () {
       ),
     );
     return { threadId, imported: true } as const;
-  }, coordinator.withSessionMutation);
+  }, withSessionMutation);
 
   return AcpRegistrySessions.of({ project, sessionManager, findOwner, importSession });
 });

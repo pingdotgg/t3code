@@ -1,8 +1,11 @@
-import { GitCommandError, OrchestrationDispatchCommandError } from "@t3tools/contracts";
+import { builtinHttpRoute } from "./plugins/httpComposition.ts";
+import * as Plugins from "./plugins/PluginService.ts";
+import { wrapBuiltinHandlers } from "./plugins/builtinCommands.ts";
+import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Context from "effect/Context";
+import { isBuiltinDisabledCause } from "@t3tools/shared/pluginKernel";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -12,6 +15,7 @@ import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
 
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Base64 from "effect/encoding/Base64";
 import * as Effect from "effect/Effect";
@@ -47,6 +51,8 @@ import {
   type FileManagerRevealKind,
   type OrchestrationV2Command,
   type GitActionProgressEvent,
+  GitCommandError,
+  GitManagerError,
   type GitManagerServiceError,
   type MessageId,
   type AcpRegistryDeleteSessionInput,
@@ -104,15 +110,11 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  WsCanvasRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
-import {
-  HttpRouter,
-  HttpServerRequest,
-  HttpServerRespondable,
-  HttpServerResponse,
-} from "effect/http";
-import { RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
+import { HttpServerRequest, HttpServerRespondable, HttpServerResponse } from "effect/http";
+import { type RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
@@ -202,6 +204,8 @@ import { makePrepareTerminalLaunch } from "./workspace/restoreMissingWorktree.ts
 import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as CanvasHostBroker from "./canvas/CanvasHostBroker.ts";
+import * as CanvasService from "./canvas/CanvasService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -296,6 +300,54 @@ import { requestUrl } from "./requestUrl.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
+
+const usageDisabled = (cause: Cause.Cause<never>) =>
+  cause.reasons.length > 0 &&
+  cause.reasons.every(
+    (reason) =>
+      Cause.isDieReason(reason) &&
+      reason.defect instanceof Error &&
+      reason.defect.message === "Plugin 't3.usage' is disabled.",
+  );
+
+const disabledBuiltinCause = isBuiltinDisabledCause;
+
+/** Releases the active service subscription while its plugin is disabled. */
+export const optionalBuiltinStream = <A, E, R>(
+  enabled: Stream.Stream<boolean>,
+  pluginId: string,
+  source: () => Stream.Stream<A, E, R>,
+  disabled: Stream.Stream<A>,
+) =>
+  enabled.pipe(
+    Stream.changes,
+    Stream.switchMap((active) =>
+      active
+        ? Stream.suspend(source).pipe(
+            Stream.catchCauseIf(
+              (cause: Cause.Cause<E>) => disabledBuiltinCause(cause, pluginId),
+              () => disabled,
+            ),
+          )
+        : disabled,
+    ),
+  );
+
+/** Switching away releases the disabled usage generation's subscription. */
+export const usageLimitSourcesConfigChanges = (
+  enabled: Stream.Stream<boolean>,
+  sources: Pick<UsageLimitSources.UsageLimitSources["Service"], "streamChanges">,
+) =>
+  enabled.pipe(
+    Stream.changes,
+    Stream.switchMap((active) =>
+      active
+        ? Stream.suspend(() => sources.streamChanges).pipe(
+            Stream.catchCauseIf(usageDisabled, () => Stream.make([])),
+          )
+        : Stream.make([]),
+    ),
+  );
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -720,31 +772,308 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+type ServerWsRpcMethod = RpcGroup.Rpcs<typeof ServerWsRpcGroup>["_tag"];
 
-// RpcGroup.toLayer derives each handler's requirements by scanning every RPC in
-// the group, so its type cost grows with handlers × RPCs. Near 200 methods that
-// crosses TypeScript's instantiation limit and the layer's requirements degrade to
-// `any`, so the handlers are registered as two disjoint, smaller groups.
-type ServerWsRpc = RpcGroup.Rpcs<typeof ServerWsRpcGroup>;
-const SPLIT_WS_RPC_PREFIXES = [
-  "server",
-  "pullRequests",
-  "issues",
-  "issueTrackers",
-  "provider",
-  "orchestration",
-] as const;
-type SplitWsRpc = Extract<
-  ServerWsRpc,
-  { readonly _tag: `${(typeof SPLIT_WS_RPC_PREFIXES)[number]}.${string}` }
->;
-const isSplitWsRpc = (rpc: ServerWsRpc): rpc is SplitWsRpc =>
-  SPLIT_WS_RPC_PREFIXES.some((prefix) => rpc._tag.startsWith(`${prefix}.`));
-const isOtherWsRpc = (rpc: ServerWsRpc): rpc is Exclude<ServerWsRpc, SplitWsRpc> =>
-  !isSplitWsRpc(rpc);
-const serverWsRpcs = Array.from(ServerWsRpcGroup.requests.values());
-const SplitWsRpcGroup = RpcGroup.make(...serverWsRpcs.filter(isSplitWsRpc));
-const OtherWsRpcGroup = RpcGroup.make(...serverWsRpcs.filter(isOtherWsRpc));
+// Reuse the authorized RPC definitions while keeping handler inference bounded.
+const selectServerWsRpcGroup = <const Tags extends ReadonlyArray<ServerWsRpcMethod>>(
+  ...tags: Tags
+) =>
+  ServerWsRpcGroup.omit(
+    ...Array.from(ServerWsRpcGroup.requests.values(), (rpc) => rpc._tag).filter(
+      (tag): tag is Exclude<ServerWsRpcMethod, Tags[number]> =>
+        !tags.some((selected) => selected === tag),
+    ),
+  );
+
+const ServerWsIssuesRpcGroup = selectServerWsRpcGroup(
+  WS_METHODS.issuesList,
+  WS_METHODS.issuesDetail,
+  WS_METHODS.issuesComments,
+  WS_METHODS.issuesTemplates,
+  WS_METHODS.issuesCandidates,
+  WS_METHODS.issuesLinkedThreads,
+  WS_METHODS.issuesCreate,
+  WS_METHODS.issuesComment,
+  WS_METHODS.issuesUpdate,
+  WS_METHODS.issuesSetState,
+  WS_METHODS.issuesReact,
+  WS_METHODS.issueTrackersList,
+  WS_METHODS.issueTrackersConnect,
+  WS_METHODS.issueTrackersBindProject,
+);
+
+const ServerWsPluginsRpcGroup = selectServerWsRpcGroup(
+  WS_METHODS.pluginsRegistryList,
+  WS_METHODS.pluginsRegistryInstall,
+  WS_METHODS.pluginsList,
+  WS_METHODS.pluginsAuthoringGuide,
+  WS_METHODS.pluginsSearch,
+  WS_METHODS.pluginsSubscribe,
+  WS_METHODS.pluginsSetEnabled,
+  WS_METHODS.pluginsReload,
+  WS_METHODS.pluginsInvoke,
+);
+
+const ServerWsOrchestrationRpcGroup = selectServerWsRpcGroup(
+  ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+  ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
+  ORCHESTRATION_V2_WS_METHODS.forceStopThread,
+  ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
+  ORCHESTRATION_V2_WS_METHODS.getNativeChildWork,
+  ORCHESTRATION_V2_WS_METHODS.getTurnItem,
+  ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
+  ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
+  ORCHESTRATION_V2_WS_METHODS.searchThread,
+  ORCHESTRATION_V2_WS_METHODS.searchThreadStream,
+  ORCHESTRATION_V2_WS_METHODS.searchThreads,
+  ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+  ORCHESTRATION_V2_WS_METHODS.getThreadFamily,
+  ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata,
+  ORCHESTRATION_V2_WS_METHODS.getThreadTitles,
+  ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads,
+  ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds,
+  ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
+  ORCHESTRATION_V2_WS_METHODS.launchThread,
+  ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+  ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+  ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
+  ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion,
+);
+
+const ServerWsScheduledTasksRpcGroup = selectServerWsRpcGroup(
+  WS_METHODS.scheduledTasksSubscribe,
+  WS_METHODS.scheduledTasksUpsert,
+  WS_METHODS.scheduledTasksSetEnabled,
+  WS_METHODS.scheduledTasksDelete,
+  WS_METHODS.scheduledTasksRunNow,
+  WS_METHODS.scheduledTasksRotateWebhookToken,
+  WS_METHODS.guestShareCreate,
+  WS_METHODS.secretsAnswerRequest,
+  WS_METHODS.scheduledTasksListWebhookDeliveries,
+  WS_METHODS.scheduledTasksGetWebhookDelivery,
+  WS_METHODS.serverProbe,
+  WS_METHODS.serverGetConfig,
+);
+
+const ServerWsProvidersRpcGroup = selectServerWsRpcGroup(
+  WS_METHODS.serverSearchAcpRegistry,
+  WS_METHODS.serverPrepareAcpRegistryAgent,
+  WS_METHODS.serverUninstallAcpRegistryManagedBinary,
+  WS_METHODS.serverAcceptAcpRegistryUrlAuth,
+  WS_METHODS.serverListAcpRegistrySessions,
+  WS_METHODS.serverImportAcpRegistrySession,
+  WS_METHODS.serverDeleteAcpRegistrySession,
+  WS_METHODS.serverListAcpRegistryProviders,
+  WS_METHODS.serverSetAcpRegistryProvider,
+  WS_METHODS.serverDisableAcpRegistryProvider,
+  WS_METHODS.serverLogoutAcpRegistry,
+  WS_METHODS.serverRefreshProviders,
+  WS_METHODS.mcpAppsCallTool,
+  WS_METHODS.mcpAppsToolInfo,
+  WS_METHODS.mcpAppsUpdateModelContext,
+  WS_METHODS.mcpAppsReadResource,
+  WS_METHODS.providerMcpSignInStart,
+  WS_METHODS.providerMcpSignInComplete,
+  WS_METHODS.providerUploadFeedback,
+  WS_METHODS.serverUpdateProvider,
+  WS_METHODS.providerConsumeResetCredit,
+  WS_METHODS.providerAuthStart,
+  WS_METHODS.providerAuthRespond,
+  WS_METHODS.providerAuthComplete,
+  WS_METHODS.chatGptReconnectProfile,
+  WS_METHODS.chatGptImportProfile,
+  WS_METHODS.chatGptHandoffSubscribe,
+  WS_METHODS.providerAuthCancel,
+  WS_METHODS.providerAuthRemoveMethod,
+  WS_METHODS.providerAuthLogout,
+  WS_METHODS.providerAuthSubscribe,
+  WS_METHODS.providerInstallStart,
+  WS_METHODS.providerInstallCancel,
+  WS_METHODS.providerInstallSubscribe,
+  WS_METHODS.providerInstallRemove,
+);
+
+const ServerWsServerRpcGroup = selectServerWsRpcGroup(
+  WS_METHODS.serverUpdateServer,
+  WS_METHODS.serverGetNpmRelease,
+  WS_METHODS.serverUpdateServerWithProgress,
+  WS_METHODS.serverCommitDesktopUpdate,
+  WS_METHODS.serverUpsertKeybinding,
+  WS_METHODS.serverRemoveKeybinding,
+  WS_METHODS.serverRunStorageCleanup,
+  WS_METHODS.serverGetStorageCleanupReport,
+  WS_METHODS.serverGetDatabaseStorage,
+  WS_METHODS.serverReclaimDatabaseSpace,
+  WS_METHODS.peerLinksList,
+  WS_METHODS.peerLinksNames,
+  WS_METHODS.peerLinksLink,
+  WS_METHODS.peerLinksUnlink,
+  WS_METHODS.peerLinksSubscribeThread,
+  WS_METHODS.peerLinksThreadHistoryPage,
+  WS_METHODS.peerLinksThreadItem,
+  WS_METHODS.peerLinksPairClient,
+  WS_METHODS.peerLinksPairLink,
+  WS_METHODS.peerLinksAnswerRequest,
+  WS_METHODS.serverGetSettings,
+  WS_METHODS.serverUpdateSettings,
+  WS_METHODS.serverDiscoverSourceControl,
+  WS_METHODS.serverCheckSecretSource,
+  WS_METHODS.serverGetTraceDiagnostics,
+  WS_METHODS.serverGetProcessDiagnostics,
+  WS_METHODS.serverGetHostResources,
+  WS_METHODS.serverGetProcessResourceHistory,
+  WS_METHODS.serverGetResourceTelemetryHistory,
+  WS_METHODS.serverGetUsageSummary,
+  WS_METHODS.serverRefreshUsageRates,
+  WS_METHODS.serverRetryResourceTelemetry,
+  WS_METHODS.serverCheckOtlpEndpoint,
+  WS_METHODS.serverListTextGeneratorModels,
+  WS_METHODS.serverPrepareTriage,
+  WS_METHODS.serverSignalProcess,
+  WS_METHODS.serverReportClientActivity,
+  WS_METHODS.cloudGetRelayClientStatus,
+  WS_METHODS.cloudInstallRelayClient,
+);
+
+const ServerWsPullRequestsRpcGroup = selectServerWsRpcGroup(
+  WS_METHODS.pullRequestsList,
+  WS_METHODS.pullRequestsListStats,
+  WS_METHODS.pullRequestsFilterOptions,
+  WS_METHODS.pullRequestsRoutingIdentity,
+  WS_METHODS.pullRequestsRouting,
+  WS_METHODS.pullRequestsSummary,
+  WS_METHODS.pullRequestsStack,
+  WS_METHODS.pullRequestsLinkedThreads,
+  WS_METHODS.pullRequestsDetail,
+  WS_METHODS.pullRequestsPreview,
+  WS_METHODS.pullRequestsChecks,
+  WS_METHODS.pullRequestsActivity,
+  WS_METHODS.pullRequestsReviewGuide,
+  WS_METHODS.pullRequestsGenerateReviewGuide,
+  WS_METHODS.pullRequestsThreadComments,
+  WS_METHODS.pullRequestsDiffFileContents,
+  WS_METHODS.pullRequestsFilesViewed,
+  WS_METHODS.pullRequestsChangeBreakdown,
+  WS_METHODS.pullRequestsSetFilesViewed,
+  WS_METHODS.pullRequestsRunAction,
+  WS_METHODS.pullRequestsUpdate,
+  WS_METHODS.pullRequestsComment,
+  WS_METHODS.pullRequestsUpdateComment,
+  WS_METHODS.pullRequestsSubmitReview,
+  WS_METHODS.pullRequestsReplyToThread,
+  WS_METHODS.pullRequestsSetThreadResolution,
+  WS_METHODS.pullRequestsSetReaction,
+  WS_METHODS.pullRequestsReportState,
+  WS_METHODS.pullRequestsInvalidate,
+  WS_METHODS.pullRequestsSubscribeRefreshes,
+  WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes,
+  WS_METHODS.pullRequestsReviewerCandidates,
+  WS_METHODS.pullRequestsRequestReviewers,
+  WS_METHODS.pullRequestsLabelCandidates,
+  WS_METHODS.pullRequestsSetLabels,
+);
+
+const ServerWsWorkspaceRpcGroup = selectServerWsRpcGroup(
+  WS_METHODS.sourceControlLookupRepository,
+  WS_METHODS.sourceControlCloneRepository,
+  WS_METHODS.sourceControlSignInStart,
+  WS_METHODS.sourceControlSignInWait,
+  WS_METHODS.sourceControlSignInCancel,
+  WS_METHODS.sourceControlAppAccess,
+  WS_METHODS.sourceControlStarred,
+  WS_METHODS.sourceControlStar,
+  WS_METHODS.projectCloneStart,
+  WS_METHODS.projectsEnsureScratch,
+  WS_METHODS.projectsCreateNew,
+  WS_METHODS.projectsCreateFromThread,
+  WS_METHODS.projectCloneCancel,
+  WS_METHODS.projectCloneRetry,
+  WS_METHODS.subscribeProjectClones,
+  WS_METHODS.sourceControlPublishRepository,
+  WS_METHODS.projectsSearchEntries,
+  WS_METHODS.projectsSearchContents,
+  WS_METHODS.projectsListEntries,
+  WS_METHODS.projectsListIgnoredFiles,
+  WS_METHODS.projectsReadFile,
+  WS_METHODS.projectsWriteFile,
+  WS_METHODS.projectsMutate,
+  WS_METHODS.shellOpenInEditor,
+  WS_METHODS.filesystemGetMetadata,
+  WS_METHODS.filesystemBrowse,
+  WS_METHODS.workspaceListFolders,
+  WS_METHODS.workspaceScanFolders,
+  WS_METHODS.workspaceTaskFolder,
+  WS_METHODS.workspaceAddTaskFolderRepository,
+  WS_METHODS.attachmentsCreateUploadUrl,
+  WS_METHODS.attachmentsDelete,
+  WS_METHODS.agentSessionsScan,
+  WS_METHODS.agentSessionsImport,
+  WS_METHODS.assetsCreateUrl,
+  WS_METHODS.assetsPersistChatAttachments,
+);
+
+const ServerWsGitRpcGroup = selectServerWsRpcGroup(
+  WS_METHODS.subscribeVcsBranch,
+  WS_METHODS.vcsRefreshBranch,
+  WS_METHODS.subscribeVcsStatus,
+  WS_METHODS.subscribeWorktreeSetup,
+  WS_METHODS.worktreeSetupCancel,
+  WS_METHODS.vcsRefreshStatus,
+  WS_METHODS.vcsPull,
+  WS_METHODS.gitRunStackedAction,
+  WS_METHODS.gitResolvePullRequest,
+  WS_METHODS.gitPreparePullRequestThread,
+  WS_METHODS.vcsListRefs,
+  WS_METHODS.vcsCreateWorktree,
+  WS_METHODS.vcsRemoveWorktree,
+  WS_METHODS.vcsCreateRef,
+  WS_METHODS.vcsSwitchRef,
+  WS_METHODS.vcsInit,
+  WS_METHODS.reviewGetBranchCommits,
+  WS_METHODS.reviewGetDiffPreview,
+  WS_METHODS.reviewGetDiffFileContents,
+);
+
+const ServerWsInteractiveRpcGroup = selectServerWsRpcGroup(
+  WS_METHODS.terminalOpen,
+  WS_METHODS.terminalAttach,
+  WS_METHODS.terminalWrite,
+  WS_METHODS.terminalResize,
+  WS_METHODS.terminalClear,
+  WS_METHODS.terminalClose,
+  WS_METHODS.terminalObserve,
+  WS_METHODS.subscribeTerminalMetadata,
+  WS_METHODS.previewOpen,
+  WS_METHODS.previewResize,
+  WS_METHODS.previewAdjust,
+  WS_METHODS.previewClose,
+  WS_METHODS.previewList,
+  WS_METHODS.previewClearProfile,
+  WS_METHODS.previewReportProfiles,
+  WS_METHODS.previewReportStatus,
+  WS_METHODS.subscribePreviewEvents,
+  WS_METHODS.deviceConfigure,
+  WS_METHODS.deviceTestHost,
+  WS_METHODS.deviceEasAccount,
+  WS_METHODS.deviceSimlockIdentity,
+  WS_METHODS.deviceList,
+  WS_METHODS.deviceOpen,
+  WS_METHODS.deviceClose,
+  WS_METHODS.deviceShutdown,
+  WS_METHODS.deviceDetail,
+  WS_METHODS.deviceAction,
+  WS_METHODS.subscribeDeviceState,
+  WS_METHODS.previewStopLocalServer,
+  WS_METHODS.subscribeDiscoveredLocalServers,
+);
+
+const ServerWsSubscriptionsRpcGroup = selectServerWsRpcGroup(
+  WS_METHODS.subscribeServerConfig,
+  WS_METHODS.subscribeServerLifecycle,
+  WS_METHODS.subscribeAuthAccess,
+  WS_METHODS.subscribeResourceTelemetry,
+);
+
 function toAuthAccessStreamEvent(
   change: Exclude<
     PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
@@ -1435,6 +1764,46 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
+// Canvas handlers build in their own layer. One `toLayer` over every WebSocket
+// RPC exceeds TypeScript's instantiation depth, which erases the handler
+// requirements to `any`.
+const layerWsCanvasRpc = WsCanvasRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const canvas = yield* CanvasService.CanvasService;
+    const canvasHosts = yield* CanvasHostBroker.CanvasHostBroker;
+    const plugins = yield* Plugins.PluginService;
+    const handlers = WsCanvasRpcGroup.of({
+      [WS_METHODS.canvasList]: (input) =>
+        Effect.suspend(() => canvas.list(input)).pipe(CanvasService.recoverCanvasDisabled),
+      [WS_METHODS.canvasCreate]: (input) =>
+        Effect.suspend(() => canvas.create(input)).pipe(
+          Effect.map(({ document, warnings }) => ({
+            ...CanvasService.summarizeCanvasDocument(document),
+            warnings,
+          })),
+          CanvasService.recoverCanvasDisabled,
+        ),
+      [WS_METHODS.canvasDelete]: (input) =>
+        Effect.suspend(() => canvas.delete(input)).pipe(CanvasService.recoverCanvasDisabled),
+      [WS_METHODS.canvasApplyOps]: (input) =>
+        Effect.suspend(() => canvas.applyOps(input)).pipe(CanvasService.recoverCanvasDisabled),
+      [WS_METHODS.canvasSubscribe]: (input) =>
+        Stream.unwrap(Effect.sync(() => canvas.subscribe(input))).pipe(
+          CanvasService.recoverCanvasStreamDisabled,
+        ),
+      [WS_METHODS.canvasConnectHost]: (input) =>
+        Stream.unwrap(Effect.sync(() => canvasHosts.connect(input))).pipe(
+          CanvasService.recoverCanvasStreamDisabled,
+        ),
+      [WS_METHODS.canvasUpdateHost]: (input) =>
+        Effect.suspend(() => canvasHosts.update(input)).pipe(CanvasService.recoverCanvasDisabled),
+      [WS_METHODS.canvasRespondHost]: (input) =>
+        Effect.suspend(() => canvasHosts.respond(input)).pipe(CanvasService.recoverCanvasDisabled),
+    });
+    return wrapBuiltinHandlers(handlers, plugins);
+  }),
+);
+
 export const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
@@ -1442,7 +1811,7 @@ export const layerWsRpc = (
   reportProfiles: ServerBrowser.ProfileReporter,
   settingsClient: { readonly secretReferences: boolean },
 ) =>
-  Layer.effectContext(
+  Layer.unwrap(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1522,6 +1891,7 @@ export const layerWsRpc = (
               Effect.orElseSucceed(() => null),
             );
       const usage = yield* UsageService.UsageService;
+      const plugins = yield* Plugins.PluginService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
@@ -1542,8 +1912,9 @@ export const layerWsRpc = (
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
-      const prepareTerminalLaunch = yield* makePrepareTerminalLaunch(
-        threadManagement.getThreadShell,
+      // Members of a disabled builtin throw on access, so per-connection setup reads them per call.
+      const prepareTerminalLaunch = yield* makePrepareTerminalLaunch((threadId) =>
+        threadManagement.getThreadShell(threadId),
       );
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
@@ -1559,6 +1930,7 @@ export const layerWsRpc = (
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const npmRelease = yield* NpmRelease.NpmRelease;
       const config = yield* ServerConfig.ServerConfig;
+      const path = yield* Path.Path;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
@@ -1598,7 +1970,8 @@ export const layerWsRpc = (
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const sourceControlSignIn = yield* SourceControlSignIn.SourceControlSignIn;
-      const withPullRequestViewer = pullRequests.withRoutingCredential;
+      const withPullRequestViewer: typeof pullRequests.withRoutingCredential = (input, operation) =>
+        pullRequests.withRoutingCredential(input, operation);
       // The panel's reads for a pull request the user opened go out during a rate-limit pause.
       const openedPullRequestRead = Effect.provideService(SourceControlRateLimit.Interactive, true);
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -1829,6 +2202,43 @@ export const layerWsRpc = (
           ),
         );
 
+      const pluginEnabled = (id: string) =>
+        plugins
+          .list({ query: id })
+          .pipe(
+            Effect.map(
+              (snapshot) =>
+                snapshot.plugins.find((plugin) => plugin.manifest.id === id)?.enabled !== false,
+            ),
+          );
+      const pluginEnabledChanges = (id: string) =>
+        plugins
+          .subscribe({ query: id })
+          .pipe(
+            Stream.map(
+              (snapshot) =>
+                snapshot.plugins.find((plugin) => plugin.manifest.id === id)?.enabled !== false,
+            ),
+          );
+      const currentUsageLimitSources = pluginEnabled("t3.usage").pipe(
+        Effect.flatMap((enabled) =>
+          enabled ? Effect.suspend(() => usageLimitSources.current) : Effect.succeed([]),
+        ),
+        Effect.catchCauseIf(usageDisabled, () => Effect.succeed([])),
+      );
+      const usageLimitSourceChanges = usageLimitSourcesConfigChanges(
+        plugins
+          .subscribe({ query: "t3.usage" })
+          .pipe(
+            Stream.map(
+              (snapshot) =>
+                snapshot.plugins.find((plugin) => plugin.manifest.id === "t3.usage")?.enabled !==
+                false,
+            ),
+          ),
+        usageLimitSources,
+      );
+
       const loadServerConfig = Effect.fn("ws.loadServerConfig")(function* (options: {
         readonly usageLimitsCommand: boolean;
         readonly workspaceSnapshotsOnDemand: boolean;
@@ -1839,7 +2249,7 @@ export const layerWsRpc = (
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const currentProviders = yield* providerRegistry.getProviders;
         const commandProviders = options.usageLimitsCommand
-          ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
+          ? withUsageLimitsCommands(currentProviders, yield* currentUsageLimitSources)
           : currentProviders;
         const providers = options.workspaceSnapshotsOnDemand
           ? withoutWorkspaceSnapshots(
@@ -1854,17 +2264,24 @@ export const layerWsRpc = (
         );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
-        const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
+        const projectsEnabled = yield* pluginEnabled("t3.projects");
+        const connectionsEnabled = yield* pluginEnabled("t3.connections");
+        const scratchWorkspaceRoot = projectsEnabled
+          ? yield* managedFolders.scratchRoot
+          : Option.none();
         const lastEventLoopStall = yield* eventLoopMonitor.latestNoticeableStall;
         const discovery = yield* resolveOpenDiscoveryForConfig({
           editors: externalLauncher.resolveAvailableEditors(),
           fileManagerRevealKind: externalLauncher.resolveFileManagerRevealKind(),
-          remoteOpenTargets: options.deferNetworkDiscovery
+          remoteOpenTargets:
+            options.deferNetworkDiscovery || !connectionsEnabled
+              ? Effect.succeed([])
+              : remoteOpenTargets.resolveTargets(),
+          directEndpoints: !connectionsEnabled
             ? Effect.succeed([])
-            : remoteOpenTargets.resolveTargets(),
-          directEndpoints: options.deferNetworkDiscovery
-            ? directEndpoints.resolveAvailable()
-            : directEndpoints.resolve(),
+            : options.deferNetworkDiscovery
+              ? directEndpoints.resolveAvailable()
+              : directEndpoints.resolve(),
         });
 
         return {
@@ -1924,7 +2341,7 @@ export const layerWsRpc = (
             onNone: () => ({}),
             onSome: (root) => ({ scratchWorkspaceRoot: root }),
           }),
-          newProjectsRoot: managedFolders.namedProjectsRoot,
+          newProjectsRoot: path.resolve(config.baseDir, "projects"),
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
           serverTime: DateTime.formatIso(yield* DateTime.now),
         };
@@ -1987,7 +2404,7 @@ export const layerWsRpc = (
         return yield* mutateProjectWithClone(projectService, projectCloneTracker, mutation);
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const issueHandlers = ServerWsIssuesRpcGroup.of({
         [WS_METHODS.issuesList]: (input) => issues.list(input),
         [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
         [WS_METHODS.issuesComments]: (input) => issues.comments(input),
@@ -2002,6 +2419,21 @@ export const layerWsRpc = (
         [WS_METHODS.issueTrackersList]: () => issueTrackers.list,
         [WS_METHODS.issueTrackersConnect]: (input) => issueTrackers.connect(input),
         [WS_METHODS.issueTrackersBindProject]: (input) => issueTrackers.bindProject(input),
+      });
+
+      const pluginsHandlers = ServerWsPluginsRpcGroup.of({
+        [WS_METHODS.pluginsRegistryList]: (input) => plugins.registryList(input),
+        [WS_METHODS.pluginsRegistryInstall]: (input) => plugins.registryInstall(input),
+        [WS_METHODS.pluginsList]: (input) => plugins.list(input),
+        [WS_METHODS.pluginsAuthoringGuide]: (input) => plugins.authoringGuide(input),
+        [WS_METHODS.pluginsSearch]: (input) => plugins.list(input),
+        [WS_METHODS.pluginsSubscribe]: (input) => plugins.subscribe(input),
+        [WS_METHODS.pluginsSetEnabled]: (input) => plugins.setEnabled(input),
+        [WS_METHODS.pluginsReload]: (input) => plugins.reload(input),
+        [WS_METHODS.pluginsInvoke]: (input) => plugins.invoke(input),
+      });
+
+      const orchestrationHandlers = ServerWsOrchestrationRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -2337,12 +2769,35 @@ export const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
-          Stream.unwrap(subscribeOrchestrationV2Shell(input)),
+          Stream.unwrap(subscribeOrchestrationV2Shell(input)).pipe(
+            Stream.catchCause((cause) =>
+              disabledBuiltinCause(cause, "t3.thread", "t3.projects")
+                ? Stream.fail(
+                    new OrchestrationV2GetShellSnapshotError({
+                      message: "Thread or project features are disabled in this environment.",
+                      cause: Cause.squash(cause),
+                    }),
+                  )
+                : Stream.failCause(cause),
+            ),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
               Effect.andThen(threadViewers.view(input.threadId)),
               Effect.andThen(subscribeOrchestrationV2Thread(input)),
+            ),
+          ).pipe(
+            Stream.catchCause((cause) =>
+              disabledBuiltinCause(cause, "t3.thread")
+                ? Stream.fail(
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: "Threads are disabled in this environment.",
+                      cause: Cause.squash(cause),
+                    }),
+                  )
+                : Stream.failCause(cause),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>
@@ -2353,6 +2808,9 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
           providerSessionManager.subscribePromptSuggestion(input.threadId),
+      });
+
+      const scheduledTaskHandlers = ServerWsScheduledTasksRpcGroup.of({
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
@@ -2395,6 +2853,9 @@ export const layerWsRpc = (
             workspaceSnapshotsOnDemand: false,
             deferNetworkDiscovery: false,
           }),
+      });
+
+      const providerHandlers = ServerWsProvidersRpcGroup.of({
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>
           acpRegistryCatalog
             .search(input)
@@ -2515,7 +2976,11 @@ export const layerWsRpc = (
             }
             // Await refresh; RPC scope closure would interrupt a fork before the hub answered.
             if (input.instanceId === undefined) {
-              yield* usageLimitSources.refresh;
+              if (yield* pluginEnabled("t3.usage")) {
+                yield* Effect.suspend(() => usageLimitSources.refresh).pipe(
+                  Effect.catchCauseIf(usageDisabled, () => Effect.void),
+                );
+              }
             }
             let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({
@@ -2701,6 +3166,9 @@ export const layerWsRpc = (
         [WS_METHODS.providerInstallCancel]: (input) => providerInstallation.cancel(input),
         [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
         [WS_METHODS.providerInstallRemove]: (input) => providerInstallation.remove(input),
+      });
+
+      const serverHandlers = ServerWsServerRpcGroup.of({
         [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
         [WS_METHODS.serverGetNpmRelease]: (input) => npmRelease.get(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
@@ -2719,7 +3187,13 @@ export const layerWsRpc = (
           }),
         [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
-        [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
+        [WS_METHODS.serverGetDatabaseStorage]: () =>
+          optionalBuiltinStream(
+            pluginEnabledChanges("t3.thread"),
+            "t3.thread",
+            () => databaseStorage.status,
+            Stream.make(null),
+          ),
         [WS_METHODS.serverReclaimDatabaseSpace]: () => databaseStorage.requestReclaim,
         [WS_METHODS.peerLinksList]: (_input) =>
           peerLinks.list.pipe(Effect.map((links) => ({ links }))),
@@ -2823,6 +3297,9 @@ export const layerWsRpc = (
                 Effect.forkScoped,
               ),
           ),
+      });
+
+      const pullRequestHandlers = ServerWsPullRequestsRpcGroup.of({
         [WS_METHODS.pullRequestsList]: (input) => pullRequests.list(input),
         [WS_METHODS.pullRequestsListStats]: (input) => pullRequests.listStats(input),
         [WS_METHODS.pullRequestsFilterOptions]: (input) => pullRequests.filterOptions(input),
@@ -2914,6 +3391,9 @@ export const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.labelCandidates(input)),
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
           withPullRequestViewer(input, pullRequests.setLabels(input)),
+      });
+
+      const workspaceHandlers = ServerWsWorkspaceRpcGroup.of({
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           sourceControlRepositories.lookupRepository(input),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
@@ -2988,7 +3468,13 @@ export const layerWsRpc = (
           projectCloneTracker.cancel(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.projectCloneRetry]: (input) =>
           projectCloneTracker.retry(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
-        [WS_METHODS.subscribeProjectClones]: () => projectCloneTracker.stream,
+        [WS_METHODS.subscribeProjectClones]: () =>
+          optionalBuiltinStream(
+            pluginEnabledChanges("t3.projects"),
+            "t3.projects",
+            () => projectCloneTracker.stream,
+            Stream.make([]),
+          ),
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           sourceControlRepositories.publishRepository(input).pipe(
             // A failed push still leaves the new remote added.
@@ -3047,7 +3533,7 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.projectsReadFile]: (input) =>
-          workspaceFileSystem.readFile(input).pipe(
+          Effect.suspend(() => workspaceFileSystem.readFile(input)).pipe(
             Effect.mapError(
               (cause) =>
                 new ProjectReadFileError({
@@ -3055,6 +3541,19 @@ export const layerWsRpc = (
                   ...projectFileFailureContext(cause),
                   cause,
                 }),
+            ),
+            Effect.catchCauseIf(
+              (cause: Cause.Cause<ProjectReadFileError>) =>
+                disabledBuiltinCause(cause, "t3.projects"),
+              (cause) =>
+                Effect.fail(
+                  new ProjectReadFileError({
+                    ...input,
+                    failure: "operation_failed",
+                    operation: "read",
+                    cause: Cause.squash(cause),
+                  }),
+                ),
             ),
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
@@ -3108,30 +3607,67 @@ export const layerWsRpc = (
           agentSessionImporter.importRecentAgentThreads(input),
         [WS_METHODS.assetsCreateUrl]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
-          Effect.fnUntraced(function* (input) {
-            const path = yield* Path.Path;
-            if (
-              input.resource._tag === "attachment" ||
-              input.resource._tag === "native-app-icon" ||
-              input.resource._tag === "environment-theme-background" ||
-              input.resource._tag === "tool-output-image" ||
-              input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET ||
-              // A network path is served only from the thread's project, looked up below.
-              (input.resource._tag === "media-file" &&
-                path.isAbsolute(input.resource.path) &&
-                !isNetworkPath(input.resource.path))
-            ) {
-              return yield* issueAssetUrl({ resource: input.resource });
-            }
-            if (input.resource._tag === "draft-workspace-file") {
-              return yield* issueAssetUrl({
-                resource: input.resource,
-                workspaceRoot: input.resource.cwd,
-              });
-            }
-            if (input.resource._tag === "project-favicon") {
-              const project = yield* projectStore
-                .findActiveByWorkspaceRoot(input.resource.cwd)
+          Effect.fnUntraced(
+            function* (input) {
+              const path = yield* Path.Path;
+              if (
+                input.resource._tag === "attachment" ||
+                input.resource._tag === "native-app-icon" ||
+                input.resource._tag === "environment-theme-background" ||
+                input.resource._tag === "tool-output-image" ||
+                input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET ||
+                // A network path is served only from the thread's project, looked up below.
+                (input.resource._tag === "media-file" &&
+                  path.isAbsolute(input.resource.path) &&
+                  !isNetworkPath(input.resource.path))
+              ) {
+                return yield* issueAssetUrl({ resource: input.resource });
+              }
+              if (input.resource._tag === "draft-workspace-file") {
+                return yield* issueAssetUrl({
+                  resource: input.resource,
+                  workspaceRoot: input.resource.cwd,
+                });
+              }
+              for (const pluginId of ["t3.thread", "t3.projects"]) {
+                if (!(yield* pluginEnabled(pluginId))) {
+                  return yield* new AssetWorkspaceContextResolutionError({
+                    resource: input.resource,
+                    cause: new Error(`Plugin '${pluginId}' is disabled.`),
+                  });
+                }
+              }
+              if (input.resource._tag === "project-favicon") {
+                const project = yield* projectStore
+                  .findActiveByWorkspaceRoot(input.resource.cwd)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new AssetWorkspaceContextResolutionError({
+                          resource: input.resource,
+                          cause,
+                        }),
+                    ),
+                  );
+                if (Option.isNone(project)) {
+                  return yield* new AssetWorkspaceContextNotFoundError({
+                    resource: input.resource,
+                  });
+                }
+                // Clone projects precede their files; clients retry asset URLs after clone completion.
+                const clone = yield* projectCloneTracker.get(project.value.projectId);
+                return yield* issueAssetUrl({
+                  resource: input.resource,
+                  ...(project.value.faviconPath
+                    ? { projectFaviconPath: project.value.faviconPath }
+                    : {}),
+                  ...(clone !== null && clone.destinationPath === project.value.workspaceRoot
+                    ? { projectCheckout: clone.phase === "done" ? "cloned" : "pending" }
+                    : {}),
+                });
+              }
+              const thread = yield* threadManagement
+                .getThreadRecords(input.resource.threadId, [])
                 .pipe(
                   Effect.mapError(
                     (cause) =>
@@ -3141,26 +3677,7 @@ export const layerWsRpc = (
                       }),
                   ),
                 );
-              if (Option.isNone(project)) {
-                return yield* new AssetWorkspaceContextNotFoundError({
-                  resource: input.resource,
-                });
-              }
-              // Clone projects precede their files; clients retry asset URLs after clone completion.
-              const clone = yield* projectCloneTracker.get(project.value.projectId);
-              return yield* issueAssetUrl({
-                resource: input.resource,
-                ...(project.value.faviconPath
-                  ? { projectFaviconPath: project.value.faviconPath }
-                  : {}),
-                ...(clone !== null && clone.destinationPath === project.value.workspaceRoot
-                  ? { projectCheckout: clone.phase === "done" ? "cloned" : "pending" }
-                  : {}),
-              });
-            }
-            const thread = yield* threadManagement
-              .getThreadRecords(input.resource.threadId, [])
-              .pipe(
+              const project = yield* projectService.getById(thread.thread.projectId).pipe(
                 Effect.mapError(
                   (cause) =>
                     new AssetWorkspaceContextResolutionError({
@@ -3169,38 +3686,93 @@ export const layerWsRpc = (
                     }),
                 ),
               );
-            const project = yield* projectService.getById(thread.thread.projectId).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new AssetWorkspaceContextResolutionError({
-                    resource: input.resource,
-                    cause,
-                  }),
-              ),
-            );
-            if (Option.isNone(project)) {
-              return yield* new AssetWorkspaceContextNotFoundError({
+              if (Option.isNone(project)) {
+                return yield* new AssetWorkspaceContextNotFoundError({
+                  resource: input.resource,
+                });
+              }
+              return yield* issueAssetUrl({
                 resource: input.resource,
+                workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
               });
-            }
-            return yield* issueAssetUrl({
-              resource: input.resource,
-              workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
-            });
-          }),
+            },
+            (effect, input) =>
+              effect.pipe(
+                Effect.catchCauseIf(
+                  (cause) => disabledBuiltinCause(cause, "t3.thread", "t3.projects"),
+                  (cause) =>
+                    Effect.fail(
+                      new AssetWorkspaceContextResolutionError({
+                        resource: input.resource,
+                        cause: Cause.squash(cause),
+                      }),
+                    ),
+                ),
+              ),
+          ),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
           persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
-        [WS_METHODS.subscribeVcsBranch]: (input) => vcsStatusBroadcaster.streamBranchStatus(input),
+      });
+
+      const gitHandlers = ServerWsGitRpcGroup.of({
+        [WS_METHODS.subscribeVcsBranch]: (input) =>
+          optionalBuiltinStream(
+            pluginEnabledChanges("t3.git"),
+            "t3.git",
+            () => vcsStatusBroadcaster.streamBranchStatus(input),
+            Stream.empty,
+          ),
         [WS_METHODS.vcsRefreshBranch]: (input) =>
-          vcsStatusBroadcaster.refreshBranchStatus(input).pipe(Effect.asVoid),
-        [WS_METHODS.subscribeVcsStatus]: (input) => vcsStatusBroadcaster.streamStatus(input),
-        [WS_METHODS.subscribeWorktreeSetup]: (input) => worktreeSetupTracker.stream(input.threadId),
+          Effect.suspend(() => vcsStatusBroadcaster.refreshBranchStatus(input)).pipe(
+            Effect.asVoid,
+            Effect.catchCauseIf(
+              (cause: Cause.Cause<GitManagerServiceError>) => disabledBuiltinCause(cause, "t3.git"),
+              (cause) =>
+                Effect.fail(
+                  new GitManagerError({
+                    operation: "refreshBranchStatus",
+                    cwd: input.cwd,
+                    detail: "Source control is disabled in this environment.",
+                    cause: Cause.squash(cause),
+                  }),
+                ),
+            ),
+          ),
+        [WS_METHODS.subscribeVcsStatus]: (input) =>
+          optionalBuiltinStream(
+            pluginEnabledChanges("t3.git"),
+            "t3.git",
+            () => vcsStatusBroadcaster.streamStatus(input),
+            Stream.empty,
+          ),
+        [WS_METHODS.subscribeWorktreeSetup]: (input) =>
+          optionalBuiltinStream(
+            pluginEnabledChanges("t3.projects"),
+            "t3.projects",
+            () => worktreeSetupTracker.stream(input.threadId),
+            Stream.make(null),
+          ),
         [WS_METHODS.worktreeSetupCancel]: (input) =>
           worktreeSetupTracker
             .cancel(input.threadId)
             .pipe(Effect.map((cancelled) => ({ cancelled }))),
         [WS_METHODS.vcsRefreshStatus]: (input) =>
-          vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
+          Effect.suspend(() =>
+            vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
+          ).pipe(
+            Effect.catchCauseIf(
+              (cause: Cause.Cause<GitManagerServiceError>) => disabledBuiltinCause(cause, "t3.git"),
+              (cause) =>
+                Effect.fail(
+                  new GitManagerError({
+                    operation: "refreshStatus",
+                    cwd: input.cwd,
+                    detail: "Source control is disabled in this environment.",
+                    cause: Cause.squash(cause),
+                  }),
+                ),
+            ),
+          ),
         [WS_METHODS.vcsPull]: (input) =>
           gitWorkflow.pullCurrentBranch(input.cwd).pipe(
             Effect.matchCauseEffect({
@@ -3261,7 +3833,22 @@ export const layerWsRpc = (
           gitWorkflow
             .preparePullRequestThread(input)
             .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-        [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
+        [WS_METHODS.vcsListRefs]: (input) =>
+          Effect.suspend(() => gitWorkflow.listRefs(input)).pipe(
+            Effect.catchCauseIf(
+              (cause: Cause.Cause<GitCommandError>) => disabledBuiltinCause(cause, "t3.git"),
+              (cause) =>
+                Effect.fail(
+                  new GitCommandError({
+                    operation: "listRefs",
+                    command: "git",
+                    cwd: input.cwd,
+                    detail: "Source control is disabled in this environment.",
+                    cause: Cause.squash(cause),
+                  }),
+                ),
+            ),
+          ),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           // A project that tracks repositories gets a task folder, as its new worktree threads do.
           taskFolders.createForProjectFolder(input).pipe(
@@ -3322,6 +3909,9 @@ export const layerWsRpc = (
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
+      });
+
+      const interactiveHandlers = ServerWsInteractiveRpcGroup.of({
         [WS_METHODS.terminalOpen]: (input) =>
           prepareTerminalLaunch(input).pipe(
             Effect.flatMap((launch) =>
@@ -3368,7 +3958,13 @@ export const layerWsRpc = (
         [WS_METHODS.previewClearProfile]: (input) => serverBrowser.clearProfile(input.profileId),
         [WS_METHODS.previewReportProfiles]: (input) => reportProfiles(input),
         [WS_METHODS.previewReportStatus]: (input) => previewManager.reportStatus(input),
-        [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
+        [WS_METHODS.subscribePreviewEvents]: (_input) =>
+          optionalBuiltinStream(
+            pluginEnabledChanges("t3.preview"),
+            "t3.preview",
+            () => previewManager.events,
+            Stream.empty,
+          ),
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
@@ -3420,6 +4016,9 @@ export const layerWsRpc = (
               );
             }),
           ),
+      });
+
+      const subscriptionHandlers = ServerWsSubscriptionsRpcGroup.of({
         [WS_METHODS.subscribeServerConfig]: (input) =>
           Stream.unwrap(
             Effect.gen(function* () {
@@ -3476,7 +4075,7 @@ export const layerWsRpc = (
                   Stream.fromEffect(providerRegistry.getProviders),
                   providerRegistry.streamChanges,
                 ),
-                usageLimitSources.streamChanges.pipe(
+                (usageLimitsCommand ? usageLimitSourceChanges : Stream.make([])).pipe(
                   Stream.changesWith(
                     usageLimitsCommand ? sameUsageLimitCommandCoverage : () => true,
                   ),
@@ -3524,7 +4123,7 @@ export const layerWsRpc = (
                   : Stream.empty;
               const usageLimitSourceUpdates =
                 input.usageLimitSources === true
-                  ? usageLimitSources.streamChanges.pipe(
+                  ? usageLimitSourceChanges.pipe(
                       Stream.map((sources) => ({
                         version: 1 as const,
                         type: "usageLimitSourcesUpdated" as const,
@@ -3663,12 +4262,19 @@ export const layerWsRpc = (
             ),
           ),
       });
-      const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = handlers;
-      const otherHandlers: Pick<typeof handlers, Exclude<ServerWsRpc, SplitWsRpc>["_tag"]> =
-        handlers;
-      return Context.merge(
-        yield* SplitWsRpcGroup.toHandlers(splitHandlers),
-        yield* OtherWsRpcGroup.toHandlers(otherHandlers),
+      return Layer.mergeAll(
+        ServerWsIssuesRpcGroup.toLayer(wrapBuiltinHandlers(issueHandlers, plugins)),
+        ServerWsPluginsRpcGroup.toLayer(wrapBuiltinHandlers(pluginsHandlers, plugins)),
+        ServerWsOrchestrationRpcGroup.toLayer(wrapBuiltinHandlers(orchestrationHandlers, plugins)),
+        ServerWsScheduledTasksRpcGroup.toLayer(wrapBuiltinHandlers(scheduledTaskHandlers, plugins)),
+        ServerWsProvidersRpcGroup.toLayer(wrapBuiltinHandlers(providerHandlers, plugins)),
+        ServerWsServerRpcGroup.toLayer(wrapBuiltinHandlers(serverHandlers, plugins)),
+        ServerWsPullRequestsRpcGroup.toLayer(wrapBuiltinHandlers(pullRequestHandlers, plugins)),
+        ServerWsWorkspaceRpcGroup.toLayer(wrapBuiltinHandlers(workspaceHandlers, plugins)),
+        ServerWsGitRpcGroup.toLayer(wrapBuiltinHandlers(gitHandlers, plugins)),
+        ServerWsInteractiveRpcGroup.toLayer(wrapBuiltinHandlers(interactiveHandlers, plugins)),
+        ServerWsSubscriptionsRpcGroup.toLayer(wrapBuiltinHandlers(subscriptionHandlers, plugins)),
+        layerWsCanvasRpc,
       );
     }),
   );
@@ -3694,7 +4300,7 @@ export const layer = Layer.unwrap(
     const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
     const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
     const sql = yield* SqlClient.SqlClient;
-    return HttpRouter.add(
+    return builtinHttpRoute("t3.http")(
       "GET",
       "/ws",
       Effect.gen(function* () {
@@ -3732,8 +4338,14 @@ export const layer = Layer.unwrap(
         }
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* analytics.recordOwners(readClientOwners(request), "client");
-        const reportProfiles = yield* serverBrowser.profileReporter;
-        const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
+        // A disabled t3.preview must not fail the upgrade; the socket is how a client re-enables it.
+        const reportProfiles = yield* Effect.suspend(() => serverBrowser.profileReporter).pipe(
+          Effect.catchCauseIf(
+            (cause) => isBuiltinDisabledCause(cause, "t3.preview"),
+            () => Effect.succeed<ServerBrowser.ProfileReporter>(() => Effect.void),
+          ),
+        );
+        return yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
             Effect.provideService(RpcServer.Protocol, withOutputWindow(protocol)),
@@ -3759,7 +4371,34 @@ export const layer = Layer.unwrap(
             ),
             Effect.forkScoped,
           );
-          return httpEffect;
+          const framedHttpEffect = url.value.searchParams.has(SOCKET_FRAME_PARTS_QUERY_PARAM)
+            ? httpEffect.pipe(
+                Effect.provideService(
+                  HttpServerRequest.HttpServerRequest,
+                  // The RPC server upgrades the request itself, so its socket is
+                  // wrapped through the request it reads.
+                  Object.create(request, {
+                    upgrade: { value: Effect.map(request.upgrade, splitLargeSocketFrames) },
+                  }),
+                ),
+              )
+            : httpEffect;
+          // Keep connection-owned plugin services alive through the upgraded socket.
+          return yield* Effect.acquireUseRelease(
+            sessions.markConnected(session.sessionId),
+            () =>
+              Effect.raceFirst(
+                framedHttpEffect,
+                sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint).pipe(
+                  Effect.as(HttpServerResponse.empty()),
+                  Effect.catchTags({
+                    SessionCredentialVerificationError: (error) =>
+                      failEnvironmentInternal("internal_error", error),
+                  }),
+                ),
+              ),
+            () => sessions.markDisconnected(session.sessionId),
+          );
         }).pipe(
           Effect.provide(
             layerWsRpc(
@@ -3810,35 +4449,6 @@ export const layer = Layer.unwrap(
               ),
             ),
           ),
-        );
-        const framedRpcWebSocketHttpEffect = url.value.searchParams.has(
-          SOCKET_FRAME_PARTS_QUERY_PARAM,
-        )
-          ? rpcWebSocketHttpEffect.pipe(
-              Effect.provideService(
-                HttpServerRequest.HttpServerRequest,
-                // The RPC server upgrades the request itself, so its socket is
-                // wrapped through the request it reads.
-                Object.create(request, {
-                  upgrade: { value: Effect.map(request.upgrade, splitLargeSocketFrames) },
-                }),
-              ),
-            )
-          : rpcWebSocketHttpEffect;
-        return yield* Effect.acquireUseRelease(
-          sessions.markConnected(session.sessionId),
-          () =>
-            Effect.raceFirst(
-              framedRpcWebSocketHttpEffect,
-              sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint).pipe(
-                Effect.as(HttpServerResponse.empty()),
-                Effect.catchTags({
-                  SessionCredentialVerificationError: (error) =>
-                    failEnvironmentInternal("internal_error", error),
-                }),
-              ),
-            ),
-          () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(
         Effect.catchTags({

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { CommandId, NonNegativeInt, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -131,7 +132,7 @@ const layerBase: Layer.Layer<
   CommandReceiptStoreV2,
   never,
   OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   CommandReceiptStoreV2,
   Effect.gen(function* () {
     const receipts = yield* OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository;

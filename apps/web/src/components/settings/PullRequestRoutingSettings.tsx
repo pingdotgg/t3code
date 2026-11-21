@@ -17,6 +17,12 @@ import { toastManager } from "../ui/toast";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { useSearchableSetting } from "./settingsSearch";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PullRequestRoutingSettings = definePluginComponent(
+  "component:components/settings/PullRequestRoutingSettings/PullRequestRoutingSettings",
+  PluginOriginalPullRequestRoutingSettings,
+);
 
 const options: ReadonlyArray<{ value: PullRequestRoutingPermission; label: string }> = [
   { value: "off", label: msg("Off", { $context: "pull request routing permission" }) },
@@ -49,7 +55,7 @@ function summarizePullRequestRouting(
   return groups.length === 0 ? null : groups.join(" · ");
 }
 
-export function PullRequestRoutingSettings({
+function PluginOriginalPullRequestRoutingSettings({
   environments,
 }: {
   readonly environments: ReadonlyArray<EnvironmentPresentation>;

@@ -3,13 +3,19 @@ import { mergeProps } from "@base-ui/react/merge-props";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+const Textarea = definePluginComponent(
+  "component:components/ui/textarea/Textarea",
+  PluginOriginalTextarea,
+);
 
 type TextareaProps = React.ComponentProps<"textarea"> & {
   size?: "sm" | "default" | "lg" | number;
   unstyled?: boolean;
 };
 
-function Textarea({
+function PluginOriginalTextarea({
   className,
   size = "default",
   unstyled = false,

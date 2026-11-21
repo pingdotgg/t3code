@@ -2,11 +2,17 @@ import type { SourceControlIcon as SourceControlIconArtwork } from "@t3tools/cli
 import { useId } from "react";
 import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
 import { withUniwind } from "uniwind";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const SourceControlIcon = defineNativePluginFeature(
+  "native.features.projects.source-control-icon",
+  BuiltinSourceControlIcon,
+);
 
 const ThemedSvg = withUniwind(Svg);
 
 /** Draws a host's mark from its definition's artwork; `currentColor` follows `color`. */
-export function SourceControlIcon(props: {
+function BuiltinSourceControlIcon(props: {
   readonly icon: SourceControlIconArtwork | null;
   readonly size?: number;
   readonly color?: string;

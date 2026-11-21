@@ -1,11 +1,15 @@
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
+import {
+  builtinService,
+  builtinServiceLayer,
+  PluginBindingScope,
+} from "@t3tools/shared/pluginKernel";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -365,12 +369,17 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const environmentId = entry.target.environmentId;
           const scope = yield* Scope.fork(registryScope);
-          const supervisor = yield* EnvironmentSupervisor.make(entry, {
-            // Seed the intent to avoid publishing a false switched-off state
-            // before an enabled, compatible environment starts connecting.
-            initiallyDesired: entry.enabled && entry.unsupportedReason === undefined,
-            learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
-          }).pipe(
+          const supervisor = yield* builtinService(
+            "t3.client",
+            EnvironmentSupervisor.EnvironmentSupervisor.key,
+            EnvironmentSupervisor.make(entry, {
+              // Seed the intent to avoid publishing a false switched-off state
+              // before an enabled, compatible environment starts connecting.
+              initiallyDesired: entry.enabled && entry.unsupportedReason === undefined,
+              learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
+            }),
+          ).pipe(
+            Effect.provideService(PluginBindingScope, `environment:${environmentId}`),
             Effect.provideService(Connectivity.Connectivity, connectivity),
             Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
             Effect.provideService(ConnectionWakeups.ConnectionWakeups, wakeups),
@@ -1216,4 +1225,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(EnvironmentRegistry, make);
+export const layer = builtinServiceLayer("t3.client")(EnvironmentRegistry, make);

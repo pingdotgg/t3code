@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   type OrchestrationV2AppThread,
   OrchestrationV2ContextHandoff,
@@ -619,4 +620,4 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
 );
 
 export const layer: Layer.Layer<ContextHandoffServiceV2, never, IdAllocator.IdAllocatorV2> =
-  Layer.effect(ContextHandoffServiceV2, makeContextHandoffService());
+  builtinServiceLayer("t3.thread")(ContextHandoffServiceV2, makeContextHandoffService());

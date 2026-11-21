@@ -3,8 +3,14 @@ import { Platform, StyleSheet, View, type ColorValue } from "react-native";
 
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function GlassBackdrop(props: { readonly fallbackColor?: ColorValue }) {
+export const GlassBackdrop = defineNativePluginFeature(
+  "native.components.ui.glass-backdrop",
+  BuiltinGlassBackdrop,
+);
+
+function BuiltinGlassBackdrop(props: { readonly fallbackColor?: ColorValue }) {
   const { themeAppearance, themeVariables } = useAppearancePreferences();
   const supportsBlur = Platform.OS === "ios";
   const color = props.fallbackColor ?? themeVariables["--color-glass-fallback"];

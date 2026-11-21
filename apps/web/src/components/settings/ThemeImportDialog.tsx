@@ -25,6 +25,16 @@ import { Dialog, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../
 import { ThemeSearchSection } from "./ThemeSearchSection";
 import { msg, T, useGT } from "gt-react";
 import { m } from "../../i18n/messages";
+import { definePluginComponent } from "~/plugins/features";
+
+const ThemeJsonEditor = definePluginComponent(
+  "component:components/settings/ThemeImportDialog/ThemeJsonEditor",
+  PluginOriginalThemeJsonEditor,
+);
+export const ThemeImportDialog = definePluginComponent(
+  "component:components/settings/ThemeImportDialog/ThemeImportDialog",
+  PluginOriginalThemeImportDialog,
+);
 
 /**
  * The guard runs on the size before the bytes are ever read: a large file
@@ -90,7 +100,7 @@ function highlightJson(value: string): string {
   return highlighted + escapeJsonHtml(value.slice(cursor));
 }
 
-function ThemeJsonEditor({
+function PluginOriginalThemeJsonEditor({
   id,
   value,
   onChange,
@@ -149,7 +159,7 @@ interface ThemeImportCallbacks {
   onImportedMany: (themes: ReadonlyArray<ThemeDefinition>, context: { updated: boolean }) => void;
 }
 
-export function ThemeImportDialog({
+function PluginOriginalThemeImportDialog({
   open,
   onOpenChange,
   onImported,

@@ -3,6 +3,12 @@ import { flushSync } from "react-dom";
 
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const RedactedSensitiveText = definePluginComponent(
+  "component:components/settings/RedactedSensitiveText/RedactedSensitiveText",
+  PluginOriginalRedactedSensitiveText,
+);
 
 const REDACTED_TEXT_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 
@@ -25,7 +31,7 @@ export function redactedPlaceholder(value: string): string {
   }).join("");
 }
 
-export function RedactedSensitiveText(props: {
+function PluginOriginalRedactedSensitiveText(props: {
   readonly value: string | null | undefined;
   readonly ariaLabel: string;
   readonly revealTooltip: string;

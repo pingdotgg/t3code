@@ -1,3 +1,4 @@
+import { builtinSucceedLayer, builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -1887,13 +1888,13 @@ const make = Effect.gen(function* () {
   });
 });
 
-const layerThreadWorktreeRestoreNoop = Layer.succeed(ThreadWorktreeRestore, {
+const layerThreadWorktreeRestoreNoop = builtinSucceedLayer("t3.thread")(ThreadWorktreeRestore, {
   restore: Effect.fn("ThreadWorktreeRestore.restore")(function () {
     return Effect.void;
   }),
 });
 
-const layerLegacyV1ThreadImporterNoop = Layer.succeed(
+const layerLegacyV1ThreadImporterNoop = builtinSucceedLayer("t3.thread")(
   LegacyV1ThreadImporter.LegacyV1ThreadImporter,
   LegacyV1ThreadImporter.LegacyV1ThreadImporter.of({
     pendingThreadCount: Effect.succeed(0),
@@ -1912,7 +1913,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
-> = Layer.effect(ThreadManagementService, make).pipe(
+> = builtinServiceLayer("t3.thread")(ThreadManagementService, make).pipe(
   Layer.provide(layerLegacyV1ThreadImporterNoop),
   Layer.provide(layerThreadWorktreeRestoreNoop),
   Layer.provide(ThreadCommandExecutor.layer),
@@ -1927,4 +1928,6 @@ export const layerWithLegacyImporter: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
-> = Layer.effect(ThreadManagementService, make).pipe(Layer.provide(ThreadCommandExecutor.layer));
+> = builtinServiceLayer("t3.thread")(ThreadManagementService, make).pipe(
+  Layer.provide(ThreadCommandExecutor.layer),
+);

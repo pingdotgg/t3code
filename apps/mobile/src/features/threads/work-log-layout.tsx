@@ -3,8 +3,34 @@ import { cn } from "../../lib/cn";
 import type { ComponentProps, ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function WorkLogBlock({
+export const WorkLogBlock = defineNativePluginFeature(
+  "native.features.threads.work-log-layout.work-log-block",
+  BuiltinWorkLogBlock,
+);
+
+export const WorkLogRows = defineNativePluginFeature(
+  "native.features.threads.work-log-layout.work-log-rows",
+  BuiltinWorkLogRows,
+);
+
+export const WorkLogIconSlot = defineNativePluginFeature(
+  "native.features.threads.work-log-layout.work-log-icon-slot",
+  BuiltinWorkLogIconSlot,
+);
+
+export const WorkLogPressable = defineNativePluginFeature(
+  "native.features.threads.work-log-layout.work-log-pressable",
+  BuiltinWorkLogPressable,
+);
+
+export const WorkLogLabel = defineNativePluginFeature(
+  "native.features.threads.work-log-layout.work-log-label",
+  BuiltinWorkLogLabel,
+);
+
+function BuiltinWorkLogBlock({
   children,
   layout = "standalone",
   continues = false,
@@ -20,15 +46,15 @@ export function WorkLogBlock({
   );
 }
 
-export function WorkLogRows({ children }: { children: ReactNode }) {
+function BuiltinWorkLogRows({ children }: { children: ReactNode }) {
   return <View className="gap-px">{children}</View>;
 }
 
-export function WorkLogIconSlot({ children }: { children: ReactNode }) {
+function BuiltinWorkLogIconSlot({ children }: { children: ReactNode }) {
   return <View className="relative h-6 w-6 shrink-0 items-center justify-center">{children}</View>;
 }
 
-export function WorkLogPressable({
+function BuiltinWorkLogPressable({
   children,
   rowSizing,
   ...props
@@ -48,7 +74,7 @@ export function WorkLogPressable({
   );
 }
 
-export function WorkLogLabel({
+function BuiltinWorkLogLabel({
   children,
   tone = "default",
 }: {

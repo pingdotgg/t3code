@@ -34,6 +34,20 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
+  it("shows the auto-compaction threshold for Claude providers", () => {
+    const claude = providerClients.get(ProviderDriverKind.make("claudeAgent"));
+    expect(claude).toBeDefined();
+
+    expect(deriveProviderSettingsFields(claude!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "homePath",
+      "autoCompactWindow",
+      "idleCompaction",
+      "pluginDirectories",
+      "launchArgs",
+    ]);
+  });
+
   it("preserves unknown config keys while omitting empty configurable fields", () => {
     const opencode = providerClients.get(ProviderDriverKind.make("opencode"));
     expect(opencode).toBeDefined();

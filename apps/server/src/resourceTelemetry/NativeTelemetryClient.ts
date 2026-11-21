@@ -1,3 +1,4 @@
+import { builtinServiceLayer, builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import type {
   HostPowerSnapshot,
   ResourceMonitorCapabilities,
@@ -1060,7 +1061,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
   });
 });
 
-export const layer = Layer.effect(NativeTelemetryClient, make());
+export const layer = builtinServiceLayer("t3.server")(NativeTelemetryClient, make());
 
 export const layerTest = (
   overrides: Partial<NativeTelemetryClient["Service"]> = {},
@@ -1075,7 +1076,7 @@ export const layerTest = (
       restartCount: 0,
       sampleIntervalMs: IDLE_SAMPLE_INTERVAL_MS,
     });
-  return Layer.succeed(
+  return builtinSucceedLayer("t3.server")(
     NativeTelemetryClient,
     NativeTelemetryClient.of({
       capabilities: Effect.succeed({

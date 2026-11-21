@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   defaultInstanceIdForDriver,
   isProviderWorkspaceSnapshotCurrent,
@@ -17,7 +18,6 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -436,7 +436,7 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   streamChanges: instance.snapshot.streamChanges,
 });
 
-export const layer = Layer.effect(
+export const layer = builtinServiceLayer("t3.server")(
   ProviderRegistry,
   Effect.gen(function* () {
     const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;

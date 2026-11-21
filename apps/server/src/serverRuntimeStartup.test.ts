@@ -9,6 +9,7 @@ import {
   EnvironmentId,
   type ServerLifecycleStreamEvent,
 } from "@t3tools/contracts";
+import { PluginKernel, layerWithEnabled } from "@t3tools/shared/pluginKernel";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { HttpServer } from "effect/http";
@@ -46,6 +47,28 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+
+it.effect("starts and stops feature workers only while their plugin is enabled", () =>
+  Effect.gen(function* () {
+    const kernel = yield* PluginKernel;
+    const calls = yield* Ref.make<ReadonlyArray<string>>([]);
+    yield* ServerRuntimeStartup.runPluginStartup(
+      "t3.thread",
+      "test/thread-startup",
+      Effect.gen(function* () {
+        yield* Ref.update(calls, (values) => [...values, "start"]);
+        yield* Effect.addFinalizer(() => Ref.update(calls, (values) => [...values, "stop"]));
+      }),
+    );
+    assert.deepEqual(yield* Ref.get(calls), []);
+    yield* kernel.setEnabled("t3.thread", true);
+    assert.deepEqual(yield* Ref.get(calls), ["start"]);
+    yield* kernel.setEnabled("t3.thread", false);
+    assert.deepEqual(yield* Ref.get(calls), ["start", "stop"]);
+    yield* kernel.setEnabled("t3.thread", true);
+    assert.deepEqual(yield* Ref.get(calls), ["start", "stop", "start"]);
+  }).pipe(Effect.scoped, Effect.provide(layerWithEnabled({ "t3.thread": false }))),
+);
 
 it.effect.each([
   "disabled-codex",

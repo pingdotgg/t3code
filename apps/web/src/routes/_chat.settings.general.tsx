@@ -1,4 +1,6 @@
+import { registerBuiltinRoute, definePluginRouteRenderer } from "~/plugins/routing";
 import { createFileRoute } from "@tanstack/react-router";
+import { definePluginFeature } from "~/plugins/features";
 
 import { GeneralSettingsPanel } from "../components/settings/SettingsPanels";
 
@@ -7,5 +9,11 @@ function SettingsGeneralRoute() {
 }
 
 export const Route = createFileRoute("/_chat/settings/general")({
-  component: SettingsGeneralRoute,
+  component: definePluginRouteRenderer(
+    "/settings/general",
+    "component",
+    definePluginFeature("settings.general", SettingsGeneralRoute),
+  ),
 });
+
+registerBuiltinRoute("/settings/general", Route);

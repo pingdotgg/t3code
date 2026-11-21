@@ -2,8 +2,14 @@ import { useGT } from "gt-react";
 import { type CSSProperties, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
+export const PanelAnimationsPreview = definePluginComponent(
+  "component:components/settings/PanelAnimationsPreview/PanelAnimationsPreview",
+  PluginOriginalPanelAnimationsPreview,
+);
+
+function PluginOriginalPanelAnimationsPreview({ durationMs }: { durationMs: number }) {
   const gt = useGT();
   const [panelsOpen, setPanelsOpen] = useState(true);
   const transitionClass =

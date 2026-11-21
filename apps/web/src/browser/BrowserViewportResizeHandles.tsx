@@ -12,6 +12,16 @@ import {
   type BrowserViewportLayout,
   type BrowserViewportResizeDirection,
 } from "./browserViewportLayout";
+import { definePluginComponent } from "~/plugins/features";
+
+const ResizeHandle = definePluginComponent(
+  "component:browser/BrowserViewportResizeHandles/ResizeHandle",
+  PluginOriginalResizeHandle,
+);
+export const BrowserViewportResizeHandles = definePluginComponent(
+  "component:browser/BrowserViewportResizeHandles/BrowserViewportResizeHandles",
+  PluginOriginalBrowserViewportResizeHandles,
+);
 
 interface Props {
   readonly layout: BrowserViewportLayout;
@@ -33,7 +43,7 @@ const EDGE_BUTTON_CLASS =
 const EDGE_GRIP_CLASS =
   "pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center text-muted-foreground/55 transition-colors duration-150 group-hover:text-foreground/85 group-focus-visible:text-foreground group-active:text-foreground";
 
-function ResizeHandle(props: {
+function PluginOriginalResizeHandle(props: {
   readonly direction: BrowserViewportResizeDirection;
   readonly label: string;
   readonly kind: HandleKind;
@@ -98,7 +108,7 @@ function ResizeHandle(props: {
   );
 }
 
-export function BrowserViewportResizeHandles({
+function PluginOriginalBrowserViewportResizeHandles({
   layout,
   activeDirection,
   onPointerDown,

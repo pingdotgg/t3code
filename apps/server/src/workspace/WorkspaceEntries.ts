@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 
@@ -617,7 +618,7 @@ export const make = Effect.gen(function* () {
   return WorkspaceEntries.of({ browse, list, listIgnoredFiles, refresh, search, searchContents });
 });
 
-export const layer = Layer.effect(WorkspaceEntries, make).pipe(
+export const layer = builtinServiceLayer("t3.projects")(WorkspaceEntries, make).pipe(
   Layer.provide(WorkspaceSearchIndex.WorkspaceSearchIndexMap.layer),
   Layer.provide(VcsProcess.layer),
 );

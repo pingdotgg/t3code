@@ -1,6 +1,9 @@
+import { registerBuiltinRoute, definePluginRouteRenderer } from "~/plugins/routing";
 import { createFileRoute } from "@tanstack/react-router";
 
 // The _chat layout owns ChatView so draft promotion keeps it mounted.
 export const Route = createFileRoute("/_chat/draft/$draftId")({
-  component: () => null,
+  component: definePluginRouteRenderer("/_chat/draft/$draftId", "component", () => null),
 });
+
+registerBuiltinRoute("/_chat/draft/$draftId", Route);

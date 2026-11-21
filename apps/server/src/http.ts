@@ -1,4 +1,6 @@
 import * as Mime from "effect/http/Mime";
+import * as NodeZlib from "node:zlib";
+import * as NodeStream from "@effect/platform-node/NodeStream";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -28,10 +30,12 @@ import {
   HttpServerRequest,
   HttpServerRespondable,
 } from "effect/http";
-import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
+import { builtinHttpRoute, builtinHttpApiGroup } from "./plugins/httpComposition.ts";
+import { builtinSucceedLayer } from "./plugins/PluginKernel.ts";
 import * as ServerConfig from "./config.ts";
+import * as CanvasService from "./canvas/CanvasService.ts";
 import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
 import { sourceControlMediaResponse } from "./assets/sourceControlMediaResponse.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
@@ -48,6 +52,7 @@ import {
   failEnvironmentScopeRequired,
   failEnvironmentAuthInvalid,
   failEnvironmentInternal,
+  requireEnvironmentScope,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import {
@@ -318,7 +323,7 @@ function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
   return redirectUrl.toString();
 }
 
-const authenticateRawRouteWithScope =
+export const authenticateRawRouteWithScope =
   /* Request instrumentation already owns the span; keep this helper in that context. */
   Effect.fnUntraced(function* (
     scope: typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope,
@@ -341,7 +346,7 @@ const authenticateRawRouteWithScope =
     }
   });
 
-export const layerServerEnvironmentHttpApi = HttpApiBuilder.group(
+export const layerServerEnvironmentHttpApi = builtinHttpApiGroup("t3.http")(
   EnvironmentHttpApi,
   "metadata",
   Effect.fnUntraced(function* (handlers) {
@@ -362,7 +367,7 @@ class DecodeOtlpTraceRecordsError extends Schema.TaggedError<DecodeOtlpTraceReco
 ) {}
 
 // Tracing once-per-second renderer exports would create more spans than it forwards.
-export const layerOtlpTracesProxyRoute = HttpRouter.add(
+export const layerOtlpTracesProxyRoute = builtinHttpRoute("t3.http")(
   "POST",
   OTLP_TRACES_PROXY_PATH,
   Effect.gen(function* () {
@@ -419,12 +424,14 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
 const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);
 
 // HttpRouter.serve builds routes privately; provide the server-wide TracerDisabledWhen to the served layer.
-const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
-  const queryIndex = request.url.indexOf("?");
-  return UNTRACED_REQUEST_PATHS.has(
-    queryIndex === -1 ? request.url : request.url.slice(0, queryIndex),
-  );
-});
+const layerUntracedRequests = builtinSucceedLayer("t3.server")(HttpMiddleware.TracerDisabledWhen)(
+  (request) => {
+    const queryIndex = request.url.indexOf("?");
+    return UNTRACED_REQUEST_PATHS.has(
+      queryIndex === -1 ? request.url : request.url.slice(0, queryIndex),
+    );
+  },
+);
 
 // Signed URLs carry their bearer token in the path; spans and request logs record it as REDACTED.
 const SIGNED_URL_ROUTE_OPTIONS = { redactedParams: ["*"] };
@@ -443,7 +450,7 @@ export const withRootRequestSpans = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
     ),
   );
 
-export const layerAssetRoute = HttpRouter.add(
+export const layerAssetRoute = builtinHttpRoute("t3.http")(
   "GET",
   `${ASSET_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
@@ -502,7 +509,50 @@ export const layerAssetRoute = HttpRouter.add(
   SIGNED_URL_ROUTE_OPTIONS,
 );
 
-export const layerAttachmentUploadRoute = HttpRouter.add(
+// Keep the route installed while its plugin is disabled so uploads get an actionable response.
+export const layerCanvasAvailability = HttpRouter.middleware(
+  (httpEffect) =>
+    httpEffect.pipe(
+      Effect.catchDefect((defect) =>
+        CanvasService.isCanvasDisabled(defect)
+          ? Effect.succeed(
+              HttpServerResponse.jsonUnsafe(
+                { error: "canvas_disabled", message: "Canvas is disabled in this environment." },
+                { status: 503, headers: { "cache-control": "no-store" } },
+              ),
+            )
+          : Effect.die(defect),
+      ),
+    ),
+  { global: true },
+);
+
+export const canvasHttpApiLayer = builtinHttpApiGroup("t3.http")(
+  EnvironmentHttpApi,
+  "canvas",
+  Effect.fnUntraced(function* (handlers) {
+    const canvas = yield* CanvasService.CanvasService;
+    return handlers.handleRaw(
+      "import",
+      Effect.fn("environment.canvas.import")(function* (args) {
+        yield* annotateEnvironmentRequest(args.endpoint.name);
+        yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+        const body =
+          args.headers["content-encoding"] === "gzip"
+            ? args.request.stream.pipe(NodeStream.pipeThroughSimple(() => NodeZlib.createGunzip()))
+            : args.request.stream;
+        const bodyPull = yield* Stream.toPull(body);
+        const { document, warnings } = yield* canvas.importUpload({
+          ...args.query,
+          body: Stream.fromPull(Effect.succeed(bodyPull)),
+        });
+        return { ...CanvasService.summarizeCanvasDocument(document), warnings };
+      }),
+    );
+  }),
+);
+
+export const layerAttachmentUploadRoute = builtinHttpRoute("t3.http")(
   "POST",
   `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
@@ -774,6 +824,8 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
 
 export const layerStaticAndDevRoute = Layer.unwrap(
   loadImmutableBuildAssets.pipe(
-    Effect.map((assets) => HttpRouter.add("GET", "*", handleStaticAndDevRequest(assets))),
+    Effect.map((assets) =>
+      builtinHttpRoute("t3.http")("GET", "*", handleStaticAndDevRequest(assets)),
+    ),
   ),
 );

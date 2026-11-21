@@ -7,10 +7,16 @@ import { createCanvasFrameSink } from "@t3tools/client-runtime/device/frame";
 import type { DeviceScreenSize, DeviceStreamClient } from "@t3tools/client-runtime/device/stream";
 import { createDuoPinch } from "@t3tools/client-runtime/device/duo-control";
 import { mountDeviceViewer } from "./mountDeviceViewer";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DeviceDuoViewport = definePluginComponent(
+  "component:components/device/DeviceDuoViewport/DeviceDuoViewport",
+  PluginOriginalDeviceDuoViewport,
+);
 
 const loadDuoViewer = () => import("@t3tools/client-runtime/device/duo-viewer");
 
-export function DeviceDuoViewport(props: {
+function PluginOriginalDeviceDuoViewport(props: {
   readonly model: DeviceModelSource;
   readonly source: HTMLCanvasElement;
   readonly onFrameListener: (listener: (() => void) | null) => void;

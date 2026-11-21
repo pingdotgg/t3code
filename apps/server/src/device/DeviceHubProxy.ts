@@ -10,7 +10,6 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpMethod,
-  HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
@@ -18,6 +17,7 @@ import * as Socket from "effect/socket/Socket";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
+import { builtinHttpRoute } from "../plugins/httpComposition.ts";
 import { authenticateMediaRequest, failEnvironmentInternal } from "../auth/http.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as DeviceService from "./DeviceService.ts";
@@ -259,4 +259,8 @@ const handler = Effect.gen(function* () {
   return yield* proxyHttp(request, upstreamUrl, invalidated, routed?.headers);
 });
 
-export const layer = HttpRouter.add("*", `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`, handler);
+export const layer = builtinHttpRoute("t3.http")(
+  "*",
+  `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`,
+  handler,
+);

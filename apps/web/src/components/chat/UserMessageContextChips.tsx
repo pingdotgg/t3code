@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { msg, T, useGT, useMessages } from "gt-react";
 import type { MessageResolver } from "~/i18n/messages";
 import { useNativeFileDrag } from "../../useNativeFileDrag";
@@ -70,7 +71,7 @@ import {
 import { TimelineRowCtx } from "./timelineRowContext";
 import { userMessageFileLabel } from "./TimelineUserMessageRow.logic";
 
-function UserMessageMentionChip(props: {
+function PluginOriginalUserMessageMentionChip(props: {
   record: Extract<KnownComposerContextRecord, { kind: "mention" }>;
   copyMarkdown: string;
 }) {
@@ -115,7 +116,7 @@ function UserMessageMentionChip(props: {
   );
 }
 
-function UserMessageSkillChip(props: {
+function PluginOriginalUserMessageSkillChip(props: {
   record: Extract<KnownComposerContextRecord, { kind: "skill" }>;
   copyMarkdown: string;
 }) {
@@ -131,7 +132,7 @@ function UserMessageSkillChip(props: {
   );
 }
 
-function UserMessagePullRequestContextChip(props: {
+function PluginOriginalUserMessagePullRequestContextChip(props: {
   record: Extract<KnownComposerContextRecord, { kind: "review-comment" }>;
   copyMarkdown: string;
   kind: ContextChipKind;
@@ -153,7 +154,7 @@ function UserMessagePullRequestContextChip(props: {
   );
 }
 
-function UserMessagePreviewAnnotationDetails(props: {
+function PluginOriginalUserMessagePreviewAnnotationDetails(props: {
   record: Extract<KnownComposerContextRecord, { kind: "preview-annotation" }>;
   image: ChatImageAttachment | null;
 }) {
@@ -239,7 +240,7 @@ function UserMessagePreviewAnnotationDetails(props: {
   );
 }
 
-function UserMessageElementDetails({
+function PluginOriginalUserMessageElementDetails({
   record,
 }: {
   record: Extract<KnownComposerContextRecord, { kind: "element" }>;
@@ -292,7 +293,7 @@ interface UserMessageContextRenderContext {
   m: MessageResolver;
 }
 
-function UnavailableUserMessageContextChip(props: UserMessageContextRenderContext) {
+function PluginOriginalUnavailableUserMessageContextChip(props: UserMessageContextRenderContext) {
   return (
     <UnresolvedChip
       label={props.reference.label}
@@ -557,7 +558,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
   fallback: (_kind, _record, context) => <UnavailableUserMessageContextChip {...context} />,
 });
 
-export function UserMessageContextReferenceChip(props: {
+function PluginOriginalUserMessageContextReferenceChip(props: {
   reference: ChatMarkdownContextReference;
   record: KnownComposerContextRecord | undefined;
   annotationImage: ChatImageAttachment | null;
@@ -587,7 +588,11 @@ export function UserMessageContextReferenceChip(props: {
   });
 }
 
-function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentContext }) {
+function PluginOriginalUserMessageReviewCommentCard({
+  comment,
+}: {
+  comment: ReviewCommentContext;
+}) {
   const m = useMessages();
   const renderedAppearance = useRenderedAppearance();
   const ctx = use(TimelineRowCtx);
@@ -655,3 +660,43 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
     </div>
   );
 }
+
+const UserMessageMentionChip = definePluginComponent(
+  "component:components/chat/UserMessageContextChips/UserMessageMentionChip",
+  PluginOriginalUserMessageMentionChip,
+);
+
+const UserMessageSkillChip = definePluginComponent(
+  "component:components/chat/UserMessageContextChips/UserMessageSkillChip",
+  PluginOriginalUserMessageSkillChip,
+);
+
+const UserMessagePullRequestContextChip = definePluginComponent(
+  "component:components/chat/UserMessageContextChips/UserMessagePullRequestContextChip",
+  PluginOriginalUserMessagePullRequestContextChip,
+);
+
+const UserMessagePreviewAnnotationDetails = definePluginComponent(
+  "component:components/chat/UserMessageContextChips/UserMessagePreviewAnnotationDetails",
+  PluginOriginalUserMessagePreviewAnnotationDetails,
+);
+
+const UserMessageElementDetails = definePluginComponent(
+  "component:components/chat/UserMessageContextChips/UserMessageElementDetails",
+  PluginOriginalUserMessageElementDetails,
+);
+
+const UnavailableUserMessageContextChip = definePluginComponent(
+  "component:components/chat/UserMessageContextChips/UnavailableUserMessageContextChip",
+  PluginOriginalUnavailableUserMessageContextChip,
+);
+
+export const UserMessageContextReferenceChip = definePluginComponent(
+  "component:components/chat/UserMessageContextChips/UserMessageContextReferenceChip",
+  PluginOriginalUserMessageContextReferenceChip,
+);
+
+const UserMessageReviewCommentCard = definePluginComponent(
+  "component:components/chat/UserMessageContextChips/UserMessageReviewCommentCard",
+  PluginOriginalUserMessageReviewCommentCard,
+);

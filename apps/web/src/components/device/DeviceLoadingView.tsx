@@ -3,8 +3,14 @@ import type { ReactNode } from "react";
 import { Smartphone } from "lucide-react";
 
 import { Spinner } from "~/components/ui/spinner";
+import { definePluginComponent } from "~/plugins/features";
 
-export function DeviceLoadingView(props: {
+export const DeviceLoadingView = definePluginComponent(
+  "component:components/device/DeviceLoadingView/DeviceLoadingView",
+  PluginOriginalDeviceLoadingView,
+);
+
+function PluginOriginalDeviceLoadingView(props: {
   readonly name: string;
   readonly description?: string;
   readonly stage: "opening" | "stream";

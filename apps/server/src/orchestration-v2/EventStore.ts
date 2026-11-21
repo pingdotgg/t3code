@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   type ApplicationProjectEvent,
   type ApplicationStoredEvent,
@@ -77,7 +78,7 @@ export class EventStoreV2 extends Context.Service<EventStoreV2, EventStoreV2Shap
 ) {}
 
 const layerBase: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.OrchestrationEventStore> =
-  Layer.effect(
+  builtinServiceLayer("t3.thread")(
     EventStoreV2,
     Effect.gen(function* () {
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;

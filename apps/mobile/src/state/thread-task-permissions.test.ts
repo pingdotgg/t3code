@@ -80,6 +80,9 @@ const state = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("../plugins/features", () => ({
+  defineNativePluginFeature: <Feature>(_slot: string, builtin: Feature) => builtin,
+}));
 vi.mock("react", () => ({
   useCallback: <A>(callback: A) => callback,
   useEffect: () => {},

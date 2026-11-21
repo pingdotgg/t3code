@@ -8,6 +8,12 @@ import {
 } from "./desktopUpdate.logic";
 import { m } from "../i18n/messages";
 import { toastManager } from "./ui/toast";
+import { definePluginComponent } from "~/plugins/features";
+
+const ReleaseNotesLink = definePluginComponent(
+  "component:components/desktopUpdate.toast/ReleaseNotesLink",
+  PluginOriginalReleaseNotesLink,
+);
 
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
 
@@ -21,7 +27,7 @@ export async function openDesktopUpdateReleaseNotes(
   toastManager.add({ type: "error", title: m(msg("Unable to open release notes")) });
 }
 
-function ReleaseNotesLink({
+function PluginOriginalReleaseNotesLink({
   shell,
   releaseUrl,
 }: {

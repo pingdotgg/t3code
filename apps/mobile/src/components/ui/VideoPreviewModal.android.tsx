@@ -21,6 +21,24 @@ import { usePreparedConnection } from "../../state/session";
 import { AppText } from "./AppText";
 import { MediaPreviewHeader } from "../MediaPreviewHeader";
 import { MediaVideoPlayer } from "../MediaVideoPlayer";
+import { defineNativePluginFeature } from "../../plugins/features";
+const MediaPreviewModal = defineNativePluginFeature(
+  "native.components.ui.video-preview-modal.media-preview-modal",
+  BuiltinMediaPreviewModal,
+);
+const LocalPreviewModal = defineNativePluginFeature(
+  "native.components.ui.video-preview-modal.local-preview-modal",
+  BuiltinLocalPreviewModal,
+);
+const OpenVideoPreviewModal = defineNativePluginFeature(
+  "native.components.ui.video-preview-modal.open-video-preview-modal",
+  BuiltinOpenVideoPreviewModal,
+);
+
+export const VideoPreviewModal = defineNativePluginFeature(
+  "native.components.ui.video-preview-modal",
+  BuiltinVideoPreviewModal,
+);
 
 export type { VideoPreviewSource } from "../../lib/videoPreviewSource";
 
@@ -77,7 +95,7 @@ function useLocalPlayback(source: LocalVideoPreviewSource): PlaybackState {
   };
 }
 
-function MediaPreviewModal(props: {
+function BuiltinMediaPreviewModal(props: {
   readonly source: MediaVideoPreviewSource;
   readonly onRequestClose: () => void;
 }) {
@@ -91,7 +109,7 @@ function MediaPreviewModal(props: {
   );
 }
 
-function LocalPreviewModal(props: {
+function BuiltinLocalPreviewModal(props: {
   readonly source: LocalVideoPreviewSource;
   readonly onRequestClose: () => void;
 }) {
@@ -105,7 +123,7 @@ function LocalPreviewModal(props: {
   );
 }
 
-function OpenVideoPreviewModal(props: {
+function BuiltinOpenVideoPreviewModal(props: {
   readonly name: string;
   readonly thumbnailKey: string;
   readonly playback: PlaybackState;
@@ -176,7 +194,7 @@ function OpenVideoPreviewModal(props: {
   );
 }
 
-export function VideoPreviewModal(props: {
+function BuiltinVideoPreviewModal(props: {
   readonly source: VideoPreviewSource | null;
   readonly onRequestClose: () => void;
 }) {

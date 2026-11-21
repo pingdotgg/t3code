@@ -88,7 +88,8 @@ export type T3McpToolSummaryAction =
   | "device"
   | "html-preview"
   | "html-render"
-  | "send-to-user";
+  | "send-to-user"
+  | "canvas";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -350,6 +351,17 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "device",
   ),
   device_close: tool(["Close", "Closing", "Closed", "a device"], "device", "device"),
+  canvas_list: tool(["List", "Listing", "Listed", "canvases"], "canvas"),
+  canvas_create: tool(["Create", "Creating", "Created", "a canvas"], "canvas"),
+  canvas_read: tool(["Read", "Reading", "Read", "a canvas"], "canvas"),
+  canvas_apply: tool(["Edit", "Editing", "Edited", "a canvas"], "canvas"),
+  canvas_screenshot: tool(
+    ["Take a screenshot of", "Taking a screenshot of", "Took a screenshot of", "a canvas"],
+    "canvas",
+  ),
+  canvas_export: tool(["Export", "Exporting", "Exported", "a canvas to HTML"], "canvas"),
+  canvas_open: tool(["Open", "Opening", "Opened", "a canvas in the Canvas panel"], "canvas"),
+  canvas_render: tool(["Show", "Showing", "Showed", "a canvas snapshot"], "canvas"),
   run_scheduled_task_now: tool(
     ["Run", "Running", "Requested a run of", "a scheduled task"],
     "schedule-run",

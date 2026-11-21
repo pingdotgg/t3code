@@ -13,10 +13,11 @@ import {
   ScreenScrollViewBottomInset,
   ScreenScrollViewSurface,
 } from "../../../components/ui/ScreenScrollView";
+import { defineNativePluginFeature } from "../../../plugins/features";
 
 export { SettingsScreenContent };
 
-export function SettingsScreen(
+function BuiltinSettingsScreen(
   props: Pick<
     AppBarProps,
     "title" | "actions" | "refresh" | "trailing" | "search" | "menus" | "guardBack"
@@ -57,3 +58,8 @@ export function SettingsScreen(
     </View>
   );
 }
+
+export const SettingsScreen = defineNativePluginFeature(
+  "native.features.settings.components.settings-screen",
+  BuiltinSettingsScreen,
+);

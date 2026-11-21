@@ -2,7 +2,6 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -22,6 +21,7 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 
 export class DesktopLifecycleRelaunchError extends Schema.TaggedError<DesktopLifecycleRelaunchError>()(
   "DesktopLifecycleRelaunchError",
@@ -351,4 +351,4 @@ export const make = DesktopLifecycle.of({
   }).pipe(Effect.withSpan("desktop.lifecycle.register")),
 });
 
-export const layer = Layer.succeed(DesktopLifecycle, make);
+export const layer = builtinSucceedLayer("t3.desktop.desktop-lifecycle", DesktopLifecycle, make);

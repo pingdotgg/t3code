@@ -65,6 +65,68 @@ import {
   visibleResourceTelemetryProcesses,
 } from "./ResourceTelemetryDiagnostics.logic";
 import { SettingsSection } from "./settingsLayout";
+import { definePluginComponent } from "~/plugins/features";
+
+const SourceStatusBadge = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/SourceStatusBadge",
+  PluginOriginalSourceStatusBadge,
+);
+const LastSampleLabel = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/LastSampleLabel",
+  PluginOriginalLastSampleLabel,
+);
+const IconStat = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/IconStat",
+  PluginOriginalIconStat,
+);
+const AggregateCard = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/AggregateCard",
+  PluginOriginalAggregateCard,
+);
+const MetricPair = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/MetricPair",
+  PluginOriginalMetricPair,
+);
+const HealthSource = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/HealthSource",
+  PluginOriginalHealthSource,
+);
+const DetailRow = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/DetailRow",
+  PluginOriginalDetailRow,
+);
+const HistoryWindowSelector = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/HistoryWindowSelector",
+  PluginOriginalHistoryWindowSelector,
+);
+const ResourceHistoryChart = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/ResourceHistoryChart",
+  PluginOriginalResourceHistoryChart,
+);
+const ProcessTreeName = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/ProcessTreeName",
+  PluginOriginalProcessTreeName,
+);
+const ProcessActions = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/ProcessActions",
+  PluginOriginalProcessActions,
+);
+const ProcessTable = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/ProcessTable",
+  PluginOriginalProcessTable,
+);
+const HistoryProcessTable = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/HistoryProcessTable",
+  PluginOriginalHistoryProcessTable,
+);
+const AttributionTable = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/AttributionTable",
+  PluginOriginalAttributionTable,
+);
+export const ResourceTelemetryDiagnostics = definePluginComponent(
+  "component:components/settings/ResourceTelemetryDiagnostics/ResourceTelemetryDiagnostics",
+  PluginOriginalResourceTelemetryDiagnostics,
+);
 
 const HISTORY_WINDOWS = [
   { label: "5m", windowMs: 5 * 60_000, bucketMs: 15_000 },
@@ -157,7 +219,7 @@ function sourceStatusTone(status: ResourceTelemetrySourceStatus): "default" | "w
   return "danger";
 }
 
-function SourceStatusBadge({
+function PluginOriginalSourceStatusBadge({
   label,
   status,
   presentation,
@@ -196,7 +258,7 @@ function SourceStatusBadge({
   );
 }
 
-function LastSampleLabel({ sampledAt }: { sampledAt: DateTime.Utc | null }) {
+function PluginOriginalLastSampleLabel({ sampledAt }: { sampledAt: DateTime.Utc | null }) {
   const relative = useRelativeTimeState(sampledAt ? DateTime.formatIso(sampledAt) : null);
   if (relative.status !== "relative") {
     return (
@@ -227,7 +289,7 @@ function LastSampleLabel({ sampledAt }: { sampledAt: DateTime.Utc | null }) {
   );
 }
 
-function IconStat({
+function PluginOriginalIconStat({
   icon,
   label,
   value,
@@ -264,7 +326,7 @@ function IconStat({
   );
 }
 
-function AggregateCard({
+function PluginOriginalAggregateCard({
   label,
   accentClass,
   aggregate,
@@ -295,7 +357,7 @@ function AggregateCard({
   );
 }
 
-function MetricPair({ label, value }: { label: string; value: string }) {
+function PluginOriginalMetricPair({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <div className="text-3xs font-semibold uppercase tracking-widest text-muted-foreground/45">
@@ -308,7 +370,13 @@ function MetricPair({ label, value }: { label: string; value: string }) {
   );
 }
 
-function HealthSource({ label, health }: { label: string; health: ResourceTelemetrySourceHealth }) {
+function PluginOriginalHealthSource({
+  label,
+  health,
+}: {
+  label: string;
+  health: ResourceTelemetrySourceHealth;
+}) {
   const gt = useGT();
   const expectedInBrowser =
     health.status === "unavailable" &&
@@ -342,7 +410,7 @@ function HealthSource({ label, health }: { label: string; health: ResourceTeleme
   );
 }
 
-function DetailRow({
+function PluginOriginalDetailRow({
   label,
   value,
   valueClassName,
@@ -366,7 +434,7 @@ function DetailRow({
   );
 }
 
-function HistoryWindowSelector({
+function PluginOriginalHistoryWindowSelector({
   selectedWindowMs,
   onSelect,
 }: {
@@ -393,7 +461,7 @@ function HistoryWindowSelector({
   );
 }
 
-function ResourceHistoryChart({
+function PluginOriginalResourceHistoryChart({
   buckets,
 }: {
   buckets: ReadonlyArray<ResourceTelemetryHistoryBucket>;
@@ -472,7 +540,7 @@ function ResourceHistoryChart({
   );
 }
 
-function ProcessTreeName({
+function PluginOriginalProcessTreeName({
   process,
   collapsed,
   onToggle,
@@ -526,7 +594,7 @@ function canSignalProcess(process: ResourceTelemetryProcess): boolean {
   );
 }
 
-function ProcessActions({
+function PluginOriginalProcessActions({
   process,
   canMaintainEnvironment,
   signalingKeys,
@@ -549,7 +617,7 @@ function ProcessActions({
   );
 }
 
-function ProcessTable({
+function PluginOriginalProcessTable({
   processes,
   canMaintainEnvironment,
   signalingKeys,
@@ -701,7 +769,7 @@ function ProcessTable({
   );
 }
 
-function HistoryProcessTable({
+function PluginOriginalHistoryProcessTable({
   processes,
 }: {
   processes: ReadonlyArray<ResourceTelemetryProcessSummary>;
@@ -815,7 +883,11 @@ function HistoryProcessTable({
   );
 }
 
-function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttributionEntry> }) {
+function PluginOriginalAttributionTable({
+  entries,
+}: {
+  entries: ReadonlyArray<ResourceAttributionEntry>;
+}) {
   return (
     <div className="overflow-x-auto border-t border-border/60">
       <table className="w-full min-w-[720px] table-fixed text-left text-xs">
@@ -881,7 +953,7 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
   );
 }
 
-export function ResourceTelemetryDiagnostics({
+function PluginOriginalResourceTelemetryDiagnostics({
   environmentId,
 }: {
   environmentId: EnvironmentId | null;

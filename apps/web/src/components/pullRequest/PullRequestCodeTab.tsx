@@ -155,8 +155,14 @@ import {
   usePullRequestReviewStore,
   type PendingReviewComment,
 } from "./pullRequestReviewStore";
+import { definePluginComponent } from "~/plugins/features";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
+
+const PullRequestCodeTab = definePluginComponent(
+  "component:components/pullRequest/PullRequestCodeTab/PullRequestCodeTab",
+  PluginOriginalPullRequestCodeTab,
+);
 
 interface ReviewAnnotationGroup {
   readonly threads: ReadonlyArray<PullRequestReviewThread>;
@@ -409,7 +415,7 @@ function isRemovedLine(fileDiff: FileDiffMetadata, oldLine: number): boolean {
   });
 }
 
-function PullRequestCodeTab({
+function PluginOriginalPullRequestCodeTab({
   scrollerRef,
   environmentId,
   reference,

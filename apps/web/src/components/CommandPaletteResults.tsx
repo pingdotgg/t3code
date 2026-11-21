@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { startPaletteThreadDrag } from "./CommandPalette.drag";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
@@ -37,7 +38,10 @@ interface CommandPaletteResultsProps {
   onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
 }
 
-function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActionsOnly: boolean }) {
+function PluginOriginalCommandPaletteEmptyState(props: {
+  emptyStateMessage?: string;
+  isActionsOnly: boolean;
+}) {
   return (
     <div className="py-10 text-center text-sm text-muted-foreground">
       {props.emptyStateMessage ??
@@ -50,7 +54,7 @@ function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActions
   );
 }
 
-export function CommandPaletteResults(props: CommandPaletteResultsProps) {
+function PluginOriginalCommandPaletteResults(props: CommandPaletteResultsProps) {
   if (props.groups.length === 0) {
     return <CommandPaletteEmptyState {...props} />;
   }
@@ -104,7 +108,9 @@ interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResul
 
 /** Pass flat items with virtualized to Command, scroll highlights via listRef, and handle Enter for
  * unmounted rows. */
-export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualizedResultsProps) {
+function PluginOriginalCommandPaletteVirtualizedResults(
+  props: CommandPaletteVirtualizedResultsProps,
+) {
   const { listRef } = props;
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
   const updateScrollFade = () => {
@@ -203,7 +209,7 @@ function ThreadRowContext({
   ) : null;
 }
 
-function DisabledCommandPaletteResultRow(props: {
+function PluginOriginalDisabledCommandPaletteResultRow(props: {
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
 }) {
   return (
@@ -237,7 +243,7 @@ function DisabledCommandPaletteResultRow(props: {
   );
 }
 
-function CommandPaletteResultRow(props: {
+function PluginOriginalCommandPaletteResultRow(props: {
   index?: number;
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
   isActive: boolean;
@@ -318,3 +324,24 @@ function CommandPaletteResultRow(props: {
     </CommandItem>
   );
 }
+
+const CommandPaletteEmptyState = definePluginComponent(
+  "component:components/CommandPaletteResults/CommandPaletteEmptyState",
+  PluginOriginalCommandPaletteEmptyState,
+);
+export const CommandPaletteResults = definePluginComponent(
+  "component:components/CommandPaletteResults/CommandPaletteResults",
+  PluginOriginalCommandPaletteResults,
+);
+export const CommandPaletteVirtualizedResults = definePluginComponent(
+  "component:components/CommandPaletteResults/CommandPaletteVirtualizedResults",
+  PluginOriginalCommandPaletteVirtualizedResults,
+);
+const DisabledCommandPaletteResultRow = definePluginComponent(
+  "component:components/CommandPaletteResults/DisabledCommandPaletteResultRow",
+  PluginOriginalDisabledCommandPaletteResultRow,
+);
+const CommandPaletteResultRow = definePluginComponent(
+  "component:components/CommandPaletteResults/CommandPaletteResultRow",
+  PluginOriginalCommandPaletteResultRow,
+);

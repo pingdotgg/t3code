@@ -297,6 +297,8 @@ it("keeps a focused inspector registered across renders and updates its content"
         NavigationContext: navigationContext,
         NavigationRouteContext: routeContext,
       };
+    if (name === "../../plugins/features")
+      return { defineNativePluginFeature: (_slot: string, builtin: unknown) => builtin };
     return {};
   };
   new Function("require", "exports", compiled.code)(load, exports);

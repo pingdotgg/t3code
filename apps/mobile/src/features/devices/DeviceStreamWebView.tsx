@@ -23,6 +23,16 @@ import {
   deviceStreamMessage,
   type DeviceStreamConfiguration,
 } from "./device-stream-document";
+import { defineNativePluginFeature } from "../../plugins/features";
+const DeviceStreamDocumentView = defineNativePluginFeature(
+  "native.features.devices.device-stream-web-view.device-stream-document-view",
+  BuiltinDeviceStreamDocumentView,
+);
+
+export const DeviceStreamWebView = defineNativePluginFeature(
+  "native.features.devices.device-stream-web-view",
+  BuiltinDeviceStreamWebView,
+);
 
 /** Resolves a status detail the WebView left marked, including marked variables inside it. */
 function streamDetailText(detail: string, resolve: MessageResolver): string {
@@ -55,7 +65,7 @@ type NativeStreamBridge = {
   readonly onInputConnected: (connected: boolean) => Promise<void>;
 };
 
-export function DeviceStreamWebView({
+function BuiltinDeviceStreamWebView({
   ref,
   ...props
 }: Omit<DeviceStreamConfiguration, "labels"> & NativeStreamBridge) {
@@ -101,7 +111,7 @@ export function DeviceStreamWebView({
   );
 }
 
-function DeviceStreamDocumentView({
+function BuiltinDeviceStreamDocumentView({
   ref,
   configuration,
   baseUrl,

@@ -24,6 +24,28 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { definePluginComponent } from "~/plugins/features";
+
+const LicenseNoticeRow = definePluginComponent(
+  "component:components/settings/OpenSourceLicenses/LicenseNoticeRow",
+  PluginOriginalLicenseNoticeRow,
+);
+const LicenseCount = definePluginComponent(
+  "component:components/settings/OpenSourceLicenses/LicenseCount",
+  PluginOriginalLicenseCount,
+);
+const LicenseHeaderAction = definePluginComponent(
+  "component:components/settings/OpenSourceLicenses/LicenseHeaderAction",
+  PluginOriginalLicenseHeaderAction,
+);
+const LicenseManifestError = definePluginComponent(
+  "component:components/settings/OpenSourceLicenses/LicenseManifestError",
+  PluginOriginalLicenseManifestError,
+);
+export const OpenSourceLicensesPanel = definePluginComponent(
+  "component:components/settings/OpenSourceLicenses/OpenSourceLicensesPanel",
+  PluginOriginalOpenSourceLicensesPanel,
+);
 
 class LicenseManifestLoadError extends Schema.TaggedError<LicenseManifestLoadError>()(
   "LicenseManifestLoadError",
@@ -75,7 +97,7 @@ const licenseManifestAtom = Atom.make(
   ),
 ).pipe(Atom.withLabel("settings:open-source-licenses"));
 
-function LicenseNoticeRow({
+function PluginOriginalLicenseNoticeRow({
   entry,
   open,
   onOpenChange,
@@ -132,7 +154,7 @@ function LicenseNoticeRow({
   );
 }
 
-function LicenseCount({
+function PluginOriginalLicenseCount({
   filteredCount,
   totalCount,
 }: {
@@ -154,7 +176,7 @@ function LicenseCount({
   );
 }
 
-function LicenseHeaderAction({
+function PluginOriginalLicenseHeaderAction({
   query,
   onQueryChange,
   searchOpen,
@@ -228,7 +250,13 @@ function LicenseHeaderAction({
   );
 }
 
-function LicenseManifestError({ message, onRetry }: { message: string; onRetry: () => void }) {
+function PluginOriginalLicenseManifestError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
   return (
     <div className="flex flex-col items-start gap-3 px-3 py-5 sm:px-4">
       <div className="flex flex-col gap-1">
@@ -246,7 +274,7 @@ function LicenseManifestError({ message, onRetry }: { message: string; onRetry: 
   );
 }
 
-export function OpenSourceLicensesPanel() {
+export function PluginOriginalOpenSourceLicensesPanel() {
   const gt = useGT();
   const result = useAtomValue(licenseManifestAtom);
   const retry = useAtomRefresh(licenseManifestAtom);

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   AuthAccessTokenType,
   AuthAccessWriteScope,
@@ -1784,7 +1785,7 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
   }
 });
 
-export const layer = Layer.effect(EnvironmentAuth, make).pipe(
+export const layer = builtinServiceLayer("t3.auth")(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),

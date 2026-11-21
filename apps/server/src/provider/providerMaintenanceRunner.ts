@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
@@ -13,7 +14,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -724,4 +724,4 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   });
 });
 
-export const layer = Layer.effect(ProviderMaintenanceRunner, make());
+export const layer = builtinServiceLayer("t3.providers")(ProviderMaintenanceRunner, make());

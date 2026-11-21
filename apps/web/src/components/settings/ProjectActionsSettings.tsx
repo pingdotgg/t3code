@@ -35,8 +35,14 @@ import { ProjectActionsList } from "./ProjectActionsList";
 import { useProjectScriptSettings } from "./useProjectScriptSettings";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ProjectActionsSettings() {
+export const ProjectActionsSettings = definePluginComponent(
+  "component:components/settings/ProjectActionsSettings/ProjectActionsSettings",
+  PluginOriginalProjectActionsSettings,
+);
+
+function PluginOriginalProjectActionsSettings() {
   const gt = useGT();
   const { scope, targets, target } = useSettingsScope();
   const { environments } = useEnvironments();

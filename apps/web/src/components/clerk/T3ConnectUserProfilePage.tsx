@@ -30,6 +30,20 @@ import {
 } from "./ClerkUserProfilePage";
 import { m, type MessageResolver } from "../../i18n/messages";
 import { useT3ChatLink } from "./useT3ChatLink";
+import { definePluginComponent } from "~/plugins/features";
+
+const T3ConnectEnvironmentRow = definePluginComponent(
+  "component:components/clerk/T3ConnectUserProfilePage/T3ConnectEnvironmentRow",
+  PluginOriginalT3ConnectEnvironmentRow,
+);
+const T3ConnectTunnelUsage = definePluginComponent(
+  "component:components/clerk/T3ConnectUserProfilePage/T3ConnectTunnelUsage",
+  PluginOriginalT3ConnectTunnelUsage,
+);
+export const T3ConnectUserProfilePage = definePluginComponent(
+  "component:components/clerk/T3ConnectUserProfilePage/T3ConnectUserProfilePage",
+  PluginOriginalT3ConnectUserProfilePage,
+);
 
 const linkedAtFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
@@ -49,7 +63,7 @@ function endpointLabel(
     : resolve(msg("Activity publishing only"));
 }
 
-function T3ConnectEnvironmentRow(props: {
+function PluginOriginalT3ConnectEnvironmentRow(props: {
   readonly environment: RelayClientEnvironmentRecord;
   readonly confirmationOpen: boolean;
   readonly mutationPending: boolean;
@@ -129,7 +143,7 @@ function T3ConnectEnvironmentRow(props: {
   );
 }
 
-function T3ConnectTunnelUsage() {
+function PluginOriginalT3ConnectTunnelUsage() {
   const usage = useManagedTunnelUsage();
   const t3Chat = useT3ChatLink();
   const gt = useGT();
@@ -178,7 +192,7 @@ function T3ConnectTunnelUsage() {
   );
 }
 
-export function T3ConnectUserProfilePage() {
+function PluginOriginalT3ConnectUserProfilePage() {
   const environmentsState = useManagedRelayEnvironments();
   const gt = useGT();
   const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {

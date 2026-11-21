@@ -653,6 +653,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         desktopDependencies: {
           "@napi-rs/keyring": "1.3.0",
           "playwright-core": "1.60.0",
+          esbuild: "0.28.2",
         },
         arch: "arm64",
         fffNodeVersion: "0.9.4",
@@ -663,6 +664,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "node-pty": "1.1.0",
         "@napi-rs/keyring": "1.3.0",
         "playwright-core": "1.60.0",
+        esbuild: "0.28.2",
         "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
       },
     );
@@ -670,7 +672,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(
       resolveMergedStageDependencies({
         platform: "linux",
-        serverDependencies: { "@ff-labs/fff-node": "0.9.4", "node-pty": "1.1.0", effect: "4.0.0" },
+        serverDependencies: {
+          "@ff-labs/fff-node": "0.9.4",
+          "node-pty": "1.1.0",
+          effect: "4.0.0",
+          esbuild: "0.28.2",
+        },
         desktopDependencies: { "@crowecawcaw/xa11y": "0.13.0" },
         arch: "x64",
         fffNodeVersion: "0.9.4",
@@ -679,6 +686,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "@ff-labs/fff-node": "0.9.4",
         "node-pty": "1.1.0",
         "@crowecawcaw/xa11y": "0.13.0",
+        esbuild: "0.28.2",
         "@ff-labs/fff-bin-linux-x64-gnu": "0.9.4",
         "@ff-labs/fff-bin-linux-x64-musl": "0.9.4",
       },

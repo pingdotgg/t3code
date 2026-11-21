@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "@t3tools/shared/proposedPlanText";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { memo, useState, useId } from "react";
@@ -39,7 +40,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
-export const ProposedPlanCard = memo(function ProposedPlanCard({
+const PluginOriginalProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
   environmentId,
   threadRef,
@@ -265,6 +266,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     </div>
   );
 });
+export const ProposedPlanCard = definePluginComponent(
+  "component:components/chat/ProposedPlanCard/ProposedPlanCard",
+  PluginOriginalProposedPlanCard,
+);
 
 function SavePlanToWorkspaceForm({
   initialPath,

@@ -1,5 +1,6 @@
 import { useGT } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
+import { defineNativePluginFeature } from "../../plugins/features";
 import Animated, {
   cubicBezier,
   runOnJS,
@@ -20,7 +21,7 @@ import type { InspectorContent } from "./inspector-panes";
 const PANE_EASING = cubicBezier(0.65, 0, 0.35, 1);
 
 /** Pass layout props to avoid an import cycle with AdaptiveWorkspaceLayout. */
-export function WorkspaceInspectorPane(props: {
+function BuiltinWorkspaceInspectorPane(props: {
   readonly renderedInspectorWidth: SharedValue<number>;
   readonly active?: boolean;
   readonly onClose: () => void;
@@ -126,3 +127,8 @@ export function WorkspaceInspectorPane(props: {
     </>
   );
 }
+
+export const WorkspaceInspectorPane = defineNativePluginFeature(
+  "native.features.layout.workspace-inspector-pane",
+  BuiltinWorkspaceInspectorPane,
+);

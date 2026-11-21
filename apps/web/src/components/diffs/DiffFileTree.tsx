@@ -24,6 +24,12 @@ import {
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
 import { diffFileTreePositions } from "@t3tools/client-runtime/diff-file-order";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DiffFileTree = definePluginComponent(
+  "component:components/diffs/DiffFileTree/DiffFileTree",
+  PluginOriginalDiffFileTree,
+);
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
@@ -38,7 +44,7 @@ interface DiffFileTreeProps {
   readonly className?: string;
 }
 
-export function DiffFileTree({
+function PluginOriginalDiffFileTree({
   entries,
   onSelectFile,
   selectedPath = null,

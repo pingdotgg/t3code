@@ -3,9 +3,15 @@ import { size } from "@expo/ui/jetpack-compose/modifiers";
 import { View } from "react-native";
 import { NativeThemeHost } from "./NativeThemeHost.android";
 import { useControlTheme } from "./useControlTheme";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const RadioIndicator = defineNativePluginFeature(
+  "native.components.ui.radio-indicator",
+  BuiltinRadioIndicator,
+);
 
 /** The enclosing radio row owns selection, touch and accessibility. */
-export function RadioIndicator({ selected }: { readonly selected: boolean }) {
+function BuiltinRadioIndicator({ selected }: { readonly selected: boolean }) {
   const { colors, systemColorsActive } = useControlTheme();
   return (
     <View pointerEvents="none" importantForAccessibility="no-hide-descendants">

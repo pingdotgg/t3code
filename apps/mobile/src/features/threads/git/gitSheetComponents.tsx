@@ -6,8 +6,14 @@ import type { ComponentProps } from "react";
 import { View } from "react-native";
 import { Button } from "../../../components/ui/Button";
 import type { MessageResolver } from "../../../i18n/messages";
+import { defineNativePluginFeature } from "../../../plugins/features";
 
-export function SheetActionButton(props: {
+export const SheetActionButton = defineNativePluginFeature(
+  "native.features.threads.git.git-sheet-components.sheet-action-button",
+  BuiltinSheetActionButton,
+);
+
+function BuiltinSheetActionButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
   readonly label: string;
   readonly disabled?: boolean;

@@ -1,11 +1,14 @@
+import { registerBuiltinRoute, definePluginRouteRenderer } from "~/plugins/routing";
+import { definePluginFeature } from "~/plugins/features";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { createFileRoute } from "@tanstack/react-router";
+import * as Schema from "effect/Schema";
 
-import { type PullRequestListSort } from "../components/pullRequest/pullRequestListPreferences";
-import { SORT_OPTIONS } from "../components/pullRequest/pullRequestListOptions";
+import { PullRequestListSort } from "../components/pullRequest/pullRequestListPreferences";
 import { type PullRequestsSearch } from "../components/pullRequest/usePullRequestListView";
-import { PullRequestsPage } from "../components/pullRequest/PullRequestsPage";
+import { PullRequestsRouteView } from "../components/pullRequest/PullRequestsPage";
 
+const isPullRequestListSort = Schema.is(PullRequestListSort);
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
 
 function pullRequestSearchLabels(raw: unknown): PullRequestsSearch["labels"] {
@@ -34,9 +37,7 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       raw.involvement === "reviewing" || raw.involvement === "authored" ? raw.involvement : "all",
     state:
       raw.state === "closed" || raw.state === "merged" || raw.state === "all" ? raw.state : "open",
-    ...(SORT_OPTIONS.some((option) => option.value === raw.sort)
-      ? { sort: raw.sort as PullRequestListSort }
-      : {}),
+    ...(isPullRequestListSort(raw.sort) ? { sort: raw.sort } : {}),
     ...(typeof raw.repository === "string" && raw.repository
       ? { repository: raw.repository.slice(0, 200) }
       : {}),
@@ -75,5 +76,11 @@ export const Route = createFileRoute("/_chat/pull-requests")({
         : undefined,
     labels: pullRequestSearchLabels(raw.labels),
   }),
-  component: PullRequestsPage,
+  component: definePluginRouteRenderer(
+    "/_chat/pull-requests",
+    "component",
+    definePluginFeature("pull-request.page", PullRequestsRouteView),
+  ),
 });
+
+registerBuiltinRoute("/_chat/pull-requests", Route);

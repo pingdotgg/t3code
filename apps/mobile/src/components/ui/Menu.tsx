@@ -12,6 +12,9 @@ import { withUniwind } from "uniwind";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { withMenuActionIconColors } from "../../lib/menu-action-colors";
 import type { MenuProps } from "./Menu.types";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const Menu = defineNativePluginFeature("native.components.ui.menu", BuiltinMenu);
 
 const ThemedMenuView = withUniwind(
   function NativeMenuView({
@@ -41,7 +44,7 @@ const ThemedMenuView = withUniwind(
   },
 );
 
-export function Menu(props: MenuProps) {
+function BuiltinMenu(props: MenuProps) {
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
   const menuPress = useRef({ isPreparing: false, isOpen: false, suppressPress: false });

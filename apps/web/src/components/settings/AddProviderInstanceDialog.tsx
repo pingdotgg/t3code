@@ -65,6 +65,12 @@ import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
 import { MultipleAccountsNote } from "./MultipleAccountsNote";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AddProviderInstanceDialog = definePluginComponent(
+  "component:components/settings/AddProviderInstanceDialog/AddProviderInstanceDialog",
+  PluginOriginalAddProviderInstanceDialog,
+);
 
 const INSTANCE_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -155,7 +161,7 @@ interface AddProviderInstanceDialogProps {
   readonly showMoreProviders?: boolean;
 }
 
-export function AddProviderInstanceDialog({
+function PluginOriginalAddProviderInstanceDialog({
   open,
   environmentId,
   environmentLabel,

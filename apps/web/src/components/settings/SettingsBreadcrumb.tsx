@@ -6,6 +6,12 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SettingsBreadcrumb = definePluginComponent(
+  "component:components/settings/SettingsBreadcrumb/SettingsBreadcrumb",
+  PluginOriginalSettingsBreadcrumb,
+);
 
 const SETTINGS_LABEL = msg("Settings");
 
@@ -20,7 +26,7 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
   return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
 }
 
-export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
+function PluginOriginalSettingsBreadcrumb({ pathname }: { pathname: string }) {
   const gt = useGT();
   const m = useMessages();
   const sectionLabel = settingsBreadcrumbLabel(pathname);

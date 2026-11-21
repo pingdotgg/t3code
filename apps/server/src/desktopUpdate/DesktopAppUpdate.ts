@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   ServerSelfUpdateError,
   type DesktopUpdateState,
@@ -9,7 +10,6 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -242,4 +242,4 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
   return DesktopAppUpdate.of({ available, run, commit });
 });
 
-export const layer = Layer.effect(DesktopAppUpdate, make());
+export const layer = builtinServiceLayer("t3.server")(DesktopAppUpdate, make());

@@ -1,8 +1,9 @@
 import { useGT } from "gt-react-native";
 import { View } from "react-native";
 import { Notice } from "../../components/ui/Notice";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function ComposerErrorNotice(props: {
+function BuiltinComposerErrorNotice(props: {
   readonly message: string;
   readonly onDismiss: () => void;
 }) {
@@ -20,3 +21,8 @@ export function ComposerErrorNotice(props: {
     </View>
   );
 }
+
+export const ComposerErrorNotice = defineNativePluginFeature(
+  "native.features.threads.composer-error-notice",
+  BuiltinComposerErrorNotice,
+);

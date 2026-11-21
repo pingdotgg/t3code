@@ -1,4 +1,5 @@
 import { useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { AppBar } from "../../components/ui/AppBar";
 import { Button } from "../../components/ui/Button";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -21,11 +22,11 @@ import { hasCloudPublicConfig } from "./publicConfig";
 
 // Only reachable with cloud config: onboarding is requested after a T3 Connect
 // sign-in, and appLinking drops the deep link otherwise.
-export function ConnectOnboardingRouteScreen() {
+function BuiltinConnectOnboardingRouteScreen() {
   return hasCloudPublicConfig() ? <ConfiguredConnectOnboardingRouteScreen /> : null;
 }
 
-function ConfiguredConnectOnboardingRouteScreen() {
+function BuiltinConfiguredConnectOnboardingRouteScreen() {
   const gt = useGT();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -106,3 +107,13 @@ function ConfiguredConnectOnboardingRouteScreen() {
     </View>
   );
 }
+
+const ConfiguredConnectOnboardingRouteScreen = defineNativePluginFeature(
+  "native.features.cloud.connect-onboarding-route-screen.configured-connect-onboarding-route-screen",
+  BuiltinConfiguredConnectOnboardingRouteScreen,
+);
+
+export const ConnectOnboardingRouteScreen = defineNativePluginFeature(
+  "native.features.cloud.connect-onboarding-route-screen",
+  BuiltinConnectOnboardingRouteScreen,
+);

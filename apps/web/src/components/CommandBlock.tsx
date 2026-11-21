@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { msg, useGT } from "gt-react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
@@ -6,7 +7,7 @@ import { cn } from "~/lib/utils";
 
 import { Button } from "./ui/button";
 
-export function CommandBlock({
+function PluginOriginalCommandBlock({
   command,
   className,
   prominent = false,
@@ -47,3 +48,8 @@ export function CommandBlock({
     </div>
   );
 }
+
+export const CommandBlock = definePluginComponent(
+  "component:components/CommandBlock/CommandBlock",
+  PluginOriginalCommandBlock,
+);

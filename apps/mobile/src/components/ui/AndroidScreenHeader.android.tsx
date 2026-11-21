@@ -13,6 +13,16 @@ import { useScaledTextRole } from "../../features/settings/appearance/useScaledT
 import { useToolbarLayout } from "./useToolbarLayout";
 import { useControlTheme } from "./useControlTheme";
 import { RoutedFormSheetContext } from "./RoutedFormSheetContext";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const AndroidHeaderIconButton = defineNativePluginFeature(
+  "native.components.ui.android-screen-header.android-header-icon-button",
+  BuiltinAndroidHeaderIconButton,
+);
+export const AndroidScreenHeader = defineNativePluginFeature(
+  "native.components.ui.android-screen-header",
+  BuiltinAndroidScreenHeader,
+);
 
 export interface AndroidHeaderAction {
   readonly accessibilityLabel: string;
@@ -27,7 +37,7 @@ export interface AndroidHeaderAction {
   readonly overflowOnly?: boolean;
 }
 
-export function AndroidHeaderIconButton(props: {
+function BuiltinAndroidHeaderIconButton(props: {
   readonly accessibilityLabel: string;
   readonly icon: AppSymbolName;
   readonly onPress?: () => void;
@@ -38,7 +48,7 @@ export function AndroidHeaderIconButton(props: {
   return <IconButton {...props} tintColorClassName="accent-header-foreground" />;
 }
 
-export function AndroidScreenHeader(props: {
+function BuiltinAndroidScreenHeader(props: {
   readonly title: string;
   readonly titleContent?: ReactNode;
   readonly subtitle?: string | null;

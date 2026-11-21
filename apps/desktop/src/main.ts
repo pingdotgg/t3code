@@ -5,7 +5,6 @@ for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", handleStdioError);
 }
 
-import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -19,7 +18,6 @@ import * as Layer from "effect/Layer";
 
 import * as Electron from "electron";
 
-import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
@@ -81,6 +79,9 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+import * as PluginKernel from "@t3tools/shared/pluginKernel";
+import * as DesktopPlatformServices from "./plugins/DesktopPlatformServices.ts";
+import * as DesktopPluginRuntime from "./plugins/DesktopPluginRuntime.ts";
 
 if (process.argv.includes("--version")) {
   try {
@@ -211,6 +212,7 @@ const layerDesktopLocalEnvironmentAuth = DesktopLocalEnvironmentAuth.layer.pipe(
 );
 
 const layerDesktopApplication = Layer.mergeAll(
+  DesktopPluginRuntime.layer,
   DesktopLifecycle.layer,
   layerDesktopAppActivation,
   DesktopWebLinks.layer,
@@ -242,9 +244,8 @@ const layerDesktopClerk = DesktopClerk.layer.pipe(
 );
 
 const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-  Layer.provideMerge(NodeHttpClient.layerUndici),
-  Layer.provideMerge(NetService.layer),
+  Layer.provideMerge(DesktopPlatformServices.layer),
+  Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(layerElectron),
 );
 
@@ -254,6 +255,7 @@ const layerDesktopRuntime = layerDesktopClerk.pipe(
     layerDesktopApplicationRuntime.pipe(Layer.provideMerge(Layer.succeedContext(clerkContext))),
   ),
   Layer.provideMerge(DesktopPreReadyPlatform.layer),
+  Layer.provideMerge(PluginKernel.layer),
 );
 
 DesktopApp.program.pipe(Effect.provide(layerDesktopRuntime), NodeRuntime.runMain);

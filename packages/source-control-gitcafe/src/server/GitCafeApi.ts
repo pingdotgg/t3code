@@ -1,7 +1,7 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -204,4 +204,4 @@ export const make = Effect.gen(function* () {
   return GitCafeApi.of({ request });
 });
 
-export const layer = Layer.effect(GitCafeApi, make);
+export const layer = builtinServiceLayer("t3.git")(GitCafeApi, make);

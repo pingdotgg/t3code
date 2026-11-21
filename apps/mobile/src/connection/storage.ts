@@ -1,3 +1,4 @@
+import { builtinContextLayer } from "@t3tools/shared/pluginKernel";
 import {
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
@@ -18,7 +19,6 @@ import {
 } from "@t3tools/client-runtime/connection";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as CatalogStore from "./catalog-store";
@@ -39,7 +39,8 @@ function targetPersistenceError(
   });
 }
 
-export const layer = Layer.effectContext(
+export const layer = builtinContextLayer(
+  "t3.mobile.storage",
   Effect.gen(function* () {
     const catalog = yield* CatalogStore.make();
     const githubRoutingPermissions = yield* makePullRequestRoutingPermissions({

@@ -6,8 +6,14 @@ import { AppText as Text } from "./AppText";
 import { IconButton } from "./IconButton";
 import { Button } from "./Button";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function ControlPill(props: {
+export const ControlPill = defineNativePluginFeature(
+  "native.components.ui.control-pill",
+  BuiltinControlPill,
+);
+
+function BuiltinControlPill(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly iconNode?: ReactNode;
   readonly label?: string;

@@ -1,6 +1,12 @@
 import type { ComponentProps } from "react";
 import type { ResizableWidthHandlers } from "~/hooks/useResizableWidth";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+export const RightPanelResizeHandle = definePluginComponent(
+  "component:components/preview/RightPanelResizeHandle/RightPanelResizeHandle",
+  PluginOriginalRightPanelResizeHandle,
+);
 
 interface Props extends Pick<
   ComponentProps<"div">,
@@ -11,7 +17,12 @@ interface Props extends Pick<
   label?: string;
 }
 
-export function RightPanelResizeHandle({ handlers, className, label, ...separatorProps }: Props) {
+function PluginOriginalRightPanelResizeHandle({
+  handlers,
+  className,
+  label,
+  ...separatorProps
+}: Props) {
   return (
     <div
       role="separator"

@@ -1,3 +1,4 @@
+import { builtinServiceLayer, builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -43,18 +44,18 @@ export function layerForCurrentOrigin() {
       if (isSameOriginBrowserPrimary()) {
         return Layer.merge(
           layerBase,
-          Layer.succeed(FetchHttpClient.RequestInit, { credentials: "include" }),
+          builtinSucceedLayer("t3.client")(FetchHttpClient.RequestInit, { credentials: "include" }),
         );
       }
 
-      const layerBearerClient = Layer.effect(
+      const layerBearerClient = builtinServiceLayer("t3.client")(
         HttpClient.HttpClient,
         Effect.map(HttpClient.HttpClient, withPrimaryBearerToken),
       ).pipe(Layer.provide(layerBase));
 
       return Layer.merge(
         layerBearerClient,
-        Layer.succeed(FetchHttpClient.RequestInit, { credentials: "omit" }),
+        builtinSucceedLayer("t3.client")(FetchHttpClient.RequestInit, { credentials: "omit" }),
       );
     }),
   );

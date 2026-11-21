@@ -2,6 +2,9 @@ import { Input as InputPrimitive } from "@base-ui/react/input";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+const Input = definePluginComponent("component:components/ui/input/Input", PluginOriginalInput);
 
 type InputProps = Omit<InputPrimitive.Props & React.RefAttributes<HTMLInputElement>, "size"> & {
   size?: "sm" | "compact" | "default" | "lg" | number;
@@ -10,7 +13,7 @@ type InputProps = Omit<InputPrimitive.Props & React.RefAttributes<HTMLInputEleme
   nativeInput?: boolean;
 };
 
-function Input({
+function PluginOriginalInput({
   className,
   size = "default",
   font = "default",

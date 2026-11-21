@@ -1,4 +1,5 @@
 import { T, useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Platform, Pressable, View } from "react-native";
 
@@ -9,7 +10,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import type { WorkspaceTab } from "./workspace/workspace-tabs-state";
 
-export function WorkspaceEmptyDetail(props: {
+function BuiltinWorkspaceEmptyDetail(props: {
   readonly tab?: WorkspaceTab | "settings";
   readonly onStartNewTask?: () => void;
   readonly onAddConnection?: () => void;
@@ -94,3 +95,8 @@ export function WorkspaceEmptyDetail(props: {
     </ScreenContent>
   );
 }
+
+export const WorkspaceEmptyDetail = defineNativePluginFeature(
+  "native.features.layout.workspace-empty-detail",
+  BuiltinWorkspaceEmptyDetail,
+);

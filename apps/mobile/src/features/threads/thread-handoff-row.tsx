@@ -30,6 +30,16 @@ import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIco
 import { environmentThreadDetails } from "../../state/threads";
 import { serverEnvironment } from "../../state/server";
 import { ThreadContextDivider } from "./thread-context-divider";
+import { defineNativePluginFeature } from "../../plugins/features";
+const HandoffEndpoint = defineNativePluginFeature(
+  "native.features.threads.thread-handoff-row.handoff-endpoint",
+  BuiltinHandoffEndpoint,
+);
+
+export const ThreadHandoffRow = defineNativePluginFeature(
+  "native.features.threads.thread-handoff-row",
+  BuiltinThreadHandoffRow,
+);
 
 type HandoffProvider = ServerProvider & {
   readonly driverKind: ServerProvider["driver"];
@@ -79,7 +89,7 @@ export function ThreadModelSwitchDivider(props: {
   );
 }
 
-export function ThreadHandoffRow(props: {
+function BuiltinThreadHandoffRow(props: {
   environmentId: EnvironmentId;
   projectedItem: OrchestrationV2ProjectedTurnItem;
   iconColor: ColorValue;
@@ -163,7 +173,7 @@ export function ThreadHandoffDivider(props: {
   );
 }
 
-function HandoffEndpoint(props: {
+function BuiltinHandoffEndpoint(props: {
   instanceId: ProviderInstanceId;
   model?: string | undefined;
   providers: ReadonlyArray<HandoffProvider>;

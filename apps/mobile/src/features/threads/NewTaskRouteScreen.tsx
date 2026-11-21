@@ -47,6 +47,7 @@ import {
   resolveNewTaskScratchOption,
 } from "./new-task-project-selection";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
@@ -125,7 +126,7 @@ function deriveProjectEmptyState(
   };
 }
 
-function NewTaskHeader(props: {
+function BuiltinNewTaskHeader(props: {
   readonly title: string;
   readonly subtitle: string | null;
   readonly canAddProject: boolean;
@@ -166,7 +167,7 @@ function NewTaskHeader(props: {
   );
 }
 
-export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
+function BuiltinNewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
   const gt = useGT();
   const m = useMessages();
   const projects = useProjects();
@@ -630,3 +631,13 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     </View>
   );
 }
+
+const NewTaskHeader = defineNativePluginFeature(
+  "native.features.threads.new-task-route-screen.new-task-header",
+  BuiltinNewTaskHeader,
+);
+
+export const NewTaskRouteScreen = defineNativePluginFeature(
+  "native.features.threads.new-task-route-screen",
+  BuiltinNewTaskRouteScreen,
+);

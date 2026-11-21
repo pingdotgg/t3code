@@ -6,6 +6,12 @@ import {
   resolveWizardNavigation,
   type WizardNavigation,
 } from "./AddProviderInstanceDialog.logic";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AddProviderInstanceWizardSteps = definePluginComponent(
+  "component:components/settings/AddProviderInstanceWizardSteps/AddProviderInstanceWizardSteps",
+  PluginOriginalAddProviderInstanceWizardSteps,
+);
 
 interface AddProviderInstanceWizardStepsProps {
   readonly currentStep: number;
@@ -21,7 +27,7 @@ interface AddProviderInstanceWizardStepsProps {
   readonly disabled?: boolean;
 }
 
-export function AddProviderInstanceWizardSteps({
+function PluginOriginalAddProviderInstanceWizardSteps({
   currentStep,
   summaries,
   instanceIdError,

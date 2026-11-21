@@ -4,8 +4,14 @@ import { useState } from "react";
 import { Button } from "~/components/ui/button";
 import { deviceEnvironment } from "~/state/device";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { definePluginComponent } from "~/plugins/features";
 
-export function DeviceHostUpdates({
+export const DeviceHostUpdates = definePluginComponent(
+  "component:components/device/DeviceHostUpdates/DeviceHostUpdates",
+  PluginOriginalDeviceHostUpdates,
+);
+
+function PluginOriginalDeviceHostUpdates({
   state,
   environmentId,
 }: {

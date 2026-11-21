@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogButton, WorkLogList, WorkLogRow } from "./WorkLog";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
@@ -63,7 +64,7 @@ import {
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
 
-export const WorkGroupSection = memo(function WorkGroupSection({
+const PluginOriginalWorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
   disclosureAnchorKey = anchorKey,
   groupedEntries,
@@ -127,7 +128,7 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   );
 });
 
-function WorkingTimer({ createdAt }: { createdAt: string }) {
+function PluginOriginalWorkingTimer({ createdAt }: { createdAt: string }) {
   const { activeThreadEnvironmentId } = use(TimelineRowCtx);
   return (
     <span
@@ -184,7 +185,7 @@ function useWorkGroupViewedImages(
   });
 }
 
-function ExpandedWorkGroupEntries({
+function PluginOriginalExpandedWorkGroupEntries({
   anchorKey,
   disclosureAnchorKey,
   entries,
@@ -348,7 +349,11 @@ function ExpandedWorkGroupEntries({
 
 const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
-export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
+function PluginOriginalWorkingTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "working" }>;
+}) {
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
   const compacting = row.compacting === true || isCompacting;
@@ -382,7 +387,11 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   );
 }
 
-function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
+function PluginOriginalBackgroundWorktreeSetupChip({
+  snapshot,
+}: {
+  snapshot: WorktreeSetupSnapshot;
+}) {
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
   const terminalId = snapshot.setupScript?.terminalId ?? null;
@@ -422,7 +431,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
   );
 }
 
-function CompactingLabel({ createdAt }: { createdAt: string | null }) {
+function PluginOriginalCompactingLabel({ createdAt }: { createdAt: string | null }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <Minimize2Icon aria-hidden="true" className="size-3" />
@@ -439,7 +448,11 @@ function CompactingLabel({ createdAt }: { createdAt: string | null }) {
   );
 }
 
-export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
+function PluginOriginalThinkingTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "thinking" }>;
+}) {
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
   const m = useMessages();
@@ -475,7 +488,7 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   );
 }
 
-function LiveActivityRow({
+function PluginOriginalLiveActivityRow({
   label,
   iconName,
   toolIcon,
@@ -514,7 +527,7 @@ function LiveActivityRow({
   );
 }
 
-function LiveActivityContent({
+function PluginOriginalLiveActivityContent({
   label,
   iconName,
   toolIcon,
@@ -580,7 +593,7 @@ function LiveActivityContent({
   );
 }
 
-export function LiveWorkEntryTimelineRow({
+function PluginOriginalLiveWorkEntryTimelineRow({
   row,
 }: {
   row: Extract<TimelineRow, { kind: "work-live" }>;
@@ -686,7 +699,7 @@ export function LiveWorkEntryTimelineRow({
   );
 }
 
-export function WorkGroupToggleTimelineRow({
+function PluginOriginalWorkGroupToggleTimelineRow({
   row,
 }: {
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
@@ -706,7 +719,7 @@ export function WorkGroupToggleTimelineRow({
   );
 }
 
-function WorkGroupHeader(props: {
+function PluginOriginalWorkGroupHeader(props: {
   label: string;
   iconName: WorkEntryIconName;
   toolIcon?: ToolActivityIcon | undefined;
@@ -739,3 +752,63 @@ function WorkGroupHeader(props: {
     />
   );
 }
+
+const WorkingTimer = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/WorkingTimer",
+  PluginOriginalWorkingTimer,
+);
+
+const ExpandedWorkGroupEntries = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/ExpandedWorkGroupEntries",
+  PluginOriginalExpandedWorkGroupEntries,
+);
+
+export const WorkingTimelineRow = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/WorkingTimelineRow",
+  PluginOriginalWorkingTimelineRow,
+);
+
+const BackgroundWorktreeSetupChip = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/BackgroundWorktreeSetupChip",
+  PluginOriginalBackgroundWorktreeSetupChip,
+);
+
+const CompactingLabel = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/CompactingLabel",
+  PluginOriginalCompactingLabel,
+);
+
+export const ThinkingTimelineRow = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/ThinkingTimelineRow",
+  PluginOriginalThinkingTimelineRow,
+);
+
+const LiveActivityRow = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/LiveActivityRow",
+  PluginOriginalLiveActivityRow,
+);
+
+const LiveActivityContent = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/LiveActivityContent",
+  PluginOriginalLiveActivityContent,
+);
+
+export const LiveWorkEntryTimelineRow = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/LiveWorkEntryTimelineRow",
+  PluginOriginalLiveWorkEntryTimelineRow,
+);
+
+export const WorkGroupToggleTimelineRow = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/WorkGroupToggleTimelineRow",
+  PluginOriginalWorkGroupToggleTimelineRow,
+);
+
+const WorkGroupHeader = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/WorkGroupHeader",
+  PluginOriginalWorkGroupHeader,
+);
+
+export const WorkGroupSection = definePluginComponent(
+  "component:components/chat/TimelineWorkGroupRows/WorkGroupSection",
+  PluginOriginalWorkGroupSection,
+);

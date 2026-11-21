@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -39,7 +40,7 @@ type ReviewCommentComposerSheetProps = StaticScreenProps<{
   readonly threadId: ThreadId;
 }>;
 
-export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProps) {
+function BuiltinReviewCommentComposerSheet(props: ReviewCommentComposerSheetProps) {
   const navigation = useNavigation();
   const gt = useGT();
   const { width } = useWindowDimensions();
@@ -271,3 +272,8 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
     </View>
   );
 }
+
+export const ReviewCommentComposerSheet = defineNativePluginFeature(
+  "native.features.review.review-comment-composer-sheet",
+  BuiltinReviewCommentComposerSheet,
+);

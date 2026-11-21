@@ -1,3 +1,5 @@
+import { builtinLifecycleLayer } from "../plugins/PluginKernel.ts";
+import { ProviderDriverCatalog } from "./ProviderDriverCatalog.ts";
 import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
@@ -41,6 +43,7 @@ type ProviderInstanceRegistryHydrationEnv =
       | ProviderHost.ProviderHost
     >
   | Settings.ServerSettingsService
+  | ProviderDriverCatalog
   | BackgroundPolicy.BackgroundPolicy
   | ServerConfig.ServerConfig
   | Path.Path
@@ -135,16 +138,18 @@ const vaultConfigs = (settings: ServerSettings) =>
 export const providerHostLayer = Layer.fresh(ProviderHostLive.layer);
 
 export const layerSettingsWatcher = (
-  settingsChanges: Stream.Stream<ServerSettings>,
+  changes: Stream.Stream<unknown>,
   // The settings the registry was built from: a change queued during startup differs from these.
   initialSettings: ServerSettings | undefined,
 ) =>
-  Layer.effectDiscard(
+  builtinLifecycleLayer(
+    "t3.server",
+    "t3/runtime/provider/Layers/ProviderInstanceRegistryHydration#lifecycle1",
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
       const serverSettings = yield* Settings.ServerSettingsService;
       let secretProviders = initialSettings && vaultConfigs(initialSettings);
-      yield* settingsChanges.pipe(
+      yield* changes.pipe(
         Stream.runForEach(() =>
           // The subscription predates the seed read, so a queued change can be
           // older than the seed. A failed current read must leave the registry intact.
@@ -179,11 +184,13 @@ export const layer: Layer.Layer<
 > = Layer.unwrap(
   Effect.gen(function* () {
     const serverSettings = yield* Settings.ServerSettingsService;
+    const driverCatalog = yield* ProviderDriverCatalog;
     yield* seedDevReplayInstance().pipe(
       Effect.catchCause((cause) => Effect.logWarning("Dev replay agent unavailable", cause)),
     );
-    // Subscribe before the seed read so saves during registry construction are queued.
+    // Subscribe before the seed read so changes during registry construction are queued.
     const settingsChanges = yield* serverSettings.subscribeChanges;
+    const driverChanges = yield* driverCatalog.subscribeChanges;
     const initialSettings: ServerSettings | undefined = yield* serverSettings.getSettings.pipe(
       Effect.orElseSucceed(() => undefined),
     );
@@ -204,6 +211,7 @@ export const layer: Layer.Layer<
       configMap: initialConfigMap,
       blockedReason: (driver) =>
         ManagedProviders.disallowedDriverReason(serverSettings.managedPolicy, driver),
+      driverCatalog,
     }).pipe(
       Layer.provide(ProviderOrchestrationAdapterInfrastructure.layer),
       Layer.provide(AcpRegistrySupport.layerFromHost),
@@ -212,9 +220,10 @@ export const layer: Layer.Layer<
       Layer.provide(SecretResolver.layer),
     );
 
-    return layerSettingsWatcher(settingsChanges, initialSettings).pipe(
-      Layer.provideMerge(layerMutable),
-    );
+    return layerSettingsWatcher(
+      Stream.merge(settingsChanges, Stream.fromSubscription(driverChanges)),
+      initialSettings,
+    ).pipe(Layer.provideMerge(layerMutable));
   }),
 ) as Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry

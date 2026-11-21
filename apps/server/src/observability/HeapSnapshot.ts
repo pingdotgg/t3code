@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - v8.writeHeapSnapshot has no Effect equivalent.
+import { builtinLifecycleLayer } from "../plugins/PluginKernel.ts";
 import * as NodePath from "node:path";
 import * as NodeV8 from "node:v8";
 
@@ -6,7 +7,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -35,7 +35,9 @@ const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true })(
   Effect.catch((cause) => Effect.logWarning("Failed to write heap snapshot.", { cause })),
 );
 
-export const layer = Layer.effectDiscard(
+export const layer = builtinLifecycleLayer(
+  "t3.server",
+  "t3/runtime/observability/HeapSnapshot#lifecycle1",
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "win32") return;
     const { logsDir } = yield* ServerConfig.ServerConfig;

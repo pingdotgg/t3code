@@ -15,6 +15,12 @@ import { usePreparedConnection } from "~/state/session";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { m, type MessageResolver } from "../../i18n/messages";
+import { definePluginComponent } from "~/plugins/features";
+
+export const EnvironmentRow = definePluginComponent(
+  "component:components/settings/EnvironmentRow/EnvironmentRow",
+  PluginOriginalEnvironmentRow,
+);
 
 const T3_CONNECT_NAME = "T3 Connect";
 
@@ -72,7 +78,7 @@ export function EnvironmentTransportLabel(props: {
   return useEnvironmentTransportLabel(props.environment);
 }
 
-export function EnvironmentRow({
+function PluginOriginalEnvironmentRow({
   kind,
   label,
   subtitle,

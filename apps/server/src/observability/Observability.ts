@@ -1,3 +1,4 @@
+import { builtinSucceedLayer, builtinLifecycleLayer } from "../plugins/PluginKernel.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as HttpObservability from "@t3tools/shared/httpObservability";
 import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
@@ -31,10 +32,10 @@ export const layer = Layer.unwrap(
     const attribution = yield* ResourceAttribution.ResourceAttribution;
 
     const layerTraceReferences = Layer.mergeAll(
-      Layer.succeed(Tracer.MinimumTraceLevel, config.traceMinLevel),
-      Layer.succeed(References.TracerTimingEnabled, config.traceTimingEnabled),
+      builtinSucceedLayer("t3.server")(Tracer.MinimumTraceLevel, config.traceMinLevel),
+      builtinSucceedLayer("t3.server")(References.TracerTimingEnabled, config.traceTimingEnabled),
       // Preserve SQL spans while awaiting connections so lock waits can be recorded on them.
-      Layer.succeed(Statement.SpanPropagationEnabled, true),
+      builtinSucceedLayer("t3.server")(Statement.SpanPropagationEnabled, true),
       HttpObservability.layer,
     );
 
@@ -77,6 +78,7 @@ export const layer = Layer.unwrap(
         yield* heapAttribution.run;
 
         return Layer.mergeAll(
+          // Every span goes through the tracer, so it stays out of the plugin kernel.
           Layer.succeed(Tracer.Tracer, heapAttribution.tracer),
           BrowserTraceCollector.layer(sink),
         );
@@ -96,7 +98,9 @@ export const layer = Layer.unwrap(
             Layer.provide(SharedObservability.layerOtlpSerialization(metrics.protocol)),
           );
 
-    const layerOtelWarnings = Layer.effectDiscard(
+    const layerOtelWarnings = builtinLifecycleLayer(
+      "t3.server",
+      "t3/runtime/observability/Layers/Observability#lifecycle1",
       Effect.forEach(config.otelEnvironment.warnings, (warning) => Effect.logWarning(warning)),
     );
 

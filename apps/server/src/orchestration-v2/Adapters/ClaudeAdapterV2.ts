@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../../plugins/PluginKernel.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import {
   compactDynamicToolOutput,
@@ -1493,7 +1494,7 @@ export const layerQueryRunner: Layer.Layer<
   | Path.Path
   | PortScanner.PortDiscovery
   | ProviderEventLoggers.ProviderEventLoggers
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   ClaudeAgentSdkQueryRunner,
   Effect.gen(function* () {
     const random = yield* SecureRandom.SecureRandom;
@@ -2297,6 +2298,8 @@ export function makeClaudeQueryOptions(input: {
   readonly attachmentsDir?: string;
   readonly settings?: ClaudeSettings;
   readonly promptSuggestions?: boolean;
+  /** Expands `~` in plugin directories; paths stay verbatim without it. */
+  readonly homeDirectory?: string;
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
@@ -2345,8 +2348,16 @@ export function makeClaudeQueryOptions(input: {
   if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
     extraArgs["thinking-display"] = "summarized";
   }
-  const pluginDirectories =
-    input.settings === undefined ? [] : claudeLaunchArgPluginDirectories(input.settings.launchArgs);
+  const expandHome = (path: string) =>
+    input.homeDirectory === undefined ? path : expandHomePath(path, input.homeDirectory);
+  const pluginDirectories = [
+    ...new Set([
+      ...(input.settings?.pluginDirectories ?? []).map(expandHome),
+      ...(input.settings === undefined
+        ? []
+        : claudeLaunchArgPluginDirectories(input.settings.launchArgs)),
+    ]),
+  ];
   // A bare --plugin-dir still reaches Claude, which reports the missing path.
   if (launchArgPluginDir === null) extraArgs["plugin-dir"] = null;
   const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
@@ -2582,7 +2593,8 @@ export const readClaudeLaunchArgSettings = Effect.fn("ClaudeAdapterV2.readLaunch
 
 export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 
-// Keep in sync with OrchestratorToolkit Tool.Readonly annotations; ClaudeAdapterV2.test.ts checks this.
+// Must stay in sync with the exposed toolkits' Tool.Readonly annotations;
+// ClaudeAdapterV2.test.ts cross-checks this list against the toolkits.
 export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__orchestrator_capabilities",
   "mcp__t3-code__list_scheduled_tasks",
@@ -2602,6 +2614,11 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__html_render",
   "mcp__t3-code__send_to_user",
   "mcp__t3-code__t3_submit_output",
+  "mcp__t3-code__canvas_list",
+  "mcp__t3-code__canvas_read",
+  "mcp__t3-code__canvas_screenshot",
+  "mcp__t3-code__canvas_export",
+  "mcp__t3-code__canvas_render",
 ];
 
 // request_secret can wait an hour; exceed Claude's default 60 s timeout.
@@ -13232,6 +13249,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const queryOptions = makeClaudeQueryOptions({
+            homeDirectory: yield* HostProcess.HomeDirectory,
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
             nativeThreadId,

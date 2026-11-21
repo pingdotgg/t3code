@@ -22,6 +22,16 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SshPasswordPromptDialog = definePluginComponent(
+  "component:components/desktop/SshPasswordPromptDialog/SshPasswordPromptDialog",
+  PluginOriginalSshPasswordPromptDialog,
+);
+const ActiveSshPasswordPrompt = definePluginComponent(
+  "component:components/desktop/SshPasswordPromptDialog/ActiveSshPasswordPrompt",
+  PluginOriginalActiveSshPasswordPrompt,
+);
 
 function describeSshTarget(request: DesktopSshPasswordPromptRequest): string {
   return request.username ? `${request.username}@${request.destination}` : request.destination;
@@ -78,7 +88,7 @@ function removeSshPasswordPrompt(requestId: string) {
   setPromptQueue(promptQueue.filter((request) => request.requestId !== requestId));
 }
 
-export function SshPasswordPromptDialog() {
+function PluginOriginalSshPasswordPromptDialog() {
   const queue = useSyncExternalStore(subscribePromptQueue, readPromptQueue, readPromptQueue);
   const currentRequest = queue[0] ?? null;
 
@@ -89,7 +99,7 @@ export function SshPasswordPromptDialog() {
   return <ActiveSshPasswordPrompt key={currentRequest.requestId} request={currentRequest} />;
 }
 
-function ActiveSshPasswordPrompt({
+function PluginOriginalActiveSshPasswordPrompt({
   request,
 }: {
   readonly request: DesktopSshPasswordPromptRequest;

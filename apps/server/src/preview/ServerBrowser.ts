@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - Playwright callbacks run outside the Effect runtime.
 // Screencasts ignore emulated device scale; real 2x keeps captures sharp.
 // --disable-gpu uses cheaper software compositing while preserving SwiftShader WebGL.
@@ -61,7 +62,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import { constVoid } from "effect/Function";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
@@ -3513,31 +3513,33 @@ const make = Effect.gen(function* () {
     Effect.forkScoped,
   );
   const environmentId = yield* environment.getEnvironmentId;
-  const hostSession = broker
-    .connect(
-      {
-        clientId: SERVER_HOST_CLIENT_ID,
-        environmentId,
-        supportedOperations: [...PREVIEW_AUTOMATION_SERVER_OPERATIONS],
-      },
-      { preferred: true },
-    )
-    .pipe(
-      Effect.flatMap((events) =>
-        events.pipe(
-          Stream.runForEach((event) => {
-            if (event.type === "connected") {
-              hostConnectionId = event.connectionId;
-              return Effect.sync(reportLiveTabs);
-            }
-            return handleRequest(event.connectionId, event.request).pipe(
-              Effect.forkScoped,
-              Effect.asVoid,
-            );
-          }),
+  const hostSession = Effect.suspend(() =>
+    broker
+      .connect(
+        {
+          clientId: SERVER_HOST_CLIENT_ID,
+          environmentId,
+          supportedOperations: [...PREVIEW_AUTOMATION_SERVER_OPERATIONS],
+        },
+        { preferred: true },
+      )
+      .pipe(
+        Effect.flatMap((events) =>
+          events.pipe(
+            Stream.runForEach((event) => {
+              if (event.type === "connected") {
+                hostConnectionId = event.connectionId;
+                return Effect.sync(reportLiveTabs);
+              }
+              return handleRequest(event.connectionId, event.request).pipe(
+                Effect.forkScoped,
+                Effect.asVoid,
+              );
+            }),
+          ),
         ),
       ),
-    );
+  );
   // The broker disconnects timed-out hosts, including slow first installs. Reconnect.
   yield* hostSession.pipe(
     Effect.exit,
@@ -3566,4 +3568,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ServerBrowser, make);
+export const layer = builtinServiceLayer("t3.preview")(ServerBrowser, make);

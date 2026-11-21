@@ -5456,5 +5456,31 @@
   "ad208e3e32c85029": "Tout masquer",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
-  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours."
+  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
+  "e4fdf2c125bb1a1c": "{count, plural, one {Canevas utilisé {count} fois} other {Canevas utilisé {count} fois}}",
+  "2a632164170177a2": "{count, plural, one {Tentative d’utiliser le canevas {count} fois} other {Tentative d’utiliser le canevas {count} fois}}",
+  "c1b7649ac731ed07": "Plugins",
+  "902eee528c565dd9": "Échec de la commande du plugin",
+  "c5d071b279c2e90f": "Fermer la récupération des plugins",
+  "ea4b0ed7aa9bd760": "Récupération des plugins",
+  "656854e648c97dca": "Réactiver un plugin intégré",
+  "ebffe4dabf52835f": "Activer {name}",
+  "ba32f1a6898cf271": "Recharger les plugins locaux",
+  "37036031afcfce34": "Fonctionnalité intégrée",
+  "9608b33769752cbf": "Rechercher des plugins dans {label}",
+  "654234ef26ef1497": "Rechercher des plugins disponibles",
+  "59375313b87b2aee": "{name} est installé",
+  "501b9d7d4a10350f": "Installer {name}",
+  "119fdf3a37955ebd": "Connectez un environnement pour gérer ses plugins.",
+  "4d4a9cccdbcb80b1": "Mettez à jour cet environnement pour gérer les plugins.",
+  "2a0fa39b8a84f848": "Cet environnement n’a pas pu charger son catalogue de plugins.",
+  "0fceafde5534f56f": "Chargement des plugins...",
+  "7c9ee44d092d4f51": [
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " · Vérifié par",
+    " ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" }
+  ],
+  "2bf815f51a9354c3": "Aucun plugin disponible ne correspond à cette recherche.",
+  "16ed41dd430363b8": "Impossible de charger le catalogue des plugins disponibles."
 }

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 import { Button } from "../ui/button";
 import { RefreshIcon } from "../ui/refresh-icon";
 import {
@@ -19,7 +20,12 @@ import { PullRequestCompactFilterMenu } from "./PullRequestCompactFilterMenu";
 import type { PullRequestFilterOption } from "./PullRequestListFilters";
 import { INVOLVEMENT_TABS, resolveFilterOptions, STATE_TABS } from "./pullRequestListOptions";
 
-function ExpandableSearch({
+const ExpandableSearch = definePluginComponent(
+  "component:components/pullRequest/PullRequestsColumn/ExpandableSearch",
+  PluginOriginalExpandableSearch,
+);
+
+function PluginOriginalExpandableSearch({
   searchInput,
   searchValue,
   open,
@@ -70,7 +76,12 @@ function ExpandableSearch({
   );
 }
 
-export function PullRequestsColumn({
+export const PullRequestsColumn = definePluginComponent(
+  "component:components/pullRequest/PullRequestsColumn/PullRequestsColumn",
+  PluginOriginalPullRequestsColumn,
+);
+
+function PluginOriginalPullRequestsColumn({
   refreshing,
   onRefresh,
   searchValue,
@@ -275,7 +286,12 @@ export function PullRequestsColumn({
   );
 }
 
-function PullRequestRefreshControl({
+const PullRequestRefreshControl = definePluginComponent(
+  "component:components/pullRequest/PullRequestsColumn/PullRequestRefreshControl",
+  PluginOriginalPullRequestRefreshControl,
+);
+
+function PluginOriginalPullRequestRefreshControl({
   compact = false,
   refreshing,
   onRefresh,

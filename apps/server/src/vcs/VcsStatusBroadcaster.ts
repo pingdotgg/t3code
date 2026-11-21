@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -6,7 +7,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -171,7 +171,7 @@ export class VcsAutoPullPolicy extends Context.Reference<{
   defaultValue: () => ({ isEnabled: () => Effect.succeed(false) }),
 }) {}
 
-export const layerAutoPullPolicy = Layer.effect(
+export const layerAutoPullPolicy = builtinServiceLayer("t3.git")(
   VcsAutoPullPolicy,
   Effect.gen(function* () {
     const projects = yield* ProjectStore.ProjectStoreV2;
@@ -1257,4 +1257,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(VcsStatusBroadcaster, make);
+export const layer = builtinServiceLayer("t3.git")(VcsStatusBroadcaster, make);

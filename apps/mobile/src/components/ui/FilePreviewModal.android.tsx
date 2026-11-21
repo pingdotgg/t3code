@@ -26,6 +26,22 @@ export type {
 import { PdfPreview } from "../PdfPreview";
 import { SheetHeader } from "./SheetHeader";
 import { AppText as Text } from "./AppText";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const DocumentPreview = defineNativePluginFeature(
+  "native.components.ui.file-preview-modal.document-preview",
+  BuiltinDocumentPreview,
+);
+
+const ImagePreviewHeader = defineNativePluginFeature(
+  "native.components.ui.file-preview-modal.image-preview-header",
+  BuiltinImagePreviewHeader,
+);
+
+const ImagePreview = defineNativePluginFeature(
+  "native.components.ui.file-preview-modal.image-preview",
+  BuiltinImagePreview,
+);
 
 function PdfDocumentPreview(props: {
   readonly source: ResolvedFilePreviewDocument;
@@ -70,7 +86,7 @@ function PdfDocumentPreview(props: {
   );
 }
 
-function DocumentPreview(props: {
+function BuiltinDocumentPreview(props: {
   readonly source: ResolvedFilePreviewDocument;
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
@@ -135,7 +151,7 @@ type ImagePreviewProps = {
 
 const ImagePreviewContext = createContext<ImagePreviewProps | null>(null);
 
-function ImagePreviewHeader(header: { readonly imageIndex: number }) {
+function BuiltinImagePreviewHeader(header: { readonly imageIndex: number }) {
   const props = useContext(ImagePreviewContext)!;
   const source = props.source.images[header.imageIndex];
   const gt = useGT();
@@ -163,7 +179,7 @@ function imageViewingProps(source: FilePreviewImages) {
   };
 }
 
-function ImagePreview(props: ImagePreviewProps) {
+function BuiltinImagePreview(props: ImagePreviewProps) {
   return (
     <ImagePreviewContext value={props}>
       <ImageViewing
@@ -200,6 +216,11 @@ function AndroidFilePreview(props: FilePreviewViewerProps) {
 }
 
 /** Shows images, PDFs and documents full screen. */
-export function FilePreviewModal(props: FilePreviewModalProps) {
+function BuiltinFilePreviewModal(props: FilePreviewModalProps) {
   return <FilePreviewSession {...props} progressiveGallery={false} Viewer={AndroidFilePreview} />;
 }
+
+export const FilePreviewModal = defineNativePluginFeature(
+  "native.components.ui.file-preview-modal",
+  BuiltinFilePreviewModal,
+);

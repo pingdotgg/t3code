@@ -76,6 +76,7 @@ import {
 } from "./threadDetailsPanelStyles";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useComposerMenuState } from "./useComposerMenuState";
+import { definePluginComponent } from "~/plugins/features";
 
 type OpenInOption = {
   label: string;
@@ -213,7 +214,7 @@ function getOpenInIconClass(kind: OpenInOption["kind"]) {
   return cn(kind === "brand" ? "text-foreground opacity-100" : "text-muted-foreground");
 }
 
-export const OpenInPicker = memo(function OpenInPicker({
+const PluginOriginalOpenInPicker = memo(function OpenInPicker({
   environmentId,
   keybindings,
   availableEditors,
@@ -493,3 +494,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     </ActionGroup>
   );
 });
+export const OpenInPicker = definePluginComponent(
+  "component:components/chat/OpenInPicker/OpenInPicker",
+  PluginOriginalOpenInPicker,
+);

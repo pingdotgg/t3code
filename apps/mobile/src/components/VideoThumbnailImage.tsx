@@ -10,6 +10,11 @@ import { StyleSheet } from "react-native";
 import type { DraftComposerFileAttachment } from "../lib/composerImages";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import { cachedVideoThumbnail, loadVideoThumbnail } from "../lib/videoThumbnails";
+import { defineNativePluginFeature } from "../plugins/features";
+export const VideoThumbnailImage = defineNativePluginFeature(
+  "native.components.video-thumbnail-image",
+  BuiltinVideoThumbnailImage,
+);
 
 interface VideoThumbnailTarget {
   readonly cacheKey: string;
@@ -36,7 +41,7 @@ const noVideoThumbnail = Atom.make(AsyncResult.initial<VideoThumbnail | null>())
   Atom.withLabel("video-thumbnail:none"),
 );
 
-export function VideoThumbnailImage(props: {
+function BuiltinVideoThumbnailImage(props: {
   readonly cacheKey: string;
   readonly source: string | DraftComposerFileAttachment | null;
   readonly contentFit?: "cover" | "contain";

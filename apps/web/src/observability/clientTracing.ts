@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -65,7 +66,7 @@ const layerDelegateRuntime = Layer.mergeAll(
   PrimaryEnvironmentHttpLayer.layer,
   OtlpExporter.layerFlusher,
   OtlpSerialization.layerJson,
-  Layer.succeed(HttpClient.TracerDisabledWhen, () => true),
+  builtinSucceedLayer("t3.client")(HttpClient.TracerDisabledWhen, () => true),
 );
 
 let activeRuntime: ManagedRuntime.ManagedRuntime<never, never> | null = null;

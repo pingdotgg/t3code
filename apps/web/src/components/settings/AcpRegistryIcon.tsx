@@ -9,6 +9,12 @@ import {
 
 import { cn } from "../../lib/utils";
 import { ACPRegistryIcon } from "../Icons";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AcpRegistryAgentIcon = definePluginComponent(
+  "component:components/settings/AcpRegistryIcon/AcpRegistryAgentIcon",
+  PluginOriginalAcpRegistryAgentIcon,
+);
 
 const ACP_REGISTRY_ICON_CACHE = "t3-acp-registry-icons-v1";
 const MAX_ICON_BYTES = 512 * 1_024;
@@ -96,7 +102,7 @@ const acpRegistryIconSourceAtom = Atom.family((iconUrl: string) =>
 
 const NO_ICON_SOURCE_ATOM = Atom.make(AsyncResult.initial<string>());
 
-export function AcpRegistryAgentIcon({
+function PluginOriginalAcpRegistryAgentIcon({
   icon,
   className,
   fallbackClassName,

@@ -1,9 +1,10 @@
 import { useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 
-export function ConnectionTraceId({
+function BuiltinConnectionTraceId({
   traceId,
   tone = "muted",
   activation = "press",
@@ -53,3 +54,8 @@ export function ConnectionTraceId({
     </>
   );
 }
+
+export const ConnectionTraceId = defineNativePluginFeature(
+  "native.features.connection.connection-trace-id",
+  BuiltinConnectionTraceId,
+);

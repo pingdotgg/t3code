@@ -5464,5 +5464,31 @@
   "ad208e3e32c85029": "Hide all",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool calls in chat",
-  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show."
+  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
+  "e4fdf2c125bb1a1c": "{count, plural, one {Used canvas {count} time} other {Used canvas {count} times}}",
+  "2a632164170177a2": "{count, plural, one {Tried to use canvas {count} time} other {Tried to use canvas {count} times}}",
+  "c1b7649ac731ed07": "Plugins",
+  "902eee528c565dd9": "Plugin command failed",
+  "c5d071b279c2e90f": "Close plugin recovery",
+  "ea4b0ed7aa9bd760": "Plugin recovery",
+  "656854e648c97dca": "Re-enable a built-in plugin",
+  "ebffe4dabf52835f": "Enable {name}",
+  "ba32f1a6898cf271": "Reload local plugins",
+  "37036031afcfce34": "Bundled feature",
+  "9608b33769752cbf": "Search plugins in {label}",
+  "654234ef26ef1497": "Search available plugins",
+  "59375313b87b2aee": "{name} is installed",
+  "501b9d7d4a10350f": "Install {name}",
+  "119fdf3a37955ebd": "Connect an environment to manage its plugins.",
+  "4d4a9cccdbcb80b1": "Update this environment to manage plugins.",
+  "2a0fa39b8a84f848": "This environment could not load its plugin catalog.",
+  "0fceafde5534f56f": "Loading plugins...",
+  "7c9ee44d092d4f51": [
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " · Reviewed by",
+    " ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" }
+  ],
+  "2bf815f51a9354c3": "No available plugins match this search.",
+  "16ed41dd430363b8": "The available plugin catalog could not be loaded."
 }

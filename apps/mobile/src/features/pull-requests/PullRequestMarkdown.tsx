@@ -3,6 +3,7 @@ import {
   type PullRequestBodySegment,
 } from "@t3tools/client-runtime/pull-request-markdown";
 import { markdownTaskMarkerOffset } from "@t3tools/shared/markdownTaskList";
+import { defineNativePluginFeature } from "../../plugins/features";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { useProject } from "../../state/entities";
@@ -109,7 +110,12 @@ function MarkdownImage(props: {
   );
 }
 
-export function PullRequestMarkdown(props: {
+export const PullRequestMarkdown = defineNativePluginFeature(
+  "markdown.pull-request",
+  BuiltinPullRequestMarkdown,
+);
+
+function BuiltinPullRequestMarkdown(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
   readonly lineBreaks?: boolean;

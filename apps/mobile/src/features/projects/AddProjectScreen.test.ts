@@ -52,6 +52,9 @@ function loadRouters() {
   };
 }
 
+vi.mock("../../plugins/features", () => ({
+  defineNativePluginFeature: <Feature>(_slot: string, builtin: Feature) => builtin,
+}));
 vi.mock("../layout/workspace/useSelectWorkspaceDetail", async () => {
   const { selectWorkspaceDetail } = await import("../layout/workspace/workspace-detail-selection");
   return {

@@ -1,4 +1,5 @@
 import { useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
@@ -26,7 +27,7 @@ import {
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
-export function SettingsEnvironmentsRouteScreen() {
+function BuiltinSettingsEnvironmentsRouteScreen() {
   const gt = useGT();
   const {
     connectedEnvironments,
@@ -159,3 +160,8 @@ export function SettingsEnvironmentsRouteScreen() {
     </SettingsScreen>
   );
 }
+
+export const SettingsEnvironmentsRouteScreen = defineNativePluginFeature(
+  "settings.environments",
+  BuiltinSettingsEnvironmentsRouteScreen,
+);

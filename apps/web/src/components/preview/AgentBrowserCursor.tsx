@@ -6,10 +6,20 @@ import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 
 import { agentBrowserCursorOpacity, type BrowserController } from "./agentBrowserCursorLogic";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AgentBrowserCursor = definePluginComponent(
+  "component:components/preview/AgentBrowserCursor/AgentBrowserCursor",
+  PluginOriginalAgentBrowserCursor,
+);
+const AgentBrowserCursorEvent = definePluginComponent(
+  "component:components/preview/AgentBrowserCursor/AgentBrowserCursorEvent",
+  PluginOriginalAgentBrowserCursorEvent,
+);
 
 const CURSOR_ACTIVE_MS = 700;
 
-export function AgentBrowserCursor(props: {
+function PluginOriginalAgentBrowserCursor(props: {
   readonly tabId: string;
   readonly zoomFactor: number;
   readonly controller: BrowserController;
@@ -30,7 +40,7 @@ export function AgentBrowserCursor(props: {
   );
 }
 
-function AgentBrowserCursorEvent(props: {
+function PluginOriginalAgentBrowserCursorEvent(props: {
   readonly event: DesktopPreviewPointerEvent;
   readonly content: {
     readonly x: number;

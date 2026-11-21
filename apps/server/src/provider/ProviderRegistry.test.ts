@@ -1,4 +1,5 @@
 import * as CodexErrors from "effect-codex-app-server/errors";
+import { ProviderDriverCatalogLive } from "./ProviderDriverCatalog.ts";
 import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
@@ -4081,6 +4082,7 @@ it.layer(
             ProviderInstanceRegistryHydration.layer.pipe(
               Layer.provide(
                 Layer.mergeAll(
+                  ProviderDriverCatalogLive,
                   PortScanner.layerTest,
                   ProviderInstallationGate.layer,
                   SqlitePersistence.layerMemory,
@@ -4207,6 +4209,7 @@ it.layer(
             ProviderInstanceRegistryHydration.layer.pipe(
               Layer.provide(
                 Layer.mergeAll(
+                  ProviderDriverCatalogLive,
                   PortScanner.layerTest,
                   ProviderInstallationGate.layer,
                   SqlitePersistence.layerMemory,
@@ -4350,6 +4353,7 @@ it.layer(
         ProviderInstanceRegistryHydration.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
+              ProviderDriverCatalogLive,
               PortScanner.layerTest,
               ProviderInstallationGate.layer,
               SqlitePersistence.layerMemory,

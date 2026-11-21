@@ -4,8 +4,13 @@ import { View } from "react-native";
 import { Button } from "../../../components/ui/Button";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { SettingsSection } from "./SettingsSection";
+import { defineNativePluginFeature } from "../../../plugins/features";
+export const SettingsProjectOverridesSection = defineNativePluginFeature(
+  "native.features.settings.components.settings-project-overrides-section",
+  BuiltinSettingsProjectOverridesSection,
+);
 
-export function SettingsProjectOverridesSection(props: {
+function BuiltinSettingsProjectOverridesSection(props: {
   readonly projectLabel: string;
   readonly hasOverrides: boolean;
   readonly pending: boolean;

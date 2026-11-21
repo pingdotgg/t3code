@@ -62,8 +62,22 @@ import {
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { pullRequestQuickActions } from "./pullRequestList.logic";
 import { PullRequestSpeedActions, PullRequestSpeedModeContext } from "./PullRequestSpeedActions";
+import { definePluginComponent, definePluginFeature } from "~/plugins/features";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
+
+const ChecksGlyph = definePluginComponent(
+  "component:components/pullRequest/ThreadPullRequestsPanel/ChecksGlyph",
+  PluginOriginalChecksGlyph,
+);
+const EnabledThreadPullRequestsPanel = definePluginComponent(
+  "component:components/pullRequest/ThreadPullRequestsPanel/EnabledThreadPullRequestsPanel",
+  PluginOriginalEnabledThreadPullRequestsPanel,
+);
+export const ThreadPullRequestsPanel = definePluginFeature(
+  "pull-request.thread",
+  BuiltinThreadPullRequestsPanel,
+);
 
 const SOURCE_LABELS: Record<ThreadPullRequestLink["source"], string> = {
   manual: msg("Linked by you"),
@@ -73,7 +87,7 @@ const SOURCE_LABELS: Record<ThreadPullRequestLink["source"], string> = {
   "stack-dismissed": msg("Dismissed", { $context: "pull request link source" }),
 };
 
-function ChecksGlyph({
+function PluginOriginalChecksGlyph({
   state,
 }: {
   state: NonNullable<ThreadPullRequestLink["snapshot"]>["checksState"] & string;
@@ -389,7 +403,11 @@ function LinkRowImpl({
   );
 }
 
-const LinkRow = memo(LinkRowImpl);
+const PluginOriginalLinkRow = memo(LinkRowImpl);
+const LinkRow = definePluginComponent(
+  "component:components/pullRequest/ThreadPullRequestsPanel/LinkRow",
+  PluginOriginalLinkRow,
+);
 
 function latestSyncedAt(links: ReadonlyArray<ThreadPullRequestLink>): string | null {
   let latest: string | null = null;
@@ -403,7 +421,7 @@ function latestSyncedAt(links: ReadonlyArray<ThreadPullRequestLink>): string | n
 const lineKey = (line: PullRequestListLine) =>
   `${line.link.host}/${line.link.repository}#${line.link.number}`;
 
-export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
+export function BuiltinThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
   const gt = useGT();
   const configs = useServerConfigs();
   if (configs.get(threadRef.environmentId) === undefined) {
@@ -417,7 +435,11 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   return <EnabledThreadPullRequestsPanel threadRef={threadRef} />;
 }
 
-function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
+function PluginOriginalEnabledThreadPullRequestsPanel({
+  threadRef,
+}: {
+  threadRef: ScopedThreadRef;
+}) {
   const gt = useGT();
   const thread = useThreadShell(threadRef);
   const issues = thread?.issues ?? [];

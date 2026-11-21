@@ -1,7 +1,7 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -58,4 +58,4 @@ const make = Effect.gen(function* () {
   return Scheduler.of({ register });
 });
 
-export const layer = Layer.effect(Scheduler, make);
+export const layer = builtinServiceLayer("t3.scheduler")(Scheduler, make);

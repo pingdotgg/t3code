@@ -1,8 +1,9 @@
 import type { ComponentProps } from "react";
 
 import { ListToggleRow } from "../../../components/ui/ListToggleRow";
+import { defineNativePluginFeature } from "../../../plugins/features";
 
-export function SettingsSwitchRow({
+function BuiltinSettingsSwitchRow({
   subtitle,
   ...props
 }: Omit<ComponentProps<typeof ListToggleRow>, "description"> & {
@@ -10,3 +11,8 @@ export function SettingsSwitchRow({
 }) {
   return <ListToggleRow {...props} description={subtitle} />;
 }
+
+export const SettingsSwitchRow = defineNativePluginFeature(
+  "native.features.settings.components.settings-switch-row",
+  BuiltinSettingsSwitchRow,
+);

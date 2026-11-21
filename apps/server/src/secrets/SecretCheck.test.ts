@@ -114,6 +114,7 @@ const setup = Effect.fn("SecretCheckTest.setup")(function* (
         });
         createdConfigs.push(input.config);
         const snapshot = providerSnapshot(input.instanceId);
+        const unused = () => Effect.die("unused");
         return {
           instanceId: input.instanceId,
           driverKind,
@@ -136,8 +137,22 @@ const setup = Effect.fn("SecretCheckTest.setup")(function* (
             streamChanges: Stream.empty,
             applyUsageLimits: () => Effect.void,
           },
-          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-          textGeneration: {} as ProviderInstance["textGeneration"],
+          // The registry only accepts a complete instance; these tests never call its methods.
+          orchestrationAdapter: {
+            instanceId: input.instanceId,
+            driver: driverKind,
+            getCapabilities: unused,
+            planSelectionTransition: unused,
+            openSession: unused,
+          } as unknown as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {
+            generateTranscriptionPostProcessing: unused,
+            generateCommitMessage: unused,
+            generatePrContent: unused,
+            generateBranchName: unused,
+            generateThreadTitle: unused,
+            generateReviewGuide: unused,
+          },
         } satisfies ProviderInstance;
       }),
   };

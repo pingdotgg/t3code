@@ -21,6 +21,7 @@ import {
 } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
+import { PluginKernel, layerWithEnabled } from "@t3tools/shared/pluginKernel";
 
 const layerServerEnvironment = (baseDir: string) =>
   ServerEnvironment.layer.pipe(
@@ -76,6 +77,30 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmentLive", (it) => {
+  it.effect("keeps host identity and descriptors available with connections disabled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped();
+      yield* Effect.gen(function* () {
+        const kernel = yield* PluginKernel;
+        const environment = yield* ServerEnvironment.ServerEnvironment;
+        const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
+        const descriptor = yield* environment.getDescriptor;
+        expect(yield* identity.getEnvironmentId).toBe(descriptor.environmentId);
+        yield* kernel.setEnabled("t3.connections", true);
+        yield* kernel.setEnabled("t3.connections", false);
+        expect(yield* environment.getDescriptor).toEqual(descriptor);
+        expect(yield* identity.getEnvironmentId).toBe(descriptor.environmentId);
+      }).pipe(
+        Effect.provide(
+          layerServerEnvironment(baseDir).pipe(
+            Layer.provideMerge(layerWithEnabled({ "t3.connections": false })),
+          ),
+        ),
+      );
+    }),
+  );
+
   it.effect("publishes proven install ownership only for manually updated servers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

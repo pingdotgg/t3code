@@ -3,8 +3,14 @@ import type { ComponentProps } from "react";
 import { FloatingActionButton } from "./ui/FloatingActionButton.android";
 import { ScrollComposeButton } from "./ScrollComposeButton.android";
 import type { NewThreadButton as SharedNewThreadButton } from "./NewThreadButton.shared";
+import { defineNativePluginFeature } from "../plugins/features";
 
-export function NewThreadButton(props: ComponentProps<typeof SharedNewThreadButton>) {
+export const NewThreadButton = defineNativePluginFeature(
+  "native.components.new-thread-button",
+  BuiltinNewThreadButton,
+);
+
+function BuiltinNewThreadButton(props: ComponentProps<typeof SharedNewThreadButton>) {
   const gt = useGT();
   if (props.extended && props.expanded !== undefined) {
     return <ScrollComposeButton {...props} expanded={props.expanded} />;

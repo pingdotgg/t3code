@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { copySnapshot as copySnapshotToClipboard } from "./copySnapshot";
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
@@ -195,7 +196,7 @@ function UserFileCard({
   );
 }
 
-function UserVideoAttachment({
+function PluginOriginalUserVideoAttachment({
   file,
   standalone = false,
   cornerClassName,
@@ -460,7 +461,11 @@ function UserMessageProjectedStatus({ row }: { row: Extract<TimelineRow, { kind:
   );
 }
 
-function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+function PluginOriginalUserTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+}) {
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
   const m = useMessages();
@@ -1141,7 +1146,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 const ACTIONS_REVEAL_CLASS_NAME =
   "items-center text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100";
 
-function UserMessageIntentMarker({
+function PluginOriginalUserMessageIntentMarker({
   intent,
   unread,
 }: {
@@ -1177,7 +1182,7 @@ function UserMessageIntentMarker({
   );
 }
 
-function RevertUserMessageButton({
+function PluginOriginalRevertUserMessageButton({
   turnCount,
   messageId,
 }: {
@@ -1215,7 +1220,7 @@ const COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM = 1.75;
 
 const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(100% - ${COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM}rem), transparent)`;
 
-const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
+const PluginOriginalCollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
   text: string;
   renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<ServerProviderSkill>;
@@ -1289,7 +1294,7 @@ const USER_MESSAGE_REMARK_PLUGINS = [
   remarkEnableOrderedListNumbers,
 ];
 
-const UserMessageBody = memo(function UserMessageBody(props: {
+const PluginOriginalUserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   renderContextReference?: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<ServerProviderSkill>;
@@ -1314,3 +1319,33 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     />
   );
 });
+
+const UserVideoAttachment = definePluginComponent(
+  "component:components/chat/TimelineUserMessageRow/UserVideoAttachment",
+  PluginOriginalUserVideoAttachment,
+);
+
+const UserTimelineRow = definePluginComponent(
+  "component:components/chat/TimelineUserMessageRow/UserTimelineRow",
+  PluginOriginalUserTimelineRow,
+);
+
+const UserMessageIntentMarker = definePluginComponent(
+  "component:components/chat/TimelineUserMessageRow/UserMessageIntentMarker",
+  PluginOriginalUserMessageIntentMarker,
+);
+
+const RevertUserMessageButton = definePluginComponent(
+  "component:components/chat/TimelineUserMessageRow/RevertUserMessageButton",
+  PluginOriginalRevertUserMessageButton,
+);
+
+const CollapsibleUserMessageBody = definePluginComponent(
+  "component:components/chat/TimelineUserMessageRow/CollapsibleUserMessageBody",
+  PluginOriginalCollapsibleUserMessageBody,
+);
+
+const UserMessageBody = definePluginComponent(
+  "component:components/chat/TimelineUserMessageRow/UserMessageBody",
+  PluginOriginalUserMessageBody,
+);

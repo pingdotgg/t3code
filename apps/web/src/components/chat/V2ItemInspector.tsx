@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { T, Var, useGT } from "gt-react";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
@@ -41,7 +42,7 @@ interface V2ItemInspectorProps {
   readonly source?: TurnItemSource | undefined;
 }
 
-function SyntaxTokens({
+function PluginOriginalSyntaxTokens({
   text,
   language,
 }: {
@@ -67,7 +68,7 @@ function SyntaxTokens({
 const monoClassName =
   "font-mono text-(length:--font-size-code,var(--text-2xs)) leading-relaxed whitespace-pre-wrap break-words select-text";
 
-function StructuredValue({
+function PluginOriginalStructuredValue({
   value,
   highlightJson = false,
   language,
@@ -158,7 +159,7 @@ function ToolOutputImages(props: ToolOutputState) {
   ));
 }
 
-function ToolOutput(props: ToolOutputState) {
+function PluginOriginalToolOutput(props: ToolOutputState) {
   return props.output ? (
     <StructuredValue value={props.output} highlightJson />
   ) : props.pending ? (
@@ -178,7 +179,7 @@ function ToolOutput(props: ToolOutputState) {
   ) : null;
 }
 
-export function FetchedToolOutput(props: {
+function PluginOriginalFetchedToolOutput(props: {
   readonly onInitialOutputReady?: (() => void) | undefined;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly environmentId: EnvironmentId;
@@ -195,7 +196,7 @@ export function FetchedToolOutput(props: {
   );
 }
 
-function ToolCallBody(
+function PluginOriginalToolCallBody(
   props: ToolOutputState & {
     readonly command?: string;
     readonly args?: unknown;
@@ -241,7 +242,7 @@ function ToolCallBody(
   );
 }
 
-export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspectorProps) {
+const PluginOriginalV2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspectorProps) {
   const gt = useGT();
   // Command rows stream their output, including the final output, from the server.
   const environmentStreamsOutput = useCommandOutputStreaming(props.environmentId);
@@ -432,3 +433,33 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
     </div>
   );
 });
+
+const SyntaxTokens = definePluginComponent(
+  "component:components/chat/V2ItemInspector/SyntaxTokens",
+  PluginOriginalSyntaxTokens,
+);
+
+const StructuredValue = definePluginComponent(
+  "component:components/chat/V2ItemInspector/StructuredValue",
+  PluginOriginalStructuredValue,
+);
+
+const ToolOutput = definePluginComponent(
+  "component:components/chat/V2ItemInspector/ToolOutput",
+  PluginOriginalToolOutput,
+);
+
+export const FetchedToolOutput = definePluginComponent(
+  "component:components/chat/V2ItemInspector/FetchedToolOutput",
+  PluginOriginalFetchedToolOutput,
+);
+
+const ToolCallBody = definePluginComponent(
+  "component:components/chat/V2ItemInspector/ToolCallBody",
+  PluginOriginalToolCallBody,
+);
+
+export const V2ItemInspector = definePluginComponent(
+  "component:components/chat/V2ItemInspector/V2ItemInspector",
+  PluginOriginalV2ItemInspector,
+);

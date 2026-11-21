@@ -3,6 +3,9 @@ import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+const Badge = definePluginComponent("component:components/ui/badge/Badge", PluginOriginalBadge);
 
 const badgeVariants = cva(
   "relative inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-sm border border-transparent font-medium outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 [&_svg:not([class*='opacity-'])]:opacity-80 [&_svg:not([class*='size-'])]:size-3.5 sm:[&_svg:not([class*='size-'])]:size-3 [&_svg]:pointer-events-none [&_svg]:shrink-0 [button&,a&]:cursor-pointer [button&,a&]:pointer-coarse:after:absolute [button&,a&]:pointer-coarse:after:size-full [button&,a&]:pointer-coarse:after:min-h-11 [button&,a&]:pointer-coarse:after:min-w-11",
@@ -43,7 +46,7 @@ interface BadgeProps extends useRender.ComponentProps<"span"> {
   size?: VariantProps<typeof badgeVariants>["size"];
 }
 
-function Badge({ className, variant, size, render, ...props }: BadgeProps) {
+function PluginOriginalBadge({ className, variant, size, render, ...props }: BadgeProps) {
   const defaultProps = {
     className: cn(badgeVariants({ className, size, variant })),
     "data-slot": "badge",

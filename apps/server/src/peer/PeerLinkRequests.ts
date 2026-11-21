@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 /**
  * Links an agent asks the user to make. The user picks the machine and access in a card, and
  * their client answers with its addresses and a pairing code that goes straight to
@@ -26,7 +27,6 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 
@@ -491,4 +491,4 @@ const outcomeNotice = (
   }
 };
 
-export const layer = Layer.effect(PeerLinkRequests, make);
+export const layer = builtinServiceLayer("t3.connections")(PeerLinkRequests, make);

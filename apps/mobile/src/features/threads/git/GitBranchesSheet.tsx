@@ -15,13 +15,18 @@ import { useSelectedThreadGitState } from "../../../state/use-selected-thread-gi
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 import { SheetActionButton } from "./gitSheetComponents";
+import { defineNativePluginFeature } from "../../../plugins/features";
+export const GitBranchesSheet = defineNativePluginFeature(
+  "native.features.threads.git.git-branches-sheet",
+  BuiltinGitBranchesSheet,
+);
 
 type GitBranchesSheetProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
 }>;
 
-export function GitBranchesSheet(_props: GitBranchesSheetProps) {
+function BuiltinGitBranchesSheet(_props: GitBranchesSheetProps) {
   const gt = useGT();
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();

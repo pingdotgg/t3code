@@ -4,6 +4,7 @@ import type {
   CodeViewItem,
   DiffLineAnnotation,
   FileDiffMetadata,
+  LineAnnotation,
   SelectedLineRange,
 } from "@pierre/diffs";
 import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
@@ -21,6 +22,64 @@ import {
 import { nextFileCommentId } from "../files/fileCommentAnnotations";
 import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
 import { StyledDiffCodeView, type StyledDiffCodeViewOptions } from "./StyledDiffCodeView";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AnnotatableCodeView = definePluginComponent(
+  "component:components/diffs/AnnotatableCodeView/AnnotatableCodeView",
+  PluginOriginalAnnotatableCodeView,
+);
+
+const DiffHeaderMetadata = definePluginComponent(
+  "diff.header.metadata",
+  ({
+    fileDiff,
+    render,
+  }: {
+    fileDiff: FileDiffMetadata;
+    render: (fileDiff: FileDiffMetadata) => ReactNode;
+  }) => render(fileDiff),
+);
+const DiffHeaderFilenameSuffix = definePluginComponent(
+  "diff.header.filename-suffix",
+  ({
+    fileDiff,
+    render,
+  }: {
+    fileDiff: FileDiffMetadata;
+    render: (fileDiff: FileDiffMetadata) => ReactNode;
+  }) => render(fileDiff),
+);
+const DiffHeaderPrefix = definePluginComponent(
+  "diff.header.prefix",
+  ({
+    fileDiff,
+    fileKey,
+    collapsed,
+    render,
+  }: {
+    fileDiff: FileDiffMetadata;
+    fileKey: string;
+    collapsed: boolean;
+    render: (fileDiff: FileDiffMetadata, fileKey: string, collapsed: boolean) => ReactNode;
+  }) => render(fileDiff, fileKey, collapsed),
+);
+const DiffFooter = definePluginComponent("diff.footer", ({ render }: { render: () => ReactNode }) =>
+  render(),
+);
+const DiffAnnotationGroup = definePluginComponent(
+  "diff.annotation",
+  (props: {
+    hasDraft: boolean;
+    annotation: LineAnnotation<DiffCommentAnnotationGroup>;
+    children: ReactNode;
+  }) => (
+    <div
+      className={props.hasDraft ? "py-1" : "divide-y divide-border/30 border-y border-border/30"}
+    >
+      {props.children}
+    </div>
+  ),
+);
 
 interface DiffCommentAnnotationEntry {
   id: string;
@@ -106,7 +165,7 @@ interface DiffSelectionContext {
   item: CodeViewItem<DiffCommentAnnotationGroup>;
 }
 
-export function AnnotatableCodeView({
+function PluginOriginalAnnotatableCodeView({
   environmentId,
   projectId,
   codeViewKey,
@@ -142,6 +201,8 @@ export function AnnotatableCodeView({
     annotation: DiffCommentLineAnnotation;
   } | null>(null);
   const [draftText, setDraftText] = useState("");
+  const renderPluginFooter = () =>
+    renderCodeViewFooter ? <DiffFooter render={renderCodeViewFooter} /> : null;
 
   const filesByKey = new Map(files.map((file) => [file.fileKey, file]));
   if (
@@ -268,10 +329,12 @@ export function AnnotatableCodeView({
       {...(renderHeaderMetadata
         ? {
             renderHeaderMetadata: (item: CodeViewItem<DiffCommentAnnotationGroup>) =>
-              item.type === "diff" ? renderHeaderMetadata(item.fileDiff) : null,
+              item.type === "diff" ? (
+                <DiffHeaderMetadata fileDiff={item.fileDiff} render={renderHeaderMetadata} />
+              ) : null,
           }
         : {})}
-      {...(renderCodeViewFooter ? { renderCodeViewFooter } : {})}
+      {...(renderCodeViewFooter ? { renderCodeViewFooter: renderPluginFooter } : {})}
       items={items}
       selectedLines={selectedLines}
       onSelectedLinesChange={setSelectedLines}
@@ -284,19 +347,24 @@ export function AnnotatableCodeView({
           onFileCollapsedChange(nextItem.id, nextItem.collapsed === true),
       }}
       renderHeaderFilenameSuffix={(item) =>
-        item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null
+        item.type === "diff" ? (
+          <DiffHeaderFilenameSuffix fileDiff={item.fileDiff} render={renderHeaderFilenameSuffix} />
+        ) : null
       }
       renderHeaderPrefix={(item) =>
-        item.type === "diff"
-          ? renderHeaderPrefix(item.fileDiff, item.id, item.collapsed === true)
-          : null
+        item.type === "diff" ? (
+          <DiffHeaderPrefix
+            fileDiff={item.fileDiff}
+            fileKey={item.id}
+            collapsed={item.collapsed === true}
+            render={renderHeaderPrefix}
+          />
+        ) : null
       }
       renderAnnotation={(...[annotation]) => {
         const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
-          <div
-            className={hasDraft ? "py-1" : "divide-y divide-border/30 border-y border-border/30"}
-          >
+          <DiffAnnotationGroup hasDraft={hasDraft} annotation={annotation}>
             {annotation.metadata.entries.map((entry) => (
               <DiffCommentAnnotation
                 key={entry.id}
@@ -317,7 +385,7 @@ export function AnnotatableCodeView({
                 onDelete={() => removeEntry(entry.id)}
               />
             ))}
-          </div>
+          </DiffAnnotationGroup>
         );
       }}
     />

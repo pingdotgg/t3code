@@ -3,6 +3,7 @@ import { View } from "react-native";
 
 import { AppText as Text } from "../../../components/ui/AppText";
 import { ListSection } from "../../../components/ui/ListSection";
+import { defineNativePluginFeature } from "../../../plugins/features";
 
 /**
  * Set while the Settings list is a split view's sidebar, naming the page open beside it. Like the
@@ -12,7 +13,7 @@ export const SettingsSidebarContext = createContext<{ readonly selected: string 
   null,
 );
 
-export function SettingsSection(props: ComponentProps<typeof ListSection>) {
+function BuiltinSettingsSection(props: ComponentProps<typeof ListSection>) {
   if (!use(SettingsSidebarContext)) return <ListSection {...props} />;
   return (
     <View className="gap-1">
@@ -36,3 +37,8 @@ export function SettingsSection(props: ComponentProps<typeof ListSection>) {
     </View>
   );
 }
+
+export const SettingsSection = defineNativePluginFeature(
+  "native.features.settings.components.settings-section",
+  BuiltinSettingsSection,
+);

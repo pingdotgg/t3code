@@ -4,10 +4,17 @@ import type { ReactNode } from "react";
 
 import { ManagedRelayAuthProvider } from "../../cloud/managedAuth";
 import { clerkAppearance } from "./clerkAppearance";
+import { definePluginComponent } from "~/plugins/features";
+
+const ElectronManagedAuthShell = definePluginComponent(
+  "component:components/clerk/ElectronManagedAuthShell/ElectronManagedAuthShell",
+  PluginOriginalElectronManagedAuthShell,
+);
+export default ElectronManagedAuthShell;
 
 /** Load only lazily inside desktop; clerk-js is statically bundled and would otherwise enter every
  * client's startup graph. */
-export default function ElectronManagedAuthShell({
+function PluginOriginalElectronManagedAuthShell({
   publishableKey,
   children,
 }: {

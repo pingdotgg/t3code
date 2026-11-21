@@ -1726,3 +1726,5 @@ function PullRequestFiltersMenuInSidebarOrder(
   const projects = sortProjectsByGroupOrder(props.projects, sidebarProjectGroups);
   return <PullRequestFiltersMenu {...props} projects={projects} />;
 }
+
+export { PullRequestsPage as PullRequestsRouteView };

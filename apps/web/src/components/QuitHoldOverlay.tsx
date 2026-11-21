@@ -2,6 +2,12 @@ import { useGT } from "gt-react";
 import { useSyncExternalStore } from "react";
 
 import { isMacPlatform } from "../lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+export const QuitHoldOverlay = definePluginComponent(
+  "component:components/QuitHoldOverlay/QuitHoldOverlay",
+  PluginOriginalQuitHoldOverlay,
+);
 
 const HOLD_HINT_LINGER_MS = 1200;
 
@@ -49,7 +55,7 @@ function subscribeQuitHint(listener: () => void): () => void {
 
 const readQuitHint = () => visibleMode;
 
-export function QuitHoldOverlay() {
+function PluginOriginalQuitHoldOverlay() {
   const visibleMode = useSyncExternalStore(subscribeQuitHint, readQuitHint, readQuitHint);
   const gt = useGT();
 

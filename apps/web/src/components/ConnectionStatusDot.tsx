@@ -2,6 +2,12 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ConnectionStatusDot = definePluginComponent(
+  "component:components/ConnectionStatusDot/ConnectionStatusDot",
+  PluginOriginalConnectionStatusDot,
+);
 
 export function connectionPhaseDotClassName(phase: EnvironmentConnectionPhase): string {
   switch (phase) {
@@ -27,7 +33,7 @@ type ConnectionStatusDotProps = {
   pingClassName?: string | null;
 };
 
-export function ConnectionStatusDot({
+function PluginOriginalConnectionStatusDot({
   tooltipText,
   dotClassName,
   pingClassName,

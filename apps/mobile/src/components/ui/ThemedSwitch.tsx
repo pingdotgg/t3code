@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { Platform, Switch } from "react-native";
 
 import { NativeSwitch } from "./NativeSwitch";
@@ -5,7 +6,7 @@ import type { ThemedSwitchProps } from "./NativeSwitch.types";
 
 export type { ThemedSwitchProps } from "./NativeSwitch.types";
 
-export function ThemedSwitch(props: ThemedSwitchProps) {
+function BuiltinThemedSwitch(props: ThemedSwitchProps) {
   if (Platform.OS === "android") {
     return <NativeSwitch {...props} />;
   }
@@ -19,3 +20,8 @@ export function ThemedSwitch(props: ThemedSwitchProps) {
     />
   );
 }
+
+export const ThemedSwitch = defineNativePluginFeature(
+  "native.components.ui.themed-switch",
+  BuiltinThemedSwitch,
+);

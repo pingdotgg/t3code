@@ -3,6 +3,7 @@ import { ChevronDownIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 import { Button } from "../ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -11,7 +12,12 @@ import {
   type PullRequestFilterOption,
 } from "./PullRequestListFilters";
 
-export function PullRequestCompactFilterMenu<Value extends string>({
+export const PullRequestCompactFilterMenu = definePluginComponent(
+  "component:components/pullRequest/PullRequestCompactFilterMenu/PullRequestCompactFilterMenu",
+  PluginOriginalPullRequestCompactFilterMenu,
+);
+
+function PluginOriginalPullRequestCompactFilterMenu<Value extends string>({
   label,
   triggerIcon,
   triggerLabel,

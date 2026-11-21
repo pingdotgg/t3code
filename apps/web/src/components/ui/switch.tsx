@@ -1,8 +1,11 @@
 import { Switch as SwitchPrimitive } from "@base-ui/react/switch";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-function Switch({
+const Switch = definePluginComponent("component:components/ui/switch/Switch", PluginOriginalSwitch);
+
+function PluginOriginalSwitch({
   className,
   size = "default",
   mixed = false,

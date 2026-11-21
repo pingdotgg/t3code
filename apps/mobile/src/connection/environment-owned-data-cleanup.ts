@@ -1,8 +1,8 @@
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { Persistence } from "@t3tools/client-runtime/platform";
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { clearThreadComposerErrorsForEnvironment } from "../state/thread-composer-error";
@@ -14,7 +14,8 @@ class EnvironmentOwnedDataClearError extends Schema.TaggedError<EnvironmentOwned
   { cause: Schema.Defect() },
 ) {}
 
-export const layer = Layer.succeed(
+export const layer = builtinSucceedLayer(
+  "t3.mobile.platform",
   Persistence.EnvironmentOwnedDataCleanup,
   Persistence.EnvironmentOwnedDataCleanup.of({
     clear: Effect.fn("Persistence.EnvironmentOwnedDataCleanup.clear")(function (environmentId) {

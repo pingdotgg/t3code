@@ -3,8 +3,26 @@ import { msg } from "gt-react";
 import { CloudIcon, LaptopIcon, MonitorIcon, ServerIcon, type LucideProps } from "lucide-react";
 import type { FunctionComponent, SVGProps } from "react";
 import { LinuxIcon } from "./Icons";
+import { definePluginComponent } from "~/plugins/features";
 
-function LucideLike(props: SVGProps<SVGSVGElement>) {
+const LucideLike = definePluginComponent(
+  "component:components/EnvironmentMachineIcon/LucideLike",
+  PluginOriginalLucideLike,
+);
+const MacMiniIcon = definePluginComponent(
+  "component:components/EnvironmentMachineIcon/MacMiniIcon",
+  PluginOriginalMacMiniIcon,
+);
+const MacStudioIcon = definePluginComponent(
+  "component:components/EnvironmentMachineIcon/MacStudioIcon",
+  PluginOriginalMacStudioIcon,
+);
+export const EnvironmentMachineIcon = definePluginComponent(
+  "component:components/EnvironmentMachineIcon/EnvironmentMachineIcon",
+  PluginOriginalEnvironmentMachineIcon,
+);
+
+function PluginOriginalLucideLike(props: SVGProps<SVGSVGElement>) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -21,7 +39,7 @@ function LucideLike(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-function MacMiniIcon(props: SVGProps<SVGSVGElement>) {
+function PluginOriginalMacMiniIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <LucideLike {...props}>
       <rect width="18" height="12" x="3" y="6" rx="2.5" />
@@ -30,7 +48,7 @@ function MacMiniIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-function MacStudioIcon(props: SVGProps<SVGSVGElement>) {
+function PluginOriginalMacStudioIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <LucideLike {...props}>
       <rect width="18" height="14" x="3" y="5" rx="2" />
@@ -65,7 +83,7 @@ export function environmentMachineIcon(
   return ICON_BY_KIND[kind];
 }
 
-export function EnvironmentMachineIcon({
+function PluginOriginalEnvironmentMachineIcon({
   kind,
   ...props
 }: LucideProps & { readonly kind: EnvironmentMachineKind }) {

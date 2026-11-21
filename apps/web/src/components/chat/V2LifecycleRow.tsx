@@ -69,10 +69,40 @@ import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { subagentResumedSince } from "./V2LifecycleRow.logic";
 import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
+import { definePluginComponent } from "~/plugins/features";
+
+export const V2LifecycleRow = definePluginComponent(
+  "component:components/chat/V2LifecycleRow/V2LifecycleRow",
+  PluginOriginalV2LifecycleRow,
+);
+export const SubagentElapsed = definePluginComponent(
+  "component:components/chat/V2LifecycleRow/SubagentElapsed",
+  PluginOriginalSubagentElapsed,
+);
+const SubagentAvatar = definePluginComponent(
+  "component:components/chat/V2LifecycleRow/SubagentAvatar",
+  PluginOriginalSubagentAvatar,
+);
+export const SubagentNotificationLink = definePluginComponent(
+  "component:components/chat/V2LifecycleRow/SubagentNotificationLink",
+  PluginOriginalSubagentNotificationLink,
+);
+const SubagentTimelineLink = definePluginComponent(
+  "component:components/chat/V2LifecycleRow/SubagentTimelineLink",
+  PluginOriginalSubagentTimelineLink,
+);
+const SubagentTimelineTooltip = definePluginComponent(
+  "component:components/chat/V2LifecycleRow/SubagentTimelineTooltip",
+  PluginOriginalSubagentTimelineTooltip,
+);
+const HandoffEndpoint = definePluginComponent(
+  "component:components/chat/V2LifecycleRow/HandoffEndpoint",
+  PluginOriginalHandoffEndpoint,
+);
 
 export type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
 
-export function V2LifecycleRow(props: {
+function PluginOriginalV2LifecycleRow(props: {
   readonly item: OrchestrationV2TurnItem;
   readonly environmentId: EnvironmentId;
   readonly resourceSummary?: boolean | undefined;
@@ -234,11 +264,15 @@ function isoOrNull(value: DateTime.Utc | null | undefined): string | null {
   return value ? DateTime.formatIso(value) : null;
 }
 
-export function SubagentElapsed({ agent }: { agent: Parameters<typeof AgentElapsed>[0]["agent"] }) {
+function PluginOriginalSubagentElapsed({
+  agent,
+}: {
+  agent: Parameters<typeof AgentElapsed>[0]["agent"];
+}) {
   return <AgentElapsed agent={agent} />;
 }
 
-function SubagentAvatar({
+function PluginOriginalSubagentAvatar({
   driver,
   displayName,
   iconUrl,
@@ -374,7 +408,7 @@ const NOTIFICATION_OUTCOME_LABEL: Record<OrchestrationV2Notification["outcome"],
   unknown: msg("Finished", { $context: "subagent task outcome" }),
 };
 
-export function SubagentNotificationLink(props: {
+function PluginOriginalSubagentNotificationLink(props: {
   readonly parentRef: ScopedThreadRef;
   readonly childThreadId: ThreadId;
   readonly taskIds?: ReadonlyArray<NodeId> | undefined;
@@ -432,7 +466,7 @@ export function SubagentNotificationLink(props: {
   );
 }
 
-function SubagentTimelineLink(props: {
+function PluginOriginalSubagentTimelineLink(props: {
   readonly parentRef: ScopedThreadRef;
   readonly subagentId: NodeId;
   readonly providerInstanceId: ProviderInstanceId;
@@ -587,7 +621,7 @@ function SubagentTimelineLink(props: {
   );
 }
 
-function SubagentTimelineTooltip(
+function PluginOriginalSubagentTimelineTooltip(
   props: Parameters<typeof SubagentTimelineLink>[0] & {
     model: string | null;
     modelSelection: OrchestrationV2Subagent["modelSelection"];
@@ -718,7 +752,7 @@ export function HandoffRow(props: {
   );
 }
 
-function HandoffEndpoint(props: {
+function PluginOriginalHandoffEndpoint(props: {
   readonly entries: ReadonlyArray<ProviderInstanceEntry>;
   readonly instanceId: ProviderInstanceId;
   readonly model?: string | undefined;

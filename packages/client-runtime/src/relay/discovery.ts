@@ -1,5 +1,6 @@
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
@@ -11,7 +12,6 @@ import {
 } from "@t3tools/contracts/relay";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
@@ -405,4 +405,4 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   return RelayEnvironmentDiscovery.of({ state, refresh });
 });
 
-export const layer = Layer.effect(RelayEnvironmentDiscovery, make());
+export const layer = builtinServiceLayer("t3.client")(RelayEnvironmentDiscovery, make());

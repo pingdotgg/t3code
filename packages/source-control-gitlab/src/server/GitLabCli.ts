@@ -1,8 +1,8 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -822,4 +822,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(GitLabCli, make);
+export const layer = builtinServiceLayer("t3.git")(GitLabCli, make);

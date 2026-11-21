@@ -6,10 +6,10 @@
 import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { builtinLifecycleLayer } from "../plugins/PluginKernel.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
@@ -82,4 +82,8 @@ const make = Effect.gen(function* () {
   );
 });
 
-export const layer = Layer.effectDiscard(make);
+export const layer = builtinLifecycleLayer(
+  "t3.thread",
+  "t3/runtime/telemetry/DelegatedTaskAnalytics#lifecycle1",
+  make,
+);

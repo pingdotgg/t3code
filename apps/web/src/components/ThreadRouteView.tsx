@@ -26,6 +26,7 @@ import {
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
 } from "../threadRoutes";
+import { definePluginFeature } from "~/plugins/features";
 
 /**
  * Keeps the family of an open thread the shell leaves out (an older settled thread) in the shell
@@ -51,7 +52,7 @@ export function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: 
  * promotion runs in the draft store; this only follows the redirect it leaves behind.
  * `background` keeps the thread mounted, inert and in place under Settings or Usage.
  */
-export function ThreadRouteView({
+export function BuiltinThreadRouteView({
   target,
   background = false,
 }: {
@@ -236,3 +237,5 @@ export function ThreadRouteView({
     </SidebarInset>
   );
 }
+
+export const ThreadRouteView = definePluginFeature("chat.route", BuiltinThreadRouteView);

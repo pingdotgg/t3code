@@ -1,5 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { T, useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -49,7 +50,7 @@ import { DEFAULT_SETTINGS_PAGE } from "../layout/workspace/workspace-tab-navigat
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
 import { m } from "../../i18n/messages";
 
-export function SettingsProjectOverviewRouteScreen() {
+function BuiltinSettingsProjectOverviewRouteScreen() {
   const gt = useGT();
   const environmentMenu = useSettingsEnvironmentMenu();
   const insets = useSafeAreaInsets();
@@ -129,7 +130,7 @@ export function SettingsProjectOverviewRouteScreen() {
   );
 }
 
-function ProjectOverviewContent(props: {
+function BuiltinProjectOverviewContent(props: {
   readonly members: readonly EnvironmentProject[];
   /** Pin and archive belong to the whole project, even when the filter picks one machine. */
   readonly group: ProjectGroup;
@@ -513,3 +514,13 @@ function RemoveCheckoutAction(props: {
     </Pressable>
   );
 }
+
+const ProjectOverviewContent = defineNativePluginFeature(
+  "native.features.settings.settings-project-overview-route-screen.project-overview-content",
+  BuiltinProjectOverviewContent,
+);
+
+export const SettingsProjectOverviewRouteScreen = defineNativePluginFeature(
+  "settings.project-overview",
+  BuiltinSettingsProjectOverviewRouteScreen,
+);

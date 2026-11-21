@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../../plugins/PluginKernel.ts";
 import {
   threadPullRequestKeysEqual,
   threadPullRequestsOf,
@@ -833,4 +834,4 @@ export const layer: Layer.Layer<
   LegacyV1ThreadImporter,
   never,
   EventSink.EventSinkV2 | SqlClient.SqlClient
-> = Layer.effect(LegacyV1ThreadImporter, make);
+> = builtinServiceLayer("t3.thread")(LegacyV1ThreadImporter, make);

@@ -1,6 +1,7 @@
 import { errorDisplayMessage, type MarkedText } from "@t3tools/client-runtime/errors";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { defineNativePluginFeature } from "../../plugins/features";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { NavigationRow } from "../../components/ui/NavigationRow";
@@ -155,7 +156,7 @@ function sourceFromParam(value: string | string[] | undefined): AddProjectRemote
   return parseAddProjectRemoteSource(stringParam(value));
 }
 
-function SectionTitle(props: { readonly children: string }) {
+function BuiltinSectionTitle(props: { readonly children: string }) {
   return (
     <Text
       className={
@@ -169,7 +170,7 @@ function SectionTitle(props: { readonly children: string }) {
   );
 }
 
-function AddProjectShell(props: { readonly children: ReactNode; readonly title: string }) {
+function BuiltinAddProjectShell(props: { readonly children: ReactNode; readonly title: string }) {
   const insets = useSafeAreaInsets();
 
   return (
@@ -191,7 +192,7 @@ function AddProjectShell(props: { readonly children: ReactNode; readonly title: 
   );
 }
 
-function ListSection(props: { readonly children: ReactNode }) {
+function BuiltinListSection(props: { readonly children: ReactNode }) {
   return (
     <View
       className={
@@ -234,7 +235,7 @@ function EnvironmentOptionRow(
   );
 }
 
-function ListRow(props: {
+function BuiltinListRow(props: {
   readonly title: string;
   readonly subtitle?: string | null;
   readonly icon: ReactNode;
@@ -302,7 +303,7 @@ function ListRow(props: {
   );
 }
 
-function PrimaryActionButton(props: {
+function BuiltinPrimaryActionButton(props: {
   readonly label: string;
   readonly disabled?: boolean;
   readonly loading?: boolean;
@@ -311,7 +312,7 @@ function PrimaryActionButton(props: {
   return <Button {...props} tone="primary" fullWidth />;
 }
 
-function ProjectPathInput(props: {
+function BuiltinProjectPathInput(props: {
   readonly value: string;
   readonly onChangeText: (value: string) => void;
   readonly onSubmit: () => void;
@@ -510,7 +511,7 @@ function useSelectedEnvironment(requestedEnvironmentId: EnvironmentId | null): {
   };
 }
 
-function EmptyEnvironmentState() {
+function BuiltinEmptyEnvironmentState() {
   const navigation = useNavigation();
   const gt = useGT();
 
@@ -531,7 +532,7 @@ function EmptyEnvironmentState() {
   );
 }
 
-function SourceControlRow(props: {
+function BuiltinSourceControlRow(props: {
   readonly source: AddProjectRemoteSource;
   readonly selectedEnvironmentId: EnvironmentId;
   readonly ready: boolean;
@@ -594,7 +595,7 @@ function SourceControlRow(props: {
   );
 }
 
-export function AddProjectSourceScreen(props: { readonly environmentId?: string | string[] }) {
+function BuiltinAddProjectSourceScreen(props: { readonly environmentId?: string | string[] }) {
   const navigation = useNavigation();
   const { environmentOptions, selectedEnvironment, setSelectedEnvironmentId } =
     useSelectedEnvironment(stringParam(props.environmentId) as EnvironmentId | null);
@@ -932,7 +933,7 @@ function useEnvironmentFromParam(
   return resolveAddProjectEnvironment(environmentOptions, environmentId);
 }
 
-export function AddProjectRepositoryScreen(props: {
+function BuiltinAddProjectRepositoryScreen(props: {
   readonly environmentId?: string | string[];
   readonly source?: string | string[];
 }) {
@@ -1036,7 +1037,7 @@ export function AddProjectRepositoryScreen(props: {
   );
 }
 
-function FolderBrowser(props: {
+function BuiltinFolderBrowser(props: {
   readonly environment: EnvironmentOption;
   readonly pathInput: string;
   readonly setPathInput: (path: string) => void;
@@ -1157,7 +1158,7 @@ function FolderBrowser(props: {
   );
 }
 
-export function AddProjectNewScreen(props: { readonly environmentId?: string | string[] }) {
+function BuiltinAddProjectNewScreen(props: { readonly environmentId?: string | string[] }) {
   const openNewTaskDraft = useOpenNewTaskDraft();
   const navigation = useNavigation();
   const environmentOptions = useEnvironmentOptions().filter(
@@ -1448,7 +1449,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   );
 }
 
-export function AddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
+function BuiltinAddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
   const environment = useEnvironmentFromParam(props.environmentId);
   const canCreateProject = useEnvironmentScope(
     environment?.environmentId ?? null,
@@ -1519,7 +1520,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   );
 }
 
-export function AddProjectDestinationScreen(props: {
+function BuiltinAddProjectDestinationScreen(props: {
   readonly environmentId?: string | string[];
   readonly remoteUrl?: string | string[];
   readonly repositoryTitle?: string | string[];
@@ -1687,3 +1688,73 @@ export function AddProjectDestinationScreen(props: {
     </AddProjectShell>
   );
 }
+
+const SectionTitle = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.section-title",
+  BuiltinSectionTitle,
+);
+
+const AddProjectShell = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.add-project-shell",
+  BuiltinAddProjectShell,
+);
+
+const ListSection = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.list-section",
+  BuiltinListSection,
+);
+
+const ListRow = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.list-row",
+  BuiltinListRow,
+);
+
+const PrimaryActionButton = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.primary-action-button",
+  BuiltinPrimaryActionButton,
+);
+
+const ProjectPathInput = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.project-path-input",
+  BuiltinProjectPathInput,
+);
+
+const EmptyEnvironmentState = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.empty-environment-state",
+  BuiltinEmptyEnvironmentState,
+);
+
+const SourceControlRow = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.source-control-row",
+  BuiltinSourceControlRow,
+);
+
+const FolderBrowser = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.folder-browser",
+  BuiltinFolderBrowser,
+);
+
+export const AddProjectSourceScreen = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.add-project-source-screen",
+  BuiltinAddProjectSourceScreen,
+);
+
+export const AddProjectRepositoryScreen = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.add-project-repository-screen",
+  BuiltinAddProjectRepositoryScreen,
+);
+
+export const AddProjectNewScreen = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.add-project-new-screen",
+  BuiltinAddProjectNewScreen,
+);
+
+export const AddProjectLocalFolderScreen = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.add-project-local-folder-screen",
+  BuiltinAddProjectLocalFolderScreen,
+);
+
+export const AddProjectDestinationScreen = defineNativePluginFeature(
+  "native.features.projects.add-project-screen.add-project-destination-screen",
+  BuiltinAddProjectDestinationScreen,
+);

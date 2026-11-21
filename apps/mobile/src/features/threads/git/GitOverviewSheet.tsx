@@ -54,6 +54,12 @@ import {
   useLinkedPullRequestLines,
 } from "../LinkedPullRequestList";
 import { useLinkedPullRequestActions } from "../useLinkedPullRequestActions";
+import { defineNativePluginFeature } from "../../../plugins/features";
+
+export const GitOverviewSheet = defineNativePluginFeature(
+  "native.features.threads.git.git-overview-sheet",
+  BuiltinGitOverviewSheet,
+);
 
 type GitOverviewSheetProps = StaticScreenProps<
   {
@@ -64,7 +70,7 @@ type GitOverviewSheetProps = StaticScreenProps<
   readonly presentation?: "sheet" | "inspector";
 };
 
-export function GitOverviewSheet(props: GitOverviewSheetProps) {
+function BuiltinGitOverviewSheet(props: GitOverviewSheetProps) {
   const navigation = useNavigation();
   const { environmentId, threadId } = props.route.params;
   const isBlankLink = environmentId.trim().length === 0 || threadId.trim().length === 0;

@@ -5,8 +5,14 @@ import { type ReactNode, useState } from "react";
 import { cn } from "~/lib/utils";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { useSettingsSearchTarget, useSettingsSearchTargetId } from "./settingsLayout";
+import { definePluginComponent } from "~/plugins/features";
 
-export function FoldedSettingsSection({
+export const FoldedSettingsSection = definePluginComponent(
+  "component:components/settings/FoldedSettingsSection/FoldedSettingsSection",
+  PluginOriginalFoldedSettingsSection,
+);
+
+function PluginOriginalFoldedSettingsSection({
   id,
   title,
   summary,

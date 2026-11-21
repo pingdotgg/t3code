@@ -6,8 +6,14 @@ import { Platform, View, type PressableProps, type StyleProp, type ViewStyle } f
 import type { useMediaActions } from "../state/mediaActions";
 import { SymbolView } from "./ui/AppSymbol";
 import { Menu } from "./ui/Menu";
+import { defineNativePluginFeature } from "../plugins/features";
 
-export function MediaActionsMenu(props: {
+export const MediaActionsMenu = defineNativePluginFeature(
+  "native.components.media-actions-menu",
+  BuiltinMediaActionsMenu,
+);
+
+function BuiltinMediaActionsMenu(props: {
   readonly media: ReturnType<typeof useMediaActions>;
   readonly inModal?: boolean;
   readonly children?: ReactElement<PressableProps>;

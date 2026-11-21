@@ -33,6 +33,12 @@ import { isConfiguredAcpRegistryAgent } from "./AddProviderInstanceDialog.logic"
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "./providerDriverMeta";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AcpRegistrySearchStep = definePluginComponent(
+  "component:components/settings/AcpRegistrySearchStep/AcpRegistrySearchStep",
+  PluginOriginalAcpRegistrySearchStep,
+);
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim()
@@ -140,7 +146,7 @@ interface AcpRegistrySearchStepProps {
   readonly onLocalConfiguration?: () => void;
 }
 
-export function AcpRegistrySearchStep({
+function PluginOriginalAcpRegistrySearchStep({
   environmentId,
   registry,
   providerInstances,

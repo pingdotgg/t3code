@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -17,7 +18,6 @@ import { isNetworkPath } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
@@ -645,4 +645,4 @@ export const make = Effect.gen(function* () {
   return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile });
 });
 
-export const layer = Layer.effect(WorkspaceFileSystem, make);
+export const layer = builtinServiceLayer("t3.projects")(WorkspaceFileSystem, make);

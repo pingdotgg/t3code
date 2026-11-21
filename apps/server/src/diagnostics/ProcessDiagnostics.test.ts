@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import { PluginKernel, layerWithEnabled } from "@t3tools/shared/pluginKernel";
 
 import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
@@ -67,6 +68,38 @@ function layerTelemetryFor(
 }
 
 describe("ProcessDiagnostics", () => {
+  it.effect("keeps host diagnostics and trace attribution available with usage disabled", () =>
+    Effect.gen(function* () {
+      const diagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
+      const attribution = yield* ResourceAttribution.ResourceAttribution;
+      const kernel = yield* PluginKernel;
+      yield* attribution.record({
+        component: "server-trace",
+        operation: "append",
+        logicalWriteBytes: 32,
+      });
+      expect((yield* attribution.snapshot).entries[0]?.logicalWriteBytes).toBe(32);
+      expect((yield* diagnostics.read).serverPid).toBe(process.pid);
+      yield* kernel.setEnabled("t3.usage", true);
+      yield* kernel.setEnabled("t3.usage", false);
+      yield* attribution.record({
+        component: "server-trace",
+        operation: "append",
+        logicalWriteBytes: 16,
+      });
+      expect((yield* attribution.snapshot).entries[0]?.logicalWriteBytes).toBe(48);
+      expect((yield* diagnostics.read).serverPid).toBe(process.pid);
+    }).pipe(
+      Effect.provide(
+        ProcessDiagnostics.layer.pipe(
+          Layer.provideMerge(layerTelemetryFor(makeNativeSnapshot([]))),
+          Layer.provideMerge(ResourceAttribution.layer),
+          Layer.provideMerge(layerWithEnabled({ "t3.usage": false })),
+        ),
+      ),
+    ),
+  );
+
   it.effect("rejects stale process identities before signaling", () =>
     Effect.gen(function* () {
       const snapshot = makeNativeSnapshot([]);

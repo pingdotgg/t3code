@@ -126,6 +126,68 @@ import {
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import type { MessageResolver } from "../../i18n/messages";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const ProviderHeader = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.provider-header",
+  BuiltinProviderHeader,
+);
+const DisclosureRow = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.disclosure-row",
+  BuiltinDisclosureRow,
+);
+const SwitchRow = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.switch-row",
+  BuiltinSwitchRow,
+);
+const ThreadSettingsSessionProvider = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.thread-settings-session-provider",
+  BuiltinThreadSettingsSessionProvider,
+);
+const ThreadSettingsModelListRow = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.thread-settings-model-list-row",
+  BuiltinThreadSettingsModelListRow,
+);
+const ThreadSettingsProviderListHeader = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.thread-settings-provider-list-header",
+  BuiltinThreadSettingsProviderListHeader,
+);
+const ThreadSettingsOptionsItem = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.thread-settings-options-item",
+  BuiltinThreadSettingsOptionsItem,
+);
+const ThreadSettingsMainContent = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.thread-settings-main-content",
+  BuiltinThreadSettingsMainContent,
+);
+const ThreadSettingsChoiceContent = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.thread-settings-choice-content",
+  BuiltinThreadSettingsChoiceContent,
+);
+const ThreadSettingsModelsScreen = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.thread-settings-models-screen",
+  BuiltinThreadSettingsModelsScreen,
+);
+const ThreadSettingsChoiceScreen = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.thread-settings-choice-screen",
+  BuiltinThreadSettingsChoiceScreen,
+);
+const ThreadSettingsPickerNavigator = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.thread-settings-picker-navigator",
+  BuiltinThreadSettingsPickerNavigator,
+);
+export const ThreadSettingsPickerScreen = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.thread-settings-picker-screen",
+  BuiltinThreadSettingsPickerScreen,
+);
+export const ExistingThreadSettingsRouteScreen = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.existing-thread-settings-route-screen",
+  BuiltinExistingThreadSettingsRouteScreen,
+);
+export const NewTaskThreadSettingsRouteScreen = defineNativePluginFeature(
+  "native.features.threads.thread-settings-sheet.new-task-thread-settings-route-screen",
+  BuiltinNewTaskThreadSettingsRouteScreen,
+);
 
 const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
   "claudeAgent",
@@ -150,7 +212,7 @@ const EMPTY_MODEL_FAVORITES: ReadonlyArray<{
 const FAVORITES_PROVIDER_FILTER = "@favorites";
 // Servers that predate `migrateModelPreferences` drop it and keep reporting null favorites.
 const attemptedMigrationGenerations = new Map<EnvironmentId, number>();
-function ProviderHeader(props: {
+function BuiltinProviderHeader(props: {
   readonly driver: string | undefined;
   readonly iconUrl: string | undefined;
   readonly label: string;
@@ -227,7 +289,7 @@ function ProviderHeader(props: {
   );
 }
 
-function DisclosureRow(props: {
+function BuiltinDisclosureRow(props: {
   readonly label: string;
   readonly value: string | undefined;
   readonly onPress: () => void;
@@ -260,7 +322,7 @@ function DisclosureRow(props: {
   );
 }
 
-function SwitchRow(props: {
+function BuiltinSwitchRow(props: {
   readonly label: string;
   readonly value: boolean;
   readonly onValueChange: (value: boolean) => void;
@@ -352,7 +414,7 @@ type ThreadSettingsSessionValue = {
 
 const ThreadSettingsSessionContext = createContext<ThreadSettingsSessionValue | null>(null);
 
-function ThreadSettingsSessionProvider(
+function BuiltinThreadSettingsSessionProvider(
   props: ThreadSettingsSessionProps & { readonly children: ReactNode },
 ) {
   const gt = useGT();
@@ -753,7 +815,7 @@ type ThreadSettingsCatalogItem =
       readonly key: "options";
     };
 
-function ThreadSettingsModelListRow(props: {
+function BuiltinThreadSettingsModelListRow(props: {
   readonly option: ModelOption;
   readonly isFirst: boolean;
   readonly isLast: boolean;
@@ -781,7 +843,7 @@ function ThreadSettingsModelListRow(props: {
   );
 }
 
-function ThreadSettingsProviderListHeader(props: {
+function BuiltinThreadSettingsProviderListHeader(props: {
   readonly provider: ThreadSettingsProviderCatalog;
 }) {
   const session = useThreadSettingsSession();
@@ -970,7 +1032,7 @@ function buildThreadSettingsCatalogItems(
   });
 }
 
-function ThreadSettingsOptionsItem(props: {
+function BuiltinThreadSettingsOptionsItem(props: {
   readonly animationsReady: boolean;
   readonly bottomInset: number;
   readonly onOpenSubmenu: (submenu: ThreadSettingsSubmenuPage) => void;
@@ -1069,7 +1131,7 @@ function ThreadSettingsOptionsItem(props: {
   );
 }
 
-function ThreadSettingsMainContent(props: {
+function BuiltinThreadSettingsMainContent(props: {
   readonly bottomInset: number;
   readonly onOpenSubmenu: (submenu: ThreadSettingsSubmenuPage) => void;
 }) {
@@ -1213,7 +1275,7 @@ function ThreadSettingsMainContent(props: {
   );
 }
 
-function ThreadSettingsChoiceContent(props: {
+function BuiltinThreadSettingsChoiceContent(props: {
   readonly submenu: ThreadSettingsSubmenuPage;
   readonly onSelected: () => void;
 }) {
@@ -1340,7 +1402,7 @@ function useThreadSettingsPickerPresentation() {
   return value;
 }
 
-function ThreadSettingsModelsScreen() {
+function BuiltinThreadSettingsModelsScreen() {
   const gt = useGT();
   const session = useThreadSettingsSession();
   const presentation = useThreadSettingsPickerPresentation();
@@ -1438,7 +1500,7 @@ function ThreadSettingsModelsScreen() {
   );
 }
 
-function ThreadSettingsChoiceScreen() {
+function BuiltinThreadSettingsChoiceScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const route = useRoute<RouteProp<ThreadSettingsPickerStackParams, "ThreadSettingsChoice">>();
 
@@ -1455,7 +1517,7 @@ function ThreadSettingsChoiceScreen() {
   );
 }
 
-function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) {
+function BuiltinThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) {
   const screenOptions = useSheetStackOptions();
   const gt = useGT();
   const presentation = {
@@ -1483,7 +1545,7 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
   );
 }
 
-export function ThreadSettingsPickerScreen(
+function BuiltinThreadSettingsPickerScreen(
   props: ThreadSettingsSessionProps & { readonly onClose: () => void },
 ) {
   return (
@@ -1493,7 +1555,7 @@ export function ThreadSettingsPickerScreen(
   );
 }
 
-export function ExistingThreadSettingsRouteScreen({
+function BuiltinExistingThreadSettingsRouteScreen({
   route,
 }: StaticScreenProps<ExistingThreadSettingsRouteParams>) {
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
@@ -1578,7 +1640,7 @@ export function ExistingThreadSettingsRouteScreen({
 }
 
 /** RNS owns nested sheet dismissal; Reasoning and Runtime remain ordinary pushes. */
-export function NewTaskThreadSettingsRouteScreen() {
+function BuiltinNewTaskThreadSettingsRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
   const optionDescriptors = resolveProviderOptionDescriptors({

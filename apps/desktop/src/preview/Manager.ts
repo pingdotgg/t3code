@@ -49,7 +49,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
@@ -94,6 +93,7 @@ import {
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS, type RecordingInputOptions } from "./RecordingInput.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }
@@ -4198,4 +4198,4 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   });
 }).pipe(Effect.withSpan("PreviewManager.make"));
 
-export const layer = Layer.effect(PreviewManager, make);
+export const layer = builtinServiceLayer("t3.desktop.manager", PreviewManager, make);

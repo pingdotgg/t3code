@@ -3,12 +3,12 @@ import {
   type SettingsSecretUnresolvedError,
 } from "@t3tools/contracts";
 import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
@@ -211,4 +211,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(GitCafeCredentials, make);
+export const layer = builtinServiceLayer("t3.git")(GitCafeCredentials, make);

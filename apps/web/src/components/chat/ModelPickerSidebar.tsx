@@ -12,6 +12,7 @@ import {
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
+import { definePluginComponent } from "~/plugins/features";
 
 function describeUnavailableInstance(
   entry: ProviderInstanceEntry,
@@ -47,7 +48,7 @@ function describeUnavailableInstance(
 const PICKER_TOOLTIP_SIDE = "left" as const;
 const PICKER_TOOLTIP_SIDE_OFFSET = 8;
 
-export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
+const PluginOriginalModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   selectedInstanceId: ProviderInstanceId | "favorites";
   onSelectInstance: (instanceId: ProviderInstanceId | "favorites") => void;
   onFocusSearch: () => void;
@@ -232,3 +233,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
     </Toolbar.Root>
   );
 });
+export const ModelPickerSidebar = definePluginComponent(
+  "component:components/chat/ModelPickerSidebar/ModelPickerSidebar",
+  PluginOriginalModelPickerSidebar,
+);

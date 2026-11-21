@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   HTML_RENDER_COLUMN_WIDTH,
@@ -34,7 +35,7 @@ function rememberContentHeight(attachmentId: string, height: number) {
   }
 }
 
-export function HtmlRenderFrame(props: {
+function PluginOriginalHtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
   readonly threadRef: ScopedThreadRef | undefined;
@@ -149,3 +150,8 @@ export function HtmlRenderFrame(props: {
     </div>
   );
 }
+
+export const HtmlRenderFrame = definePluginComponent(
+  "component:components/chat/HtmlRenderFrame/HtmlRenderFrame",
+  PluginOriginalHtmlRenderFrame,
+);

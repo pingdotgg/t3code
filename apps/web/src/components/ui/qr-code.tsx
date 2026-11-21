@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { QrCode } from "@t3tools/shared/qrCode";
+import { definePluginComponent } from "~/plugins/features";
 
 type QRCodeSvgProps = {
   value: string;
@@ -49,7 +50,7 @@ function buildQrPathData(qrCode: ReturnType<typeof QrCode.encodeText>, marginSiz
   return commands.join("");
 }
 
-export const QRCodeSvg = memo(function QRCodeSvg({
+const PluginOriginalQRCodeSvg = memo(function QRCodeSvg({
   value,
   size = 128,
   level = "L",
@@ -79,3 +80,7 @@ export const QRCodeSvg = memo(function QRCodeSvg({
     </svg>
   );
 });
+export const QRCodeSvg = definePluginComponent(
+  "component:components/ui/qr-code/QRCodeSvg",
+  PluginOriginalQRCodeSvg,
+);

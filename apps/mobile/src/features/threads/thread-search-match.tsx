@@ -5,8 +5,13 @@ import { useGT } from "gt-react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const ThreadSearchMatchExcerpt = defineNativePluginFeature(
+  "native.features.threads.thread-search-match.thread-search-match-excerpt",
+  BuiltinThreadSearchMatchExcerpt,
+);
 
-export function ThreadSearchMatchExcerpt(props: {
+function BuiltinThreadSearchMatchExcerpt(props: {
   readonly match: EnvironmentThreadSearchMatch;
   readonly query: string;
   readonly selected?: boolean;

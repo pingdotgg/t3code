@@ -3,6 +3,12 @@ import { useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const UsageShareBar = definePluginComponent(
+  "component:components/usage/UsageShareBar/UsageShareBar",
+  PluginOriginalUsageShareBar,
+);
 
 export interface ShareSegment {
   readonly label: string;
@@ -10,7 +16,7 @@ export interface ShareSegment {
   readonly color: string;
 }
 
-export function UsageShareBar({
+function PluginOriginalUsageShareBar({
   label,
   segments,
   format,

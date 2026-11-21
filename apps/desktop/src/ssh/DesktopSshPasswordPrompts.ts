@@ -7,7 +7,6 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -17,6 +16,7 @@ import {
   SSH_PASSWORD_PROMPT_CHANNEL,
   SSH_PASSWORD_PROMPT_SETTLED_CHANNEL,
 } from "../ipc/channels.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 const DEFAULT_SSH_PASSWORD_PROMPT_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -482,4 +482,8 @@ export const make = Effect.fn("desktop.sshPasswordPrompts.make")(function* (
 });
 
 export const layer = (options: DesktopSshPasswordPromptsOptions = {}) =>
-  Layer.effect(DesktopSshPasswordPrompts, make(options));
+  builtinServiceLayer(
+    "t3.desktop.desktop-ssh-password-prompts",
+    DesktopSshPasswordPrompts,
+    make(options),
+  );

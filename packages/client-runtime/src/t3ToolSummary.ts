@@ -1207,6 +1207,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "canvas": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Used canvas {count} time} other {Used canvas {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to use canvas {count} time} other {Tried to use canvas {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "capabilities": {
       const count = selected.length;
       label = done

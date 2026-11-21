@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -238,6 +239,6 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(TextGeneration, make).pipe(
+export const layer = builtinServiceLayer("t3.server")(TextGeneration, make).pipe(
   Layer.provideMerge(TextGenerators.layer),
 );

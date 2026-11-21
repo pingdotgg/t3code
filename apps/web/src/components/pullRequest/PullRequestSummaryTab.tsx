@@ -101,14 +101,44 @@ import { canReactPullRequestComment } from "@t3tools/client-runtime/pull-request
 import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
+import { definePluginComponent } from "~/plugins/features";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
+
+const CommentIdentity = definePluginComponent(
+  "component:components/pullRequest/PullRequestSummaryTab/CommentIdentity",
+  PluginOriginalCommentIdentity,
+);
+const CommentLocation = definePluginComponent(
+  "component:components/pullRequest/PullRequestSummaryTab/CommentLocation",
+  PluginOriginalCommentLocation,
+);
+const CommentBody = definePluginComponent(
+  "component:components/pullRequest/PullRequestSummaryTab/CommentBody",
+  PluginOriginalCommentBody,
+);
+const CollapsedComment = definePluginComponent(
+  "component:components/pullRequest/PullRequestSummaryTab/CollapsedComment",
+  PluginOriginalCollapsedComment,
+);
+export const PullRequestMetaRow = definePluginComponent(
+  "component:components/pullRequest/PullRequestSummaryTab/PullRequestMetaRow",
+  PluginOriginalPullRequestMetaRow,
+);
+export const PullRequestSection = definePluginComponent(
+  "component:components/pullRequest/PullRequestSummaryTab/PullRequestSection",
+  PluginOriginalPullRequestSection,
+);
+export const PullRequestSummaryTab = definePluginComponent(
+  "component:components/pullRequest/PullRequestSummaryTab/PullRequestSummaryTab",
+  PluginOriginalPullRequestSummaryTab,
+);
 
 function reviewerKey(login: string): string {
   return login.toLowerCase();
 }
 
-function CommentIdentity({
+function PluginOriginalCommentIdentity({
   comment,
   detail,
 }: {
@@ -152,7 +182,7 @@ function CommentIdentity({
   );
 }
 
-function CommentLocation({
+function PluginOriginalCommentLocation({
   comment,
   thread,
 }: {
@@ -201,7 +231,7 @@ interface CommentEditing {
   readonly onSave: (comment: PullRequestComment, body: string) => void;
 }
 
-function CommentBody({
+function PluginOriginalCommentBody({
   comment,
   editing,
   className,
@@ -278,7 +308,7 @@ function AddToChatButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function CollapsedComment({
+function PluginOriginalCollapsedComment({
   comment,
   editing,
   label,
@@ -362,7 +392,7 @@ function CollapsedComment({
   );
 }
 
-export function PullRequestMetaRow({
+function PluginOriginalPullRequestMetaRow({
   icon,
   label,
   children,
@@ -382,7 +412,7 @@ export function PullRequestMetaRow({
   );
 }
 
-export function PullRequestSection({
+function PluginOriginalPullRequestSection({
   title,
   name,
   defaultOpen = true,
@@ -465,7 +495,7 @@ const COMMENT_FILTER_STORAGE_KEY = "t3code:pull-request-comment-filter:v1";
 const CommentFilterSchema = Schema.Struct({ bots: Schema.Boolean, resolved: Schema.Boolean });
 const DEFAULT_COMMENT_FILTER: typeof CommentFilterSchema.Type = { bots: false, resolved: false };
 
-export function PullRequestSummaryTab({
+function PluginOriginalPullRequestSummaryTab({
   revealUrl,
   onRevealSettled,
   scrollerRef,

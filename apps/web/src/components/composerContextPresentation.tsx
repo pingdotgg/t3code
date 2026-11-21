@@ -9,7 +9,7 @@ import type {
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
 import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
-import { createContext, type ReactElement, type ReactNode, use } from "react";
+import { type ReactElement, type ReactNode, use } from "react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import type { MessageResolver } from "../i18n/messages";
 import { ComposerContextActionsContext } from "./composerContextActions";
@@ -59,6 +59,48 @@ import {
   PullRequestChip,
   UnresolvedChip,
 } from "./contextChipParts";
+import { definePluginComponent, createPluginContext } from "~/plugins/features";
+
+const ContextChip = definePluginComponent(
+  "component:components/composerContextPresentation/ContextChip",
+  PluginOriginalContextChip,
+);
+const ImageContextChip = definePluginComponent(
+  "component:components/composerContextPresentation/ImageContextChip",
+  PluginOriginalImageContextChip,
+);
+const FileContextChip = definePluginComponent(
+  "component:components/composerContextPresentation/FileContextChip",
+  PluginOriginalFileContextChip,
+);
+const PullRequestContextChip = definePluginComponent(
+  "component:components/composerContextPresentation/PullRequestContextChip",
+  PluginOriginalPullRequestContextChip,
+);
+const ReviewCommentContextChip = definePluginComponent(
+  "component:components/composerContextPresentation/ReviewCommentContextChip",
+  PluginOriginalReviewCommentContextChip,
+);
+const ComposerReviewCommentDetails = definePluginComponent(
+  "component:components/composerContextPresentation/ComposerReviewCommentDetails",
+  PluginOriginalComposerReviewCommentDetails,
+);
+const PreviewAnnotationContextChip = definePluginComponent(
+  "component:components/composerContextPresentation/PreviewAnnotationContextChip",
+  PluginOriginalPreviewAnnotationContextChip,
+);
+const ComposerPreviewAnnotationDetails = definePluginComponent(
+  "component:components/composerContextPresentation/ComposerPreviewAnnotationDetails",
+  PluginOriginalComposerPreviewAnnotationDetails,
+);
+const UnresolvedContextChip = definePluginComponent(
+  "component:components/composerContextPresentation/UnresolvedContextChip",
+  PluginOriginalUnresolvedContextChip,
+);
+export const ComposerContextReferenceChip = definePluginComponent(
+  "component:components/composerContextPresentation/ComposerContextReferenceChip",
+  PluginOriginalComposerContextReferenceChip,
+);
 
 export type ComposerDraftContextRecord =
   | { kind: "terminal"; record: TerminalContextDraft }
@@ -87,7 +129,8 @@ export function uploadedContextRecordFromDraft(entry: ComposerDraftContextRecord
   return uploadedAttachmentContextRecord(entry.record, entry.upload);
 }
 
-export const ComposerContextRecordsContext = createContext<ComposerDraftContextRecords>(
+export const ComposerContextRecordsContext = createPluginContext<ComposerDraftContextRecords>(
+  "components/composerContextPresentation/ComposerContextRecordsContext",
   EMPTY_COMPOSER_CONTEXT_RECORDS,
 );
 
@@ -139,7 +182,7 @@ export function composerContextRecordsFromDraft(input: {
   return records;
 }
 
-function ContextChip(props: {
+function PluginOriginalContextChip(props: {
   icon: ReactElement;
   label: string;
   kindLabel: string;
@@ -192,7 +235,7 @@ function attachmentTooltip(
   return lines.join("\n");
 }
 
-function ImageContextChip(props: {
+function PluginOriginalImageContextChip(props: {
   record: ComposerImageAttachment;
   upload: AttachmentUploadState | undefined;
 }) {
@@ -219,7 +262,7 @@ function ImageContextChip(props: {
   );
 }
 
-function FileContextChip(props: {
+function PluginOriginalFileContextChip(props: {
   record: ComposerFileAttachment;
   upload: AttachmentUploadState | undefined;
 }) {
@@ -272,7 +315,10 @@ function FileContextChip(props: {
   );
 }
 
-function PullRequestContextChip(props: { record: ReviewCommentContext; kind: ContextChipKind }) {
+function PluginOriginalPullRequestContextChip(props: {
+  record: ReviewCommentContext;
+  kind: ContextChipKind;
+}) {
   const actions = use(ComposerContextActionsContext);
   const messages = useMessages();
   const metadata = props.record.pullRequest;
@@ -289,7 +335,7 @@ function PullRequestContextChip(props: { record: ReviewCommentContext; kind: Con
   );
 }
 
-function ReviewCommentContextChip(props: {
+function PluginOriginalReviewCommentContextChip(props: {
   record: ReviewCommentContext;
   isPullRequest: boolean;
   detailsMode: ContextPresentationCapability["details"];
@@ -360,7 +406,11 @@ function previewAnnotationTooltip(
   return lines.join("\n");
 }
 
-function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentContext }) {
+function PluginOriginalComposerReviewCommentDetails({
+  comment,
+}: {
+  comment: ReviewCommentContext;
+}) {
   const messages = useMessages();
   return (
     <div className="space-y-2 overflow-hidden rounded-lg border border-border/70 bg-background/70 p-3">
@@ -381,7 +431,7 @@ function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentConte
   );
 }
 
-function PreviewAnnotationContextChip(props: {
+function PluginOriginalPreviewAnnotationContextChip(props: {
   annotation: PreviewAnnotationPayload;
   screenshot: ComposerImageAttachment | undefined;
   detailsMode: ContextPresentationCapability["details"];
@@ -404,7 +454,7 @@ function PreviewAnnotationContextChip(props: {
   );
 }
 
-function ComposerPreviewAnnotationDetails({
+function PluginOriginalComposerPreviewAnnotationDetails({
   annotation,
   screenshot,
 }: {
@@ -450,7 +500,7 @@ function ComposerThreadContextChip(props: { record: ThreadContextRecord }) {
   );
 }
 
-function UnresolvedContextChip(props: { label: string }) {
+function PluginOriginalUnresolvedContextChip(props: { label: string }) {
   const gt = useGT();
   return (
     <UnresolvedChip
@@ -577,7 +627,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
   fallback: (_kind, _entry, context) => <UnresolvedContextChip label={context.label} />,
 });
 
-export function ComposerContextReferenceChip(props: {
+function PluginOriginalComposerContextReferenceChip(props: {
   kind: string;
   contextId: string;
   label: string;

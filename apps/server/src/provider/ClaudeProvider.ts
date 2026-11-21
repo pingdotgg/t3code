@@ -58,6 +58,7 @@ import {
   discoverClaudeSkills,
   readClaudeSettingsEnv,
 } from "./Drivers/ClaudeSkills.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -275,7 +276,10 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
   readonly spawnVia: "env" | "launcher-thread" | undefined;
+  readonly pluginDirectories?: ReadonlyArray<string>;
+  readonly homeDirectory?: string;
 }): ClaudeQueryOptions {
+  const homeDirectory = input.homeDirectory;
   return {
     ...(input.spawnVia === "env" ? { spawnClaudeCodeProcess: spawnClaudeProbeThroughEnv } : {}),
     ...(input.spawnVia === "launcher-thread"
@@ -285,6 +289,22 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
+    ...(input.pluginDirectories?.length
+      ? {
+          plugins: [
+            ...new Set(
+              input.pluginDirectories.map((path) =>
+                homeDirectory === undefined ? path : expandHomePath(path, homeDirectory),
+              ),
+            ),
+          ].map((path) => ({
+            type: "local" as const,
+            path,
+            // Periodic discovery must not start a plugin's MCP servers.
+            skipMcpDiscovery: true,
+          })),
+        }
+      : {}),
     // Keep settings for slash-command discovery, but disable hooks so health checks do not run SessionStart repeatedly.
     settings: { disableAllHooks: true },
     allowedTools: [],
@@ -498,6 +518,7 @@ const probeClaudeCapabilities = (
   });
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,
@@ -531,6 +552,8 @@ const probeClaudeCapabilities = (
             cwd,
             managedMcpConfig,
             spawnVia,
+            pluginDirectories: claudeSettings.pluginDirectories,
+            homeDirectory,
           }),
         });
         const init = await q.initializationResult();

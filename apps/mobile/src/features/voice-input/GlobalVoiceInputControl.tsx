@@ -22,6 +22,17 @@ import { cn } from "../../lib/cn";
 import { CompactVoiceWaveform, DictationElapsedTime } from "./ComposerDictationControl";
 import { useGlobalVoiceInput } from "./VoiceInputProvider";
 import { resolveVoiceComposerPresentation } from "./voiceInputPresentation";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const EdgeDictationPill = defineNativePluginFeature(
+  "native.features.voice-input.global-voice-input-control.edge-dictation-pill",
+  BuiltinEdgeDictationPill,
+);
+
+export const GlobalVoiceInputControl = defineNativePluginFeature(
+  "native.features.voice-input.global-voice-input-control",
+  BuiltinGlobalVoiceInputControl,
+);
 
 const PILL_HEIGHT = 36;
 const COLLAPSED_WIDTH = 64;
@@ -34,7 +45,7 @@ const MORPH_TIMING = {
 } as const;
 const ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
 
-export function GlobalVoiceInputControl(props: { readonly children: ReactNode }) {
+function BuiltinGlobalVoiceInputControl(props: { readonly children: ReactNode }) {
   const voice = useGlobalVoiceInput();
   const [expanded, setExpanded] = useState(false);
   const resolveMessage = useMessages();
@@ -67,7 +78,7 @@ export function GlobalVoiceInputControl(props: { readonly children: ReactNode })
   );
 }
 
-function EdgeDictationPill(props: {
+function BuiltinEdgeDictationPill(props: {
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
 }) {

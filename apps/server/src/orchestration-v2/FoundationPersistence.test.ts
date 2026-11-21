@@ -1060,6 +1060,82 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("keeps raw tool bodies for trusted bounded subscribers", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const thread = makeThread(ThreadId.make("thread:large-stream-body:raw"), now);
+      const output = {
+        content: [{ type: "text", text: "first line\n" + "x".repeat(1024 * 1024) }],
+      };
+      const tool: OrchestrationV2TurnItem = {
+        id: TurnItemId.make("tool:large-stream-body:raw"),
+        type: "dynamic_tool",
+        threadId: thread.id,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "running",
+        title: "Large tool",
+        toolName: "mcp__large_tool",
+        input: { query: "details" },
+        output,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      };
+      const [created] = yield* sink.write({
+        events: [
+          threadCreatedEvent({ id: "event:large-stream-body:raw:created", thread, now }),
+          {
+            id: EventId.make("event:large-stream-body:raw:replay"),
+            type: "turn-item.updated",
+            threadId: thread.id,
+            occurredAt: now,
+            payload: tool,
+          },
+        ],
+      });
+      const pull = yield* Stream.toPull(
+        sink.stream({
+          threadId: thread.id,
+          afterSequence: created!.sequence,
+          bounded: true,
+          projection: "raw",
+        }),
+      );
+      const replay = yield* pull;
+      assert.lengthOf(replay, 1);
+      const [completed] = yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:large-stream-body:raw:live"),
+            type: "turn-item.updated",
+            threadId: thread.id,
+            occurredAt: now,
+            payload: { ...tool, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      const live = yield* pull;
+      assert.deepEqual(
+        live.map((stored) => stored.sequence),
+        [completed!.sequence],
+      );
+      for (const stored of [...replay, ...live]) {
+        assert.equal(stored.event.type, "turn-item.updated");
+        if (stored.event.type !== "turn-item.updated") return;
+        assert.equal(stored.event.payload.type, "dynamic_tool");
+        if (stored.event.payload.type !== "dynamic_tool") return;
+        assert.deepEqual(stored.event.payload.output, output);
+      }
+    }),
+  );
+
   it.effect.each(["high-water", "replay"] as const)(
     "bounds live events while the V2 %s query is blocked",
     (phase) =>

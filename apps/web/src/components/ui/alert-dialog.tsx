@@ -13,8 +13,46 @@ import {
   renderRetainedPopup,
   useDialogActionInitialFocus,
 } from "~/components/ui/dialog";
+import { definePluginComponent } from "~/plugins/features";
 
-function AlertDialog<Payload>(props: AlertDialogPrimitive.Root.Props<Payload>) {
+const AlertDialogBackdrop = definePluginComponent(
+  "component:components/ui/alert-dialog/AlertDialogBackdrop",
+  PluginOriginalAlertDialogBackdrop,
+);
+const AlertDialogViewport = definePluginComponent(
+  "component:components/ui/alert-dialog/AlertDialogViewport",
+  PluginOriginalAlertDialogViewport,
+);
+const AlertDialogPopup = definePluginComponent(
+  "component:components/ui/alert-dialog/AlertDialogPopup",
+  PluginOriginalAlertDialogPopup,
+);
+const AlertDialogHeader = definePluginComponent(
+  "component:components/ui/alert-dialog/AlertDialogHeader",
+  PluginOriginalAlertDialogHeader,
+);
+const AlertDialogFooter = definePluginComponent(
+  "component:components/ui/alert-dialog/AlertDialogFooter",
+  PluginOriginalAlertDialogFooter,
+);
+const AlertDialogTitle = definePluginComponent(
+  "component:components/ui/alert-dialog/AlertDialogTitle",
+  PluginOriginalAlertDialogTitle,
+);
+const AlertDialogDescription = definePluginComponent(
+  "component:components/ui/alert-dialog/AlertDialogDescription",
+  PluginOriginalAlertDialogDescription,
+);
+const AlertDialogClose = definePluginComponent(
+  "component:components/ui/alert-dialog/AlertDialogClose",
+  PluginOriginalAlertDialogClose,
+);
+const AlertDialog = definePluginComponent(
+  "component:components/ui/alert-dialog/AlertDialog",
+  PluginOriginalAlertDialog,
+);
+
+function PluginOriginalAlertDialog<Payload>(props: AlertDialogPrimitive.Root.Props<Payload>) {
   return (
     <ControlledOpenContext value={props.open}>
       <AlertDialogPrimitive.Root {...props} />
@@ -22,9 +60,16 @@ function AlertDialog<Payload>(props: AlertDialogPrimitive.Root.Props<Payload>) {
   );
 }
 
-const AlertDialogPortal = AlertDialogPrimitive.Portal;
+const PluginOriginalAlertDialogPortal = AlertDialogPrimitive.Portal;
+const AlertDialogPortal = definePluginComponent(
+  "component:components/ui/alert-dialog/AlertDialogPortal",
+  PluginOriginalAlertDialogPortal,
+);
 
-function AlertDialogBackdrop({ className, ...props }: AlertDialogPrimitive.Backdrop.Props) {
+function PluginOriginalAlertDialogBackdrop({
+  className,
+  ...props
+}: AlertDialogPrimitive.Backdrop.Props) {
   return (
     <AlertDialogPrimitive.Backdrop
       forceRender
@@ -35,7 +80,10 @@ function AlertDialogBackdrop({ className, ...props }: AlertDialogPrimitive.Backd
   );
 }
 
-function AlertDialogViewport({ className, ...props }: AlertDialogPrimitive.Viewport.Props) {
+function PluginOriginalAlertDialogViewport({
+  className,
+  ...props
+}: AlertDialogPrimitive.Viewport.Props) {
   return (
     <AlertDialogPrimitive.Viewport
       className={cn(
@@ -48,7 +96,7 @@ function AlertDialogViewport({ className, ...props }: AlertDialogPrimitive.Viewp
   );
 }
 
-function AlertDialogPopup({
+function PluginOriginalAlertDialogPopup({
   className,
   bottomStickOnMobile = true,
   portalContainer,
@@ -87,7 +135,7 @@ function AlertDialogPopup({
   );
 }
 
-function AlertDialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalAlertDialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
@@ -100,7 +148,7 @@ function AlertDialogHeader({ className, ...props }: React.ComponentProps<"div">)
   );
 }
 
-function AlertDialogFooter({
+function PluginOriginalAlertDialogFooter({
   className,
   variant = "default",
   ...props
@@ -121,7 +169,7 @@ function AlertDialogFooter({
   );
 }
 
-function AlertDialogTitle({ className, ...props }: AlertDialogPrimitive.Title.Props) {
+function PluginOriginalAlertDialogTitle({ className, ...props }: AlertDialogPrimitive.Title.Props) {
   return (
     <AlertDialogPrimitive.Title
       className={cn("wrap-anywhere shrink-0 font-semibold text-xl leading-snug", className)}
@@ -131,7 +179,10 @@ function AlertDialogTitle({ className, ...props }: AlertDialogPrimitive.Title.Pr
   );
 }
 
-function AlertDialogDescription({ className, ...props }: AlertDialogPrimitive.Description.Props) {
+function PluginOriginalAlertDialogDescription({
+  className,
+  ...props
+}: AlertDialogPrimitive.Description.Props) {
   return (
     <AlertDialogPrimitive.Description
       className={cn(
@@ -144,7 +195,7 @@ function AlertDialogDescription({ className, ...props }: AlertDialogPrimitive.De
   );
 }
 
-function AlertDialogClose(props: AlertDialogPrimitive.Close.Props) {
+function PluginOriginalAlertDialogClose(props: AlertDialogPrimitive.Close.Props) {
   return <AlertDialogPrimitive.Close data-slot="alert-dialog-close" {...props} />;
 }
 

@@ -24,8 +24,14 @@ import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
+import { definePluginComponent } from "~/plugins/features";
 
 import type { ChangeRequestTermKind } from "./changeRequestTerm";
+
+export const PullRequestReviewForm = definePluginComponent(
+  "component:components/pullRequest/PullRequestReviewForm/PullRequestReviewForm",
+  PluginOriginalPullRequestReviewForm,
+);
 
 const VERDICTS: ReadonlyArray<{
   readonly value: PullRequestReviewVerdict;
@@ -59,7 +65,7 @@ const VERDICTS: ReadonlyArray<{
   },
 ];
 
-export function PullRequestReviewForm({
+function PluginOriginalPullRequestReviewForm({
   environmentId,
   active,
   reference,

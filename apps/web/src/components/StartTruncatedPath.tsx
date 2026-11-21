@@ -1,7 +1,19 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-export function StartTruncatedPath({ path, className }: { path: string; className?: string }) {
+export const StartTruncatedPath = definePluginComponent(
+  "component:components/StartTruncatedPath/StartTruncatedPath",
+  PluginOriginalStartTruncatedPath,
+);
+
+function PluginOriginalStartTruncatedPath({
+  path,
+  className,
+}: {
+  path: string;
+  className?: string;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger

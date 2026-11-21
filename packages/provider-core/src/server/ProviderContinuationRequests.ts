@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   type OrchestrationV2Notification,
   MessageId,
@@ -8,7 +9,6 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 
@@ -42,7 +42,7 @@ export class ProviderContinuationRequests extends Context.Reference<{
   defaultValue: () => ({ offer: () => Effect.void, take: Effect.never }),
 }) {}
 
-export const layer = Layer.effect(
+export const layer = builtinServiceLayer("t3.thread")(
   ProviderContinuationRequests,
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ProviderContinuationRequest>();

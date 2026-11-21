@@ -2,6 +2,12 @@ import { createContext, use, type ComponentProps } from "react";
 import { Platform } from "react-native";
 import { cn } from "../../lib/cn";
 import { NativeScrollView as ScrollView } from "../../native/NativeScrollViewMarker";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const ScreenScrollView = defineNativePluginFeature(
+  "native.components.ui.screen-scroll-view",
+  BuiltinScreenScrollView,
+);
 
 export const ScreenScrollViewBottomInset = createContext(0);
 /**
@@ -10,7 +16,7 @@ export const ScreenScrollViewBottomInset = createContext(0);
  */
 export const ScreenScrollViewSurface = createContext<string | undefined>(undefined);
 
-export function ScreenScrollView(props: ComponentProps<typeof ScrollView>) {
+function BuiltinScreenScrollView(props: ComponentProps<typeof ScrollView>) {
   const bottomInset = use(ScreenScrollViewBottomInset);
   const surface = use(ScreenScrollViewSurface);
   return (

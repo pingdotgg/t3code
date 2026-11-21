@@ -47,6 +47,24 @@ import {
   settingsScopeEnvironmentLabels,
   settingsScopeProjectMachines,
 } from "./settingsScopeAxis";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SettingsScopeSentence = definePluginComponent(
+  "component:components/settings/SettingsScopeSentence/SettingsScopeSentence",
+  PluginOriginalSettingsScopeSentence,
+);
+const ScopeMenu = definePluginComponent(
+  "component:components/settings/SettingsScopeSentence/ScopeMenu",
+  PluginOriginalScopeMenu,
+);
+const EnvironmentScopeMenu = definePluginComponent(
+  "component:components/settings/SettingsScopeSentence/EnvironmentScopeMenu",
+  PluginOriginalEnvironmentScopeMenu,
+);
+const ProjectScopeMenu = definePluginComponent(
+  "component:components/settings/SettingsScopeSentence/ProjectScopeMenu",
+  PluginOriginalProjectScopeMenu,
+);
 
 export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/general",
@@ -68,7 +86,7 @@ interface SettingsScopeMenuProps {
   readonly onChange: (next: SettingsScopeSearch) => void;
 }
 
-export function SettingsScopeSentence() {
+function PluginOriginalSettingsScopeSentence() {
   const scope = useOptionalSettingsScope();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useEnvironments();
@@ -172,7 +190,7 @@ function ScopeOptionLabel({ option }: { option: ScopeOption }) {
   );
 }
 
-function ScopeMenu({
+function PluginOriginalScopeMenu({
   ariaLabel,
   icon,
   label,
@@ -284,7 +302,7 @@ function ScopeMenu({
   );
 }
 
-function EnvironmentScopeMenu({
+function PluginOriginalEnvironmentScopeMenu({
   value,
   groups,
   environments,
@@ -401,7 +419,12 @@ function CheckoutScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) 
   );
 }
 
-function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsScopeMenuProps) {
+function PluginOriginalProjectScopeMenu({
+  value,
+  groups,
+  environments,
+  onChange,
+}: SettingsScopeMenuProps) {
   const gt = useGT();
   const selected = groups.find((group) => group.projectKey === value.project);
   const projects = projectScopeMenuGroups(groups, value).map((group) => ({

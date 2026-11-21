@@ -1,7 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
@@ -9,6 +8,7 @@ import * as Ref from "effect/Ref";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import { readChromiumLocalStorage } from "./chromiumLocalStorage.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 /** Reads the V1 profile without opening it in Chromium, even while V1 runs. */
 export class DesktopLegacyLocalStorage extends Context.Service<
@@ -102,4 +102,8 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopLegacyLocalStorage, make);
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-legacy-local-storage",
+  DesktopLegacyLocalStorage,
+  make,
+);

@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import {
   AuthStandardClientScopes,
   CommandId,
@@ -344,7 +345,9 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
             Effect.provide(
               makeProjectCliRuntimeLayer(layerProjectService).pipe(
                 Layer.provide(ServerConfig.layer(config)),
-                Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
+                Layer.provide(
+                  builtinSucceedLayer("t3.server")(References.MinimumLogLevel, minimumLogLevel),
+                ),
               ),
             ),
           ),
@@ -358,7 +361,9 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       Layer.mergeAll(EnvironmentAuth.layerRuntime, WorkspacePaths.layer).pipe(
         Layer.provideMerge(FetchHttpClient.layer),
         Layer.provideMerge(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
+        Layer.provide(
+          builtinSucceedLayer("t3.server")(References.MinimumLogLevel, minimumLogLevel),
+        ),
       ),
     ),
   );

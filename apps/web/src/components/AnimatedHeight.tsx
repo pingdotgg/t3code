@@ -1,9 +1,15 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { observeResize } from "../lib/observeResize";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AnimatedHeight = definePluginComponent(
+  "component:components/AnimatedHeight/AnimatedHeight",
+  PluginOriginalAnimatedHeight,
+);
 
 const HEIGHT_TRANSITION_FALLBACK_MS = 250;
 
-export function AnimatedHeight({
+function PluginOriginalAnimatedHeight({
   children,
   holdHeight = false,
 }: {

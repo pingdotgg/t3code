@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from "react";
+import { definePluginComponent } from "~/plugins/features";
 
 interface RenderErrorBoundaryProps {
   readonly children: ReactNode;
@@ -11,7 +12,7 @@ interface RenderErrorBoundaryState {
   readonly resetKeys?: ReadonlyArray<unknown> | undefined;
 }
 
-export class RenderErrorBoundary extends Component<
+class PluginOriginalRenderErrorBoundary extends Component<
   RenderErrorBoundaryProps,
   RenderErrorBoundaryState
 > {
@@ -38,3 +39,8 @@ export class RenderErrorBoundary extends Component<
     return this.state.failed ? this.props.fallback : this.props.children;
   }
 }
+
+export const RenderErrorBoundary = definePluginComponent(
+  "component:components/RenderErrorBoundary/RenderErrorBoundary",
+  PluginOriginalRenderErrorBoundary,
+);

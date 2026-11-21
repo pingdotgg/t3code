@@ -1,4 +1,5 @@
 import { T } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { ComponentProps } from "react";
 import { View } from "react-native";
@@ -9,7 +10,7 @@ import { ConnectionEnvironmentRow } from "./ConnectionEnvironmentRow";
 
 type EnvironmentRowProps = ComponentProps<typeof ConnectionEnvironmentRow>;
 
-export function LocalEnvironmentList({
+function BuiltinLocalEnvironmentList({
   environments,
   expandedId,
   onToggle,
@@ -62,3 +63,8 @@ export function LocalEnvironmentList({
     </View>
   );
 }
+
+export const LocalEnvironmentList = defineNativePluginFeature(
+  "native.features.connection.local-environment-list",
+  BuiltinLocalEnvironmentList,
+);

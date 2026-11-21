@@ -1,3 +1,4 @@
+import { builtinSucceedLayer, builtinLifecycleLayer } from "@t3tools/shared/pluginKernel";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { EnvironmentRpcSubscriptionObserver, request } from "@t3tools/client-runtime/rpc";
 import {
@@ -9,7 +10,6 @@ import {
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -36,14 +36,17 @@ function normalizeAppState(
   return "unknown";
 }
 
-export const layerObserver = Layer.succeed(
+export const layerObserver = builtinSucceedLayer(
+  "t3.mobile.background-activity",
   EnvironmentRpcSubscriptionObserver,
   EnvironmentRpcSubscriptionObserver.of({
     observe: observeMobileBackgroundActivitySubscription,
   }),
 );
 
-export const layerReporter = Layer.effectDiscard(
+export const layerReporter = builtinLifecycleLayer(
+  "t3.mobile.background-activity",
+  "native.lifecycle.background-activity",
   Effect.gen(function* () {
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const storage = yield* MobileStorage.MobileStorage;

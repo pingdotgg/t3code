@@ -35,6 +35,41 @@ import {
 } from "./toast.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./tooltip";
 import { useThreadRouteTarget } from "~/hooks/useThreadRouteTarget";
+import { definePluginComponent } from "~/plugins/features";
+
+const CopyErrorButton = definePluginComponent(
+  "component:components/ui/toast/CopyErrorButton",
+  PluginOriginalCopyErrorButton,
+);
+const ToastExpandableSection = definePluginComponent(
+  "component:components/ui/toast/ToastExpandableSection",
+  PluginOriginalToastExpandableSection,
+);
+const ToastDescriptionAndExpandable = definePluginComponent(
+  "component:components/ui/toast/ToastDescriptionAndExpandable",
+  PluginOriginalToastDescriptionAndExpandable,
+);
+const ToastBodyContent = definePluginComponent(
+  "component:components/ui/toast/ToastBodyContent",
+  PluginOriginalToastBodyContent,
+);
+const ThreadToastVisibleAutoDismiss = definePluginComponent(
+  "component:components/ui/toast/ThreadToastVisibleAutoDismiss",
+  PluginOriginalThreadToastVisibleAutoDismiss,
+);
+const ToastProvider = definePluginComponent(
+  "component:components/ui/toast/ToastProvider",
+  PluginOriginalToastProvider,
+);
+const Toasts = definePluginComponent("component:components/ui/toast/Toasts", PluginOriginalToasts);
+const AnchoredToastProvider = definePluginComponent(
+  "component:components/ui/toast/AnchoredToastProvider",
+  PluginOriginalAnchoredToastProvider,
+);
+const AnchoredToasts = definePluginComponent(
+  "component:components/ui/toast/AnchoredToasts",
+  PluginOriginalAnchoredToasts,
+);
 
 export type ThreadToastData = {
   threadRef?: ScopedThreadRef | null;
@@ -143,7 +178,7 @@ function handleToastDismissClick(
   manager.close(toastId);
 }
 
-function CopyErrorButton({ text }: { text: string }) {
+function PluginOriginalCopyErrorButton({ text }: { text: string }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: {
       target: "error-message",
@@ -177,7 +212,7 @@ function CopyErrorButton({ text }: { text: string }) {
 const toastExpandablePanelClassName =
   "mt-2 max-h-40 min-h-0 overflow-y-auto overscroll-contain pr-0.5 select-text";
 
-function ToastExpandableSection({
+function PluginOriginalToastExpandableSection({
   children,
   labels,
 }: {
@@ -209,7 +244,7 @@ function ToastExpandableSection({
   );
 }
 
-function ToastDescriptionAndExpandable({
+function PluginOriginalToastDescriptionAndExpandable({
   toastData,
   toastDescription,
   toastType,
@@ -358,7 +393,7 @@ interface ToastBodyContentProps extends ToastBodyDescriptor {
   readonly toastType: unknown;
 }
 
-function ToastBodyContent({
+function PluginOriginalToastBodyContent({
   stackedActionLayout,
   Icon,
   copyErrorText,
@@ -484,7 +519,7 @@ function useActiveThreadRefFromRoute(): ScopedThreadRef | null {
   return null;
 }
 
-function ThreadToastVisibleAutoDismiss({
+function PluginOriginalThreadToastVisibleAutoDismiss({
   toastId,
   dismissAfterVisibleMs,
 }: {
@@ -563,7 +598,11 @@ function ThreadToastVisibleAutoDismiss({
   return null;
 }
 
-function ToastProvider({ children, position = "top-right", ...props }: ToastProviderProps) {
+function PluginOriginalToastProvider({
+  children,
+  position = "top-right",
+  ...props
+}: ToastProviderProps) {
   return (
     <Toast.Provider toastManager={toastManager} {...props}>
       {children}
@@ -572,7 +611,7 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
   );
 }
 
-function Toasts({ position }: { position: ToastPosition }) {
+function PluginOriginalToasts({ position }: { position: ToastPosition }) {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
   const gt = useGT();
@@ -723,7 +762,7 @@ function Toasts({ position }: { position: ToastPosition }) {
   );
 }
 
-function AnchoredToastProvider({ children, ...props }: Toast.Provider.Props) {
+function PluginOriginalAnchoredToastProvider({ children, ...props }: Toast.Provider.Props) {
   return (
     <Toast.Provider toastManager={anchoredToastManager} {...props}>
       {children}
@@ -732,7 +771,7 @@ function AnchoredToastProvider({ children, ...props }: Toast.Provider.Props) {
   );
 }
 
-function AnchoredToasts() {
+function PluginOriginalAnchoredToasts() {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
   const gt = useGT();

@@ -1,10 +1,10 @@
 import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Context from "effect/Context";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import { builtinSyncLayer } from "./pluginKernel.ts";
 
 export class NetError extends Schema.TaggedError<NetError>()("NetError", {
   message: Schema.String,
@@ -176,4 +176,4 @@ export const make = () => {
   } satisfies NetServiceShape;
 };
 
-export const layer = Layer.sync(NetService, make);
+export const layer = builtinSyncLayer("t3.connections")(NetService, make);

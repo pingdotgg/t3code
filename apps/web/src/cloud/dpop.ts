@@ -1,3 +1,4 @@
+import { builtinContextLayer } from "@t3tools/shared/pluginKernel";
 import { msg } from "gt-react";
 import { m } from "../i18n/messages";
 import { DpopProof } from "@t3tools/client-runtime/relay";
@@ -28,8 +29,13 @@ const DPOP_KEY_STORE_NAME = "keys";
 const DPOP_KEY_ID = "relay-dpop-proof-key";
 const decodeDpopPublicJwk = Schema.decodeUnknownEffect(DpopPublicJwk);
 
-export const layer = Layer.mergeAll(Digest.layerWebCrypto, Signature.layerWebCrypto).pipe(
-  Layer.provideMerge(SecureRandom.layerWebCrypto),
+export const layer = builtinContextLayer(
+  "t3.client",
+  Layer.build(
+    Layer.mergeAll(Digest.layerWebCrypto, Signature.layerWebCrypto).pipe(
+      Layer.provideMerge(SecureRandom.layerWebCrypto),
+    ),
+  ),
 );
 
 function dpopError(message: string, cause?: unknown) {

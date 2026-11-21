@@ -15,7 +15,7 @@ import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import {
-  ThreadMarkdownVideo,
+  ThreadMarkdownVideo as BuiltinThreadMarkdownVideo,
   ThreadMediaRetainContext,
   ThreadMediaVisibleContext,
 } from "./ThreadMarkdownVideo";
@@ -337,6 +337,60 @@ import { loopbackUrlForDevice } from "../browser/browserTabs";
 import { useOpenLocalPreview } from "../browser/useOpenLocalPreview";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { useMessageTimeFormatter } from "./useMessageTimeFormatter";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const AssistantForkButton = defineNativePluginFeature(
+  "native.features.threads.thread-feed.assistant-fork-button",
+  BuiltinAssistantForkButton,
+);
+const MessageAttachmentImage = defineNativePluginFeature(
+  "native.features.threads.thread-feed.message-attachment-image",
+  BuiltinMessageAttachmentImage,
+);
+const MessageAttachmentFile = defineNativePluginFeature(
+  "native.features.threads.thread-feed.message-attachment-file",
+  BuiltinMessageAttachmentFile,
+);
+const MessageAttachmentUnknown = defineNativePluginFeature(
+  "native.features.threads.thread-feed.message-attachment-unknown",
+  BuiltinMessageAttachmentUnknown,
+);
+const ThreadMediaVisibility = defineNativePluginFeature(
+  "native.features.threads.thread-feed.thread-media-visibility",
+  BuiltinThreadMediaVisibility,
+);
+const ThreadMarkdownVideo = defineNativePluginFeature(
+  "native.features.threads.thread-markdown-video",
+  BuiltinThreadMarkdownVideo,
+);
+const ArtifactTemplateCard = defineNativePluginFeature(
+  "native.features.threads.thread-feed.artifact-template-card",
+  BuiltinArtifactTemplateCard,
+);
+const AgentMessageFoldHeader = defineNativePluginFeature(
+  "native.features.threads.thread-feed.agent-message-fold-header",
+  BuiltinAgentMessageFoldHeader,
+);
+const OpenSenderThreadButton = defineNativePluginFeature(
+  "native.features.threads.thread-feed.open-sender-thread-button",
+  BuiltinOpenSenderThreadButton,
+);
+const UserMessageContent = defineNativePluginFeature(
+  "native.features.threads.thread-feed.user-message-content",
+  BuiltinUserMessageContent,
+);
+const UserMessageMarkdownContent = defineNativePluginFeature(
+  "native.features.threads.thread-feed.user-message-markdown-content",
+  BuiltinUserMessageMarkdownContent,
+);
+const ThreadFeedPlaceholder = defineNativePluginFeature(
+  "native.features.threads.thread-feed.thread-feed-placeholder",
+  BuiltinThreadFeedPlaceholder,
+);
+const ThreadFeedLoadEarlierControl = defineNativePluginFeature(
+  "native.features.threads.thread-feed.thread-feed-load-earlier-control",
+  BuiltinThreadFeedLoadEarlierControl,
+);
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // iOS blockquotes and selectable text measure separately; definite bubble width matches UIKit's drawing width.
@@ -448,7 +502,7 @@ function UserMessageCopyButton(props: {
   );
 }
 
-function AssistantForkButton(props: {
+function BuiltinAssistantForkButton(props: {
   readonly environmentId: EnvironmentId;
   readonly iconColor: ColorValue;
   readonly buttonSize: number;
@@ -602,7 +656,7 @@ function MessageImage(props: {
   );
 }
 
-function MessageAttachmentImage(props: {
+function BuiltinMessageAttachmentImage(props: {
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
   readonly name: string;
@@ -712,7 +766,7 @@ function isMediaAttachment(attachment: ChatAttachment): boolean {
   );
 }
 
-function MessageAttachmentFile(props: {
+function BuiltinMessageAttachmentFile(props: {
   readonly environmentId: EnvironmentId;
   readonly attachment: ChatFileAttachment;
   readonly onPressPreview: (source: FilePreviewSource) => void;
@@ -1186,7 +1240,7 @@ function MessageAttachmentList(props: {
   );
 }
 
-function MessageAttachmentUnknown(props: { readonly name: string }) {
+function BuiltinMessageAttachmentUnknown(props: { readonly name: string }) {
   return (
     <View className="flex-row items-center gap-2 py-1">
       <PierreEntryIcon path={props.name} kind="file" size={16} />
@@ -1210,7 +1264,7 @@ function ThreadFeedScrollView(props: ComponentPropsWithRef<typeof Animated.Scrol
   );
 }
 
-function ThreadMediaVisibility(props: {
+function BuiltinThreadMediaVisibility(props: {
   readonly rowId: string;
   readonly setRetainedRowId: Dispatch<SetStateAction<string | null>>;
   readonly children: ReactNode;
@@ -1278,7 +1332,7 @@ const ARTIFACT_TEMPLATE_SYMBOL_BY_KIND: Record<
   slack: "text.bubble",
 };
 
-function ArtifactTemplateCard(props: {
+function BuiltinArtifactTemplateCard(props: {
   readonly template: CodexArtifactTemplate;
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
@@ -1318,7 +1372,7 @@ function ArtifactTemplateCard(props: {
   );
 }
 
-const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
+const BuiltinAssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdown: string;
   readonly environmentId: EnvironmentId;
   readonly citationSource?: Pick<AssistantCitation, "threadId" | "messageId">;
@@ -1430,6 +1484,11 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     </>
   );
 });
+
+const AssistantMarkdownContent = defineNativePluginFeature(
+  "native.features.threads.thread-feed.assistant-markdown-content",
+  BuiltinAssistantMarkdownContent,
+);
 
 // Folds split first, so an artifact card inside a fold stays inside it.
 function AssistantMarkdownBlocks(props: {
@@ -1624,7 +1683,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
 }
 
 /** Messages from other agents fold to one line so the user's own messages stay easy to find. */
-function AgentMessageFoldHeader(props: {
+function BuiltinAgentMessageFoldHeader(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId?: ThreadId;
   /** A linked environment's sender title, for when this client cannot reach it. */
@@ -1682,7 +1741,7 @@ function AgentMessageFoldHeader(props: {
   );
 }
 
-function OpenSenderThreadButton(props: {
+function BuiltinOpenSenderThreadButton(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId: ThreadId;
   /** In a linked environment, shown only when this client is connected to it. */
@@ -2824,7 +2883,7 @@ type UserMessageContentProps = {
   readonly renderImage: MarkdownImageRenderer;
 };
 
-function UserMessageContent(props: UserMessageContentProps) {
+function BuiltinUserMessageContent(props: UserMessageContentProps) {
   const gt = useGT();
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
@@ -2940,7 +2999,7 @@ function UserMessageContent(props: UserMessageContentProps) {
   );
 }
 
-function UserMessageMarkdownContent(props: UserMessageContentProps) {
+function BuiltinUserMessageMarkdownContent(props: UserMessageContentProps) {
   const text = props.text;
   const models = useModelMentions(props.environmentId, text);
   const messages = useMessages();
@@ -3004,7 +3063,7 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
   );
 }
 
-function ThreadFeedPlaceholder(props: {
+function BuiltinThreadFeedPlaceholder(props: {
   readonly bottomInset: number;
   readonly detail: string;
   readonly horizontalPadding: number;
@@ -3160,7 +3219,7 @@ const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
 // instead of at width 0 and again when the new feed's own layout reports the same width.
 let lastSplitViewport: { windowWidth: number; width: number; height: number } | null = null;
 
-export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+const BuiltinThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const gt = useGT();
   const m = useMessages();
   const formatMessageTime = useMessageTimeFormatter();
@@ -4525,7 +4584,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
 });
 
-function ThreadFeedLoadEarlierControl(props: ThreadFeedHistoryControls) {
+export const ThreadFeed = defineNativePluginFeature(
+  "native.features.threads.thread-feed",
+  BuiltinThreadFeed,
+);
+
+function BuiltinThreadFeedLoadEarlierControl(props: ThreadFeedHistoryControls) {
   const gt = useGT();
   const theme = useUniwindTheme();
   const mutedColor = theme["--color-icon-subtle"];

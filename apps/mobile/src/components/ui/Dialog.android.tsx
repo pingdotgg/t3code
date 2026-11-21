@@ -21,6 +21,13 @@ import { m } from "../../i18n/messages";
 import { themeColorWithContrast } from "../../lib/mobileTheme";
 import type { Alert, AlertButton } from "react-native";
 import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const Host = defineNativePluginFeature("native.components.ui.dialog.host", BuiltinHost);
+const DialogPresentation = defineNativePluginFeature(
+  "native.components.ui.dialog.dialog-presentation",
+  BuiltinDialogPresentation,
+);
 
 export type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
 
@@ -99,7 +106,7 @@ export function prompt(request: TextInputDialogRequest): void {
   submitRequest({ kind: "text-input", request });
 }
 
-export function Host() {
+function BuiltinHost() {
   const gt = useGT();
   const presented = useSyncExternalStore(subscribe, getPresented, getPresented);
 
@@ -152,7 +159,7 @@ export function Host() {
   ) : null;
 }
 
-function DialogPresentation(props: DialogPresentationProps) {
+function BuiltinDialogPresentation(props: DialogPresentationProps) {
   const gt = useGT();
   const { themeVariables: colors } = useAppearancePreferences();
   const titleTypography = useScaledTextRole("title");

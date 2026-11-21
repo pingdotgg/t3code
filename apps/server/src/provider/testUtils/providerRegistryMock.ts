@@ -1,7 +1,7 @@
 import * as ProviderRegistry from "../ProviderRegistry.ts";
+import { builtinSucceedLayer } from "../../plugins/PluginKernel.ts";
 import type { ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
@@ -24,4 +24,7 @@ const makeProviderRegistryMock = (
 });
 
 export const layer = (providers: ReadonlyArray<ServerProvider> = []) =>
-  Layer.succeed(ProviderRegistry.ProviderRegistry, makeProviderRegistryMock(providers));
+  builtinSucceedLayer("t3.providers")(
+    ProviderRegistry.ProviderRegistry,
+    makeProviderRegistryMock(providers),
+  );

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import {
@@ -16,7 +17,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as DateTime from "effect/DateTime";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -259,4 +259,4 @@ const make = Effect.gen(function* () {
   return ThreadTitleRegenerationService.of({ execute });
 });
 
-export const layer = Layer.effect(ThreadTitleRegenerationService, make);
+export const layer = builtinServiceLayer("t3.thread")(ThreadTitleRegenerationService, make);

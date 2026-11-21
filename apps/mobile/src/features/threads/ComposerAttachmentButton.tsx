@@ -5,13 +5,14 @@ import { Pressable } from "react-native";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 const ATTACHMENT_MENU_ACTIONS: MenuAction[] = [
   { id: "photos", title: msg("Photo Library"), image: "photo" },
   { id: "files", title: msg("Choose Files"), image: "folder" },
 ];
 
-export function ComposerAttachmentButton(props: {
+function BuiltinComposerAttachmentButton(props: {
   readonly disabled?: boolean;
   readonly size?: "regular" | "large";
   readonly supportsFiles: boolean;
@@ -62,3 +63,8 @@ export function ComposerAttachmentButton(props: {
     </Menu>
   );
 }
+
+export const ComposerAttachmentButton = defineNativePluginFeature(
+  "native.features.threads.composer-attachment-button",
+  BuiltinComposerAttachmentButton,
+);

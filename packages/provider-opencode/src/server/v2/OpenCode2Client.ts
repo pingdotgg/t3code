@@ -1,10 +1,10 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Path from "effect/Path";
 import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import { OpenCode, type OpenCodeClient } from "@opencode/client/effect";
 import { OpenCodeEvent } from "@opencode/protocol/groups/event";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
@@ -350,7 +350,7 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(OpenCode2Client, make);
+export const layer = builtinServiceLayer("t3.providers")(OpenCode2Client, make);
 
 /** Send input only initially; cursor pages must omit order or OpenCode rejects them. */
 export const paginate = <Input extends { readonly cursor?: unknown }, Item, E, R>(

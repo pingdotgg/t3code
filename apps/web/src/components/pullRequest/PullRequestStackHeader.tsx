@@ -2,8 +2,14 @@ import { T, useGT, Var } from "gt-react";
 
 import { MenuGroupLabel } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PullRequestStackHeader({
+export const PullRequestStackHeader = definePluginComponent(
+  "component:components/pullRequest/PullRequestStackHeader/PullRequestStackHeader",
+  PluginOriginalPullRequestStackHeader,
+);
+
+function PluginOriginalPullRequestStackHeader({
   number,
   notice,
   stale = false,

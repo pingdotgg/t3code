@@ -1,3 +1,4 @@
+import { builtinSucceedLayer, builtinLifecycleLayer } from "@t3tools/shared/pluginKernel";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import {
   EnvironmentRpcSubscriptionObserver,
@@ -13,7 +14,6 @@ import {
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -165,14 +165,16 @@ export function retainedBackgroundScopes(
   ).filter((scope): scope is BackgroundScope => scope !== null);
 }
 
-export const layerObserver = Layer.succeed(
+export const layerObserver = builtinSucceedLayer("t3.client")(
   EnvironmentRpcSubscriptionObserver,
   EnvironmentRpcSubscriptionObserver.of({
     observe: observeBackgroundActivitySubscription,
   }),
 );
 
-export const layer = Layer.effectDiscard(
+export const layer = builtinLifecycleLayer(
+  "t3.client",
+  "t3/client/web/backgroundActivityReporter.ts#1",
   Effect.gen(function* () {
     if (typeof window === "undefined" || typeof document === "undefined") {
       return;

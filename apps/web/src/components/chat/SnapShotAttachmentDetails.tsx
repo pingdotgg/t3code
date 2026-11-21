@@ -14,6 +14,20 @@ import {
   showAnchoredCopyErrorToast,
 } from "../ui/anchoredCopyToast";
 import { HighlightedTokens } from "./HighlightedTokens";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SnapShotAccessibilityData = definePluginComponent(
+  "component:components/chat/SnapShotAttachmentDetails/SnapShotAccessibilityData",
+  PluginOriginalSnapShotAccessibilityData,
+);
+export const SnapShotContentsButton = definePluginComponent(
+  "component:components/chat/SnapShotAttachmentDetails/SnapShotContentsButton",
+  PluginOriginalSnapShotContentsButton,
+);
+export const SnapShotAttachmentDetails = definePluginComponent(
+  "component:components/chat/SnapShotAttachmentDetails/SnapShotAttachmentDetails",
+  PluginOriginalSnapShotAttachmentDetails,
+);
 
 export const SNAP_SHOT_ATTACHMENT_FRAME_CLASS =
   "relative h-28 w-52 max-w-full overflow-hidden rounded-lg border border-border/80";
@@ -23,7 +37,7 @@ interface SnapShotAccessibilityDetails {
   format: "json" | "text";
 }
 
-export function SnapShotAccessibilityData({
+function PluginOriginalSnapShotAccessibilityData({
   details,
   className,
 }: {
@@ -127,7 +141,7 @@ export function SnapShotCopyButton({
   );
 }
 
-export function SnapShotContentsButton({
+function PluginOriginalSnapShotContentsButton({
   source,
   className,
   side = "top",
@@ -205,7 +219,7 @@ export function SnapShotContentsButton({
   );
 }
 
-export function SnapShotAttachmentDetails({
+function PluginOriginalSnapShotAttachmentDetails({
   source,
   onCopySnapshot,
   className,

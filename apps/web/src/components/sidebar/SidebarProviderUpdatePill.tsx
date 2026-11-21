@@ -12,6 +12,12 @@ import {
   type ProviderUpdateSidebarPillView,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SidebarProviderUpdatePill = definePluginComponent(
+  "component:components/sidebar/SidebarProviderUpdatePill/SidebarProviderUpdatePill",
+  PluginOriginalSidebarProviderUpdatePill,
+);
 
 // Matches the pill's `duration-180` class.
 const PROVIDER_UPDATE_PILL_EXIT_MS = 180;
@@ -43,7 +49,7 @@ function latestProviderCheckedAt(
   );
 }
 
-export function SidebarProviderUpdatePill() {
+function PluginOriginalSidebarProviderUpdatePill() {
   const gt = useGT();
   const messages = useMessages();
   const navigate = useNavigate();

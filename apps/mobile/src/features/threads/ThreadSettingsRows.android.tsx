@@ -5,8 +5,17 @@ import {
   type ModelRowProps,
   type ChoiceRowProps,
 } from "./ThreadSettingsRows.shared";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const ModelRow = defineNativePluginFeature(
+  "native.features.threads.thread-settings-rows.model-row",
+  BuiltinModelRow,
+);
+export const ChoiceRow = defineNativePluginFeature(
+  "native.features.threads.thread-settings-rows.choice-row",
+  BuiltinChoiceRow,
+);
 
-export function ModelRow(props: ModelRowProps) {
+function BuiltinModelRow(props: ModelRowProps) {
   return (
     <ModelRowContent
       {...props}
@@ -18,7 +27,7 @@ export function ModelRow(props: ModelRowProps) {
   );
 }
 
-export function ChoiceRow(props: ChoiceRowProps) {
+function BuiltinChoiceRow(props: ChoiceRowProps) {
   return (
     <ChoiceRowContent
       {...props}

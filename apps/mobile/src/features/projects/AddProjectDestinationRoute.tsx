@@ -1,5 +1,10 @@
 import type { StaticScreenProps } from "@react-navigation/native";
 import { AddProjectDestinationScreen } from "./AddProjectScreen";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const AddProjectDestinationRoute = defineNativePluginFeature(
+  "native.features.projects.add-project-destination-route",
+  BuiltinAddProjectDestinationRoute,
+);
 
 type AddProjectDestinationRouteParams = {
   readonly environmentId?: string | string[];
@@ -10,7 +15,7 @@ type AddProjectDestinationRouteParams = {
   readonly prompt?: string | string[];
 };
 
-export function AddProjectDestinationRoute({
+function BuiltinAddProjectDestinationRoute({
   route,
 }: StaticScreenProps<AddProjectDestinationRouteParams | undefined>) {
   return <AddProjectDestinationScreen {...(route.params ?? {})} />;

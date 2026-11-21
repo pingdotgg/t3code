@@ -17,8 +17,9 @@ import { Button } from "../../components/ui/Button";
 import { uuidv4 } from "../../lib/uuid";
 import { m } from "../../i18n/messages";
 import { insertComposerDraftContext } from "../../state/use-composer-drafts";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function TerminalContextSheet(props: {
+function BuiltinTerminalContextSheet(props: {
   text: string;
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -134,3 +135,8 @@ export function TerminalContextSheet(props: {
     </Sheet>
   );
 }
+
+export const TerminalContextSheet = defineNativePluginFeature(
+  "native.features.terminal.terminal-context-sheet",
+  BuiltinTerminalContextSheet,
+);

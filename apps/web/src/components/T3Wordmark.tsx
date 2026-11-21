@@ -1,6 +1,12 @@
 import type { SVGProps } from "react";
+import { definePluginComponent } from "~/plugins/features";
 
-export function T3Wordmark(props: SVGProps<SVGSVGElement>) {
+export const T3Wordmark = definePluginComponent(
+  "component:components/T3Wordmark/T3Wordmark",
+  PluginOriginalT3Wordmark,
+);
+
+function PluginOriginalT3Wordmark(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...props} viewBox="15.5309 37 94.3941 56.96" xmlns="http://www.w3.org/2000/svg">
       <path

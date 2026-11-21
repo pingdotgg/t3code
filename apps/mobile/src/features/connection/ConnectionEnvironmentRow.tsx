@@ -1,5 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import * as Dialog from "../../components/ui/Dialog";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -49,7 +50,7 @@ function connectionStatusLabel(
   );
 }
 
-export function ConnectionEnvironmentRow(props: {
+function BuiltinConnectionEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   readonly expanded: boolean;
   readonly opensDetails?: boolean;
@@ -342,3 +343,8 @@ export function ConnectionEnvironmentRow(props: {
     </Animated.View>
   );
 }
+
+export const ConnectionEnvironmentRow = defineNativePluginFeature(
+  "native.features.connection.connection-environment-row",
+  BuiltinConnectionEnvironmentRow,
+);

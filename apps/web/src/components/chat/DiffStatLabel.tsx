@@ -1,6 +1,7 @@
 import { useGT } from "gt-react";
 import { memo } from "react";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
 export function hasNonZeroStat(stat: { additions: number; deletions: number }): boolean {
   return stat.additions > 0 || stat.deletions > 0;
@@ -20,7 +21,7 @@ export function formatCompactDiffCount(value: number): string {
   return `${b < 10 ? b.toFixed(1).replace(/\.0$/, "") : Math.round(b)}b`;
 }
 
-export const DiffStatLabel = memo(function DiffStatLabel(props: {
+const PluginOriginalDiffStatLabel = memo(function DiffStatLabel(props: {
   additions: number;
   deletions: number;
   className?: string;
@@ -48,3 +49,7 @@ export const DiffStatLabel = memo(function DiffStatLabel(props: {
     </span>
   );
 });
+export const DiffStatLabel = definePluginComponent(
+  "component:components/chat/DiffStatLabel/DiffStatLabel",
+  PluginOriginalDiffStatLabel,
+);

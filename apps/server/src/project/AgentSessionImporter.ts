@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -27,7 +28,6 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -606,4 +606,4 @@ export class AgentSessionImporter extends Context.Service<
   AgentSessionImporterShape
 >()("t3/project/AgentSessionImporter") {}
 
-export const layer = Layer.effect(AgentSessionImporter, make);
+export const layer = builtinServiceLayer("t3.projects")(AgentSessionImporter, make);

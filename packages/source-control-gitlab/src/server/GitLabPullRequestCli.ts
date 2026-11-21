@@ -4,11 +4,11 @@ import {
   diffFileSection,
   truncateLongDiffLines,
 } from "@t3tools/source-control-core/server/diffFileRevisions";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -3069,4 +3069,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(GitLabPullRequestCli, make);
+export const layer = builtinServiceLayer("t3.pull-requests")(GitLabPullRequestCli, make);
