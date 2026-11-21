@@ -11,7 +11,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -514,3 +516,56 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
   }
   return blocks;
 });
+
+const AntigravityConfigMcpServer = Schema.Struct({
+  command: Schema.optional(Schema.String),
+  args: Schema.optional(Schema.Array(Schema.String)),
+  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  url: Schema.optional(Schema.String),
+  serverUrl: Schema.optional(Schema.String),
+  disabled: Schema.optional(Schema.Boolean),
+});
+const decodeAntigravityMcpConfig = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ mcpServers: Schema.Record(Schema.String, Schema.Unknown) }),
+  ),
+);
+const decodeAntigravityConfigMcpServer = Schema.decodeUnknownOption(AntigravityConfigMcpServer);
+
+/**
+ * agy preloads only the servers a session names and loads the rest of `config/mcp_config.json`
+ * after the first prompt has started. It resolves a named server from its own config, headers
+ * and OAuth included, so naming the profile's servers puts their tools in the first model call.
+ */
+export const readAntigravityProfileMcpServers = Effect.fn("readAntigravityProfileMcpServers")(
+  function* (profileDirectory: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* fs
+      .readFileString(path.join(profileDirectory, "config", "mcp_config.json"))
+      .pipe(Effect.flatMap(decodeAntigravityMcpConfig), Effect.option);
+    if (Option.isNone(config)) return [];
+    const servers: EffectAcpSchema.McpServer[] = [];
+    for (const [name, value] of Object.entries(config.value.mcpServers)) {
+      const server = decodeAntigravityConfigMcpServer(value);
+      if (Option.isNone(server) || server.value.disabled === true) continue;
+      const { command, args, env } = server.value;
+      const url = server.value.url ?? server.value.serverUrl;
+      if (command !== undefined) {
+        servers.push({
+          name,
+          command,
+          args: [...(args ?? [])],
+          env: Object.entries(env ?? {}).map(([key, envValue]) => ({
+            name: key,
+            value: envValue,
+          })),
+        });
+      } else if (url !== undefined) {
+        // Headers stay in agy's config; the session entry only names the server.
+        servers.push({ type: "http", name, url, headers: [] });
+      }
+    }
+    return servers;
+  },
+);
