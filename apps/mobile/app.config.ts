@@ -363,6 +363,8 @@ const config: ExpoConfig = {
         icon: variant.assets.androidNotificationIcon,
         color: variant.assets.androidNotificationColor,
         mode: APP_VARIANT === "development" ? "development" : "production",
+        // Its aps-environment mod runs after withoutIosPersonalTeamCapabilities.
+        enableRemoteNotifications: !isIosPersonalTeamBuild,
       },
     ],
     // Gate Clerk here: withoutIosPersonalTeamCapabilities runs too early to strip its entitlement.

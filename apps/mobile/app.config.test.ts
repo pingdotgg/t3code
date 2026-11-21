@@ -1,4 +1,5 @@
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+import { compileModsAsync, IOSConfig, type StaticPlugin, withPlugins } from "expo/config-plugins";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import appleAppSiteAssociation from "../web/public/.well-known/apple-app-site-association.json";
@@ -6,7 +7,11 @@ import assetLinks from "../web/public/.well-known/assetlinks.json";
 
 // Keep config parsing independent of local env files and build credentials.
 vi.mock("../../scripts/lib/public-config.ts", () => ({
-  loadRepoEnv: () => ({ APP_VARIANT: process.env.APP_VARIANT }),
+  loadRepoEnv: () => ({
+    APP_VARIANT: process.env.APP_VARIANT,
+    T3CODE_IOS_PERSONAL_TEAM: process.env.T3CODE_IOS_PERSONAL_TEAM,
+    T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID: process.env.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID,
+  }),
 }));
 
 afterEach(() => {
@@ -45,3 +50,34 @@ it.each([
   ]);
   expect(assetLinks.map((link) => link.target.package_name)).toContain(identifier);
 });
+
+it.each([
+  [false, true],
+  [true, false],
+])(
+  "Personal Team build %j keeps push and associated domains: %j",
+  async (personalTeam, keepsCapabilities) => {
+    if (personalTeam) {
+      vi.stubEnv("T3CODE_IOS_PERSONAL_TEAM", "1");
+      vi.stubEnv("T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID", "com.example.t3code");
+    }
+    const config = await loadConfig("production");
+    const projectRoot = import.meta.dirname;
+    const plugins = (config.plugins ?? []).flatMap((plugin): Array<string | StaticPlugin> =>
+      typeof plugin === "string" ? [plugin] : plugin.length === 0 ? [] : [[plugin[0], plugin[1]]],
+    );
+    // Prebuild applies Expo's own iOS mods, associated domains among them, after app plugins.
+    const withMods = IOSConfig.Entitlements.withAssociatedDomains(
+      withPlugins({ ...config, _internal: { projectRoot } }, plugins),
+    );
+    const { ios } = await compileModsAsync(withMods, {
+      projectRoot,
+      platforms: ["ios"],
+      introspect: true,
+    });
+    const entitlements = ios?.entitlements ?? {};
+    // A Personal Team cannot sign these, so a device build fails its capability check.
+    expect("aps-environment" in entitlements).toBe(keepsCapabilities);
+    expect("com.apple.developer.associated-domains" in entitlements).toBe(keepsCapabilities);
+  },
+);
