@@ -85,6 +85,9 @@ export interface IssuedBearerSession {
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
 const MCP_CLIENT_SUBJECT = "mcp-client";
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
+// A peer link's session moves back out to its full lifetime when a call finds it this far
+// short, so a used link never expires and a busy one writes at most once per step.
+const PEER_LINK_RENEWAL_STEP = Duration.days(1);
 
 // A device pairing with its DPoP key renews the session itself, so the token can be short and
 // the device stays signed in while used. One idle for the whole window pairs again.
@@ -98,6 +101,8 @@ export interface McpClientSession {
   readonly access: AuthMcpClientAccess;
   /** Another T3 Code environment's link, whose work here stays within it. */
   readonly peerLink: boolean;
+  /** When a peer link's session ends unless it is used again; the linking side keeps this. */
+  readonly linkExpiresAt?: DateTime.Utc;
 }
 
 export interface AuthenticatedSession {
@@ -1577,26 +1582,56 @@ export const make = Effect.gen(function* () {
       return yield* authenticateRequest(request);
     });
 
+  /** The expiry of a verified peer link session, moved out when this use finds it a step short. */
+  const renewPeerLinkSession = Effect.fnUntraced(function* (
+    sessionId: AuthSessionId,
+    expiresAt: DateTime.DateTime,
+  ) {
+    const now = yield* DateTime.now;
+    const renewed = DateTime.add(now, {
+      milliseconds: Duration.toMillis(MCP_CLIENT_SESSION_TTL),
+    });
+    if (DateTime.distance(expiresAt, renewed).pipe(Duration.isLessThan(PEER_LINK_RENEWAL_STEP))) {
+      return DateTime.toUtc(expiresAt);
+    }
+    const current = yield* sessions
+      .extend(sessionId, renewed, PEER_LINK_RENEWAL_STEP)
+      .pipe(mapSessionVerificationErrors);
+    // A revoke can land between the verification and the update.
+    if (Option.isNone(current)) {
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: "The peer link session ended before it could be renewed.",
+      });
+    }
+    return current.value;
+  });
+
   const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
     const token = parseBearerToken(request);
     if (token === null) return Effect.fail(new ServerAuthMissingCredentialError({}));
     return sessions.verify(token).pipe(
       mapSessionVerificationErrors,
-      Effect.flatMap((session) =>
-        session.subject === MCP_CLIENT_SUBJECT && session.method === "bearer-access-token"
-          ? Effect.succeed({
-              sessionId: session.sessionId,
-              label: session.client.label ?? "MCP client",
-              access: session.scopes.includes(AuthOrchestrationOperateScope)
-                ? (session.runtimeModeCeiling ?? "approval-required")
-                : "read-only",
-              peerLink: session.peerLink === true,
-            } satisfies McpClientSession)
-          : Effect.fail(
-              new ServerAuthInvalidCredentialError({
-                diagnostic: "Only MCP client sessions are accepted here.",
-              }),
-            ),
+      Effect.flatMap(
+        Effect.fnUntraced(function* (session) {
+          if (session.subject !== MCP_CLIENT_SUBJECT || session.method !== "bearer-access-token") {
+            return yield* new ServerAuthInvalidCredentialError({
+              diagnostic: "Only MCP client sessions are accepted here.",
+            });
+          }
+          const client = {
+            sessionId: session.sessionId,
+            label: session.client.label ?? "MCP client",
+            access: session.scopes.includes(AuthOrchestrationOperateScope)
+              ? (session.runtimeModeCeiling ?? "approval-required")
+              : "read-only",
+            peerLink: session.peerLink === true,
+          } satisfies McpClientSession;
+          if (session.peerLink !== true || session.expiresAt === undefined) return client;
+          return {
+            ...client,
+            linkExpiresAt: yield* renewPeerLinkSession(session.sessionId, session.expiresAt),
+          } satisfies McpClientSession;
+        }),
       ),
       Effect.withSpan("EnvironmentAuth.authenticateMcpClient"),
     );

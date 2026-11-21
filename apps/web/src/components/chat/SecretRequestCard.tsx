@@ -1,13 +1,15 @@
 import { pipe } from "effect/Function";
 import {
-  SECRET_REQUEST_DEFAULT_PLACEHOLDER,
   secretRequestAnswerInput,
   secretRequestDisplay,
   secretRequestFailureMessage,
+  secretRequestInputs,
   secretRequestLink,
   secretRequestPrivacyNote,
   secretRequestReference,
   secretRequestSources,
+  secretRequestValue,
+  type SecretRequestInput,
   type SecretRequestItem,
   type SecretRequestReply,
   type SecretRequestSource,
@@ -22,10 +24,12 @@ import type {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { T, useMessages, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import {
   CheckIcon,
   ExternalLinkIcon,
+  EyeIcon,
+  EyeOffIcon,
   KeyRoundIcon,
   LockIcon,
   MinusIcon,
@@ -38,6 +42,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { SecretSourceSelect } from "../settings/SecretSourceInput";
 import { WorkLogRow } from "./WorkLog";
 
@@ -88,7 +93,7 @@ function PendingSecretRequestForm(props: {
 }) {
   const { item } = props;
   const messages = useMessages();
-  const inputId = useId();
+  const formId = useId();
   const errorId = useId();
   const privacyId = useId();
   const answer = useAtomCommand(serverEnvironment.answerSecretRequest, {
@@ -97,15 +102,25 @@ function PendingSecretRequestForm(props: {
     reportFailure: false,
     reportDefect: false,
   });
-  const sources = useSecretRequestSources(props.environmentId);
+  const multiple = item.fields !== undefined;
+  // A reference answers one value, so a card with fields is always typed.
+  const configuredSources = useSecretRequestSources(props.environmentId);
+  const sources = multiple ? NO_SOURCES : configuredSources;
   const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
-  const [secret, setSecret] = useState("");
+  const [values, setValues] = useState<Readonly<Record<string, string>>>({});
   const [reference, setReference] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Enter and click can both submit before a render.
   const inFlight = useRef(false);
+  const inputs = secretRequestInputs(item, messages);
+  const inputId = (index: number) => `${formId}-${index}`;
+  const describedBy = error !== null ? `${privacyId} ${errorId}` : privacyId;
+  const canSave =
+    source === null
+      ? secretRequestAnswerInput(item, { type: "save", values }) !== null
+      : reference.trim().length > 0;
 
   const send = async (reply: SecretRequestReply) => {
     const input = secretRequestAnswerInput(item, reply);
@@ -113,15 +128,19 @@ function PendingSecretRequestForm(props: {
     inFlight.current = true;
     setSubmitting(true);
     setError(null);
+    // A password field that leaves the page with text in it can prompt to save a login,
+    // so the card is emptied before it closes; a failed answer puts the values back.
+    const typed = values;
+    setValues({});
     const result = await answer({ environmentId: props.environmentId, input }).finally(() => {
       inFlight.current = false;
       setSubmitting(false);
     });
     if (result._tag === "Success") {
-      setSecret("");
       setReference("");
       return;
     }
+    setValues(typed);
     if (!isAtomCommandInterrupted(result)) {
       pipe(
         squashAtomCommandFailure(result),
@@ -134,16 +153,46 @@ function PendingSecretRequestForm(props: {
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (source === null) {
-      void send({ type: "save", secret });
+      void send({ type: "save", values });
     } else if (secretRequestReference(source, reference) === undefined) {
       setError(source.invalidReferenceMessage);
     } else {
       void send({ type: "reference", source, reference });
     }
   };
-  const draft = source === null ? secret : reference;
+
   const link = secretRequestLink(item);
-  const describedBy = error !== null ? `${privacyId} ${errorId}` : privacyId;
+  const field = (input: SecretRequestInput, index: number) => (
+    <SecretRequestField
+      key={input.key}
+      id={inputId(index)}
+      input={input}
+      // A single input is labelled by the card title.
+      label={multiple ? input.label : undefined}
+      value={secretRequestValue(values, input.key)}
+      disabled={submitting}
+      invalid={error !== null}
+      describedBy={describedBy}
+      onChange={(value) => setValues((current) => ({ ...current, [input.key]: value }))}
+    />
+  );
+  const saveButton = (
+    <Button type="submit" disabled={submitting || !canSave}>
+      <T>Save securely</T>
+    </Button>
+  );
+
+  const declineButton = (
+    <Button
+      type="button"
+      size="xs"
+      variant="ghost-muted"
+      disabled={submitting}
+      onClick={() => void send({ type: "decline" })}
+    >
+      <T>Decline</T>
+    </Button>
+  );
 
   return (
     <form
@@ -158,14 +207,19 @@ function PendingSecretRequestForm(props: {
         if (!(event.target instanceof Element)) return;
         if (event.target.closest("input, button, a")) return;
         if (window.getSelection()?.isCollapsed === false) return;
-        document.getElementById(inputId)?.focus();
+        const empty = inputs.findIndex((input) => !secretRequestValue(values, input.key).trim());
+        document.getElementById(inputId(Math.max(empty, 0)))?.focus();
       }}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2.5">
         <KeyRoundIcon aria-hidden className="size-4 shrink-0 text-warning-foreground" />
-        <label htmlFor={inputId} className="text-label text-foreground">
-          {item.label}
-        </label>
+        {multiple ? (
+          <p className="text-label text-foreground">{item.label}</p>
+        ) : (
+          <label htmlFor={inputId(0)} className="text-label text-foreground">
+            {item.label}
+          </label>
+        )}
         {item.reason.trim() ? (
           <p className="min-w-0 text-body wrap-anywhere text-muted-foreground">{item.reason}</p>
         ) : null}
@@ -196,74 +250,56 @@ function PendingSecretRequestForm(props: {
         </div>
       ) : null}
       <div className="flex min-w-0 flex-col gap-2 rounded-lg bg-card p-2.5">
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          {sources.length > 0 ? (
-            <SecretSourceSelect
-              value={source?.id ?? null}
-              sources={sources}
-              label={item.label}
-              disabled={submitting}
-              onValueChange={(next) => {
-                setSourceId(next);
-                setError(null);
-              }}
-            />
-          ) : null}
-          <div className="min-w-40 flex-1">
-            {source === null ? (
-              <Input
-                size="lg"
-                id={inputId}
-                // A CSS-masked text field still exposes its value to screen readers.
-                type="password"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                data-1p-ignore
-                data-lpignore="true"
-                data-bwignore
-                placeholder={item.placeholder ?? messages(SECRET_REQUEST_DEFAULT_PLACEHOLDER)}
-                value={secret}
+        {multiple ? (
+          <>
+            <div className="flex min-w-0 flex-col gap-2.5">{inputs.map(field)}</div>
+            <div className="flex min-w-0 items-center justify-end gap-1.5">
+              {saveButton}
+              {declineButton}
+            </div>
+          </>
+        ) : (
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {sources.length > 0 ? (
+              <SecretSourceSelect
+                value={source?.id ?? null}
+                sources={sources}
+                label={item.label}
                 disabled={submitting}
-                aria-invalid={error !== null || undefined}
-                aria-describedby={describedBy}
-                onChange={(event) => setSecret(event.currentTarget.value)}
-              />
-            ) : (
-              <Input
-                size="lg"
-                id={inputId}
-                font="mono"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                placeholder={source.referencePlaceholder}
-                value={reference}
-                disabled={submitting}
-                aria-invalid={error !== null || undefined}
-                aria-describedby={describedBy}
-                onChange={(event) => {
-                  setReference(event.currentTarget.value);
+                onValueChange={(next) => {
+                  setSourceId(next);
                   setError(null);
                 }}
               />
-            )}
+            ) : null}
+            <div className="min-w-40 flex-1">
+              {source === null ? (
+                inputs.map(field)
+              ) : (
+                <Input
+                  size="lg"
+                  id={inputId(0)}
+                  font="mono"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  placeholder={source.referencePlaceholder}
+                  value={reference}
+                  disabled={submitting}
+                  aria-invalid={error !== null || undefined}
+                  aria-describedby={describedBy}
+                  onChange={(event) => {
+                    setReference(event.currentTarget.value);
+                    setError(null);
+                  }}
+                />
+              )}
+            </div>
+            {saveButton}
+            {declineButton}
           </div>
-          <Button type="submit" disabled={submitting || draft.trim().length === 0}>
-            <T>Save securely</T>
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost-muted"
-            disabled={submitting}
-            onClick={() => void send({ type: "decline" })}
-          >
-            <T>Decline</T>
-          </Button>
-        </div>
+        )}
         {error !== null ? (
           <p id={errorId} role="alert" className="text-meta text-destructive">
             {error}
@@ -271,5 +307,69 @@ function PendingSecretRequestForm(props: {
         ) : null}
       </div>
     </form>
+  );
+}
+
+function SecretRequestField(props: {
+  readonly id: string;
+  readonly input: SecretRequestInput;
+  readonly label: string | undefined;
+  readonly value: string;
+  readonly disabled: boolean;
+  readonly invalid: boolean;
+  readonly describedBy: string;
+  readonly onChange: (value: string) => void;
+}) {
+  const { input } = props;
+  const gt = useGT();
+  const [revealed, setRevealed] = useState(false);
+  const masked = input.secret && !revealed;
+  const control = (
+    <InputGroup size="lg">
+      <InputGroupInput
+        id={props.id}
+        // A CSS-masked text field still exposes its value to screen readers.
+        type={masked ? "password" : "text"}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
+        data-1p-ignore
+        data-lpignore="true"
+        data-bwignore
+        placeholder={input.placeholder}
+        value={props.value}
+        disabled={props.disabled}
+        aria-invalid={props.invalid || undefined}
+        aria-describedby={props.describedBy}
+        onChange={(event) => props.onChange(event.currentTarget.value)}
+      />
+      {input.secret ? (
+        <InputGroupAddon align="inline-end">
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label={gt("Show {label}", { label: input.label })}
+            aria-pressed={revealed}
+            disabled={props.disabled}
+            // Keep focus, and the caret, in the input.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => setRevealed((current) => !current)}
+          >
+            {revealed ? <EyeOffIcon aria-hidden /> : <EyeIcon aria-hidden />}
+          </Button>
+        </InputGroupAddon>
+      ) : null}
+    </InputGroup>
+  );
+  if (props.label === undefined) return control;
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <label htmlFor={props.id} className="text-meta text-muted-foreground">
+        {props.label}
+      </label>
+      {control}
+    </div>
   );
 }

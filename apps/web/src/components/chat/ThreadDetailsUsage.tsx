@@ -5,8 +5,8 @@ import type {
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
-  collectProviderUsageLimits,
   type LimitPace,
+  type LimitPoolWindow,
   paceOf,
   paceRemainingPercent,
   remainingPercent,
@@ -26,6 +26,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { nextPoolReset, poolSources, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: msg("Ahead of pace"),
@@ -34,15 +35,23 @@ const PACE_LABEL: Record<LimitPace, string> = {
 };
 export interface ThreadDetailsUsageInput {
   readonly providerInstanceId: ProviderInstanceId | null;
+  readonly model: string | null;
   readonly providers: readonly ServerProvider[];
   readonly sources: UsageLimitSourceSnapshots;
   readonly contextWindow: ContextWindowSnapshot | null;
 }
 type UsageTone = "error" | "warning" | null;
 
+function limitTone(left: number): UsageTone {
+  if (left <= 10) return "error";
+  if (left <= 20) return "warning";
+  return null;
+}
+
 /** Provider limits share the canvas's icon, label, meter, percentage and reset columns; each row opens the usage page. */
 export function ThreadDetailsUsage({
   providerInstanceId,
+  model,
   providers,
   sources,
 }: Omit<ThreadDetailsUsageInput, "contextWindow">) {
@@ -50,19 +59,19 @@ export function ThreadDetailsUsage({
   const m = useMessages();
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
-  const report =
-    providerInstanceId !== null
-      ? collectProviderUsageLimits(providerInstanceId, providers, sources, now)
-      : null;
-  const limits =
-    report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
-    providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
-  const notice = limits
-    ? limitsNotice(limits, m)
-    : gt("This provider has not reported usage limits.");
+  const resolved = resolveThreadDetailsLimits(providerInstanceId, model, providers, sources, now);
+  const limits = resolved?.kind === "instance" ? resolved.limits : null;
+  const notice =
+    resolved === null
+      ? gt("This provider has not reported usage limits.")
+      : limits
+        ? limitsNotice(limits, m)
+        : null;
   return (
     <ThreadDetailsSection title={gt("Usage limits")} variant="usage">
-      {notice || !limits?.windows.length ? (
+      {resolved?.kind === "pool" ? (
+        resolved.windows.map((window) => <PoolRow key={window.id} window={window} now={now} />)
+      ) : notice || !limits?.windows.length ? (
         <UsageRow
           label={gt("Limits", { $context: "usage limits row label" })}
           icon={<TimerIcon />}
@@ -192,8 +201,8 @@ function LimitRow({
       label={window.label}
       icon={weekly ? <CalendarRangeIcon /> : <TimerIcon />}
       fill={left}
+      tone={limitTone(left)}
       tick={timeLeft}
-      tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       value={`${left}%`}
       ariaValue={gt("{left}% left", { left })}
       opensUsage
@@ -221,6 +230,78 @@ function LimitRow({
               <span className="block">
                 {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)}
               </span>
+            </span>
+          ) : null}
+        </>
+      }
+    />
+  );
+}
+
+function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly now: number }) {
+  const gt = useGT();
+  const m = useMessages();
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const left = window.remainingPercent;
+  const accounts = window.members.length;
+  const from = poolSources(window);
+  const sourceLabels = [...from.hubs, ...(from.signedIn ? [gt("Signed-in accounts")] : [])];
+  const next = nextPoolReset(window, now);
+  const resetsAt = next?.member.window.resetsAt;
+  const weekly = window.kind === "weekly" || window.kind === "monthly";
+  const reset =
+    next && resetsAt
+      ? {
+          duration: formatDuration(next.at - now, m),
+          time: formatUpcomingTimestamp(resetsAt, timestampFormat, now, undefined, m),
+        }
+      : null;
+  return (
+    <UsageRow
+      label={window.label}
+      icon={weekly ? <CalendarRangeIcon /> : <TimerIcon />}
+      fill={left}
+      tone={limitTone(left)}
+      value={`${left}%`}
+      ariaValue={gt("{left}% left", { left })}
+      opensUsage
+      trailing={
+        next ? (
+          <span className="truncate text-caption text-dim-foreground">
+            {weekly
+              ? new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(next.at)
+              : formatDuration(next.at - now, m)}
+          </span>
+        ) : undefined
+      }
+      tooltip={
+        <>
+          <span className="text-foreground">
+            {accounts > 1
+              ? gt("{label}: {left}% left across {accounts} accounts", {
+                  label: window.label,
+                  left,
+                  accounts,
+                })
+              : gt("{label}: {left}% left", { label: window.label, left })}
+          </span>
+          {window.pace ? <span className="block">{m(PACE_LABEL[window.pace])}</span> : null}
+          {next && reset ? (
+            <span>
+              <span className="block">
+                {accounts > 1
+                  ? gt("+{percent}% in {duration}", {
+                      percent: next.restoresPercent,
+                      duration: reset.duration,
+                    })
+                  : gt("Resets in {duration}", { duration: reset.duration })}
+              </span>
+              <span className="block">{reset.time}</span>
+            </span>
+          ) : null}
+          {sourceLabels.length > 0 ? (
+            <span className="block">
+              {gt("From {sources}", { sources: sourceLabels.join(", ") })}
             </span>
           ) : null}
         </>

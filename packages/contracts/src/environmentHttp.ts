@@ -70,6 +70,7 @@ import {
   EnvironmentSpeechStatus,
   EnvironmentSpeechTranscriptionResult,
 } from "./speech.ts";
+import { PeerLinkClientPairingCredential, PeerLinkClientPairingRequest } from "./peerLink.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
   OrchestrationV2ShellHttpSnapshot,
@@ -1052,6 +1053,23 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+/**
+ * What a linking environment asks of this one over its link, outside `/mcp`. The handler accepts
+ * only a peer link's own session, so no agent's tool list ever carries it.
+ */
+class EnvironmentPeerLinkHttpApi extends HttpApiGroup.make("peerLink").add(
+  HttpApiEndpoint.post("clientPairing", "/api/peer-link/client-pairing", {
+    headers: OptionalBearerHeaders,
+    payload: PeerLinkClientPairingRequest,
+    success: PeerLinkClientPairingCredential,
+    error: [
+      EnvironmentHttpUnauthorizedError,
+      EnvironmentHttpForbiddenError,
+      EnvironmentHttpInternalServerError,
+    ],
+  }),
+) {}
+
 // Path tokens and optional body signatures authenticate webhooks; read raw bytes to verify signatures.
 const WebhookParams = Schema.Struct({
   hookId: TrimmedNonEmptyString,
@@ -1070,7 +1088,8 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.post("webhookPost", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.put("webhookPut", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
-  .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
+  .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint))
+  .annotate(HttpApi.RedactedNames, { params: ["token"] }) {}
 
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
@@ -1081,4 +1100,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi)
-  .add(EnvironmentWebhooksHttpApi) {}
+  .add(EnvironmentWebhooksHttpApi)
+  .add(EnvironmentPeerLinkHttpApi) {}

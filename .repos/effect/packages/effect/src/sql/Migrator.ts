@@ -101,6 +101,9 @@ export class MigrationError extends Data.TaggedError("MigrationError")<{
  *
  * **Details**
  *
+ * Each run is wrapped in a `Migrator.run` span with the migrations table name
+ * in the `effect.sql.migrator.table` attribute.
+ *
  * `transformWrites` transforms only the effects that create the migrations
  * table and insert into it, for clients such as ClickHouse that run row-less
  * statements differently from queries. Reads of the migrations table and the
@@ -363,7 +366,11 @@ ORDER BY migration_id`,
     }
 
     return completed
-  })
+  }).pipe(
+    Effect.withSpan("Migrator.run", { attributes: { "effect.sql.migrator.table": table } }, {
+      captureStackTrace: false
+    })
+  )
 
 const migrationsTableExists = (sql: Client.SqlClient, table: string): Effect.Effect<boolean, SqlError> => {
   // Match query quoting: to_regclass folds unquoted names to lowercase.
