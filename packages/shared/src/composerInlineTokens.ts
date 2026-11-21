@@ -20,11 +20,23 @@ export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
 }
 
-const SKILL_MENTION_SOURCE =
-  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)/u
-    .source;
-const SKILL_TOKEN_REGEX = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s)`, "gu");
-export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$)`, "gu");
+// Closing punctuation ends a mention, so `$review,` names `review` and `$20k.` stays money.
+const SKILL_MENTION_PUNCTUATION = `[.,;:!?)\\]'"]*`;
+const SKILL_MENTION_SOURCE = `(^|\\s)\\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?${SKILL_MENTION_PUNCTUATION}(?:\\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9](?:[a-zA-Z0-9:_-]*[a-zA-Z0-9])?)`;
+const SKILL_TOKEN_REGEX = new RegExp(
+  `${SKILL_MENTION_SOURCE}(?=${SKILL_MENTION_PUNCTUATION}\\s)`,
+  "gu",
+);
+/** The `$name` grammar every provider dispatches; the match stops before trailing punctuation. */
+export const SKILL_MENTION_PATTERN = new RegExp(
+  `${SKILL_MENTION_SOURCE}(?=${SKILL_MENTION_PUNCTUATION}(?:\\s|$))`,
+  "gu",
+);
+
+/** `/name` for CLIs that read a command name up to whitespace, so `$review,` sends `/review ,`. */
+export function slashSkillCommand(name: string, next: string | undefined): string {
+  return next === undefined || /\s/u.test(next) ? `/${name}` : `/${name} `;
+}
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 // Bound unmatched-bracket rescans to avoid quadratic work; only basenames survive, and common filesystems cap them at 255.
 const MAX_FILE_LINK_LABEL_LENGTH = 512;

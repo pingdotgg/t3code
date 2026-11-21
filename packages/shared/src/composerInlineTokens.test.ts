@@ -50,6 +50,16 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens("Budget is $20k tomorrow")).toEqual([]);
     expect(collectComposerInlineTokens("Cost is $100M total")).toEqual([]);
     expect(collectComposerInlineTokens("Limit is $1e6 here")).toEqual([]);
+    expect(collectComposerInlineTokens("Budget is $20k, then $5. ")).toEqual([]);
+  });
+
+  it("ends a skill at closing punctuation", () => {
+    expect(collectComposerInlineTokens("Run $ui, then $pdf:pdf! Also $ns:skill: now")).toEqual([
+      { type: "skill", value: "ui", source: "$ui", start: 4, end: 7 },
+      { type: "skill", value: "pdf:pdf", source: "$pdf:pdf", start: 14, end: 22 },
+      { type: "skill", value: "ns:skill", source: "$ns:skill", start: 29, end: 38 },
+    ]);
+    expect(collectComposerInlineTokens("echo $HOME/bin $ui-- now")).toEqual([]);
   });
 
   it("does not convert incomplete trailing tokens", () => {

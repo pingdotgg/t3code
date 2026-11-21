@@ -204,7 +204,7 @@ describe("leadingGrokSkillMention", () => {
     { text: "  €deploy\nship it", mention: { name: "deploy", rest: "\nship it" } },
     { text: "$deploy", mention: { name: "deploy", rest: "" } },
     { text: "$25 off", mention: undefined },
-    { text: "$deploy, then ship", mention: undefined },
+    { text: "$deploy, then ship", mention: { name: "deploy", rest: ", then ship" } },
   ])("reads $text", ({ text, mention }) => {
     assert.deepEqual(leadingGrokSkillMention(text), mention);
   });

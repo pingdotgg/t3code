@@ -37,6 +37,13 @@ describe("planClaudeSkillDispatch", () => {
     });
   });
 
+  it("spaces a mention from trailing punctuation so Claude still reads the command", () => {
+    expect(planClaudeSkillDispatch("$review, then $implement.", SKILLS)).toEqual({
+      leadingText: "/review , then /implement .",
+      commandText: "/implement .",
+    });
+  });
+
   it("dispatches currency-prefixed mentions and preserves their source boundaries", () => {
     for (const symbol of ["€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {
       expect(

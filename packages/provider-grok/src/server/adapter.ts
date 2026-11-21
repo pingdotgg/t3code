@@ -4,6 +4,7 @@ import {
   isXAiTaskCompletedWakeNotification,
   xAiRateLimitedErrorCode,
 } from "./xaiAcpExtension.ts";
+import { slashSkillCommand } from "@t3tools/shared/composerInlineTokens";
 import { discoverGrokSkills, leadingGrokSkillMention } from "./skills.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -379,7 +380,7 @@ export function makeGrokAcpAdapterFlavor(
       ).pipe(
         Effect.map((skills) =>
           skills.some((skill) => skill.enabled && skill.name === mention.name)
-            ? `/${mention.name}${mention.rest}`
+            ? `${slashSkillCommand(mention.name, mention.rest[0])}${mention.rest}`
             : text,
         ),
         Effect.orElseSucceed(() => text),
