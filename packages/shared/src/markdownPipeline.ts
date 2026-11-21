@@ -9,6 +9,7 @@ import type {
   TableCell,
   Text,
 } from "mdast";
+import { isAssistantFieldParagraph } from "./markdownFieldLines.ts";
 import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
 import { type PluggableList, type Processor, type Transformer, unified } from "unified";
 import remarkParse from "remark-parse";
@@ -752,27 +753,14 @@ function remarkNormalizeLinksAndTagInlineCode() {
   };
 }
 
-// `Label: value`, also with the label in bold or italics (`**Label:** value`, `*Label*: value`).
-const ASSISTANT_FIELD_LINE = /^(\*{1,2}|_{1,2})?[\p{L}][\p{L}\p{N} /_-]{0,31}(?:\1:|:\1)[ \t]+\S/u;
-
 export function remarkAssistantFieldLines(): Transformer<Root> {
   const addLineBreaks = remarkBreaks();
   return (tree, file) => {
     const source = String(file);
-    const fields = tree.children.filter((node) => {
-      if (node.type !== "paragraph" || !node.position) return false;
-      const { start, end } = node.position;
-      return (
-        start.line !== end.line &&
-        start.offset !== undefined &&
-        end.offset !== undefined &&
-        source
-          .slice(start.offset, end.offset)
-          .split(/\r\n?|\n/)
-          .every((line) => ASSISTANT_FIELD_LINE.test(line))
-      );
+    addLineBreaks({
+      type: "root",
+      children: tree.children.filter((node) => isAssistantFieldParagraph(node, source)),
     });
-    addLineBreaks({ type: "root", children: fields });
   };
 }
 
