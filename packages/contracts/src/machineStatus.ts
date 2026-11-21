@@ -35,9 +35,9 @@ export const MachineStatus = Schema.Struct({
   pressure: Schema.NullOr(
     Schema.Struct({ cpu: MachinePressure, memory: MachinePressure, io: MachinePressure }),
   ),
-  /** Threads with a run preparing, queued, starting or running, delegated children included. */
+  /** Threads with a run preparing, starting or running, delegated children included. */
   working: NonNegativeInt,
-  /** Threads whose agent session is alive but has no such run. */
+  /** Threads still bound to a live agent session but without such a run. */
   open: NonNegativeInt,
   /** The server's `machineStatus.maxWorkingAgents`; null leaves the room to memory alone. */
   maxWorkingAgents: Schema.NullOr(PositiveInt),

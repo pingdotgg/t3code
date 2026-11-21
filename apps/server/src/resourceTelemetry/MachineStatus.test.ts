@@ -36,8 +36,15 @@ const seed = Effect.fn("seed")(function* (
     readonly minute: number;
     readonly deleted?: boolean;
     readonly runs?: ReadonlyArray<string>;
-    /** A session status, and whether the thread is bound only through the bindings table. */
-    readonly session?: { readonly status: string; readonly boundOnly?: boolean };
+    /**
+     * A session status. `boundOnly`: the session row names no thread, only its binding does.
+     * `detached`: the session row names the thread, but no binding is left.
+     */
+    readonly session?: {
+      readonly status: string;
+      readonly boundOnly?: boolean;
+      readonly detached?: boolean;
+    };
   }>,
 ) {
   const sql = yield* SqlClient.SqlClient;
@@ -73,6 +80,7 @@ const seed = Effect.fn("seed")(function* (
           ${thread.session.status}, ${at}, '{}'
         )
       `;
+      if (thread.session.detached) continue;
       yield* sql`
         INSERT INTO orchestration_v2_projection_provider_session_bindings (provider_session_id, thread_id)
         VALUES (${sessionId}, ${thread.id})
@@ -82,7 +90,7 @@ const seed = Effect.fn("seed")(function* (
 });
 
 describe("MachineStatusReader", () => {
-  it.effect("counts threads with an active run as working and idle live sessions as open", () =>
+  it.effect("counts threads with a starting or running run as working, live sessions as open", () =>
     Effect.gen(function* () {
       yield* seed([
         { id: "running", minute: 1, runs: ["completed", "running", "queued"] },
@@ -94,6 +102,8 @@ describe("MachineStatusReader", () => {
         { id: "stopped", minute: 7, runs: ["completed"], session: { status: "stopped" } },
         { id: "failed", minute: 8, runs: ["failed"], session: { status: "error" } },
         { id: "deleted", minute: 9, deleted: true, runs: ["running"] },
+        { id: "queued-open", minute: 10, runs: ["queued"], session: { status: "ready" } },
+        { id: "detached", minute: 11, session: { status: "ready", detached: true } },
       ]);
       const status = yield* (yield* MachineStatus.MachineStatusReader).read;
 
@@ -105,15 +115,15 @@ describe("MachineStatusReader", () => {
         })),
         [
           { threadId: "preparing-child", state: "working", providerInstanceId: "claudeAgent" },
-          { threadId: "queued", state: "working", providerInstanceId: "claudeAgent" },
           { threadId: "running", state: "working", providerInstanceId: "claudeAgent" },
+          { threadId: "queued-open", state: "open", providerInstanceId: "codex" },
           { threadId: "bound", state: "open", providerInstanceId: "codex" },
           { threadId: "idle", state: "open", providerInstanceId: "codex" },
           { threadId: "waiting", state: "open", providerInstanceId: "codex" },
         ],
       );
-      assert.strictEqual(status.working, 3);
-      assert.strictEqual(status.open, 3);
+      assert.strictEqual(status.working, 2);
+      assert.strictEqual(status.open, 4);
       assert.strictEqual(status.agents[0]?.title, "Title preparing-child");
       assert.strictEqual(status.maxWorkingAgents, 2);
       assert.strictEqual(status.cpuUtilization, 0.25);
