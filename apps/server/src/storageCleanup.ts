@@ -10,7 +10,6 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type {
-  OrchestrationV2ThreadShell,
   ProjectId,
   ServerSettings,
   ServerSettingsError,
@@ -155,7 +154,7 @@ type LimitRecoverySettings = Pick<
 >;
 
 export function storageCleanupThreadIdle(
-  thread: OrchestrationV2ThreadShell,
+  thread: ProjectionStore.StorageCleanupThread,
   now: number,
   settings: LimitRecoverySettings,
 ): boolean {
@@ -163,7 +162,7 @@ export function storageCleanupThreadIdle(
 }
 
 function threadIdle(
-  thread: OrchestrationV2ThreadShell,
+  thread: ProjectionStore.StorageCleanupThread,
   now: number,
   settings: LimitRecoverySettings,
 ): boolean {
@@ -185,7 +184,7 @@ function threadIdle(
 // A run held for its usage-limit reset has its work still ahead of it, and a
 // fresh worktree would otherwise look unchanged and be removed before it runs.
 function heldForLimitRecovery(
-  thread: OrchestrationV2ThreadShell,
+  thread: ProjectionStore.StorageCleanupThread,
   now: number,
   settings: LimitRecoverySettings,
 ): boolean {
@@ -215,7 +214,7 @@ function heldForLimitRecovery(
 }
 
 /** PR metadata refreshes must not reset the inactivity clock. */
-export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): number {
+export function storageCleanupActivityAt(thread: ProjectionStore.StorageCleanupThread): number {
   return Math.max(
     ...[
       thread.createdAt,
@@ -228,7 +227,7 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
 }
 
 /** Only a complete subagent or side chat chain within this worktree shares ownership. */
-function worktreeOwner<T extends Pick<OrchestrationV2ThreadShell, "id" | "lineage">>(
+function worktreeOwner<T extends Pick<ProjectionStore.StorageCleanupThread, "id" | "lineage">>(
   threads: ReadonlyArray<T>,
 ) {
   if (threads.length === 1) return threads[0];
@@ -257,8 +256,8 @@ function worktreeOwner<T extends Pick<OrchestrationV2ThreadShell, "id" | "lineag
 }
 
 function worktreeSettlementChain(
-  thread: OrchestrationV2ThreadShell,
-  byId: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>,
+  thread: ProjectionStore.StorageCleanupThread,
+  byId: ReadonlyMap<ThreadId, ProjectionStore.StorageCleanupThread>,
   now: number,
   settings: LimitRecoverySettings,
 ) {
@@ -513,11 +512,10 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => ({ bytes: null, reason: "worktree could not be fully inspected" })),
   );
 
-  // Large snapshots take seconds; use the reader worker instead of blocking the event loop.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
-    const snapshot = yield* projections.getShellSnapshot().pipe(NodeSqliteClient.readOnly);
+    const threads = yield* projections.getStorageCleanupThreads();
     const projects = yield* projectStore.listShells();
-    return { projects, threads: [...snapshot.threads, ...snapshot.archivedThreads] };
+    return { projects, threads };
   });
 
   const containsProjectRoot = Effect.fn("StorageCleanup.containsProjectRoot")(function* (

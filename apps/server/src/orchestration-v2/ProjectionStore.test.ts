@@ -144,6 +144,31 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
   }
   assert.isFalse(statements.some((statement) => /COUNT\(\*\)|GROUP BY/i.test(statement)));
 
+  const cleanupStatementsFrom = statements.length;
+  const cleanupThreads = yield* store.getStorageCleanupThreads().pipe(Effect.withTracer(tracer));
+  const omitted = new Set([
+    "itemCount",
+    "visibleItemCount",
+    "latestRunStopRequested",
+    "latestRunBackgroundWake",
+    "activityRunStatus",
+    "activityRunStartedAt",
+    "hasActionableProposedPlan",
+  ]);
+  const byId = <T extends { readonly id: string }>(threads: ReadonlyArray<T>) =>
+    threads.toSorted((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+  assert.deepEqual(
+    byId(cleanupThreads),
+    byId([...shells, ...snapshot.archivedThreads]).map((shell) =>
+      Object.fromEntries(Object.entries(shell).filter(([key]) => !omitted.has(key))),
+    ),
+  );
+  assert.isFalse(
+    statements
+      .slice(cleanupStatementsFrom)
+      .some((statement) => /COUNT\(\*\)|GROUP BY|projection_plans/i.test(statement)),
+  );
+
   const iso = (value: DateTime.Utc | null | undefined) =>
     value == null ? null : DateTime.formatIso(value);
   const trimmed = (
