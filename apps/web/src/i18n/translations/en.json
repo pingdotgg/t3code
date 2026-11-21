@@ -3718,6 +3718,12 @@
     },
     " app"
   ],
+  "0fd6b38d7839f885": "Signed in to {server}",
+  "54789628a737f557": "Sign in to {server}",
+  "8aecbd38f1facf71": "Approve access in your browser. It then opens a page that may not load: copy that page's address and paste it here.",
+  "2281dc87b05d4a4c": "Starting the sign-in…",
+  "880d3e6e7ff86899": "Address of the page your browser opened",
+  "e52585cdfcf317cf": "Finish sign-in",
   "9cc6288e83305ca3": "The diagram could not be rendered.",
   "74d986aed0381cb0": "The diagram renderer failed to load.",
   "d694484d6fea351e": "Expand diagram",

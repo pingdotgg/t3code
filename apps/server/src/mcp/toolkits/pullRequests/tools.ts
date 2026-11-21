@@ -668,7 +668,7 @@ const ListPullRequestsTool = Tool.make("pull_request_list", {
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutForge);
 
 const CreatePullRequestTool = Tool.make("pull_request_create", {
-  description: "Open a PR from this thread's pushed branch and link it, or return its open PR.",
+  description: "Push this thread's branch, then open its PR and link it, or return its open PR.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     title: TrimmedNonEmptyString,

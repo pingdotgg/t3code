@@ -3717,6 +3717,12 @@
       "v": "v"
     }
   ],
+  "0fd6b38d7839f885": "Você entrou em {server}",
+  "54789628a737f557": "Entrar em {server}",
+  "8aecbd38f1facf71": "Aprove o acesso no navegador. Depois ele abre uma página que pode não carregar: copie o endereço dessa página e cole aqui.",
+  "2281dc87b05d4a4c": "Iniciando o login…",
+  "880d3e6e7ff86899": "Endereço da página que o navegador abriu",
+  "e52585cdfcf317cf": "Concluir login",
   "9cc6288e83305ca3": "Não foi possível renderizar o diagrama.",
   "74d986aed0381cb0": "Falha ao carregar o renderizador de diagramas.",
   "d694484d6fea351e": "Expandir diagrama",

@@ -3717,6 +3717,12 @@
       "v": "v"
     }
   ],
+  "0fd6b38d7839f885": "Inloggad på {server}",
+  "54789628a737f557": "Logga in på {server}",
+  "8aecbd38f1facf71": "Godkänn åtkomsten i webbläsaren. Den öppnar sedan en sida som kanske inte laddas: kopiera sidans adress och klistra in den här.",
+  "2281dc87b05d4a4c": "Startar inloggningen…",
+  "880d3e6e7ff86899": "Adressen till sidan som webbläsaren öppnade",
+  "e52585cdfcf317cf": "Slutför inloggningen",
   "9cc6288e83305ca3": "Diagrammet kunde inte renderas.",
   "74d986aed0381cb0": "Diagramrenderaren kunde inte läsas in.",
   "d694484d6fea351e": "Expandera diagram",
