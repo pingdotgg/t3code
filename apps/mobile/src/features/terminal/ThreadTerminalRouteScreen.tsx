@@ -224,6 +224,21 @@ type TerminalToolbarAction =
       readonly modifier: PendingModifier;
     };
 
+// The route spans the Duo rail, so content that is not the terminal body insets itself.
+function TerminalUnavailable(props: { readonly title: string; readonly detail: string }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      className="flex-1 bg-screen"
+      style={
+        Platform.OS === "ios" ? { paddingLeft: insets.left, paddingRight: insets.right } : undefined
+      }
+    >
+      <EmptyState title={props.title} detail={props.detail} />
+    </View>
+  );
+}
+
 function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
   return first === undefined || first.trim().length === 0 ? null : first;
@@ -334,12 +349,10 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     }
 
     return (
-      <View className="flex-1 bg-screen">
-        <EmptyState
-          title={gt("Thread unavailable")}
-          detail={gt("This terminal route needs an active thread and workspace.")}
-        />
-      </View>
+      <TerminalUnavailable
+        title={gt("Thread unavailable")}
+        detail={gt("This terminal route needs an active thread and workspace.")}
+      />
     );
   }
 
@@ -860,14 +873,12 @@ function ThreadTerminal(props: {
 
   if (!selectedThreadProject?.workspaceRoot) {
     return (
-      <View className="flex-1 bg-screen">
-        <EmptyState
-          title={gt("Terminal unavailable")}
-          detail={gt(
-            "This thread does not have a workspace root yet, so there is nowhere to open a shell.",
-          )}
-        />
-      </View>
+      <TerminalUnavailable
+        title={gt("Terminal unavailable")}
+        detail={gt(
+          "This thread does not have a workspace root yet, so there is nowhere to open a shell.",
+        )}
+      />
     );
   }
 
