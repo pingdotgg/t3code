@@ -111,7 +111,7 @@ describe("resolveThreadProviderInstance", () => {
       resolveThreadProviderInstance(serverConfigs.get(environmentId)?.providers, thread),
     ).toMatchObject({
       driverKind: "codex",
-      displayName: "Codex Work",
+      displayName: "Codex",
       showBadge: true,
     });
   });
