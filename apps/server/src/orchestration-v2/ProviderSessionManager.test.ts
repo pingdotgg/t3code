@@ -3299,7 +3299,7 @@ it.effect.each([
   {
     scenario: "none" as const,
     description:
-      "ProviderSessionManagerV2 fails explicitly instead of mutating non-rotatable credentials on a second typed run",
+      "ProviderSessionManagerV2 keeps a non-rotatable runtime's credential, unbound, for a second typed run",
   },
   {
     scenario: "reload-blocked" as const,
@@ -3492,24 +3492,24 @@ it.effect.each([
         );
         assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
 
-        // A second typed run requires a new run-bound token, which a non-rotatable runtime cannot deliver.
-        const rejected = yield* manager
-          .open({
-            threadId,
-            providerSessionId,
-            modelSelection,
-            runtimePolicy,
-            runId: run3,
-            attemptId: RunAttemptId.make("attempt-none-3"),
-            requireRunScopedMcp: true,
-          })
-          .pipe(Effect.flip);
-        assert.equal(rejected._tag, "ProviderSessionOpenError");
-        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
-        assert.equal(
-          (yield* mcpSessions.read(threadId))?.authorizationHeader,
-          config1!.authorizationHeader,
-        );
+        // A non-rotatable runtime cannot take a token for a second typed run: the turn still runs,
+        // and its token stops answering for run1 so the new run can submit.
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run3,
+          attemptId: RunAttemptId.make("attempt-none-3"),
+          requireRunScopedMcp: true,
+        });
+        const unbound = yield* registry.resolve(token1);
+        assert.isDefined(unbound);
+        assert.isUndefined(unbound!.thread.runId);
+        assert.isUndefined(unbound!.thread.attemptId);
+        const config3 = yield* mcpSessions.read(threadId);
+        assert.equal(config3?.authorizationHeader, config1!.authorizationHeader);
+        assert.isUndefined(config3?.runId);
         yield* manager.close(providerSessionId);
       });
 

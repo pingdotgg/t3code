@@ -1665,7 +1665,6 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
       readonly json: string;
       readonly callerRunId?: RunId | undefined;
       readonly callerAttemptId?: RunAttemptId | undefined;
-      readonly requireCallerRunId?: boolean | undefined;
     }> = [];
     const runA = RunId.make("run-a");
     const attemptA = RunAttemptId.make("attempt-a");
@@ -1685,7 +1684,6 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
               json: input.json,
               callerRunId: input.callerRunId,
               callerAttemptId: input.callerAttemptId,
-              requireCallerRunId: input.requireCallerRunId,
             });
             if (rejectNext !== undefined) {
               const problem = rejectNext;
@@ -1724,7 +1722,7 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
         );
       });
 
-    // Unbound MCP callers still pass requireCallerRunId: true and surface service rejections as invalid_request.
+    // Service rejections surface as invalid_request.
     rejectNext = "This output was submitted for a turn that is no longer active.";
     const unbound = yield* callWith(undefined, undefined, '{"ok":false}').pipe(
       Effect.provide(serverLayer),
@@ -1754,21 +1752,18 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
         json: '{"ok":false}',
         callerRunId: undefined,
         callerAttemptId: undefined,
-        requireCallerRunId: true,
       },
       {
         threadId,
         json: '{"ok":false}',
         callerRunId: runA,
         callerAttemptId: attemptA,
-        requireCallerRunId: true,
       },
       {
         threadId,
         json: '{"ok":true}',
         callerRunId: runB,
         callerAttemptId: attemptB,
-        requireCallerRunId: true,
       },
     ]);
   }),

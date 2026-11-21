@@ -37,6 +37,8 @@ export interface McpSessionRegistryShape {
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeCredential: (credentialId: string) => Effect.Effect<void>;
+  /** For runtimes that cannot take a new credential: the token stays valid but answers for no run. */
+  readonly releaseRunBinding: (credentialId: string) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
@@ -245,6 +247,17 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     touch,
     revokeCredential: Effect.fn("McpSessionRegistry.revokeCredential")(function* (credentialId) {
       yield* revokeWhere((record) => record.credentialId === credentialId);
+    }),
+    releaseRunBinding: Effect.fn("McpSessionRegistry.releaseRunBinding")(function* (credentialId) {
+      yield* SynchronizedRef.update(state, ({ records }) => {
+        const next = new Map(records);
+        for (const [tokenHash, record] of records) {
+          if (record.credentialId !== credentialId) continue;
+          const { runId: _runId, attemptId: _attemptId, ...thread } = record.scope.thread;
+          next.set(tokenHash, { ...record, scope: { ...record.scope, thread } });
+        }
+        return { records: next };
+      });
     }),
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {

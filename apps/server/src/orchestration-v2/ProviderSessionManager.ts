@@ -2231,14 +2231,18 @@ export const layerWithOptions = (
               yield* recordMcpTurnChecked(input.providerSessionId, input.threadId, turnKey);
               return;
             }
-            if (input.runtime.mcpCredentialRotation === "none") {
-              if (current !== undefined) {
-                return yield* new ProviderSessionOpenError({
-                  instanceId: input.providerInstanceId,
-                  providerSessionId: input.providerSessionId,
-                  cause: `Provider ${input.runtime.driver} cannot rotate MCP credentials on a live session without session reload or MCP-over-ACP.`,
-                });
+            // This runtime cannot take a new credential: keep it unbound so later typed turns still
+            // submit, leaving the late-submission race open only where rotation is impossible.
+            if (input.runtime.mcpCredentialRotation === "none" && current !== undefined) {
+              if (current.runId !== undefined || current.attemptId !== undefined) {
+                yield* mcpSessionRegistry.releaseRunBinding(
+                  McpProviderSession.mcpCredentialIdOf(current),
+                );
+                const { runId: _runId, attemptId: _attemptId, ...unbound } = current;
+                yield* mcpSessions.set(unbound);
               }
+              yield* recordMcpTurnChecked(input.providerSessionId, input.threadId, turnKey);
+              return;
             }
             const ownerSessionId = (yield* Ref.get(sessions))
               .get(sessionKey(input.providerSessionId))

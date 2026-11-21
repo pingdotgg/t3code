@@ -23,6 +23,7 @@ export const layer = Layer.succeed(
     resolve: () => Effect.undefined,
     touch: () => Effect.void,
     revokeCredential: () => Effect.void,
+    releaseRunBinding: () => Effect.void,
     revokeProviderSession: () => Effect.void,
     revokeThread: () => Effect.void,
     revokeAll: Effect.void,

@@ -469,7 +469,9 @@ that turn was sent with. A turn that was asked for nothing answers for the
 newest turn that was asked and has not answered yet, which is how an agent that
 ended its turn to wait gives its result after it is woken. A typed turn's MCP
 credential carries its run and attempt, so a late call from a stopped or
-superseded turn is rejected instead of landing on the next one. A rejection names what did not fit, so the agent can
+superseded turn is rejected instead of landing on the next one. A provider
+session that cannot take a new credential keeps an unbound one, where that race
+stays open. A rejection names what did not fit, so the agent can
 correct it and call again; a later accepted submission replaces an earlier one.
 
 ### `t3_thread_wait`

@@ -497,7 +497,6 @@ export interface ThreadManagementServiceShape {
     readonly json: string;
     readonly callerRunId?: RunId;
     readonly callerAttemptId?: RunAttemptId;
-    readonly requireCallerRunId?: boolean;
   }) => Effect.Effect<{ readonly runId: RunId }, ThreadManagementFailure>;
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
@@ -1052,12 +1051,6 @@ const make = Effect.gen(function* () {
       return yield* new ThreadManagementRunOutputRejectedError({
         threadId: input.threadId,
         problem: "This turn was not asked for a result. Reply in your message instead.",
-      });
-    }
-    if (input.requireCallerRunId === true && input.callerRunId === undefined) {
-      return yield* new ThreadManagementRunOutputRejectedError({
-        threadId: input.threadId,
-        problem: "This output was submitted for a turn that is no longer active.",
       });
     }
     if (input.callerRunId !== undefined || input.callerAttemptId !== undefined) {

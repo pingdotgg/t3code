@@ -12187,17 +12187,6 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           ],
         });
 
-        const unboundOnTyped = yield* threadManagement
-          .submitRunOutput({
-            threadId,
-            commandId: CommandId.make("runtime-layer-unbound-run-output"),
-            json: '{"from":"unbound"}',
-            requireCallerRunId: true,
-          })
-          .pipe(Effect.flip);
-        assert.equal(unboundOnTyped._tag, "ThreadManagementRunOutputRejectedError");
-        assert.include(unboundOnTyped.message, "no longer active");
-
         const lateFromA = yield* threadManagement
           .submitRunOutput({
             threadId,
@@ -12257,7 +12246,6 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
             commandId: CommandId.make("runtime-layer-plain-run-output-stale"),
             json: "{}",
             callerRunId: runA.id,
-            requireCallerRunId: true,
           })
           .pipe(Effect.flip);
         assert.equal(plainFromStale._tag, "ThreadManagementRunOutputRejectedError");
@@ -12267,7 +12255,6 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
             threadId,
             commandId: CommandId.make("runtime-layer-plain-run-output-unbound"),
             json: "{}",
-            requireCallerRunId: true,
           })
           .pipe(Effect.flip);
         assert.equal(plainFromUnbound._tag, "ThreadManagementRunOutputRejectedError");
