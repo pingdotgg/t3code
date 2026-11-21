@@ -1266,7 +1266,7 @@ function deriveTurnFolds(input: {
         ? resolve(msg("You stopped after {duration}", { duration }))
         : resolve(msg("You stopped this response"))
       : duration
-        ? resolve(msg("Worked for {duration}", { duration }))
+        ? resolve(msg("Elapsed {duration}", { duration }))
         : resolve(msg("Worked"));
 
     // The top row keeps the whole turn's time, steers included. Work after a

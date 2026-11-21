@@ -3781,7 +3781,7 @@
   "a265d829e76c30fb": "Ran {program}",
   "3b8635b46a63c2f0": "You stopped after {duration}",
   "abebe26bc3e613e8": "You stopped this response",
-  "cf180966ebd1c307": "Worked for {duration}",
+  "69c895518032a308": "Elapsed {duration}",
   "ea45064fb0582c38": "Worked",
   "cbf71f6bf85f65e4": "Continued for {duration}",
   "8571e67ea1596019": "Continued",
@@ -4494,8 +4494,8 @@
   "e81991d4a58ce959": "Setup script",
   "512e5f7d08325a74": "Background setup is still running: {scriptName}. Show setup progress.",
   "ff6edf13509031be": "Setting up worktree…",
-  "eb06160a98c4dd18": [
-    "Working for ",
+  "4415a92a506827b7": [
+    "Elapsed ",
     {
       "t": "WorkingTimer",
       "i": 1
