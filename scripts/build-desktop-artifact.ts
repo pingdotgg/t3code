@@ -673,6 +673,25 @@ export class MacProvisioningProfileNotFoundError extends Schema.TaggedError<MacP
   }
 }
 
+export class MacLocalSigningIdentityNotFoundError extends Schema.TaggedError<MacLocalSigningIdentityNotFoundError>()(
+  "MacLocalSigningIdentityNotFoundError",
+  {
+    identity: Schema.String,
+  },
+) {
+  static fromCause(cause: unknown) {
+    return isMacLocalSigningIdentityNotFoundError(cause)
+      ? cause
+      : new MacLocalSigningIdentityNotFoundError({ identity: "<invalid configuration>" });
+  }
+
+  override get message(): string {
+    return `T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY "${this.identity}" is not a valid code-signing identity in the keychain. Renew or import it, or unset the variable for an unsigned build.`;
+  }
+}
+
+const isMacLocalSigningIdentityNotFoundError = Schema.is(MacLocalSigningIdentityNotFoundError);
+
 export class DesktopBuildDistDirectoryMissingError extends Schema.TaggedError<DesktopBuildDistDirectoryMissingError>()(
   "DesktopBuildDistDirectoryMissingError",
   {
@@ -1016,6 +1035,34 @@ export const LINUX_FILE_EXCLUSIONS = [
   ...MAC_FILE_EXCLUSIONS,
   "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
 ] as const;
+
+// electron-builder rejects identity names that keep Apple's certificate-type prefix.
+const APPLE_CERTIFICATE_PREFIXES = [
+  "Developer ID Application:",
+  "Developer ID Installer:",
+  "3rd Party Mac Developer Application:",
+  "3rd Party Mac Developer Installer:",
+] as const;
+
+export function resolveLocalSigningIdentity(value: string | undefined): string | undefined {
+  let identity = value?.trim();
+  const prefix = APPLE_CERTIFICATE_PREFIXES.find((candidate) => identity?.startsWith(candidate));
+  if (prefix) {
+    identity = identity?.slice(prefix.length).trim();
+    if (!identity) throw new MacLocalSigningIdentityNotFoundError({ identity: value ?? "" });
+  }
+  return identity || undefined;
+}
+
+export function resolveLocalSigningHash(identity: string, identities: string): string {
+  const matches = [...identities.matchAll(/^\s*\d+\) ([A-Fa-f0-9]{40}) "(.+)"\s*$/gm)].filter(
+    (match) => match[1] === identity || resolveLocalSigningIdentity(match[2]) === identity,
+  );
+  const hashes = [...new Set(matches.map((match) => match[1]))];
+  const hash = hashes.length === 1 ? hashes[0] : undefined;
+  if (!hash) throw new MacLocalSigningIdentityNotFoundError({ identity });
+  return hash;
+}
 
 // Native packages (node-pty, objc-js) ship prebuilds for both Darwin architectures; only universal
 // apps need both. macOS 27 warns that an arm64 app holding x64-only code won't open on macOS 28.
@@ -2816,6 +2863,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     | undefined,
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  localSigningHash?: string,
 ) {
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
@@ -2867,7 +2915,25 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    // A persistent local identity keeps Keychain approvals valid across fork rebuilds.
+    const localSigningIdentity = signed
+      ? undefined
+      : yield* Effect.try({
+          try: () =>
+            resolveLocalSigningIdentity(
+              loadRepoEnv({ repoRoot }).T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY,
+            ),
+          catch: MacLocalSigningIdentityNotFoundError.fromCause,
+        });
     buildConfig.mac = {
+      ...(localSigningIdentity
+        ? {
+            identity: localSigningHash ?? localSigningIdentity,
+            type: "development",
+            forceCodeSigning: true,
+            notarize: false,
+          }
+        : {}),
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
@@ -2912,7 +2978,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           role: "Viewer",
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      // The custom signer receives the resolved certificate hash; the default one only its name.
+      ...(signed || localSigningIdentity
+        ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
+        : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -3596,29 +3665,53 @@ export class MacPackagedAppMissingError extends Schema.TaggedError<MacPackagedAp
   }
 }
 
+const findMacPackagedApps = Effect.fn("desktopArtifact.findMacPackagedApps")(function* (
+  stageDistDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const appPaths: string[] = [];
+  for (const entry of yield* fs.readDirectory(stageDistDir)) {
+    if (!entry.startsWith("mac")) continue;
+    const outputDir = path.join(stageDistDir, entry);
+    const apps = yield* fs.readDirectory(outputDir).pipe(Effect.orElseSucceed(() => []));
+    for (const app of apps) {
+      if (app.endsWith(".app")) appPaths.push(path.join(outputDir, app));
+    }
+  }
+  if (appPaths.length === 0) return yield* new MacPackagedAppMissingError({ stageDistDir });
+  return appPaths;
+});
+
+export const verifyLocalMacSignature = Effect.fn("desktopArtifact.verifyLocalMacSignature")(
+  function* (stageDistDir: string, localSigningHash: string, verbose: boolean) {
+    for (const app of yield* findMacPackagedApps(stageDistDir)) {
+      yield* runCommand(
+        ChildProcess.make("codesign", [
+          "--verify",
+          "--strict",
+          "-R",
+          `certificate leaf = H"${localSigningHash}"`,
+          app,
+        ]),
+        { label: "verify local macOS signing identity", verbose },
+      );
+    }
+  },
+);
+
 export const validateMacPackagedPayload = Effect.fn("desktopArtifact.validateMacPackagedPayload")(
   function* (input: { readonly stageDistDir: string; readonly verbose?: boolean }) {
-    const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const asarPaths: string[] = [];
-    for (const entry of yield* fs.readDirectory(input.stageDistDir)) {
-      if (!entry.startsWith("mac")) continue;
-      const outputDir = path.join(input.stageDistDir, entry);
-      const apps = yield* fs.readDirectory(outputDir).pipe(Effect.orElseSucceed(() => []));
-      for (const app of apps) {
-        if (app.endsWith(".app")) {
-          asarPaths.push(path.join(outputDir, app, "Contents/Resources/app.asar"));
-        }
-      }
-    }
-    if (asarPaths.length === 0) {
-      return yield* new MacPackagedAppMissingError({ stageDistDir: input.stageDistDir });
-    }
-    for (const asarPath of asarPaths) {
-      yield* verifyPackagedBundleIsSelfContained({ asarPath, verbose: input.verbose ?? false });
+    const apps = yield* findMacPackagedApps(input.stageDistDir);
+    for (const app of apps) {
+      yield* verifyPackagedBundleIsSelfContained({
+        asarPath: path.join(app, "Contents/Resources/app.asar"),
+        verbose: input.verbose ?? false,
+      });
     }
     yield* Effect.log(
-      `[desktop-artifact] Validated macOS payload (${String(asarPaths.length)} app bundle(s)).`,
+      `[desktop-artifact] Validated macOS payload (${String(apps.length)} app bundle(s)).`,
     );
   },
 );
@@ -3896,6 +3989,31 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
+  const localSigningIdentity =
+    options.platform === "mac" && !options.signed
+      ? yield* Effect.try({
+          try: () =>
+            resolveLocalSigningIdentity(
+              loadRepoEnv({ repoRoot }).T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY,
+            ),
+          catch: MacLocalSigningIdentityNotFoundError.fromCause,
+        })
+      : undefined;
+  let localSigningHash: string | undefined;
+  if (localSigningIdentity) {
+    // With a custom signer set, electron-builder skips a missing or expired identity silently.
+    const identities = yield* spawnAndCollectOutput(
+      ChildProcess.make("security", ["find-identity", "-v", "-p", "codesigning"]),
+    ).pipe(Effect.orElseSucceed(() => ({ stdout: "", stderr: "", exitCode: 1 })));
+    if (identities.exitCode !== 0) {
+      return yield* new MacLocalSigningIdentityNotFoundError({ identity: localSigningIdentity });
+    }
+    localSigningHash = yield* Effect.try({
+      try: () => resolveLocalSigningHash(localSigningIdentity, identities.stdout),
+      catch: MacLocalSigningIdentityNotFoundError.fromCause,
+    });
+  }
+
   const configuredMacPasskeySigning =
     options.platform === "mac" && options.signed
       ? yield* Effect.try({
@@ -3983,6 +4101,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
+      localSigningHash,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -4165,6 +4284,10 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   // x64 builds on arm64 runners; the arm64 check covers the shared JS bundle.
   if (options.platform === "mac" && options.arch === "arm64" && hostPlatform === "darwin") {
     yield* validateMacPackagedPayload({ stageDistDir, verbose: options.verbose });
+  }
+
+  if (localSigningHash) {
+    yield* verifyLocalMacSignature(stageDistDir, localSigningHash, options.verbose);
   }
 
   const copiedArtifacts = yield* copyDesktopBuildArtifacts(
