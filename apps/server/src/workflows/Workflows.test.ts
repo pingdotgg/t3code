@@ -47,6 +47,8 @@ interface Latch {
   readonly entered: Deferred.Deferred<void>;
   readonly release: Deferred.Deferred<void>;
   readonly cleaned: Deferred.Deferred<void>;
+  /** Holds the `bad` step of a `sibling` run until the test lets it go. */
+  readonly bad: Deferred.Deferred<void>;
 }
 
 /** A workflow whose `flaky` step fails until `failures` reaches zero, counting every execution. */
@@ -132,6 +134,29 @@ const definitions = (
           );
           return `done on attempt ${attempt}`;
         }),
+    ),
+    /** Fails `bad` beside an open wait, as long as `failures` says. */
+    workflow("sibling", { version: 1, payload: Schema.Struct({}), returns: Schema.String }, () =>
+      Effect.map(
+        Effect.all(
+          [
+            step(
+              "bad",
+              { returns: Schema.Number, ...once },
+              Effect.andThen(
+                Effect.andThen(Deferred.await(latch.bad), count("bad tries")),
+                Effect.flatMap(
+                  Ref.getAndUpdate(failures, (left) => Math.max(0, left - 1)),
+                  (left) => (left > 0 ? Effect.fail("the dependency is down") : count("bad")),
+                ),
+              ),
+            ),
+            wait("sib", { returns: Schema.String }),
+          ],
+          { concurrency: 2 },
+        ),
+        ([bad, sib]) => `${bad} ${Option.getOrElse(sib, () => "none")}`,
+      ),
     ),
     workflow(
       "review",
@@ -710,6 +735,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
     entered: yield* Deferred.make<void>(),
     release: yield* Deferred.make<void>(),
     cleaned: yield* Deferred.make<void>(),
+    bad: yield* Deferred.make<void>(),
   };
   // One database file, so a second engine built from it is the server after a restart.
   const agents = fakeAgents();
@@ -826,6 +852,35 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a signal to a paused run is kept for the resume and does not run the failed step", () =>
+  Effect.gen(function* () {
+    const { counts, failures, latch, boot } = yield* harness();
+    yield* Ref.set(failures, 2);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start("sibling", {}, { idempotencyKey: "sib" });
+        yield* workflows.waitFor(runId, (run) => run.status === "waiting" && run.detail === "sib");
+        yield* Deferred.succeed(latch.bad, undefined);
+        yield* workflows.waitFor(runId, status("paused"));
+        assert.equal(
+          yield* workflows.signal({ runId, wait: "sib" }, "x", { id: "sib-x" }),
+          "delivered",
+        );
+        yield* workflows.resume(runId);
+        const again = yield* workflows.waitFor(runId, (run) => run.pauses === 2);
+        assert.equal(again.status, "paused");
+        yield* workflows.resume(runId);
+        const done = yield* workflows.waitFor(runId, status("completed", "paused"));
+        assert.deepStrictEqual([done.status, done.result], ["completed", "1 x"]);
+        const bad = (yield* workflows.get(runId)).steps.find((step) => step.name === "bad");
+        assert.equal(bad?.attempts, 3);
+      }),
+    );
+    assert.deepStrictEqual(yield* Ref.get(counts), { "bad tries": 3, bad: 1 });
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect("a wait survives a restart, checks what it is signalled with, and steps run once", () =>
