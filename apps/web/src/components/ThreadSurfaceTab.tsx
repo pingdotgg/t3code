@@ -96,6 +96,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "../state/query";
 import { focusActivePanelTerminal, focusTerminal } from "../lib/terminalFocus";
 import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
+import { sideThreadComposer, sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
 import { useOpenSurfaceInMainView } from "../hooks/useOpenSurfaceInMainView";
 import type { TerminalContextSelection } from "../lib/terminalContext";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -603,7 +604,16 @@ function ThreadSurfacePane({
       threadTitle={threadTitle}
       onActivate={(active) => {
         // Choosing a side chat's tab puts the keyboard in its message box, even when it shows.
-        if (active.kind === "thread") requestSideChatComposerFocus(threadRef, active.id);
+        // A thread with no composer, or one not known yet, takes focus as any other tab does.
+        const kind =
+          active.kind === "thread"
+            ? sideThreadKindOf(
+                readThreadShell(scopeThreadRef(threadRef.environmentId, active.threadId)),
+              )
+            : null;
+        if (kind !== null && sideThreadComposer(kind) === "composer") {
+          requestSideChatComposerFocus(threadRef, active.id);
+        }
       }}
       onCloseSurface={close}
       onOpenInMainView={openInMainView}

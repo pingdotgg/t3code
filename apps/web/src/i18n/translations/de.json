@@ -4546,6 +4546,7 @@
   "b16fdf56b16d99c9": "Im Tempo",
   "90f977e97ae8b6c6": "Unter dem Tempo",
   "97eff1793298489a": "Dieser Anbieter hat keine Nutzungslimits gemeldet.",
+  "23622878aeee86d9": "Angemeldete Konten",
   "b560c47847c88b2e": "Limits",
   "3e524e1c0141f4ad": "Nicht verknüpft",
   "42a02a4b27828027": "Nicht verfügbar",
@@ -4566,6 +4567,7 @@
   "1b16346722b65812": "{timeLeft} % des Zeitfensters übrig",
   "21c657cae336b772": "Nächstes Zurücksetzen in {duration}",
   "c29a3a293c3f98c3": "Wird in {duration} zurückgesetzt",
+  "78c1d280f021a28f": "Von {sources}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "d62967ed2aca3b27": [
     "Über ",

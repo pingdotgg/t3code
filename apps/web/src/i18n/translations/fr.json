@@ -4544,6 +4544,7 @@
   "b16fdf56b16d99c9": "Dans le rythme",
   "90f977e97ae8b6c6": "En dessous du rythme",
   "97eff1793298489a": "Ce fournisseur n’a signalé aucune limite d’utilisation.",
+  "23622878aeee86d9": "Comptes connectés",
   "b560c47847c88b2e": "Limites",
   "3e524e1c0141f4ad": "Non associé",
   "42a02a4b27828027": "Indisponible",
@@ -4564,6 +4565,7 @@
   "1b16346722b65812": "{timeLeft} % de la fenêtre restant",
   "21c657cae336b772": "Prochaine réinitialisation dans {duration}",
   "c29a3a293c3f98c3": "Réinitialisation dans {duration}",
+  "78c1d280f021a28f": "Depuis {sources}",
   "e16b0b9b490c8bc7": "{label} : {value}",
   "d62967ed2aca3b27": [
     "Sur ",

@@ -1,10 +1,11 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveTerminalActivityStatus } from "@t3tools/client-runtime/state/terminal";
-import type {
-  ContextMenuItem,
-  KeybindingCommand,
-  ResolvedKeybindingsConfig,
-  ScopedThreadRef,
+import {
+  type ContextMenuItem,
+  type KeybindingCommand,
+  type ResolvedKeybindingsConfig,
+  type ScopedThreadRef,
+  ThreadId,
 } from "@t3tools/contracts";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
@@ -50,6 +51,7 @@ import { ProjectFavicon } from "../components/ProjectFavicon";
 import { Button, ContentButton } from "../components/ui/button";
 import { cn } from "../lib/utils";
 import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
+import { sideThreadComposer, sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
 import { PANE_GHOST_TAB_TITLE_CLASS, PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
 import { IssueGlyph } from "../components/issue/issuePresentation";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
@@ -1252,7 +1254,18 @@ function LayoutPaneTabButton({
     // Choosing a side chat's tab puts the keyboard in its message box.
     const { content } = tab;
     if (content.kind === "surface" && content.surfaceId.startsWith("thread:")) {
-      requestSideChatComposerFocus(content.threadRef, content.surfaceId);
+      // A thread with no composer, or one not known yet, takes focus as any other tab does.
+      const kind = sideThreadKindOf(
+        readThreadShell(
+          scopeThreadRef(
+            content.threadRef.environmentId,
+            ThreadId.make(content.surfaceId.slice("thread:".length)),
+          ),
+        ),
+      );
+      if (kind !== null && sideThreadComposer(kind) === "composer") {
+        requestSideChatComposerFocus(content.threadRef, content.surfaceId);
+      }
     }
   };
   const openMenu = (event: ReactMouseEvent) => {

@@ -34,7 +34,7 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ContextWindowSegments } from "./ContextWindowMeter";
 import { contextWindowSegments } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { nextPoolReset, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
+import { nextPoolReset, poolSources, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
 
 const USAGE_ROW_CLASS =
   "col-span-full grid min-w-0 grid-cols-subgrid items-center gap-x-1.5 text-meta";
@@ -81,11 +81,15 @@ export function ThreadDetailsUsage({
         : null;
   const pool = resolved?.kind === "pool" ? resolved.windows : undefined;
   const rows = pool
-    ? pool.map((pooled) => ({
-        window: pooledWindow(pooled, now),
-        accounts: pooled.members.length,
-      }))
-    : (limits?.windows ?? []).map((window) => ({ window, accounts: 1 }));
+    ? pool.map((pooled) => {
+        const from = poolSources(pooled);
+        return {
+          window: pooledWindow(pooled, now),
+          accounts: pooled.members.length,
+          sources: [...from.hubs, ...(from.signedIn ? [gt("Signed-in accounts")] : [])],
+        };
+      })
+    : (limits?.windows ?? []).map((window) => ({ window, accounts: 1, sources: [] }));
   const poolNotice =
     providerInstanceId !== null && ownNotice !== null && !pool
       ? limitPoolNotice(providerInstanceId, providers, sources)
@@ -109,8 +113,14 @@ export function ThreadDetailsUsage({
         />
       ) : (
         <>
-          {rows.map(({ window, accounts }) => (
-            <LimitRow key={window.id} window={window} now={now} pooledAccounts={accounts} />
+          {rows.map(({ window, accounts, sources }) => (
+            <LimitRow
+              key={window.id}
+              window={window}
+              now={now}
+              pooledAccounts={accounts}
+              sources={sources}
+            />
           ))}
         </>
       )}
@@ -292,10 +302,12 @@ function LimitRow({
   window,
   now,
   pooledAccounts,
+  sources,
 }: {
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
   readonly pooledAccounts: number;
+  readonly sources: ReadonlyArray<string>;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -356,6 +368,9 @@ function LimitRow({
                 Across <Var>{pooledAccounts}</Var> accounts
               </T>
             </span>
+          ) : null}
+          {sources.length > 0 ? (
+            <span>{gt("From {sources}", { sources: sources.join(", ") })}</span>
           ) : null}
         </>
       }

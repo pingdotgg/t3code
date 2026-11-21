@@ -635,10 +635,11 @@ export function requestWorkspaceFocus(target: WorkspaceFocusTarget) {
 
 /** Puts the keyboard in the message box of the side chat a surface tab shows. */
 export function requestSideChatComposerFocus(threadRef: ScopedThreadRef, surfaceId: string) {
+  const threadId = surfaceId.slice("thread:".length);
   requestWorkspaceFocus({
     area: "panel",
     surface: { threadKey: scopedThreadKey(threadRef), surfaceId },
-    selector: `[data-side-chat-pane="${CSS.escape(surfaceId.slice("thread:".length))}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+    selector: `[data-side-chat-pane="${CSS.escape(threadId)}"] [data-workspace-area="composer"] [contenteditable="true"]`,
   });
 }
 

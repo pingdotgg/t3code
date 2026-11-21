@@ -4543,6 +4543,7 @@
   "b16fdf56b16d99c9": "Al ritmo",
   "90f977e97ae8b6c6": "Por debajo del ritmo",
   "97eff1793298489a": "Este proveedor no ha informado de límites de uso.",
+  "23622878aeee86d9": "Cuentas con sesión iniciada",
   "b560c47847c88b2e": "Límites",
   "3e524e1c0141f4ad": "No vinculado",
   "42a02a4b27828027": "No disponible",
@@ -4563,6 +4564,7 @@
   "1b16346722b65812": "Queda un {timeLeft}% de la ventana",
   "21c657cae336b772": "Próximo restablecimiento en {duration}",
   "c29a3a293c3f98c3": "Se restablece en {duration}",
+  "78c1d280f021a28f": "De {sources}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "d62967ed2aca3b27": [
     "En ",

@@ -4544,6 +4544,7 @@
   "b16fdf56b16d99c9": "I takt",
   "90f977e97ae8b6c6": "Under takten",
   "97eff1793298489a": "Den här leverantören har inte rapporterat användningsgränser.",
+  "23622878aeee86d9": "Inloggade konton",
   "b560c47847c88b2e": "Gränser",
   "3e524e1c0141f4ad": "Inte länkad",
   "42a02a4b27828027": "Inte tillgänglig",
@@ -4564,6 +4565,7 @@
   "1b16346722b65812": "{timeLeft} % av fönstret kvar",
   "21c657cae336b772": "Nästa återställning om {duration}",
   "c29a3a293c3f98c3": "Återställs om {duration}",
+  "78c1d280f021a28f": "Från {sources}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "d62967ed2aca3b27": [
     "Över ",

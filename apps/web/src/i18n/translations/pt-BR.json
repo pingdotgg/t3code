@@ -4543,6 +4543,7 @@
   "b16fdf56b16d99c9": "No ritmo",
   "90f977e97ae8b6c6": "Abaixo do ritmo",
   "97eff1793298489a": "Este provedor não informou limites de uso.",
+  "23622878aeee86d9": "Contas conectadas",
   "b560c47847c88b2e": "Limites",
   "3e524e1c0141f4ad": "Não vinculado",
   "42a02a4b27828027": "Indisponível",
@@ -4563,6 +4564,7 @@
   "1b16346722b65812": "{timeLeft}% da janela restante",
   "21c657cae336b772": "Próxima renovação em {duration}",
   "c29a3a293c3f98c3": "Renova em {duration}",
+  "78c1d280f021a28f": "De {sources}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "d62967ed2aca3b27": [
     "Em ",

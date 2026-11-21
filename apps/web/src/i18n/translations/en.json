@@ -4545,6 +4545,7 @@
   "b16fdf56b16d99c9": "On pace",
   "90f977e97ae8b6c6": "Under pace",
   "97eff1793298489a": "This provider has not reported usage limits.",
+  "23622878aeee86d9": "Signed-in accounts",
   "b560c47847c88b2e": "Limits",
   "3e524e1c0141f4ad": "Not linked",
   "42a02a4b27828027": "Unavailable",
@@ -4565,6 +4566,7 @@
   "1b16346722b65812": "{timeLeft}% of the window left",
   "21c657cae336b772": "Next reset in {duration}",
   "c29a3a293c3f98c3": "Resets in {duration}",
+  "78c1d280f021a28f": "From {sources}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "d62967ed2aca3b27": [
     "Across ",
