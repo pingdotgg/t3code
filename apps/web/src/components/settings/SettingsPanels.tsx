@@ -119,6 +119,7 @@ import { useSearchableSetting } from "./settingsSearch";
 import { nativeLanguageName, SYSTEM_LANGUAGE } from "@t3tools/client-runtime/locales";
 import { SUPPORTED_LOCALES } from "../../i18n/locales";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
+import { CodexProbeTimeoutsSettingsRow } from "./CodexProbeTimeoutsSettings";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
@@ -2478,6 +2479,10 @@ export function MaintenanceSettingsPanel() {
             />
           }
         />
+      </SettingsSection>
+
+      <SettingsSection id="codex-probes" title="Codex probes">
+        <CodexProbeTimeoutsSettingsRow />
       </SettingsSection>
 
       <StorageCleanupSections />

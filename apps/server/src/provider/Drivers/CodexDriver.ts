@@ -30,6 +30,7 @@ import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   makeCodexSkillsProbe,
+  readCodexProbeTimeouts,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
@@ -178,6 +179,8 @@ export const CodexDriver: ProviderDriver<
         config,
       });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const providerHost = yield* ProviderHost.ProviderHost;
+    const probeTimeouts = readCodexProbeTimeouts(providerHost);
     const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
@@ -273,7 +276,11 @@ export const CodexDriver: ProviderDriver<
     const checkProvider = modelCatalog.refreshInBackground.pipe(
       Effect.andThen(
         Effect.zipWith(
-          checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
+          probeTimeouts.pipe(
+            Effect.flatMap((timeouts) =>
+              checkCodexProviderStatus(effectiveConfig, undefined, processEnv, undefined, timeouts),
+            ),
+          ),
           currentCatalog,
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
           { concurrent: true },
@@ -331,13 +338,23 @@ export const CodexDriver: ProviderDriver<
         ? snapshot.getSnapshot
         : Effect.all([
             snapshot.getSnapshot,
-            probeSkills({
-              binaryPath: effectiveConfig.binaryPath,
-              homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-              cwd,
-              environment: processEnv,
-            }).pipe(Effect.timeout(resolveProviderProbeTimeoutMs("codex", 20_000, processEnv))),
+            probeTimeouts.pipe(
+              Effect.flatMap((timeouts) =>
+                probeSkills({
+                  binaryPath: effectiveConfig.binaryPath,
+                  homePath: effectiveConfig.homePath,
+                  launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                  cwd,
+                  environment: processEnv,
+                }).pipe(
+                  Effect.timeout(
+                    Duration.millis(
+                      resolveProviderProbeTimeoutMs("codex", timeouts.skills, processEnv),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ]).pipe(
             Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
             Effect.mapError(
@@ -359,18 +376,21 @@ export const CodexDriver: ProviderDriver<
       resetCreditCoordinator
         .redeem(accountKey, (idempotencyKey) =>
           Effect.gen(function* () {
-            const { client } = yield* withCodexAppServerClient({
-              binaryPath: effectiveConfig.binaryPath,
-              homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-              cwd: process.cwd(),
-              environment: processEnv,
-            });
-            const response = yield* client.request("account/rateLimitResetCredit/consume", {
-              idempotencyKey,
-            });
-            return response.outcome;
-          }).pipe(Effect.scoped, Effect.timeout("20 seconds")),
+            const timeouts = yield* probeTimeouts;
+            return yield* Effect.gen(function* () {
+              const { client } = yield* withCodexAppServerClient({
+                binaryPath: effectiveConfig.binaryPath,
+                homePath: effectiveConfig.homePath,
+                launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                cwd: process.cwd(),
+                environment: processEnv,
+              });
+              const response = yield* client.request("account/rateLimitResetCredit/consume", {
+                idempotencyKey,
+              });
+              return response.outcome;
+            }).pipe(Effect.scoped, Effect.timeout(Duration.millis(timeouts.resetCredit)));
+          }),
         )
         .pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
