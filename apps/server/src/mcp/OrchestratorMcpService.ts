@@ -3733,7 +3733,10 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(threadManagementFailure))).runtimeRequests
         : [];
       const wakesCaller =
-        ownedTask && !childRequests.some((request) => request.status === "pending");
+        ownedTask &&
+        !childRequests.some(
+          (request) => request.status === "pending" && request.responseCapability.type === "live",
+        );
       return {
         threadId: input.threadId,
         runId: result.run?.id ?? null,
