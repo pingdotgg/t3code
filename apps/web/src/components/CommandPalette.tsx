@@ -1,4 +1,5 @@
 import { MultiRepoProjectForm } from "./MultiRepoProjectForm";
+import { readCanSetUpMultiRepoProject } from "../hooks/useMultiRepoSetupTargets";
 import { canSetUpMultiRepoProjects } from "../multiRepoSetupMenu";
 import {
   listMultiRepoProjectsToSetUp,
@@ -1232,7 +1233,9 @@ function OpenCommandPaletteDialog(props: {
     const groups: Array<CommandPaletteView["groups"][number]> = [
       { value: `sources:${environmentId}`, label: gt("Sources"), items: sourceItems },
     ];
-    const setupItems = canSetUpMultiRepoProjects(capabilities)
+    const canSetUp =
+      canSetUpMultiRepoProjects(capabilities) && readCanSetUpMultiRepoProject(environmentId);
+    const setupItems = canSetUp
       ? listMultiRepoProjectsToSetUp(projects, environmentId).map(
           (setup): CommandPaletteActionItem => {
             const sourceLabel = environmentLabelById.get(setup.source.environmentId);
@@ -3151,13 +3154,13 @@ function OpenCommandPaletteDialog(props: {
       <MultiRepoProjectForm
         key={`${multiRepoForm.environmentId}:${multiRepoForm.setup?.key ?? ""}`}
         environmentId={multiRepoForm.environmentId}
+        environmentLabel={
+          environmentLabelById.get(multiRepoForm.environmentId) ?? multiRepoForm.environmentId
+        }
         projects={projects}
         {...(multiRepoForm.setup
           ? {
               setup: multiRepoForm.setup,
-              environmentLabel:
-                environmentLabelById.get(multiRepoForm.environmentId) ??
-                multiRepoForm.environmentId,
               initialFolder: getCloneDestinationPath(
                 getAddProjectInitialQueryForEnvironment(multiRepoForm.environmentId),
                 inferProjectTitleFromPath(multiRepoForm.setup.source.workspaceRoot),

@@ -2233,15 +2233,14 @@
   "a14791cb283d578e": "Repositories to clone",
   "5ae8ad42b49296a3": "Git URLs or owner/repo names (only for an empty folder)",
   "548f9db69b69ff04": "Adding…",
-  "330852bbf2b84a34": [
+  "f2cd6943d75a2c2c": [
     "Set up ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " on",
-    " ",
+    " on ",
     {
       "i": 2,
       "k": "_gt_value_2",

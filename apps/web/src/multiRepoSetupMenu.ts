@@ -66,17 +66,18 @@ export const MULTI_REPO_SETUP_SCOPES = [
 export function listMultiRepoSetupTargets<Environment extends MultiRepoSetupEnvironment>(
   input: MultiRepoSetupInput<Environment>,
 ): Array<{ readonly environment: Environment; readonly setup: MultiRepoProjectSetup }> {
+  const isReferenced = (project: EnvironmentProject) =>
+    input.projectRefs.some(
+      (ref) => ref.environmentId === project.environmentId && ref.projectId === project.id,
+    );
+  const referenced = input.projects.filter(isReferenced);
+  // Copies sharing a key collapse into the first one listed, so the seed is this project's own.
+  const projects = [...referenced, ...input.projects.filter((project) => !isReferenced(project))];
   const projectKeys = new Set(
-    input.projects
-      .filter((project) =>
-        input.projectRefs.some(
-          (ref) => ref.environmentId === project.environmentId && ref.projectId === project.id,
-        ),
-      )
-      .flatMap((project) => {
-        const key = deriveMultiRepoKey(project.multiRepo);
-        return key === null ? [] : [key];
-      }),
+    referenced.flatMap((project) => {
+      const key = deriveMultiRepoKey(project.multiRepo);
+      return key === null ? [] : [key];
+    }),
   );
   if (projectKeys.size === 0) return [];
   return input.environments.flatMap((environment) => {
@@ -87,7 +88,7 @@ export function listMultiRepoSetupTargets<Environment extends MultiRepoSetupEnvi
     ) {
       return [];
     }
-    const setup = listMultiRepoProjectsToSetUp(input.projects, environment.environmentId).find(
+    const setup = listMultiRepoProjectsToSetUp(projects, environment.environmentId).find(
       (candidate) => projectKeys.has(candidate.key),
     );
     return setup ? [{ environment, setup }] : [];

@@ -26,7 +26,7 @@ export function MultiRepoProjectForm(props: {
   projects: ReadonlyArray<EnvironmentProject>;
   /** Starts on cloning this project from another machine into `initialFolder`. */
   setup?: MultiRepoProjectSetup;
-  environmentLabel?: string;
+  environmentLabel: string;
   initialFolder?: string;
   onBack: () => void;
   onCreated: (project: ScopedProjectRef) => Promise<void>;
@@ -137,10 +137,9 @@ export function MultiRepoProjectForm(props: {
   return (
     <div className="space-y-4 p-4">
       <h2 className="text-lg font-medium">
-        {props.setup ? (
+        {selected ? (
           <T>
-            Set up <Var>{props.setup.source.title}</Var> on{" "}
-            <Var>{props.environmentLabel ?? props.environmentId}</Var>
+            Set up <Var>{selected.source.title}</Var> on <Var>{props.environmentLabel}</Var>
           </T>
         ) : (
           <T>Multi-repo project</T>

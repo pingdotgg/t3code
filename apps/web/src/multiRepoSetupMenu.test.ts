@@ -161,8 +161,8 @@ describe("multi-repo sidebar setup menu", () => {
     ).toEqual([]);
   });
 
-  it("matches by multi-repo identity even if the palette chooses another source machine", () => {
-    const copy = project(server, { workspaceRoot: "/srv/product" });
+  it("matches by multi-repo identity and seeds from the project the menu belongs to", () => {
+    const copy = project(server, { title: "Product copy", workspaceRoot: "/srv/product" });
     const unrelated = project(laptop, {
       id: ProjectId.make("other"),
       multiRepo: { members: [{ path: "tools", remoteUrl: "https://github.com/acme/tools" }] },
@@ -174,7 +174,7 @@ describe("multi-repo sidebar setup menu", () => {
       canSetUp: () => true,
     });
     expect(menu.items).toHaveLength(1);
-    expect(menu.setupsByAction.get("multi-repo-setup:desktop")?.setup.source).toBe(source);
+    expect(menu.setupsByAction.get("multi-repo-setup:desktop")?.setup.source).toBe(copy);
   });
 
   it.each([
