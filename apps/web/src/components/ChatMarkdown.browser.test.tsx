@@ -770,6 +770,37 @@ describe("ChatMarkdown inline code selection", () => {
 });
 
 describe("ChatMarkdown copy", () => {
+  it("copies a code block without the newline that rendering adds to it", async () => {
+    setup();
+    await using screen = await renderText("");
+    using writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    for (const [text, copied] of [
+      ["```bash\nnpm install\n```", "npm install"],
+      ["```bash\nnpm install", "npm install"],
+      ["    npm install", "npm install"],
+      ["    <div>", "<div>"],
+      ["- Run:\n\n  ```bash\n  npm install\n  ```", "npm install"],
+      ["> ```bash\n> npm install\n> ```", "npm install"],
+      ["```mermaid\ngraph TD\n```", "graph TD"],
+      ["```bash\nnpm install\n\n```", "npm install\n"],
+      ["<pre><code>npm install\n</code></pre>", "npm install\n"],
+      [
+        "1. Step\n\n   <div>\n   <pre><code>npm install\n   </code></pre>\n   </div>",
+        "npm install\n",
+      ],
+      ["- <div>\n  <pre><code>npm install\n  </code></pre>\n  </div>", "npm install\n"],
+      ["> <div>\n> <pre><code>npm install\n> </code></pre>\n> </div>", "npm install\n"],
+    ] as const) {
+      writeText.mockClear();
+      // A new key remounts the block: a clicked button reads "Copied" for a while.
+      await screen.rerender(<ChatMarkdown key={text} cwd="/tmp/project" text={text} />);
+      const copyButtons = () => buttonsLabelled(screen.container, "Copy code");
+      await vi.waitFor(() => expect(copyButtons().length, text).toBe(1));
+      await act(async () => copyButtons()[0]!.click());
+      await vi.waitFor(() => expect(writeText.mock.calls[0]?.[0], text).toBe(copied));
+    }
+  });
+
   it("copies a fully selected callout as alert Markdown and a partial one as text", async () => {
     setup();
     await using screen = await renderText("> [!WARNING]\n> Back up first.");

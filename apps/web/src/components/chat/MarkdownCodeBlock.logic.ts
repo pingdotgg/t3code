@@ -68,6 +68,21 @@ export function isClosedCodeFence(
   );
 }
 
+// Markdown code blocks gain one "\n" when they become HTML; the text of a raw
+// HTML <pre> is the author's. Its position lands behind list or quote markers.
+export function codeBlockCopyText(
+  node: ReactMarkdownExtraProps["node"],
+  text: string,
+  code: string,
+): string {
+  if (!code.endsWith("\n")) return code;
+  const start = node?.position?.start.offset;
+  if (start === undefined) return code.slice(0, -1);
+  const rawHtmlStart = /[ \t>]*<pre[\s>]/iy;
+  rawHtmlStart.lastIndex = start;
+  return rawHtmlStart.test(text) ? code : code.slice(0, -1);
+}
+
 export function nodeToPlainText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") {
     return String(node);
