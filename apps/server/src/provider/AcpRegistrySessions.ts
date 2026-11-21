@@ -144,6 +144,31 @@ const make = Effect.gen(function* () {
     return { instance, manager: instance.acpSessionManagement };
   });
 
+  const importHistory = Effect.fn("AcpRegistrySessions.importHistory")(
+    (threadId: ThreadId, workspaceRoot: string) =>
+      agentSessionImporter.importNativeHistory({ threadId, workspaceRoot }).pipe(
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            const thread = yield* threadManagement
+              .getThreadShell(threadId)
+              .pipe(Effect.orElseSucceed(() => null));
+            const pending =
+              thread !== null &&
+              AgentSessionImporter.isNativeHistoryPending({
+                historyOrigin: thread.historyOrigin,
+                hasRun: thread.latestRunId !== null,
+              });
+            return yield* new AcpRegistryOperationError({
+              reason: "session_import_failed",
+              message: "Could not import the ACP session history.",
+              ...(pending ? { pendingHistoryThreadId: threadId } : {}),
+              cause,
+            });
+          }),
+        ),
+      ),
+  );
+
   const importSession = Effect.fn("AcpRegistrySessions.importSession")(function* (
     input: AcpRegistryImportSessionInput,
   ) {
@@ -185,16 +210,7 @@ const make = Effect.gen(function* () {
         historyOrigin: existing.historyOrigin,
         hasRun: existing.latestRunId !== null,
       });
-      yield* agentSessionImporter.importNativeHistory({ threadId, workspaceRoot }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AcpRegistryOperationError({
-              reason: "session_import_failed",
-              message: "Could not import the ACP session history.",
-              cause,
-            }),
-        ),
-      );
+      yield* importHistory(threadId, workspaceRoot);
       return { threadId, imported: repairing } as const;
     }
 
@@ -252,16 +268,7 @@ const make = Effect.gen(function* () {
         cause: launched.failure,
       });
     }
-    // The thread is usable without its history, so a failed read only logs.
-    yield* agentSessionImporter.importNativeHistory({ threadId, workspaceRoot }).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Could not import ACP session history", {
-          instanceId: input.instanceId,
-          sessionId: input.sessionId,
-          cause,
-        }),
-      ),
-    );
+    yield* importHistory(threadId, workspaceRoot);
     return { threadId, imported: true } as const;
   }, coordinator.withSessionMutation);
 
