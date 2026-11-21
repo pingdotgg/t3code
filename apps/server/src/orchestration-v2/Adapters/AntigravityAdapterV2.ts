@@ -6,6 +6,7 @@ import {
   type ProviderSetupError,
 } from "@t3tools/contracts";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -49,6 +50,12 @@ import {
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
+import {
+  discoverAntigravitySkills,
+  resolveAntigravityUserHome,
+  appendAntigravityInvokedSkills,
+} from "../../provider/Drivers/AntigravitySkills.ts";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -103,6 +110,7 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  readonly userHome?: string;
 }
 
 /**
@@ -235,6 +243,65 @@ export function makeAntigravityAcpAdapterFlavor(
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
         Effect.provideService(Path.Path, options.path),
       ),
+    rewriteUserText: (text, turnInput) => {
+      const mentionPattern = new RegExp(SKILL_MENTION_PATTERN.source, "u");
+      if (!mentionPattern.test(text)) {
+        return Effect.succeed(text);
+      }
+      return Effect.gen(function* () {
+        const cwd = turnInput.runtimePolicy.cwd ?? options.host?.paths?.workspaceRoot ?? "";
+        let userHome = options.userHome;
+        if (!userHome) {
+          const platform = yield* HostProcess.Platform;
+          const env = yield* HostProcess.Environment;
+          const home = yield* HostProcess.HomeDirectory;
+          userHome = resolveAntigravityUserHome(platform, env, home);
+        }
+        const profileDirectory = options.profileDirectory ?? "";
+        return yield* discoverAntigravitySkills({ cwd, userHome, profileDirectory }).pipe(
+          Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+          Effect.provideService(Path.Path, options.path),
+          Effect.flatMap((skills) => {
+            const skillsByName = new Map(
+              skills
+                .filter((skill) => skill.enabled && skill.userInvocable !== false)
+                .map((skill) => [skill.name, skill]),
+            );
+            if (skillsByName.size === 0) return Effect.succeed(text);
+
+            const mentionedNames = new Set<string>();
+            const rewrittenText = text.replace(
+              new RegExp(SKILL_MENTION_PATTERN.source, "gu"),
+              (match, prefix: string, name: string) => {
+                if (skillsByName.has(name)) {
+                  mentionedNames.add(name);
+                  return `${prefix}/${name}`;
+                }
+                return match;
+              },
+            );
+
+            if (mentionedNames.size === 0) return Effect.succeed(text);
+
+            const invokedUserOnlySkills = [...mentionedNames]
+              .map((name) => skillsByName.get(name)!)
+              .filter((skill) => skill.userInvocationOnly === true);
+
+            if (invokedUserOnlySkills.length === 0) return Effect.succeed(rewrittenText);
+
+            return Effect.forEach(invokedUserOnlySkills, (skill) =>
+              options.fileSystem.readFileString(skill.path).pipe(
+                Effect.map((contents) => ({ name: skill.name, contents })),
+                Effect.orElseSucceed(() => ({
+                  name: skill.name,
+                  contents: `The user invoked this skill. Follow the instructions at: ${skill.path}`,
+                })),
+              ),
+            ).pipe(Effect.map((loaded) => appendAntigravityInvokedSkills(rewrittenText, loaded)));
+          }),
+        );
+      }).pipe(Effect.orElseSucceed(() => text));
+    },
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
     // A finished background command or timer wakes the agent with no prompt open: it streams a

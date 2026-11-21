@@ -94,6 +94,40 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  it.effect("parses disable-model-invocation and user-invocable frontmatter flags", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const shipPath = yield* writeSkill(
+        path.join(input.userHome, ".gemini", "config", "skills", "ship"),
+        "---\nname: ship\ndescription: Ship changes.\ndisable-model-invocation: true\n---\n# Ship instructions\n",
+      );
+      const internalPath = yield* writeSkill(
+        path.join(input.cwd, ".gemini", "skills", "internal"),
+        "---\nname: internal\ndescription: Internal skill.\nuser-invocable: false\n---\n",
+      );
+
+      assert.deepEqual(yield* discoverAntigravitySkills(input), [
+        {
+          name: "internal",
+          description: "Internal skill.",
+          path: internalPath,
+          scope: "project",
+          enabled: true,
+          userInvocable: false,
+        },
+        {
+          name: "ship",
+          description: "Ship changes.",
+          path: shipPath,
+          scope: "user",
+          enabled: true,
+          userInvocationOnly: true,
+        },
+      ]);
+    }),
+  );
+
   it.effect("reads skills from enabled plugins in the instance's Antigravity profile", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

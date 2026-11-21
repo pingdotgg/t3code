@@ -104,20 +104,61 @@ const readIfPresent = <A, R>(
     }),
   );
 
+function parseFrontmatterBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1 ? true : value === 0 ? false : undefined;
+  if (typeof value !== "string") return undefined;
+  switch (value.trim().toLowerCase()) {
+    case "true":
+    case "yes":
+    case "on":
+      return true;
+    case "false":
+    case "no":
+    case "off":
+      return false;
+    default:
+      return undefined;
+  }
+}
+
+const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+
+export function appendAntigravityInvokedSkills(
+  prompt: string,
+  skills: ReadonlyArray<{ readonly name: string; readonly contents: string }>,
+): string {
+  if (skills.length === 0) return prompt;
+  const blocks = skills.map(
+    (skill) =>
+      `<skill name="${skill.name}">\n${skill.contents.replace(FRONTMATTER_PATTERN, "").trim()}\n</skill>`,
+  );
+  return `${prompt}\n\nThe user invoked these skills. Follow their instructions:\n\n${blocks.join("\n\n")}`;
+}
+
 function parseSkillFrontmatter(contents: string, fileName: string) {
   const start = contents.indexOf("---");
   if (start === -1) return undefined;
   const end = contents.indexOf("---", start + 3);
   if (end === -1) return undefined;
   try {
-    const frontmatter = decodeSkillFrontmatter(
-      parseYamlDocument(contents.slice(start + 3, end).trim()) ?? {},
-    );
+    const parsed = parseYamlDocument(contents.slice(start + 3, end).trim());
+    if (parsed !== undefined && parsed !== null && typeof parsed !== "object") return undefined;
+    const rawParsed = (parsed ?? {}) as Record<string, unknown>;
+    const frontmatter = decodeSkillFrontmatter(rawParsed);
     const name = frontmatter.name || fileName.slice(0, -3);
     const description = frontmatter.description?.trim();
     // Native names are not trimmed. Do not rename one to fit the picker contract.
     if (!name || name !== name.trim()) return undefined;
-    return { name, ...(description ? { description } : {}) };
+    const userInvocationOnly =
+      parseFrontmatterBoolean(rawParsed["disable-model-invocation"]) === true;
+    const userInvocable = parseFrontmatterBoolean(rawParsed["user-invocable"]);
+    return {
+      name,
+      ...(description ? { description } : {}),
+      ...(userInvocationOnly ? { userInvocationOnly: true } : {}),
+      ...(userInvocable === false ? { userInvocable: false } : {}),
+    };
   } catch {
     return undefined;
   }
