@@ -2255,7 +2255,11 @@ describe("PrinterService safety guards & lifecycle", () => {
                 ),
               );
             }
-            if (url.pathname === "/printer/print/cancel") {
+            if (
+              url.pathname === "/printer/print/cancel" ||
+              url.pathname === "/printer/print/pause" ||
+              url.pathname === "/printer/gcode/script"
+            ) {
               cancelCalls.push(url.pathname);
               return Effect.succeed(
                 HttpClientResponse.fromWeb(request, new Response("ok", { status: 200 })),
@@ -2289,6 +2293,29 @@ describe("PrinterService safety guards & lifecycle", () => {
               }),
             );
             expect(Exit.isFailure(staleStopExit)).toBe(true);
+            const stalePauseExit = yield* Effect.exit(
+              service.action({
+                printerId: moonrakerConfig.id,
+                action: {
+                  kind: "pause",
+                  expectedJobFileName: "same-plate.gcode",
+                  expectedJobStartedAt: originalStartedAt,
+                },
+              }),
+            );
+            expect(Exit.isFailure(stalePauseExit)).toBe(true);
+            const staleSkipExit = yield* Effect.exit(
+              service.action({
+                printerId: moonrakerConfig.id,
+                action: {
+                  kind: "skipObjects",
+                  objectIds: [1],
+                  expectedJobFileName: "same-plate.gcode",
+                  expectedJobStartedAt: originalStartedAt,
+                },
+              }),
+            );
+            expect(Exit.isFailure(staleSkipExit)).toBe(true);
             expect(cancelCalls).toHaveLength(0);
 
             // Missing observed startedAt (e.g. standby/idle) also fails closed when expectedJobStartedAt is supplied.

@@ -430,4 +430,51 @@ describe("HomeAssistantBambuAdapter parsing", () => {
         expect(Exit.isFailure(mediaExit)).toBe(true);
       }),
   );
+
+  it("canonicalizes start_time and end_time across HA timestamp format variations and drops unparseable values", () => {
+    const nowMs = Date.parse("2026-11-21T00:18:10.000Z");
+    const withTimes = (startTime: string, endTime: string) =>
+      LIVE_P1S_STATES.map((entity) => {
+        if (entity.entity_id === "sensor.p1s_01p00a000000001_start_time") {
+          return { ...entity, state: startTime };
+        }
+        if (entity.entity_id === "sensor.p1s_01p00a000000001_end_time") {
+          return { ...entity, state: endTime };
+        }
+        return entity;
+      });
+
+    const poll1 = parseHomeAssistantBambuStates({
+      config: P1S_CONFIG,
+      states: withTimes("2026-11-21T00:00:00+00:00", "2026-11-21T01:48:00+00:00"),
+      previous: undefined,
+      cache: {},
+      nowMs,
+      nowIso: "2026-11-21T00:18:10.000Z",
+    });
+    const poll2 = parseHomeAssistantBambuStates({
+      config: P1S_CONFIG,
+      states: withTimes("2026-11-21T02:00:00.000+02:00", "2026-11-21T01:48:00.000Z"),
+      previous: poll1.snapshot,
+      cache: poll1.cache,
+      nowMs: nowMs + 4_000,
+      nowIso: "2026-11-21T00:18:14.000Z",
+    });
+    expect(poll1.snapshot.job.startedAt).toBe("2026-11-21T00:00:00.000Z");
+    expect(poll2.snapshot.job.startedAt).toBe("2026-11-21T00:00:00.000Z");
+    expect(poll1.snapshot.job.estimatedFinishAt).toBe("2026-11-21T01:48:00.000Z");
+    expect(poll2.snapshot.job.estimatedFinishAt).toBe("2026-11-21T01:48:00.000Z");
+
+    const invalid = parseHomeAssistantBambuStates({
+      config: P1S_CONFIG,
+      states: withTimes("not-a-timestamp", "12345"),
+      previous: undefined,
+      cache: {},
+      nowMs,
+      nowIso: "2026-11-21T00:18:10.000Z",
+    });
+    expect(invalid.snapshot.job.startedAt).toBeNull();
+    expect(invalid.snapshot.job.estimatedFinishAt).toBeNull();
+    expect(invalid.snapshot.job.elapsedSeconds).toBeNull();
+  });
 });

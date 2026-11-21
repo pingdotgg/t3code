@@ -23,6 +23,7 @@ import { useRightPanelStore } from "../../rightPanelStore";
 import {
   applyDeviceSnapshot,
   applyPrinterSnapshot,
+  disconnectPrinterEnvironment,
   floatDeviceSurface,
   followPreviewSessions,
   resetDeviceSessionBaselinesForTests,
@@ -529,5 +530,111 @@ describe("applyPrinterSnapshot", () => {
     expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
       [expectedSurfaceId],
     );
+  });
+
+  it("closes departing agent-opened tabs on disconnect handoff, preserves manual tabs, and avoids stale tabs on reconnect", () => {
+    setup();
+    const ownerRef = scopeThreadRef(proxyEnvId, ref.threadId);
+    const ownerThreadKey = scopedThreadKey(ownerRef);
+    const expectedProxySurfaceId = `printer:${encodeURIComponent(proxyEnvId)}:${encodeURIComponent("p1s-studio")}`;
+    const ownerSession = {
+      threadId: ref.threadId,
+      printerId: PrinterId.make("p1s-studio"),
+      printerLabel: "Studio P1S",
+      openedAt: "2026-11-21T03:00:00.000Z",
+    };
+    const proxySession = {
+      ...ownerSession,
+      proxyEnvironmentId: proxyEnvId,
+      openedAt: "2026-11-21T03:00:02.000Z",
+    };
+
+    // Baseline both envs, then owner opens first and proxy duplicate is suppressed.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([proxySession]), { sheetLayout: false });
+    expect(
+      useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces.map((s) => s.id),
+    ).toEqual(["printer:p1s-studio"]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]).toBeUndefined();
+
+    // Owner disconnects while proxy remains active: owner agent-opened tab closes, proxy opens.
+    disconnectPrinterEnvironment(proxyEnvId, { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces ?? []).toEqual([]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedProxySurfaceId],
+    );
+
+    // Owner reconnects with an empty session list: no stale tab lingers on owner; proxy stays open.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces ?? []).toEqual([]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedProxySurfaceId],
+    );
+
+    // Manually opened tabs on a disconnecting environment are preserved.
+    setup();
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    useRightPanelStore.getState().openPrinter(ownerRef, {
+      printerId: "p1s-studio",
+      label: "Studio P1S",
+    });
+    disconnectPrinterEnvironment(proxyEnvId, { sheetLayout: false });
+    expect(
+      useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces.map((s) => s.id),
+    ).toEqual(["printer:p1s-studio"]);
+  });
+
+  it("does not resurrect a user-dismissed tab when canonical ownership transfers across thread keys", () => {
+    setup();
+    const ownerRef = scopeThreadRef(proxyEnvId, ref.threadId);
+    const ownerThreadKey = scopedThreadKey(ownerRef);
+    const expectedProxySurfaceId = `printer:${encodeURIComponent(proxyEnvId)}:${encodeURIComponent("p1s-studio")}`;
+    const ownerSession = {
+      threadId: ref.threadId,
+      printerId: PrinterId.make("p1s-studio"),
+      printerLabel: "Studio P1S",
+      openedAt: "2026-11-21T04:00:00.000Z",
+    };
+    const proxySession = {
+      ...ownerSession,
+      proxyEnvironmentId: proxyEnvId,
+      openedAt: "2026-11-21T04:00:01.000Z",
+    };
+
+    // Case 1: Session-end transfer after user dismisses owner tab.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([proxySession]), { sheetLayout: false });
+    useRightPanelStore.getState().closeSurface(ownerRef, "printer:p1s-studio");
+    expect(useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces).toEqual([]);
+
+    // Owner session ends while proxy remains -> ownership transfers without resurrecting proxy tab.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces ?? []).toEqual([]);
+
+    // Once proxy also ends, a brand-new later session can auto-open cleanly.
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    const freshProxySession = { ...proxySession, openedAt: "2026-11-21T04:10:00.000Z" };
+    applyPrinterSnapshot(ref.environmentId, printerState([freshProxySession]), {
+      sheetLayout: false,
+    });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedProxySurfaceId],
+    );
+
+    // Case 2: Disconnect transfer after user dismisses owner tab.
+    setup();
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([proxySession]), { sheetLayout: false });
+    useRightPanelStore.getState().closeSurface(ownerRef, "printer:p1s-studio");
+    disconnectPrinterEnvironment(proxyEnvId, { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[ownerThreadKey]?.surfaces ?? []).toEqual([]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces ?? []).toEqual([]);
   });
 });

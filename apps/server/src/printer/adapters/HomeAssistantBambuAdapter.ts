@@ -102,6 +102,14 @@ function haString(entity: HaEntityState | undefined): string | null {
   return entity.state.trim();
 }
 
+function haIsoTimestamp(entity: HaEntityState | undefined): string | null {
+  const raw = haString(entity);
+  if (!raw || !/^\d{4}-\d{2}-\d{2}/.test(raw)) return null;
+  const parsedMs = Date.parse(raw);
+  if (!Number.isFinite(parsedMs)) return null;
+  return DateTime.formatIso(DateTime.makeUnsafe(parsedMs));
+}
+
 function haBoolean(entity: HaEntityState | undefined): boolean | null {
   if (!entity || isUnsetHaState(entity.state)) return null;
   const lower = entity.state.trim().toLowerCase();
@@ -650,10 +658,10 @@ export function parseHomeAssistantBambuStates(input: {
           ? Math.round(remainingRaw)
           : Math.round(remainingRaw * 3600);
 
-  const startedAt = haString(byId.get(`sensor.${prefix}_start_time`));
-  const estimatedFinishAt = haString(byId.get(`sensor.${prefix}_end_time`));
+  const startedAt = haIsoTimestamp(byId.get(`sensor.${prefix}_start_time`));
+  const estimatedFinishAt = haIsoTimestamp(byId.get(`sensor.${prefix}_end_time`));
   const elapsedSeconds =
-    isJobActive && startedAt && Number.isFinite(Date.parse(startedAt))
+    isJobActive && startedAt !== null
       ? Math.max(0, Math.round((nowMs - Date.parse(startedAt)) / 1000))
       : null;
 
