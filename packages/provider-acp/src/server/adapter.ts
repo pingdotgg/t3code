@@ -677,6 +677,13 @@ export interface AcpAdapterV2Flavor {
    * agent request, tool or subagent is open, and replaces the agent before the next turn.
    */
   readonly promptInactivityTimeout?: Duration.Input;
+  /**
+   * Checked when `promptInactivityTimeout` expires with no open requests, tools, or subagents.
+   * Returning `true` rearms the watchdog for native waits the agent never exposes over ACP.
+   */
+  readonly promptInactivityPaused?: (input: {
+    readonly sessionId: string;
+  }) => Effect.Effect<boolean>;
   /** Grok can retain task_already_running until process exit. */
   readonly restartRuntimeAfterInterrupt?: boolean;
   /** Prompt failures after which the agent process keeps failing until replaced. */
@@ -8790,6 +8797,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           for (const subagent of context.subagents.values()) {
             if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) return true;
           }
+          if (flavor.promptInactivityPaused !== undefined) {
+            if (yield* flavor.promptInactivityPaused({ sessionId: context.nativeThreadId })) {
+              return true;
+            }
+          }
           return false;
         });
 
@@ -8812,6 +8824,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (context.lastProgressAt + timeoutMillis > now) return "rearm" as const;
               if (yield* promptInactivityPaused(context)) {
                 context.lastProgressAt = now;
+                return "rearm" as const;
+              }
+              if (context.finalized || context.interrupted) return "done" as const;
+              if ((yield* Ref.get(activeTurn)) !== context) return "done" as const;
+              if (yield* Deferred.isDone(context.promptWireSettled)) return "done" as const;
+              if (openAgentRequests.size > 0 || (yield* Ref.get(pendingRuntimeRequests)).size > 0) {
+                context.lastProgressAt = yield* Clock.currentTimeMillis;
+                return "rearm" as const;
+              }
+              const progressCheckedAt = yield* Clock.currentTimeMillis;
+              if (context.lastProgressAt + timeoutMillis > progressCheckedAt) {
                 return "rearm" as const;
               }
               context.inactivityWatchdog = undefined;

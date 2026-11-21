@@ -37,6 +37,7 @@ import {
   readAntigravityPendingReply,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
+import { hasLiveAntigravityScheduleTimer } from "../../provider/acp/AntigravityScheduleWait.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
@@ -304,6 +305,11 @@ export function makeAntigravityAcpAdapterFlavor(
               profileDirectory,
               rootSessionId: sessionId,
               toolCallIds: nativeTaskIds,
+            }),
+          promptInactivityPaused: ({ sessionId }) =>
+            hasLiveAntigravityScheduleTimer({
+              profileDirectory,
+              sessionId,
             }),
           hasPendingReply: (sessionId: string) =>
             readAntigravityPendingReply({

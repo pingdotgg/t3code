@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures write a native session database.
+import * as NodeSqlite from "node:sqlite";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -2502,6 +2505,249 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         assert.include(sent, "through the Antigravity harness, as gemini-test-low");
         assert.notInclude(append, "systemPrompt");
         assert.include(sent, "<pull_request_linking>");
+      }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 prompt inactivity with native schedule timers", () => {
+  const varint = (value: number): number[] => {
+    const bytes: number[] = [];
+    while (value >= 0x80) {
+      bytes.push((value & 0x7f) | 0x80);
+      value = Math.floor(value / 0x80);
+    }
+    return [...bytes, value];
+  };
+  const varintField = (number: number, value: number) => [...varint(number * 8), ...varint(value)];
+  const bytesField = (number: number, value: string | Uint8Array) => {
+    const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+    return [...varint(number * 8 + 2), ...varint(bytes.length), ...bytes];
+  };
+  const proto = (...parts: number[][]) => Uint8Array.from(parts.flat());
+  const scheduleRow = (createdAtMs: number, durationSeconds: number) =>
+    proto(
+      bytesField(
+        1,
+        proto(
+          varintField(1, Math.floor(createdAtMs / 1_000)),
+          varintField(2, (createdAtMs % 1_000) * 1_000_000),
+        ),
+      ),
+      bytesField(
+        4,
+        proto(
+          bytesField(1, "call_schedule_timer"),
+          bytesField(2, "schedule"),
+          bytesField(
+            3,
+            JSON.stringify({ DurationSeconds: durationSeconds, Prompt: "Check status" }),
+          ),
+        ),
+      ),
+    );
+
+  const openHeldPromptSession = Effect.fn("openHeldPromptSession")(function* (
+    profileDirectory: string,
+  ) {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    const releasePrompt = yield* Deferred.make<void>();
+    const promptDispatched = yield* Deferred.make<void>();
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+    const instanceId = ProviderInstanceId.make("antigravity-schedule-test");
+    const threadId = ThreadId.make("thread-antigravity-schedule");
+    const adapter = yield* makeAntigravityAdapterV2({
+      instanceId,
+      selfInvocation: yield* resolveSelfInvocation(),
+      profileDirectory,
+      makeRuntime: (input) =>
+        makeAntigravityAcpRuntime({
+          ...input,
+          childProcessSpawner,
+          spawn: {
+            command: process.execPath,
+            args: [mockAgentPath],
+            cwd: input.cwd,
+            env: { T3_ACP_ANTIGRAVITY: "1" },
+          },
+        }).pipe(
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+          Effect.map((runtime): RuntimeService => ({
+            ...runtime,
+            handleSessionUpdate: (handler) =>
+              Effect.sync(() => {
+                sessionUpdate = handler;
+              }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            prompt: (_payload, promptOptions) =>
+              Effect.gen(function* () {
+                if (promptOptions?.dispatched !== undefined) {
+                  yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                }
+                yield* Deferred.succeed(promptDispatched, undefined);
+                yield* Deferred.await(releasePrompt);
+                if (sessionUpdate !== undefined) {
+                  yield* sessionUpdate(
+                    normalizeAntigravitySessionUpdate({
+                      sessionId: "mock-session-1",
+                      update: {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "Timer fired and completed." },
+                      },
+                    }),
+                  );
+                }
+                return { stopReason: "end_turn" as const };
+              }),
+          })),
+        ),
+      withProcess: (_stop, task) => task,
+      defaultModel: Effect.undefined,
+    });
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+    const session = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-antigravity-schedule"),
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    yield* session.events.pipe(
+      Stream.runForEach((event) => Queue.offer(events, event).pipe(Effect.asVoid)),
+      Effect.forkScoped,
+    );
+    const now = yield* DateTime.now;
+    yield* session.startTurn({
+      appThread: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project-antigravity-schedule"),
+        title: "Antigravity schedule",
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+      threadId,
+      runId: RunId.make("run-antigravity-schedule-1"),
+      runOrdinal: 1,
+      providerTurnOrdinal: 1,
+      attemptId: RunAttemptId.make("attempt-antigravity-schedule-1"),
+      rootNodeId: NodeId.make("node-antigravity-schedule-1"),
+      providerThread,
+      modelSelection,
+      runtimePolicy,
+      message: {
+        messageId: MessageId.make("message-antigravity-schedule-1"),
+        text: "Wait 50 minutes and check status.",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
+    });
+    yield* Deferred.await(promptDispatched);
+    return { events, releasePrompt };
+  });
+
+  const advanceMinutes = (minutes: number) =>
+    Effect.forEach(Array.from({ length: minutes }), () => TestClock.adjust("1 minute"), {
+      discard: true,
+    });
+
+  it.effect(
+    "pauses the 15-minute inactivity watchdog while an unexpired schedule timer is running",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-sched-live-" });
+        const startMs = Date.UTC(2026, 10, 19, 23, 14, 34);
+        yield* TestClock.setTime(startMs);
+        const conversations = path.join(profile, "antigravity-acp", "conversations");
+        yield* fs.makeDirectory(conversations, { recursive: true });
+        const db = new NodeSqlite.DatabaseSync(path.join(conversations, "mock-session-1.db"));
+        try {
+          db.exec(
+            "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER NOT NULL, status INTEGER NOT NULL, metadata BLOB, task_details BLOB, step_payload BLOB)",
+          );
+          db.prepare("INSERT INTO steps VALUES (138, 132, 2, ?, NULL, NULL)").run(
+            scheduleRow(startMs, 3000),
+          );
+        } finally {
+          db.close();
+        }
+        const { events, releasePrompt } = yield* openHeldPromptSession(profile);
+        // Pass the 15-minute inactivity deadline in 1-minute slices (without triggering host sleep).
+        yield* advanceMinutes(20);
+        yield* Deferred.succeed(releasePrompt, undefined);
+        const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        while (true) {
+          const event = yield* Queue.take(events);
+          collected.push(event);
+          if (event.type === "turn.terminal") break;
+        }
+        const terminal = collected.at(-1);
+        assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+        assert.include(JSON.stringify(collected), "Timer fired and completed.");
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "still fails on 15-minute inactivity when a RUNNING schedule timer in the database already expired",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-sched-expired-" });
+        const startMs = Date.UTC(2026, 10, 19, 23, 32, 37);
+        yield* TestClock.setTime(startMs);
+        const conversations = path.join(profile, "antigravity-acp", "conversations");
+        yield* fs.makeDirectory(conversations, { recursive: true });
+        const db = new NodeSqlite.DatabaseSync(path.join(conversations, "mock-session-1.db"));
+        try {
+          db.exec(
+            "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER NOT NULL, status INTEGER NOT NULL, metadata BLOB, task_details BLOB, step_payload BLOB)",
+          );
+          db.prepare("INSERT INTO steps VALUES (85, 132, 2, ?, NULL, NULL)").run(
+            scheduleRow(startMs, 120),
+          );
+        } finally {
+          db.close();
+        }
+        const { events } = yield* openHeldPromptSession(profile);
+        yield* advanceMinutes(16);
+        const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        while (true) {
+          const event = yield* Queue.take(events);
+          collected.push(event);
+          if (event.type === "turn.terminal") break;
+        }
+        const terminal = collected.at(-1);
+        assert.equal(terminal?.type === "turn.terminal" && terminal.status, "failed");
+        assert.include(JSON.stringify(terminal), "sent nothing for 15 minutes");
       }).pipe(Effect.provide(layerSession)),
   );
 });

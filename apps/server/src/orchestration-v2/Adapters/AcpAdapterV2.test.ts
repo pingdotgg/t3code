@@ -628,6 +628,10 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   readonly cancelled?: Deferred.Deferred<void>;
   readonly followAgentWorkState?: boolean;
   readonly sessionScope?: Scope.Scope;
+  readonly promptInactivityPaused?: (input: {
+    readonly sessionId: string;
+  }) => Effect.Effect<boolean>;
+  readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const natives: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
@@ -639,6 +643,9 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
       capabilities: AcpProviderCapabilitiesV2,
       promptInactivityTimeout: "15 minutes",
       ...(input.followAgentWorkState === true ? { followAgentWorkState: true } : {}),
+      ...(input.promptInactivityPaused === undefined
+        ? {}
+        : { promptInactivityPaused: input.promptInactivityPaused }),
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
         mockAgentPath: yield* bundledMockAgentPath,
@@ -657,6 +664,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
       }),
     },
     selfInvocation: yield* resolveSelfInvocation(),
+    ...(input.testHooks === undefined ? {} : { testHooks: input.testHooks }),
     ...(input.followAgentWorkState === true
       ? { continuationRequests: { offer: () => Effect.void } }
       : {}),
@@ -6009,6 +6017,53 @@ describe("AcpAdapterV2", () => {
       // regression: #39410 the handoff's tool call stayed running after the session closed.
       assert.include(["completed", "failed", "interrupted", "cancelled"], statuses.at(-1));
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "does not fail a turn when promptWireSettled completes while promptInactivityPaused awaits I/O",
+    () =>
+      Effect.gen(function* () {
+        const promptDispatched = yield* Deferred.make<void>();
+        const releasePrompt = yield* Deferred.make<void>();
+        const wireSettled = yield* Deferred.make<void>();
+        const pauseEntered = yield* Deferred.make<void>();
+        const releasePause = yield* Deferred.make<void>();
+        const harness = yield* makePromptInactivityHarness({
+          environment: () => ({}),
+          promptInactivityPaused: () =>
+            Deferred.succeed(pauseEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(releasePause)),
+              Effect.as(false),
+            ),
+          testHooks: {
+            afterPromptWireSettled: () =>
+              Deferred.succeed(wireSettled, undefined).pipe(Effect.asVoid),
+          },
+          wrapPrompt: () => (_payload, options) =>
+            Effect.gen(function* () {
+              if (options?.dispatched !== undefined) {
+                yield* Deferred.succeed(options.dispatched, undefined);
+              }
+              yield* Deferred.succeed(promptDispatched, undefined);
+              yield* Deferred.await(releasePrompt);
+              return { stopReason: "end_turn" as const };
+            }),
+        });
+        const terminalFiber = yield* harness.terminals(1).pipe(Effect.forkChild);
+        yield* harness.startTurn(1);
+        yield* Deferred.await(promptDispatched);
+        for (let minute = 0; minute < 15; minute += 1) {
+          yield* TestClock.adjust("1 minute");
+        }
+        yield* Deferred.await(pauseEntered);
+        // Prompt settles on the wire while retireInactivePrompt is awaiting promptInactivityPaused.
+        yield* Deferred.succeed(releasePrompt, undefined);
+        yield* Deferred.await(wireSettled);
+        yield* Deferred.succeed(releasePause, undefined);
+        const [terminal] = yield* Fiber.join(terminalFiber);
+        assert.equal(terminal?.status, "completed");
+        assert.lengthOf(harness.natives, 1);
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("does not poll the process ledger while a cgroup lease owns teardown", () =>
