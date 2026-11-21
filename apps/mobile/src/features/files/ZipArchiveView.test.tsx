@@ -127,7 +127,10 @@ vi.mock("../../components/ui/AppBar", () => {
     }) => <div>{props.menus?.map((menu) => renderItems(menu.items))}</div>,
   };
 });
-vi.mock("../../components/ui/useBarInset", () => ({ useContentTopInset: () => 0 }));
+vi.mock("../../components/ui/useBarInset", () => ({
+  useContentTopInset: () => 0,
+  useContentBottomInset: () => 0,
+}));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../components/ui/Progress", () => ({ Progress: () => null }));
 vi.mock("../../components/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));

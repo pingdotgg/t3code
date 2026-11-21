@@ -283,7 +283,7 @@ it.effect(
           url,
         );
       }
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("does not refine a context whose server address is empty", () =>
@@ -390,7 +390,11 @@ it.effect("asks once for every checkout of a server no integration claims", () =
       "gitlab-cli auth status --hostname git.example.internal",
     ]);
 
-    yield* TestClock.adjust("5 minutes");
+    yield* TestClock.adjust("59 minutes");
+    yield* resolveUnknown(registry, "a");
+    assert.deepStrictEqual(asked, once);
+
+    yield* TestClock.adjust("1 minute");
     yield* resolveUnknown(registry, "a");
     assert.deepStrictEqual(asked, [...once, ...once]);
   }),
@@ -461,6 +465,45 @@ it.effect("asks again once Settings change", () =>
     yield* PubSub.publish(changes, DEFAULT_SERVER_SETTINGS);
     yield* Deferred.await(handled);
     assert.strictEqual((yield* resolveUnknown(registry, "c")).provider.kind, "github");
+  }),
+);
+
+it.effect("asks again once discovery finds a new sign-in, not on every discovery", () =>
+  Effect.gen(function* () {
+    let signedIn = false;
+    let refinements = 0;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      discovery: [
+        {
+          ...claimingCli("gitlab"),
+          parseAuth: () => ({
+            status: signedIn ? "authenticated" : "unauthenticated",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          }),
+        },
+      ],
+      run: ({ args }) => {
+        if (args.includes("--hostname")) refinements += 1;
+        return Effect.succeed(
+          TestSourceControlHost.processOutput(
+            signedIn ? "  ✓ Logged in to git.example.internal as user\n" : "",
+          ),
+        );
+      },
+    });
+    yield* registry.discover;
+    assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
+    yield* registry.discover;
+    assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "unknown");
+    assert.strictEqual(refinements, 1);
+
+    signedIn = true;
+    yield* registry.discover;
+    assert.strictEqual((yield* resolveUnknown(registry, "c")).provider.kind, "gitlab");
+    assert.strictEqual(refinements, 2);
   }),
 );
 

@@ -158,6 +158,7 @@ it("keeps local as the default and never reuses consent for an offline or resele
           acceleration: "cpu",
           modelUnloadTimeout: "never",
           gpuDevices: [],
+          benchmarkTier: "cpu",
         }),
       )
       .mockResolvedValueOnce(Response.json({ text: "hello" }));
@@ -171,7 +172,8 @@ it("keeps local as the default and never reuses consent for an offline or resele
     chooseVoiceDestination(host, "openai");
     const cloud = appAtomRegistry.get(voiceRouteAtom)!.transcriber!;
     mocks.fetch.mockResolvedValueOnce(Response.json({ openai: false, xai: true }));
-    await expect(cloud.prepare(options)).rejects.toMatchObject({
+    const missingKey = await cloud.prepare(options);
+    await expect(missingKey.start?.("file:///voice.m4a", options)).rejects.toMatchObject({
       code: "unavailable",
       message: expect.stringContaining("Add your OpenAI API key"),
     });

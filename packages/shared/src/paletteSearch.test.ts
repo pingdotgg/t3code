@@ -308,6 +308,7 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
       pullRequests: [{ number: 243, title: "perf: faster cold starts" }],
     });
     expect(scoreThreadSearch("lakebed perf", lakebed, NOW)?.explain?.()).toEqual({
+      field: "pull-request",
       label: "PR",
       text: "#243 perf: faster cold starts",
       ranges: [{ start: 5, end: 9 }],
@@ -321,6 +322,7 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
     });
     for (const query of ["#22889", "pr 22889", "pr22889", "pull request #22889"]) {
       expect(scoreThreadSearch(foldSearchQuery(query), subject, NOW)?.explain?.(), query).toEqual({
+        field: "pull-request",
         label: "PR",
         text: "#22889 Smaller MCP payloads",
         ranges: [{ start: 1, end: 6 }],
@@ -328,11 +330,20 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
     }
     // The app's own worktree prefix is not part of what the branch says.
     expect(scoreThreadSearch("cleanup", subject, NOW)?.explain?.()).toEqual({
+      field: "branch",
       label: "Branch",
       text: "cleanup-payloads",
       ranges: [{ start: 0, end: 7 }],
     });
     expect(scoreThreadSearch("trim", subject, NOW)?.explain?.()).toBeUndefined();
+    // Nor is it in the flat t3-<hex> form used when a `t3` branch blocks nested refs.
+    const flat = thread("Add search", { branch: "t3-abcd1234" });
+    expect(scoreThreadSearch("t3", flat, NOW)).toBeNull();
+    expect(scoreThreadSearch("t3 connect", flat, NOW)).toBeNull();
+    expect(scoreThreadSearch("abcd1234", flat, NOW)).not.toBeNull();
+    for (const query of ["t3-abcd", "t3-abcd1234 connect", "connect t3-abcd1234"]) {
+      expect(scoreThreadSearch(query, { ...flat, projectTitle: "connect" }, NOW)).not.toBeNull();
+    }
   });
 
   it("reads letters and numbers typed together, without forgiving typos in numbers", () => {
