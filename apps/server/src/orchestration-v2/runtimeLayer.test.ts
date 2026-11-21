@@ -14259,10 +14259,11 @@ describe("subagent lifecycle cascade", () => {
       });
       assert.isEmpty(kept.storedEvents);
     });
-    const movedSideChat = Effect.fn("test.movedSideChat")(function* () {
+    const sideChatWithChild = Effect.fn("test.sideChatWithChild")(function* (
+      projectId = base.projectId,
+    ) {
       const side = ThreadId.make("side");
       const child = ThreadId.make("side-child");
-      const projectId = ProjectId.make("foreign");
       yield* sideChat(parent, side);
       yield* set(side, { projectId });
       yield* set(child, {
@@ -14285,7 +14286,7 @@ describe("subagent lifecycle cascade", () => {
       drain,
       markUsed,
       renameAndKeep,
-      movedSideChat,
+      sideChatWithChild,
     };
   });
   const receipt = (id: string) =>
@@ -14532,12 +14533,13 @@ describe("subagent lifecycle cascade", () => {
   );
 
   it.effect.each([
-    { delivery: "reply", useParentDerivedId: false },
-    { delivery: "worker", useParentDerivedId: false },
-    { delivery: "worker", useParentDerivedId: true },
+    { delivery: "reply", useParentDerivedId: false, pending: false },
+    { delivery: "worker", useParentDerivedId: false, pending: false },
+    { delivery: "worker", useParentDerivedId: true, pending: false },
+    { delivery: "reply", useParentDerivedId: false, pending: true },
   ] as const)(
-    "preserves an independent side-chat rearchive through $delivery, parent-derived ID $useParentDerivedId",
-    ({ delivery, useParentDerivedId }) =>
+    "preserves an independent side-chat rearchive through $delivery, parent-derived ID $useParentDerivedId, pending $pending",
+    ({ delivery, useParentDerivedId, pending }) =>
       Effect.gen(function* () {
         const f = yield* fixture;
         const side = ThreadId.make("side");
@@ -14548,17 +14550,23 @@ describe("subagent lifecycle cascade", () => {
         });
         if (useParentDerivedId) yield* f.run("archive", side, "earlier:side-archive");
         yield* f.run("archive");
-        yield* f.run("unarchive", side);
-        assert.equal(yield* f.archived(side, child), "00");
-        yield* TestClock.adjust("1 second");
-        yield* f.run(
-          "archive",
-          side,
-          useParentDerivedId ? "archive:parent:side-chat:side" : undefined,
-        );
-        yield* f.drain;
-        yield* TestClock.adjust("8 days");
-        yield* f.outbox.pruneSettled;
+        if (pending) {
+          yield* f.commit("unarchive", side);
+          yield* TestClock.adjust("1 second");
+          yield* f.commit("archive", side);
+        } else {
+          yield* f.run("unarchive", side);
+          assert.equal(yield* f.archived(side, child), "00");
+          yield* TestClock.adjust("1 second");
+          yield* f.run(
+            "archive",
+            side,
+            useParentDerivedId ? "archive:parent:side-chat:side" : undefined,
+          );
+          yield* f.drain;
+          yield* TestClock.adjust("8 days");
+          yield* f.outbox.pruneSettled;
+        }
         const occupied = {
           commandId: CommandId.make("unarchive:parent:side-chat:side"),
           threadId: ThreadId.make("fork"),
@@ -14576,6 +14584,7 @@ describe("subagent lifecycle cascade", () => {
           yield* f.commit("unarchive");
           yield* f.drain;
         }
+        if (pending) yield* f.drain;
         assert.equal(yield* f.archived(parent, side, child), "001");
         if (useParentDerivedId)
           assert.deepEqual(Option.getOrThrow(yield* receipt(occupied.commandId)), occupied);
@@ -14593,7 +14602,7 @@ describe("subagent lifecycle cascade", () => {
     (delivery) =>
       Effect.gen(function* () {
         const f = yield* fixture;
-        const { side, child } = yield* f.movedSideChat();
+        const { side, child } = yield* f.sideChatWithChild(ProjectId.make("foreign"));
         const commandId = CommandId.make("delete:parent:side-chat:side");
         const laterDeletion = delivery === "legacy worker after a later deletion";
         if (delivery === "legacy worker after unused close" || laterDeletion) {
@@ -14634,12 +14643,55 @@ describe("subagent lifecycle cascade", () => {
       }).pipe(Effect.provide(Layer.merge(layerTest, SqlitePersistence.layerMemory))),
   );
 
+  it.effect.each(["occupied receipt", "pending direct restore"] as const)(
+    "archives the original parent without planning a foreign side-chat cascade after %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const { side, child } = yield* f.sideChatWithChild(ProjectId.make("foreign"));
+        const occupied = {
+          commandId: CommandId.make(`archive:parent:side-chat:${side}`),
+          threadId: ThreadId.make("fork"),
+          commandType: "thread.archive",
+          acceptedAt: f.now,
+          resultSequence: 0,
+          status: "accepted",
+          error: null,
+        } as const;
+        if (scenario === "occupied receipt") {
+          yield* Effect.flatMap(Receipts.CommandReceiptStoreV2, (r) => r.upsert(occupied));
+        } else {
+          yield* f.run("archive", side);
+          yield* f.drain;
+          yield* f.commit("unarchive", side);
+        }
+        yield* f.run("archive");
+        yield* f.drain;
+        assert.equal(yield* f.archived(parent, side, child), "110");
+        if (scenario === "occupied receipt")
+          assert.deepEqual(Option.getOrThrow(yield* receipt(occupied.commandId)), occupied);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("stops a committed archive cascade at a side chat moved before delivery", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const { side, child } = yield* f.sideChatWithChild();
+      yield* f.commit("archive");
+      const projectId = ProjectId.make("foreign");
+      yield* f.set(side, { projectId });
+      yield* f.set(child, { projectId });
+      yield* f.drain;
+      assert.equal(yield* f.archived(parent, side, child), "110");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each(["retained legacy event", "pruned fresh event"] as const)(
     "recovers a direct side-chat deletion with a parent-derived ID and %s",
     (history) =>
       Effect.gen(function* () {
         const f = yield* fixture;
-        const { side, child } = yield* f.movedSideChat();
+        const { side, child } = yield* f.sideChatWithChild(ProjectId.make("foreign"));
         yield* f.markUsed(parent);
         const kept = yield* f.threads.dispatch({
           type: "thread.delete",
@@ -14735,7 +14787,7 @@ describe("subagent lifecycle cascade", () => {
   it.effect("rejects a direct side-chat delete whose recovery ID is occupied", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
-      const { side, child } = yield* f.movedSideChat();
+      const { side, child } = yield* f.sideChatWithChild();
       const collidingCommandId = `delete:parent:side-chat:${side}`;
       const effectId = `effect:${collidingCommandId}:subagent-threads.cascade`;
       yield* f.commit("delete");
@@ -14748,6 +14800,15 @@ describe("subagent lifecycle cascade", () => {
       assert.deepEqual(yield* f.outbox.get(effectId), occupied);
       assert.equal(yield* f.state("deletedAt", parent, side, child), "110");
       yield* f.commit("delete", side, "direct:fresh-delete");
+      const fresh = Option.getOrThrow(
+        yield* f.outbox.get("effect:direct:fresh-delete:subagent-threads.cascade"),
+      );
+      assert.equal(fresh.threadId, side);
+      assert.include(fresh.request, {
+        type: "subagent-threads.cascade",
+        operation: "thread.delete",
+        directDelete: true,
+      });
       yield* f.drain;
       assert.equal(yield* f.state("deletedAt", parent, side, child), "111");
     }).pipe(Effect.provide(layerTest)),
@@ -14758,7 +14819,7 @@ describe("subagent lifecycle cascade", () => {
     (operation) =>
       Effect.gen(function* () {
         const f = yield* fixture;
-        const { side } = yield* f.movedSideChat();
+        const { side } = yield* f.sideChatWithChild();
         const fork = ThreadId.make("fork");
         const child = ThreadId.make("fork-child");
         if (operation === "unarchive") {

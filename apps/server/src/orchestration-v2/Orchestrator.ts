@@ -1917,10 +1917,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const subagentCascadeEffects = Effect.fn("Orchestrator.subagentCascadeEffects")(function* (
     { commandId, threadId }: { readonly commandId: CommandId; readonly threadId: ThreadId },
     operation: "thread.archive" | "thread.unarchive" | "thread.delete",
+    projectId: ProjectId,
     sideChat?: EffectOutbox.EmbeddedSideChatCascade,
   ) {
     const cascade = yield* EffectOutbox.SubagentCascade;
     if (cascade?.path.at(-1) === threadId) return [];
+    if (sideChat && sideChat.projectId !== projectId) return [];
     if (operation === "thread.unarchive" && sideChat && !sideChat.archiveCommandId) return [];
     if ((yield* projectionStore.getSubagentChildThreads(threadId)).length === 0) return [];
     const cutoff = cascade?.source?.cutoff;
@@ -5655,9 +5657,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     if (command.type === "thread.archive" || command.type === "thread.unarchive") {
-      const cascade = yield* subagentCascadeEffects(command, command.type, sideChat).pipe(
-        mapDispatchError(command),
-      );
+      const cascade = yield* subagentCascadeEffects(
+        command,
+        command.type,
+        thread.projectId,
+        sideChat,
+      ).pipe(mapDispatchError(command));
       yield* Ref.update(effects, (existing) => [...existing, ...cascade]);
     }
 
@@ -15723,9 +15728,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               idAllocator,
             }),
           );
-          const cascade = yield* subagentCascadeEffects(deletion, deletion.type, sideChat).pipe(
-            mapDispatchError(command),
-          );
+          const cascade = yield* subagentCascadeEffects(
+            deletion,
+            deletion.type,
+            projection.thread.projectId,
+            sideChat,
+          ).pipe(mapDispatchError(command));
           return {
             ...plan,
             projectId: projection.thread.projectId,
@@ -15806,19 +15814,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : undefined;
           const sideChatArchive =
             derivedArchiveId === undefined
-              ? undefined
-              : Option.getOrUndefined(
-                  yield* commandReceipts
-                    .getByCommandId(derivedArchiveId)
-                    .pipe(mapDispatchError(command)),
-                );
+              ? null
+              : yield* commandReceipts
+                  .getLatestLifecycle(threadId, ["thread.archive"])
+                  .pipe(mapDispatchError(command));
           yield* dispatchThreadMutation(sideChatCommand, events, effects, {
             parentThreadId: parent.id,
             projectId: parent.projectId,
             archiveCommandId:
-              sideChatArchive?.status === "accepted" &&
-              sideChatArchive.commandType === "thread.archive" &&
-              sideChatArchive.threadId === threadId &&
+              sideChatArchive !== null &&
+              sideChatArchive.commandId === derivedArchiveId &&
               sideChatArchive.resultSequence === parentArchive?.resultSequence
                 ? sideChatArchive.commandId
                 : undefined,
