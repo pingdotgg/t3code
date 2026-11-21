@@ -1,0 +1,155 @@
+import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
+import { readFileSync, writeFileSync } from "node:fs"
+import { FileDescriptorProto, FileDescriptorSet } from "../../src/protobuf/ProtobufDescriptorProto.ts"
+import * as ProtobufMessage from "../../src/protobuf/ProtobufMessage.ts"
+import * as Result from "../../src/Result.ts"
+
+// The checked-in descriptor definitions let Effect read the input for its next
+// generation. Both pinned inputs come from protobuf v36.2; see README.md.
+const input = (path, digest) => {
+  const bytes = readFileSync(new URL(path, import.meta.url))
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), digest, `Unexpected input: ${path}`)
+  return bytes
+}
+input("descriptor.proto", "c96db5406336ebcc82523c1dfb122721986a1f43c4aaed45a4a4ad6996efacc2")
+const bytes = input(
+  "../../test/fixtures/protobuf/descriptor-set.binpb",
+  "948853f065aa75d8f7ab994ac2c7ba493ec5868195e78d152c651e46529f80ac"
+)
+const set = Result.getOrThrow(ProtobufMessage.decode(FileDescriptorSet)(bytes))
+const file = set.file.find((file) => file.name === "google/protobuf/descriptor.proto")
+assert.ok(file?.source_code_info?.location.length, "Descriptor source information is required")
+
+// Omit empty repeated fields and order properties by field number to keep the
+// embedded descriptor compact and identical to the previous generated output.
+const compact = (value, descriptor) => {
+  assert.equal(value[ProtobufMessage.unknownFields], undefined, `Unknown fields in ${descriptor.typeName}`)
+  const out = {}
+  for (const field of [...descriptor.fields].sort((a, b) => a.number - b.number)) {
+    const item = value[field.name]
+    if (item === undefined || (field.kind === "list" && item.length === 0)) continue
+    const element = (item) => field.type.kind === "message" ? compact(item, field.type.message) : item
+    out[field.name] = field.kind === "list" ? item.map(element) : element(item)
+  }
+  return out
+}
+
+const locations = new Map(file.source_code_info.location.map((location) => [(location.path ?? []).join("."), location]))
+const prefix = `.${file.package}.`
+const symbol = (name) => {
+  assert.ok(name.startsWith(prefix), `Unexpected external type: ${name}`)
+  return name.slice(prefix.length).replaceAll(".", "_")
+}
+const comments = (path) => {
+  const location = locations.get(path.join("."))
+  return (location?.leading_comments || location?.trailing_comments || "").trim()
+}
+const doc = (comment, publicApi = false, indent = "") => {
+  const lines = comment.replaceAll("*/", "*\\/").split("\n").map((line) => line.replace(/^ ?/, "").trimEnd())
+  if (!publicApi && !comment) return ""
+  if (!publicApi && lines.length === 1) return `${indent}/** ${lines[0]} */\n`
+  const paragraph = lines.indexOf("")
+  if (paragraph !== -1) lines.splice(paragraph, 0, "", "**Details**")
+  const body = comment ? lines : []
+  if (publicApi) {
+    if (comment) body.push("")
+    body.push("@stability experimental", "@category descriptor.proto", "@since 4.1.5")
+  }
+  return `${indent}/**\n${body.map((line) => `${indent} *${line ? ` ${line}` : ""}\n`).join("")}${indent} */\n`
+}
+
+// Keep the embedded descriptor readable without depending on a formatter's version.
+const literal = (value, depth = 0) => {
+  if (typeof value === "bigint") return `${value}n`
+  if (value instanceof Uint8Array) return `new Uint8Array([${[...value].join(", ")}])`
+  if (value === null || typeof value !== "object") return JSON.stringify(value)
+  const array = Array.isArray(value)
+  const parts = array
+    ? value.map((item) => literal(item, depth + 1))
+    : Object.entries(value).map(([key, item]) => `${key}: ${literal(item, depth + 1)}`)
+  const [open, close] = array ? ["[", "]"] : ["{", "}"]
+  if (parts.length === 0) return open + close
+  const inline = array ? `${open}${parts.join(", ")}${close}` : `${open} ${parts.join(", ")} ${close}`
+  if (!inline.includes("\n") && depth * 2 + inline.length <= 110) return inline
+  const indent = "  ".repeat(depth)
+  return `${open}\n${parts.map((part) => `${indent}  ${part}`).join(",\n")}\n${indent}${close}`
+}
+
+const scalar = new Map([
+  [1, "number"], [2, "number"], [3, "bigint"], [4, "bigint"],
+  [5, "number"], [6, "bigint"], [7, "number"], [8, "boolean"],
+  [9, "string"], [12, "Uint8Array"], [13, "number"],
+  [15, "number"], [16, "bigint"], [17, "number"], [18, "bigint"]
+])
+const fieldType = (field) => {
+  const type = field.type_name ? symbol(field.type_name) : scalar.get(field.type)
+  assert.ok(type, `Unsupported field type: ${field.name}`)
+  return field.label === 3 ? `ReadonlyArray<${type}>` : type
+}
+
+const { source_code_info: _, ...descriptor } = compact(file, FileDescriptorProto)
+let output = `/**
+ * Built-in types and descriptors for Google's \`google/protobuf/descriptor.proto\`.
+ * These definitions describe protobuf files, messages, fields, enums and services.
+ *
+ * @stability experimental
+ * @since 4.1.5
+ */
+// @generated by packages/effect/scripts/protobuf/generate.mjs. Do not edit.
+// Source: protocolbuffers/protobuf v36.2 (2c74169b34066ceb8ddb6b882fcb3fb32d737a55).
+// Regenerate: pnpm protobuf-codegen
+
+import * as Resolve from "./internal/resolve.ts"
+import type * as ProtobufDescriptor from "./ProtobufDescriptor.ts"
+
+${doc("The resolved `google/protobuf/descriptor.proto`.", true)}export const descriptorFile: ProtobufDescriptor.FileDescriptor = Resolve.resolve([${literal(descriptor)}]).files[0]
+`
+
+const enumeration = (value, path, fullName) => {
+  const name = symbol(fullName)
+  output += `\n${doc(comments(path) || `The values of \`${fullName.slice(1)}\`.`, true)}export const ${name} = {\n`
+  output += value.value.map((entry, index) =>
+    `${doc(comments([...path, 2, index]), false, "  ")}  ${entry.name}: ${entry.number}`
+  ).join(",\n")
+  output += `\n} as const\n\n${doc(`A value of \`${fullName.slice(1)}\`.`, true)}`
+  output += `export type ${name} = (typeof ${name})[keyof typeof ${name}]\n`
+}
+
+const message = (value, path, fullName, reference) => {
+  const name = symbol(fullName)
+  assert.ok(!value.oneof_decl?.length, "Bootstrap renderer does not support oneofs")
+  output += `\n${doc(comments(path) || `The fields of \`${fullName.slice(1)}\`.`, true)}export interface ${name} {`
+  if (value.field?.length) {
+    output += "\n" + value.field.map((field, index) =>
+      `${doc(comments([...path, 2, index]), false, "  ")}  readonly ${field.name}${field.label === 2 ? "" : "?"}: ${fieldType(field)}`
+    ).join("\n") + "\n"
+  }
+  output += `}\n\n${doc(`The descriptor of \`${fullName.slice(1)}\`.`, true)}`
+  output += `export const ${name}: ProtobufDescriptor.MessageDescriptor = ${reference}\n`
+  for (const [index, nested] of (value.nested_type ?? []).entries()) {
+    message(nested, [...path, 3, index], `${fullName}.${nested.name}`, `${name}.messages[${index}]`)
+  }
+  for (const [index, nested] of (value.enum_type ?? []).entries()) {
+    enumeration(nested, [...path, 4, index], `${fullName}.${nested.name}`)
+  }
+}
+
+for (const [index, value] of file.message_type.entries()) {
+  message(value, [4, index], `${prefix}${value.name}`, `descriptorFile.messages[${index}]`)
+}
+for (const [index, value] of file.enum_type.entries()) {
+  enumeration(value, [5, index], `${prefix}${value.name}`)
+}
+
+const target = new URL("../../src/protobuf/ProtobufDescriptorProto.ts", import.meta.url)
+assert.ok(process.argv.slice(2).every((arg) => arg === "--check"), "Usage: pnpm protobuf-codegen [--check]")
+if (process.argv.includes("--check")) {
+  if (readFileSync(target, "utf8") !== output) {
+    throw new Error("Generated descriptor is stale; run pnpm protobuf-codegen")
+  }
+  console.log("Protobuf descriptor is up to date")
+} else {
+  writeFileSync(target, output)
+  console.log("Regenerated protobuf descriptor")
+}

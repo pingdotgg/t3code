@@ -1,68 +1,104 @@
-export type AuditPlatform = "ios" | "android";
+import * as Schema from "effect/Schema";
 
-export interface AuditRect {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-}
+export const AuditPlatformSchema = Schema.Literals(["ios", "android"]);
+export type AuditPlatform = typeof AuditPlatformSchema.Type;
 
-export interface SmallTargetDetail {
-  readonly unit: string;
-  readonly width: number;
-  readonly height: number;
-  readonly recommendedSize: number;
-}
+const AuditRectSchema = Schema.Struct({
+  x: Schema.Number,
+  y: Schema.Number,
+  width: Schema.Number,
+  height: Schema.Number,
+});
+export type AuditRect = typeof AuditRectSchema.Type;
 
-export interface AmbiguousNameDetail {
-  readonly name: string;
-  readonly count: number;
-}
+const ViewportSchema = Schema.Struct({
+  width: Schema.Number,
+  height: Schema.Number,
+});
+export type AuditViewport = typeof ViewportSchema.Type;
 
-export interface AuditFinding {
-  readonly ref: string;
-  readonly kind: "small-target" | "missing-name" | "ambiguous-name" | "covered-control" | string;
-  readonly severity?: string;
-  readonly role: string;
-  readonly label?: string;
-  readonly identifier?: string;
-  readonly rect?: AuditRect;
-  readonly detail?: SmallTargetDetail | AmbiguousNameDetail | Record<string, unknown>;
-}
+const SmallTargetDetailSchema = Schema.Struct({
+  unit: Schema.String,
+  width: Schema.Number,
+  height: Schema.Number,
+  recommendedSize: Schema.Number,
+});
 
-export interface RawSnapshotNode {
-  readonly index: number;
-  readonly parentIndex?: number;
-  readonly ref?: string;
-  readonly type?: string;
-  readonly role?: string;
-  readonly label?: string;
-  readonly identifier?: string;
-  readonly contentDescription?: string;
-  readonly text?: string;
-  readonly rect?: AuditRect;
-  readonly enabled?: boolean;
-  readonly hittable?: boolean;
-  readonly visibleToUser?: boolean;
-  readonly keyboardOwned?: boolean;
-  readonly systemBar?: string;
-}
+const AmbiguousNameDetailSchema = Schema.Struct({
+  name: Schema.String,
+  count: Schema.Number,
+});
 
-export interface RawSnapshotData {
-  readonly nodes: ReadonlyArray<RawSnapshotNode>;
-  readonly viewport?: { readonly width: number; readonly height: number };
-  readonly androidSnapshot?: { readonly pixelDensity?: number; readonly backend?: string };
-}
+const AuditFindingSchema = Schema.Struct({
+  ref: Schema.String,
+  kind: Schema.String,
+  severity: Schema.optional(Schema.String),
+  role: Schema.String,
+  label: Schema.optional(Schema.String),
+  identifier: Schema.optional(Schema.String),
+  rect: Schema.optional(AuditRectSchema),
+  detail: Schema.optional(Schema.Unknown),
+});
+export type AuditFinding = typeof AuditFindingSchema.Type;
 
-export interface AuditCapture {
-  readonly platform: AuditPlatform;
-  readonly screen: string;
-  readonly viewport?: { readonly width: number; readonly height: number } | undefined;
-  readonly pixelDensity: number;
-  readonly findings: ReadonlyArray<AuditFinding>;
-  readonly guidance?: Readonly<Record<string, string>> | undefined;
-  readonly limitations?: ReadonlyArray<string> | undefined;
-}
+const RawSnapshotNodeSchema = Schema.Struct({
+  index: Schema.Number,
+  parentIndex: Schema.optional(Schema.Number),
+  ref: Schema.optional(Schema.String),
+  type: Schema.optional(Schema.String),
+  role: Schema.optional(Schema.String),
+  label: Schema.optional(Schema.String),
+  identifier: Schema.optional(Schema.String),
+  contentDescription: Schema.optional(Schema.String),
+  text: Schema.optional(Schema.String),
+  rect: Schema.optional(AuditRectSchema),
+  enabled: Schema.optional(Schema.Boolean),
+  hittable: Schema.optional(Schema.Boolean),
+  visibleToUser: Schema.optional(Schema.Boolean),
+  keyboardOwned: Schema.optional(Schema.Boolean),
+  systemBar: Schema.optional(Schema.String),
+});
+export type RawSnapshotNode = typeof RawSnapshotNodeSchema.Type;
+
+export const RawSnapshotDataSchema = Schema.Struct({
+  nodes: Schema.Array(RawSnapshotNodeSchema),
+  viewport: Schema.optional(ViewportSchema),
+  androidSnapshot: Schema.optional(
+    Schema.Struct({
+      pixelDensity: Schema.optional(Schema.Number),
+      backend: Schema.optional(Schema.String),
+    }),
+  ),
+});
+export type RawSnapshotData = typeof RawSnapshotDataSchema.Type;
+
+export const AuditPayloadSchema = Schema.Struct({
+  findings: Schema.optional(Schema.Array(AuditFindingSchema)),
+  guidance: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  limitations: Schema.optional(Schema.Array(Schema.String)),
+});
+
+export const AuditCaptureSchema = Schema.Struct({
+  platform: AuditPlatformSchema,
+  screen: Schema.String,
+  viewport: Schema.optional(ViewportSchema),
+  pixelDensity: Schema.Number,
+  findings: Schema.Array(AuditFindingSchema),
+  guidance: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  limitations: Schema.optional(Schema.Array(Schema.String)),
+});
+export type AuditCapture = typeof AuditCaptureSchema.Type;
+
+export const AgentDeviceEnvelopeSchema = Schema.Struct({
+  success: Schema.optional(Schema.Boolean),
+  data: Schema.optional(Schema.Unknown),
+  error: Schema.optional(
+    Schema.Struct({
+      message: Schema.optional(Schema.String),
+      hint: Schema.optional(Schema.String),
+    }),
+  ),
+});
 
 export interface FixedFinding {
   readonly before: AuditFinding;
@@ -94,6 +130,9 @@ export interface OverlayBox {
 
 const VIEWPORT_EDGE_CLIP_TOLERANCE = 10;
 
+const isSmallTargetDetail = Schema.is(SmallTargetDetailSchema);
+const isAmbiguousNameDetail = Schema.is(AmbiguousNameDetailSchema);
+
 export function unitForPlatform(platform: AuditPlatform): "pt" | "dp" {
   return platform === "ios" ? "pt" : "dp";
 }
@@ -101,7 +140,7 @@ export function unitForPlatform(platform: AuditPlatform): "pt" | "dp" {
 export function resolveViewport(
   capture: Pick<AuditCapture, "viewport">,
   raw?: RawSnapshotData,
-): { readonly width: number; readonly height: number } | undefined {
+): AuditViewport | undefined {
   if (capture.viewport?.width && capture.viewport?.height) return capture.viewport;
   if (raw?.viewport?.width && raw?.viewport?.height) return raw.viewport;
   const rootRect = raw?.nodes[0]?.rect;
@@ -116,24 +155,6 @@ export function formatHeight(rect: AuditRect, density: number, unit: "pt" | "dp"
   return `${h}${unit}`;
 }
 
-function isSmallTargetDetail(detail: AuditFinding["detail"]): detail is SmallTargetDetail {
-  return (
-    typeof detail === "object" &&
-    detail !== null &&
-    typeof (detail as SmallTargetDetail).width === "number" &&
-    typeof (detail as SmallTargetDetail).height === "number"
-  );
-}
-
-function isAmbiguousNameDetail(detail: AuditFinding["detail"]): detail is AmbiguousNameDetail {
-  return (
-    typeof detail === "object" &&
-    detail !== null &&
-    typeof (detail as AmbiguousNameDetail).name === "string" &&
-    typeof (detail as AmbiguousNameDetail).count === "number"
-  );
-}
-
 /**
  * Filters known platform-chrome and viewport-clipping artifacts so regressions stay high-signal:
  * - iOS 26/27 native UISwitch accessibility frames report 63×28pt.
@@ -143,7 +164,7 @@ function isAmbiguousNameDetail(detail: AuditFinding["detail"]): detail is Ambigu
 export function isPlatformNoise(
   finding: AuditFinding,
   platform: AuditPlatform,
-  viewport?: { readonly width: number; readonly height: number },
+  viewport?: AuditViewport,
 ): boolean {
   if (platform === "ios") {
     if (

@@ -3364,6 +3364,35 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.equal((yield* Fiber.join(created)).nativeThreadRef?.nativeId, SESSION);
     }),
   );
+  it.effect("allows a thread's other folders, except ones whose path would match siblings", () =>
+    Effect.gen(function* () {
+      const permissions = [
+        ...supervisedRules.slice(0, 3),
+        { action: "external_directory", resource: "/repos/api/*", effect: "allow" },
+        ...supervisedRules.slice(3),
+      ];
+      const runtime = yield* openCode2ReplayRuntime([
+        ...opening,
+        out("agent.list", "<any>"),
+        reply("agent.list", agentList),
+        out("session.create", {
+          location: { directory: WORK },
+          model: { providerID: "opencode", id: "big-pickle" },
+          permissions,
+        }),
+        replyData("session.create", sessionInfo({ permissions })),
+      ]);
+      const created = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: {
+          ...policy("approval-required"),
+          workspace: { folders: [], extraRoots: ["/repos/api/", "/repos/api?", "/repos/a*"] },
+        },
+      });
+      assert.equal(created.nativeThreadRef?.nativeId, SESSION);
+    }),
+  );
   const reconnected = (
     active: Record<string, unknown>,
     ended?: "succeeded",
