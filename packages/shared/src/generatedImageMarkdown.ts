@@ -31,7 +31,10 @@ function unclosedBlockEnd(text: string): string | undefined {
     if (tag !== undefined) {
       return /<\/(?:script|pre|style|textarea)>/i.test(source) ? undefined : `</${tag}>`;
     }
-    return /^ {0,3}<!--/.test(source) && !source.includes("-->") ? "-->" : undefined;
+    if (/^ {0,3}<!--/.test(source)) return source.includes("-->") ? undefined : "-->";
+    if (/^ {0,3}<\?/.test(source)) return source.includes("?>") ? undefined : "?>";
+    if (/^ {0,3}<![A-Za-z]/.test(source)) return source.includes(">") ? undefined : ">";
+    return /^ {0,3}<!\[CDATA\[/.test(source) && !source.includes("]]>") ? "]]>" : undefined;
   }
   if (last?.type !== "code") return undefined;
   const fence = /^ {0,3}(`{3,}|~{3,})/.exec(source)?.[1];
