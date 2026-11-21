@@ -2015,6 +2015,57 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  // regression: #40099 a call that joined a running child showed as a second subagent
+  it.effect("shows a call that joined a running subagent as that one subagent", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        ...callAgain({ background: true }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report", "CHILD_OK"),
+      ]);
+      const rows = new Map<string, { childThreadId: string | null; model: string | null }>();
+      const childTitles: Array<string> = [];
+      const watch = yield* watchCalls(
+        {
+          ...runtime,
+          events: runtime.events.pipe(
+            Stream.tap((event) =>
+              Effect.sync(() => {
+                if (event.type === "subagent.updated")
+                  rows.set(event.subagent.id, {
+                    childThreadId: event.subagent.childThreadId,
+                    model: event.subagent.model,
+                  });
+                if (
+                  event.type === "app_thread.created" &&
+                  event.appThread.lineage.parentThreadId !== null
+                )
+                  childTitles.push(event.appThread.title);
+              }),
+            ),
+          ),
+        },
+        thread,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          watch.callsById.get("call-background")?.status === "completed" &&
+          [...watch.callsById.values()].every((call) => call.status === "completed") &&
+          watch.state.roster?.length === 0,
+      );
+      const [launched] = [...rows.values()];
+      assert.isNotNull(launched?.childThreadId);
+      assert.deepEqual(
+        [...rows.values()],
+        [{ childThreadId: launched!.childThreadId, model: "opencode/big-pickle" }],
+      );
+      assert.deepEqual(childTitles, [childTitles[0]]);
+    }),
+  );
+
   it.effect("keeps a call to a finished subagent for its own run's report", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
