@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
 import { FileCode2Icon } from "lucide-react";
 import { lazy, Suspense, useState, type MouseEvent } from "react";
@@ -16,6 +16,7 @@ import {
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../../state/environments";
+import { useWorkflowEnvironmentIds } from "./useWorkflowEnvironmentIds";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
@@ -52,10 +53,16 @@ export function WorkflowsPage() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const connectedIds = useConnectedEnvironmentIds();
   const { environments } = useEnvironments();
+  const workflowIds = useWorkflowEnvironmentIds();
+  // Only servers with workflows on in Labs can be picked; a connected one with them off says so.
   const connected = environments.filter((environment) =>
-    connectedIds.includes(environment.environmentId),
+    workflowIds.includes(environment.environmentId),
   );
   const asked = search.env === undefined ? null : EnvironmentId.make(search.env);
+  const turnedOff =
+    asked === null
+      ? workflowIds.length === 0 && connectedIds.length > 0
+      : connectedIds.includes(asked) && !workflowIds.includes(asked);
   // An environment the address names is kept while it is away: its run and file mean nothing on
   // another server.
   const environmentId =
@@ -74,13 +81,14 @@ export function WorkflowsPage() {
   const pinned = environmentId ?? search.env;
   const env = pinned === undefined ? {} : { env: pinned };
   const away =
-    asked !== null && environmentId === null
+    asked !== null && environmentId === null && !turnedOff
       ? (environments.find((environment) => environment.environmentId === asked)?.label ?? asked)
       : null;
   const run = search.run === undefined ? {} : { run: search.run };
   const editing = search.definitions === true || search.file !== undefined;
   // An open file stays open while its environment is away, so a draft in it is not lost.
-  const fileEnvironmentId = environmentId ?? (search.file === undefined ? null : asked);
+  const fileEnvironmentId =
+    environmentId ?? (search.file === undefined || turnedOff ? null : asked);
   const [fileActions, setFileActions] = useState<HTMLElement | null>(null);
   const definitions = useEnvironmentQuery(
     fileEnvironmentId === null || search.file === undefined
@@ -190,7 +198,7 @@ export function WorkflowsPage() {
               )}
             </WorkspaceBreadcrumb>
             {(connected.length > 1 && environmentId !== null) ||
-            (away !== null && connected.length > 0) ? (
+            ((away !== null || turnedOff) && connected.length > 0) ? (
               <Select
                 value={environmentId ?? asked}
                 onValueChange={(value) => {
@@ -203,6 +211,10 @@ export function WorkflowsPage() {
                 >
                   <SelectValue>
                     {away ??
+                      (turnedOff
+                        ? environments.find((environment) => environment.environmentId === asked)
+                            ?.label
+                        : undefined) ??
                       connected.find((environment) => environment.environmentId === environmentId)
                         ?.label ??
                       environmentId}
@@ -250,6 +262,19 @@ export function WorkflowsPage() {
               description={gt(
                 "Its workflows show again when it reconnects. Pick another environment to see its runs.",
               )}
+            />
+          ) : turnedOff ? (
+            <WorkflowsEmpty
+              title={gt("Workflows are off")}
+              description={
+                <T>
+                  Turn them on for this server in{" "}
+                  <Link to="/settings/labs" className="underline underline-offset-2">
+                    Settings → Labs
+                  </Link>
+                  .
+                </T>
+              }
             />
           ) : environmentId === null ? (
             <WorkflowsEmpty
