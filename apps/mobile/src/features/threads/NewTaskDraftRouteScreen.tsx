@@ -21,7 +21,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { m } from "../../i18n/messages";
 import { useProjects } from "../../state/entities";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { rootNavigationRef } from "../../lib/rootNavigation";
+import { useAppWindowId } from "../../lib/appWindows";
+import { rootNavigationForWindow } from "../../lib/rootNavigation";
 import { threadSelectionDeferral } from "../layout/deferred-navigation";
 import { useWorkspaceState } from "../../state/workspace";
 import { vcsEnvironment } from "../../state/vcs";
@@ -67,6 +68,8 @@ const branchCheckouts = makeNewTaskBranchCheckouts({
     }),
   holdNavigation: threadSelectionDeferral.waitFor,
   onFailure: (request, result) => {
+    const navigation = rootNavigationForWindow(request.windowId);
+    if (!navigation?.isReady()) return;
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
@@ -74,10 +77,10 @@ const branchCheckouts = makeNewTaskBranchCheckouts({
         errorDisplayMessage(error, m) ?? m(msg("The branch could not be checked out.")),
       );
     }
-    rootNavigationRef.dispatch({
+    navigation.dispatch({
       ...CommonActions.goBack(),
       source: request.routeKey,
-      target: rootNavigationRef.getRootState()?.key,
+      target: navigation.getRootState()?.key,
     });
   },
 });
@@ -93,6 +96,7 @@ const idleBranchCheckoutAtom = Atom.make(AsyncResult.initial<BranchCheckoutResul
 
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
   const gt = useGT();
+  const windowId = useAppWindowId();
   const currentRoute = useRoute();
   const goBack = useWorkspaceBackNavigation();
   const params = route.params ?? {};
@@ -147,6 +151,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   const checkoutKey =
     needsPreparation && initialProjectRef.branch && !waitingForProject && flowKey !== undefined
       ? branchCheckoutRequestKey({
+          windowId,
           flowKey,
           routeKey: currentRoute.key,
           environmentId: checkoutProject?.environmentId ?? null,

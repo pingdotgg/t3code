@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { deadlineStore, minuteTick } from "@t3tools/client-runtime/clock";
 import { Atom } from "effect/reactivity";
 
+import type { AppWindowId } from "../lib/appWindows";
 import {
   reconcilePendingThreadOrder,
   type PendingThreadOrder,
@@ -15,7 +16,8 @@ import { environmentServerConfigsAtom } from "./server";
 import { steadyNavigationThreadShellsAtom } from "./threads";
 import { queuedThreadKeysAtom } from "./use-thread-outbox";
 
-export const threadArrangementOpenAtom = Atom.make(false).pipe(Atom.keepAlive);
+/** The window presenting the arrangement sheet; every window mounts a host for it. */
+export const threadArrangementWindowAtom = Atom.make<AppWindowId | null>(null).pipe(Atom.keepAlive);
 
 export const threadDropBusyAtom = Atom.make(false).pipe(Atom.keepAlive);
 

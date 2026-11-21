@@ -12,6 +12,7 @@ import {
 
 function request(flowKey: string, branch: string): BranchCheckoutRequest {
   return {
+    windowId: 1,
     flowKey,
     routeKey: flowKey,
     environmentId: null,
@@ -105,7 +106,7 @@ describe("new task branch checkouts", () => {
     expect(onFailure).not.toHaveBeenCalled();
     checkouts.release(keyA);
     await vi.waitFor(() => expect(onFailure).toHaveBeenCalledTimes(1));
-    expect(onFailure.mock.calls[0]![0]).toMatchObject({ flowKey: "flow-a" });
+    expect(onFailure.mock.calls[0]![0]).toMatchObject({ flowKey: "flow-a", windowId: 1 });
 
     checkouts.prune(new Set(["flow-a"]));
     runs[1]!.settle(failure);

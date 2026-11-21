@@ -31,7 +31,13 @@ import { msg } from "gt-react-native";
 
 import { m } from "../../i18n/messages";
 import { findLinkedRoute, findStackRoute, updateLinkedRoute } from "../../lib/appLinking";
-import { rootNavigationRef } from "../../lib/rootNavigation";
+import type { AppWindowId } from "../../lib/appWindows";
+import {
+  rootNavigationRef,
+  rootNavigationForWindow,
+  rootNavigationWindowId,
+  rootNavigationWindowStatus,
+} from "../../lib/rootNavigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentProjects, projectEnvironment } from "../../state/projects";
@@ -62,6 +68,7 @@ const NEW_TASK_ROUTE = "NewTaskProject";
 const NEW_TASK_ROUTES = [NEW_TASK_ROUTE];
 
 type LinkedDraftRequest = {
+  readonly windowId: AppWindowId;
   readonly prompt: LinkedPrompt | null;
   readonly provider: string | null;
   readonly model: string | null;
@@ -85,6 +92,8 @@ const shellsSettledAtom = Atom.make((get) => {
 }).pipe(Atom.withLabel("mobile:prompt-link-shells-settled"));
 
 let pendingLink: string | null = null;
+// The window that took the link: its screen lands there, and only that window's state shows it.
+let pendingWindow: AppWindowId | null = null;
 let stopWaitingForShells: (() => void) | null = null;
 
 /**
@@ -94,6 +103,7 @@ let stopWaitingForShells: (() => void) | null = null;
  */
 export function takeNewTaskPromptLink(
   state: PartialState<NavigationState> | undefined,
+  windowId = rootNavigationWindowId(),
 ): PartialState<NavigationState> | undefined {
   const route = findLinkedRoute(state, NEW_TASK_ROUTES);
   const search = promptLinkSearchFromParams(
@@ -101,6 +111,7 @@ export function takeNewTaskPromptLink(
   );
   if (search === null) return state;
   pendingLink = search;
+  pendingWindow = windowId;
   return updateLinkedRoute(state, NEW_TASK_ROUTES, (linked) => ({
     ...linked,
     params: withoutPromptLinkParams(linked.params),
@@ -110,6 +121,9 @@ export function takeNewTaskPromptLink(
 /** Wired to the navigation container's state changes. */
 export function resolvePendingNewTaskPromptLink(state: NavigationState | undefined): void {
   if (pendingLink === null) return;
+  const owner = rootNavigationWindowStatus(pendingWindow);
+  if (owner === "closed") dropPendingLink();
+  if (owner !== "current") return;
   const step = stepPendingPromptLink(pendingLink, {
     // A screen pushed above New task (such as Add project) drops the link, so it never lands
     // over the wrong screen.
@@ -133,11 +147,13 @@ function dropPendingLink(): void {
 }
 
 /** Dispatches as the new-task screen would, so `replace` swaps that screen out. */
-function dispatchFromNewTask(action: StackActionType): void {
-  const root = rootNavigationRef.getRootState();
+function dispatchFromNewTask(windowId: AppWindowId, action: StackActionType): void {
+  const navigation = rootNavigationForWindow(windowId);
+  if (!navigation?.isReady()) return;
+  const root = navigation.getRootState();
   const screen = findStackRoute(root, NEW_TASK_ROUTE);
   const target = screen?.navigatorKey ?? root?.key;
-  rootNavigationRef.dispatch({
+  navigation.dispatch({
     ...action,
     ...(target ? { target } : {}),
     ...(screen ? { source: screen.routeKey } : {}),
@@ -167,10 +183,12 @@ function writeDraft(
 }
 
 function openThread(
+  windowId: AppWindowId,
   thread: { readonly environmentId: EnvironmentId; readonly id: ThreadId },
   prompt: LinkedDraftRequest["prompt"],
 ) {
   dispatchFromNewTask(
+    windowId,
     StackActions.replace("Thread", {
       environmentId: String(thread.environmentId),
       threadId: String(thread.id),
@@ -266,6 +284,7 @@ async function openProjectDraft(project: EnvironmentProject, request: LinkedDraf
   }
   const modelUnavailable = writeDraft(draftKey, project.environmentId, request);
   dispatchFromNewTask(
+    request.windowId,
     StackActions.push("Thread", {
       draft: {
         draftId: draftKey,
@@ -346,6 +365,7 @@ function cloneRepository(repository: PromptLinkRepository, request: LinkedDraftR
       : null;
   const name = promptLinkRepositoryName(repository);
   dispatchFromNewTask(
+    request.windowId,
     StackActions.push("AddProjectDestination", {
       environmentId,
       remoteUrl: `https://github.com/${name}.git`,
@@ -369,6 +389,8 @@ function cloneRepository(repository: PromptLinkRepository, request: LinkedDraftR
 }
 
 function resolveLink(linkSearch: string) {
+  const windowId = rootNavigationWindowId();
+  if (windowId === null) return;
   const threads = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
   const parsed = parseNewThreadLink(linkSearch, m);
   if (!parsed.ok) {
@@ -378,13 +400,25 @@ function resolveLink(linkSearch: string) {
   const link = parsed.value;
   const request: LinkedDraftRequest =
     link.kind === "new"
-      ? { prompt: link.prompt, provider: link.provider, model: link.model, pullRequest: null }
-      : { prompt: link.prompt, provider: null, model: null, pullRequest: link.pullRequest };
+      ? {
+          windowId,
+          prompt: link.prompt,
+          provider: link.provider,
+          model: link.model,
+          pullRequest: null,
+        }
+      : {
+          windowId,
+          prompt: link.prompt,
+          provider: null,
+          model: null,
+          pullRequest: link.pullRequest,
+        };
 
   if (link.kind === "pull-request") {
     const thread = findPromptLinkPullRequestThread(threads, link.pullRequest);
     if (thread) {
-      openThread(thread, link.prompt);
+      openThread(windowId, thread, link.prompt);
       return;
     }
   }
@@ -412,7 +446,7 @@ function resolveLink(linkSearch: string) {
     const { pullRequest } = request;
     void (async () => {
       const thread = pullRequest && (await findServerPullRequestThread(projects, pullRequest));
-      if (thread) openThread(thread, request.prompt);
+      if (thread) openThread(windowId, thread, request.prompt);
       else await openProjectDraft(project, request);
     })();
     return;

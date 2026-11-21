@@ -7,6 +7,7 @@ const fixture = vi.hoisted(() => ({
   applied: [] as { draftKey: string; text: string }[],
   root: undefined as NavigationState | undefined,
   detailOpens: 0,
+  activeWindow: null as number | null,
 }));
 
 vi.mock("../../components/ui/Dialog", () => ({ alert: () => {} }));
@@ -17,6 +18,9 @@ vi.mock("./prompt-link-actions", () => ({
 }));
 vi.mock("../../lib/rootNavigation", () => ({
   rootNavigationRef: { getRootState: () => fixture.root },
+  rootNavigationWindowId: () => fixture.activeWindow,
+  rootNavigationWindowStatus: (id: number | null) =>
+    id === null || id === fixture.activeWindow ? "current" : "waiting",
 }));
 vi.mock("../../state/atom-registry", async () => {
   const { AtomRegistry } = await import("effect/reactivity");
@@ -53,6 +57,7 @@ const { resolvePendingThreadPromptLink, takeThreadPromptLink } = await import(".
 function setup() {
   fixture.applied.length = 0;
   fixture.root = undefined;
+  fixture.activeWindow = null;
   appAtomRegistry.reset();
   appAtomRegistry.set(fixtureShell, null);
   appAtomRegistry.set(fixtureDetailSource, AsyncResult.success({ data: Option.none() }));
@@ -97,12 +102,15 @@ describe("takeThreadPromptLink", () => {
 
   it("fills the draft once the linked thread shows on its screen", () => {
     setup();
-    takeThreadPromptLink(linkedState());
-    fixture.root = threadRoute;
-    resolvePendingThreadPromptLink(threadRoute);
+    takeThreadPromptLink(linkedState(), 1);
+    fixture.activeWindow = 2;
+    resolvePendingThreadPromptLink(stack([{ key: "home", name: "Home" }]));
+    appAtomRegistry.set(fixtureShell, { id: "thread-1" });
     expect(fixture.applied).toEqual([]);
 
-    appAtomRegistry.set(fixtureShell, { id: "thread-1" });
+    fixture.activeWindow = 1;
+    fixture.root = threadRoute;
+    resolvePendingThreadPromptLink(threadRoute);
     expect(fixture.applied).toEqual([{ draftKey: expect.any(String), text: "Fix the bug" }]);
     appAtomRegistry.set(fixtureShell, { id: "thread-1", title: "renamed" });
     expect(fixture.applied).toHaveLength(1);

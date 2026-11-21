@@ -1,3 +1,4 @@
+import type { AppWindowId } from "../../lib/appWindows";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
 import { EnvironmentId } from "@t3tools/contracts";
@@ -9,6 +10,7 @@ export type BranchCheckoutResult = AtomCommandResult<VcsRef, unknown>;
 type BranchCheckoutFailure = Extract<BranchCheckoutResult, { readonly _tag: "Failure" }>;
 
 export interface BranchCheckoutRequest {
+  readonly windowId: AppWindowId;
   /** The draft route's flow key; the checkout is abandoned once it leaves the stack. */
   readonly flowKey: string;
   readonly routeKey: string;
@@ -22,6 +24,7 @@ export interface BranchCheckoutRequest {
 // requests share one key and start can rebuild the request from it.
 const RequestKey = Schema.fromJsonString(
   Schema.Tuple([
+    Schema.Number,
     Schema.String,
     Schema.String,
     Schema.NullOr(EnvironmentId),
@@ -36,6 +39,7 @@ const decodeRequestKey = Schema.decodeSync(RequestKey);
 /** A pure, stable key for a request: the same fields always give the same key. */
 export function branchCheckoutRequestKey(request: BranchCheckoutRequest): string {
   return encodeRequestKey([
+    request.windowId,
     request.flowKey,
     request.routeKey,
     request.environmentId,
@@ -46,9 +50,9 @@ export function branchCheckoutRequestKey(request: BranchCheckoutRequest): string
 }
 
 function requestFromKey(key: string): BranchCheckoutRequest {
-  const [flowKey, routeKey, environmentId, workspaceRoot, branch, worktreePath] =
+  const [windowId, flowKey, routeKey, environmentId, workspaceRoot, branch, worktreePath] =
     decodeRequestKey(key);
-  return { flowKey, routeKey, environmentId, workspaceRoot, branch, worktreePath };
+  return { windowId, flowKey, routeKey, environmentId, workspaceRoot, branch, worktreePath };
 }
 
 interface CheckoutEntry {
