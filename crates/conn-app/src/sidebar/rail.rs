@@ -1,16 +1,20 @@
 //! Leftmost workspace rail (`WorkspaceRail.tsx` parity).
 //!
-//! Geometry:
+//! Geometry (`../conn/apps/web/src/components/sidebar/WorkspaceRail.tsx`):
 //! - Width: `54px` (`w-13.5`).
 //! - Top `44px` drag spacer clearing the macOS traffic lights.
+//! - First button ("All projects") sits `5px` below the `44px` header so the
+//!   `38px` button centers on the `32px` search row (`44 + 8 + 16 = 68px` ==
+//!   `44 + 5 + 19 = 68px`).
 //! - Rail button: `38px x 38px` (`size-9.5`), `10px` radius (`rounded-rail`).
 //! - Inner workspace tile: `28px x 28px` (`size-7`), `5px` radius (`rounded-tile`,
-//!   concentric `10px - 5px` inset).
+//!   concentric `10px - 5px` inset), muted monogram tinted from theme tokens.
 //! - Active workspace: `2px` inset ring (`sidebar_foreground` @ 90%) over
-//!   `sidebar_row_active`, leaving a visible gap around the inner `28px` tile.
+//!   `sidebar_row_active`, leaving a visible `3px` gap around the `28px` tile.
+//! - Bottom utility column: Usage (`ChartNoAxesColumn`) and Settings (`Settings`).
 
 use conn_state::ShellState;
-use conn_theme::{ShellGeometry, Tokens};
+use conn_theme::{Appearance, ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
     Context, InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
@@ -20,12 +24,16 @@ use gpui_kit::{
 use crate::app::ConnApp;
 use crate::icons;
 use crate::shell::WORKSPACE_RAIL_WIDTH_PX;
+use crate::sidebar::{project_monogram, project_monogram_color};
 use crate::theme::{hsla, hsla_alpha};
 
 const RAIL_BUTTON_SIZE_PX: f32 = 38.0;
 const RAIL_BUTTON_RADIUS_PX: f32 = 10.0;
 const RAIL_TILE_SIZE_PX: f32 = 28.0;
 const RAIL_TILE_RADIUS_PX: f32 = 5.0;
+/// `8px (--sidebar-content-inset) - 3px (0.75 * 4px)` so the 38px button centers
+/// on the 32px search row inside the sidebar card (`WorkspaceRail.tsx:256`).
+const RAIL_TOP_ALIGN_OFFSET_PX: f32 = 5.0;
 
 /// Renders the vertical workspace rail.
 #[must_use]
@@ -37,24 +45,17 @@ pub(crate) fn render_workspace_rail(
     cx: &mut Context<'_, ConnApp>,
 ) -> gpui_kit::Div {
     let all_active = active_workspace.is_none();
+    let tile_bg_alpha = match tokens.appearance {
+        Appearance::Light => 0.14,
+        Appearance::Dark => 0.18,
+    };
 
     let mut workspace_tiles = Vec::with_capacity(shell.projects.len());
     for (idx, project) in shell.projects.iter().enumerate() {
         let project_id = project.id.clone();
         let active = active_workspace == Some(project.id.as_str());
-        let monogram = project
-            .title
-            .chars()
-            .next()
-            .map(|c| c.to_ascii_uppercase().to_string())
-            .unwrap_or_else(|| "?".into());
-
-        // Cycle semantic theme accents (no hardcoded hex literals).
-        let (tile_bg, tile_fg) = match idx % 3 {
-            0 => (hsla(tokens.info), hsla(tokens.primary_foreground)),
-            1 => (hsla(tokens.success), hsla(tokens.primary_foreground)),
-            _ => (hsla(tokens.warning), hsla(tokens.primary_foreground)),
-        };
+        let monogram = project_monogram(&project.title);
+        let accent = project_monogram_color(&project.title, tokens);
 
         let tile = div()
             .flex()
@@ -62,9 +63,9 @@ pub(crate) fn render_workspace_rail(
             .justify_center()
             .size(px(RAIL_TILE_SIZE_PX))
             .rounded(px(RAIL_TILE_RADIUS_PX))
-            .bg(tile_bg)
-            .text_color(tile_fg)
-            .text_size(px(14.0))
+            .bg(hsla_alpha(accent, tile_bg_alpha))
+            .text_color(hsla(accent))
+            .text_size(px(12.0))
             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
             .child(monogram);
 
@@ -113,6 +114,17 @@ pub(crate) fn render_workspace_rail(
         cx.listener(|_app, _event, _window, _cx| {}),
     );
 
+    let usage_btn = rail_button(
+        "rail-usage",
+        false,
+        tokens,
+        icons::chrome(
+            IconName::ChartNoAxesColumn,
+            hsla(tokens.sidebar_muted_foreground),
+        ),
+        cx.listener(|_app, _event, _window, _cx| {}),
+    );
+
     let settings_btn = rail_button(
         "rail-settings",
         false,
@@ -144,13 +156,26 @@ pub(crate) fn render_workspace_rail(
                 .min_h_0()
                 .w_full()
                 .items_center()
-                .gap(px(8.0))
-                .pt(px(8.0))
+                .pt(px(RAIL_TOP_ALIGN_OFFSET_PX))
                 .child(all_projects_btn)
-                .children(workspace_tiles)
-                .child(add_workspace_btn),
+                .child(
+                    div()
+                        .id("rail-workspaces-scroll")
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .items_center()
+                        .gap(px(8.0))
+                        .mt(px(8.0))
+                        .pb(px(8.0))
+                        .overflow_y_scroll()
+                        .children(workspace_tiles)
+                        .child(add_workspace_btn),
+                ),
         )
-        // Bottom utility actions.
+        // Bottom utility actions (`RailActions` in `WorkspaceRail.tsx`).
         .child(
             div()
                 .flex()
@@ -160,6 +185,7 @@ pub(crate) fn render_workspace_rail(
                 .items_center()
                 .gap(px(8.0))
                 .pb(px(8.0))
+                .child(usage_btn)
                 .child(settings_btn),
         )
 }
