@@ -7,6 +7,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -75,12 +76,14 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
       .atom(({ registry }) =>
         followStreamInEnvironment(
           environmentId,
-          followLinkedThread({
-            items: subscribe(WS_METHODS.peerLinksSubscribeThread, input),
-            historyPage: (cursor) =>
-              request(WS_METHODS.peerLinksThreadHistoryPage, { ...input, cursor }),
-            previous: registry.get(kept),
-          }),
+          Stream.suspend(() =>
+            followLinkedThread({
+              items: subscribe(WS_METHODS.peerLinksSubscribeThread, input),
+              historyPage: (cursor) =>
+                request(WS_METHODS.peerLinksThreadHistoryPage, { ...input, cursor }),
+              previous: registry.get(kept),
+            }),
+          ),
         ),
       )
       .pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-data:peer-links:thread-stream:${key}`));

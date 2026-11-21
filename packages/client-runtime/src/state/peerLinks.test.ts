@@ -1,5 +1,7 @@
+import * as NodeBuffer from "node:buffer";
 import {
   EnvironmentId,
+  EventId,
   MessageId,
   TurnItemId,
   WS_METHODS,
@@ -171,6 +173,151 @@ it.effect.each([
       expect(visibleMessages(refreshed)).toEqual([recent.sourceItemId]);
       expect(refreshed.thread.historyCursor).toBe("new-window");
     }).pipe(Effect.scoped),
+);
+
+it.effect.each([
+  "live update",
+  "away update",
+  "window moves",
+  "history removed",
+  "route restart",
+] as const)("shows the current linked history on reopen (%s)", (change) =>
+  Effect.gen(function* () {
+    const recent = messageRow("Recent message", 3);
+    const older = messageRow("Earlier message", 2);
+    const oldest = messageRow("Oldest message", 1);
+    const latest = messageRow("Latest message", 4);
+    const cursorAt = (sequence: number, row: OrchestrationV2ProjectedTurnItem) =>
+      NodeBuffer.Buffer.from(
+        JSON.stringify({
+          v: 1,
+          seq: sequence,
+          st: row.sourceThreadId,
+          si: row.sourceItemId,
+          p: row.item.ordinal - 1,
+        }),
+      ).toString("base64url");
+    const snapshot = (
+      snapshotSequence: number,
+      title: string,
+      row = recent,
+    ): OrchestrationV2ThreadStreamItem => ({
+      kind: "snapshot",
+      snapshotSequence,
+      projection: {
+        ...v2Projection,
+        thread: { ...v2Projection.thread, title },
+        turnItems: [row.item],
+        visibleTurnItems: [row],
+      },
+      historyCursor: cursorAt(snapshotSequence, row),
+      hasMoreHistory: true,
+    });
+    const subscriptions = yield* Queue.unbounded<{
+      items: Queue.Queue<OrchestrationV2ThreadStreamItem>;
+      stopped: Deferred.Deferred<void>;
+    }>();
+    const requested: string[] = [];
+    const client = {
+      [WS_METHODS.peerLinksSubscribeThread]: () =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            const items = yield* Queue.unbounded<OrchestrationV2ThreadStreamItem>();
+            const stopped = yield* Deferred.make<void>();
+            yield* Effect.addFinalizer(() => Deferred.succeed(stopped, undefined));
+            yield* Queue.offer(subscriptions, { items, stopped });
+            return Stream.fromQueue(items);
+          }),
+        ),
+      [WS_METHODS.peerLinksThreadHistoryPage]: ({ cursor }: { cursor: string }) =>
+        Effect.sync((): OrchestrationV2ThreadHistoryPage => {
+          requested.push(cursor);
+          const revision = cursor === cursorAt(7, recent) ? 7 : 8;
+          return change === "history removed" && revision === 8
+            ? { snapshotSequence: 8, items: [oldest], nextCursor: null, hasMoreHistory: false }
+            : {
+                snapshotSequence: revision,
+                items: cursor === cursorAt(8, latest) ? [older, recent] : [older],
+                nextCursor: cursorAt(revision, older),
+                hasMoreHistory: true,
+              };
+        }),
+    } as unknown as RpcSession["client"];
+    const target = {
+      environmentId: EnvironmentId.make("via"),
+      input: { environmentId: EnvironmentId.make("linked"), threadId: v2ThreadId },
+    };
+    const supervisor = EnvironmentSupervisor.of({
+      target: { environmentId: target.environmentId, label: "Via" },
+      session: yield* SubscriptionRef.make(Option.some({ client })),
+    } as unknown as EnvironmentSupervisor["Service"]);
+    const route = yield* SubscriptionRef.make(0);
+    const environment = EnvironmentRegistry.of({
+      followStream: (_id, stream) =>
+        SubscriptionRef.changes(route).pipe(
+          Stream.switchMap(() => Stream.provideService(stream, EnvironmentSupervisor, supervisor)),
+        ),
+    } as Pick<EnvironmentRegistry["Service"], "followStream"> as EnvironmentRegistry["Service"]);
+    const runtime = Atom.runtime(Layer.succeed(EnvironmentRegistry, environment));
+    const links = createPeerLinkEnvironmentAtoms(runtime);
+    const registry = yield* Effect.acquireRelease(
+      Effect.sync(() => AtomRegistry.make()),
+      (registry) => Effect.sync(() => registry.dispose()),
+    );
+    const views = yield* Queue.unbounded<LinkedThreadView>();
+    const open = () =>
+      registry.subscribe(links.threadView(target), (result) => {
+        if (AsyncResult.isSuccess(result)) Queue.offerUnsafe(views, result.value);
+      });
+    const unmount = open();
+    const first = yield* Queue.take(subscriptions);
+    yield* Queue.offer(first.items, snapshot(7, "Original"));
+    (yield* Queue.take(views)).loadEarlier();
+    yield* Queue.take(views); // Loading.
+    expect((yield* Queue.take(views)).thread.historyCursor).toBe(cursorAt(7, older));
+
+    if (change === "live update") {
+      yield* Queue.offer(first.items, {
+        kind: "event",
+        sequence: 8,
+        event: {
+          id: EventId.make("retitle"),
+          type: "thread.metadata-updated",
+          threadId: v2ThreadId,
+          occurredAt: v2Now,
+          payload: { ...v2Projection.thread, title: "Renamed" },
+        },
+      });
+      expect((yield* Queue.take(views)).thread.sequence).toBe(8);
+    }
+    if (change === "route restart") {
+      yield* SubscriptionRef.set(route, 1);
+    } else {
+      unmount();
+      yield* Deferred.await(first.stopped);
+      open();
+    }
+    const reopened = yield* Queue.take(subscriptions);
+    const sequence = change === "route restart" ? 7 : 8;
+    const title = change === "route restart" ? "Original" : "Renamed";
+    const moved = change === "window moves";
+    yield* Queue.offer(reopened.items, snapshot(sequence, title, moved ? latest : recent));
+    const resumed = yield* Queue.take(views);
+    const removed = change === "history removed";
+    const refetched = removed || moved || change === "away update";
+    expect(resumed.thread.projection?.thread.title).toBe(title);
+    expect(resumed.thread.projection?.visibleTurnItems.map((row) => row.sourceItemId)).toEqual([
+      (removed ? oldest : older).sourceItemId,
+      recent.sourceItemId,
+      ...(moved ? [latest.sourceItemId] : []),
+    ]);
+    expect(resumed.thread.historyCursor).toBe(removed ? null : cursorAt(refetched ? 8 : 7, older));
+    expect(requested).toEqual(
+      refetched
+        ? [cursorAt(7, recent), cursorAt(8, moved ? latest : recent)]
+        : [cursorAt(7, recent)],
+    );
+  }).pipe(Effect.scoped),
 );
 
 const now = DateTime.makeUnsafe("2026-11-20T00:00:00.000Z");

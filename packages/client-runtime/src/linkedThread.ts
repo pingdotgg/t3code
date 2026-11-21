@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
@@ -7,6 +8,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { mFallback, msg } from "gt-i18n";
@@ -17,13 +19,10 @@ import {
   deriveThreadStructureRuntime,
 } from "./state/threadExecution.ts";
 import {
-  mergeOlderHistoryIntoProjection,
-  mergeOlderSubagentsIntoProjection,
-} from "./state/threadHistoryMerge.ts";
-import {
   applyThreadHistoryPage,
   applyThreadStreamItem,
   initialThreadStreamState,
+  prependThreadHistory,
   type ThreadStreamState,
 } from "./state/threadStream.ts";
 
@@ -216,6 +215,12 @@ export function isLinkedThreadWorking(projection: OrchestrationV2ThreadProjectio
 /** How long a view waits before asking again for a thread whose environment did not answer. */
 export const LINKED_THREAD_RETRY_MS = 15_000;
 
+interface LinkedHistoryWindow {
+  readonly sequence: number;
+  readonly cursor: string;
+  readonly oldest: Pick<OrchestrationV2ProjectedTurnItem, "sourceThreadId" | "sourceItemId"> | null;
+}
+
 /** A linked thread as its view holds it: the thread's own stream, reduced as any thread's is. */
 export interface LinkedThreadView {
   readonly thread: ThreadStreamState;
@@ -224,7 +229,8 @@ export interface LinkedThreadView {
   readonly history: { readonly loading: boolean; readonly failed: boolean };
   /** Pagination progress survives the temporary view that hides the cursor during reconnect. */
   readonly loadedHistory: {
-    readonly snapshotCursor: string;
+    readonly window: LinkedHistoryWindow;
+    readonly pages: number;
     readonly nextCursor: string | null;
   } | null;
   /** Loads the turns before the ones shown. Does nothing while a page loads or none is left. */
@@ -264,7 +270,7 @@ export const followLinkedThread = <E, R, E2, R2>(source: {
       const requests = yield* Queue.unbounded<void>();
       let requested = false;
       let previous = source.previous ?? null;
-      let snapshotCursor: string | null = null;
+      let snapshotWindow: LinkedHistoryWindow | null = null;
       // Both halves below run one step at a time, so each reads the view the other left.
       let view: LinkedThreadView = {
         thread: initialThreadStreamState,
@@ -272,7 +278,7 @@ export const followLinkedThread = <E, R, E2, R2>(source: {
         history: { loading: false, failed: false },
         loadedHistory: null,
         loadEarlier: () => {
-          if (requested || view.thread.historyCursor === null) return;
+          if (requested || snapshotWindow === null || view.thread.historyCursor === null) return;
           requested = true;
           Queue.offerUnsafe(requests, undefined);
         },
@@ -281,43 +287,78 @@ export const followLinkedThread = <E, R, E2, R2>(source: {
         view = { ...view, ...patch };
         return view;
       };
-      const onItem = (item: OrchestrationV2ThreadStreamItem) => {
-        const thread = applyThreadStreamItem(view.thread, item);
+      // Only snapshots rebuild history. Live events keep the steady-state reducer path.
+      const onItem = Effect.fnUntraced(function* (item: OrchestrationV2ThreadStreamItem) {
+        let thread = applyThreadStreamItem(view.thread, item);
         if (item.kind !== "snapshot") return show({ thread, error: null });
 
         const kept = view.thread.projection === null ? previous : view;
         previous = null;
-        snapshotCursor = thread.historyCursor;
         const loaded = kept?.loadedHistory;
-        // A different revision or window can invalidate both the old rows and their cursor.
-        if (
-          kept?.thread.projection &&
-          thread.projection &&
-          kept.thread.sequence === thread.sequence &&
-          loaded &&
-          loaded.snapshotCursor === snapshotCursor
-        ) {
-          return show({
-            thread: {
-              ...thread,
-              projection: mergeOlderSubagentsIntoProjection(
-                mergeOlderHistoryIntoProjection(
-                  thread.projection,
-                  kept.thread.projection.visibleTurnItems,
-                ),
-                kept.thread.projection.subagents,
-              ),
-              historyCursor: loaded.nextCursor,
-            },
-            loadedHistory: loaded,
-            error: null,
-          });
+        const oldest = thread.projection?.visibleTurnItems[0];
+        const window: LinkedHistoryWindow | null =
+          thread.historyCursor === null
+            ? null
+            : {
+                sequence: thread.sequence,
+                cursor: thread.historyCursor,
+                oldest: oldest
+                  ? { sourceThreadId: oldest.sourceThreadId, sourceItemId: oldest.sourceItemId }
+                  : null,
+              };
+        snapshotWindow = null;
+        let pages = 0;
+        let failed = false;
+        if (window && kept?.thread.projection && loaded) {
+          const sameAnchor =
+            window.oldest !== null &&
+            window.oldest.sourceThreadId === loaded.window.oldest?.sourceThreadId &&
+            window.oldest.sourceItemId === loaded.window.oldest.sourceItemId;
+          // The cursor embeds the snapshot sequence even when its anchor stays put.
+          if (
+            kept.thread.sequence === window.sequence &&
+            (window.cursor === loaded.window.cursor ||
+              (window.sequence > loaded.window.sequence && sameAnchor))
+          ) {
+            thread = prependThreadHistory(
+              thread,
+              {
+                items: kept.thread.projection.visibleTurnItems,
+                subagents: kept.thread.projection.subagents,
+              },
+              loaded.nextCursor,
+            );
+            pages = loaded.pages;
+          } else if (
+            window.sequence >= kept.thread.sequence &&
+            window.sequence > loaded.window.sequence
+          ) {
+            // Re-read the prior page depth from the new window so removed rows stay removed.
+            while (pages < loaded.pages && thread.historyCursor !== null) {
+              const cursor = thread.historyCursor;
+              const page = yield* Effect.option(source.historyPage(cursor));
+              if (Option.isNone(page) || page.value.snapshotSequence < window.sequence) {
+                failed = true;
+                break;
+              }
+              thread = applyThreadHistoryPage(thread, cursor, page.value);
+              pages += 1;
+              if (thread.historyCursor === cursor) break;
+            }
+          }
         }
-        return show({ thread, loadedHistory: null, error: null });
-      };
-      const attempt = (): Stream.Stream<LinkedThreadView, E, R> =>
+        snapshotWindow = window;
+        return show({
+          thread,
+          loadedHistory:
+            window && pages > 0 ? { window, pages, nextCursor: thread.historyCursor } : null,
+          history: { loading: false, failed },
+          error: null,
+        });
+      });
+      const attempt = (): Stream.Stream<LinkedThreadView, E, R | R2> =>
         source.items.pipe(
-          Stream.map(onItem),
+          Stream.mapEffect(onItem),
           Stream.catch((error) =>
             isLinkedThreadUnreachable(error)
               ? Stream.make(show({ error })).pipe(
@@ -332,7 +373,8 @@ export const followLinkedThread = <E, R, E2, R2>(source: {
         Stream.flatMap(() =>
           Stream.suspend(() => {
             const cursor = view.thread.historyCursor;
-            if (cursor === null) {
+            const window = snapshotWindow;
+            if (cursor === null || window === null) {
               requested = false;
               return Stream.empty;
             }
@@ -342,17 +384,25 @@ export const followLinkedThread = <E, R, E2, R2>(source: {
                   source.historyPage(cursor).pipe(
                     Effect.match({
                       onSuccess: (page) => {
+                        if (snapshotWindow !== window) return null;
                         const thread = applyThreadHistoryPage(view.thread, cursor, page);
                         return show({
                           thread,
                           loadedHistory:
-                            thread !== view.thread && snapshotCursor !== null
-                              ? { snapshotCursor, nextCursor: thread.historyCursor }
+                            thread !== view.thread
+                              ? {
+                                  window,
+                                  pages: (view.loadedHistory?.pages ?? 0) + 1,
+                                  nextCursor: thread.historyCursor,
+                                }
                               : view.loadedHistory,
                           history: { loading: false, failed: false },
                         });
                       },
-                      onFailure: () => show({ history: { loading: false, failed: true } }),
+                      onFailure: () =>
+                        snapshotWindow === window
+                          ? show({ history: { loading: false, failed: true } })
+                          : null,
                     }),
                     Effect.ensuring(
                       Effect.sync(() => {
@@ -365,6 +415,7 @@ export const followLinkedThread = <E, R, E2, R2>(source: {
             );
           }),
         ),
+        Stream.filter((view) => view !== null),
       );
       return Stream.merge(attempt(), earlier, { haltStrategy: "left" });
     }),
