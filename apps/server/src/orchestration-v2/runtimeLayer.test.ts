@@ -4793,6 +4793,81 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  // regression: #40307 a watch that never read its PR retried a generic CLI failure in silence
+  it.effect("tells the agent when a watch has never managed to read its pull request", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-never-read");
+      const projectId = ProjectId.make("pr-watch-never-read-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch never read",
+        workspaceRoot: "/workspace/watch-never-read",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-never-read-create"),
+        threadId,
+        projectId,
+        title: "Watch never read",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-never-read-start"),
+        threadId,
+        host: "gitlab.example.com",
+        repository: "group/project",
+        number: 123,
+        watching: true,
+        link: {
+          url: "https://gitlab.example.com/group/project/-/merge_requests/123",
+          source: "agent",
+        },
+      });
+      const cliFailure = (operation: string) =>
+        new PullRequestOperationError({
+          operation,
+          detail: "GitLab CLI command failed",
+          cause: new PullRequestProviderError({
+            provider: SourceControlProviderKind.make("gitlab"),
+            operation,
+            reason: "failed",
+            detail: "GitLab CLI command failed",
+          }),
+        });
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              watchFingerprint: () => Effect.succeed(null),
+              detail: () => Effect.fail(cliFailure("detail")),
+              activity: () => Effect.fail(cliFailure("activity")),
+            }),
+          ),
+        ),
+      );
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      for (let pass = 0; pass < 15; pass += 1) {
+        yield* reactor.sweep.pipe(Effect.andThen(worker.drain()));
+        yield* TestClock.adjust("2 minutes");
+      }
+
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.isNotEmpty(messages.filter((message) => message.notification !== undefined));
+    }),
+  );
+
   // regression: watched #26248 merged and its agent kept saying it was still watching
   it.effect("wakes once when a watched pull request merges, naming the merge commit", () =>
     Effect.gen(function* () {
