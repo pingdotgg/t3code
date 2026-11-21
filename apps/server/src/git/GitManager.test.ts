@@ -1085,6 +1085,18 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           /remote get-url|remote\.[^ ]+\.url|branch\.[^ ]+\.remote|refs\/remotes/.test(args),
         ),
       ).toEqual([]);
+
+      // A remote added outside T3 Code shows on the next read.
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+      ]);
+      yield* TestClock.adjust("2 seconds");
+      const afterRemote = yield* manager.localStatus({ cwd: repoDir });
+      expect(afterRemote.hasPrimaryRemote).toBe(true);
+      expect(afterRemote.sourceControlProvider?.kind).toBe("github");
     }),
   );
 
@@ -3395,6 +3407,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/status-open-over-merged"]);
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+      ]);
 
       const { manager } = yield* makeManager({
         providerScenario: {

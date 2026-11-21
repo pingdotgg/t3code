@@ -885,7 +885,7 @@ it.effect("resolves a branch's base once while its refs and branch config are un
       const spawner = ChildProcessSpawner.make((command) => {
         if (!ChildProcess.isStandardCommand(command)) return delegate.spawn(command);
         spawnedArgs.push(command.args.map(String));
-        return failRemoteLookup && command.args[0] === "remote"
+        return failRemoteLookup && command.args.includes("remote")
           ? Effect.fail(
               PlatformError.systemError({
                 _tag: "Unknown",
