@@ -248,15 +248,14 @@ function CommentBody({
 }
 
 /**
- * What Add to chat hands over for a remark: a remark on a line goes as its whole conversation,
- * the way fixing one does. Null when there are no words in it to talk about.
+ * What Add to chat hands over for a remark: a remark in a thread goes as its whole conversation.
+ * Null when there are no words in it to talk about.
  */
 function chatSubject(
   comment: PullRequestComment,
   thread: PullRequestConversationThread | undefined,
 ): PullRequestChatSubject | null {
-  // An overview thread has no line to attach, so it goes as its opening remark, as fixing it does.
-  if (thread !== undefined && thread.path !== null) {
+  if (thread !== undefined) {
     return thread.comments.some((entry) => visibleBody(entry.body) !== null)
       ? { kind: "thread", thread }
       : null;
@@ -768,8 +767,7 @@ export function PullRequestSummaryTab({
             ? null
             : { kind: "comment", comment }
           : { kind: "thread", thread };
-    // A reply goes with its conversation, from the card that heads it.
-    const chat = reply ? null : chatSubject(comment, thread);
+    const chat = chatSubject(comment, thread);
     return (
       <article
         key={`${detail.url}:${comment.id}`}
