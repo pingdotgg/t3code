@@ -25,6 +25,7 @@ import {
   antigravityPermissionMode,
   antigravityRuntimeModeForSessionMode,
   antigravitySteersWithPrompt,
+  antigravityStreamsAfterPrompt,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
@@ -237,10 +238,11 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
-    // A finished background command or timer wakes the agent with no prompt open: it streams a
-    // reply and asks for permissions, and no prompt response ever ends that reply.
-    enablePostSettleContinuation: true,
-    deferFinalizeForBackgroundWork: true,
+    // From agy 1.5.10, a finished background command or timer wakes the agent with no prompt open:
+    // it streams a reply and asks for permissions, and no prompt response ever ends that reply.
+    // Earlier 1.5 releases close their update stream on end_turn, so deferring finalize would hang.
+    enablePostSettleContinuation: antigravityStreamsAfterPrompt,
+    deferFinalizeForBackgroundWork: antigravityStreamsAfterPrompt,
     wakeOnDetachedRequest: true,
     replyEndsWithUsageUpdate: true,
     toolOutlivesPrompt: antigravityToolOutlivesPrompt,

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-20T23:50:00Z",
+  "updatedAt": "2026-11-21T10:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -92,7 +92,8 @@
       "versionPattern": "^(?:agy_acp_server_)?(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?$",
       "recommendedRange": ">=1.5.12 <2",
       "ranges": [
-        { "range": ">=1.5.0 <2", "status": "supported" },
+        { "range": ">=1.5.10 <2", "status": "supported" },
+        { "range": ">=1.5.0 <1.5.10", "status": "unsupported" },
         { "range": "<1.5.0", "status": "broken" }
       ]
     },

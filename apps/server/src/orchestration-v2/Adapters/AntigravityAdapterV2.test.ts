@@ -1004,6 +1004,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   options?: {
     readonly profileDirectory?: string;
     readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
+    readonly agentVersion?: string;
   },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1055,7 +1056,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
           cwd: input.cwd,
           env: {
             T3_ACP_ANTIGRAVITY: "1",
-            ...(steering === undefined ? {} : { T3_ACP_AGENT_VERSION: steering.agentVersion }),
+            T3_ACP_AGENT_VERSION: steering?.agentVersion ?? options?.agentVersion ?? "1.5.11",
           },
         },
       }).pipe(
@@ -1346,6 +1347,24 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
       assert.include(JSON.stringify(run), "Here is the chart.", "the reply is part of the run");
       assert.lengthOf(offers, 0, "the open run needs no continuation");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // agy below 1.5.10 exits its conversation update stream on end_turn and never emits a
+  // post-prompt completion for a backgrounded command, so holding the turn open would hang.
+  it.effect("completes the run on end_turn when agy below 1.5.10 leaves a command running", () =>
+    Effect.gen(function* () {
+      const { offers, startTurn, until } = yield* openSessionWithRunningCommand(
+        { WaitMsBeforeAsync: 10000 },
+        undefined,
+        undefined,
+        { agentVersion: "1.5.9" },
+      );
+      yield* startTurn(1, false);
+      const run = yield* until((event) => event.type === "turn.terminal");
+      const terminal = run.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+      assert.lengthOf(offers, 0);
     }).pipe(Effect.provide(layerSession)),
   );
 

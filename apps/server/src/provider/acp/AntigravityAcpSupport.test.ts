@@ -19,6 +19,7 @@ import {
   antigravityPermissionDisposition,
   antigravitySessionMeta,
   antigravitySessionMode,
+  antigravityStreamsAfterPrompt,
   buildAntigravityPrompt,
 } from "./AntigravityAcpSupport.ts";
 
@@ -60,14 +61,17 @@ function makeModelRuntime(
 
 describe("Antigravity release gates", () => {
   it.each([
-    { version: "1.5.0", ownName: false, advertisedAppend: false },
-    { version: "1.5.1", ownName: true, advertisedAppend: false },
-    { version: "1.5.7", ownName: true, advertisedAppend: true },
-    { version: undefined, ownName: false, advertisedAppend: false },
-    { version: "unknown", ownName: false, advertisedAppend: false },
+    { version: "1.5.0", ownName: false, advertisedAppend: false, streamsAfterPrompt: false },
+    { version: "1.5.1", ownName: true, advertisedAppend: false, streamsAfterPrompt: false },
+    { version: "1.5.7", ownName: true, advertisedAppend: true, streamsAfterPrompt: false },
+    { version: "1.5.9", ownName: true, advertisedAppend: true, streamsAfterPrompt: false },
+    { version: "1.5.10", ownName: true, advertisedAppend: true, streamsAfterPrompt: true },
+    { version: "1.5.11", ownName: true, advertisedAppend: true, streamsAfterPrompt: true },
+    { version: undefined, ownName: false, advertisedAppend: false, streamsAfterPrompt: false },
+    { version: "unknown", ownName: false, advertisedAppend: false, streamsAfterPrompt: false },
   ])(
-    "$version: advertised system append $advertisedAppend, own client name $ownName",
-    ({ version, ownName, advertisedAppend }) => {
+    "$version: advertised system append $advertisedAppend, own client name $ownName, post-prompt stream $streamsAfterPrompt",
+    ({ version, ownName, advertisedAppend, streamsAfterPrompt }) => {
       const initialize = {
         protocolVersion: 1,
         ...(advertisedAppend
@@ -85,6 +89,7 @@ describe("Antigravity release gates", () => {
           : undefined,
       );
       expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
+      expect(antigravityStreamsAfterPrompt(initialize)).toBe(streamsAfterPrompt);
     },
   );
 });

@@ -73,12 +73,22 @@ function compareVersions(left: ReadonlyArray<number>, right: ReadonlyArray<numbe
 const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
 // `agy acp` 1.5.0 steers a running turn with the next prompt; the 1.4 harness queues it.
 const PROMPT_STEERING_RELEASE = [1, 5, 0] as const;
+// `agy acp` 1.5.10 keeps its conversation update stream open after `session/prompt` returns;
+// earlier 1.5 releases close the stream on `end_turn` and never deliver post-prompt completions.
+const POST_PROMPT_STREAM_RELEASE = [1, 5, 10] as const;
 
 export const antigravitySteersWithPrompt = (
   initializeResult: EffectAcpSchema.InitializeResponse,
 ) => {
   const parsed = parseAntigravityVersion(initializeResult.agentInfo?.version);
   return parsed !== undefined && compareVersions(parsed, PROMPT_STEERING_RELEASE) >= 0;
+};
+
+export const antigravityStreamsAfterPrompt = (
+  initializeResult: EffectAcpSchema.InitializeResponse,
+) => {
+  const parsed = parseAntigravityVersion(initializeResult.agentInfo?.version);
+  return parsed !== undefined && compareVersions(parsed, POST_PROMPT_STREAM_RELEASE) >= 0;
 };
 
 export const antigravityAppendsSystemPrompt = (
