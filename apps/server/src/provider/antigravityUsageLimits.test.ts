@@ -691,6 +691,36 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect(
+    "does not report the native CLI's sign-in expired once its hourly access token lapses",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")),
+        );
+        const { probe, tokenPath } = yield* fixture({ missingToken: true });
+        // The 1.5.x CLI's access token lives an hour; its refresh token keeps the sign-in valid.
+        yield* fs.writeFileString(
+          path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+          JSON.stringify({
+            token: {
+              access_token: "access-token",
+              token_type: "Bearer",
+              refresh_token: "refresh-a",
+              expiry: "2026-10-09T10:59:00Z",
+              expires_in: 3600,
+            },
+            auth_method: "consumer",
+            id_token_email: "someone@example.com",
+          }),
+        );
+        const limits = yield* probe;
+        expect(limits.unavailable?.message ?? "").not.toMatch(/sign-in has expired/);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("reads a Gemini Enterprise keyring sign-in and reports when it has expired", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
