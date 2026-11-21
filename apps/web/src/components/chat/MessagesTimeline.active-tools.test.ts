@@ -1,6 +1,10 @@
 import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { deriveMessagesTimelineRows, liveWorkEntryLabel } from "./MessagesTimeline.logic";
+import {
+  deriveMessagesTimelineRows,
+  liveWorkEntryLabel,
+  workEntryDisplayLabel,
+} from "./MessagesTimeline.logic";
 
 describe("long active tool groups", () => {
   it.each([false, true])(
@@ -46,6 +50,51 @@ describe("long active tool groups", () => {
       if (expanded) {
         expect(details[0]?.groupedEntries).toEqual(live?.groupedEntries);
       }
+    },
+  );
+});
+
+describe("liveWorkEntryLabel for a command execution without a command", () => {
+  it.each([
+    {
+      status: "inProgress" as const,
+      active: true,
+      toolTitle: "Ran command",
+      expected: "Running command",
+    },
+    {
+      status: "inProgress" as const,
+      active: true,
+      toolTitle: "Command",
+      expected: "Running command",
+    },
+    {
+      status: "failed" as const,
+      active: false,
+      toolTitle: "Ran command",
+      expected: "Failed command",
+    },
+    {
+      status: "failed" as const,
+      active: false,
+      toolTitle: "Run command",
+      expected: "Failed command",
+    },
+  ])(
+    "labels a $status entry titled $toolTitle as $expected",
+    ({ status, active, toolTitle, expected }) => {
+      const entry = {
+        id: "work-empty-command",
+        createdAt: "2026-10-12T00:00:00Z",
+        label: "Ran command",
+        toolTitle,
+        tone: "tool" as const,
+        itemType: "command_execution" as const,
+        command: "",
+        toolLifecycleStatus: status,
+      };
+      expect(liveWorkEntryLabel(entry, undefined, active)).toBe(expected);
+      expect(workEntryDisplayLabel(entry, undefined)).toBe(expected);
     },
   );
 });
