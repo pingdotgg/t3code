@@ -444,7 +444,9 @@ linked issues wakes when any of them maps to **Wake**, settles only when all of 
 the thread as it is. A snooze from a rule has no wake time; the thread shows **∞** in the
 Snoozed list until a status change, **Wake thread**, or a message wakes it. A thread with work
 still running waits until it is idle before it snoozes or settles. A rule never settles a pinned
-thread.
+thread. Rules leave a thread whose **Auto-settle behavior** is **Never** alone: they do not wake,
+snooze, or settle it, and an action still waiting for the thread to go idle is dropped. After you
+switch it back to **Follow settings**, only later status changes count.
 
 ## GitHub stacks
 

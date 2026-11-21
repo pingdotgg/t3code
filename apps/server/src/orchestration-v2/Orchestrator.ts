@@ -15682,12 +15682,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const thread = yield* projectionStore
           .getThread(command.threadId)
           .pipe(Effect.mapError(toProjectionError));
-        // Organizing the thread or changing a rule after the decision cancels it.
+        // Organizing the thread, turning its auto-settle off, or changing a rule cancels a decision.
         if (
           automationFingerprint(settings.issueThreadAutomationRules) !== command.rulesFingerprint ||
           revision !== command.expectedRevision ||
           thread.deletedAt !== null ||
-          thread.archivedAt !== null
+          thread.archivedAt !== null ||
+          thread.autoSettleDisabledAt != null
         ) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,

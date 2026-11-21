@@ -278,6 +278,8 @@ const make = Effect.gen(function* () {
     const rulesFingerprint = automationFingerprint(config.issueThreadAutomationRules);
     const candidates = (yield* projections.getIssueAutomationCandidates()).flatMap(
       ({ thread, revision }) => {
+        // Rules leave a thread with auto-settle off alone; pruning drops any action it waited on.
+        if (thread.autoSettleDisabledAt != null) return [];
         const links = rules.flatMap((rule) =>
           (thread.issues ?? [])
             .filter((link) => matches(rule, link))
