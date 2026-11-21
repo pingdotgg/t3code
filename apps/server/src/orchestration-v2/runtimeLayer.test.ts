@@ -14700,6 +14700,7 @@ describe("subagent lifecycle cascade", () => {
           onlyIfUnused: true,
         });
         assert.isEmpty(kept.storedEvents);
+        assert.equal(yield* f.state("deletedAt", parent, app, native, grandchild), "0000");
 
         if (history === "pruned fresh event") {
           const store = yield* ProjectionStore.ProjectionStoreV2;
