@@ -1698,8 +1698,8 @@ describe("PreviewManager", () => {
 
           const pictureInPicture = yield* Effect.flip(
             manager.openPictureInPicture("tab_destroyed_guest"),
-          );
-          expect(pictureInPicture._tag).not.toBe("PreviewWebContentsNotFoundError");
+          ).pipe(Effect.orDie);
+          expect(pictureInPicture._tag).toBe("PreviewWebviewNotInitializedError");
         }),
       ),
   );
