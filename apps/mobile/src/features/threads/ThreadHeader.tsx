@@ -23,6 +23,8 @@ export function ThreadHeader(props: {
   readonly hasThreadCwd: boolean;
   readonly inspectorMode: ThreadInspectorMode | null;
   readonly onOpenFilesInspector: () => void;
+  /** Present only on a delegated child the user may pop out. */
+  readonly onPopOut?: () => void;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -44,6 +46,16 @@ export function ThreadHeader(props: {
         },
       ]
     : [];
+  if (props.onPopOut) {
+    actions.push({
+      accessibilityLabel: gt("Pop out to top level"),
+      icon: "arrow.up.right.circle",
+      subtitle: gt("Make it an ordinary thread"),
+      overflowOnly: true,
+      separateBackground: false,
+      onPress: props.onPopOut,
+    });
+  }
   const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
 
   return (

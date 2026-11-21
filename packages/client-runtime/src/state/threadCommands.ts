@@ -37,6 +37,7 @@ import {
   forkSideChat,
   forkThreadFromRun,
   markThreadUnread,
+  popOutThread,
   mergeThreadBack,
   promoteQueuedRun,
   resumeThreadQueue,
@@ -342,6 +343,12 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    popOut: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:pop-out",
+      execute: popOutThread,
+      scheduler,
+      concurrency,
+    }),
     updateMetadata: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:update-metadata",
       execute: updateThreadMetadata,
@@ -533,6 +540,7 @@ export function createThreadEnvironmentAtoms<R, E>(
   };
   const commands = {
     ...sent,
+    popOut: rowAction(sent.popOut),
     delete: rowAction(sent.delete),
     archive: rowAction(sent.archive),
     unarchive: rowAction(sent.unarchive),

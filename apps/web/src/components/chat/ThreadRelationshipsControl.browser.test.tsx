@@ -52,6 +52,9 @@ vi.mock(import("../../state/peerLinks"), () => ({
   peerLinkEnvironment: { readThread: {} } as never,
   useLinkedEnvironments: (() => new Map()) as never,
 }));
+vi.mock(import("../../hooks/useThreadActions"), () => ({
+  usePopOutThread: (() => async () => AsyncResult.success(undefined)) as never,
+}));
 vi.mock(import("../../lib/archivedThreadsState"), () => ({
   useArchivedThreadSnapshots: (() => ({
     snapshots: [{ environmentId: "environment", snapshot: { threads: state.archivedThreads } }],

@@ -109,7 +109,7 @@ import {
   DEFERRED_COMMAND_MESSAGE_CONDITION,
   JAVASCRIPT_TRIM_WHITESPACE,
 } from "./deferredCommandMessage.ts";
-import { readableSearchText } from "./messageSearchIndex.ts";
+import { indexThreadMessages, readableSearchText } from "./messageSearchIndex.ts";
 import {
   isFoldableWorkItem,
   isThreadHistoryUserTurn,
@@ -1064,6 +1064,7 @@ export function applyToProjection(
     case "thread.unsettled":
     case "thread.snoozed":
     case "thread.unsnoozed":
+    case "thread.detached":
     case "thread.auto-settle-set":
     case "thread.pinned":
     case "thread.unpinned":
@@ -2542,6 +2543,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.unsettled":
             case "thread.snoozed":
             case "thread.unsnoozed":
+            case "thread.detached":
             case "thread.auto-settle-set":
             case "thread.pinned":
             case "thread.unpinned":
@@ -2624,6 +2626,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   WHERE thread_id = ${event.threadId} AND fork_run_ids_json IS NULL
                 `;
               }
+              if (event.type === "thread.detached") yield* indexThreadMessages(sql, event.threadId);
               break;
             }
             case "run.created":
@@ -3413,6 +3416,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.unsettled" &&
             event.type !== "thread.snoozed" &&
             event.type !== "thread.unsnoozed" &&
+            event.type !== "thread.detached" &&
             event.type !== "thread.auto-settle-set" &&
             event.type !== "thread.pinned" &&
             event.type !== "thread.unpinned" &&
@@ -6823,8 +6827,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       threadId,
     ) =>
       sql<{ readonly child_thread_id: string }>`SELECT child_thread_id
-        FROM orchestration_v2_projection_subagents
+        FROM orchestration_v2_projection_subagents AS task
         WHERE thread_id = ${threadId} AND origin = 'app_owned' AND child_thread_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_threads AS child
+            WHERE child.thread_id = task.child_thread_id
+              AND json_extract(child.payload_json, '$.lineage.detachedFrom.threadId') = ${threadId}
+          )
         ORDER BY COALESCE(started_at, ''), subagent_id ASC`.pipe(
         Effect.map((rows) => [...new Set(rows.map((row) => ThreadId.make(row.child_thread_id)))]),
         Effect.mapError(controlReadError(threadId)),
