@@ -1359,9 +1359,7 @@ function NewKeybindingCommandSelect({
       value={draft.commandDraft || null}
       onValueChange={(value) => value && draft.setCommandDraft(value)}
     >
-      {/* The row opens from "Add keybinding", which it disables, so it takes the focus. */}
       <ComboboxTrigger
-        autoFocus
         aria-label={gt("Command")}
         render={<SelectButton size="sm" />}
         className={className}
