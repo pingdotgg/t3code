@@ -259,6 +259,8 @@ interface ChatMarkdownProps {
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
+  /** Identifies a streaming reply across remounts, so text already shown does not fade in again. */
+  streamingId?: string | undefined;
   skills?: ReadonlyArray<ServerProviderSkill>;
   className?: string;
   lineBreaks?: boolean;
@@ -289,6 +291,8 @@ export interface ChatMarkdownContextReference {
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+const shownStreamingIds = new Set<string>();
+
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
@@ -1941,6 +1945,15 @@ function ChatMarkdown({
 }: ChatMarkdownProps) {
   const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
     useChatMarkdownState({ text, inline, ...props });
+  const { isStreaming, streamingId } = props;
+  const [textAtMount] = useState(text);
+  const [remounted] = useState(
+    () => streamingId !== undefined && shownStreamingIds.has(streamingId),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Records the reply outside React so the next mount after a thread switch or virtualized scroll knows it was shown.
+  useEffect(() => {
+    if (isStreaming && streamingId !== undefined) shownStreamingIds.add(streamingId);
+  }, [isStreaming, streamingId]);
   const hasInsights = renderInsights && text.includes("★ Insight");
   // Streaming re-renders only the last block; offsets for task edits need the whole text.
   const streamingBlocks =
@@ -1991,7 +2004,9 @@ function ChatMarkdown({
           "text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]",
         className,
       )}
-      data-streaming={componentState.isStreaming ? "" : undefined}
+      data-animate-streaming={
+        componentState.isStreaming && (!remounted || text !== textAtMount) ? "" : undefined
+      }
       onCopy={handleCopy}
     >
       <ChatMarkdownRendererContext value={componentState}>
