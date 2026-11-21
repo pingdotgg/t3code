@@ -1348,6 +1348,29 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("reports the child's exit when a write fails because the child already died", () =>
+    Effect.gen(function* () {
+      const { stdio } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio: Stdio.make({
+          args: stdio.args,
+          stdin: stdio.stdin,
+          stdout: () => Sink.forEach(() => Effect.die("EPIPE")),
+          stderr: () => Sink.drain,
+        }),
+        terminationError: Effect.succeed(new AcpError.AcpProcessExitedError({ signal: "SIGABRT" })),
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* transport.notify("x/initialize", {}).pipe(Effect.exit);
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, AcpError.AcpProcessExitedError);
+      assert.equal((error as AcpError.AcpProcessExitedError).signal, "SIGABRT");
+    }),
+  );
+
   it.effect("does not treat intentional serverProtocol.end as a transport failure", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
