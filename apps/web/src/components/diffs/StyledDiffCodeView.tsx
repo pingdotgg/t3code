@@ -7,6 +7,7 @@ import {
   type UncontrolledCodeViewProps,
 } from "@pierre/diffs/react";
 /* oxlint-enable eslint/no-restricted-imports */
+import { useGT } from "gt-react";
 import type { Ref } from "react";
 
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
@@ -404,8 +405,21 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
   surface = "flush",
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
+  const gt = useGT();
+  // The change bars are colour alone; this names each changed line for screen readers.
+  const lineKindCss = `[data-indicators="bars"] [data-line][data-line-type="change-deletion"]::before {
+  content: "" / ${JSON.stringify(gt("Removed", { $context: "diff line, read by screen readers" }))};
+}
+[data-indicators="bars"] [data-line][data-line-type="change-addition"]::before {
+  content: "" / ${JSON.stringify(gt("Added", { $context: "diff line, read by screen readers" }))};
+}`;
   const cards = surface === "cards";
-  const unsafeCSS = [DIFF_VIEW_UNSAFE_CSS, cards ? FILE_CARDS_UNSAFE_CSS : null, unsafeCSSExtra]
+  const unsafeCSS = [
+    DIFF_VIEW_UNSAFE_CSS,
+    lineKindCss,
+    cards ? FILE_CARDS_UNSAFE_CSS : null,
+    unsafeCSSExtra,
+  ]
     .filter(Boolean)
     .join("\n");
   return (

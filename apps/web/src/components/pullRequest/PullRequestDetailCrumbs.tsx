@@ -1,11 +1,12 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useGT, useMessages } from "gt-react";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
 import { resolvePullRequestState } from "./pullRequestPresentation";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
-import { readLocalApi } from "~/localApi";
 import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -73,16 +74,19 @@ function BackButton({
 
 function NumberLink({
   detail,
+  threadRef,
   toneClassName,
   openOnHostText,
   focusable,
 }: {
   detail: CrumbsPullRequest;
+  threadRef: ScopedThreadRef | null;
   toneClassName: string;
   openOnHostText: string;
   focusable: boolean;
 }) {
   const gt = useGT();
+  const openLink = useOpenLink(threadRef);
   return (
     <span className={cn("inline-flex shrink-0", toneClassName)}>
       <Tooltip>
@@ -91,9 +95,9 @@ function NumberLink({
             <InlineButton
               tone={null}
               {...(focusable ? {} : { tabIndex: -1 })}
-              onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
+              onClick={(event) => void openLink(detail.url, { event }).catch(console.error)}
               onAuxClick={(event) => {
-                if (event.button === 1) void readLocalApi()?.shell.openExternal(detail.url);
+                if (event.button === 1) void openLink(detail.url, { event }).catch(console.error);
               }}
               onContextMenu={(event) => openNumberContextMenu(event, detail)}
               aria-label={gt(
@@ -119,6 +123,7 @@ function NumberLink({
 
 export function PullRequestDetailCrumbs({
   detail,
+  threadRef,
   toneClassName,
   repositoryUrl,
   openOnHostText,
@@ -126,6 +131,7 @@ export function PullRequestDetailCrumbs({
   children,
 }: {
   detail: CrumbsPullRequest | null;
+  threadRef: ScopedThreadRef | null;
   toneClassName: string | null;
   repositoryUrl: string | null;
   openOnHostText: string;
@@ -134,6 +140,7 @@ export function PullRequestDetailCrumbs({
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const openLink = useOpenLink(threadRef);
   const state = detail ? resolvePullRequestState(detail, messages) : null;
   return (
     <div className="mt-2 flex min-h-6 min-w-0 flex-wrap items-center gap-1.5 pl-4 text-label text-muted-foreground">
@@ -152,7 +159,13 @@ export function PullRequestDetailCrumbs({
                 repositoryUrl ? (
                   <InlineButton
                     tone="muted"
-                    onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
+                    onClick={(event) =>
+                      void openLink(repositoryUrl, { event }).catch(console.error)
+                    }
+                    onAuxClick={(event) => {
+                      if (event.button === 1)
+                        void openLink(repositoryUrl, { event }).catch(console.error);
+                    }}
                   >
                     {detail.repository}
                   </InlineButton>
@@ -169,6 +182,7 @@ export function PullRequestDetailCrumbs({
           </Tooltip>
           <NumberLink
             detail={detail}
+            threadRef={threadRef}
             toneClassName={toneClassName}
             openOnHostText={openOnHostText}
             focusable
