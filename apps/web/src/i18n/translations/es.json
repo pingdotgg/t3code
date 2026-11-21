@@ -6777,6 +6777,7 @@
   "ff49cda2006d155a": "No se pudo comprobar la pertenencia a la pila",
   "be49947d8fca9505": "Comprobando la pertenencia a la pila…",
   "a2e58d83bc5daf36": "Fusión automática",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "6a2b21500ebf1305": "Contraer el panel de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
   "9f07c0e2e791c6b0": "{count, plural, one {{formatted} archivo cambiado} other {{formatted} archivos cambiados}}",
   "1f7445dfeeb0502d": "Copiar el comando de checkout",

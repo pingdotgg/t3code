@@ -3050,6 +3050,7 @@
   "1d44f8d46fa8508e": "Markera utkastet som redo för granskning innan du mergar.",
   "6ffcf2825c96d94b": "Lös grenkonflikterna innan du mergar.",
   "ceac7373aef06b11": "Repot har inga tillgängliga merge-metoder.",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "80bb66fe1c536e09": "Öppna på {provider}",
   "dd7e258483f58a8f": "Arkiverad tråd",
   "754d11d1f210a398": "Starta en ny tråd",

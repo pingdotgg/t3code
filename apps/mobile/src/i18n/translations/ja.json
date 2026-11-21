@@ -3041,6 +3041,7 @@
   "1d44f8d46fa8508e": "マージする前に、この下書きをレビューの準備完了にしてください。",
   "6ffcf2825c96d94b": "マージする前にブランチの競合を解決してください。",
   "ceac7373aef06b11": "このリポジトリで利用できるマージ方法はありません。",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "80bb66fe1c536e09": "{provider} で開く",
   "dd7e258483f58a8f": "アーカイブ済みのスレッド",
   "754d11d1f210a398": "新しいスレッドを開始",

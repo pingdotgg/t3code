@@ -502,7 +502,7 @@ export const make = Effect.gen(function* () {
 
     getChangeRequestChecks: (input) =>
       cli.revalidateChecks(input, readChecks(input)).pipe(
-        Effect.map(({ state, checks }) => ({ state, checks })),
+        Effect.map(({ state, checks, mergeBlocked }) => ({ state, checks, mergeBlocked })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
 

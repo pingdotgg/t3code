@@ -6777,6 +6777,7 @@
   "ff49cda2006d155a": "Не удалось проверить членство в стеке",
   "be49947d8fca9505": "Проверка членства в стеке…",
   "a2e58d83bc5daf36": "Автослияние",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "6a2b21500ebf1305": "{term, select, mr {Свернуть панель мерж-реквеста} cr {Свернуть панель запроса на изменение} other {Свернуть панель пул-реквеста}}",
   "9f07c0e2e791c6b0": "{count, plural, one {{formatted} изменённый файл} few {{formatted} изменённых файла} many {{formatted} изменённых файлов} other {{formatted} изменённого файла}}",
   "1f7445dfeeb0502d": "Копировать команду checkout",

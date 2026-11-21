@@ -3045,6 +3045,7 @@
   "1d44f8d46fa8508e": "병합하기 전에 이 초안을 검토 준비 완료로 표시하세요.",
   "6ffcf2825c96d94b": "병합하기 전에 브랜치 충돌을 해결하세요.",
   "ceac7373aef06b11": "이 저장소에는 사용 가능한 병합 방법이 없습니다.",
+  "2ec6fd5239985d64": "The repository's rules block merging until their requirements are met.",
   "80bb66fe1c536e09": "{provider}에서 열기",
   "dd7e258483f58a8f": "보관된 스레드",
   "754d11d1f210a398": "새 스레드 시작",
