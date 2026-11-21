@@ -34,6 +34,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { ScopedSwitch } from "./ScopedSwitch";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { Button } from "../ui/button";
@@ -333,9 +334,9 @@ export function SourceControlWritingSettingsSection() {
           "Add a Guide tab to pull requests. An agent explains the changes and points out decisions that need review.",
         )}
         control={
-          <Switch
-            mixed={mixedReviewGuidesEnabled}
-            checked={mixedReviewGuidesEnabled ? false : settings.reviewGuidesEnabled}
+          <ScopedSwitch
+            settingKeys={["reviewGuidesEnabled"]}
+            checked={settings.reviewGuidesEnabled}
             onCheckedChange={(checked) => updateSettings({ reviewGuidesEnabled: Boolean(checked) })}
             aria-label={gt("Review guides")}
           />
@@ -523,9 +524,9 @@ export function SourceControlWritingSettingsSection() {
             ) : null
           }
           control={
-            <Switch
+            <ScopedSwitch
               mixed={templatesMixed}
-              checked={templatesMixed ? false : style.followChangeRequestTemplates}
+              checked={style.followChangeRequestTemplates}
               onCheckedChange={(checked) =>
                 updateSettings({
                   sourceControlWritingStyle: {
