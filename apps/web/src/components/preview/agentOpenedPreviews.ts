@@ -7,6 +7,7 @@ import type {
   DeviceServiceState,
   EnvironmentId,
   PreviewSessionSnapshot,
+  PrinterServiceState,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -27,6 +28,7 @@ import { useRightPanelStore } from "../../rightPanelStore";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../../rightPanelLayout";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { deviceEnvironment } from "../../state/device";
+import { printerEnvironment } from "../../state/printer";
 import { readEnvironmentSupportsServerBrowser } from "../../state/entities";
 import { environmentSummaries } from "../../state/presentation";
 
@@ -215,10 +217,39 @@ export function floatDeviceSurface(
 
 export function resetDeviceSessionBaselinesForTests(): void {
   deviceSessionBaselines.clear();
+  printerSessionBaselines.clear();
+}
+
+const printerSessionBaselines = new Map<EnvironmentId, ReadonlySet<string>>();
+
+const printerSessionKey = (session: PrinterServiceState["sessions"][number]) =>
+  `${session.threadId}:${session.printerId}:${session.openedAt}`;
+
+function applyPrinterSnapshot(
+  environmentId: EnvironmentId,
+  state: PrinterServiceState,
+  options: { readonly sheetLayout: boolean },
+): void {
+  const previous = printerSessionBaselines.get(environmentId);
+  printerSessionBaselines.set(environmentId, new Set(state.sessions.map(printerSessionKey)));
+  if (!previous || options.sheetLayout) return;
+  for (const session of state.sessions) {
+    if (previous.has(printerSessionKey(session))) continue;
+    const printer = state.printers.find((entry) => entry.id === session.printerId);
+    const threadRef = scopeThreadRef(environmentId, session.threadId);
+    useRightPanelStore.getState().openPrinter(
+      threadRef,
+      {
+        printerId: session.printerId,
+        ...(printer ? { label: printer.label } : {}),
+      },
+      true,
+    );
+  }
 }
 
 function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
-  return appAtomRegistry.subscribe(
+  const stopDevices = appAtomRegistry.subscribe(
     deviceEnvironment.state({ environmentId, input: {} }),
     (result) => {
       const state = AsyncResult.getOrElse(result, () => null);
@@ -230,6 +261,21 @@ function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
     },
     { immediate: true },
   );
+  const stopPrinters = appAtomRegistry.subscribe(
+    printerEnvironment.state({ environmentId, input: {} }),
+    (result) => {
+      const state = AsyncResult.getOrElse(result, () => null);
+      if (state === null) return;
+      applyPrinterSnapshot(environmentId, state, {
+        sheetLayout: window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches,
+      });
+    },
+    { immediate: true },
+  );
+  return () => {
+    stopDevices();
+    stopPrinters();
+  };
 }
 
 /**

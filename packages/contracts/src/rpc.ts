@@ -366,6 +366,19 @@ import {
   DeviceShutdownInput,
 } from "./device.ts";
 import {
+  PrinterActionInput,
+  PrinterCloseInput,
+  PrinterConfigureInput,
+  PrinterError,
+  PrinterListInput,
+  PrinterOpenInput,
+  PrinterServiceState,
+  PrinterSession,
+  PrinterSnapshot,
+  PrinterTestConnectionInput,
+  PrinterTestConnectionResult,
+} from "./printer.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
@@ -563,6 +576,13 @@ export const WS_METHODS = {
   deviceDetail: "device.detail",
   deviceAction: "device.action",
 
+  printerConfigure: "printer.configure",
+  printerTestConnection: "printer.testConnection",
+  printerList: "printer.list",
+  printerOpen: "printer.open",
+  printerClose: "printer.close",
+  printerAction: "printer.action",
+
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverGetNpmRelease: "server.getNpmRelease",
@@ -705,6 +725,7 @@ export const WS_METHODS = {
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
+  subscribePrinterState: "subscribePrinterState",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -2068,6 +2089,48 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
+const WsPrinterConfigureRpc = Rpc.make(WS_METHODS.printerConfigure, {
+  payload: PrinterConfigureInput,
+  success: PrinterServiceState,
+  error: Schema.Union([PrinterError, EnvironmentAuthorizationError]),
+});
+
+const WsPrinterTestConnectionRpc = Rpc.make(WS_METHODS.printerTestConnection, {
+  payload: PrinterTestConnectionInput,
+  success: PrinterTestConnectionResult,
+  error: Schema.Union([PrinterError, EnvironmentAuthorizationError]),
+});
+
+const WsPrinterListRpc = Rpc.make(WS_METHODS.printerList, {
+  payload: PrinterListInput,
+  success: PrinterServiceState,
+  error: Schema.Union([PrinterError, EnvironmentAuthorizationError]),
+});
+
+const WsPrinterOpenRpc = Rpc.make(WS_METHODS.printerOpen, {
+  payload: PrinterOpenInput,
+  success: PrinterSession,
+  error: Schema.Union([PrinterError, EnvironmentAuthorizationError]),
+});
+
+const WsPrinterCloseRpc = Rpc.make(WS_METHODS.printerClose, {
+  payload: PrinterCloseInput,
+  error: Schema.Union([PrinterError, EnvironmentAuthorizationError]),
+});
+
+const WsPrinterActionRpc = Rpc.make(WS_METHODS.printerAction, {
+  payload: PrinterActionInput,
+  success: PrinterSnapshot,
+  error: Schema.Union([PrinterError, EnvironmentAuthorizationError]),
+});
+
+const WsSubscribePrinterStateRpc = Rpc.make(WS_METHODS.subscribePrinterState, {
+  payload: Schema.Struct({}),
+  success: PrinterServiceState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: OrchestrationV2RpcSchemas.dispatchCommand.output,
@@ -2591,6 +2654,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
+  WsPrinterConfigureRpc,
+  WsPrinterTestConnectionRpc,
+  WsPrinterListRpc,
+  WsPrinterOpenRpc,
+  WsPrinterCloseRpc,
+  WsPrinterActionRpc,
+  WsSubscribePrinterStateRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

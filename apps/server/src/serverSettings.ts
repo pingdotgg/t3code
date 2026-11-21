@@ -67,6 +67,7 @@ import {
   mapSettingsSecrets,
   mapSettingsSecretValues,
   withoutRemovedSecretProviderReferences,
+  withoutRedirectedPrinterTokens,
   withoutRedirectedSimlockTokens,
   SECRET_REDACTED,
   type SettingsSecret,
@@ -314,7 +315,16 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
       Ref.get(currentSettingsRef).pipe(
-        Effect.flatMap(update),
+        Effect.flatMap((current) =>
+          update(current).pipe(
+            Effect.map((next) =>
+              withoutRedirectedPrinterTokens(
+                current,
+                withoutRedirectedSimlockTokens(current, next),
+              ),
+            ),
+          ),
+        ),
         Effect.flatMap(normalizeServerSettings),
         Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
         Effect.map(resolveTextGenerationProvider),
@@ -1205,9 +1215,12 @@ const make = Effect.gen(function* () {
         }
         // An older client echoes a reference as the redacted marker; restore it before vetting so
         // a removed provider's reference is cleared below rather than restored by persistence.
-        const updated = withoutRedirectedSimlockTokens(
+        const updated = withoutRedirectedPrinterTokens(
           current,
-          withEchoedSecretReferences(current, yield* update(current)),
+          withoutRedirectedSimlockTokens(
+            current,
+            withEchoedSecretReferences(current, yield* update(current)),
+          ),
         );
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);

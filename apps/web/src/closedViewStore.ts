@@ -84,6 +84,11 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
             typeof surface.target.name === "string" &&
             (surface.target.platform === "ios" || surface.target.platform === "android")))
       );
+    case "printer":
+      return (
+        (surface.title === undefined || typeof surface.title === "string") &&
+        (surface.printerId === undefined || typeof surface.printerId === "string")
+      );
     case "thread":
       return typeof surface.threadId === "string" && surface.id === `thread:${surface.threadId}`;
     case "linked-thread":

@@ -26,6 +26,7 @@ const RIGHT_PANEL_KINDS = [
   "file",
   "preview",
   "device",
+  "printer",
   "terminal",
   "pull-request",
   "pull-requests",
@@ -48,6 +49,7 @@ export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
   | { id: "device" | `device:${string}`; kind: "device"; target?: DeviceTabTarget; title?: string }
+  | { id: "printer" | `printer:${string}`; kind: "printer"; printerId?: string; title?: string }
   | {
       id: `terminal:${string}`;
       kind: "terminal";
@@ -130,7 +132,7 @@ export function decodeThreadSurface(surface: object): ThreadSurface | null {
 }
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 16;
+const RIGHT_PANEL_STORAGE_VERSION = 17;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -196,6 +198,11 @@ interface RightPanelStoreState {
   /** Records the title the linked environment gave, so the tab and a reopened one show it. */
   setLinkedThreadTitle: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
+  openPrinter: (
+    ref: ScopedThreadRef,
+    target: { readonly printerId: string; readonly label?: string },
+    automatic?: boolean,
+  ) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
@@ -299,6 +306,8 @@ const singletonSurface = (
       return { id: "pull-requests", kind };
     case "device":
       return { id: "device", kind };
+    case "printer":
+      return { id: "printer", kind };
   }
 };
 
@@ -677,6 +686,30 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         }),
                       ];
                     }
+                    if (surface.kind === "printer") {
+                      if (
+                        typeof surface.id !== "string" ||
+                        (surface.id !== "printer" && !surface.id.startsWith("printer:"))
+                      ) {
+                        return [];
+                      }
+                      const printerId =
+                        typeof surface.printerId === "string" && surface.printerId.length > 0
+                          ? surface.printerId
+                          : undefined;
+                      const title =
+                        typeof surface.title === "string" && surface.title.length > 0
+                          ? surface.title
+                          : undefined;
+                      return [
+                        {
+                          id: surface.id,
+                          kind: "printer" as const,
+                          ...(printerId ? { printerId } : {}),
+                          ...(title ? { title } : {}),
+                        },
+                      ];
+                    }
                     if (surface.kind !== "terminal") return [surface];
                     if (
                       !("resourceId" in surface) ||
@@ -870,6 +903,23 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               },
               existing ?? surface,
             );
+          }),
+        ),
+      openPrinter: (ref, target, automatic = false) =>
+        set((state) =>
+          (automatic ? automaticUpdate : userAction)(state, scopedThreadKey(ref), (current) => {
+            const id = `printer:${encodeURIComponent(target.printerId)}` as const;
+            const surface: RightPanelSurface = {
+              id,
+              kind: "printer",
+              printerId: target.printerId,
+              ...(target.label ? { title: target.label } : {}),
+            };
+            const existing = current.surfaces.find((entry) => entry.id === id);
+            const surfaces = existing
+              ? current.surfaces.filter((entry) => entry.id !== "printer")
+              : current.surfaces.map((entry) => (entry.id === "printer" ? surface : entry));
+            return upsertSurface({ ...current, surfaces }, existing ?? surface);
           }),
         ),
       openThread: (ref, threadId) =>

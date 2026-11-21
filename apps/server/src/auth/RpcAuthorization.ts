@@ -238,6 +238,13 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.deviceDetail]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeDeviceState]: AuthOrchestrationReadScope,
+  [WS_METHODS.printerConfigure]: AuthSettingsWriteScope,
+  [WS_METHODS.printerTestConnection]: AuthSettingsWriteScope,
+  [WS_METHODS.printerList]: AuthOrchestrationReadScope,
+  [WS_METHODS.printerOpen]: AuthOrchestrationOperateScope,
+  [WS_METHODS.printerClose]: AuthOrchestrationOperateScope,
+  [WS_METHODS.printerAction]: AuthOrchestrationOperateScope,
+  [WS_METHODS.subscribePrinterState]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
@@ -328,6 +335,8 @@ const requiredScopesForRpcCall = (
   if (
     (method === WS_METHODS.deviceSimlockIdentity ||
       method === WS_METHODS.deviceEasAccount ||
+      method === WS_METHODS.printerConfigure ||
+      method === WS_METHODS.printerTestConnection ||
       method === WS_METHODS.serverListTextGeneratorModels) &&
     containsSecretReference(payload)
   ) {

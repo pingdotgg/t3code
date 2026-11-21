@@ -21,6 +21,7 @@ import {
   DeviceToolError,
   OrchestratorMcpFailure,
   PreviewAutomationError,
+  PrinterToolError,
   ProviderInteractionMode,
   type RunId,
   RuntimeMode,
@@ -33,6 +34,7 @@ import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import * as PrinterService from "../printer/PrinterService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -92,6 +94,12 @@ import {
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
+import * as PrinterHandlers from "./toolkits/printer/handlers.ts";
+import {
+  PrinterCameraSnapshotTool,
+  PrinterSnapshotToolkit,
+  PrinterStandardToolkit,
+} from "./toolkits/printer/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { MessageToolkit } from "./toolkits/message/tools.ts";
 import * as MessageHandlers from "./toolkits/message/handlers.ts";
@@ -975,6 +983,36 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
 
 const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 const isDeviceToolError = Schema.is(DeviceToolError);
+const isPrinterToolError = Schema.is(PrinterToolError);
+
+const registerPrinterCameraSnapshot = Effect.fn("McpHttpServer.registerPrinterCameraSnapshot")(
+  function* () {
+    const printers = yield* PrinterService.PrinterService;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const built = yield* decodeAsAdvertised(PrinterSnapshotToolkit);
+    yield* registerImageTool(
+      PrinterCameraSnapshotTool,
+      (payload) =>
+        built
+          .handle("printer_camera_snapshot", payload)
+          .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+      (effect) =>
+        effect.pipe(
+          Effect.provideService(PrinterService.PrinterService, printers),
+          Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+        ),
+      "snapshot",
+      (error) => {
+        if (!isPrinterToolError(error)) {
+          return isOrchestratorMcpFailure(error)
+            ? error.message
+            : (parameterValidationMessage(error) ?? "Printer camera snapshot failed.");
+        }
+        return error.message;
+      },
+    );
+  },
+);
 
 const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(function* () {
   const htmlRender = yield* HtmlRender.HtmlRender;
@@ -1382,6 +1420,21 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+const layerPrinterStandardToolkitRegistration = toolkitRegistration(
+  PrinterStandardToolkit,
+  PrinterHandlers.layerStandard,
+);
+
+const layerPrinterSnapshotRegistration = imageToolRegistration(
+  registerPrinterCameraSnapshot(),
+  PrinterHandlers.layerSnapshot,
+);
+
+export const layerPrinterToolkit = Layer.mergeAll(
+  layerPrinterStandardToolkitRegistration,
+  layerPrinterSnapshotRegistration,
+);
+
 /**
  * `McpServer` for in-process calls, which provide `McpInvocationContext`
  * around `callTool` as the auth middleware does for each /mcp request.
@@ -1425,6 +1478,7 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerIssuesToolkit,
   layerDeviceToolkit,
+  layerPrinterToolkit,
   layerHtmlToolkit,
   layerMessageToolkit,
 );

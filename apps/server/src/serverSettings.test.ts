@@ -1754,6 +1754,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           provider: SecretProviderId.make("personal"),
           reference: "op://Private/Simlock/token",
         };
+        const printerHaReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Printer/ha-token",
+        };
+        const printerMoonrakerReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Printer/moonraker-key",
+        };
+        const printerOctoPrintReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Printer/octoprint-key",
+        };
         const antigravityReference = {
           provider: SecretProviderId.make("personal"),
           reference: "op://Private/Gemini/key",
@@ -1806,6 +1818,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               maxLeaseMinutes: 60,
             },
           ],
+          printers: [
+            {
+              kind: "home-assistant-bambu",
+              id: "bambu-1",
+              label: "Bambu P1S",
+              baseUrl: "http://homeassistant.local:8123",
+              accessToken: printerHaReference,
+              pollIntervalSeconds: 4,
+            },
+            {
+              kind: "moonraker",
+              id: "voron-1",
+              label: "Voron 2.4",
+              baseUrl: "http://voron.local:7125",
+              apiKey: printerMoonrakerReference,
+              pollIntervalSeconds: 4,
+            },
+            {
+              kind: "octoprint",
+              id: "prusa-1",
+              label: "Prusa MK4",
+              baseUrl: "http://octopi.local:5000",
+              apiKey: printerOctoPrintReference,
+              pollIntervalSeconds: 4,
+            },
+          ],
           providerInstances: {
             [antigravity]: {
               driver: ProviderDriverKind.make("antigravity"),
@@ -1831,6 +1869,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.equal(legacy.textGenerators[router]?.apiKey, SECRET_REDACTED);
         assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
+        assert.equal(
+          legacy.printers[0]?.kind === "home-assistant-bambu"
+            ? legacy.printers[0].accessToken
+            : undefined,
+          SECRET_REDACTED,
+        );
+        assert.equal(
+          legacy.printers[1]?.kind === "moonraker" ? legacy.printers[1].apiKey : undefined,
+          SECRET_REDACTED,
+        );
+        assert.equal(
+          legacy.printers[2]?.kind === "octoprint" ? legacy.printers[2].apiKey : undefined,
+          SECRET_REDACTED,
+        );
         const configOf = (settings: ServerSettings, id: ProviderInstanceId) =>
           settings.providerInstances[id]?.config as Record<string, unknown> | undefined;
         assert.equal(configOf(legacy, antigravity)?.apiKey, SECRET_REDACTED);
@@ -1842,6 +1894,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           textGenerators: legacy.textGenerators,
           easDeviceHosts: legacy.easDeviceHosts,
           simlockDeviceHosts: legacy.simlockDeviceHosts,
+          printers: legacy.printers,
           providerInstances: legacy.providerInstances,
         });
         assert.deepEqual(echoed.sourceControlHosts.bitbucket?.accessToken, reference);
@@ -1858,6 +1911,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         assert.deepEqual(echoed.easDeviceHosts[0]?.accessToken, easReference);
         assert.deepEqual(echoed.simlockDeviceHosts[0]?.agentToken, simlockReference);
+        assert.deepEqual(
+          echoed.printers[0]?.kind === "home-assistant-bambu"
+            ? echoed.printers[0].accessToken
+            : undefined,
+          printerHaReference,
+        );
+        assert.deepEqual(
+          echoed.printers[1]?.kind === "moonraker" ? echoed.printers[1].apiKey : undefined,
+          printerMoonrakerReference,
+        );
+        assert.deepEqual(
+          echoed.printers[2]?.kind === "octoprint" ? echoed.printers[2].apiKey : undefined,
+          printerOctoPrintReference,
+        );
         assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
         assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
@@ -1933,6 +2000,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             maxConcurrentSessions: 2,
           },
         ],
+        printers: [
+          {
+            kind: "home-assistant-bambu",
+            id: "bambu-1",
+            label: "Bambu P1S",
+            baseUrl: "http://homeassistant.local:8123",
+            accessToken: personal("Printer/ha-token"),
+            pollIntervalSeconds: 4,
+          },
+          {
+            kind: "moonraker",
+            id: "voron-1",
+            label: "Voron 2.4",
+            baseUrl: "http://voron.local:7125",
+            apiKey: work,
+            pollIntervalSeconds: 4,
+          },
+        ],
       });
 
       // An older client's save echoes a reference it cannot decode as the redacted marker.
@@ -1960,6 +2045,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.equal(removed.usageLimitSources[hub]?.managementKey, "");
       assert.deepEqual(removed.cloudSpeechCredentials, { openai: "", xai: work, openrouter: "" });
       assert.equal(removed.easDeviceHosts[0]?.accessToken, "");
+      assert.equal(
+        removed.printers[0]?.kind === "home-assistant-bambu"
+          ? removed.printers[0].accessToken
+          : undefined,
+        "",
+      );
+      assert.deepEqual(
+        removed.printers[1]?.kind === "moonraker" ? removed.printers[1].apiKey : undefined,
+        work,
+      );
       assert.deepEqual(Object.keys(removed.secretProviders), ["work"]);
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
@@ -1973,6 +2068,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "cloudSpeechCredentials.openrouter",
         "easDeviceHosts.[].accessToken",
         "simlockDeviceHosts.[].agentToken",
+        "printers.[].accessToken",
+        "printers.[].apiKey",
+        "printers.[].apiKey",
         "usageLimitSources.*.managementKey",
         "textGenerators.*.apiKey",
       ]);
