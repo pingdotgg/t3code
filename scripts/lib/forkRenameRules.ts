@@ -154,6 +154,7 @@ const MCP_MATCHER_WIDENINGS = [
     to: 'lathe", "t3-code", "t3_code", "t3code"',
     done: '"lathe", "',
   },
+  { from: "t3_?code", to: "(?:lathe|t3_?code)", done: "(?:lathe|" },
 ] as const;
 
 const mcpMatcherWidening = (o: RenameOccurrence) => {
@@ -400,6 +401,26 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
       /base64,|integrity|sha(?:256|512)-/.test(o.line) || /^[A-Za-z0-9+/=]{40,}$/.test(stem(o)),
   },
 
+  {
+    id: "kept-cursor-sdk-patch",
+    class: "kept",
+    reason:
+      "Names inside the @cursor/sdk patch: the bundle's own minified names (T30) and the locals the patch adds (__t3m, __t3kept); the patch stays as written so it applies to the published bundle.",
+    path: /^patches\/@cursor__sdk@[^/]+\.patch$/,
+  },
+
+  {
+    id: "id-scenario-harness",
+    class: "identifier",
+    reason:
+      "The e2e scenario harness: its t3.ts and t3-mobile.ts modules, the t3 fixture every scenario takes, the worktree branch prefix it lists, and its simulator tenant, tmux socket and home argument. prove-scenario.ts finds iOS scenarios by the mobile module's name, so both rename together.",
+    test: (o) =>
+      ((o.path.startsWith("scripts/scenarios/") || o.path === "scripts/prove-scenario.ts") &&
+        /^(?:\.\/)?t3(?:-mobile)?(?:\.ts)?[:/]?$|^t3-scenario-[a-z-]+-\$$/.test(o.token)) ||
+      (o.path === "scripts/scenarios/start-app.ts" && o.token === "t3-home") ||
+      (o.path === "scripts/e2e.config.ts" && o.token === "t3-scenarios"),
+  },
+
   // wire-peer: exchanged with services and clients the fork does not run.
   // Lathe builds use upstream's T3 Connect (relay.t3.codes, clerk.t3.codes,
   // app.t3.codes), and upstream's hosted app and mobile app can talk to a
@@ -437,9 +458,23 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "wire-client-protocol",
     class: "wire-peer",
     reason:
-      "Server surface upstream clients speak: discovery, the protocol header, the bootstrap token type, telemetry shapes.",
+      "Server surface upstream clients speak: discovery, the protocol header, the preview tunnel's refusal headers (the kept mobile app's native tunnel reads them too), the bootstrap token type, telemetry shapes.",
     token:
-      /\/\.well-known\/t3\b|x-t3-orchestration-protocol|urn:t3:params|(?:^|\.)["'`]?allT3(?:["'`:]?$|\.)|unknown-t3|^["'`]?t3_kind["'`]?/,
+      /\/\.well-known\/t3\b|x-t3-orchestration-protocol|x-t3-tunnel-(?:port-refused|disabled)|urn:t3:params|(?:^|\.)["'`]?allT3(?:["'`:]?$|\.)|unknown-t3|^["'`]?t3_kind["'`]?/,
+  },
+  {
+    id: "wire-server-installation-kind",
+    class: "wire-peer",
+    reason:
+      "The t3-launcher server installation kind in environment capabilities. Upstream's hosted and mobile clients build a Lathe server's update command from it, and a Lathe client an upstream server's; no Lathe release stores or sends another name.",
+    token: /^["'`]?t3-launcher["'`]?[,;)]?$/,
+  },
+  {
+    id: "wire-mcp-app-color-scheme",
+    class: "wire-peer",
+    reason:
+      "The t3-color-scheme query parameter: the client sets it on an MCP app frame URL and the server's injected bootstrap reads it, so upstream's hosted app and a Lathe server must agree.",
+    token: /^["'`]?t3-color-scheme["'`]?/,
   },
   {
     id: "wire-telemetry-names",
@@ -500,8 +535,8 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "wire-peer-links",
     class: "wire-peer",
     reason:
-      "Peer links between environments: the OAuth software id and redirect URI, the MCP client name and the T3-Mode-Limit header, which the server on the other end may be upstream's.",
-    test: (o) => /t3code-peer|t3-mode-limit/i.test(o.token),
+      "Peer links between environments: the OAuth software id and redirect URI, the MCP client name and the T3-Mode-Limit and T3-Sender-Thread headers, which the server on the other end may be upstream's.",
+    test: (o) => /t3code-peer|t3-mode-limit|t3-sender-thread/i.test(o.token),
   },
   {
     id: "kept-npm-release-manifest-key",
@@ -570,8 +605,30 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "kept-git-branch-config",
     class: "kept",
     reason:
-      "branch.<name>.t3-merge-base keys in users' repos' git config; they describe the branch, so both apps share them.",
-    token: /(?:^|[."'`])t3-merge-base(?:-ref)?\b/,
+      "branch.<name>.t3-merge-base and t3-pull-request keys in users' repos' git config; they describe the branch, so both apps share them.",
+    token: /(?:^|[."'`])t3-(?:merge-base(?:-ref)?|pull-request)\b/,
+  },
+  {
+    id: "kept-checkpoint-trailer",
+    class: "kept",
+    reason:
+      "The T3-Head-Moved-At trailer in checkpoint commits under refs/t3/, read back from the previous checkpoint; threads synced from upstream continue from upstream's checkpoints.",
+    token: /^["'`]?T3-Head-Moved-At\b/,
+  },
+  {
+    id: "kept-provider-update-lock",
+    class: "kept",
+    reason:
+      "The machine-wide lock directory for provider CLI updates (t3code-provider-updates); upstream servers on the same machine update the same provider installs, so sharing the lock keeps them from replacing files under each other.",
+    token: /^["'`]?t3code-provider-updates["'`]?/,
+  },
+  {
+    id: "kept-integration-fixture-owner",
+    class: "kept",
+    reason:
+      "The t3 owner in the transfer budget fixture's remote and canonical key, kept with the owner field beside them (wire-credential-owner).",
+    path: /^apps\/server\/integration\//,
+    token: /github\.com[:/]t3\//,
   },
   {
     id: "kept-vendored-binary-imports",
@@ -652,7 +709,7 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     reason:
       "Renderer localStorage and IndexedDB keys holding user data and preferences; the desktop import copies them by name.",
     test: (o) =>
-      /^["'`]?(?:t3code[:.][a-z]|t3[:.](?:pullRequests\.preferences|backgroundActivity|chatgpt))/.test(
+      /^["'`]?(?:t3code[:.][a-z]|t3[:.](?:pullRequests\.(?:preferences|savedViews)|issues\.|backgroundActivity|chatgpt))/.test(
         o.token.slice(Math.max(0, o.offset - 1)),
       ) &&
       !/t3code:(?:open-command-palette|preview-action|focus-composer|local_storage_change|github-routing-changed|update-everything-result|snap-shot-setup-resume|chunk-load-reloaded|dev-compression|project-favicons)|t3\.pullRequests\.(?:detail|list)/.test(
@@ -792,8 +849,8 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "kept-html-render-bootstrap",
     class: "kept",
     reason:
-      "Names baked into stored html_render pages: the t3-theme fragment and style, t3/notifications methods, t3-link ids.",
-    token: /t3-theme|t3\/notifications|t3-link-/,
+      "Names baked into stored html_render pages and the scripts beside them: the t3-theme and t3-contain-scroll fragments and style, t3/notifications and t3/file-preview methods, t3-link ids.",
+    token: /t3-theme|t3-contain-scroll|t3\/notifications|t3\/file-preview\/|t3-link-/,
   },
 
   // upstream references: credit, links, and upstream's own published names
@@ -837,7 +894,7 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
         (/^t3(?:`?\)?\.?|[;:]|\\[rn].*)?$/.test(at) &&
           /^\/?$/.test(prev) &&
           !o.token.includes("://")) ||
-        /^t3\.exe/.test(at)
+        /^t3\\?\.exe/.test(at)
       );
     },
     path: /forkCliArtifacts|forkCliArchive|cliRelease|build-cli-archive|build-desktop-artifact|install\.(?:sh|ps1|test\.ts)|pinnedRuntime|selfUpdate|update(?:\.test)?\.ts|ForkCliInstall|tunnel(?:\.test)?\.ts|DesktopWsl|fork-cli-release-assets|serviceLauncher|smoke-cli|npm-launcher/,
@@ -999,6 +1056,7 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
       const rest = o.line.slice(o.column);
       return (
         rest.startsWith("t3[-_ ]?code") ||
+        rest.startsWith("t3_?code") ||
         (/t3-code\|t3_code\|t3code/.test(o.line) && /^t3(?:-code|_code|code)[|)]/.test(rest)) ||
         (/_SERVER_ALIASES = new Set\(/.test(o.line) && /^t3(?:-code|_code|code)["'`]/.test(rest))
       );
@@ -1018,7 +1076,7 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     reason:
       "MCP server name (t3-code) and tool names (t3_*) agents call. Renamed to lathe and lathe_*; the old names stay recognised permanently, since stored tool calls and provider transcripts hold them.",
     token:
-      /mcp__t3[-_]code__|(?:^|[^A-Za-z0-9])t3_(?:workflow|thread|preview|worktree|device|project|environment|pending|queue|attachment|html|orchestrator|scheduled|delegate|task|document|link|unwatch|watch|find|read|create|list|request|resolve|background)[a-z_]*|^["'`]?t3-code["'`:]?$|^t3-code-\*|^mcp_servers\.t3-code$/,
+      /mcp__t3[-_]code__|(?:^|[^A-Za-z0-9])t3_(?:workflow|thread|preview|worktree|device|project|environment|pending|queue|attachment|html|orchestrator|scheduled|delegate|task|document|link|unwatch|watch|find|read|create|list|request|resolve|background|theme)[a-z_]*|^["'`]?t3-code["'`:]?$|^t3-code-\*|^mcp_servers\.t3-code$/,
   },
   {
     id: "agent-mcp-matchers",
@@ -1041,6 +1099,16 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     class: "agent-facing",
     reason: "Prompt markup agents read (<t3_context>, t3_code_instructions).",
     token: /t3_context|t3_code_[a-z_]*|(?:^|[^A-Za-z])t3_code(?:$|[^a-z_])/,
+  },
+
+  {
+    id: "agent-mcp-app-setup-name",
+    class: "agent-facing",
+    reason:
+      "The name the setup steps give the MCP server in another agent app (hermes or openclaw mcp add/login t3code, t3code under mcp_servers); it becomes lathe, as claude mcp add does.",
+    test: (o) =>
+      /^t3code[.,]?$/.test(o.token) &&
+      /\b(?:hermes|openclaw) mcp (?:add|login) t3code|\bmcp_servers\b/.test(o.line),
   },
 
   // identifiers: names that never leave the build
@@ -1149,9 +1217,9 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "id-dev-and-host-names",
     class: "identifier",
     reason:
-      "Dev replay names (agentInfo, window.t3dev), test origins, secret separators, the agents' systemd slice and protection drop-in; Lathe names them for itself so it never shares them with upstream on one host.",
+      "Dev replay names (agentInfo, window.t3dev, the t3/mcp_call request), test origins, secret separators, the agents' systemd slice and protection drop-in; Lathe names them for itself so it never shares them with upstream on one host.",
     token:
-      /t3-dev-replay|(?:^|\.)t3dev\b|t3-boot\.test|__t3-secret-|app-t3code\.slice|90-t3code-protect\.conf/,
+      /t3-dev-replay|t3\/mcp_call|(?:^|\.)t3dev\b|t3-boot\.test|__t3-secret-|app-t3code\.slice|90-t3code-protect\.conf/,
   },
   {
     id: "id-eval-and-native-fixtures",
@@ -1169,9 +1237,9 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "id-desktop-internals",
     class: "identifier",
     reason:
-      "Desktop internals rebuilt with the app: dev flags, build keys, Windows shim locals and types, CDP ids, icon files, the compile cache.",
+      "Desktop internals rebuilt with the app: dev flags, build keys, Windows shim locals and types, CDP ids, icon files, the compile cache, the preview's certificate approvals file, and the AppImage mount prefix (named after the artifact).",
     token:
-      /--t3code-dev-root|t3code(?:CommitHash|WebAuthn)|t3_(?:codepage|exit)|T3\.Env|t3-(?:kernel32|user32|preview|black-windows|electron)|^["'`]t3code["'`],?$/,
+      /--t3code-dev-root|t3code-certificate-approvals|\.mount_T3-|t3code(?:CommitHash|WebAuthn)|t3_(?:codepage|exit)|T3\.Env|t3-(?:kernel32|user32|preview|black-windows|electron)|^["'`]t3code["'`],?$/,
     path: /^apps\/desktop\/|^scripts\/|\.vscode\//,
   },
   {
@@ -1216,8 +1284,8 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "id-shell-helpers",
     class: "identifier",
     reason:
-      "Shell and script helper functions (t3_home, t3_runtime_ready) inside generated scripts.",
-    token: /^\/?\$?t3_(?:home|runtime_ready|fetch|cwd)$/,
+      "Shell and script helper functions and locals (t3_home, t3_runtime_ready, script_t3, first_t3) inside generated scripts.",
+    token: /^\/?\$?t3_(?:home|runtime_ready|fetch|cwd)$|^\$?(?:script|version|first)_t3$/,
   },
   {
     id: "id-metric-names",
@@ -1230,9 +1298,9 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "id-runtime-ids-and-prefixes",
     class: "identifier",
     reason:
-      "Runtime ids, temp and socket prefixes, log tags, MIME types, CSS transition names, asset files and test identities; nothing reads them across versions.",
+      "Runtime ids, temp and socket prefixes, log tags, MIME types, CSS transition and highlight names, FFI library labels, AudioWorklet and IPC message names, headers between the server and its own provider sessions, asset files and test identities; nothing reads them across versions.",
     test: (o) =>
-      /t3(?:code)?-\$|t3_\$|t3-(?:cli|token)-\$|^t3-claude$|t3code-startup-warmup|t3-(?:host|mermaid|term|orchestrator-v2|preview|ghostty-input|permission-check|acp-cli|acp-mock|collab-mock|pi-mcp|markdown-inline-prefix|mobile-|draft-hero|snap-shot|agent|black-|iris|checkpoint-index|kde-bus|browser-launch|darwin|advapi32)|__t3codeStartupModuleProfiler|t3code-(?:desktop|git-trace2|review-index|ssh-askpass|pierre)|\.t3-(?:capture|icon-export)|t3_capture_|t3ssh-|\/tmp\/t3-|x-t3code-|t3continue-|t3-xai-prompt-|msg_t3_|refs\/t3code\/|\.cache\/t3code\/|^t3\.export\.|^\[t3-|^t3:jsonrpc|\$t3:|t3code_no_provider|t3_dev_session_|noreply@t3\.codes|t3code@users\.noreply|t3code-test@|-t3\.\d+|dist-exe\/t3|npm-launcher\/t3\.mjs|release\/t3-|\/t3\.tgz|^\/t3\/$|\.\{t3,lathe,t3f\}|\\\.t3\b|t3\/[a-z0-9-]+\/[A-Z]|^\/?t3-connect$|^\[t3-|^["'`]t3\/orchestration-v2\/|t3-page\.localhost|t3-sqlite-state|not-a-t3-server|app-t3code-agents/.test(
+      /t3(?:code)?-\$|t3_\$|t3-(?:cli|token)-\$|^t3-claude$|t3code-startup-warmup|t3-(?:host|mermaid|term|orchestrator-v2|preview|ghostty-input|permission-check|acp-cli|acp-mock|collab-mock|pi-mcp|markdown-inline-prefix|mobile-|draft-hero|snap-shot|agent|black-|iris|checkpoint-index|kde-bus|browser-launch|darwin|advapi32|kernel32|libsystem|pcm-capture|cut-line-note|speech-reply|tool-exposure|service-tier|prompt-\$|create-\$)|tmp_objdir-t3(?:code)?-|__t3codeStartupModuleProfiler|t3code-(?:desktop|git-trace2|review-index|ssh-askpass|pierre)|\.t3-(?:capture|icon-export|replaced-|rule-copies\.json|setup-)|\/\.t3\.X{6}|t3_capture_|t3ssh-|\/tmp\/t3-|x-t3code-|t3continue-|t3-xai-prompt-|msg_t3_|refs\/t3code\/|\.cache\/t3code\/|^t3\.export\.|^\[t3-|^t3:jsonrpc|\$t3:|t3code_no_provider|t3_dev_session_|noreply@t3\.codes|t3code@users\.noreply|t3code-test@|-t3\.\d+|dist-exe\/t3|npm-launcher\/t3\.mjs|release\/t3-|\/t3\.tgz|^\/t3\/$|\.\{t3,lathe,t3f\}|\\\.t3\b|t3\/[a-z0-9-]+\/[A-Z]|^\/?t3-connect$|^\[t3-|^["'`]t3\/orchestration-v2\/|t3-page\.localhost|t3-sqlite-state|not-a-t3-server|app-t3code-agents/.test(
         o.token,
       ) ||
       (/^t3[.:]?$/.test(o.token) &&
@@ -1314,12 +1382,44 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
       ),
   },
   {
+    id: "upstream-translated-service-compounds",
+    class: "upstream-reference",
+    reason:
+      "T3 Connect and T3 Chat compounds in translation catalogs (T3-Connect-Konto, T3-Chat-Abo), upstream's services, kept as upstream-service-names keeps the English.",
+    path: /^apps\/[a-z]+\/src\/i18n\/translations\/[A-Za-z-]+\.json$/,
+    token: /^T3-(?:Connect|Chat)-/,
+  },
+  {
+    id: "display-translated-short-name",
+    class: "display",
+    reason:
+      "The product and its CLI in translation catalogs, following the English source of the same key: T3-Thread, T3-trådar, T3:s, T3-Home, t3-Befehl, t3/add-search.",
+    path: /^apps\/[a-z]+\/src\/i18n\/translations\/[A-Za-z-]+\.json$/,
+    test: (o) =>
+      (stem(o) === "T3" && /^T3(?:[-:][A-Za-z-]*)?[.,:;]?$/.test(o.token)) ||
+      (stem(o) === "t3" && /^t3(?:\/(?:add-search)?|-Befehls?)?[.,:;]?$/.test(o.token)),
+  },
+  {
+    id: "display-short-name-after-escape",
+    class: "display",
+    reason: 'The short product name after a newline escape in a string ("Created\\nT3 threads").',
+    test: (o) => stem(o) === "T3" && afterEscape(o) && /^T3 thread/.test(o.line.slice(o.column)),
+  },
+  {
+    id: "display-cli-install-messages",
+    class: "display",
+    reason:
+      "The CLI named in install and uninstall messages where punctuation or a value follows it (t3., t3:, t3 <version>).",
+    path: /^apps\/server\/src\/cli\/(?:install|uninstall)\.ts$/,
+    test: (o) => stem(o) === "t3" && /^t3[.:]?$/.test(o.token),
+  },
+  {
     id: "id-binaries-and-scripts",
     class: "identifier",
     reason:
       "Bundled helper binaries, shell functions, DOM data attributes, generated id prefixes, and the MCP client names the CLI sends to its own server.",
     token:
-      /t3-resource-monitor|t3-browser-secret|t3_fetch|\$__t3c|data-t3code-|data-t3-context|t3_\$\{|run-t3|t3-runtime|\.notarize-t3|t3-cli-archive|t3-screens|^t3-[a-z]+-cli$/,
+      /t3-resource-monitor|t3-browser-secret|t3_fetch|\$__t3c|__t3(?:_command|[cf])(?![A-Za-z0-9_])|data-t3code-|data-t3-context|t3_\$\{|run-t3|t3-runtime|\.notarize-t3|t3-cli-archive|t3-screens|^t3-[a-z]+-cli$/,
   },
   {
     id: "kept-vcs-config-file",
@@ -1381,7 +1481,7 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     test: (o) =>
       UPSTREAM_IDENTITY_TOKEN.test(o.token) ||
       (UPSTREAM_CLI_FILES.test(o.path) &&
-        /(?:^|\/)t3(?::|\\?\.mjs)?$|^t3\$reset\.?$|\\nt3$/.test(o.token)),
+        /(?:^|\/)t3(?::|\\?\.mjs|\$\/)?$|^t3\$reset\.?$|\\nt3$/.test(o.token)),
   },
 ];
 

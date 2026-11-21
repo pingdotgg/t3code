@@ -706,6 +706,154 @@ describe("FORK_RENAME_RULES", () => {
       'findPromptLinkProject(projects, { owner: "me", name: "t3code" })',
       "upstream-reference",
     ],
+    // Names upstream added after 337c5858c3.
+    ["patches/@cursor__sdk@1.4.2.patch", "+var __t3m=__t3models.find(x)", "kept"],
+    ["patches/@cursor__sdk@1.4.2.patch", " var T30,Y71;", "kept"],
+    ["scripts/scenarios/a.e2e.ts", 'import { test, WEB } from "./t3.ts";', "identifier"],
+    ["scripts/scenarios/a.e2e.ts", 'git("branch", "--list", "t3/*")', "identifier"],
+    [
+      "scripts/prove-scenario.ts",
+      '  return source.includes("t3-mobile") ? "ios" : "web";',
+      "identifier",
+    ],
+    ["scripts/e2e.config.ts", '        session: "t3-scenarios",', "identifier"],
+    [
+      "apps/desktop/src/preview/LoopbackTunnel.test.ts",
+      '      refused ? { "x-t3-tunnel-port-refused": "1" } : {},',
+      "wire-peer",
+    ],
+    ["apps/web/src/versionSkew.test.ts", '        kind: "t3-launcher",', "wire-peer"],
+    [
+      "packages/shared/src/mcpApp.ts",
+      'export const MCP_APP_COLOR_SCHEME_PARAM = "t3-color-scheme";',
+      "wire-peer",
+    ],
+    [
+      "apps/server/src/mcp/McpInvocationContext.ts",
+      'export const SENDER_THREAD_HEADER = "t3-sender-thread";',
+      "wire-peer",
+    ],
+    [
+      "apps/server/src/git/GitManager.ts",
+      "const key = (branch: string) => `branch.${branch}.t3-pull-request`;",
+      "kept",
+    ],
+    [
+      "apps/server/src/vcs/GitVcsDriver.ts",
+      'const HEAD_MARK_TRAILER = "T3-Head-Moved-At";',
+      "kept",
+    ],
+    [
+      "apps/server/src/provider/providerMaintenanceCommandCoordinator.ts",
+      'const lockDirectory = () => NodePath.join(NodeOS.tmpdir(), "t3code-provider-updates");',
+      "kept",
+    ],
+    [
+      "apps/server/integration/TransferBudgetV2Fixture.integration.ts",
+      '  canonicalKey: "github.com/t3/transfer-budget",',
+      "kept",
+    ],
+    [
+      "apps/web/src/components/issue/issueSavedViews.ts",
+      '  storageKey: "t3.issues.savedViews",',
+      "persisted",
+    ],
+    [
+      "packages/shared/src/htmlRender.ts",
+      'const CONTAIN_SCROLL_FRAGMENT_KEY = "t3-contain-scroll";',
+      "kept",
+    ],
+    ["scripts/install.ps1", "  -match '^[^\\\\/]+\\\\t3\\.exe$'", "kept"],
+    [
+      "apps/server/src/mcp/toolkits/theme/tools.ts",
+      'const ThemeReadTool = Tool.make("t3_theme_read", {',
+      "agent-facing",
+    ],
+    [
+      "packages/provider-acp/src/server/runtimeModel.ts",
+      "      /^editor_t3_?code_[0-9a-f]{8}$/.test(qualified[1]) &&",
+      "agent-facing",
+    ],
+    [
+      "packages/provider-acp/src/server/runtimeModel.ts",
+      "      /^editor_(?:lathe|t3_?code)_[0-9a-f]{8}$/.test(qualified[1]) &&",
+      "kept",
+    ],
+    [
+      "apps/web/src/components/mcp/mcpApps.ts",
+      "        `hermes mcp add t3code --url ${url} --auth oauth`,",
+      "agent-facing",
+    ],
+    [
+      "apps/web/src/i18n/translations/en.json",
+      '  "dac3e3eb509de945": "Run hermes mcp login t3code.",',
+      "agent-facing",
+    ],
+    ["apps/server/scripts/dev-replay-agent.ts", 'const MCP_CALL = "t3/mcp_call";', "identifier"],
+    [
+      "apps/desktop/src/preview/BrowserSession.ts",
+      'const CERTIFICATE_APPROVALS_FILE = "t3code-certificate-approvals.json";',
+      "identifier",
+    ],
+    [
+      "apps/desktop/src/shell/DesktopShellEnvironment.ts",
+      "        !/^\\/tmp\\/\\.mount_T3-[^/]+(?:\\/|$)/u.test(entry),",
+      "identifier",
+    ],
+    ["scripts/install.sh", "version_t3() {", "identifier"],
+    [
+      "apps/web/src/speech/pcmWorklet.ts",
+      'registerProcessor("t3-pcm-capture", PcmCaptureProcessor);',
+      "identifier",
+    ],
+    ["apps/server/src/vcs/GitVcsDriverCore.ts", '  prefix: "tmp_objdir-t3code-",', "identifier"],
+    [
+      "packages/provider-core/src/server/mcpSession.ts",
+      'export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";',
+      "identifier",
+    ],
+    ["scripts/install.sh", 'launcher_tmp="$(mktemp "${bin_dir}/.t3.XXXXXX")"', "identifier"],
+    [
+      "apps/server/src/project/ProjectSetupScriptRunner.ts",
+      '  "let __t3c = $env.LAST_EXIT_CODE",',
+      "identifier",
+    ],
+    [
+      "apps/server/src/cli/uninstall.ts",
+      "yield* Console.log(`Left ${launcher}: it no longer runs this t3.`);",
+      "display",
+    ],
+    [
+      "apps/web/src/i18n/translations/de.json",
+      '  "26f98026953e6835": "{host} ist nicht mit deinem T3-Connect-Konto verknüpft",',
+      "upstream-reference",
+    ],
+    [
+      "apps/web/src/i18n/translations/de.json",
+      '  "43c211068ab48950": "Hol dir mehr Tunnel mit deinem T3-Chat-Abo (sorry!)",',
+      "upstream-reference",
+    ],
+    [
+      "apps/web/src/i18n/translations/de.json",
+      '  "0a7ec36662b6eff7": "T3-Thread gestartet",',
+      "display",
+    ],
+    [
+      "apps/web/src/i18n/translations/sv.json",
+      '  "2b067fba95e3312b": "T3:s systemavtryck",',
+      "display",
+    ],
+    ["apps/web/src/i18n/translations/ko.json", '  "0767c794edea8f03": "t3 명령",', "display"],
+    [
+      "packages/client-runtime/src/work-log/t3ToolSentences.ts",
+      '    "Create\\nCreating\\nCreated\\nT3 threads",',
+      "display",
+    ],
+    [
+      "apps/server/src/cli/invocation.ts",
+      "const PINNED_RUNTIME_ENTRY = /^(.*)\\/runtime\\/versions\\/[^/]+\\/t3$/;",
+      "upstream-reference",
+    ],
   ])("classifies %s: %s as %s", (path, line, expected) => {
     expect(classOf(path, line)).toBe(expected);
   });
