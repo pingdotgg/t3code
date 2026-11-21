@@ -65,7 +65,7 @@ function withFakeClaudeEnv<A, E, R>(
     expectedTools?: string;
     argsMustNotContain?: string;
     stdinMustContain?: string;
-    rejectsImages?: boolean;
+    imageRejection?: string;
     imageAttemptLog?: string;
     configDirMustBe?: string;
     cwdMustNotBe?: string;
@@ -90,7 +90,7 @@ function withFakeClaudeEnv<A, E, R>(
       T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN: input.argsMustContain,
       T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN: input.argsMustNotContain,
       T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN: input.stdinMustContain,
-      T3_FAKE_CLAUDE_REJECTS_IMAGES: input.rejectsImages ? "1" : undefined,
+      T3_FAKE_CLAUDE_IMAGE_REJECTION: input.imageRejection,
       T3_FAKE_CLAUDE_IMAGE_ATTEMPT_LOG: input.imageAttemptLog,
       T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
       T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
@@ -272,7 +272,16 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("still generates text when a text-only model rejects image attachments", () =>
+  it.effect.each([
+    // A model that cannot take images is remembered, so later calls go straight to text only.
+    { rejection: "Image inputs are not supported by this model", imageAttempts: 1 },
+    // A rejection of this request's images says nothing about the model.
+    {
+      rejection:
+        "At least one of the image dimensions exceed max allowed size for many-image requests: 2000 pixels",
+      imageAttempts: 2,
+    },
+  ])("still generates text when images are rejected: $rejection", ({ rejection, imageAttempts }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -281,7 +290,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       return yield* withFakeClaudeEnv(
         {
           output: JSON.stringify({ structured_output: { branch: "fix/login-button" } }),
-          rejectsImages: true,
+          imageRejection: rejection,
           imageAttemptLog,
         },
         (textGeneration) =>
@@ -315,9 +324,8 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
 
             expect(first.branch).toBe("fix/login-button");
             expect(second.branch).toBe("fix/login-button");
-            // Once the model has rejected images, later calls go straight to text only.
             const attempts = yield* fs.readFileString(imageAttemptLog);
-            expect(attempts.trim().split("\n")).toHaveLength(1);
+            expect(attempts.trim().split("\n")).toHaveLength(imageAttempts);
           }),
       );
     }).pipe(Effect.scoped),

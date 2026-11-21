@@ -55,6 +55,9 @@ const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"
 
 const NO_SESSION_PERSISTENCE = "--no-session-persistence";
 // Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
+// Only a rejection of images as such marks a model text-only, not a size or count limit.
+const IMAGES_UNSUPPORTED =
+  /image[^\n]*(?:not support|unsupported)|(?:not support|unsupported)[^\n]*image/i;
 const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PERSISTENCE}'`;
 
 const ClaudeOutputEnvelope = Schema.Struct({
@@ -374,8 +377,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           runClaudeAttempt(false).pipe(
             Effect.tap((result) =>
               Effect.sync(() => {
-                const imageFailure = `${imageResult.stdout}\n${imageResult.stderr}`.toLowerCase();
-                if (result.exitCode === 0 && imageFailure.includes("image")) {
+                const imageFailure = `${imageResult.stdout}\n${imageResult.stderr}`;
+                if (result.exitCode === 0 && IMAGES_UNSUPPORTED.test(imageFailure)) {
                   textOnlyModels.add(apiModelId);
                 }
               }),
