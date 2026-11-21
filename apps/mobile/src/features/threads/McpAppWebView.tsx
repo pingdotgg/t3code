@@ -37,7 +37,7 @@ import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { uuidv4 } from "../../lib/uuid";
 import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
-import { useAssetUrlState } from "../../state/assets";
+import { refreshAssetUrl, useAssetUrlState } from "../../state/assets";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useThreadShell } from "../../state/entities";
 import { mcpAppEnvironment } from "../../state/mcpApps";
@@ -495,6 +495,18 @@ export function ThreadMcpApp(props: {
           if (current.displayMode === "fullscreen") current.onExitFullscreen?.();
           else setClosed(true);
         });
+      },
+      loadToolOutputImage: async (index) => {
+        const { environmentId, threadId, itemId } = latest.current.props;
+        const url = await refreshAssetUrl(environmentId, {
+          _tag: "tool-output-image",
+          threadId,
+          itemId,
+          index,
+        });
+        if (url === null) return undefined;
+        const response = await fetch(url);
+        return response.ok ? new Uint8Array(await response.arrayBuffer()) : undefined;
       },
       onSizeChanged: (size) => {
         if (latest.current.props.displayMode === "fullscreen") return;

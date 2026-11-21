@@ -287,6 +287,37 @@ describe("orchestration V2 wire projection", () => {
     expect(JSON.stringify(output).length).toBeLessThan(270_000);
   });
 
+  it("keeps an MCP app's result envelope when its screenshot exceeds the detail budget", () => {
+    const app = {
+      attachmentId: "mcp-app-1",
+      server: "revyl",
+      tool: "screenshot",
+      resourceUri: "ui://revyl/screenshot",
+    };
+    const data = "A".repeat(334_000);
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      toolName: "revyl.screenshot",
+      output: {
+        t3McpApp: app,
+        result: {
+          content: [{ type: "image", mimeType: "image/png", data, _meta: { frameId: "f1" } }],
+          structuredContent: { device: "tablet" },
+        },
+      },
+    };
+    const projected = projectTurnItemForDetail(item);
+    const output = projected.type === "dynamic_tool" ? projected.output : null;
+    expect(output).toEqual({
+      t3McpApp: app,
+      result: {
+        content: [{ type: "image", mimeType: "image/png", _meta: { frameId: "f1" } }],
+        structuredContent: { device: "tablet" },
+      },
+    });
+  });
+
   it("bounds a tool output made of many images", () => {
     const image = { type: "image", data: "AAAA", mimeType: "image/png" };
     const item = {
