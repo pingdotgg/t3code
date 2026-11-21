@@ -4,6 +4,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -36,6 +37,80 @@ describe("snapshotCookieDatabase", () => {
           const sql = yield* SqlClient.SqlClient;
           return yield* sql<{ readonly name: string }>`SELECT name FROM cookies`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshot, readonly: true })));
+        expect(rows).toEqual([{ name: "committed-in-wal" }]);
+      }),
+    ),
+  );
+
+  it.effect("copies a database another connection holds exclusively, as Firefox does", () =>
+    runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sourceDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-cookie-exclusive-source-",
+        });
+        const source = path.join(sourceDirectory, "cookies.sqlite");
+        const snapshot = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`PRAGMA locking_mode = EXCLUSIVE`;
+          yield* sql`PRAGMA journal_mode = WAL`;
+          yield* sql`PRAGMA wal_autocheckpoint = 0`;
+          yield* sql`CREATE TABLE moz_cookies(name TEXT NOT NULL)`;
+          yield* sql`INSERT INTO moz_cookies(name) VALUES (${"committed-in-wal"})`;
+          // Exclusive WAL keeps its index in memory, so no other connection can open the file.
+          expect(yield* fileSystem.exists(`${source}-shm`)).toBe(false);
+          return yield* snapshotCookieDatabase(source);
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: source })));
+        const rows = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql<{ readonly name: string }>`SELECT name FROM moz_cookies`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshot, readonly: true })));
+        expect(rows).toEqual([{ name: "committed-in-wal" }]);
+      }),
+    ),
+  );
+
+  it.effect("retries the copy when the WAL disappears while it is copied", () =>
+    runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sourceDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-cookie-vanishing-wal-",
+        });
+        const source = path.join(sourceDirectory, "cookies.sqlite");
+        let walCopies = 0;
+        const racingFileSystem: FileSystem.FileSystem = {
+          ...fileSystem,
+          copyFile: (from, to) =>
+            from.endsWith("-wal") && walCopies++ === 0
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "copyFile",
+                    pathOrDescriptor: from,
+                  }),
+                )
+              : fileSystem.copyFile(from, to),
+        };
+        const snapshot = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`PRAGMA locking_mode = EXCLUSIVE`;
+          yield* sql`PRAGMA journal_mode = WAL`;
+          yield* sql`PRAGMA wal_autocheckpoint = 0`;
+          yield* sql`CREATE TABLE moz_cookies(name TEXT NOT NULL)`;
+          yield* sql`INSERT INTO moz_cookies(name) VALUES (${"committed-in-wal"})`;
+          return yield* snapshotCookieDatabase(source).pipe(
+            Effect.provideService(FileSystem.FileSystem, racingFileSystem),
+          );
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: source })));
+        const rows = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql<{ readonly name: string }>`SELECT name FROM moz_cookies`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshot, readonly: true })));
+        expect(walCopies).toBe(2);
         expect(rows).toEqual([{ name: "committed-in-wal" }]);
       }),
     ),

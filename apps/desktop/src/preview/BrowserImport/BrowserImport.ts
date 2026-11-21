@@ -130,11 +130,7 @@ export class BrowserImport extends Context.Service<
 const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function* (
   definition: BrowserImportSourceDefinition,
   context: BrowserImportPathContext,
-): Effect.fn.Return<
-  BrowserImportUnavailableReason | undefined,
-  never,
-  FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
-> {
+): Effect.fn.Return<BrowserImportUnavailableReason | undefined, never, FileSystem.FileSystem> {
   if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
   if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
   if (yield* isSourceRunning(definition, context)) return "browserRunning";

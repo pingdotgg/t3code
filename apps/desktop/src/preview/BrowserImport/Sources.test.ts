@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Builds a Chromium-shaped cookie
 // table with the same native bindings the source reads.
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -8,15 +9,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
-import { ChildProcessSpawner } from "effect/process";
 import * as NodeSqlite from "node:sqlite";
 
 import type { BrowserImportPathContext } from "./Sources.ts";
 import {
   BROWSER_IMPORT_SOURCES,
-  chromiumProcessIsAlive,
-  chromiumSingletonLockIsHeld,
-  firefoxSymlinkLockIsHeld,
   resolveCookieDatabase,
   isSourceInstalled,
   isSourceRunning,
@@ -45,13 +42,8 @@ const userDataDirectory = (context: BrowserImportPathContext) => {
   return root;
 };
 
-const run = <A, E>(
-  effect: Effect.Effect<
-    A,
-    E,
-    FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
-  >,
-) => effect.pipe(Effect.provide(NodeServices.layer));
+const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>) =>
+  effect.pipe(Effect.provide(NodeServices.layer));
 
 const writeCookieDatabase = (file: string, count: number) =>
   Effect.sync(() => {
@@ -111,90 +103,36 @@ describe("isSourceRunning", () => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "reads Chromium's dangling SingletonLock symlink as a running browser",
+    "does not block running Chromium, Firefox, or Zen profiles on macOS and Linux",
     () =>
       run(
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
-          const context = yield* withSourceHome();
-          assert.isFalse(yield* isSourceRunning(helium, context));
-
-          yield* fileSystem.symlink(
-            "host-that-does-not-exist-1234",
-            `${userDataDirectory(context)}/SingletonLock`,
-          );
-
-          assert.isTrue(yield* isSourceRunning(helium, context));
+          for (const platform of ["darwin", "linux"] as const) {
+            const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-running-" });
+            const context = yield* sourcePathContext.pipe(
+              Effect.provideService(HostProcess.Environment, { HOME: home }),
+              Effect.provideService(HostProcess.Platform, platform),
+            );
+            // Live locks as each browser leaves them while it runs.
+            const chromiumRoot = helium.userDataDirectory(context)!;
+            yield* fileSystem.makeDirectory(`${chromiumRoot}/Default`, { recursive: true });
+            yield* writeCookieDatabase(`${chromiumRoot}/Default/Cookies`, 1);
+            yield* fileSystem.symlink(
+              `${NodeOS.hostname()}-${process.pid}`,
+              `${chromiumRoot}/SingletonLock`,
+            );
+            assert.isFalse(yield* isSourceRunning(helium, context));
+            for (const source of [firefox, zen]) {
+              const profile = `${source.userDataDirectory(context)!}/live.default`;
+              yield* fileSystem.makeDirectory(profile, { recursive: true });
+              yield* writeFirefoxCookieDatabase(`${profile}/cookies.sqlite`, 1, 0);
+              yield* fileSystem.symlink(`127.0.0.1:+${process.pid}`, `${profile}/lock`);
+              assert.isFalse(yield* isSourceRunning(source, context));
+            }
+          }
         }),
       ),
-  );
-});
-
-describe("chromiumSingletonLockIsHeld", () => {
-  it.effect("ignores a positively dead PID on the current host", () =>
-    Effect.gen(function* () {
-      const checked: number[] = [];
-      const held = yield* chromiumSingletonLockIsHeld("current-host-4321", "current-host", (pid) =>
-        Effect.sync(() => {
-          checked.push(pid);
-          return false;
-        }),
-      );
-      assert.isFalse(held);
-      assert.deepEqual(checked, [4321]);
-    }),
-  );
-
-  it.effect("keeps foreign-host and malformed targets without probing a PID", () =>
-    Effect.gen(function* () {
-      let probes = 0;
-      const probe = (_pid: number) =>
-        Effect.sync(() => {
-          probes += 1;
-          return false;
-        });
-      assert.isTrue(yield* chromiumSingletonLockIsHeld("another-host-4321", "current-host", probe));
-      assert.isTrue(
-        yield* chromiumSingletonLockIsHeld("current-host-no-pid", "current-host", probe),
-      );
-      assert.isTrue(yield* chromiumSingletonLockIsHeld("current-host-0", "current-host", probe));
-      assert.strictEqual(probes, 0);
-    }),
-  );
-});
-
-describe("chromiumProcessIsAlive", () => {
-  it.effect("returns false only when signal 0 reports a missing process", () =>
-    Effect.gen(function* () {
-      const missing = Object.assign(new Error("missing"), { code: "ESRCH" });
-      const denied = Object.assign(new Error("denied"), { code: "EPERM" });
-      assert.isFalse(
-        yield* chromiumProcessIsAlive(4321, () => {
-          throw missing;
-        }),
-      );
-      assert.isTrue(
-        yield* chromiumProcessIsAlive(4321, () => {
-          throw denied;
-        }),
-      );
-      assert.isTrue(
-        yield* chromiumProcessIsAlive(4321, () => {
-          throw undefined;
-        }),
-      );
-      assert.isTrue(
-        yield* chromiumProcessIsAlive(4321, () => {
-          throw "unknown failure";
-        }),
-      );
-      assert.isTrue(
-        yield* chromiumProcessIsAlive(4321, () => {
-          throw null;
-        }),
-      );
-      assert.isTrue(yield* chromiumProcessIsAlive(4321, () => true));
-    }),
   );
 });
 
@@ -621,48 +559,40 @@ describe("Zen", () => {
 });
 
 describe("Firefox Snap profiles", () => {
-  it.effect.skipIf(!symlinksSupported)(
-    "finds Snap profiles with or without profiles.ini and checks their locks",
-    () =>
-      run(
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const home = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3code-firefox-snap-",
-          });
-          const context = yield* sourcePathContext.pipe(
-            Effect.provideService(HostProcess.Environment, { HOME: home }),
-            Effect.provideService(HostProcess.Platform, "linux"),
-          );
-          const root = context.path.join(home, "snap", "firefox", "common", ".mozilla", "firefox");
-          const directory = context.path.join(root, "abcd.default");
-          yield* fileSystem.makeDirectory(directory, { recursive: true });
-          yield* writeFirefoxCookieDatabase(`${directory}/cookies.sqlite`, 2, 1);
-          yield* fileSystem.writeFileString(
-            `${root}/profiles.ini`,
-            "[Profile0]\nName=Personal\nIsRelative=1\nPath=abcd.default\n",
-          );
+  it.effect("finds Snap profiles with or without profiles.ini", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-firefox-snap-",
+        });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: home }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+        const root = context.path.join(home, "snap", "firefox", "common", ".mozilla", "firefox");
+        const directory = context.path.join(root, "abcd.default");
+        yield* fileSystem.makeDirectory(directory, { recursive: true });
+        yield* writeFirefoxCookieDatabase(`${directory}/cookies.sqlite`, 2, 1);
+        yield* fileSystem.writeFileString(
+          `${root}/profiles.ini`,
+          "[Profile0]\nName=Personal\nIsRelative=1\nPath=abcd.default\n",
+        );
 
-          assert.isTrue(yield* isSourceInstalled(firefox, context));
-          assert.deepEqual(yield* listSourceProfiles(firefox, context), [
-            { directory, name: "Personal", cookieCount: 2 },
-          ]);
-          assert.equal(
-            yield* resolveCookieDatabase(firefox, context, directory),
-            context.path.join(directory, "cookies.sqlite"),
-          );
-          assert.isFalse(yield* isSourceRunning(firefox, context));
-          yield* fileSystem.symlink("foreign-host:+4242", `${directory}/lock`);
-          assert.isTrue(yield* isSourceRunning(firefox, context));
-          yield* fileSystem.remove(`${directory}/lock`);
-          assert.isFalse(yield* isSourceRunning(firefox, context));
-
-          yield* fileSystem.remove(`${root}/profiles.ini`);
-          assert.deepEqual(yield* listSourceProfiles(firefox, context), [
-            { directory, name: "abcd.default", cookieCount: 2 },
-          ]);
-        }),
-      ),
+        assert.isTrue(yield* isSourceInstalled(firefox, context));
+        assert.deepEqual(yield* listSourceProfiles(firefox, context), [
+          { directory, name: "Personal", cookieCount: 2 },
+        ]);
+        assert.equal(
+          yield* resolveCookieDatabase(firefox, context, directory),
+          context.path.join(directory, "cookies.sqlite"),
+        );
+        yield* fileSystem.remove(`${root}/profiles.ini`);
+        assert.deepEqual(yield* listSourceProfiles(firefox, context), [
+          { directory, name: "abcd.default", cookieCount: 2 },
+        ]);
+      }),
+    ),
   );
 
   it.effect("keeps matching profile names in native and Snap installs distinct", () =>
@@ -840,48 +770,6 @@ describe("listSourceProfiles Firefox fallback", () => {
 });
 
 describe("isSourceRunning for Firefox", () => {
-  it.effect.skipIf(!symlinksSupported)("finds the lock inside the profile, not at the root", () =>
-    run(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-" });
-        const context = yield* sourcePathContext.pipe(
-          Effect.provideService(HostProcess.Environment, { HOME: home }),
-          Effect.provideService(HostProcess.Platform, "darwin"),
-        );
-        const root = firefox.userDataDirectory(context)!;
-        const profile = `${root}/Profiles/abcd.default-release`;
-        yield* fileSystem.makeDirectory(profile, { recursive: true });
-        yield* fileSystem.writeFileString(`${profile}/cookies.sqlite`, "db");
-
-        assert.isFalse(yield* isSourceRunning(firefox, context));
-
-        yield* fileSystem.writeFileString(`${root}/lock`, "");
-        assert.isFalse(yield* isSourceRunning(firefox, context));
-
-        yield* fileSystem.writeFileString(`${profile}/.parentlock`, "");
-        assert.isFalse(yield* isSourceRunning(firefox, context));
-
-        yield* fileSystem.symlink(`127.0.0.1:+${process.pid}`, `${profile}/lock`);
-        assert.isTrue(yield* isSourceRunning(firefox, context));
-      }),
-    ),
-  );
-
-  it.effect("reads a Firefox lock symlink's pid to tell live from crashed", () =>
-    Effect.gen(function* () {
-      const alive = (pid: number) => Effect.succeed(pid === 4242);
-      const local = new Set(["127.0.0.1", "127.0.1.1", "192.168.1.20"]);
-      assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.0.1:4242", local, alive));
-      assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.1.1:+4242", local, alive));
-      assert.isTrue(yield* firefoxSymlinkLockIsHeld("192.168.1.20:+4242", local, alive));
-      assert.isFalse(yield* firefoxSymlinkLockIsHeld("127.0.0.1:+9999", local, alive));
-      assert.isFalse(yield* firefoxSymlinkLockIsHeld("192.168.1.20:+9999", local, alive));
-      assert.isTrue(yield* firefoxSymlinkLockIsHeld("garbage", local, alive));
-      assert.isTrue(yield* firefoxSymlinkLockIsHeld("10.0.0.7:+9999", local, alive));
-    }),
-  );
-
   it.effect("does not treat a stale parent.lock file as a running browser", () =>
     run(
       Effect.gen(function* () {

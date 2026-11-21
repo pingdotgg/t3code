@@ -6,8 +6,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as SqlClient from "effect/sql/SqlClient";
 
 export type BrowserImportEngine = "chromium" | "firefox" | "safari";
@@ -547,46 +545,6 @@ const databaseFileExists = Effect.fnUntraced(function* (path: string) {
   );
 });
 
-type ProcessLivenessProbe = (pid: number) => Effect.Effect<boolean>;
-
-export const chromiumProcessIsAlive = (
-  pid: number,
-  signalProcess: (pid: number, signal: 0) => unknown = process.kill.bind(process),
-) =>
-  Effect.sync(() => {
-    try {
-      signalProcess(pid, 0);
-      return true;
-    } catch (cause) {
-      // Only ESRCH proves a stale lock; permission and unknown failures may still hide an active browser.
-      return !(
-        typeof cause === "object" &&
-        cause !== null &&
-        "code" in cause &&
-        cause.code === "ESRCH"
-      );
-    }
-  });
-
-const processIsAlive: ProcessLivenessProbe = (pid) => chromiumProcessIsAlive(pid);
-
-export const chromiumSingletonLockIsHeld = Effect.fnUntraced(function* (
-  target: string,
-  currentHost: string,
-  isProcessAlive: ProcessLivenessProbe,
-) {
-  const separator = target.lastIndexOf("-");
-  if (separator <= 0) return true;
-  const host = target.slice(0, separator);
-  const pidText = target.slice(separator + 1);
-  if (!/^\d+$/.test(pidText)) return true;
-  const pid = Number(pidText);
-  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
-  // Foreign-host PIDs may come from a shared home; never declare them stale here.
-  if (host !== currentHost) return true;
-  return yield* isProcessAlive(pid);
-});
-
 /** Windows sharing and lock violations are translated by libuv to `Busy`. */
 const isWindowsLockHeldError = (error: PlatformError.PlatformError): boolean =>
   error.reason._tag === "Busy";
@@ -622,130 +580,30 @@ export const windowsChromiumCookiesAreHeld = Effect.fnUntraced(function* (
   return held.some(Boolean);
 });
 
-export const firefoxSymlinkLockIsHeld = Effect.fnUntraced(function* (
-  target: string,
-  localAddresses: ReadonlySet<string>,
-  isProcessAlive: ProcessLivenessProbe,
-) {
-  const separator = target.lastIndexOf(":");
-  if (separator < 0) return true;
-  // Firefox resolves the hostname to loopback or LAN addresses; only local owners' PIDs are meaningful.
-  const owner = target.slice(0, separator);
-  if (!localAddresses.has(owner)) return true;
-  // A `+` marks an fcntl-holding owner; the pid follows either way.
-  const pidText = target.slice(separator + 1).replace(/^\+/, "");
-  if (!/^\d+$/.test(pidText)) return true;
-  const pid = Number(pidText);
-  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
-  return yield* isProcessAlive(pid);
-});
-
-/** Dock launches have a bare PATH; try the absolute interpreter before relying on shell discovery. */
-const FCNTL_PROBE_INTERPRETERS = ["/usr/bin/python3", "python3"] as const;
-
-/** Apple's python3 shim can fail with an install prompt before the probe script runs. */
-const FCNTL_PROBE_SCRIPT =
-  "import fcntl,os,sys\n" +
-  "fd=os.open(sys.argv[1],os.O_WRONLY)\n" +
-  "try:\n" +
-  "  fcntl.lockf(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n" +
-  "except BlockingIOError:\n" +
-  "  print('held')\n" +
-  "else:\n" +
-  "  print('free')";
-
 /**
- * A missing or refusing interpreter (Apple's shim without developer tools) means
- * the probe is unavailable, so report "not held": "held" would block Firefox import
- * forever, and the SQLite snapshot already copes with a live WAL.
+ * Only Windows blocks a running browser. Elsewhere `snapshotCookieDatabase`
+ * reads a live database, including Firefox's exclusively locked one, and
+ * Safari writes its jar atomically. Windows reads of a held profile are
+ * unverified, so it keeps the quit-first check.
  */
-const posixLockIsHeld = Effect.fnUntraced(function* (
-  path: string,
-  interpreters: ReadonlyArray<string> = FCNTL_PROBE_INTERPRETERS,
-) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const environment = yield* HostProcess.Environment;
-  for (const interpreter of interpreters) {
-    const verdict = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const handle = yield* spawner.spawn(
-          ChildProcess.make(interpreter, ["-c", FCNTL_PROBE_SCRIPT, path], {
-            stdin: "ignore",
-            env: environment,
-          }),
-        );
-        const [stdout] = yield* Effect.all(
-          [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
-          { concurrency: "unbounded" },
-        );
-        return stdout.trim();
-      }),
-    ).pipe(Effect.orElseSucceed(() => ""));
-    if (verdict === "held") return true;
-    if (verdict === "free") return false;
-  }
-  return false;
-});
-
-/** Firefox leaves regular lock files after exit; test the lock, not file existence. */
-const firefoxProfileIsHeld = Effect.fnUntraced(function* (
-  directory: string,
-  context: BrowserImportPathContext,
-  localAddresses: ReadonlySet<string>,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  if (context.platform === "win32") {
-    return yield* windowsLockIsHeld(context.path.join(directory, "parent.lock"));
-  }
-  const symlinkHeld = yield* fileSystem.readLink(context.path.join(directory, "lock")).pipe(
-    Effect.flatMap((target) => firefoxSymlinkLockIsHeld(target, localAddresses, processIsAlive)),
-    Effect.orElseSucceed(() => false),
-  );
-  if (symlinkHeld) return true;
-  const parentLock = context.path.join(directory, ".parentlock");
-  const present = yield* fileSystem.stat(parentLock).pipe(
-    Effect.map((info) => info.type === "File"),
-    Effect.orElseSucceed(() => false),
-  );
-  if (!present) return false;
-  return yield* posixLockIsHeld(parentLock);
-});
-
 export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")(function* (
   definition: BrowserImportSourceDefinition,
   context: BrowserImportPathContext,
-): Effect.fn.Return<
-  boolean,
-  never,
-  FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
-> {
-  const fileSystem = yield* FileSystem.FileSystem;
+): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
+  if (context.platform !== "win32" || definition.engine === "safari") return false;
+  if (definition.engine === "chromium") {
+    return yield* windowsChromiumCookiesAreHeld(definition, context);
+  }
   const root = definition.userDataDirectory(context);
   if (root === undefined) return false;
-  // Safari writes its jar atomically and needs no lock, even while running.
-  if (definition.engine === "safari") return false;
-  if (definition.engine !== "firefox") {
-    if (context.platform === "win32") {
-      return yield* windowsChromiumCookiesAreHeld(definition, context);
-    }
-    const currentHost = yield* HostProcess.Hostname;
-    const lock = context.path.join(root, "SingletonLock");
-    return yield* fileSystem.readLink(lock).pipe(
-      Effect.flatMap((target) => chromiumSingletonLockIsHeld(target, currentHost, processIsAlive)),
-      Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
-    );
-  }
-
   const profiles = yield* listSourceProfiles(definition, context);
-  const localAddresses: ReadonlySet<string> =
-    context.platform === "win32" ? new Set() : yield* yield* HostProcess.Addresses;
-  const found = yield* Effect.forEach(profiles, (profile) => {
+  const held = yield* Effect.forEach(profiles, (profile) => {
     const directory = context.path.isAbsolute(profile.directory)
       ? profile.directory
       : context.path.join(root, profile.directory);
-    return firefoxProfileIsHeld(directory, context, localAddresses);
+    return windowsLockIsHeld(context.path.join(directory, "parent.lock"));
   });
-  return found.some(Boolean);
+  return held.some(Boolean);
 });
 
 /** Require a cookie database; installers create empty directories. Safari stat needs no Full Disk Access. */
