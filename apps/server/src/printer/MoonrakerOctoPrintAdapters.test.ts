@@ -157,7 +157,7 @@ describe("MoonrakerAdapter", () => {
   );
 
   it.effect(
-    "preserves Klipper coordinate mode with unique per-attempt SAVE/RESTORE_GCODE_STATE and restores only on HTTP error",
+    "preserves Klipper coordinate mode with unique per-attempt SAVE/RESTORE_GCODE_STATE and attempts restore on HTTP and transport failures",
     () =>
       Effect.gen(function* () {
         const scripts: Array<string> = [];
@@ -226,7 +226,7 @@ describe("MoonrakerAdapter", () => {
         expect(secondMatch?.[1]).not.toBe(firstMatch?.[1]);
         expect(scripts[1]).toBe(`RESTORE_GCODE_STATE NAME=${secondMatch?.[1]}`);
 
-        // Pre-request transport failure must NOT send RESTORE_GCODE_STATE.
+        // Transport failure/timeout can occur after G91 ran on Klipper, so best-effort restore uses the same unique state name.
         scripts.length = 0;
         mode = "transport";
         const transportExit = yield* Effect.exit(
@@ -241,7 +241,15 @@ describe("MoonrakerAdapter", () => {
             .pipe(Effect.provide(mockClient)),
         );
         expect(Exit.isFailure(transportExit)).toBe(true);
-        expect(scripts).toHaveLength(1);
+        expect(scripts).toHaveLength(2);
+        const thirdMatch =
+          /^SAVE_GCODE_STATE NAME=(T3_JOG_[a-z0-9_]+)\nG91\nG0 Y1 F3000\nRESTORE_GCODE_STATE NAME=(T3_JOG_[a-z0-9_]+)$/.exec(
+            scripts[0]!,
+          );
+        expect(thirdMatch).not.toBeNull();
+        expect(thirdMatch?.[1]).toBe(thirdMatch?.[2]);
+        expect(thirdMatch?.[1]).not.toBe(secondMatch?.[1]);
+        expect(scripts[1]).toBe(`RESTORE_GCODE_STATE NAME=${thirdMatch?.[1]}`);
       }),
   );
 

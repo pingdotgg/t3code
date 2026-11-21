@@ -423,17 +423,16 @@ export const moonrakerAdapter: PrinterAdapter<MoonrakerPrinterConfig> = {
           config.id,
           "moonraker.moveAxis",
         ).pipe(
-          Effect.tapError((error) =>
-            // Only attempt restore if Moonraker answered (HTTP error); a unique state name ensures we never restore an unrelated prior jog.
-            error.reason.includes("returned HTTP ")
-              ? runMoonrakerGcode(
-                  baseUrl,
-                  secret,
-                  `RESTORE_GCODE_STATE NAME=${stateName}`,
-                  config.id,
-                  "moonraker.moveAxis.restore",
-                ).pipe(Effect.ignore)
-              : Effect.void,
+          Effect.tapError(() =>
+            // Best-effort restore on any failure (HTTP error, timeout, or connection drop after G91).
+            // Unique per-attempt stateName ensures restoring a nonexistent state is harmless if the request never arrived.
+            runMoonrakerGcode(
+              baseUrl,
+              secret,
+              `RESTORE_GCODE_STATE NAME=${stateName}`,
+              config.id,
+              "moonraker.moveAxis.restore",
+            ).pipe(Effect.ignore),
           ),
         );
       }

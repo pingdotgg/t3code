@@ -457,10 +457,40 @@ describe("applyPrinterSnapshot", () => {
       [expectedSurfaceId],
     );
 
-    // Explicit user close suppresses later automatic re-opening.
+    // Explicit user close suppresses later automatic re-opening for the SAME session.
     useRightPanelStore.getState().closeSurface(ref, expectedSurfaceId);
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionC]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces).toEqual([]);
+
+    // Ending the dismissed session clears dismissal so a NEW agent session can auto-open cleanly.
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
     const sessionD = { ...sessionA, openedAt: "2026-11-21T01:15:00.000Z" };
     applyPrinterSnapshot(ref.environmentId, printerState([sessionD]), { sheetLayout: false });
-    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces).toEqual([]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedSurfaceId],
+    );
+
+    // A manually opened tab is NOT closed when an agent session ends.
+    useRightPanelStore.getState().openPrinter(ref, {
+      printerId: "p1s-studio",
+      proxyEnvironmentId: proxyEnvId,
+      label: "Studio P1S",
+    });
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedSurfaceId],
+    );
+
+    // Cross-env duplicate of the same canonical session does not open a duplicate tab on the owner env.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    const sessionE = { ...sessionA, openedAt: "2026-11-21T01:20:00.000Z" };
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionE]), { sheetLayout: false });
+    applyPrinterSnapshot(
+      proxyEnvId,
+      printerState([{ ...sessionE, proxyEnvironmentId: undefined }]),
+      { sheetLayout: false },
+    );
+    const ownerRef = scopeThreadRef(proxyEnvId, ref.threadId);
+    expect(useRightPanelStore.getState().byThreadKey[scopedThreadKey(ownerRef)]).toBeUndefined();
   });
 });

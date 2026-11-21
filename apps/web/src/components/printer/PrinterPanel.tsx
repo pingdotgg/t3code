@@ -466,7 +466,28 @@ export function PrinterPanel(props: {
   } | null>(null);
   const [isWide, setIsWide] = useState(false);
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
-  const lastMediaRefreshMsRef = useRef(0);
+  const lastMediaRefreshMsByPrinterRef = useRef<Map<string, number>>(new Map());
+
+  const activeJobSignature = `${activePrinterKey}:${activePrinter?.job.fileName ?? ""}:${activePrinter?.job.startedAt ?? ""}`;
+  const [trackedJobSignature, setTrackedJobSignature] = useState(activeJobSignature);
+  if (trackedJobSignature !== activeJobSignature) {
+    setTrackedJobSignature(activeJobSignature);
+    if (stopTarget !== null) setStopTarget(null);
+    if (skipTarget !== null) setSkipTarget(null);
+  }
+
+  const stopDialogValid =
+    stopTarget !== null &&
+    activePrinter !== undefined &&
+    stopTarget.printerId === activePrinter.id &&
+    stopTarget.proxyEnvironmentId === proxyEnvironmentId &&
+    stopTarget.expectedJobFileName === activePrinter.job.fileName;
+  const skipDialogValid =
+    skipTarget !== null &&
+    activePrinter !== undefined &&
+    skipTarget.printerId === activePrinter.id &&
+    skipTarget.proxyEnvironmentId === proxyEnvironmentId &&
+    skipTarget.jobFileName === activePrinter.job.fileName;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks container width to switch single-tree narrow vs wide layout without duplicating viewport polling
   useEffect(() => {
@@ -478,8 +499,9 @@ export function PrinterPanel(props: {
 
   const handleMediaError = () => {
     const now = Date.now();
-    if (now - lastMediaRefreshMsRef.current < 15_000) return;
-    lastMediaRefreshMsRef.current = now;
+    const lastMs = lastMediaRefreshMsByPrinterRef.current.get(activePrinterKey) ?? 0;
+    if (now - lastMs < 15_000) return;
+    lastMediaRefreshMsByPrinterRef.current.set(activePrinterKey, now);
     refreshPrinterMediaAccess(proxyEnvironmentId);
   };
 
@@ -508,6 +530,12 @@ export function PrinterPanel(props: {
           description: formatEnvironmentQueryError(result.cause),
         });
       }
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: gt("Could not refresh printer"),
+        description: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setRefreshing(false);
     }
@@ -536,6 +564,12 @@ export function PrinterPanel(props: {
           description: formatEnvironmentQueryError(result.cause),
         });
       }
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: gt("Printer command failed"),
+        description: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setPendingAction(null);
     }
@@ -1098,12 +1132,7 @@ export function PrinterPanel(props: {
 
       {/* Stop Print Confirmation Dialog (bound to the job captured when opened) */}
       <AlertDialog
-        open={
-          stopTarget !== null &&
-          stopTarget.printerId === activePrinter.id &&
-          stopTarget.proxyEnvironmentId === proxyEnvironmentId &&
-          stopTarget.expectedJobFileName === activePrinter.job.fileName
-        }
+        open={stopDialogValid}
         onOpenChange={(open) => {
           if (!open) setStopTarget(null);
         }}
@@ -1146,12 +1175,7 @@ export function PrinterPanel(props: {
 
       {/* Skip Object Confirmation Dialog */}
       <AlertDialog
-        open={
-          skipTarget !== null &&
-          skipTarget.printerId === activePrinter.id &&
-          skipTarget.proxyEnvironmentId === proxyEnvironmentId &&
-          skipTarget.jobFileName === activePrinter.job.fileName
-        }
+        open={skipDialogValid}
         onOpenChange={(open) => {
           if (!open) setSkipTarget(null);
         }}

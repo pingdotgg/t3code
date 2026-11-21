@@ -201,6 +201,13 @@ const layerTest = McpHttpServer.layerPrinterToolkit.pipe(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(layerPrinterServiceMock),
+  Layer.provideMerge(
+    ServerSettings.layerTest({
+      enablePrinterSupport: true,
+      enableAgentPrinterAccess: true,
+      linkedEnvironmentsEnabled: true,
+    }),
+  ),
 );
 
 describe("McpPrinterToolkit", () => {
@@ -306,6 +313,13 @@ describe("McpPrinterToolkit", () => {
           const layerRemoteNode = McpHttpServer.layerPrinterToolkit.pipe(
             Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
             Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+            Layer.provideMerge(
+              ServerSettings.layerTest({
+                enablePrinterSupport: true,
+                enableAgentPrinterAccess: true,
+                linkedEnvironmentsEnabled: true,
+              }),
+            ),
             Layer.provideMerge(
               Layer.mock(PrinterService.PrinterService)({
                 state: Effect.sync(emptyLocalState),
@@ -701,6 +715,13 @@ describe("McpPrinterToolkit", () => {
             Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
             Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
             Layer.provideMerge(
+              ServerSettings.layerTest({
+                enablePrinterSupport: true,
+                enableAgentPrinterAccess: true,
+                linkedEnvironmentsEnabled: true,
+              }),
+            ),
+            Layer.provideMerge(
               Layer.mock(PrinterService.PrinterService)({
                 state: Effect.succeed(mockState),
                 list: () => Effect.succeed(mockState),
@@ -731,7 +752,7 @@ describe("McpPrinterToolkit", () => {
             expect(snap.isError).toBe(true);
           }).pipe(Effect.provide(truncatedImageLayer));
 
-          // 3. Unreachable peer is surfaced clearly when no peers respond.
+          // 3. Unreachable/unavailable peers are surfaced clearly and prevent ambiguous printerId auto-selection without environmentId.
           const emptyLocal: PrinterServiceState = {
             enabled: false,
             agentAccessEnabled: false,
@@ -744,6 +765,13 @@ describe("McpPrinterToolkit", () => {
             Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
             Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
             Layer.provideMerge(
+              ServerSettings.layerTest({
+                enablePrinterSupport: false,
+                enableAgentPrinterAccess: true,
+                linkedEnvironmentsEnabled: true,
+              }),
+            ),
+            Layer.provideMerge(
               Layer.mock(PrinterService.PrinterService)({
                 state: Effect.succeed(emptyLocal),
                 list: () => Effect.succeed(emptyLocal),
@@ -755,9 +783,9 @@ describe("McpPrinterToolkit", () => {
                 enabled: Effect.succeed(true),
                 list: Effect.succeed([
                   {
-                    environmentId: flakyEnvId,
-                    label: "Garage Proxy",
-                    urls: ["https://garage.t3.test"],
+                    environmentId: proxyEnvId,
+                    label: "Home Proxy",
+                    urls: ["https://home.t3.test"],
                     status: "reachable",
                     access: "read-only",
                     linkedAt: DateTime.makeUnsafe(0),
@@ -765,33 +793,97 @@ describe("McpPrinterToolkit", () => {
                     lastReachedAt: null,
                     lastError: null,
                   },
+                  {
+                    environmentId: flakyEnvId,
+                    label: "Garage Proxy",
+                    urls: ["https://garage.t3.test"],
+                    status: "unreachable",
+                    access: "read-only",
+                    linkedAt: DateTime.makeUnsafe(0),
+                    expiresAt: DateTime.makeUnsafe("2099-01-01T00:00:00.000Z"),
+                    lastReachedAt: null,
+                    lastError: "offline",
+                  },
                 ]),
                 get: () => Effect.succeedNone,
               }),
             ),
             Layer.provideMerge(
               Layer.mock(PeerForwarding.PeerForwarding)({
-                call: () =>
-                  Effect.fail(
+                call: (_scope, tool, targetEnvId) => {
+                  if (targetEnvId === proxyEnvId && tool.name === "printer_list") {
+                    return Effect.succeed({
+                      enabled: true,
+                      printers: [
+                        {
+                          id: printerId,
+                          label: "Studio P1S",
+                          kind: "home-assistant-bambu",
+                          model: "Bambu Lab P1S",
+                          online: true,
+                          stale: false,
+                          status: "running",
+                          stageLabel: "Printing",
+                          fileName: "desk-jig.gcode.3mf",
+                          progressPercent: 42,
+                          hasCamera: true,
+                          openInThread: false,
+                          environmentId: proxyEnvId,
+                        },
+                      ],
+                    }) as never;
+                  }
+                  if (targetEnvId === proxyEnvId && tool.name === "printer_camera_snapshot") {
+                    return Effect.succeed({
+                      printerId,
+                      printerLabel: "Studio P1S",
+                      online: true,
+                      stale: false,
+                      capturedAt: "2026-11-21T07:00:00.000Z",
+                      cameraAgeSeconds: 2,
+                      environmentId: proxyEnvId,
+                      screenshot: {
+                        mimeType: "image/jpeg",
+                        data: Buffer.from(sampleJpeg).toString("base64"),
+                        width: 16,
+                        height: 12,
+                      },
+                    }) as never;
+                  }
+                  return Effect.fail(
                     new OrchestratorMcpFailure({
                       code: "orchestration_error",
                       message: "Connection refused",
                     }),
-                  ),
+                  );
+                },
               }),
             ),
           );
           yield* Effect.gen(function* () {
             const server = yield* McpServer.McpServer;
-            const status = yield* server.callTool({ name: "printer_status", arguments: {} }).pipe(
-              Effect.provideService(McpInvocationContext.McpInvocationContext, {
-                ...invocation(["printer"]),
-                linkedEnvironments: true,
-              }),
-              Effect.provideService(McpSchema.McpServerClient, client),
-            );
-            expect(status.isError).toBe(true);
-            expect(JSON.stringify(status.content)).toContain("Garage Proxy");
+            const callFleet = Effect.provideService(McpInvocationContext.McpInvocationContext, {
+              ...invocation(["printer"]),
+              linkedEnvironments: true,
+            });
+            // Even with an explicit printerId, an unreachable non-expired peer could host the same ID -> must require environmentId.
+            const ambiguousSnap = yield* server
+              .callTool({
+                name: "printer_camera_snapshot",
+                arguments: { printerId: "p1s-studio" },
+              })
+              .pipe(callFleet, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(ambiguousSnap.isError).toBe(true);
+            expect(JSON.stringify(ambiguousSnap.content)).toContain("Garage Proxy");
+
+            // Passing explicit environmentId succeeds cleanly.
+            const targetedSnap = yield* server
+              .callTool({
+                name: "printer_camera_snapshot",
+                arguments: { printerId: "p1s-studio", environmentId: proxyEnvId },
+              })
+              .pipe(callFleet, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(targetedSnap.isError).toBe(false);
           }).pipe(Effect.provide(unreachableLayer));
         }),
       ),

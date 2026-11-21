@@ -55,6 +55,8 @@ export type RightPanelSurface =
       printerId?: string;
       proxyEnvironmentId?: EnvironmentId;
       title?: string;
+      /** Set when opened automatically by an agent session so session-end cleanup never closes user-opened tabs. */
+      openedByAgent?: true;
     }
   | {
       id: `terminal:${string}`;
@@ -966,15 +968,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               printerId: target.printerId,
               proxyEnvironmentId: ownerEnvironmentId,
               ...(target.label ? { title: target.label } : {}),
+              ...(automatic ? { openedByAgent: true as const } : {}),
             };
             const existing = current.surfaces.find((entry) => entry.id === id);
             const updatedExisting =
               existing && existing.kind === "printer"
-                ? {
-                    ...existing,
-                    proxyEnvironmentId: ownerEnvironmentId,
-                    ...(target.label ? { title: target.label } : {}),
-                  }
+                ? (() => {
+                    const { openedByAgent: existingAgent, ...existingRest } = existing;
+                    return {
+                      ...existingRest,
+                      proxyEnvironmentId: ownerEnvironmentId,
+                      ...(target.label ? { title: target.label } : {}),
+                      ...(automatic && existingAgent ? { openedByAgent: true as const } : {}),
+                    };
+                  })()
                 : undefined;
             const surfaces = existing
               ? current.surfaces
@@ -1000,14 +1007,28 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       closePrinterSessionSurface: (ref, surfaceId) =>
         set((state) =>
           automaticUpdate(state, scopedThreadKey(ref), (current) => {
-            const index = current.surfaces.findIndex(
-              (surface) => surface.id === surfaceId && surface.kind === "printer",
+            const remainingDismissed = (current.dismissedPrinterSurfaceIds ?? []).filter(
+              (entry) => entry !== surfaceId,
             );
-            if (index < 0) return current;
+            const dismissalChanged =
+              remainingDismissed.length !== (current.dismissedPrinterSurfaceIds?.length ?? 0);
+            const index = current.surfaces.findIndex(
+              (surface) =>
+                surface.id === surfaceId && surface.kind === "printer" && surface.openedByAgent,
+            );
+            if (index < 0 && !dismissalChanged) return current;
+            const { dismissedPrinterSurfaceIds: _dropped, ...rest } = current;
+            const base = {
+              ...rest,
+              ...(remainingDismissed.length > 0
+                ? { dismissedPrinterSurfaceIds: remainingDismissed }
+                : {}),
+            };
+            if (index < 0) return base;
             const surfaces = current.surfaces.filter((surface) => surface.id !== surfaceId);
             const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
             return {
-              ...current,
+              ...base,
               isOpen: surfaces.length > 0 && current.isOpen,
               surfaces,
               activeSurfaceId:

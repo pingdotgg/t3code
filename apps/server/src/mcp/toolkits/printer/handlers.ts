@@ -164,13 +164,19 @@ const discoverPeerPrinters = Effect.fn("McpPrinterHandlers.discoverPeerPrinters"
 
   const listed = yield* links.list.pipe(Effect.orElseSucceed(() => []));
   const now = yield* DateTime.now;
-  const candidates = listed.filter(
+  const activeLinks = listed.filter(
     (link) =>
-      link.environmentId !== scope.environmentId &&
-      link.status === "reachable" &&
-      DateTime.isGreaterThan(link.expiresAt, now),
+      link.environmentId !== scope.environmentId && DateTime.isGreaterThan(link.expiresAt, now),
   );
-  if (candidates.length === 0) return { printers: [], unreachablePeers: [] };
+  if (activeLinks.length === 0) return { printers: [], unreachablePeers: [] };
+
+  const unavailablePeers = activeLinks
+    .filter((link) => link.status !== "reachable")
+    .map((link) => link.label);
+  const candidates = activeLinks.filter((link) => link.status === "reachable");
+  if (candidates.length === 0) {
+    return { printers: [], unreachablePeers: unavailablePeers };
+  }
 
   const perPeer = yield* Effect.forEach(
     candidates,
@@ -213,9 +219,12 @@ const discoverPeerPrinters = Effect.fn("McpPrinterHandlers.discoverPeerPrinters"
   );
   return {
     printers: perPeer.flatMap((entry) => entry.printers),
-    unreachablePeers: perPeer
-      .map((entry) => entry.unreachable)
-      .filter((label): label is string => label !== null),
+    unreachablePeers: [
+      ...unavailablePeers,
+      ...perPeer
+        .map((entry) => entry.unreachable)
+        .filter((label): label is string => label !== null),
+    ],
   };
 });
 
@@ -277,7 +286,16 @@ function matchDiscoveredPeerPrinter(
   }
 
   const exact = discovered.filter((entry) => entry.printer.id === trimmed);
-  if (exact.length === 1) return Effect.succeed(exact[0]!);
+  if (exact.length === 1) {
+    if (unreachablePeers.length > 0) {
+      return Effect.fail(
+        new PrinterToolUnavailableError({
+          reason: `Cannot confirm "${trimmed}" is unique across the fleet because some linked environments did not answer (${unreachablePeers.join(", ")}). Matching printer: ${exact[0]!.printer.id} via ${exact[0]!.environmentLabel} (${exact[0]!.environmentId}). Pass environmentId explicitly.`,
+        }),
+      );
+    }
+    return Effect.succeed(exact[0]!);
+  }
   if (exact.length > 1) {
     const candidates = exact
       .map((entry) => `${entry.printer.id} via ${entry.environmentLabel} (${entry.environmentId})`)
@@ -294,7 +312,16 @@ function matchDiscoveredPeerPrinter(
     (entry) =>
       entry.printer.id.toLowerCase() === lower || entry.printer.label.toLowerCase() === lower,
   );
-  if (fuzzy.length === 1) return Effect.succeed(fuzzy[0]!);
+  if (fuzzy.length === 1) {
+    if (unreachablePeers.length > 0) {
+      return Effect.fail(
+        new PrinterToolUnavailableError({
+          reason: `Cannot confirm "${trimmed}" is unique across the fleet because some linked environments did not answer (${unreachablePeers.join(", ")}). Matching printer: ${fuzzy[0]!.printer.id} via ${fuzzy[0]!.environmentLabel} (${fuzzy[0]!.environmentId}). Pass environmentId explicitly.`,
+        }),
+      );
+    }
+    return Effect.succeed(fuzzy[0]!);
+  }
   if (fuzzy.length > 1) {
     const candidates = fuzzy
       .map((entry) => `${entry.printer.id} (${entry.printer.label} via ${entry.environmentLabel})`)
@@ -361,7 +388,7 @@ type ResolvedReadTarget =
 const buildHandlers = Effect.gen(function* () {
   const forwarding = yield* Effect.serviceOption(PeerForwarding.PeerForwarding);
   const links = yield* Effect.serviceOption(PeerLinks.PeerLinks);
-  const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const settingsService = yield* ServerSettings.ServerSettingsService;
   const peers: PeerRuntime = { forwarding, links };
 
   const resolvePrinterPolicy = Effect.fn("McpPrinterHandlers.resolvePrinterPolicy")(function* (
@@ -381,15 +408,9 @@ const buildHandlers = Effect.gen(function* () {
     if (scope.thread === undefined) {
       return { localAllowed: false, peerAllowed: false };
     }
-    if (Option.isNone(settingsService)) {
-      return {
-        localAllowed: state !== null && state.enabled && state.agentAccessEnabled,
-        peerAllowed: scope.linkedEnvironments !== false,
-      };
-    }
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const [settings, threadShell] = yield* Effect.all([
-      settingsService.value.getSettings.pipe(Effect.orElseSucceed(() => null)),
+      settingsService.getSettings.pipe(Effect.orElseSucceed(() => null)),
       threads.getThreadShell(scope.thread.threadId).pipe(Effect.orElseSucceed(() => null)),
     ]);
     // Fail closed if settings or thread project policy cannot be resolved.

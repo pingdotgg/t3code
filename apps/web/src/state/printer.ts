@@ -91,7 +91,7 @@ export function useFleetPrinters(threadEnvironmentId: EnvironmentId | null): {
   const envIds: Array<EnvironmentId> = [];
   const envMeta = new Map<
     EnvironmentId,
-    { readonly label: string; readonly relayManaged: boolean; readonly connecting: boolean }
+    { readonly label: string; readonly relayManaged: boolean }
   >();
   if (threadEnvironmentId !== null) {
     const match = environments.find((env) => env.environmentId === threadEnvironmentId);
@@ -99,8 +99,6 @@ export function useFleetPrinters(threadEnvironmentId: EnvironmentId | null): {
     envMeta.set(threadEnvironmentId, {
       label: match?.label ?? threadEnvironmentId,
       relayManaged: match?.relayManaged ?? false,
-      connecting:
-        match?.connection.phase === "connecting" || match?.connection.phase === "reconnecting",
     });
   }
   for (const env of connected) {
@@ -109,7 +107,6 @@ export function useFleetPrinters(threadEnvironmentId: EnvironmentId | null): {
     envMeta.set(env.environmentId, {
       label: env.label,
       relayManaged: env.relayManaged,
-      connecting: false,
     });
   }
 
@@ -123,7 +120,10 @@ export function useFleetPrinters(threadEnvironmentId: EnvironmentId | null): {
   const loadingEnvironmentIds = new Set<EnvironmentId>();
 
   for (const env of environments) {
-    if (env.connection.phase === "connecting" || env.connection.phase === "reconnecting") {
+    if (
+      envMeta.has(env.environmentId) &&
+      (env.connection.phase === "connecting" || env.connection.phase === "reconnecting")
+    ) {
       loadingEnvironmentIds.add(env.environmentId);
     }
   }

@@ -275,6 +275,11 @@ function PrinterEditorForm({
           deviceId: current.deviceId || result.value.detectedDeviceId || "",
         }));
       }
+    } catch (error) {
+      setTestResult({
+        ok: false,
+        summary: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setTesting(false);
     }
@@ -286,6 +291,12 @@ function PrinterEditorForm({
     try {
       const config = configFromDraft(draft, existingPrinters);
       await onSave(config, draft.existingId);
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: gt("Could not save 3D printer settings"),
+        description: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setSaving(false);
     }
@@ -309,21 +320,20 @@ function PrinterEditorForm({
           <Select
             value={draft.kind}
             onValueChange={(value) => {
-              if (!value) return;
+              if (!value || value === draft.kind) return;
               setTestResult(null);
-              setDraft((current) =>
-                current.kind === value
-                  ? current
-                  : {
-                      ...current,
-                      kind: value as PrinterKind,
-                      // Clear backend-specific credentials and fields so an HA token never carries over to Moonraker/OctoPrint.
-                      secret: { kind: "cleared" },
-                      entityPrefix: "",
-                      deviceId: "",
-                      webcamUrl: "",
-                    },
-              );
+              // Permanently clear the previous backend's saved secret & remount SecretSourceInput so switching back never resurrects it.
+              setSecretCleared(true);
+              setSecretValid(true);
+              setSecretInputKey((n) => n + 1);
+              setDraft((current) => ({
+                ...current,
+                kind: value as PrinterKind,
+                secret: { kind: "cleared" },
+                entityPrefix: "",
+                deviceId: "",
+                webcamUrl: "",
+              }));
             }}
           >
             <SelectTrigger id={backendId}>
@@ -568,6 +578,13 @@ function PrinterSettingsContent() {
         return false;
       }
       return true;
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: gt("Could not save 3D printer settings"),
+        description: error instanceof Error ? error.message : String(error),
+      });
+      return false;
     } finally {
       setPending(false);
     }

@@ -218,15 +218,24 @@ export function floatDeviceSurface(
 export function resetDeviceSessionBaselinesForTests(): void {
   deviceSessionBaselines.clear();
   printerSessionBaselines.clear();
+  activePrinterSessionOrigins.clear();
 }
 
 const printerSessionBaselines = new Map<
   EnvironmentId,
   ReadonlyMap<string, PrinterServiceState["sessions"][number]>
 >();
+/** Deduplicates identical agent printer sessions across environments by canonical session identity. */
+const activePrinterSessionOrigins = new Map<string, EnvironmentId>();
 
 const printerSessionKey = (session: PrinterServiceState["sessions"][number]) =>
   `${session.threadId}:${session.proxyEnvironmentId ?? ""}:${session.printerId}:${session.openedAt}`;
+
+const canonicalPrinterSessionKey = (
+  environmentId: EnvironmentId,
+  session: PrinterServiceState["sessions"][number],
+) =>
+  `${session.threadId}:${session.proxyEnvironmentId ?? environmentId}:${session.printerId}:${session.openedAt}`;
 
 function printerSurfaceIdForSession(
   originEnvironmentId: EnvironmentId,
@@ -246,11 +255,23 @@ export function applyPrinterSnapshot(
   const previous = printerSessionBaselines.get(environmentId);
   const next = new Map(state.sessions.map((session) => [printerSessionKey(session), session]));
   printerSessionBaselines.set(environmentId, next);
-  if (!previous) return;
+  if (!previous) {
+    for (const session of next.values()) {
+      const canonical = canonicalPrinterSessionKey(environmentId, session);
+      if (!activePrinterSessionOrigins.has(canonical)) {
+        activePrinterSessionOrigins.set(canonical, environmentId);
+      }
+    }
+    return;
+  }
 
-  // Close printer panel tabs whose agent session explicitly ended on this environment.
+  // Close auto-opened printer tabs whose agent session ended and clear per-session dismissal suppression.
   for (const [key, ended] of previous) {
     if (next.has(key)) continue;
+    const canonical = canonicalPrinterSessionKey(environmentId, ended);
+    if (activePrinterSessionOrigins.get(canonical) === environmentId) {
+      activePrinterSessionOrigins.delete(canonical);
+    }
     const threadRef = scopeThreadRef(environmentId, ended.threadId);
     const surfaceId = printerSurfaceIdForSession(environmentId, ended);
     const stillActive = state.sessions.some(
@@ -259,17 +280,19 @@ export function applyPrinterSnapshot(
         printerSurfaceIdForSession(environmentId, session) === surfaceId,
     );
     if (!stillActive) {
-      const store = useRightPanelStore.getState();
-      const threadState = store.byThreadKey[scopedThreadKey(threadRef)];
-      if (threadState?.surfaces.some((surface) => surface.id === surfaceId)) {
-        store.closePrinterSessionSurface(threadRef, surfaceId);
-      }
+      useRightPanelStore.getState().closePrinterSessionSurface(threadRef, surfaceId);
     }
   }
 
   if (options.sheetLayout) return;
   for (const [key, session] of next) {
     if (previous.has(key)) continue;
+    const canonical = canonicalPrinterSessionKey(environmentId, session);
+    const existingOrigin = activePrinterSessionOrigins.get(canonical);
+    if (existingOrigin !== undefined && existingOrigin !== environmentId) {
+      continue;
+    }
+    activePrinterSessionOrigins.set(canonical, environmentId);
     const printer = state.printers.find((entry) => entry.id === session.printerId);
     const threadRef = scopeThreadRef(environmentId, session.threadId);
     const label = session.printerLabel ?? printer?.label;
@@ -314,6 +337,9 @@ function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
     stopPrinters();
     deviceSessionBaselines.delete(environmentId);
     printerSessionBaselines.delete(environmentId);
+    for (const [canonical, origin] of activePrinterSessionOrigins) {
+      if (origin === environmentId) activePrinterSessionOrigins.delete(canonical);
+    }
   };
 }
 

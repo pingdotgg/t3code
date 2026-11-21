@@ -33,10 +33,15 @@ export class PrinterDnsLookup extends Context.Service<
   (hostname: string) => Effect.Effect<ReadonlyArray<ResolvedAddress>, PrinterOperationError>
 >()("t3/printer/PrinterUrlGuard/PrinterDnsLookup") {}
 
-/** Optional host->addresses pin shared across a single action's preflight poll and write dispatch. */
+export interface PrinterAddressPin {
+  readonly candidates: ReadonlyArray<ResolvedAddress>;
+  pinned: ResolvedAddress | null;
+}
+
+/** Optional host->address pin shared across a single action's preflight poll and write dispatch. */
 export class PrinterPinnedAddresses extends Context.Service<
   PrinterPinnedAddresses,
-  ReadonlyMap<string, ReadonlyArray<ResolvedAddress>>
+  ReadonlyMap<string, PrinterAddressPin>
 >()("t3/printer/PrinterUrlGuard/PrinterPinnedAddresses") {}
 
 const requireUndici = NodeModule.createRequire(import.meta.url);
@@ -100,7 +105,8 @@ export function validatePrinterBaseUrl(
 ): Effect.Effect<URL, PrinterOperationError> {
   return Effect.try({
     try: () => {
-      const parsed = new URL(rawUrl.trim());
+      const trimmed = rawUrl.trim();
+      const parsed = new URL(trimmed);
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
         throw new Error("Only http:// and https:// printer URLs are supported.");
       }
@@ -109,10 +115,10 @@ export function validatePrinterBaseUrl(
           "Remove embedded credentials from the printer URL; use the token field instead.",
         );
       }
-      if (parsed.hash !== "") {
+      if (parsed.hash !== "" || trimmed.includes("#")) {
         throw new Error("Remove URL fragments (#...) from the printer URL.");
       }
-      if (!options?.allowQuery && parsed.search !== "") {
+      if (!options?.allowQuery && (parsed.search !== "" || trimmed.includes("?"))) {
         throw new Error("Remove query parameters (?...) from the printer backend URL.");
       }
       if (isBlockedPrinterAddress(parsed.hostname)) {
@@ -147,9 +153,9 @@ const resolveCheckedAddresses = Effect.fn("PrinterUrlGuard.resolveCheckedAddress
   }
   const pinnedMap = yield* Effect.serviceOption(PrinterPinnedAddresses);
   if (Option.isSome(pinnedMap)) {
-    const pinned = pinnedMap.value.get(bareHost);
-    if (pinned && pinned.length > 0) {
-      return pinned;
+    const pin = pinnedMap.value.get(bareHost);
+    if (pin && pin.candidates.length > 0) {
+      return pin.pinned ? [pin.pinned] : pin.candidates;
     }
   }
   const customLookup = yield* Effect.serviceOption(PrinterDnsLookup);
@@ -184,20 +190,19 @@ const resolveCheckedAddresses = Effect.fn("PrinterUrlGuard.resolveCheckedAddress
   return resolved;
 });
 
-/** Resolves and pins a single verified address for a backend host across an entire action's poll + write sequence. */
+/** Resolves verified addresses once for an action; read-only preflight pins the answering IP for subsequent writes. */
 export const pinPrinterHostAddress = Effect.fn("PrinterUrlGuard.pinPrinterHostAddress")(function* (
   rawUrl: string,
   operation: string,
   printerId?: string,
-): Effect.fn.Return<ReadonlyMap<string, ReadonlyArray<ResolvedAddress>>, PrinterOperationError> {
+): Effect.fn.Return<ReadonlyMap<string, PrinterAddressPin>, PrinterOperationError> {
   const parsed = yield* validatePrinterBaseUrl(rawUrl, operation, printerId);
   const resolved = yield* resolveCheckedAddresses(parsed, operation, printerId);
   if (resolved === null || resolved.length === 0) {
     return new Map();
   }
   const bareHost = normalizeHost(parsed.hostname);
-  // Pin the single primary resolved IP so preflight poll and hardware write cannot land on different backends.
-  return new Map([[bareHost, [resolved[0]!]]]);
+  return new Map([[bareHost, { candidates: resolved, pinned: null }]]);
 });
 
 function acquirePinnedDispatcher(
@@ -269,9 +274,17 @@ function acquirePinnedDispatcher(
 }
 
 export function buildPrinterEndpoint(baseUrl: URL, path: string): URL {
-  const normalizedBase = baseUrl.toString().replace(/\/+$/, "");
+  const basePath = baseUrl.pathname.replace(/\/+$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return new URL(`${normalizedBase}${normalizedPath}`);
+  const endpoint = new URL(baseUrl.origin);
+  const queryIndex = normalizedPath.indexOf("?");
+  if (queryIndex >= 0) {
+    endpoint.pathname = `${basePath}${normalizedPath.slice(0, queryIndex)}`;
+    endpoint.search = normalizedPath.slice(queryIndex);
+  } else {
+    endpoint.pathname = `${basePath}${normalizedPath}`;
+  }
+  return endpoint;
 }
 
 /** Fast deterministic 64-bit FNV-1a fingerprint for camera frame staleness detection. */
@@ -436,35 +449,78 @@ const executeBoundedRequest = Effect.fn("PrinterUrlGuard.executeBoundedRequest")
 
   return yield* Effect.scoped(
     Effect.gen(function* () {
+      const bareHost = normalizeHost(url.hostname);
+      const pinnedMap = yield* Effect.serviceOption(PrinterPinnedAddresses);
+      const activePin = Option.isSome(pinnedMap) ? pinnedMap.value.get(bareHost) : undefined;
+      const isReadOnlyGet = (options.method ?? "GET") === "GET";
       const resolvedAddresses = yield* resolveCheckedAddresses(
         url,
         options.operation,
         options.printerId,
       );
-      const pinned =
-        resolvedAddresses !== null
-          ? yield* acquirePinnedDispatcher(resolvedAddresses, options.operation, options.printerId)
-          : undefined;
       const guard = yield* Effect.serviceOption(PrinterRequestGuard);
-      if (Option.isSome(guard)) {
-        yield* guard.value();
-      }
-      const requestInit: globalThis.RequestInit = {
-        redirect: "manual",
-        ...(pinned
-          ? {
-              dispatcher: pinned.agent as unknown as NonNullable<
-                globalThis.RequestInit["dispatcher"]
-              >,
+
+      const executeOnce = Effect.fn("PrinterUrlGuard.executeOnce")(function* (
+        targetAddresses: ReadonlyArray<ResolvedAddress> | null,
+      ) {
+        const pinned =
+          targetAddresses !== null
+            ? yield* acquirePinnedDispatcher(targetAddresses, options.operation, options.printerId)
+            : undefined;
+        if (Option.isSome(guard)) {
+          yield* guard.value();
+        }
+        const requestInit: globalThis.RequestInit = {
+          redirect: "manual",
+          ...(pinned
+            ? {
+                dispatcher: pinned.agent as unknown as NonNullable<
+                  globalThis.RequestInit["dispatcher"]
+                >,
+              }
+            : {}),
+        };
+        const execute = client
+          .execute(buildRequest(url, options))
+          .pipe(Effect.provideService(FetchHttpClient.RequestInit, requestInit));
+        return yield* pinned
+          ? Effect.provideService(execute, FetchHttpClient.Fetch, pinned.fetch)
+          : execute;
+      });
+
+      let response: HttpClientResponse.HttpClientResponse;
+      if (activePin && resolvedAddresses !== null && resolvedAddresses.length > 0) {
+        if (activePin.pinned !== null) {
+          response = yield* executeOnce([activePin.pinned]);
+        } else if (isReadOnlyGet) {
+          let lastError: unknown = null;
+          let matched: HttpClientResponse.HttpClientResponse | undefined;
+          for (const candidate of activePin.candidates) {
+            const attempt = yield* Effect.result(executeOnce([candidate]));
+            if (attempt._tag === "Success") {
+              activePin.pinned = candidate;
+              matched = attempt.success;
+              break;
             }
-          : {}),
-      };
-      const execute = client
-        .execute(buildRequest(url, options))
-        .pipe(Effect.provideService(FetchHttpClient.RequestInit, requestInit));
-      const response = yield* pinned
-        ? Effect.provideService(execute, FetchHttpClient.Fetch, pinned.fetch)
-        : execute;
+            if (isPrinterOperationError(attempt.failure)) {
+              return yield* attempt.failure;
+            }
+            lastError = attempt.failure;
+          }
+          if (!matched) {
+            return yield* Effect.fail(lastError ?? new Error(`Could not reach ${url.host}.`));
+          }
+          response = matched;
+        } else {
+          // Never retry a write on a second IP address.
+          const primary = activePin.candidates[0]!;
+          activePin.pinned = primary;
+          response = yield* executeOnce([primary]);
+        }
+      } else {
+        response = yield* executeOnce(resolvedAddresses);
+      }
+
       yield* checkStatus(response.status, url.host, options.operation, options.printerId);
       const bytes = yield* readBoundedResponseBytes(response, maxBytes, url, options);
       const contentType = response.headers["content-type"] ?? "application/octet-stream";

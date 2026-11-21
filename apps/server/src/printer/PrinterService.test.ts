@@ -10,11 +10,13 @@ import {
 import * as SecretResolverCore from "@t3tools/secret-provider-core/server/SecretResolver";
 import { it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -1695,6 +1697,336 @@ describe("PrinterService safety guards & lifecycle", () => {
                 ),
                 Layer.provide(mockSecretResolverLayer),
                 Layer.provide(overlapClient),
+              ),
+            ),
+          ),
+        );
+      }),
+  );
+
+  it.effect(
+    "rejects queued commands if printer ID is retargeted while waiting on the per-printer action lock",
+    () =>
+      Effect.gen(function* () {
+        const firstStopEntered = yield* Deferred.make<void>();
+        const releaseFirstStop = yield* Deferred.make<void>();
+        const stopHosts: Array<string> = [];
+        let holdFirstStop = true;
+
+        const retargetRaceClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/api/states") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify([
+                      {
+                        entity_id: "binary_sensor.p1s_test_online",
+                        state: "on",
+                        last_reported: FRESH_REPORTED_AT,
+                      },
+                      {
+                        entity_id: "sensor.p1s_test_print_status",
+                        state: "running",
+                        last_reported: FRESH_REPORTED_AT,
+                      },
+                      {
+                        entity_id: "sensor.p1s_test_gcode_filename",
+                        state: "shared-job.gcode.3mf",
+                      },
+                      { entity_id: "button.p1s_test_stop", state: "unknown" },
+                    ]),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                ),
+              );
+            }
+            if (url.pathname.startsWith("/api/services/")) {
+              return Effect.gen(function* () {
+                stopHosts.push(url.host);
+                if (holdFirstStop) {
+                  holdFirstStop = false;
+                  yield* Deferred.succeed(firstStopEntered, undefined);
+                  yield* Deferred.await(releaseFirstStop);
+                }
+                return HttpClientResponse.fromWeb(request, new Response("[]", { status: 200 }));
+              });
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(P1S_CONFIG.deviceId!, { status: 200 }),
+              ),
+            );
+          }),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* PrinterService.PrinterService;
+            yield* service.list({ refresh: true });
+
+            // Hold stop #1 open on host .50.
+            const stop1 = yield* Effect.forkChild(
+              service.action({
+                printerId: P1S_CONFIG.id,
+                action: { kind: "stop", expectedJobFileName: "shared-job.gcode.3mf" },
+              }),
+            );
+            yield* Deferred.await(firstStopEntered);
+
+            // Queue stop #2 on the same printerId while stop #1 holds the lock.
+            const stop2 = yield* Effect.forkChild(
+              Effect.exit(
+                service.action({
+                  printerId: P1S_CONFIG.id,
+                  action: { kind: "stop", expectedJobFileName: "shared-job.gcode.3mf" },
+                }),
+              ),
+            );
+            yield* Effect.yieldNow;
+
+            // Retarget printerId to replacement printer .51 (also printing shared-job.gcode.3mf!).
+            yield* service.configure({
+              printers: [{ ...P1S_CONFIG, baseUrl: "http://192.168.1.51:8123" }],
+            });
+
+            yield* Deferred.succeed(releaseFirstStop, undefined);
+            yield* Fiber.join(stop1);
+            const stop2Exit = yield* Fiber.join(stop2);
+            expect(Exit.isFailure(stop2Exit)).toBe(true);
+            expect(stopHosts).toEqual(["192.168.1.50:8123"]);
+          }).pipe(
+            Effect.provide(
+              PrinterService.layer.pipe(
+                Layer.provide(
+                  ServerSettings.layerTest({
+                    enablePrinterSupport: true,
+                    printers: [P1S_CONFIG],
+                  }),
+                ),
+                Layer.provide(mockSecretResolverLayer),
+                Layer.provide(retargetRaceClient),
+              ),
+            ),
+          ),
+        );
+      }),
+  );
+
+  it.effect(
+    "rejects bare trailing ? and #, falls back across dual-stack DNS during preflight poll, and pins the answering IP for write",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(validatePrinterBaseUrl("http://192.168.1.50:8123/?", "test")),
+          ),
+        ).toBe(true);
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(validatePrinterBaseUrl("http://192.168.1.50:8123/#", "test")),
+          ),
+        ).toBe(true);
+
+        // Start a real IPv4-only server on 127.0.0.1; DNS returns [dead ::1, working 127.0.0.1].
+        const receivedMethods: Array<string> = [];
+        const server = NodeHttp.createServer((req, res) => {
+          receivedMethods.push(`${req.method ?? "GET"} ${req.url ?? "/"}`);
+          if (req.url === "/api/states") {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(
+              JSON.stringify([
+                {
+                  entity_id: "binary_sensor.p1s_test_online",
+                  state: "on",
+                  last_reported: FRESH_REPORTED_AT,
+                },
+                {
+                  entity_id: "sensor.p1s_test_print_status",
+                  state: "idle",
+                  last_reported: FRESH_REPORTED_AT,
+                },
+                { entity_id: "light.p1s_test_chamber_light", state: "on" },
+              ]),
+            );
+            return;
+          }
+          if (req.url === "/api/template") {
+            res.writeHead(200, { "content-type": "text/plain" });
+            res.end(P1S_CONFIG.deviceId!);
+            return;
+          }
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end("[]");
+        });
+        const port = yield* Effect.acquireRelease(
+          Effect.promise(
+            () =>
+              new Promise<number>((resolve) => {
+                server.listen(0, "127.0.0.1", () => {
+                  const address = server.address();
+                  resolve(typeof address === "object" && address !== null ? address.port : 0);
+                });
+              }),
+          ),
+          () => Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+        );
+
+        let dnsCallsDuringAction = 0;
+        let counting = false;
+        const dualStackConfig: HomeAssistantBambuPrinterConfig = {
+          ...P1S_CONFIG,
+          baseUrl: `http://dualstack.lan.test:${port}`,
+        };
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* PrinterService.PrinterService;
+            // Settle startup background poll before measuring DNS lookups during action().
+            yield* service.list({ refresh: true });
+            counting = true;
+            yield* service.action({
+              printerId: dualStackConfig.id,
+              action: { kind: "setChamberLight", on: false },
+            });
+            expect(dnsCallsDuringAction).toBe(1);
+            expect(receivedMethods).toContain("POST /api/services/light/turn_off");
+          }).pipe(
+            Effect.provide(
+              PrinterService.layer.pipe(
+                Layer.provide(
+                  ServerSettings.layerTest({
+                    enablePrinterSupport: true,
+                    printers: [dualStackConfig],
+                  }),
+                ),
+                Layer.provide(mockSecretResolverLayer),
+                Layer.provide(FetchHttpClient.layer),
+                Layer.provide(
+                  Layer.succeed(PrinterDnsLookup, () =>
+                    Effect.sync(() => {
+                      if (counting) dnsCallsDuringAction += 1;
+                      return [
+                        { address: "::1", family: 6 },
+                        { address: "127.0.0.1", family: 4 },
+                      ];
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+  );
+
+  it.effect(
+    "ignores out-of-order older camera responses and sequences camera independently of cover fetches",
+    () =>
+      Effect.gen(function* () {
+        const cam1Entered = yield* Deferred.make<void>();
+        const releaseCam1 = yield* Deferred.make<void>();
+        let cameraCalls = 0;
+        const camClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/api/states") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify([
+                      {
+                        entity_id: "binary_sensor.p1s_test_online",
+                        state: "on",
+                        last_reported: FRESH_REPORTED_AT,
+                      },
+                      {
+                        entity_id: "sensor.p1s_test_print_status",
+                        state: "running",
+                        last_reported: FRESH_REPORTED_AT,
+                      },
+                      { entity_id: "camera.p1s_test_camera", state: "streaming" },
+                      { entity_id: "image.p1s_test_cover_image", state: FRESH_REPORTED_AT },
+                    ]),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                ),
+              );
+            }
+            if (url.pathname.startsWith("/api/camera_proxy/")) {
+              return Effect.gen(function* () {
+                const callNum = ++cameraCalls;
+                if (callNum === 1) {
+                  yield* Deferred.succeed(cam1Entered, undefined);
+                  yield* Deferred.await(releaseCam1);
+                }
+                const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, callNum, 0xff, 0xd9]);
+                return HttpClientResponse.fromWeb(
+                  request,
+                  new Response(jpeg, { status: 200, headers: { "content-type": "image/jpeg" } }),
+                );
+              });
+            }
+            if (url.pathname.startsWith("/api/image_proxy/")) {
+              const png = new Uint8Array([
+                0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00,
+              ]);
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(png, { status: 200, headers: { "content-type": "image/png" } }),
+                ),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(P1S_CONFIG.deviceId!, { status: 200 }),
+              ),
+            );
+          }),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* PrinterService.PrinterService;
+            yield* service.list({ refresh: true });
+
+            // Start slow camera request #1 at t=0.
+            const cam1Fiber = yield* Effect.forkChild(service.fetchMedia(P1S_CONFIG.id, "camera"));
+            yield* Deferred.await(cam1Entered);
+
+            // Concurrent cover fetch must NOT block camera #1 or #2 sequencing.
+            yield* service.fetchMedia(P1S_CONFIG.id, "cover");
+
+            // Advance clock 5s and complete newer camera request #2 first.
+            yield* TestClock.adjust(Duration.seconds(5));
+            yield* service.fetchMedia(P1S_CONFIG.id, "camera");
+            const afterCam2 = (yield* service.state).printers[0]?.media.cameraUpdatedAt;
+            expect(afterCam2).toBe("1970-01-01T00:00:05.000Z");
+
+            // Now release slow older camera request #1 -> must NOT regress cameraUpdatedAt back to t=0!
+            yield* Deferred.succeed(releaseCam1, undefined);
+            yield* Fiber.join(cam1Fiber);
+            const afterCam1 = (yield* service.state).printers[0]?.media.cameraUpdatedAt;
+            expect(afterCam1).toBe("1970-01-01T00:00:05.000Z");
+          }).pipe(
+            Effect.provide(
+              PrinterService.layer.pipe(
+                Layer.provide(
+                  ServerSettings.layerTest({
+                    enablePrinterSupport: true,
+                    printers: [P1S_CONFIG],
+                  }),
+                ),
+                Layer.provide(mockSecretResolverLayer),
+                Layer.provide(camClient),
               ),
             ),
           ),

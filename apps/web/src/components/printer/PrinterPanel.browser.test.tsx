@@ -19,6 +19,7 @@ import { PrinterPanel } from "./PrinterPanel";
 const mockStateRef = vi.hoisted(() => ({
   current: null as PrinterServiceState | null,
   proxyEnv: null as { readonly id: EnvironmentId; readonly label: string } | null,
+  loadingEnvironmentIds: new Set<EnvironmentId>(),
 }));
 
 const mockRunCommand = vi.hoisted(() => vi.fn());
@@ -71,7 +72,7 @@ vi.mock("~/state/printer", async (importOriginal) => {
         entries,
         localState: mockStateRef.proxyEnv ? { ...state, printers: [] } : state,
         loaded: true,
-        loadingEnvironmentIds: new Set<EnvironmentId>(),
+        loadingEnvironmentIds: mockStateRef.loadingEnvironmentIds,
         unreachableEnvironmentCount: 0,
         error: null,
       };
@@ -422,6 +423,47 @@ describe("PrinterPanel", () => {
     await expect.element(page.getByText("Stop active print?")).not.toBeInTheDocument();
     expect(mockRunCommand).not.toHaveBeenCalled();
 
+    // Reprinting the original filename (A -> B -> A) must NOT revive the stale Stop dialog.
+    mockStateRef.current = {
+      enabled: true,
+      agentAccessEnabled: true,
+      mediaBasePath: "/api/printer-media",
+      printers: [jobA],
+      sessions: [],
+      revision: 3,
+    };
+    await screen.rerender(
+      <div style={{ width: 480, height: 820, display: "flex" }}>
+        <PrinterPanel
+          mode="embedded"
+          threadRef={threadRef}
+          surface={{ id: "printer:p1s-studio", kind: "printer", printerId: "p1s-studio" }}
+          visible
+        />
+      </div>,
+    );
+    await expect.element(page.getByText("Stop active print?")).not.toBeInTheDocument();
+
+    // Switch back to jobB for skip-object assertion.
+    mockStateRef.current = {
+      enabled: true,
+      agentAccessEnabled: true,
+      mediaBasePath: "/api/printer-media",
+      printers: [jobB],
+      sessions: [],
+      revision: 4,
+    };
+    await screen.rerender(
+      <div style={{ width: 480, height: 820, display: "flex" }}>
+        <PrinterPanel
+          mode="embedded"
+          threadRef={threadRef}
+          surface={{ id: "printer:p1s-studio", kind: "printer", printerId: "p1s-studio" }}
+          visible
+        />
+      </div>,
+    );
+
     // Skip object confirmation includes expectedJobFileName for the captured job.
     const skipButtons = screen.getByRole("button", { name: "Skip" });
     await userEvent.click(skipButtons.first());
@@ -536,5 +578,28 @@ describe("PrinterPanel", () => {
       </div>,
     );
     await expect.element(screen.getByText("gone is unavailable"), { timeout: 2500 }).toBeVisible();
+
+    // When the pinned environment is still connecting/loading, show a loading state instead of claiming unavailable.
+    mockStateRef.loadingEnvironmentIds = new Set([threadRef.environmentId]);
+    try {
+      await screen.rerender(
+        <div style={{ width: 480, height: 820, display: "flex" }}>
+          <PrinterPanel
+            mode="embedded"
+            threadRef={threadRef}
+            surface={{
+              id: "printer:gone",
+              kind: "printer",
+              printerId: "gone",
+              proxyEnvironmentId: threadRef.environmentId,
+            }}
+            visible
+          />
+        </div>,
+      );
+      await expect.element(screen.getByText("gone is unavailable")).not.toBeInTheDocument();
+    } finally {
+      mockStateRef.loadingEnvironmentIds = new Set();
+    }
   });
 });
