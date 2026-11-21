@@ -203,10 +203,12 @@ function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
 function SidebarUtilityItem({
   icon,
   label,
+  shortcutLabel,
   onClick,
 }: {
   icon: ReactNode;
   label: string;
+  shortcutLabel?: string | null;
   onClick: () => void;
 }) {
   return (
@@ -219,7 +221,10 @@ function SidebarUtilityItem({
             </SidebarMenuButton>
           }
         />
-        <TooltipPopup side="top">{label}</TooltipPopup>
+        <TooltipPopup side="top">
+          {label}
+          {shortcutLabel ? ` (${shortcutLabel})` : ""}
+        </TooltipPopup>
       </Tooltip>
     </SidebarMenuItem>
   );
@@ -235,6 +240,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   });
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -303,6 +309,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
             label={gt("Usage")}
+            shortcutLabel={shortcutLabelForCommand(keybindings, "usage.open")}
             onClick={handleUsageClick}
           />
         </>

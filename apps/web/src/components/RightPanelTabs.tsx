@@ -73,7 +73,11 @@ import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { issueStatePresentation } from "~/components/issue/issuePresentation";
 import { issueEnvironment } from "~/state/issues";
-import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
+import {
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+  type ShortcutMatchContext,
+} from "~/keybindings";
 import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
@@ -1139,6 +1143,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   });
 
   if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
+  const addSurfaceShortcutLabel = shortcutLabelForCommand(props.keybindings, "rightPanel.new", {
+    context: { rightPanelOpen: true },
+  });
 
   const addSurfaceMenuBlocked = () =>
     !addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS) !== null;
@@ -1547,19 +1554,28 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             </SortableTabList>
             {props.open !== false ? (
               <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
-                <MenuTrigger
-                  ref={addSurfaceTriggerRef}
-                  render={
-                    <Button
-                      aria-label={gt("Add panel surface")}
-                      className="shrink-0"
-                      size="icon-xs"
-                      variant="ghost-muted"
-                    />
-                  }
-                >
-                  <Plus className="size-3.5" />
-                </MenuTrigger>
+                <Tooltip disabled={!addSurfaceShortcutLabel}>
+                  <TooltipTrigger
+                    render={
+                      <MenuTrigger
+                        ref={addSurfaceTriggerRef}
+                        render={
+                          <Button
+                            aria-label={gt("Add panel surface")}
+                            className="shrink-0"
+                            size="icon-xs"
+                            variant="ghost-muted"
+                          />
+                        }
+                      />
+                    }
+                  >
+                    <Plus className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="bottom">
+                    {gt("Add panel surface")} ({addSurfaceShortcutLabel})
+                  </TooltipPopup>
+                </Tooltip>
                 <MenuPopup
                   align="start"
                   side="bottom"

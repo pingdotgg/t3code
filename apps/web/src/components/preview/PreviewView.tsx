@@ -1016,6 +1016,9 @@ export function PreviewView({
         onBack={handleBack}
         onForward={handleForward}
         onRefresh={handleRefresh}
+        refreshShortcutLabel={shortcutLabelForCommand(keybindings, "preview.refresh", {
+          context: { previewFocus: true, previewOpen: true },
+        })}
         onStopLoading={handleStopLoading}
         onSubmit={(next) => void handleSubmitUrl(next)}
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}

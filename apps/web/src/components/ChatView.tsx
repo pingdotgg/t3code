@@ -3521,6 +3521,10 @@ export default function ChatView(props: ChatViewProps) {
               onOpenThread={onOpenRelatedThreadStable}
               rightPanelOpen={inlineRightPanelOwnsTitleBar}
               onNewThreadInProject={handleNewThreadInActiveProjectStable}
+              newThreadInProjectShortcutLabel={shortcutLabelForCommand(
+                keybindings,
+                "chat.newLocal",
+              )}
               {...(activeDraftLogicalProjectKey
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
                 : {})}

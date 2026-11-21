@@ -14,6 +14,7 @@ import {
   type VcsRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { GitBranchIcon } from "lucide-react";
 import {
@@ -40,7 +41,10 @@ import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
+import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "../lib/utils";
+import { primaryServerKeybindingsAtom } from "../state/server";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./chat/threadDetailsPanelStyles";
 import { ThreadDetailsThreadPrRows } from "./chat/ThreadDetailsPrRows";
 import { ThreadDetailsIssueRows } from "./chat/ThreadDetailsIssueRows";
@@ -119,6 +123,7 @@ export function BranchToolbarBranchSelector({
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
   const gt = useGT();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const messages = useMessages();
   const composerFloatingLayerProps = useComposerMenuProps();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
@@ -692,6 +697,9 @@ export function BranchToolbarBranchSelector({
     },
     messages,
   );
+  // Only the composer's picker opens on the shortcut; the thread details panel copy does not.
+  const branchShortcutLabel =
+    displayMode === "toolbar" ? shortcutLabelForCommand(keybindings, "composer.branch") : null;
 
   const branchPrBranch = resolveBranchToolbarPrBranch({
     activeThreadBranch,
@@ -869,34 +877,43 @@ export function BranchToolbarBranchSelector({
           }}
           onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
         >
-          <ComboboxTrigger
-            render={
-              displayMode === "panel" ? (
-                <ThreadDetailsControl part="select" />
-              ) : (
-                <ComposerControl size="xs" />
-              )
-            }
-            className="min-w-0 max-w-full active:scale-100"
-            disabled={isInitialBranchesLoadPending || isBranchActionPending}
-            // NVDA browse mode re-reads a combobox when its attributes change, not when its text does.
-            aria-label={gt("Branch: {branch}", { branch: triggerLabel })}
-          >
-            <GitBranchIcon
-              className={cn(
-                "size-3 shrink-0",
-                displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
-              )}
-            />
-            <ComposerContextLabel displayMode={displayMode}>
-              <MiddleTruncate
-                value={triggerLabel}
-                variant="cap-aligned"
-                className="w-full"
-                aria-hidden
+          <Tooltip disabled={!branchShortcutLabel}>
+            <TooltipTrigger
+              render={
+                <ComboboxTrigger
+                  render={
+                    displayMode === "panel" ? (
+                      <ThreadDetailsControl part="select" />
+                    ) : (
+                      <ComposerControl size="xs" />
+                    )
+                  }
+                  className="min-w-0 max-w-full active:scale-100"
+                  disabled={isInitialBranchesLoadPending || isBranchActionPending}
+                  // NVDA browse mode re-reads a combobox when its attributes change, not when its text does.
+                  aria-label={gt("Branch: {branch}", { branch: triggerLabel })}
+                />
+              }
+            >
+              <GitBranchIcon
+                className={cn(
+                  "size-3 shrink-0",
+                  displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
+                )}
               />
-            </ComposerContextLabel>
-          </ComboboxTrigger>
+              <ComposerContextLabel displayMode={displayMode}>
+                <MiddleTruncate
+                  value={triggerLabel}
+                  variant="cap-aligned"
+                  className="w-full"
+                  aria-hidden
+                />
+              </ComposerContextLabel>
+            </TooltipTrigger>
+            <TooltipPopup>
+              {triggerLabel} · {branchShortcutLabel}
+            </TooltipPopup>
+          </Tooltip>
         </span>
         {displayMode === "panel" ? (
           <ThreadDetailsThreadPrRows

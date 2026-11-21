@@ -5,10 +5,13 @@ import {
   Maximize2Icon,
   Minimize2Icon,
 } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
 import { useGT } from "gt-react";
 import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
 
+import { shortcutLabelForCommand } from "~/keybindings";
 import { cn } from "~/lib/utils";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
@@ -156,6 +159,11 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
 }) {
   const gt = useGT();
   const label = maximized ? gt("Restore panel size") : gt("Maximize panel");
+  const shortcutLabel = shortcutLabelForCommand(
+    useAtomValue(primaryServerKeybindingsAtom),
+    "rightPanel.toggleMaximized",
+    { context: { rightPanelOpen: true } },
+  );
   return (
     <Tooltip>
       <TooltipTrigger
@@ -176,7 +184,10 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
           </Toggle>
         }
       />
-      <TooltipPopup side="bottom">{label}</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {label}
+        {shortcutLabel ? ` (${shortcutLabel})` : null}
+      </TooltipPopup>
     </Tooltip>
   );
 });

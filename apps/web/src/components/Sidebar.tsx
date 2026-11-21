@@ -3028,6 +3028,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       ? shortcutLabelForCommand(keybindings, "chat.newLocal")
       : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
+  const settleShortcutLabel = shortcutLabelForCommand(keybindings, "thread.settle");
+  const pinShortcutLabel = shortcutLabelForCommand(keybindings, "thread.pin");
   return (
     <SidebarFolderDrop>
       <SidebarChromeHeader isElectron={isElectron} />
@@ -3522,6 +3524,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             readOpensPullRequestsInRightPanel={readOpensPullRequestsInRightPanel}
                             jumpLabel={
                               showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null
+                            }
+                            settleShortcutLabel={
+                              routeThreadKey === threadKey ? settleShortcutLabel : null
+                            }
+                            pinShortcutLabel={
+                              routeThreadKey === threadKey ? pinShortcutLabel : null
                             }
                             currentEnvironmentId={primaryEnvironmentId}
                             environmentLabel={

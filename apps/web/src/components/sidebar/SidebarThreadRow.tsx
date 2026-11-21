@@ -598,6 +598,9 @@ type SidebarThreadRowProps = {
   // Read at click time; a prop would re-render every row on entering or leaving a thread route.
   readOpensPullRequestsInRightPanel: () => boolean;
   jumpLabel: string | null;
+  // Set on the route thread's row only: the settle and pin shortcuts act on the open thread.
+  settleShortcutLabel: string | null;
+  pinShortcutLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
@@ -1219,6 +1222,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </TooltipPopup>
     </Tooltip>
   ) : null;
+  const settleTooltip = props.settleShortcutLabel
+    ? gt("Settle thread ({shortcut})", { shortcut: props.settleShortcutLabel })
+    : gt("Settle thread");
   const showPin =
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
   const pinIndicator = showPin ? (
@@ -1244,7 +1250,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           />
         </TooltipTrigger>
         <TooltipPopup>
-          <T>Unpin thread</T>
+          {props.pinShortcutLabel
+            ? gt("Unpin thread ({shortcut})", { shortcut: props.pinShortcutLabel })
+            : gt("Unpin thread")}
         </TooltipPopup>
       </Tooltip>
     ) : (
@@ -1491,7 +1499,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         <Undo2Icon className="mb-px size-3.5" />
                       </TooltipTrigger>
                       <TooltipPopup side="top">
-                        <T>Un-settle thread</T>
+                        {props.settleShortcutLabel
+                          ? gt("Un-settle thread ({shortcut})", {
+                              shortcut: props.settleShortcutLabel,
+                            })
+                          : gt("Un-settle thread")}
                       </TooltipPopup>
                     </Tooltip>
                   ) : (
@@ -1512,9 +1524,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       >
                         <CheckIcon className="size-3" />
                       </TooltipTrigger>
-                      <TooltipPopup side="top">
-                        <T>Settle thread</T>
-                      </TooltipPopup>
+                      <TooltipPopup side="top">{settleTooltip}</TooltipPopup>
                     </Tooltip>
                   )}
                   {jumpHintLabel ? <JumpHintBadge label={jumpHintLabel} /> : null}
@@ -1715,9 +1725,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             <CheckIcon className="size-3.5" />
                             <T>Settle</T>
                           </TooltipTrigger>
-                          <TooltipPopup>
-                            <T>Settle thread</T>
-                          </TooltipPopup>
+                          <TooltipPopup>{settleTooltip}</TooltipPopup>
                         </Tooltip>
                       ) : null}
                     </span>

@@ -6,6 +6,7 @@ import {
   type PointerEventHandler,
   type ReactNode,
 } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import { msg, useGT, useMessages } from "gt-react";
 import {
   CheckIcon,
@@ -18,7 +19,9 @@ import {
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import type { MessageResolver } from "~/i18n/messages";
 import { formatContextWindowTokens } from "~/lib/contextWindow";
+import { shortcutLabelForCommand } from "~/keybindings";
 import { cn, isMacPlatform } from "~/lib/utils";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useShortcutModifierState } from "../../shortcutModifierState";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
@@ -152,6 +155,11 @@ function StopGenerationButton({
   onInterrupt: () => void;
 }) {
   const gt = useGT();
+  const shortcutLabel = shortcutLabelForCommand(
+    useAtomValue(primaryServerKeybindingsAtom),
+    "thread.stop",
+    { context: { turnRunning: true } },
+  );
   const isStopDisabled = stopPhase === "pending";
   return (
     <Tooltip>
@@ -182,6 +190,7 @@ function StopGenerationButton({
         {stopPhase === "pending"
           ? gt("Stopping…")
           : gt("Interrupt", { $context: "verb, stops the running agent" })}
+        {stopPhase !== "pending" && shortcutLabel ? ` (${shortcutLabel})` : null}
       </TooltipPopup>
     </Tooltip>
   );

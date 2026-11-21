@@ -33,6 +33,7 @@ interface Props {
   onBack: () => void;
   onForward: () => void;
   onRefresh: () => void;
+  refreshShortcutLabel?: string | null | undefined;
   onStopLoading: () => void;
   onSubmit: (url: string) => void;
   onOpenInBrowser?: (() => void) | undefined;
@@ -63,6 +64,7 @@ export function PreviewChromeRow({
   onBack,
   onForward,
   onRefresh,
+  refreshShortcutLabel,
   onStopLoading,
   onSubmit,
   onOpenInBrowser,
@@ -155,7 +157,11 @@ export function PreviewChromeRow({
               <RefreshIcon refreshing={loading} />
             </TooltipTrigger>
             <TooltipPopup>
-              {loading ? gt("Stop", { $context: "stop loading the page" }) : gt("Refresh")}
+              {loading
+                ? gt("Stop", { $context: "stop loading the page" })
+                : refreshShortcutLabel
+                  ? gt("Refresh ({shortcut})", { shortcut: refreshShortcutLabel })
+                  : gt("Refresh")}
             </TooltipPopup>
           </Tooltip>
         </div>

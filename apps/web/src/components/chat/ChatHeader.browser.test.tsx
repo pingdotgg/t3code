@@ -37,6 +37,7 @@ function header(title: string) {
         onOpenThread={() => {}}
         rightPanelOpen={false}
         onNewThreadInProject={() => {}}
+        newThreadInProjectShortcutLabel={null}
       />
       <div tabIndex={0}>Outside rename</div>
     </>
