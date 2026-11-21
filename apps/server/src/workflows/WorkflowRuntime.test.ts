@@ -164,6 +164,8 @@ it.effect(
         // Only that file is held back: another file's change still runs, and the held one says why.
         const other =
           'T3.workflow("other", { version: 1, payload: Schema.Struct({}) }, () => Effect.void);\n';
+        // A file the folder's naming leaves out says so, instead of never running without a word.
+        yield* fileSystem.writeFileString(at("my flow.ts"), other);
         assert.deepStrictEqual(yield* definitions.save("other.ts", other), {
           changed: true,
           problems: [],
@@ -176,6 +178,11 @@ it.effect(
             ["other.ts", 0],
           ],
         );
+        assert.deepStrictEqual(
+          (yield* definitions.read).problems.map((problem) => problem.file),
+          ["my flow.ts"],
+        );
+        yield* fileSystem.remove(at("my flow.ts"));
         assert.deepStrictEqual(yield* definitions.remove("other.ts"), {
           changed: true,
           problems: [],
