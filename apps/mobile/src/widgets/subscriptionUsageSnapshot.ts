@@ -24,6 +24,7 @@ export interface SubscriptionUsageText {
   noSessionLimit: string;
   noWeeklyLimit: string;
   subscriptionRemaining: string;
+  subscriptionUsed: string;
   percentLeft: string;
   percentUsed: string;
   windowPercentLeft: string;
@@ -172,6 +173,7 @@ function subscriptionUsageText(
     noSessionLimit: resolve(msg("No session limit reported")),
     noWeeklyLimit: resolve(msg("No weekly limit reported")),
     subscriptionRemaining: resolve(msg("Subscription remaining")),
+    subscriptionUsed: resolve(msg("Subscription used")),
     percentLeft: resolve(msg("{remaining}% left", { remaining: "{remaining}" })),
     percentUsed: resolve(msg("{used}% used", { used: "{used}" })),
     windowPercentLeft: resolve(

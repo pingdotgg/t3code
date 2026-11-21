@@ -61,6 +61,7 @@ function SubscriptionUsage(
     noSessionLimit: "No session limit reported",
     noWeeklyLimit: "No weekly limit reported",
     subscriptionRemaining: "Subscription remaining",
+    subscriptionUsed: "Subscription used",
     percentLeft: "{remaining}% left",
     percentUsed: "{used}% used",
     windowPercentLeft: "{window} · {remaining}% left",
@@ -94,7 +95,10 @@ function SubscriptionUsage(
       .replace("{provider}", provider)
       .replace("{window}", window.label)
       .replace("{reset}", window.reset)
-      .replace("{detail}", detail);
+      .replace(
+        "{detail}",
+        used && detail === text.subscriptionRemaining ? text.subscriptionUsed : detail,
+      );
   const providers = props.providers ?? [
     // oxlint-disable-next-line t3code/no-untranslated-copy -- widget fallback until the app publishes translated text
     { name: "Codex", detail: "Open T3 to connect", windows: [], expiresAt: 0 },

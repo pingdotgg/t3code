@@ -1705,6 +1705,7 @@
   "a0b256b49573c479": "No session limit reported",
   "bdb25fc7329e1ea7": "No weekly limit reported",
   "2a868f5893b8a3d0": "Subscription remaining",
+  "4de5fcfb9d79a954": "Subscription used",
   "07f5912af296f9ea": "{remaining}% left",
   "d996426072afbeb2": "{used}% used",
   "f60ed5fcf4fd471c": "{window} · {remaining}% left",

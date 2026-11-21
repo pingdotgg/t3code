@@ -1706,6 +1706,7 @@
   "a0b256b49573c479": "未报告会话限制",
   "bdb25fc7329e1ea7": "未报告每周限制",
   "2a868f5893b8a3d0": "订阅剩余",
+  "4de5fcfb9d79a954": "订阅已用",
   "07f5912af296f9ea": "剩余 {remaining}%",
   "d996426072afbeb2": "已使用 {used}%",
   "f60ed5fcf4fd471c": "{window} · 剩余 {remaining}%",
