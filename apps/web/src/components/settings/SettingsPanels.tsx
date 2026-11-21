@@ -312,11 +312,11 @@ function AboutVersionSection() {
       ? !canCheckForUpdate(updateState)
       : isDesktopUpdateButtonDisabled(updateState);
   const buttonDisabledReason = isUpdateActionPending
-    ? "An update installation is pending."
+    ? gt("An update installation is pending.")
     : buttonDisabled && updateState
       ? (getDesktopUpdateDisabledReason(updateState, updatesDenial) ??
         (updateState.status === "checking"
-          ? "Checking for updates."
+          ? gt("Checking for updates.")
           : (buttonTooltip ?? undefined)))
       : undefined;
 
@@ -407,9 +407,9 @@ function AboutVersionSection() {
           managed={updatesDenial}
           disabledReason={
             updateRun !== null
-              ? "Wait for the current update to finish before switching tracks."
+              ? gt("Wait for the current update to finish before switching tracks.")
               : switchChannel !== null
-                ? "Finish reviewing the update track switch first."
+                ? gt("Finish reviewing the update track switch first.")
                 : undefined
           }
           control={
