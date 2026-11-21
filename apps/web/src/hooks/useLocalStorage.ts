@@ -32,7 +32,28 @@ const fallbackStorage: Storage = (() => {
 const getStorage = (): Storage =>
   typeof window !== "undefined" ? window.localStorage : fallbackStorage;
 
+// Values the browser refused to store, so this session still reads them back. A later
+// successful write or another tab's change to the key supersedes them.
+const unsavedValues = new Map<string, string>();
+let watchingOtherTabs = false;
+const keepUnsaved = (key: string, value: string) => {
+  unsavedValues.set(key, value);
+  if (watchingOtherTabs || typeof window === "undefined") return;
+  watchingOtherTabs = true;
+  // Capture listeners run first at the target, so subscribers added earlier re-read fresh values.
+  window.addEventListener(
+    "storage",
+    (event) => {
+      if (event.key === null) unsavedValues.clear();
+      else unsavedValues.delete(event.key);
+    },
+    { capture: true },
+  );
+};
+
 const read = (key: string) => {
+  const unsaved = unsavedValues.get(key);
+  if (unsaved !== undefined) return unsaved;
   try {
     return getStorage().getItem(key);
   } catch (cause) {
@@ -65,7 +86,9 @@ export const setLocalStorageItem = <T, E>(key: string, value: T, schema: Schema.
   const valueToSet = encode(key, schema, value);
   try {
     getStorage().setItem(key, valueToSet);
+    unsavedValues.delete(key);
   } catch (cause) {
+    keepUnsaved(key, valueToSet);
     throw new LocalStorageOperationError({ operation: "write", storageKey: key, cause });
   }
 };
@@ -73,6 +96,7 @@ export const setLocalStorageItem = <T, E>(key: string, value: T, schema: Schema.
 export const removeLocalStorageItem = (key: string) => {
   try {
     getStorage().removeItem(key);
+    unsavedValues.delete(key);
   } catch (cause) {
     throw new LocalStorageOperationError({ operation: "remove", storageKey: key, cause });
   }
@@ -185,6 +209,11 @@ export function writeLocalStorageValue<T, E>(
     } else {
       setLocalStorageItem(key, valueToStore, schema);
     }
+  } catch (error) {
+    console.error("[LOCALSTORAGE] Could not update stored value.", error);
+    if (!unsavedValues.has(key)) return;
+  }
+  try {
     dispatchLocalStorageChange(key);
   } catch (error) {
     console.error("[LOCALSTORAGE] Could not update stored value.", error);

@@ -263,6 +263,30 @@ export function AppearanceSettingsPanel() {
         />
 
         <SettingsRow
+          {...searchableSetting("shared-panel-width")}
+          description={gt(
+            "Use one right panel width in every thread. When off, each thread keeps its own width.",
+          )}
+          resetAction={
+            settings.sharedPanelWidth !== DEFAULT_UNIFIED_SETTINGS.sharedPanelWidth ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset shared panel width to default")}
+                onClick={() =>
+                  updateSettings({ sharedPanelWidth: DEFAULT_UNIFIED_SETTINGS.sharedPanelWidth })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sharedPanelWidth}
+              onCheckedChange={(checked) => updateSettings({ sharedPanelWidth: Boolean(checked) })}
+              aria-label={gt("Use the same right panel width in every thread")}
+            />
+          }
+        />
+
+        <SettingsRow
           {...searchableSetting("chat-width")}
           description={gt("Set how wide messages and the composer can grow on large screens.")}
           resetAction={
