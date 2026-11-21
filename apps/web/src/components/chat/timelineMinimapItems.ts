@@ -1,5 +1,9 @@
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
-import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import {
+  isAttachmentOnlyBootstrapPrompt,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import type { Nodes } from "mdast";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -94,8 +98,12 @@ export function markdownPlainText(markdown: string): string {
   return markdownNodeText(markdownPreviewParser.parse(markdown)).replace(/\s+/g, " ").trim();
 }
 
-function compactMinimapPreview(text: string | null | undefined) {
-  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
+// The tooltip shows a few lines; bound parsing work for long messages and streaming responses.
+function markdownMinimapPreview(markdown: string | null) {
+  if (markdown === null) return null;
+  const compact = markdownNodeText(markdownPreviewParser.parse(markdown.slice(0, 1_500)))
+    .replace(/\s+/g, " ")
+    .trim();
   return compact.length > 0 ? compact : null;
 }
 
@@ -106,12 +114,14 @@ export function resolveTimelineMinimapPreview(
     ? null
     : {
         ...item,
-        userText: compactMinimapPreview(item.userText),
-        // The tooltip shows three lines; bound parsing work while long responses stream.
-        assistantText: compactMinimapPreview(
-          item.assistantText === null
+        // Before markdown parsing, which would reduce a citation link to "Assistant quote".
+        userText: markdownMinimapPreview(
+          item.userText === null
             ? null
-            : markdownNodeText(markdownPreviewParser.parse(item.assistantText.slice(0, 1_500))),
+            : assistantCitationsToPlainText(
+                replaceComposerContextReferences(item.userText, (reference) => reference.label),
+              ),
         ),
+        assistantText: markdownMinimapPreview(item.assistantText),
       };
 }

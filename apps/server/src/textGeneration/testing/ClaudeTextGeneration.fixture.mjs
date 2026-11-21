@@ -13,8 +13,11 @@ if (permissionIndex === -1 || argv[permissionIndex + 1] !== "dontAsk") {
   fail("text generation must deny permission prompts", 12);
 }
 const toolsIndex = argv.indexOf("--tools");
-if (toolsIndex === -1 || argv[toolsIndex + 1] !== "") {
-  fail("text generation must receive an explicit empty tool set", 6);
+if (
+  toolsIndex === -1 ||
+  argv[toolsIndex + 1] !== (process.env.T3_FAKE_CLAUDE_EXPECTED_TOOLS ?? "")
+) {
+  fail("text generation did not receive the expected tool set", 6);
 }
 if (argv.includes("--dangerously-skip-permissions")) {
   fail("text generation must not bypass permissions", 7);
@@ -63,6 +66,19 @@ if (argsMustNotContain && args.includes(argsMustNotContain)) {
 const stdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
 if (stdinMustContain && !stdinContent.includes(stdinMustContain)) {
   fail("stdin missing expected content", 4);
+}
+
+if (process.env.T3_FAKE_CLAUDE_REJECTS_IMAGES === "1" && stdinContent.includes('"type":"image"')) {
+  process.stdout.write(
+    JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      api_error_status: 400,
+      result: "API Error: 400 Image inputs are not supported by this model",
+    }) + "\n",
+  );
+  process.exit(1);
 }
 
 const configDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
