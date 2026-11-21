@@ -181,6 +181,24 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("opens Obsidian note links but not Advanced URI writes", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+      const electronShell = yield* ElectronShell.ElectronShell;
+      assert.equal(
+        yield* electronShell.openExternal("obsidian://open?vault=Example&file=notes%2FExample.md"),
+        true,
+      );
+      assert.equal(
+        yield* electronShell.openExternal(
+          "obsidian://adv-uri?vault=Example&filepath=Example&data=overwrite&mode=overwrite",
+        ),
+        false,
+      );
+      assert.equal(openExternalMock.mock.calls.length, 1);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("does not open unsafe external URLs", () =>
     Effect.gen(function* () {
       const electronShell = yield* ElectronShell.ElectronShell;

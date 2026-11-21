@@ -7,7 +7,56 @@ import {
   inlineCodeFilePathCandidate,
   isMarkdownFileLinkLabel,
   parseMarkdownFileLink,
+  parseObsidianNavigationHref,
 } from "./markdownLinks.ts";
+
+describe("parseObsidianNavigationHref", () => {
+  it.each([
+    "obsidian://open?vault=Example%20Vault",
+    "obsidian://open?vault=Example&file=notes%2FExample.md%23Overview&paneType=tab",
+    "obsidian://open?path=%2Ftmp%2FExample%20Vault%2FExample.md",
+    "obsidian://adv-uri?vault=Example&filepath=notes%2FExample.md&heading=Overview",
+    "obsidian://adv-uri?vault=Example&filepath=Example.md&block=example",
+    "obsidian://adv-uri?vault=Example&filename=Example&line=2&column=3&offset=4",
+  ])("preserves encoded navigation destinations in %s", (href) => {
+    expect(parseObsidianNavigationHref(href)).toBe(href);
+  });
+
+  it("normalizes the scheme before Markdown sanitization", () => {
+    expect(parseObsidianNavigationHref("ObSiDiAn://open?vault=Example")).toBe(
+      "obsidian://open?vault=Example",
+    );
+  });
+
+  it.each([
+    "not a URL",
+    "https://open?vault=Example",
+    "unknown://open?vault=Example",
+    "obsidian://new?vault=Example&file=Example",
+    "obsidian://daily?vault=Example",
+    "obsidian://open/other?vault=Example",
+    "obsidian://user:password@open?vault=Example",
+    "obsidian://open:123?vault=Example",
+    "obsidian://open?vault=Example#fragment",
+    "obsidian://open",
+    "obsidian://adv-uri?vault=Example",
+    "obsidian://adv-uri?filepath=",
+    "obsidian://open?vault=Example&vault=Other",
+    ...[
+      "data",
+      "mode",
+      "commandid",
+      "commandname",
+      "clipboard",
+      "append",
+      "prepend",
+      "x-success",
+      "uid",
+    ].map((key) => `obsidian://adv-uri?filepath=Example&${key}=value`),
+  ])("rejects unsupported actions, parameters and URL shapes in %s", (href) => {
+    expect(parseObsidianNavigationHref(href)).toBeNull();
+  });
+});
 
 describe("isMarkdownFileLinkLabel", () => {
   // regression: #15509 descriptive labels are not mistaken for the linked file name
