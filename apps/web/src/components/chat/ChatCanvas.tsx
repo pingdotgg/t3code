@@ -1,5 +1,7 @@
+import { useLocale } from "gt-react";
 import { useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties } from "react";
 import { useStore } from "zustand";
+import { localeDirection } from "../../i18n/locales";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import type { ChatCanvasPreview } from "./chatCanvasLayout";
 import { resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
@@ -59,6 +61,7 @@ export function ChatCanvas({
   composerOverlayElement: HTMLElement | null;
   detailsCardTopInset?: number;
 }) {
+  const rtl = localeDirection(useLocale()) === "rtl";
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
   const [timelineElement, registerTimeline] = useState<HTMLElement | null>(null);
@@ -114,13 +117,14 @@ export function ChatCanvas({
         width,
         narrowestWidth: transitionWidths?.narrowestWidth ?? width,
         height: element.clientHeight,
-        padding: Number.parseFloat(styles.paddingLeft),
+        padding: Number.parseFloat(styles.paddingInlineStart),
         maxChatWidth: Number.parseFloat(styles.width),
         minChatWidth: Number.parseFloat(styles.minWidth),
         composerHeight: composerOverlayElement?.getBoundingClientRect().height ?? 0,
         timelineGutter: timelineElement
           ? (timelineElement.offsetWidth - timelineElement.clientWidth) / 2
           : 0,
+        rtl,
       });
     };
     measure();
@@ -133,7 +137,7 @@ export function ChatCanvas({
       disposed = true;
       stopObserving();
     };
-  }, [store, composerOverlayElement, timelineElement, detailsCardTopInset]);
+  }, [store, composerOverlayElement, timelineElement, detailsCardTopInset, rtl]);
   const detailsCardInlineOpen = useRightPanelStore((state) =>
     threadRef === null
       ? false

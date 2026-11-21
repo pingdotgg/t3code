@@ -1,5 +1,3 @@
-import { msg } from "gt-i18n";
-import { errorMessage } from "./errorMessage.ts";
 import * as Schema from "effect/Schema";
 import { IsoDateTime, ProviderThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ThreadId } from "./baseSchemas.ts";
@@ -92,8 +90,6 @@ export class ProviderUploadFeedbackError extends Schema.TaggedError<ProviderUplo
   },
 ) {
   override get message(): string {
-    return errorMessage(
-      msg("Failed to upload feedback for thread {threadId}.", { threadId: this.threadId }),
-    );
+    return `Failed to upload feedback for thread ${this.threadId}.`;
   }
 }

@@ -1,7 +1,5 @@
 import * as Schema from "effect/Schema";
-import { msg } from "gt-i18n";
 import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { errorMessage } from "./errorMessage.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const AgentSessionSource = Schema.Literals(["claudeAgent", "codex", "pi"]);
@@ -61,9 +59,7 @@ export class AgentSessionImportProjectNotFoundError extends Schema.TaggedError<A
   { projectId: ProjectId },
 ) {
   override get message(): string {
-    return errorMessage(
-      msg("Project ''{projectId}'' does not exist.", { projectId: this.projectId }),
-    );
+    return `Project '${this.projectId}' does not exist.`;
   }
 }
 
@@ -72,12 +68,7 @@ export class AgentSessionImportProjectChangedError extends Schema.TaggedError<Ag
   { projectId: ProjectId },
 ) {
   override get message(): string {
-    return errorMessage(
-      msg(
-        "Project ''{projectId}'' changed directories. Scan for projects again before importing history.",
-        { projectId: this.projectId },
-      ),
-    );
+    return `Project '${this.projectId}' changed directories. Scan for projects again before importing history.`;
   }
 }
 
@@ -95,8 +86,6 @@ export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanEr
   },
 ) {
   override get message(): string {
-    return errorMessage(
-      msg("Failed to scan agent sessions during {operation}.", { operation: this.operation }),
-    );
+    return `Failed to scan agent sessions during ${this.operation}.`;
   }
 }

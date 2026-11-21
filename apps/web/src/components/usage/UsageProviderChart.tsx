@@ -448,14 +448,14 @@ export function UsageProviderChart({
       : formatPeriod(period);
 
   return (
-    <div className="flex flex-col gap-1">
+    <div dir="ltr" className="flex flex-col gap-1">
       <div className="flex gap-2">
         <div aria-hidden className="relative h-56 w-14 shrink-0">
           {scale.labeled
             ? scale.ticks.map((tick) => (
                 <span
                   key={tick}
-                  className="absolute end-0 -translate-y-1/2 text-3xs text-muted-foreground tabular-nums"
+                  className="absolute right-0 -translate-y-1/2 text-3xs text-muted-foreground tabular-nums"
                   style={{ top: `${(toY(tick) / VIEW_HEIGHT) * 100}%` }}
                 >
                   {tick === 0 ? "0" : format(tick)}
@@ -515,7 +515,7 @@ export function UsageProviderChart({
 
       <div
         aria-hidden
-        className="flex justify-between ps-16 text-3xs text-muted-foreground uppercase"
+        className="flex justify-between pl-16 text-3xs text-muted-foreground uppercase"
       >
         <span>{periods[0] === undefined ? "" : formatPeriod(periods[0])}</span>
         <span>

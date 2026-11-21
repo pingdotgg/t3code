@@ -1,5 +1,3 @@
-import { msg } from "gt-i18n";
-import { errorMessage } from "./errorMessage.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
@@ -37,12 +35,7 @@ export class SettingsSecretUnresolvedError extends Schema.TaggedError<SettingsSe
   { provider: Schema.String },
 ) {
   override get message(): string {
-    return errorMessage(
-      msg(
-        'Could not read the credential from the secret provider "{provider}". Unlock or fix it in Settings, then try again.',
-        { provider: this.provider },
-      ),
-    );
+    return `Could not read the credential from the secret provider "${this.provider}". Unlock or fix it in Settings, then try again.`;
   }
 }
 

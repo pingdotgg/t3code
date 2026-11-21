@@ -1,5 +1,4 @@
 export * from "./baseSchemas.ts";
-export * from "./errorMessage.ts";
 export * from "./assistantCitations.ts";
 export * from "./composerContext.ts";
 export * from "./composerContextClipboard.ts";

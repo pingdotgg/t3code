@@ -1,5 +1,3 @@
-import { msg } from "gt-i18n";
-import { errorMessage } from "./errorMessage.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -62,42 +60,19 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
     const name = CLOUD_SPEECH_PROVIDER_NAMES[this.provider];
     switch (this.reason) {
       case "missing-key":
-        return errorMessage(msg("Add your {name} API key in Settings → Voice.", { name }));
+        return `Add your ${name} API key in Settings → Voice.`;
       case "key-changed":
-        return errorMessage(
-          msg("The {name} key changed before your recording was sent. Try again.", { name }),
-        );
+        return `The ${name} key changed before your recording was sent. Try again.`;
       case "unreadable-key":
-        return errorMessage(
-          msg(
-            "Couldn’t read the {name} API key. Unlock the vault on the selected environment or update the key in Settings → Voice. No audio was sent to {name}.",
-            { name },
-          ),
-        );
+        return `Couldn’t read the ${name} API key. Unlock the vault on the selected environment or update the key in Settings → Voice. No audio was sent to ${name}.`;
       case "rejected-key":
-        return errorMessage(
-          msg(
-            "{name} rejected this API key. Check its permissions and billing in Settings → Voice.",
-            { name },
-          ),
-        );
+        return `${name} rejected this API key. Check its permissions and billing in Settings → Voice.`;
       case "rate-limit":
-        return errorMessage(
-          msg("{name} reached a usage limit. Check the account's quota or try again later.", {
-            name,
-          }),
-        );
+        return `${name} reached a usage limit. Check the account's quota or try again later.`;
       case "model-unavailable":
-        return errorMessage(
-          msg(
-            "The chosen model isn’t available on {name}. Choose another model in Settings → Voice.",
-            { name },
-          ),
-        );
+        return `The chosen model isn’t available on ${name}. Choose another model in Settings → Voice.`;
       case "unavailable":
-        return errorMessage(
-          msg("{name} couldn’t transcribe this recording. Try again later.", { name }),
-        );
+        return `${name} couldn’t transcribe this recording. Try again later.`;
     }
   }
 }

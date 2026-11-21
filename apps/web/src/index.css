@@ -172,6 +172,24 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   );
 }
 
+.wco:dir(rtl),
+:dir(rtl) .wco {
+  --workspace-controls-left: calc(
+    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
+  );
+  --workspace-controls-right: calc(env(titlebar-area-x, 0px) + 0.75rem);
+}
+
+[data-macos-traffic-lights="true"] {
+  --workspace-controls-left: var(--desktop-window-controls-inset, 90px);
+}
+
+[data-macos-traffic-lights="true"]:dir(rtl),
+:dir(rtl) [data-macos-traffic-lights="true"] {
+  --workspace-controls-left: calc(var(--safe-area-inline-start) + 0.75rem);
+  --workspace-controls-right: var(--desktop-window-controls-inset, 90px);
+}
+
 /* The font tokens are declared outside the inline theme so utilities reference
    the variables and Settings -> Appearance can override them at runtime. The
    default stacks are mirrored in `appearanceFonts.ts`. */

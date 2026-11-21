@@ -1,5 +1,3 @@
-import { msg } from "gt-i18n";
-import { errorMessage } from "./errorMessage.ts";
 import * as Schema from "effect/Schema";
 
 import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
@@ -45,31 +43,22 @@ export const SECRET_REQUEST_UNSAVED_NOTE = {
 } as const;
 
 const SECRET_REQUEST_FAILURE_MESSAGES = {
-  load_failed: msg("Could not load the secret request."),
-  not_found: msg("This secret request no longer exists."),
-  already_answered: msg("This secret request was already answered."),
-  fields_mismatch: msg("This request asks for different values. Update the app and try again."),
-  agent_stopped: msg("The agent that asked has stopped, so this secret can't be used."),
-  store_failed: msg("Could not store the secret."),
-  reference_unreadable: msg("Could not read the secret from the secret provider."),
-  record_failed: msg("Saved the secret, but could not update the request."),
-  invalid_ref: msg("That {referenceField} is not valid.", { referenceField: "secretRef" }),
-  read_failed: msg("Could not read the secret."),
-  ref_unavailable: msg(
-    "That {referenceField} was already used or does not exist. Ask the user again with {command}.",
-    { referenceField: "secretRef", command: "request_secret" },
-  ),
-  ref_expired: msg("That {referenceField} expired. Ask the user again with {command}.", {
-    referenceField: "secretRef",
-    command: "request_secret",
-  }),
-  consume_failed: msg("Could not use that {referenceField}. Try again.", {
-    referenceField: "secretRef",
-  }),
-  not_a_file_request: msg(
-    "The user did not save this secret for shell use. Ask again with {command} and {deliveryOption}.",
-    { command: "request_secret", deliveryOption: 'delivery: "file"' },
-  ),
+  load_failed: "Could not load the secret request.",
+  not_found: "This secret request no longer exists.",
+  already_answered: "This secret request was already answered.",
+  fields_mismatch: "This request asks for different values. Update the app and try again.",
+  agent_stopped: "The agent that asked has stopped, so this secret can't be used.",
+  store_failed: "Could not store the secret.",
+  reference_unreadable: "Could not read the secret from the secret provider.",
+  record_failed: "Saved the secret, but could not update the request.",
+  invalid_ref: "That secretRef is not valid.",
+  read_failed: "Could not read the secret.",
+  ref_unavailable:
+    "That secretRef was already used or does not exist. Ask the user again with request_secret.",
+  ref_expired: "That secretRef expired. Ask the user again with request_secret.",
+  consume_failed: "Could not use that secretRef. Try again.",
+  not_a_file_request:
+    'The user did not save this secret for shell use. Ask again with request_secret and delivery: "file".',
 } as const;
 
 export const SecretRequestFailureReason = Schema.Literals(
@@ -90,13 +79,8 @@ export class SecretRequestError extends Schema.TaggedError<SecretRequestError>()
 ) {
   override get message(): string {
     if (this.reason === "reference_unreadable" && this.provider !== undefined) {
-      return errorMessage(
-        msg(
-          'Could not read the secret from the secret provider "{provider}". Unlock it and try again, or enter the value.',
-          { provider: this.provider },
-        ),
-      );
+      return `Could not read the secret from the secret provider "${this.provider}". Unlock it and try again, or enter the value.`;
     }
-    return errorMessage(SECRET_REQUEST_FAILURE_MESSAGES[this.reason]);
+    return SECRET_REQUEST_FAILURE_MESSAGES[this.reason];
   }
 }

@@ -1,5 +1,3 @@
-import { msg } from "gt-i18n";
-import { errorMessage } from "./errorMessage.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -1765,25 +1763,8 @@ export const ServerSettingsOperation = Schema.Literals([
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
 /** Why a provider the administrator's policy leaves out cannot be used. */
-export const disallowedProviderMessage = (organization: string | undefined, label?: string) => {
-  if (organization === undefined) {
-    return label === undefined
-      ? errorMessage(msg("Your organization policy does not allow the this provider."))
-      : errorMessage(
-          msg("Your organization policy does not allow the {label} provider.", { label }),
-        );
-  }
-  return label === undefined
-    ? errorMessage(
-        msg("{organization}''s policy does not allow the this provider.", { organization }),
-      )
-    : errorMessage(
-        msg("{organization}''s policy does not allow the {label} provider.", {
-          organization,
-          label,
-        }),
-      );
-};
+export const disallowedProviderMessage = (organization: string | undefined, label: string) =>
+  `${organization === undefined ? "Your organization" : `${organization}'s`} policy does not allow the ${label} provider.`;
 
 export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>()(
   "ServerSettingsError",
@@ -1801,66 +1782,22 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
   },
 ) {
   override get message(): string {
-    const {
-      operation,
-      managedSetting,
-      managedBy,
-      providerInstanceId,
-      environmentVariable,
-      settingsPath,
-    } = this;
-    if (operation === "write-managed-setting") {
-      if (managedSetting === undefined) {
-        return managedBy === undefined
-          ? errorMessage(msg("This setting is managed by your organization and cannot be changed."))
-          : errorMessage(
-              msg("This setting is managed by {managedBy} and cannot be changed.", { managedBy }),
-            );
-      }
-      return managedBy === undefined
-        ? errorMessage(
-            msg("{managedSetting} is managed by your organization and cannot be changed.", {
-              managedSetting,
-            }),
-          )
-        : errorMessage(
-            msg("{managedSetting} is managed by {managedBy} and cannot be changed.", {
-              managedSetting,
-              managedBy,
-            }),
-          );
+    if (this.operation === "write-managed-setting") {
+      return `${this.managedSetting ?? "This setting"} is managed by ${this.managedBy ?? "your organization"} and cannot be changed.`;
     }
-    if (operation === "use-disallowed-provider") {
-      return disallowedProviderMessage(managedBy, this.providerLabel ?? providerInstanceId);
+    if (this.operation === "use-disallowed-provider") {
+      return disallowedProviderMessage(
+        this.managedBy,
+        this.providerLabel ?? this.providerInstanceId ?? "this",
+      );
     }
-    if (providerInstanceId === undefined) {
-      return environmentVariable === undefined
-        ? errorMessage(
-            msg("Server settings {operation} failed at {settingsPath}.", {
-              operation,
-              settingsPath,
-            }),
-          )
-        : errorMessage(
-            msg(
-              "Server settings {operation} failed and environment variable {environmentVariable} at {settingsPath}.",
-              { operation, environmentVariable, settingsPath },
-            ),
-          );
-    }
-    return environmentVariable === undefined
-      ? errorMessage(
-          msg(
-            "Server settings {operation} failed for provider {providerInstanceId} at {settingsPath}.",
-            { operation, providerInstanceId, settingsPath },
-          ),
-        )
-      : errorMessage(
-          msg(
-            "Server settings {operation} failed for provider {providerInstanceId} and environment variable {environmentVariable} at {settingsPath}.",
-            { operation, providerInstanceId, environmentVariable, settingsPath },
-          ),
-        );
+    const provider =
+      this.providerInstanceId === undefined ? "" : ` for provider ${this.providerInstanceId}`;
+    const variable =
+      this.environmentVariable === undefined
+        ? ""
+        : ` and environment variable ${this.environmentVariable}`;
+    return `Server settings ${this.operation} failed${provider}${variable} at ${this.settingsPath}.`;
   }
 }
 

@@ -1,6 +1,4 @@
 import { Schema } from "effect";
-import { msg } from "gt-i18n";
-import { errorMessage } from "./errorMessage.ts";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BROWSER_PROFILE_MAX_COUNT, BrowserProfile, BrowserProfileId } from "./browserProfile.ts";
 
@@ -31,11 +29,7 @@ const PreviewViewportDimension = Schema.Int.check(
 const viewportAreaFilter = Schema.makeFilter(
   ({ width, height }: { readonly width: number; readonly height: number }) =>
     width * height <= PREVIEW_VIEWPORT_MAX_AREA ||
-    errorMessage(
-      msg("Viewport area must not exceed {maximumArea} pixels.", {
-        maximumArea: PREVIEW_VIEWPORT_MAX_AREA,
-      }),
-    ),
+    `Viewport area must not exceed ${PREVIEW_VIEWPORT_MAX_AREA} pixels.`,
 );
 
 export const PreviewViewportSize = Schema.Struct({
@@ -340,22 +334,16 @@ export class PreviewStopLocalServerError extends Schema.TaggedError<PreviewStopL
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
-  override get message(): string {
+  override get message() {
     switch (this.reason) {
       case "not-found":
-        return errorMessage(msg("This server is no longer running."));
+        return "This server is no longer running.";
       case "shared-group":
-        return errorMessage(
-          msg(
-            "This server shares a process group with T3 Code, an agent, or a terminal shell, so it can't be stopped on its own.",
-          ),
-        );
+        return "This server shares a process group with T3 Code, an agent, or a terminal shell, so it can't be stopped on its own.";
       case "unsupported":
-        return errorMessage(
-          msg("Stopping servers is not supported on this environment's platform."),
-        );
+        return "Stopping servers is not supported on this environment's platform.";
       case "signal-failed":
-        return errorMessage(msg("The server's processes could not be signaled."));
+        return "The server's processes could not be signaled.";
     }
   }
 }
@@ -374,13 +362,8 @@ export class PreviewSessionLookupError extends Schema.TaggedError<PreviewSession
     tabId: Schema.String,
   },
 ) {
-  override get message(): string {
-    return errorMessage(
-      msg("Unknown preview session: thread={threadId}, tab={tabId}", {
-        threadId: this.threadId,
-        tabId: this.tabId,
-      }),
-    );
+  override get message() {
+    return `Unknown preview session: thread=${this.threadId}, tab=${this.tabId}`;
   }
 }
 
@@ -393,20 +376,9 @@ export class PreviewInvalidUrlError extends Schema.TaggedError<PreviewInvalidUrl
     cause: Schema.Defect(),
   },
 ) {
-  override get message(): string {
-    return this.protocol === undefined
-      ? errorMessage(
-          msg(
-            "Invalid preview URL ({reason}; input length {inputLength}). Use an http(s) URL or a schemeless host such as localhost:5173. With preview_open, omit url when creating a new tab to open a blank tab.",
-            { reason: this.reason, inputLength: this.inputLength },
-          ),
-        )
-      : errorMessage(
-          msg(
-            "Invalid preview URL ({reason}: {protocol}; input length {inputLength}). Use an http(s) URL or a schemeless host such as localhost:5173. With preview_open, omit url when creating a new tab to open a blank tab.",
-            { reason: this.reason, protocol: this.protocol, inputLength: this.inputLength },
-          ),
-        );
+  override get message() {
+    const protocol = this.protocol === undefined ? "" : `: ${this.protocol}`;
+    return `Invalid preview URL (${this.reason}${protocol}; input length ${this.inputLength}). Use an http(s) URL or a schemeless host such as localhost:5173. With preview_open, omit url when creating a new tab to open a blank tab.`;
   }
 }
 
@@ -414,8 +386,8 @@ export class PreviewControlRequiredError extends Schema.TaggedError<PreviewContr
   "PreviewControlRequiredError",
   { tabId: Schema.String },
 ) {
-  override get message(): string {
-    return errorMessage(msg("Take control of the server browser and use its viewer controls."));
+  override get message() {
+    return "Take control of the server browser and use its viewer controls.";
   }
 }
 
@@ -423,8 +395,8 @@ export class PreviewClearProfileError extends Schema.TaggedError<PreviewClearPro
   "PreviewClearProfileError",
   { profileId: Schema.String, cause: Schema.Defect() },
 ) {
-  override get message(): string {
-    return errorMessage(msg("The environment could not delete this browser profile's data."));
+  override get message() {
+    return "The environment could not delete this browser profile's data.";
   }
 }
 

@@ -1,7 +1,6 @@
 import "./intl-polyfills";
 import { reloadAppAsync } from "expo";
 import { resolveLocaleSelection } from "@t3tools/client-runtime/locales";
-import { setErrorMessageResolver } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { GTProvider, initializeGT, useLocale } from "gt-react-native";
@@ -25,7 +24,7 @@ import {
 
 import { mobilePreferencesAtom, savedMobileLanguageAtom } from "../state/preferences";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
-import { m, setActiveLocale } from "./messages";
+import { setActiveLocale } from "./messages";
 
 const FormattingLocaleContext = createContext(DEFAULT_LOCALE);
 
@@ -56,7 +55,6 @@ initializeGT({
   // Loaded catalogs never go stale; GT's default 60 s expiry would only reload the same file.
   cacheExpiryTime: null,
 });
-setErrorMessageResolver(m);
 
 // Read the device languages from gt-react-native's own native module: GT's getLocale() prefers
 // the last locale passed to GTProvider, which it persists, so it can't express "system".

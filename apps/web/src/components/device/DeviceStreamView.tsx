@@ -374,7 +374,7 @@ export function DeviceStreamView(props: {
         >
           <div
             ref={mountCanvas}
-            className={cn("absolute top-0 start-0", mjpegUrl && "hidden")}
+            className={cn("absolute top-0 left-0", mjpegUrl && "hidden")}
             style={mediaStyle}
           />
           {props.visible && access && mjpegUrl ? (
@@ -383,7 +383,7 @@ export function DeviceStreamView(props: {
               ref={attachMjpegImage}
               alt=""
               draggable={false}
-              className="absolute top-0 start-0 object-contain"
+              className="absolute top-0 left-0 object-contain"
               style={mediaStyle}
             />
           ) : null}

@@ -1486,7 +1486,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 ps-2",
           props.mode === "inline" && !props.layoutControls ? "pe-28" : "pe-3",
           ownsDesktopTitleBar && "drag-region",
-          ownsDesktopTitleBar && "wco:pe-(--workspace-native-controls-inset)",
+          ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar

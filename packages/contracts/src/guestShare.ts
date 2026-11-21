@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-import { msg } from "gt-i18n";
 
 import { ChatAttachment } from "./chatAttachment.ts";
 import {
@@ -10,7 +9,6 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
-import { errorMessage } from "./errorMessage.ts";
 
 /**
  * A guest share lets one unauthenticated browser watch a thread over T3 Connect and propose
@@ -67,11 +65,11 @@ export const GuestShareCreateResult = Schema.Struct({
 export type GuestShareCreateResult = typeof GuestShareCreateResult.Type;
 
 const GUEST_SHARE_CREATE_MESSAGES = {
-  disabled: msg("Guest links are off. Turn them on in Settings > Labs."),
-  connect_unavailable: msg("Guest links need a running T3 Connect tunnel."),
-  thread_unavailable: msg("This thread cannot be shared."),
-  read_failed: msg("Failed to read the shared thread."),
-  changed: msg("The guest link changed while it was being created."),
+  disabled: "Guest links are off. Turn them on in Settings > Labs.",
+  connect_unavailable: "Guest links need a running T3 Connect tunnel.",
+  thread_unavailable: "This thread cannot be shared.",
+  read_failed: "Failed to read the shared thread.",
+  changed: "The guest link changed while it was being created.",
 } as const;
 
 export class GuestShareCreateError extends Schema.TaggedError<GuestShareCreateError>()(
@@ -87,7 +85,7 @@ export class GuestShareCreateError extends Schema.TaggedError<GuestShareCreateEr
   },
 ) {
   override get message(): string {
-    return errorMessage(GUEST_SHARE_CREATE_MESSAGES[this.reason]);
+    return GUEST_SHARE_CREATE_MESSAGES[this.reason];
   }
 }
 

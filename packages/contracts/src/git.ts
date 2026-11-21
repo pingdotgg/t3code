@@ -1,6 +1,5 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { msg } from "gt-i18n";
 import {
   ForwardCompatibleOptional,
   NonNegativeInt,
@@ -9,7 +8,6 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { errorMessage } from "./errorMessage.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
@@ -390,22 +388,8 @@ export class GitCommandError extends Schema.TaggedError<GitCommandError>()("GitC
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return this.reason === undefined
-      ? errorMessage(
-          msg("Git command failed in {operation} ({cwd}): {detail}", {
-            operation: this.operation,
-            cwd: this.cwd,
-            detail: this.detail,
-          }),
-        )
-      : errorMessage(
-          msg("Git command failed in {operation} ({cwd}): {detail} ({reason})", {
-            operation: this.operation,
-            cwd: this.cwd,
-            detail: this.detail,
-            reason: this.reason,
-          }),
-        );
+    const reason = this.reason === undefined ? "" : ` (${this.reason})`;
+    return `Git command failed in ${this.operation} (${this.cwd}): ${this.detail}${reason}`;
   }
 }
 
@@ -418,12 +402,7 @@ export class TextGenerationError extends Schema.TaggedError<TextGenerationError>
   },
 ) {
   override get message(): string {
-    return errorMessage(
-      msg("Text generation failed in {operation}: {detail}", {
-        operation: this.operation,
-        detail: this.detail,
-      }),
-    );
+    return `Text generation failed in ${this.operation}: ${this.detail}`;
   }
 }
 
@@ -434,12 +413,7 @@ export class GitManagerError extends Schema.TaggedError<GitManagerError>()("GitM
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return errorMessage(
-      msg("Git manager failed in {operation}: {detail}", {
-        operation: this.operation,
-        detail: this.detail,
-      }),
-    );
+    return `Git manager failed in ${this.operation}: ${this.detail}`;
   }
 }
 
@@ -455,16 +429,7 @@ export class GitPullRequestMaterializationError extends Schema.TaggedError<GitPu
   },
 ) {
   override get message(): string {
-    return errorMessage(
-      msg(
-        "Failed to materialize pull request #{pullRequestNumber} branch {headBranch} as {localBranch}.",
-        {
-          pullRequestNumber: this.pullRequestNumber,
-          headBranch: this.headBranch,
-          localBranch: this.localBranch,
-        },
-      ),
-    );
+    return `Failed to materialize pull request #${this.pullRequestNumber} branch ${this.headBranch} as ${this.localBranch}.`;
   }
 }
 

@@ -1,6 +1,4 @@
 import * as Schema from "effect/Schema";
-import { msg } from "gt-i18n";
-import { errorMessage } from "./errorMessage.ts";
 
 import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 
@@ -80,21 +78,17 @@ export class McpAppRequestError extends Schema.TaggedError<McpAppRequestError>()
   override get message(): string {
     switch (this.reason) {
       case "not-an-app":
-        return errorMessage(msg("This tool call has no MCP app."));
+        return "This tool call has no MCP app.";
       case "provider-unsupported":
-        return errorMessage(msg("This thread's provider cannot run MCP app requests."));
+        return "This thread's provider cannot run MCP app requests.";
       case "session-stopped":
-        return errorMessage(
-          msg(
-            "The app's thread is not running. Send a message in the thread that created it to use the app again.",
-          ),
-        );
+        return "The app's thread is not running. Send a message in the thread that created it to use the app again.";
       case "tool-not-callable":
-        return errorMessage(msg("This app cannot call that tool."));
+        return "This app cannot call that tool.";
       case "unsupported-content":
-        return errorMessage(msg("Only text and structured content are supported."));
+        return "Only text and structured content are supported.";
       case "request-failed":
-        return errorMessage(msg("The app's MCP server request failed."));
+        return "The app's MCP server request failed.";
     }
   }
 }
