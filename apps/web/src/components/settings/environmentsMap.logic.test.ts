@@ -497,6 +497,32 @@ describe("fleetLinkOffer", () => {
     expect(offer("cups", "old")).toMatchObject({ renews: false });
   });
 
+  it("links through a machine that holds a full-access link there and whose access the client manages", () => {
+    const through = (hosts: ReadonlyArray<FleetEnvironmentInput>) => {
+      const result = fleetLinkOffer(build(hosts), node("mbp"), node("vm"));
+      return result.kind === "link" ? [result.path, result.target] : result.kind;
+    };
+    const full = link("vm", { access: "full-access" });
+    expect(through([environment("mbp"), environment("nucbox", [full])])).toEqual([
+      "through-link",
+      {
+        kind: "address",
+        address: "https://vm.example.ts.net",
+        through: { viaEnvironmentId: id("nucbox"), environmentId: id("vm"), label: "vm" },
+      },
+    ]);
+    for (const [why, nucbox] of [
+      ["a lower link", environment("nucbox", [link("vm")])],
+      ["an expired link", environment("nucbox", [{ ...full, status: "expired" }])],
+      ["a link that does not answer", environment("nucbox", [{ ...full, status: "unreachable" }])],
+      ["no access management", environment("nucbox", [full], { canWriteAccess: false })],
+    ] as const) {
+      expect(through([environment("mbp"), nucbox]), why).toMatchObject(["pairing-code", {}]);
+    }
+    // Its own link is not a way to a new one.
+    expect(through([environment("mbp", [full])])).toMatchObject(["pairing-code", {}]);
+  });
+
   it("offers nothing from a machine that cannot link, or to itself or the client", () => {
     const reason = (source: string, target: string) => {
       const result = offer(source, target);
