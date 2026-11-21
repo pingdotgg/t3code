@@ -2928,6 +2928,95 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("keeps MiniMax's plan review open after its prompt returns", () =>
+    Effect.gen(function* () {
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          // MiniMax Code 0.7.9 asks for plan review, then resolves the prompt while it waits.
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "request",
+              method: "elicitation/create",
+              params: {
+                sessionId: CLAUDE_ROOT_SESSION,
+                mode: "form",
+                message: "Approve the plan?",
+                requestedSchema: {
+                  type: "object",
+                  properties: {
+                    decision: { type: "string", title: "Plan", enum: ["approve", "reject"] },
+                  },
+                  required: ["decision"],
+                },
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              kind: "response",
+              method: "elicitation/create",
+              result: { action: "accept", content: { decision: "approve" } },
+            },
+          },
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "minimax-code",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1)).pipe(Effect.forkScoped);
+      const seen = yield* session.until(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+      );
+      const request = seen.find(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      if (request?.type !== "runtime_request.updated") throw new Error("Missing request");
+      const settled = seen.at(-1)!;
+      if (settled.type !== "provider_turn.updated") throw new Error("Missing settled turn");
+      // Anything not retained here is dismissed by the ingestor, and the agent is never answered.
+      assert.include(settled.retainedRuntimeRequestIds ?? [], request.runtimeRequest.id);
+      yield* session.runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        answers: { decision: "approve" },
+      });
+      let answer: unknown;
+      while (answer === undefined) {
+        const frame = (yield* Queue.take(session.outgoing)) as { readonly result?: unknown };
+        answer = frame.result;
+      }
+      assert.deepEqual(answer, { action: "accept", content: { decision: "approve" } });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("counts per-turn usage for a local glm command", () =>
     Effect.gen(function* () {
       const session = yield* openClaudeReplaySession(
