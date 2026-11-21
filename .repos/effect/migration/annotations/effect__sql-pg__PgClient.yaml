@@ -6,7 +6,7 @@
   note: "Wrapping an existing node-pg Pool was removed. Provide connection settings to PgClient.layer instead."
 "@effect/sql-pg/PgClient#PgClient":
   replacement: "@effect/sql-pg/PgClient#PgClient"
-  note: "Retained; the service value is now a Context.Service. The listen method returns a scoped Effect acquiring a Queue.Dequeue<PgConnection.Notification, SqlError>; consume it with Queue operations or Stream.fromQueue and read each notification's payload. Connection failures after registration fail the queue with the original SqlError; scope closure interrupts consumers."
+  note: "Retained; the service value is now a Context.Service. The listen method returns a scoped Effect acquiring a Queue.Dequeue<PgConnection.Notification, SqlError>; consume it with Queue operations or Stream.fromQueue and read each notification's payload. Connection failures after registration fail the queue with the original SqlError; scope closure interrupts consumers. The PgClient interface no longer extends SqlClient.SqlClient. Yielding the service still gives PgClient & SqlClient, but an effect that requires PgClient no longer type-checks against a SqlClient requirement annotation, and a SqlClient-only layer no longer satisfies PgClient. Annotate a layer chosen between drivers as Layer.Layer<SqlClient.SqlClient, E>."
 "@effect/sql-pg/PgClient#PgClientConfig":
   include: true
   replacement: "@effect/sql-pg/PgClient#PgClientConfig / PgPoolConfig"

@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Layer, Option } from "effect"
-import { HttpRouter, HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http"
+import { Context, Effect, Exit, Layer, Logger, Option, References, Tracer } from "effect"
+import type { FindMyWay } from "effect/http"
+import { HttpRouter, HttpServerError, HttpServerRequest, HttpServerResponse, UrlParams } from "effect/http"
 
 const echoUrl = (request: HttpServerRequest.HttpServerRequest) => Effect.succeed(HttpServerResponse.text(request.url))
 
@@ -10,9 +11,13 @@ const layerPrefixed = (prefix: string) =>
     Effect.map(HttpRouter.HttpRouter, (router) => router.prefixed(prefix))
   )
 
-const fetchText = (app: Layer.Layer<never, never, HttpRouter.HttpRouter>, path: string) =>
+const fetchText = (
+  app: Layer.Layer<never, never, HttpRouter.HttpRouter>,
+  path: string,
+  routerConfig?: Partial<FindMyWay.RouterConfig>
+) =>
   Effect.acquireUseRelease(
-    Effect.sync(() => HttpRouter.toWebHandler(app, { disableLogger: true })),
+    Effect.sync(() => HttpRouter.toWebHandler(app, { disableLogger: true, routerConfig })),
     ({ handler }) =>
       Effect.promise(async () => {
         const response = await handler(new Request(`http://localhost${path}`))
@@ -22,6 +27,110 @@ const fetchText = (app: Layer.Layer<never, never, HttpRouter.HttpRouter>, path: 
   )
 
 describe("HttpRouter", () => {
+  for (const first of ["static", "wildcard"] as const) {
+    it.effect(`dispatches static and wildcard routes with ${first} registered first`, () =>
+      Effect.gen(function*() {
+        const exact = HttpRouter.route("GET", "/test", HttpServerResponse.text("static"))
+        const wildcard = HttpRouter.route("GET", "/test/*", HttpServerResponse.text("wildcard"))
+        const routes = HttpRouter.use(Effect.fn(function*(router) {
+          for (const route of first === "static" ? [exact, wildcard] : [wildcard, exact]) {
+            yield* router.addAll([route])
+          }
+        }))
+
+        assert.strictEqual(yield* fetchText(routes, "/test"), "static")
+        assert.strictEqual(yield* fetchText(routes, "/test/anything"), "wildcard")
+      }))
+  }
+
+  for (const first of ["explicit", "wildcard"] as const) {
+    it.effect(`rejects colliding regex patterns with ${first} registered first`, () =>
+      Effect.gen(function*() {
+        const router = yield* HttpRouter.make
+        const explicit = HttpRouter.route("GET", "/files/:id(456)", HttpServerResponse.empty())
+        const wildcard = HttpRouter.route("GET", "/files/:id(123)/*", HttpServerResponse.empty())
+        const result = yield* Effect.exit(
+          router.addAll(first === "explicit" ? [explicit, wildcard] : [wildcard, explicit])
+        )
+        assert.deepStrictEqual(result, Exit.die(new Error("Method 'GET' already declared for route '/files/:()'")))
+      }))
+  }
+
+  it.effect("records redacted params in server spans and logs", () =>
+    Effect.gen(function*() {
+      const spans: Array<Tracer.NativeSpan> = []
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options)
+          spans.push(span)
+          return span
+        }
+      })
+      const urls: Array<unknown> = []
+      const logger = Logger.make((options) => {
+        urls.push(options.fiber.getRef(References.CurrentLogAnnotations)["http.url"])
+      })
+      const inner = yield* HttpRouter.toHttpEffect(
+        HttpRouter.add("GET", "/:id/:secret", echoUrl, { redactedParams: ["secret"] })
+      )
+      const app = Layer.mergeAll(
+        HttpRouter.add("GET", "/hooks/:id/:secret", echoUrl, { redactedParams: ["secret"] }),
+        HttpRouter.add("GET", "/assets/*", echoUrl, { redactedParams: ["*"] }),
+        // Nested regex capture shifts param indices, so all params are redacted.
+        HttpRouter.add("GET", "/codes/:secret(^(a|b)\\d+)-:id", echoUrl, { redactedParams: ["secret"] }),
+        HttpRouter.add("GET", "/named/:id(?<digits>\\d+)", echoUrl, { redactedParams: ["id"] }),
+        HttpRouter.add("GET", "/opt/:p1-:p2?", echoUrl, { redactedParams: ["p2"] }),
+        HttpRouter.add("GET", "*", echoUrl, { redactedParams: ["*"] }),
+        HttpRouter.use((router) =>
+          router.prefixed("/vault").add("*", "*", Effect.orDie(inner), { redactedParams: ["*"] })
+        ),
+        HttpRouter.use((router) => router.prefixed("/mounted").add("*", "*", Effect.orDie(inner)))
+      )
+      const context = Context.make(Tracer.Tracer, tracer).pipe(
+        Context.add(Logger.CurrentLoggers, new Set([logger])),
+        Context.add(UrlParams.CurrentRedactedNames, ["key"])
+      )
+      const bodies = yield* Effect.acquireUseRelease(
+        Effect.sync(() => HttpRouter.toWebHandler(app)),
+        ({ handler }) =>
+          Effect.promise(async () => {
+            const out: Array<string> = []
+            for (
+              const path of [
+                "/hooks/123/s3cret?key=q",
+                "/assets/tok/site.css",
+                "/codes/a1-7",
+                "/named/12",
+                "/opt",
+                "/other/s3cret",
+                "/vault/1/s3cret",
+                "/mounted/1/s3cret"
+              ]
+            ) {
+              const response = await handler(new Request(`http://localhost${path}`), context)
+              out.push(await response.text())
+            }
+            return out
+          }),
+        ({ dispose }) => Effect.promise(dispose)
+      )
+
+      const expectedPaths = [
+        "/hooks/123/REDACTED",
+        "/assets/REDACTED",
+        "/codes/REDACTED-REDACTED",
+        "/named/REDACTED",
+        "/opt",
+        "/REDACTED",
+        "/vault/REDACTED",
+        "/mounted/1/REDACTED"
+      ]
+      assert.strictEqual(bodies[0], "/hooks/123/s3cret?key=q")
+      assert.deepStrictEqual(urls, expectedPaths)
+      assert.deepStrictEqual(spans.map((span) => span.attributes.get("url.path")), expectedPaths)
+      assert.strictEqual(spans[0].attributes.get("url.full"), "http://localhost/hooks/123/REDACTED?key=REDACTED")
+    }))
+
   it("normalizes the prefix stored by prefixRoute", () => {
     const route = HttpRouter.prefixRoute(
       HttpRouter.route("GET", "/users", HttpServerResponse.text("ok")),
@@ -116,17 +225,26 @@ describe("HttpRouter", () => {
   for (const ignoreDuplicateSlashes of [true, false]) {
     it.effect(`preserves the local URL with ignoreDuplicateSlashes=${ignoreDuplicateSlashes}`, () =>
       Effect.gen(function*() {
-        const routes = HttpRouter.use((router) => router.prefixed("/api//v1").add("GET", "/users", echoUrl)).pipe(
-          Layer.provide(
-            Layer.succeed(HttpRouter.RouterConfig)(ignoreDuplicateSlashes ? {} : { ignoreDuplicateSlashes })
-          )
-        )
+        const routes = HttpRouter.use((router) => router.prefixed("/api//v1").add("GET", "/users", echoUrl))
 
-        const body = yield* fetchText(routes, ignoreDuplicateSlashes ? "/api/v1/users?x=1" : "/api//v1/users?x=1")
+        const body = yield* fetchText(
+          routes,
+          ignoreDuplicateSlashes ? "/api/v1/users?x=1" : "/api//v1/users?x=1",
+          { ignoreDuplicateSlashes }
+        )
 
         assert.strictEqual(body, "/users?x=1")
       }))
   }
+
+  it.effect("removes a matched prefix containing ; when useSemicolonDelimiter is false", () =>
+    Effect.gen(function*() {
+      const routes = HttpRouter.use((router) => router.prefixed("/tenants/:tenant").add("GET", "/users", echoUrl))
+
+      const body = yield* fetchText(routes, "/tenants/acme;v=1/users?x=1", { useSemicolonDelimiter: false })
+
+      assert.strictEqual(body, "/users?x=1")
+    }))
 
   it.effect("nests a prefixed sub-router beneath a prefixed parent router", () =>
     Effect.gen(function*() {
