@@ -1748,14 +1748,14 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends R2 to the base-branch stack and the operator lands it bottom-up.
 
-## Add docs to a board as work (A1)
+## Add docs to a board as work, and show worktree setup on agent cards (A1)
 
 **Depends on.** L1.
 
 **Files.**
 
-- [ ] Edit `apps/board/src/chat/Composer.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/board/Viewport.tsx`, and `apps/board/src/orchestrator/brief.md`.
-- [ ] Create `apps/board/src/chat/attachments.ts` and `apps/board/src/chat/attachments.test.ts`.
+- [ ] Edit `apps/board/src/chat/Composer.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/board/Viewport.tsx`, `apps/board/src/board/AgentCard.tsx`, and `apps/board/src/orchestrator/brief.md`.
+- [ ] Create `apps/board/src/chat/attachments.ts`, `apps/board/src/chat/attachments.test.ts`, `apps/board/src/state/worktreeSetup.ts`, and `apps/board/src/state/worktreeSetup.test.ts`.
 
 **Build.**
 
@@ -1764,6 +1764,8 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] The orchestrator card lists the board's docs by name, from the attachments in its thread. It shows one row per doc and a count.
 - [ ] `brief.md` tells the orchestrator to read every attached doc before it plans, to cite the doc a ticket comes from, and to organize docs into tickets the same way it does issues.
 - [ ] In `attachments.ts`, keep the pure pieces: turn dropped files into T3 attachment inputs, and check them against T3's limits before sending.
+- [ ] Show each worktree agent's setup on its agent card, as Orca shows it. Subscribe to T3's `subscribeWorktreeSetup` for the agent's thread. While the phase is `running`, the card shows the current stage's label from `worktreeSetupStageLabel` and its percent when T3 sends one. When the phase is `failed`, the card shows the failed stage, T3's error, the last three lines of that stage's `tail`, and **Open terminal** for the setup script's `terminalId` when it has one. When the phase is `done`, the line goes away. Today the board never reads this stream, so a failing setup script shows nowhere.
+- [ ] In `worktreeSetup.ts`, keep the pure piece: the card line a setup snapshot renders.
 
 **You see.**
 
@@ -1771,13 +1773,13 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `attachments.test.ts` turns a fixed markdown file and a fixed PNG into literal attachment inputs, and rejects a file over T3's 50 MiB limit with T3's own message. Run `vp test run src/chat/attachments.test.ts` from `apps/board`.
+- [ ] `attachments.test.ts` turns a fixed markdown file and a fixed PNG into literal attachment inputs, and rejects a file over T3's 50 MiB limit with T3's own message. `worktreeSetup.test.ts` turns a fixed running snapshot and a fixed failed snapshot into their literal card lines. Run `vp test run src/chat/attachments.test.ts src/state/worktreeSetup.test.ts` from `apps/board`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Every lane uses a real Claude orchestrator.
 
-- [ ] Lane 1. Regression lane against trunk. Trunk's composer sends no attachments, so record that fact. Attach a markdown spec with the button at head. Save `a1-attach.png`. Pass when the message carries the file and the orchestrator quotes a line from it.
+- [ ] Lane 1. Regression lane against trunk. Trunk's composer sends no attachments, so record that fact. Attach a markdown spec and a screenshot with the button at head. Save `a1-attach.png`. Pass when the message carries both files, the orchestrator quotes a line from the spec, and it describes what the screenshot shows.
 - [ ] Lane 2. Drop a PDF onto the board. Save `a1-drop.png`. Pass when one orchestrator message carries it and the orchestrator card lists it.
-- [ ] Lane 3. Attach a screenshot image. Save `a1-image.png`. Pass when the orchestrator describes what the image shows.
+- [ ] Lane 3. Set the lane project's setup script in Settings, then Worktrees, to a command that prints three lines and exits 1, and start one worktree agent. Then set a script that succeeds, and start another. Save `a1-setup-failed.png`, `a1-setup-running.png`, and `a1-setup.txt` with T3's raw snapshots. Pass when the first card shows the failed stage, T3's error, and the script's last lines, the second card shows each stage as it runs, and its line goes away when setup is done.
 - [ ] Lane 4. Give a board a goal and a two-page spec. Save `a1-tickets.txt`. Pass when the orchestrator's tickets each cite the spec.
 - [ ] Lane 5. Add one Linear issue and one doc to the same board. Save `a1-mixed.png`. Pass when both turn into tickets on the board.
 - [ ] Lane 6. Reopen the board. Save `a1-reopen.png`. Pass when the orchestrator card still lists every doc.
