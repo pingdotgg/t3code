@@ -37,6 +37,7 @@ export function antigravityUserSkillDirectories(
 const MAX_SKILL_BYTES = 1_000_000;
 const MAX_SCAN_BYTES = 8_000_000;
 const MAX_SCAN_ENTRIES = 10_000;
+const MAX_INHERIT_DEPTH = 10;
 // Typical frontmatter fits in one chunk, so most skills cost about this much of the scan budget.
 const SKILL_READ_CHUNK_BYTES = 1024;
 
@@ -45,6 +46,19 @@ const SkillFrontmatter = Schema.Struct({
   description: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
+const SkillConfigEntry = Schema.Struct({
+  path: Schema.String,
+  include_only: Schema.optional(Schema.Array(Schema.String)),
+  exclude: Schema.optional(Schema.Array(Schema.String)),
+});
+const decodeSkillsConfig = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      inherits: Schema.optional(Schema.Array(SkillConfigEntry)),
+      entries: Schema.optional(Schema.Array(SkillConfigEntry)),
+    }),
+  ),
+);
 const decodePluginPreferences = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
@@ -171,6 +185,139 @@ const readSkillFrontmatter = Effect.fn("readAntigravitySkill")(function* (
   return bytes.toString("utf8", 0, frontmatterEnd);
 });
 
+type SkillPatternMatcher = (entry: string) => boolean;
+
+interface SkillEntryFilter {
+  readonly includeGroups: ReadonlyArray<ReadonlyArray<SkillPatternMatcher>>;
+  readonly excludePatterns: ReadonlyArray<SkillPatternMatcher>;
+}
+
+const EMPTY_SKILL_FILTER: SkillEntryFilter = {
+  includeGroups: [],
+  excludePatterns: [],
+};
+
+interface SkillPatternToken {
+  readonly test: (character: string) => boolean;
+  readonly optional: boolean;
+  readonly repeats: boolean;
+}
+
+/** Undefined for syntax outside literals, escapes, `.`, `[...]` and `* + ?`; such patterns match literally. */
+function parseSkillPattern(pattern: string): ReadonlyArray<SkillPatternToken> | undefined {
+  const characters = Array.from(pattern);
+  const tokens: Array<SkillPatternToken> = [];
+  let index = 0;
+  while (index < characters.length) {
+    const character = characters[index]!;
+    let test: (candidate: string) => boolean;
+    if (character === "\\") {
+      const escaped = characters[index + 1];
+      if (escaped === undefined) return undefined;
+      if (/[dDwWsS]/.test(escaped)) {
+        const characterClass = new RegExp(`^\\${escaped}$`, "u");
+        test = (candidate) => characterClass.test(candidate);
+      } else {
+        test = (candidate) => candidate === escaped;
+      }
+      index += 2;
+    } else if (character === "[") {
+      const close = characters.indexOf("]", index + 2);
+      if (close === -1) return undefined;
+      let characterClass: RegExp;
+      try {
+        characterClass = new RegExp(`^[${characters.slice(index + 1, close).join("")}]$`, "u");
+      } catch {
+        return undefined;
+      }
+      test = (candidate) => characterClass.test(candidate);
+      index = close + 1;
+    } else if (character === ".") {
+      test = () => true;
+      index += 1;
+    } else if ("()|{}^$*+?".includes(character)) {
+      return undefined;
+    } else {
+      test = (candidate) => candidate === character;
+      index += 1;
+    }
+    const quantifier = characters[index];
+    const optional = quantifier === "*" || quantifier === "?";
+    const repeats = quantifier === "*" || quantifier === "+";
+    if (optional || repeats) {
+      index += 1;
+      if (characters[index] === "?") index += 1;
+    }
+    tokens.push({ test, optional, repeats });
+  }
+  return tokens;
+}
+
+/** Manifests can come from an opened workspace, so matching runs as an NFA in linear time instead of RegExp. */
+function compileSkillPattern(pattern: string): SkillPatternMatcher {
+  const tokens = parseSkillPattern(pattern);
+  if (tokens === undefined) return (entry) => entry === pattern;
+  const close = (states: Set<number>) => {
+    for (const state of states) {
+      if (state < tokens.length && tokens[state]!.optional) states.add(state + 1);
+    }
+    return states;
+  };
+  return (entry) => {
+    let states = close(new Set([0]));
+    for (const character of entry) {
+      const next = new Set<number>();
+      for (const state of states) {
+        const token = tokens[state];
+        if (!token?.test(character)) continue;
+        next.add(state + 1);
+        if (token.repeats) next.add(state);
+      }
+      if (next.size === 0) return false;
+      states = close(next);
+    }
+    return states.has(tokens.length);
+  };
+}
+
+function matchesSkillFilter(entry: string, filter: SkillEntryFilter): boolean {
+  for (const group of filter.includeGroups) {
+    if (!group.some((matches) => matches(entry))) return false;
+  }
+  return !filter.excludePatterns.some((matches) => matches(entry));
+}
+
+function narrowSkillFilter(
+  parent: SkillEntryFilter,
+  entry: {
+    readonly include_only?: ReadonlyArray<string> | undefined;
+    readonly exclude?: ReadonlyArray<string> | undefined;
+  },
+): SkillEntryFilter {
+  const includeGroups =
+    entry.include_only && entry.include_only.length > 0
+      ? [...parent.includeGroups, entry.include_only.map(compileSkillPattern)]
+      : parent.includeGroups;
+  const excludePatterns =
+    entry.exclude && entry.exclude.length > 0
+      ? [...parent.excludePatterns, ...entry.exclude.map(compileSkillPattern)]
+      : parent.excludePatterns;
+  return { includeGroups, excludePatterns };
+}
+
+function resolveSkillsConfigPath(
+  path: Path.Path,
+  rawPath: string,
+  baseDir: string,
+  userHome: string,
+): string {
+  if (rawPath === "~") return userHome;
+  if (rawPath.startsWith("~/") || rawPath.startsWith("~\\")) {
+    return path.join(userHome, rawPath.slice(2));
+  }
+  return path.isAbsolute(rawPath) ? path.resolve(rawPath) : path.resolve(baseDir, rawPath);
+}
+
 /** Keep read errors typed so workspace snapshots cannot cache partial results. */
 export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
   readonly cwd: string;
@@ -205,6 +352,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     directory: string,
     scope: string,
     scanChildren: boolean,
+    filter: SkillEntryFilter = EMPTY_SKILL_FILTER,
   ): Effect.fn.Return<void, AntigravitySkillsProbeError, FileSystem.FileSystem> {
     const info = yield* readIfPresent(fileSystem.stat(directory), directory);
     if (info?.type !== "Directory") return;
@@ -237,6 +385,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     }
     if (scanChildren) {
       const children = sortedEntries
+        .filter((entry) => matchesSkillFilter(entry, filter))
         .map((entry) => ({ entry, sortKey: skillPathSortKey(entry) }))
         .sort((left, right) =>
           left.sortKey < right.sortKey ? -1 : left.sortKey > right.sortKey ? 1 : 0,
@@ -247,8 +396,86 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     }
   });
 
+  const scanSkillsConfig = Effect.fn("scanAntigravitySkillsConfig")(function* (
+    configPath: string,
+    baseDir: string,
+    scope: string,
+    filter: SkillEntryFilter,
+    visitedConfigs: ReadonlySet<string>,
+    depth: number,
+  ): Effect.fn.Return<void, AntigravitySkillsProbeError, FileSystem.FileSystem> {
+    if (depth > MAX_INHERIT_DEPTH) return;
+    const resolvedConfigPath = path.resolve(configPath);
+    if (visitedConfigs.has(resolvedConfigPath)) return;
+    const configInfo = yield* readIfPresent(
+      fileSystem.stat(resolvedConfigPath),
+      resolvedConfigPath,
+    );
+    if (configInfo?.type !== "File") return;
+    const byteLimit = Math.min(MAX_SKILL_BYTES, budget.remainingBytes);
+    if (configInfo.size > BigInt(byteLimit)) {
+      return yield* new AntigravitySkillsProbeError({
+        reason: "scan-budget-exhausted",
+        path: resolvedConfigPath,
+      });
+    }
+    const raw = yield* readIfPresent(
+      fileSystem.readFileString(resolvedConfigPath),
+      resolvedConfigPath,
+    );
+    if (raw === undefined) return;
+    budget.remainingBytes -= Buffer.byteLength(raw, "utf8");
+    const parsed = decodeSkillsConfig(raw);
+    if (parsed._tag === "None") return;
+
+    const nextVisited = new Set(visitedConfigs);
+    nextVisited.add(resolvedConfigPath);
+    for (const inherited of parsed.value.inherits ?? []) {
+      const inheritedPath = resolveSkillsConfigPath(path, inherited.path, baseDir, input.userHome);
+      yield* scanSkillsConfig(
+        inheritedPath,
+        path.dirname(inheritedPath),
+        scope,
+        narrowSkillFilter(filter, inherited),
+        nextVisited,
+        depth + 1,
+      );
+    }
+    for (const entry of parsed.value.entries ?? []) {
+      const entryDirectory = resolveSkillsConfigPath(path, entry.path, baseDir, input.userHome);
+      yield* scanDirectory(entryDirectory, scope, true, narrowSkillFilter(filter, entry));
+    }
+  });
+
   for (const root of roots) {
     yield* scanDirectory(root.directory, root.scope, true);
+  }
+
+  for (const config of [
+    {
+      configPath: path.resolve(input.cwd, ".agents", "skills.json"),
+      baseDir: input.cwd,
+      scope: "project",
+    },
+    {
+      configPath: path.resolve(input.cwd, ".agent", "skills.json"),
+      baseDir: input.cwd,
+      scope: "project",
+    },
+    {
+      configPath: path.join(input.userHome, ".gemini", "config", "skills.json"),
+      baseDir: path.join(input.userHome, ".gemini", "config"),
+      scope: "user",
+    },
+  ]) {
+    yield* scanSkillsConfig(
+      config.configPath,
+      config.baseDir,
+      config.scope,
+      EMPTY_SKILL_FILTER,
+      new Set(),
+      0,
+    );
   }
 
   const pluginsDirectory = path.join(input.profileDirectory, "config", "plugins");
