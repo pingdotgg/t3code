@@ -10,6 +10,8 @@ import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";
 import { normalizeProjectPathForComparison } from "./projects.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 const SCRATCH_PROJECT_SCOPE_KEY = "\0no-project";
 
@@ -271,6 +273,10 @@ export function pickableProjectGroups<
   return [...open.filter((group) => group.pinned), ...open.filter((group) => !group.pinned)];
 }
 
+export function isPickableProjectMember(member: Pick<EnvironmentProject, "archivedAt">): boolean {
+  return member.archivedAt == null;
+}
+
 function projectFreshnessTime(project: EnvironmentProject): number {
   const updatedAtTime = Date.parse(project.updatedAt);
   if (Number.isFinite(updatedAtTime)) {
@@ -311,12 +317,15 @@ function selectProjectIdentitySource<TProject extends EnvironmentProject>(
   return freshestIdentifiedProject ?? winner;
 }
 
-export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
-  readonly projects: ReadonlyArray<TProject>;
-  readonly settings: ProjectGroupingSettings;
-  readonly preferredEnvironmentId?: EnvironmentId | null;
-  readonly groupScratchProjects?: boolean;
-}): ReadonlyArray<ProjectGroup<TProject>> {
+export function buildProjectGroups<TProject extends EnvironmentProject>(
+  input: {
+    readonly projects: ReadonlyArray<TProject>;
+    readonly settings: ProjectGroupingSettings;
+    readonly preferredEnvironmentId?: EnvironmentId | null;
+    readonly groupScratchProjects?: boolean;
+  },
+  resolve: MFunctionType = mFallback,
+): ReadonlyArray<ProjectGroup<TProject>> {
   const projectsByPhysicalKey = new Map<string, TProject[]>();
   for (const project of input.projects) {
     const physicalProjectKey = derivePhysicalProjectKey(project);
@@ -380,7 +389,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       key,
       label:
         input.groupScratchProjects && representative.isScratch
-          ? "No project"
+          ? resolve(msg("No project"))
           : members.length > 1
             ? deriveProjectGroupLabel({
                 groupKey: key,
@@ -392,7 +401,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       members,
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
       pinned: members.some((member) => member.project.pinnedAt != null),
-      archived: members.every((member) => member.project.archivedAt != null),
+      archived: !members.some(({ project }) => isPickableProjectMember(project)),
     };
   });
 }

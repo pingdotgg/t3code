@@ -122,6 +122,39 @@ describe.each([1.25, 2.2])("renderGhosttySnapshot at a %sx device pixel ratio", 
     expect(pixelsOffBackground(context)).toBe(0);
   });
 
+  it("keeps concealed text and its decorations hidden, under a block cursor too", () => {
+    const context = scaledContext(scale);
+    const concealed = { ...blank, text: "█", invisible: true, underline: true };
+    const snapshot = (cursorVisible: boolean): GhosttySnapshot => ({
+      cols: 3,
+      rows: 1,
+      foreground: { r: 0, g: 0, b: 0 },
+      background,
+      cursor: { r: 0, g: 0, b: 0 },
+      cursorX: 1,
+      cursorY: 0,
+      cursorVisible,
+      cursorBlinking: false,
+      cursorStyle: 1,
+      dirtyRows: new Set([0]),
+      rowData: [
+        {
+          cells: [blank, concealed, blank],
+          text: "",
+          isWrapContinuation: false,
+          wrapsToNext: false,
+        },
+      ],
+    });
+    const options = { ...layout, context, forceFull: true };
+
+    renderGhosttySnapshot({ ...options, snapshot: snapshot(false), cursorOn: false });
+    expect(pixelsOffBackground(context)).toBe(0);
+
+    renderGhosttySnapshot({ ...options, snapshot: snapshot(true), cursorOn: true });
+    expect(isDarkAt(context, 15.7, 12.5)).toBe(true);
+  });
+
   // Cell 1 spans x 11.8 to 19.6 and row 0 spans y 4 to 21 in CSS pixels.
   it.each([
     ["right", "\ue0b4", { flat: 12.3, round: 19.1, neighbour: 0, outside: 11.3 }],
