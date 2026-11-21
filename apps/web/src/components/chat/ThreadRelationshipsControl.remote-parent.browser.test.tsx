@@ -52,7 +52,11 @@ vi.mock(import("../../state/entities"), async (original) => ({
 }));
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
-  useEnvironment: (() => ({ label: "Linked" })) as never,
+  useEnvironment: (() => ({
+    label: "Linked",
+    entry: { enabled: true },
+    connection: { phase: "connected" },
+  })) as never,
 }));
 vi.mock(import("../ui/toast"), async (original) => {
   const actual = await original();

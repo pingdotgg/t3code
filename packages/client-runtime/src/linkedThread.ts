@@ -57,6 +57,24 @@ export function resolveLinkedThreadOpen(input: {
   return input.own === undefined ? "unavailable" : "direct";
 }
 
+/**
+ * The client's own connection to a saved environment, as `resolveLinkedThreadOpen` takes it. One
+ * switched off in settings can't open its threads, so it counts as unsaved and only a link reads them.
+ */
+export function ownEnvironmentConnection(
+  saved:
+    | {
+        readonly entry: { readonly enabled: boolean };
+        readonly connection: { readonly phase: string };
+      }
+    | null
+    | undefined,
+): { readonly connected: boolean } | undefined {
+  return saved?.entry.enabled === true
+    ? { connected: saved.connection.phase === "connected" }
+    : undefined;
+}
+
 export type LinkedEnvironmentConnection =
   /** This client paired with the linked environment and saved it. */
   | { readonly type: "connected" }

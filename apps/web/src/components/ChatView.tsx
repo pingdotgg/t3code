@@ -976,8 +976,8 @@ export default function ChatView(props: ChatViewProps) {
     return {
       title: delegatedFromThread?.title ?? delegatedFrom.title,
       environmentLabel: delegatedFromEnvironment?.label ?? activeThread?.linkOrigin?.label ?? "",
-      // Only an environment this client is connected to can open the parent.
-      ...(delegatedFromEnvironment === null
+      // Only an environment enabled in this client can open the parent.
+      ...(delegatedFromEnvironment?.entry.enabled !== true
         ? {}
         : {
             open: (): void => {

@@ -19,6 +19,8 @@ import {
   keepLinkedThreadView,
   LINKED_THREAD_RETRY_MS,
   type LinkedThreadView,
+  ownEnvironmentConnection,
+  resolveLinkedThreadOpen,
 } from "./linkedThread.ts";
 import { v2Now, v2Projection } from "./state/orchestrationV2TestFixtures.ts";
 
@@ -162,6 +164,27 @@ it.effect("loads the turns before a snapshot's window once per request", () =>
     expect(asked).toEqual(["cursor-1"]);
   }).pipe(Effect.scoped),
 );
+
+describe("resolveLinkedThreadOpen", () => {
+  const here = EnvironmentId.make("env-here");
+  const laptop = EnvironmentId.make("env-laptop");
+  const open = (enabled: boolean, linked: boolean) =>
+    resolveLinkedThreadOpen({
+      environmentId: laptop,
+      viaEnvironmentId: here,
+      own: ownEnvironmentConnection({
+        entry: { enabled },
+        connection: { phase: enabled ? "connected" : "disconnected" },
+      }),
+      linked,
+    });
+
+  it("never opens a thread in a saved environment that is switched off", () => {
+    expect(open(true, true)).toBe("direct");
+    expect(open(false, true)).toBe("linked");
+    expect(open(false, false)).toBe("unavailable");
+  });
+});
 
 describe("connectLinkedEnvironment", () => {
   const lan = "http://192.168.1.20:3773";

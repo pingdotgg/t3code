@@ -4,6 +4,7 @@ import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import {
   connectLinkedEnvironment,
   type LinkedThreadOpen,
+  ownEnvironmentConnection,
   resolveLinkedThreadOpen,
 } from "@t3tools/client-runtime/linked-thread";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
@@ -43,13 +44,14 @@ export function useLinkedThreadOpener(
   const navigate = useNavigate();
   const viaEnvironmentId = panelRef.environmentId;
   const own = useEnvironment(thread?.environmentId ?? null);
-  const connected = own?.connection.phase === "connected";
+  const ownConnection = ownEnvironmentConnection(own);
+  const connected = ownConnection?.connected === true;
   const links = useLinkedEnvironments(thread === undefined || connected ? null : viaEnvironmentId);
   if (thread === undefined) return null;
   const resolved = resolveLinkedThreadOpen({
     environmentId: thread.environmentId,
     viaEnvironmentId,
-    own: own === null ? undefined : { connected },
+    own: ownConnection,
     linked: links.has(thread.environmentId),
   });
   const mode = resolved === "direct" ? "direct" : "linked";

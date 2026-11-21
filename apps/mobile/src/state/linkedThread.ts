@@ -2,6 +2,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import {
   connectLinkedEnvironment,
   type LinkedThreadTarget,
+  ownEnvironmentConnection,
 } from "@t3tools/client-runtime/linked-thread";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
 import { useState } from "react";
@@ -23,10 +24,7 @@ export function useLinkedThreadReach(
   subagents: ReadonlyArray<Pick<OrchestrationV2Subagent, "childThreadId" | "remoteChild">>,
 ) {
   const { presentationById } = useEnvironments();
-  const ownConnection = (id: EnvironmentId) => {
-    const own = presentationById.get(id);
-    return own && { connected: own.connection.phase === "connected" };
-  };
+  const ownConnection = (id: EnvironmentId) => ownEnvironmentConnection(presentationById.get(id));
   const links = useLinkedEnvironments(
     subagents.some(
       (subagent) =>

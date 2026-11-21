@@ -371,6 +371,8 @@ function DelegatedFromRow(props: {
   const router = useRouter();
   const { delegatedFrom } = props;
   const environment = useEnvironment(delegatedFrom.environmentId);
+  // A saved environment that is switched off can't open its threads.
+  const openable = environment?.entry.enabled === true ? environment : null;
   const parentRef = scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const parent = useQuietThreadShell(parentRef);
@@ -415,9 +417,9 @@ function DelegatedFromRow(props: {
               size="sm"
               variant="ghost"
               part="row"
-              aria-disabled={environment === null || undefined}
+              aria-disabled={openable === null || undefined}
               onClick={() => {
-                if (environment === null) return;
+                if (openable === null) return;
                 void openParent();
               }}
             />
@@ -445,7 +447,7 @@ function DelegatedFromRow(props: {
           <LineageTooltipContent
             title={title}
             hint={
-              environment === null
+              openable === null
                 ? label
                   ? gt("Delegated from {label}. Connect to it to open the parent thread.", {
                       label,
@@ -453,7 +455,7 @@ function DelegatedFromRow(props: {
                   : gt(
                       "Delegated from a linked environment. Connect to it to open the parent thread.",
                     )
-                : gt("Open parent agent on {label}", { label: environment.label })
+                : gt("Open parent agent on {label}", { label: openable.label })
             }
           />
         </TooltipPopup>
