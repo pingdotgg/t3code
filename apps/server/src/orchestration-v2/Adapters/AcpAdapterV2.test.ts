@@ -11680,6 +11680,97 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("persists context usage the agent reports after its prompt settles", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const promptStarted = yield* Deferred.make<void>();
+      const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Deferred.succeed(promptStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(promptGate)),
+                ),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("thread-acp-late-usage");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-late-usage"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(promptStarted);
+      const update = (update: EffectAcpSchema.SessionUpdate) =>
+        sessionUpdateHandler!({ sessionId: "mock-session-1", update });
+      yield* update({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "OK" },
+      });
+      yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+      while ((yield* Queue.take(events)).type !== "turn.terminal");
+
+      // Kimi Code 2.6.2 sends its usage_update just after answering session/prompt.
+      yield* update({ sessionUpdate: "usage_update", used: 13101, size: 1048576 });
+      let late: ProviderAdapter.ProviderAdapterV2Event;
+      do late = yield* Queue.take(events);
+      while (late.type !== "provider_thread.updated");
+      assert.deepInclude(late.providerThread.contextUsage, { usedTokens: 13101 });
+      // With no run left to receive it, only a session-scoped update reaches the projection.
+      assert.isTrue(late.sessionScoped);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("durably poisons start and resume when required hard teardown is unavailable", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
