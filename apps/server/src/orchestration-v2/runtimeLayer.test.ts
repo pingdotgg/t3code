@@ -14508,6 +14508,27 @@ describe("subagent lifecycle cascade", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("preserves a newer side-chat archive through a delayed nested restore", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const side = ThreadId.make("side");
+      const child = ThreadId.make("side-child");
+      yield* f.sideChat(app, side);
+      yield* f.set(child, {
+        lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
+      });
+      yield* f.run("archive");
+      yield* f.drain;
+      assert.equal(yield* f.archived(parent, app, side, child), "1111");
+      yield* f.commit("unarchive");
+      yield* f.commit("unarchive", side);
+      yield* TestClock.adjust("1 second");
+      yield* f.commit("archive", side);
+      yield* f.drain;
+      assert.equal(yield* f.archived(parent, app, side, child), "0001");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     { delivery: "reply", useParentDerivedId: false },
     { delivery: "worker", useParentDerivedId: false },
@@ -14641,6 +14662,27 @@ describe("subagent lifecycle cascade", () => {
       assert.equal(yield* f.state("deletedAt", parent, app, side, child), "1000");
       assert.isTrue(Option.isNone(yield* receipt(nestedId)));
       assert.deepEqual(yield* f.outbox.get(effectId), occupied);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("rejects a direct side-chat delete whose recovery ID is occupied", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const { side, child } = yield* f.movedSideChat();
+      const collidingCommandId = `delete:parent:side-chat:${side}`;
+      const effectId = `effect:${collidingCommandId}:subagent-threads.cascade`;
+      yield* f.commit("delete");
+      const occupied = yield* f.outbox.get(effectId);
+      const { request } = Option.getOrThrow(occupied);
+      assert.equal(request.type, "subagent-threads.cascade");
+      const rejected = yield* f.commit("delete", side, collidingCommandId).pipe(Effect.flip);
+      assert.equal(rejected._tag, "OrchestratorDispatchError");
+      assert.isTrue(Option.isNone(yield* receipt(collidingCommandId)));
+      assert.deepEqual(yield* f.outbox.get(effectId), occupied);
+      assert.equal(yield* f.state("deletedAt", parent, side, child), "110");
+      yield* f.commit("delete", side, "direct:fresh-delete");
+      yield* f.drain;
+      assert.equal(yield* f.state("deletedAt", parent, side, child), "111");
     }).pipe(Effect.provide(layerTest)),
   );
 

@@ -1920,7 +1920,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if ((yield* projectionStore.getSubagentChildThreads(threadId)).length === 0) return [];
     const cutoff = cascade?.source?.cutoff;
     // The generated receipt would hide the side chat's newer choice from the cascade worker.
-    if (sideChat && operation === "thread.archive" && cutoff !== undefined) {
+    if (sideChat && operation !== "thread.delete" && cutoff !== undefined) {
       const latest = yield* commandReceipts.getLatestLifecycle(threadId, [
         "thread.archive",
         "thread.unarchive",
