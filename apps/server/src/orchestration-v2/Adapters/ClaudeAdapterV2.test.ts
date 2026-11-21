@@ -1278,6 +1278,9 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
@@ -1330,10 +1333,8 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
         Stream.runCollect,
         Effect.forkScoped,
       );
-      // No SDK title/description/decisionReason and no command/path field: the
-      // prompt is the serialized-input summary, sliced at 397 code units. The
-      // rocket occupies units 396-397 of the serialized input, so the cut must
-      // keep the prompt valid Unicode.
+      // With no command or path field the prompt is the serialized input cut at 397
+      // code units, which lands between the rocket's two surrogates.
       const query = "x".repeat(386) + "\u{1F680}" + "y".repeat(20);
       const decision = yield* Effect.promise(() =>
         canUseTool!(
@@ -1350,10 +1351,12 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
       const approval = events.findLast(
         (event) => event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
       );
-      if (approval?.type !== "turn_item.updated" || approval.turnItem.type !== "approval_request") {
-        return;
-      }
-      assert.equal(approval.turnItem.prompt, `mcp__acme__query: {"query":"${"x".repeat(386)}...`);
+      assert.equal(
+        approval?.type === "turn_item.updated" && approval.turnItem.type === "approval_request"
+          ? approval.turnItem.prompt
+          : undefined,
+        `mcp__acme__query: {"query":"${"x".repeat(386)}...`,
+      );
 
       const request = events.find((event) => event.type === "runtime_request.updated");
       assert.equal(request?.runtimeRequest.kind, "command");
@@ -11644,8 +11647,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           },
         }),
       );
-      // The rocket occupies units 7999-8000 of the page text, so the 8,000-unit
-      // snippet cut must keep it valid Unicode.
+      // The 8,000-unit snippet cut lands between the rocket's two surrogates.
       yield* Queue.offer(
         harness.sdkMessages,
         claudeSdkFrame({
