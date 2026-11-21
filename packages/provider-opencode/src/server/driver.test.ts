@@ -257,9 +257,14 @@ it.live("discovers models through a home-relative OpenCode wrapper", () =>
 );
 
 // OpenCode's system directory is fixed per platform; Windows roots it at ProgramData.
-it.live.each(["global", "system"] as const)(
-  "reloads a ready catalog when the %s OpenCode config changes",
-  (source) =>
+// OpenCode 1.x also reads a global config.json, which its TOML migration writes.
+const configSaves = [
+  { source: "global", file: "config.json" },
+  { source: "system", file: "opencode.json" },
+] as const;
+it.live.each(configSaves)(
+  "reloads a ready catalog when the $source OpenCode $file changes",
+  ({ source, file }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-config-" });
@@ -346,7 +351,7 @@ it.live.each(["global", "system"] as const)(
           Effect.forkChild({ startImmediately: true }),
         );
         providerIds = ["opencode", providerId];
-        yield* fs.writeFileString(NodePath.join(configDir, "opencode.json"), "{}");
+        yield* fs.writeFileString(NodePath.join(configDir, file), "{}");
         yield* Fiber.join(reloaded);
       }
     }).pipe(Effect.scoped, Effect.provide(layer)),

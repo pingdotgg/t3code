@@ -84,7 +84,7 @@ import {
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("opencode");
-const OPENCODE_CONFIG_FILES = new Set(["opencode.json", "opencode.jsonc"]);
+const OPENCODE_CONFIG_FILES = new Set(["config.json", "opencode.json", "opencode.jsonc"]);
 
 // A loopback server runs on this environment, but can outlive its CLI installation.
 // Its reported version may therefore differ from the installed executable after an update.
