@@ -67,6 +67,7 @@ const AntigravityProviderCapabilitiesV2 = {
   tools: {
     ...AcpProviderCapabilitiesV2.tools,
     supportsMcpTools: true,
+    supportsBackgroundWait: true,
   },
   subagents: {
     ...AcpProviderCapabilitiesV2.subagents,
