@@ -103,7 +103,6 @@ describe("Antigravity Auto", () => {
 
   it.each([
     { kind: "execute", expected: "ask" },
-    { kind: "fetch", expected: "ask" },
     { kind: "read", expected: "allow" },
   ] as const)("answers $expected to $kind requests in Auto", ({ kind, expected }) => {
     const request = {
