@@ -63,6 +63,23 @@ export function canCommitPendingModel(
   );
 }
 
+/** Instance ids repeat across environments, so each environment keeps its own sections. */
+export function providerSectionPreferenceKey(
+  environmentId: string | null | undefined,
+  sectionKey: string,
+): string {
+  return JSON.stringify([environmentId ?? null, sectionKey]);
+}
+
+export function savedProviderSectionCollapsed(
+  saved: Readonly<Record<string, boolean>>,
+  environmentId: string | null | undefined,
+  sectionKey: string,
+): boolean | undefined {
+  const key = providerSectionPreferenceKey(environmentId, sectionKey);
+  return Object.hasOwn(saved, key) ? saved[key] : undefined;
+}
+
 export function providerSectionIsCollapsed(input: {
   readonly defaultExpanded: boolean;
   /** The state the user last chose for this section, if any; it outlives the sheet. */

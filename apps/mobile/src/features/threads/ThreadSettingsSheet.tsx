@@ -123,6 +123,8 @@ import {
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
   providerSectionIsCollapsed,
+  providerSectionPreferenceKey,
+  savedProviderSectionCollapsed,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import type { MessageResolver } from "../../i18n/messages";
@@ -332,7 +334,7 @@ type ThreadSettingsSessionValue = {
   readonly promptTraits: ReturnType<typeof getPromptControlledTraits>;
   readonly displayedModelSelection: ModelSelection | null;
   readonly reportedModelSelection: ModelSelection | null;
-  readonly providerSectionsCollapsed: Readonly<Record<string, boolean>>;
+  readonly savedSectionCollapsed: (sectionKey: string) => boolean | undefined;
   readonly hasLegacyModels: boolean;
   readonly pendingModel: ModelOption | null;
   readonly providerFilter: string | null;
@@ -515,6 +517,8 @@ function ThreadSettingsSessionProvider(
   const providerSectionsCollapsed = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelProviderSectionsCollapsed ?? EMPTY_PROVIDER_SECTIONS_COLLAPSED)
     : EMPTY_PROVIDER_SECTIONS_COLLAPSED;
+  const savedSectionCollapsed = (sectionKey: string) =>
+    savedProviderSectionCollapsed(providerSectionsCollapsed, props.environmentId, sectionKey);
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const displayedPrompt = pendingModel ? (pendingPrompt ?? props.prompt) : props.prompt;
@@ -607,11 +611,12 @@ function ThreadSettingsSessionProvider(
 
   // Transforms read optimistic state, so quick toggles of different sections all persist.
   const toggleProvider = (sectionKey: string, collapsed: boolean) => {
+    const preferenceKey = providerSectionPreferenceKey(props.environmentId, sectionKey);
     void savePreferences({
       transform: (current) => ({
         modelProviderSectionsCollapsed: {
           ...current.modelProviderSectionsCollapsed,
-          [sectionKey]: !collapsed,
+          [preferenceKey]: !collapsed,
         },
       }),
     });
@@ -658,7 +663,7 @@ function ThreadSettingsSessionProvider(
     reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
     favoriteKeys,
     favoritesLoaded,
-    providerSectionsCollapsed,
+    savedSectionCollapsed,
     hasLegacyModels,
     pendingModel,
     providerFilter,
@@ -864,7 +869,7 @@ function subProviderCatalogItems(
         subProvider.unavailableReason !== undefined ||
         providerSectionIsCollapsed({
           defaultExpanded: backendModels.some(session.isApplied),
-          savedCollapsed: session.providerSectionsCollapsed[expansionKey],
+          savedCollapsed: session.savedSectionCollapsed(expansionKey),
           isNarrowed: false,
         });
       return [
@@ -940,7 +945,7 @@ function buildThreadSettingsCatalogItems(
     const collapsible = !isNarrowed;
     const collapsed = providerSectionIsCollapsed({
       defaultExpanded: isPrimary || containsAppliedSelection,
-      savedCollapsed: session.providerSectionsCollapsed[group.providerKey],
+      savedCollapsed: session.savedSectionCollapsed(group.providerKey),
       isNarrowed,
     });
     const provider: ThreadSettingsProviderCatalog = {

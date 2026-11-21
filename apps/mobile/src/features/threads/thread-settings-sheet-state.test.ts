@@ -15,6 +15,8 @@ import {
   canCommitPendingModel,
   pendingModelAfterPress,
   providerSectionIsCollapsed,
+  providerSectionPreferenceKey,
+  savedProviderSectionCollapsed,
 } from "./thread-settings-sheet-state";
 
 function modelOption(
@@ -195,5 +197,13 @@ describe("thread settings sheet state", () => {
     expect(
       providerSectionIsCollapsed({ defaultExpanded: true, savedCollapsed: true, isNarrowed: true }),
     ).toBe(false);
+  });
+
+  it("keeps saved provider sections apart per environment", () => {
+    const saved = { [providerSectionPreferenceKey("work", "codex")]: true };
+
+    expect(savedProviderSectionCollapsed(saved, "work", "codex")).toBe(true);
+    expect(savedProviderSectionCollapsed(saved, "home", "codex")).toBeUndefined();
+    expect(savedProviderSectionCollapsed(saved, "work", "constructor")).toBeUndefined();
   });
 });
