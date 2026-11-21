@@ -75,6 +75,7 @@ export interface SettingsSearchItem {
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  readonly threadAutoSettleSnoozedOnMergeOnly?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -88,6 +89,7 @@ export interface SettingsSearchAvailability {
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
+  readonly hasThreadAutoSettleSnoozedOnMergeEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
@@ -700,6 +702,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     searchTerms: [msg("pull request merge closed automatically sidebar")],
     requiresThreadAutoSettlement: true,
+    scope: "project-defaults",
+  },
+  {
+    id: "settle-snoozed-threads-on-merge",
+    title: "Auto-settle snoozed threads on merge",
+    to: "/settings/threads",
+    targetId: "auto-settle-merged-threads",
+    searchTerms: ["snooze pull request merge auto-settle sidebar wake"],
+    requiresThreadAutoSettlement: true,
+    threadAutoSettleSnoozedOnMergeOnly: true,
     scope: "project-defaults",
   },
   {
@@ -1640,6 +1652,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.primaryEnvironmentOnly || availability.hasPrimaryEnvironment === true) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+      (!item.threadAutoSettleSnoozedOnMergeOnly ||
+        availability.hasThreadAutoSettleSnoozedOnMergeEnvironment === true) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||

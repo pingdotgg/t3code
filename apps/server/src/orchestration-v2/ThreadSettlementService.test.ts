@@ -181,6 +181,7 @@ describe("isAutoSettlementCandidate", () => {
       snoozedAt: at(-60 * 60 * 1_000),
     });
     expect(ThreadSettlementService.isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
+    expect(ThreadSettlementService.isAutoSettlementCandidate(snoozed, NOW_MS, true)).toBe(true);
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-30 * 60 * 1_000) }),
@@ -914,6 +915,51 @@ describe("ThreadSettlementServiceV2 worker", () => {
           thread.id,
         ]);
       }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
+  it.effect("settles a snoozed thread with a merged link only when snoozed-on-merge is on", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const thread = makeThread("snoozed-merged-link", {
+        snoozedAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        snoozedUntil: DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
+        pullRequests: [
+          {
+            ...persistedLink(null, DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
+            snapshot: {
+              state: "merged",
+              title: "Pull request",
+              headBranch: "feature",
+              baseBranch: "main",
+              isDraft: false,
+              updatedAt: NOW,
+              syncedAt: NOW,
+              mergedAt: NOW,
+            },
+          },
+        ],
+      });
+      for (const [enabled, expected] of [
+        [false, []],
+        [true, [thread.id]],
+      ] as const) {
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleSnoozedOnMerge: enabled,
+          },
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual(
+            expected,
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }
     }),
   );
 
@@ -2330,5 +2376,18 @@ describe("isSnoozed", () => {
         autoSettleOnMerge: true,
       }),
     ).toBeNull();
+    const resolveWith = (mergedAt: DateTime.Utc, autoSettleOnMerge: boolean) =>
+      ThreadSettlementService.resolveAutoSettlementAt({
+        thread,
+        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(mergedAt) },
+        nowMs: NOW_MS,
+        autoSettleAfterDays: null,
+        autoSettleOnMerge,
+        autoSettleSnoozedOnMerge: true,
+      });
+    expect(resolveWith(at(-1), true)).toEqual(at(-DAY_MS));
+    // A merge that landed before the snooze was already seen by the user who snoozed.
+    expect(resolveWith(at(-3 * DAY_MS), true)).toBeNull();
+    expect(resolveWith(at(-1), false)).toBeNull();
   });
 });
