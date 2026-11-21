@@ -2291,9 +2291,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
 
       yield* busy.ask;
       yield* idle.ask;
+      // The wake reads the workspace from disk; behind the busy lock it would never arrive here.
+      yield* Fiber.join(idleWoken);
       yield* TestClock.adjust("1 minute");
       yield* Fiber.join(busyLock);
-      yield* Fiber.join(idleWoken);
 
       assert.deepEqual(order, ["idle coordinator woken", "busy coordinator's lock released"]);
     }),
