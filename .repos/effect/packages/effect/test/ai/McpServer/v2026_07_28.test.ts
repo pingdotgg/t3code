@@ -216,6 +216,75 @@ it.layer(testLayer)(`Mcp Conformance (${protocol.protocolVersion})`, (it) => {
         }
       }))
 
+    it.effect("should check tool visibility before mirrored headers and preserve middleware errors", () =>
+      Effect.gen(function*() {
+        const state = { visible: false, invocations: 0 }
+        const LogCode = McpServer.middleware()((effect) =>
+          Effect.tapError(effect, (error) => Effect.sync(() => error.code.toFixed(0)))
+        )
+        const Visible = McpServer.visibility(() => Effect.sync(() => state.visible))
+        const registrations = Layer.effectDiscard(Effect.gen(function*() {
+          const server = yield* McpServer.McpServer
+          yield* server.addTool({
+            tool: new McpSchema.Tool({
+              name: "SecretTool",
+              inputSchema: {
+                type: "object",
+                properties: { region: { type: "string", "x-mcp-header": "Region" } },
+                required: ["region"]
+              }
+            }),
+            annotations: Context.empty(),
+            services: yield* Effect.context<never>(),
+            handle: () =>
+              Effect.sync(() => {
+                state.invocations++
+                return new McpSchema.CallToolResult({ content: [{ type: "text", text: "allowed" }] })
+              })
+          })
+        })).pipe(Layer.provide(Visible.combine(LogCode).layer))
+        const harness = yield* makeHttpHarness(McpServer.layerHttp({
+          name: "HeaderVisibility",
+          version: "1.0.0",
+          path: "/mcp",
+          protocols: [protocol],
+          registrations
+        }))
+        const send = (header?: string) =>
+          harness.post(
+            request("visibility", "tools/call", { name: "SecretTool", arguments: { region: "eu" } }),
+            {
+              ...headers("tools/call", "SecretTool"),
+              ...(header === undefined ? {} : { "Mcp-Param-Region": header })
+            }
+          )
+
+        for (const header of [undefined, "us"]) {
+          const response = yield* send(header)
+          assert.strictEqual(response.status, 200)
+          const error = yield* decodeError(response)
+          assert.strictEqual(error.id, "visibility")
+          assert.strictEqual(error.error.code, McpSchema.INVALID_PARAMS_ERROR_CODE)
+          assert.strictEqual(error.error.message, "Tool 'SecretTool' not found")
+          assert.strictEqual(state.invocations, 0)
+        }
+
+        state.visible = true
+        const mismatched = yield* send("us")
+        assert.strictEqual(mismatched.status, 400)
+        const error = yield* decodeError(mismatched)
+        assert.strictEqual(error.error.code, McpSchema.HEADER_MISMATCH_ERROR_CODE)
+        assert.strictEqual(state.invocations, 0)
+
+        const allowed = yield* send("eu")
+        assert.strictEqual(allowed.status, 200)
+        const result = Schema.decodeUnknownSync(Schema.Struct({ result: McpSchema.CallToolResult }))(
+          yield* readMcpHttpResponse(allowed)
+        )
+        assert.deepStrictEqual(result.result.content, [{ type: "text", text: "allowed" }])
+        assert.strictEqual(state.invocations, 1)
+      }))
+
     // SEP-2567: https://modelcontextprotocol.io/seps/2567-remove-sessions
     it.effect("should exchange self-contained newline-delimited requests over stdio", () =>
       Effect.gen(function*() {

@@ -160,7 +160,14 @@ export const layerExecutor: Layer.Layer<
         switch (effect.request.type) {
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
-            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
+            return continueRestartedRun({
+              threadId: effect.threadId,
+              sourceRunId,
+              ...(effect.request.processLossCount === undefined
+                ? {}
+                : { processLossCount: effect.request.processLossCount }),
+              ...(effect.request.cause === undefined ? {} : { cause: effect.request.cause }),
+            }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
               Effect.tapError(() =>
@@ -206,6 +213,19 @@ export const layerExecutor: Layer.Layer<
                 providerThreadId: effect.request.providerThreadId,
                 modelSelection: effect.request.modelSelection,
               })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
+          case "provider-session.apply-thread-title":
+            return providerTurnControl
+              .applyThreadTitle({ threadId: effect.threadId, title: effect.request.title })
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -530,6 +550,7 @@ export const layerExecutor: Layer.Layer<
                 providerThreadId: effect.request.providerThreadId,
                 checkpointId: effect.request.checkpointId,
                 scopeId: effect.request.scopeId,
+                requestId: effect.commandId,
                 ...(effect.request.restoreFiles === undefined
                   ? {}
                   : { restoreFiles: effect.request.restoreFiles }),
