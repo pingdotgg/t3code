@@ -1,4 +1,5 @@
 import type { ProviderDriverKind } from "@t3tools/contracts";
+import { T } from "gt-react";
 import { ZapIcon } from "lucide-react";
 import { UltrafastIcon } from "../Icons";
 import { cn } from "~/lib/utils";
@@ -28,7 +29,7 @@ export function TraitsSpeedIcon({
         )}
       />
       <span className="sr-only">
-        {speedIcon === "ultrafast" ? "Ultrafast mode on" : "Fast mode on"}
+        {speedIcon === "ultrafast" ? <T>Ultrafast mode on</T> : <T>Fast mode on</T>}
       </span>
     </>
   );

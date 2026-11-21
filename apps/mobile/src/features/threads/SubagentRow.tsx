@@ -4,8 +4,12 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
-import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
+import {
+  resolveSubagentMetadata,
+  subagentCardDetail,
+} from "@t3tools/client-runtime/state/subagent-display";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
+import { msg, T, useMessages, Var } from "gt-react-native";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import Svg, { Path } from "react-native-svg";
@@ -16,7 +20,6 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
-import { subagentCardDetail } from "./subagent-card-presentation";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import {
   resolveSubagentRowPresentation,
@@ -51,7 +54,12 @@ export function SubagentRow(props: {
   /** The task runs in a linked environment this app is connected to. */
   readonly canOpenRemote?: boolean;
 }) {
-  const presentation = resolveSubagentRowPresentation(props.subagent, props.canOpenRemote);
+  const messages = useMessages();
+  const presentation = resolveSubagentRowPresentation(
+    props.subagent,
+    props.canOpenRemote,
+    messages,
+  );
   const detail = subagentCardDetail(presentation.detail);
   return (
     <View className="flex-row gap-3">
@@ -84,7 +92,9 @@ export function SubagentRow(props: {
             </Text>
             {presentation.runsOn !== null ? (
               <Text numberOfLines={1} className="shrink text-xs text-foreground-muted">
-                on {presentation.runsOn}
+                <T>
+                  on <Var>{presentation.runsOn}</Var>
+                </T>
               </Text>
             ) : null}
           </View>
@@ -115,6 +125,7 @@ function SubagentMetadata(props: {
   readonly subagent: SubagentRowSubagent;
 }) {
   const { environmentId, subagent } = props;
+  const messages = useMessages();
   // A task in a linked environment runs a provider instance of that environment.
   const config = useEnvironmentServerConfig(subagent.remoteChild?.environmentId ?? environmentId);
   const providers = (config?.providers ?? []).map((candidate) => {
@@ -135,6 +146,9 @@ function SubagentMetadata(props: {
     (candidate) => candidate.instanceId === subagent.providerInstanceId,
   );
   const showBadge = provider !== undefined && shouldShowInstanceBadge(provider, providers);
+  // A remote task's own driver is only a "remote" label.
+  const driver =
+    provider?.driver ?? (subagent.remoteChild === undefined ? subagent.driver : undefined);
   const parent = useThreadShell(scopeThreadRef(environmentId, subagent.threadId))?.source;
   const child = useThreadShell(
     subagent.childThreadId === null ? null : scopeThreadRef(environmentId, subagent.childThreadId),
@@ -144,15 +158,19 @@ function SubagentMetadata(props: {
   );
   const childProject = useProject(child ? scopeProjectRef(environmentId, child.projectId) : null);
   const selection = subagentModelSelection(subagent, child);
-  const { modelLabel, modelSlug, workspace } = resolveSubagentMetadata({
-    model: subagent.model,
-    modelSelection: selection,
-    provider,
-    parentThread: parent,
-    childThread: child,
-    parentProject,
-    childProject,
-  });
+  const { modelLabel, modelSlug, workspace } = resolveSubagentMetadata(
+    {
+      model: subagent.model,
+      modelSelection: selection,
+      provider,
+      parentThread: parent,
+      childThread: child,
+      parentProject,
+      childProject,
+    },
+    messages,
+  );
+  const branchLabel = messages(msg("Branch", { $context: "field label" }));
   const traits = resolveSubagentTraits({
     modelSlug,
     selection,
@@ -170,12 +188,10 @@ function SubagentMetadata(props: {
           accentColor={provider.accentColor}
           showBadge
         />
+      ) : driver === undefined ? (
+        <SymbolView name="robot" size={11} tintColorClassName="accent-icon-muted" />
       ) : (
-        <ProviderIcon
-          provider={provider?.driver ?? subagent.driver}
-          iconUrl={provider?.iconUrl}
-          size={12}
-        />
+        <ProviderIcon provider={driver} iconUrl={provider?.iconUrl} size={12} />
       )}
       <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
         {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
@@ -192,7 +208,7 @@ function SubagentMetadata(props: {
         >
           <Text className="text-xs text-foreground-muted">·</Text>
           <SymbolView
-            name={label === "Branch" ? "arrow.triangle.branch" : "folder"}
+            name={label === branchLabel ? "arrow.triangle.branch" : "folder"}
             size={11}
             tintColorClassName="accent-icon-muted"
           />
@@ -206,10 +222,15 @@ function SubagentMetadata(props: {
 }
 
 function SubagentTraitsLabel(props: { readonly traits: SubagentTraits }) {
+  const messages = useMessages();
   const { effort, speedIcon } = props.traits;
   if (!effort && !speedIcon) return null;
   const speedLabel =
-    speedIcon === "ultrafast" ? "Ultrafast mode on" : speedIcon ? "Fast mode on" : null;
+    speedIcon === "ultrafast"
+      ? messages(msg("Ultrafast mode on"))
+      : speedIcon
+        ? messages(msg("Fast mode on"))
+        : null;
   return (
     <View
       accessible

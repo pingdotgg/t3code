@@ -189,7 +189,10 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
           ),
         )
         .mockReturnValueOnce(Effect.succeed(output(json({ changeEntries: [] }))))
-        .mockReturnValueOnce(Effect.succeed(output("[]")));
+        .mockReturnValueOnce(Effect.succeed(output("[]")))
+        .mockReturnValueOnce(
+          Effect.succeed(output(json({ count: 1, value: [{ id: "4f1c", name: "release-1.0" }] }))),
+        );
       const provider = yield* AzureDevOpsPullRequestProvider.make;
       const detail = yield* provider.getChangeRequest({
         cwd: "/w",
@@ -200,7 +203,9 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       expect(detail.headSha).toBe(latestHead);
       expect(argsOfCall(2)).toContain("iterationId=2");
-      expect(mockedExecute).toHaveBeenCalledTimes(4);
+      expect(argsOfCall(4)).toContain("pullRequestLabels");
+      expect(detail.labels).toEqual([{ name: "release-1.0", color: null }]);
+      expect(mockedExecute).toHaveBeenCalledTimes(5);
     }),
   );
 
@@ -445,6 +450,36 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       expect(argsOfCall(0)).toContain("--description=- rewrote the page\n- kept the rest");
     }),
+  );
+
+  it.effect(
+    "sends a title or description that looks like `@path` as text, not as a file for az to read",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+        yield* cli.updatePullRequest({
+          cwd: "/w",
+          number: 42,
+          title: "@notes.txt",
+          body: "@notes.txt",
+        });
+
+        // az replaces an argument that starts with `@`, or whose text after the first `=` does, with that file's contents.
+        const fileReads = argsOfCall(0).flatMap((arg) => {
+          const value = arg.startsWith("@") ? arg : arg.slice(arg.indexOf("=") + 1);
+          return (arg.startsWith("@") || arg.includes("=")) && value.startsWith("@")
+            ? [value.slice(1)]
+            : [];
+        });
+        expect(fileReads).not.toContain("notes.txt");
+        // Each `@` value goes over stdin, which reaches az wherever it runs; one per call.
+        expect(mockedExecute.mock.calls.map(([call]) => call.stdin)).toEqual([
+          "@notes.txt",
+          "@notes.txt",
+        ]);
+      }),
   );
 
   it.effect("names the head's blob as what a cleared file was cleared at", () =>
