@@ -18,12 +18,16 @@ if [[ ! -s "$DEV/bearer" ]]; then
     > "$DEV/bearer"
 fi
 (cd "$ROOT" && cargo build -p conn-app --features automation ${CARGO_FLAGS:-})
+# A bundled .app activates like a normal app (clicks and keys reach it); a bare binary does not.
+"$ROOT/scripts/bundle-app.sh" debug >/dev/null
 rm -f "$DEV/automation-port"
-CONN_GPUI_SERVER="http://127.0.0.1:$PORT" CONN_GPUI_TOKEN_FILE="$DEV/bearer" \
-  CONN_GPUI_AUTOMATION="$DEV/automation-port" CONN_GPUI_THEME="${CONN_GPUI_THEME:-dark-mono}" \
-  nohup "$ROOT/target/debug/conn-app" > "$DEV/app.log" 2>&1 &
-echo $! > "$DEV/app.pid"
+open -n "$ROOT/target/debug/Conn GPUI.app" \
+  --env CONN_GPUI_SERVER="http://127.0.0.1:$PORT" \
+  --env CONN_GPUI_TOKEN_FILE="$DEV/bearer" \
+  --env CONN_GPUI_AUTOMATION="$DEV/automation-port" \
+  --env CONN_GPUI_THEME="${CONN_GPUI_THEME:-dark-mono}" \
+  --env CONN_GPUI_BROWSER_URL="${CONN_GPUI_BROWSER_URL:-}" \
+  --stdout "$DEV/app.log" --stderr "$DEV/app.log"
 for _ in $(seq 1 100); do [[ -s "$DEV/automation-port" ]] && break; sleep 0.1; done
-# Launched from a background shell, the window opens behind other apps: bring it forward.
-osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $(cat "$DEV/app.pid")) to true" >/dev/null 2>&1 || true
+pgrep -f "Conn GPUI.app/Contents/MacOS/conn-app" | tail -1 > "$DEV/app.pid"
 echo "app pid $(cat "$DEV/app.pid"), automation port $(cat "$DEV/automation-port" 2>/dev/null)"
