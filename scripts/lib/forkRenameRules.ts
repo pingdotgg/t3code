@@ -1000,8 +1000,8 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "upstream-text-match-samples",
     class: "upstream-reference",
     reason:
-      "Sample names and queries in the filesystem browse filter and speech hint tests, which only have to match one another; renaming some of them breaks the match.",
-    path: /^packages\/(?:client-runtime\/src\/state\/filesystem|shared\/src\/speech)\.test\.ts$/,
+      "Sample text in the filesystem browse filter, speech hint and project monogram tests, picked for its length or for matching other samples; renaming some of it breaks the case.",
+    path: /^packages\/(?:client-runtime\/src\/state\/filesystem|shared\/src\/speech)\.test\.ts$|^apps\/web\/src\/projectIconOptions\.test\.ts$/,
   },
   {
     id: "kept-upstream-alpha-dir",

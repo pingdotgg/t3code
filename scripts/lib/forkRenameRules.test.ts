@@ -250,6 +250,7 @@ describe("FORK_RENAME_RULES", () => {
       'hints: ["  T3   Code ", "t3 code"],',
       "upstream-reference",
     ],
+    ["apps/web/src/projectIconOptions.test.ts", '      ["T3", true],', "upstream-reference"],
     // DOM attributes and the approvals file follow the renamed preview code.
     [
       "apps/desktop/src/preview/PickPreload.test.ts",
