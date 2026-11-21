@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ChatFileAttachment,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProjectId,
@@ -2823,6 +2824,103 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
         Stream.runHead,
       );
       assert.equal((yield* runtime!.getModeState)?.currentModeId, "default");
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect("omits the ACP MCP terminal fallback instructions when T3 MCP is attached", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("antigravity-no-mcp-fallback-test");
+      const threadId = ThreadId.make("thread-antigravity-no-mcp-fallback");
+      const providerSessionId = ProviderSessionId.make(
+        "provider-session-antigravity-no-mcp-fallback",
+      );
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-antigravity-no-mcp-fallback"),
+        threadId,
+        providerSessionId,
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer antigravity-mcp-token",
+        browserToolsAvailable: true,
+      });
+      const capturedPrompts: Array<ReadonlyArray<EffectAcpSchema.ContentBlock>> = [];
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.map((runtime) => ({
+              ...runtime,
+              prompt: (request: { readonly prompt: ReadonlyArray<EffectAcpSchema.ContentBlock> }) =>
+                Effect.sync(() => {
+                  capturedPrompts.push(request.prompt);
+                  return { stopReason: "end_turn" as const };
+                }),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* session.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* session.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection,
+          now: yield* DateTime.now,
+        }),
+      );
+      yield* Stream.fromQueue(events).pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isTrue(flavor.omitAcpMcpFallbackInstructions);
+      assert.equal(capturedPrompts.length, 1);
+      const promptText = capturedPrompts[0]!
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n");
+      assert.notInclude(promptText, "<t3_code_instructions>");
+      assert.notInclude(promptText, "ACP fallback:");
+      assert.include(promptText, "<runtime_info>");
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
