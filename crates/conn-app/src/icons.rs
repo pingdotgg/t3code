@@ -101,8 +101,12 @@ pub(crate) fn right_panel_tab_icon(tab: RightPanelTab) -> IconName {
         RightPanelTab::Diff => IconName::GitPullRequest,
         RightPanelTab::Terminal => IconName::Terminal,
         RightPanelTab::Browser => IconName::Globe,
+        RightPanelTab::Api => IconName::Globe,
         RightPanelTab::Database => IconName::Database,
         RightPanelTab::Mcp => IconName::Plug,
+        RightPanelTab::Tasks => IconName::Check,
+        RightPanelTab::PullRequest => IconName::GitPullRequest,
+        RightPanelTab::LinkedItems => IconName::ExternalLink,
         RightPanelTab::Device => IconName::Smartphone,
     }
 }

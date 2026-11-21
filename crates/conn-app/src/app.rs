@@ -773,7 +773,12 @@ impl ConnApp {
 
     /// Closes a right panel tab; the last open tab stays.
     fn close_right_panel_tab(&mut self, tab: RightPanelTab, cx: &mut Context<'_, Self>) {
+        // Closing the last surface closes the panel, as in Conn.
         if self.right_panel_open_tabs.len() <= 1 {
+            self.right_panel_add_menu_open = false;
+            if self.layout.right_panel_open {
+                self.toggle_right_panel(cx);
+            }
             return;
         }
         let Some(pos) = self.right_panel_open_tabs.iter().position(|&t| t == tab) else {
@@ -890,10 +895,55 @@ impl ConnApp {
             .child(chat_card)
     }
 
+    /// Surfaces the add menu enables, by Conn's rules (`SURFACE_DISABLED_REASONS`): project
+    /// surfaces need a thread in a project; pull request and linked items need a pull request.
+    fn available_right_panel_tabs(&self) -> Vec<RightPanelTab> {
+        let thread = self.layout.selected_thread_id.is_some();
+        RightPanelTab::MENU_ORDER
+            .into_iter()
+            .filter(|tab| match tab {
+                RightPanelTab::Browser | RightPanelTab::Tasks => true,
+                RightPanelTab::PullRequest | RightPanelTab::LinkedItems => false,
+                _ => thread,
+            })
+            .collect()
+    }
+
+    /// Handles a key while the add-surface menu is open: a surface's letter opens it, Escape
+    /// closes the menu. Returns whether the key was used.
+    fn handle_add_menu_key(
+        &mut self,
+        event: &gpui_kit::KeyDownEvent,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        if !self.right_panel_add_menu_open {
+            return false;
+        }
+        let keystroke = &event.keystroke;
+        let modifiers = keystroke.modifiers;
+        if modifiers.control || modifiers.platform || modifiers.alt {
+            return false;
+        }
+        if keystroke.key == "escape" {
+            self.right_panel_add_menu_open = false;
+            cx.notify();
+            return true;
+        }
+        if let Some(tab) = RightPanelTab::from_menu_shortcut(&keystroke.key)
+            && self.available_right_panel_tabs().contains(&tab)
+        {
+            self.right_panel_add_menu_open = false;
+            self.select_right_panel_tab(tab, cx);
+            return true;
+        }
+        false
+    }
+
     fn render_right_panel_column(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         use crate::panels::header::{PanelHeaderCallbacks, PanelHeaderProps, render_panel_header};
         use std::rc::Rc;
         let app = cx.entity();
+        let available_tabs = self.available_right_panel_tabs();
         let header = render_panel_header(
             PanelHeaderProps {
                 open_tabs: &self.right_panel_open_tabs,
@@ -902,6 +952,7 @@ impl ConnApp {
                 bottom_dock_open: false,
                 panel_open: self.layout.right_panel_open,
                 add_menu_open: self.right_panel_add_menu_open,
+                available_tabs: &available_tabs,
                 tokens: &self.tokens,
             },
             PanelHeaderCallbacks {
@@ -919,9 +970,14 @@ impl ConnApp {
                 }),
                 on_toggle_add_menu: {
                     let app = app.clone();
-                    Rc::new(move |_, cx| {
+                    Rc::new(move |window, cx| {
                         app.update(cx, |this, cx| {
                             this.right_panel_add_menu_open = !this.right_panel_add_menu_open;
+                            if this.right_panel_add_menu_open {
+                                // Conn focuses the trigger, so the menu's letter keys and
+                                // Escape reach it whatever had the keyboard before.
+                                window.focus(&this.focus_handle, cx);
+                            }
                             cx.notify();
                         });
                     })
@@ -1093,14 +1149,30 @@ impl Render for ConnApp {
         let mut root = div()
             .id("conn-shell-root")
             .track_focus(&self.focus_handle)
-            .capture_key_down(|event, _window, _cx| {
-                if std::env::var_os("CONN_GPUI_FRAME_LOG").is_some() {
-                    eprintln!(
-                        "key: {:?} {:?}",
-                        event.keystroke.modifiers, event.keystroke.key
-                    );
-                }
-            })
+            .capture_key_down(
+                cx.listener(|app, event: &gpui_kit::KeyDownEvent, _window, cx| {
+                    if std::env::var_os("CONN_GPUI_FRAME_LOG").is_some() {
+                        eprintln!(
+                            "key: {:?} {:?}",
+                            event.keystroke.modifiers, event.keystroke.key
+                        );
+                    }
+                    if app.handle_add_menu_key(event, cx) {
+                        cx.stop_propagation();
+                    }
+                }),
+            )
+            .on_mouse_down(
+                gpui_kit::MouseButton::Left,
+                cx.listener(|app, _, _window, cx| {
+                    // A click outside the add-surface menu closes it (the menu and its trigger
+                    // stop their own clicks).
+                    if app.right_panel_add_menu_open {
+                        app.right_panel_add_menu_open = false;
+                        cx.notify();
+                    }
+                }),
+            )
             .on_action(cx.listener(|app, _: &ToggleSidebar, _window, cx| {
                 app.toggle_sidebar(cx);
             }))

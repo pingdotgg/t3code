@@ -12,16 +12,63 @@ pub const RIGHT_PANEL_MAX_WIDTH: f32 = 1200.0;
 /// Default right-panel width in CSS pixels.
 pub const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 480.0;
 
-/// Top-level right-panel surface tabs matching Conn desktop (`RightPanelTabs.tsx`).
+/// Top-level right-panel surfaces matching Conn desktop (`RightPanelTabs.tsx`, `rightPanelStore.ts`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RightPanelTab {
     Files,
     Diff,
     Terminal,
     Browser,
+    Api,
     Database,
     Mcp,
+    Tasks,
+    PullRequest,
+    LinkedItems,
     Device,
+}
+
+impl RightPanelTab {
+    /// Surfaces in the order of Conn's add-surface (`+`) menu.
+    pub const MENU_ORDER: [Self; 11] = [
+        Self::Browser,
+        Self::Api,
+        Self::Database,
+        Self::Mcp,
+        Self::Tasks,
+        Self::Terminal,
+        Self::Files,
+        Self::Diff,
+        Self::PullRequest,
+        Self::LinkedItems,
+        Self::Device,
+    ];
+
+    /// The surface's single-key shortcut in the add-surface menu.
+    #[must_use]
+    pub const fn menu_shortcut(self) -> &'static str {
+        match self {
+            Self::Browser => "B",
+            Self::Api => "R",
+            Self::Database => "Q",
+            Self::Mcp => "I",
+            Self::Tasks => "K",
+            Self::Terminal => "T",
+            Self::Files => "F",
+            Self::Diff => "D",
+            Self::PullRequest => "P",
+            Self::LinkedItems => "L",
+            Self::Device => "M",
+        }
+    }
+
+    /// The surface whose menu shortcut is `key` (case-insensitive).
+    #[must_use]
+    pub fn from_menu_shortcut(key: &str) -> Option<Self> {
+        Self::MENU_ORDER
+            .into_iter()
+            .find(|tab| tab.menu_shortcut().eq_ignore_ascii_case(key))
+    }
 }
 
 /// Window layout state: sidebar, right panel, and selection.

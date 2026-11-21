@@ -29,8 +29,8 @@ use self::color::to_hsla;
 use self::diff::DiffPanel;
 use self::files::FilesPanel;
 use self::header::{
-    PanelHeaderCallbacks, PanelHeaderProps, panel_tab_icon_path, render_panel_header,
-    superhero_icon,
+    PanelHeaderCallbacks, PanelHeaderProps, panel_tab_icon_path, panel_tab_label,
+    render_panel_header, superhero_icon,
 };
 use self::terminal::TerminalPanel;
 
@@ -313,6 +313,7 @@ impl RightPanel {
                 bottom_dock_open: self.bottom_dock_open,
                 panel_open: true,
                 add_menu_open: self.add_menu_open,
+                available_tabs: &RightPanelTab::MENU_ORDER,
                 tokens: &self.tokens,
             },
             callbacks,
@@ -336,21 +337,9 @@ impl Render for RightPanel {
             RightPanelTab::Diff => self.diff.clone().into_any_element(),
             RightPanelTab::Terminal => self.terminal.clone().into_any_element(),
             RightPanelTab::Browser => self.browser.clone().into_any_element(),
-            RightPanelTab::Database => placeholder_surface(
-                "Database panel",
-                panel_tab_icon_path(RightPanelTab::Database),
-                &self.tokens,
-                muted,
-            ),
-            RightPanelTab::Mcp => placeholder_surface(
-                "MCP panel",
-                panel_tab_icon_path(RightPanelTab::Mcp),
-                &self.tokens,
-                muted,
-            ),
-            RightPanelTab::Device => placeholder_surface(
-                "Device panel",
-                panel_tab_icon_path(RightPanelTab::Device),
+            other => placeholder_surface(
+                panel_tab_label(other),
+                panel_tab_icon_path(other),
                 &self.tokens,
                 muted,
             ),
