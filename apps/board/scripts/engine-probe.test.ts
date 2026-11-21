@@ -49,20 +49,4 @@ describe("engine probe summary", () => {
     expect(text).toContain("- Check F. Pass the folder as cwd.");
     expect(text).not.toContain("never");
   });
-
-  it("Given every check passed, when the findings render, then they say no later PR needs a workaround", () => {
-    const passed = results.map((result) => ({ ...result, verdict: "PASS" as const }));
-    const text = renderFindings(
-      passed,
-      {},
-      {
-        date: "2026-11-20T00:00:00.000Z",
-        engineVersion: "0.1.10",
-        claudeVersion: "2.1.309 (Claude Code)",
-        model: "claude-haiku-5-5",
-        totalMs: 1_000,
-      },
-    );
-    expect(text).toContain("No check failed, so no later PR needs a workaround.");
-  });
 });

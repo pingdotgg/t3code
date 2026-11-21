@@ -134,16 +134,14 @@ export function timelineRows(projection: TimelineSource): ReadonlyArray<Timeline
         break;
       case "assistant": {
         const text = textOf(item);
-        if (text !== "" || item.streaming) {
-          rows.push({
-            kind: "assistant",
-            id: item.id,
-            text,
-            streaming: item.streaming,
-            at: createdAt(item),
-            turnStartedAt: projection.runs.find((run) => run.id === item.runId)?.startedAt ?? null,
-          });
-        }
+        rows.push({
+          kind: "assistant",
+          id: item.id,
+          text,
+          streaming: item.streaming,
+          at: createdAt(item),
+          turnStartedAt: projection.runs.find((run) => run.id === item.runId)?.startedAt ?? null,
+        });
         break;
       }
       case "notice":

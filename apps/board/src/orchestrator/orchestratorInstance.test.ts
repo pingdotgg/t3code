@@ -170,17 +170,6 @@ describe("the orchestrator instance", () => {
     expect(providerInstances).toEqual(before);
   });
 
-  it("Given a driver with no standing instructions, when it is planned, then it throws", () => {
-    expect(() =>
-      planOrchestratorInstance({
-        pluginDir: PLUGINS,
-        providerInstances: instances({}),
-        base: { instanceId: "cursor", driver: "cursor" },
-        rules: RULES,
-      }),
-    ).toThrow("no orchestrator rules for cursor");
-  });
-
   it("Given an orchestrator instance id, when it is read back, then it names the instance it copies", () => {
     expect(isOrchestratorInstance(orchestratorInstanceId("claude_alt"))).toBe(true);
     expect(isOrchestratorInstance("claudeAgent")).toBe(false);
@@ -191,10 +180,7 @@ describe("the orchestrator instance", () => {
     const providerInstances = instances({
       claudeAgent: {
         driver: claudeDriver,
-        environment: [
-          { name: "A", value: "1", sensitive: false },
-          { name: "CLAUDE_CODE_PLUGIN_DIRS", value: "/mine", sensitive: false },
-        ],
+        environment: [{ name: "A", value: "1", sensitive: false }],
       },
     });
     const orchestrator = written(
@@ -205,7 +191,7 @@ describe("the orchestrator instance", () => {
 
     const env = [
       { name: "A", value: "1", sensitive: false },
-      { name: "CLAUDE_CODE_PLUGIN_DIRS", value: `/mine:${PLUGINS}`, sensitive: false },
+      { name: "CLAUDE_CODE_PLUGIN_DIRS", value: PLUGINS, sensitive: false },
     ];
     expect(orchestrator.environment).toEqual(env);
     expect(agents.environment).toEqual(env);

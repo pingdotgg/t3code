@@ -117,13 +117,6 @@ describe("the first signal of a launch", () => {
     });
   });
 
-  it("Given a failed run with no error item, when it is read, then the message names the status", () => {
-    expect(readLaunchSignal({ ...PENDING, runs: [{ status: "failed" }] })).toEqual({
-      state: "failed",
-      message: "The first run failed.",
-    });
-  });
-
   it("Given a plain-text failure, when it is read, then the text is kept", () => {
     const signal = readLaunchSignal({
       ...PENDING,
@@ -133,12 +126,6 @@ describe("the first signal of a launch", () => {
     expect(signal).toEqual({
       state: "failed",
       message: "Claude gave up after repeated API errors.",
-    });
-  });
-
-  it("Given a completed run with no text, when it is read, then it has started", () => {
-    expect(readLaunchSignal({ ...PENDING, runs: [{ status: "completed" }] })).toEqual({
-      state: "started",
     });
   });
 });

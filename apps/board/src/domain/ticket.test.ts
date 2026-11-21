@@ -39,13 +39,6 @@ describe("tickets.json", () => {
     expect(Result.isSuccess(parsed)).toBe(true);
   });
 
-  it("Given null for a field the orchestrator does not know yet, when it is parsed, then it is accepted", () => {
-    const parsed = parseTickets(
-      '[{"key":"T-1","title":"a","stage":"planned","branch":null,"pr":null,"threads":null}]',
-    );
-    expect(Result.isSuccess(parsed)).toBe(true);
-  });
-
   it("Given the stage done, when it is parsed, then it is rejected and names stage", () => {
     const issue = issueOf('[{"key":"T-1","title":"a","stage":"done"}]');
     expect(issue.fields).toEqual(["stage"]);

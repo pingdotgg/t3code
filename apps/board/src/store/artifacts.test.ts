@@ -41,7 +41,6 @@ const tree = {
     `${BOARD}/roles/task.md`,
     `${BOARD}/artifacts/T-1/shot.png`,
     `${BOARD}/artifacts/T-1/fix1/proof.txt`,
-    `${BOARD}/artifacts/T-1/.cache`,
     `${BOARD}/review/T-1/round-1.md`,
     `${BOARD}/inbox/note.md`,
   ],

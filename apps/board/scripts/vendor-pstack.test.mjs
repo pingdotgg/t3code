@@ -6,6 +6,21 @@ import * as NodeTest from "node:test";
 
 import { vendor } from "./vendor-pstack.mjs";
 
+const HEAD = `---
+name: poteto-mode
+description: poteto's agent style for concise, detailed responses, deliberate subagents, unslopped prose, simple code, and verified work. Use for poteto, /poteto-mode, or requests to work in this style.
+disable-model-invocation: true
+mode: true
+icon: crown
+color: yellow
+reminder: New task? Playbook match or rigor needed -> apply /poteto-mode. Casual turn or user opts out -> don't.
+---
+
+# Poteto mode
+
+## Non-negotiables
+`;
+
 NodeTest.test(
   "Given a pstack-t3 checkout, when it is vendored, then each skill lands without its front matter",
   (t) => {
@@ -13,10 +28,7 @@ NodeTest.test(
     t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }));
     for (const skill of ["poteto-mode", "pstack-t3"]) {
       NodeFS.mkdirSync(NodePath.join(root, "checkout", "skills", skill), { recursive: true });
-      NodeFS.writeFileSync(
-        NodePath.join(root, "checkout", "skills", skill, "SKILL.md"),
-        `---\nname: ${skill}\ndescription: "x"\n---\n\n# ${skill} body\n\nText with --- inside.\n`,
-      );
+      NodeFS.writeFileSync(NodePath.join(root, "checkout", "skills", skill, "SKILL.md"), HEAD);
     }
 
     const written = vendor(NodePath.join(root, "checkout"), NodePath.join(root, "out"));
@@ -27,7 +39,7 @@ NodeTest.test(
     );
     NodeAssert.equal(
       NodeFS.readFileSync(written[0], "utf8"),
-      "# poteto-mode body\n\nText with --- inside.\n",
+      "# Poteto mode\n\n## Non-negotiables\n",
     );
   },
 );

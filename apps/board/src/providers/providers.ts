@@ -98,8 +98,6 @@ export function pickableInstances(
     .toSorted(
       (left, right) =>
         DRIVER_ORDER.indexOf(left.driver) - DRIVER_ORDER.indexOf(right.driver) ||
-        Number(right.instanceId === defaultInstanceIdForDriver(right.driver)) -
-          Number(left.instanceId === defaultInstanceIdForDriver(left.driver)) ||
         left.instanceId.localeCompare(right.instanceId),
     )
     .map((provider) => {
@@ -157,14 +155,11 @@ export function defaultPick(instances: ReadonlyArray<PickableInstance>): Default
       instance.models.some((model) => model.slug === DEFAULT_ORCHESTRATOR.model),
   );
   if (preferred !== undefined) {
-    const effort = preferred.models
-      .find((model) => model.slug === DEFAULT_ORCHESTRATOR.model)
-      ?.effort?.choices.some((choice) => choice.id === DEFAULT_ORCHESTRATOR.effort);
     return {
       value: {
         instanceId: preferred.instanceId,
         model: DEFAULT_ORCHESTRATOR.model,
-        effort: effort === true ? DEFAULT_ORCHESTRATOR.effort : "",
+        effort: DEFAULT_ORCHESTRATOR.effort,
       },
       reason: null,
     };

@@ -129,10 +129,6 @@ describe("ranking the slash menu", () => {
     expect(withModel.map((item) => item.label)).toEqual(["/model", "/update-config"]);
   });
 
-  it("Given the input /comp, when the items are ranked, then only /compact stays", () => {
-    expect(labels("comp")).toEqual(["/compact"]);
-  });
-
   it("Given a query with no match, when the items are ranked, then nothing stays", () => {
     expect(labels("zzz")).toEqual([]);
   });

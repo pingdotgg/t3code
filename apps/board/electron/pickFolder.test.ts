@@ -41,22 +41,20 @@ describe("resolveFolder", () => {
     });
   });
 
-  it("Given a Windows drive path, when resolved, then it is refused as outside WSL", async () => {
-    const { host } = hostWithFolders([], { "C:\\Users": "/mnt/c/Users" });
+  it.each([
+    ["C:\\Users", [], { "C:\\Users": "/mnt/c/Users" }],
+    ["/mnt/c/Users", ["/mnt/c/Users"], {}],
+  ] as const)(
+    "Given %s typed, when resolved, then it is refused as outside WSL",
+    async (typed, folders, windowsToLinux) => {
+      const { host } = hostWithFolders(folders, windowsToLinux);
 
-    expect(await resolveFolder(host, "C:\\Users")).toEqual({
-      ok: false,
-      reason: "That folder is outside WSL. Pick one inside the Linux distro, such as /home.",
-    });
-  });
-
-  it("Given a path on a Windows drive mount, when typed, then it is refused as outside WSL", async () => {
-    const { host } = hostWithFolders(["/mnt/c/Users"], {});
-
-    const result = await resolveFolder(host, "/mnt/c/Users");
-
-    expect(result.ok).toBe(false);
-  });
+      expect(await resolveFolder(host, typed)).toEqual({
+        ok: false,
+        reason: "That folder is outside WSL. Pick one inside the Linux distro, such as /home.",
+      });
+    },
+  );
 
   it("Given a missing folder, when typed, then the reason names it", async () => {
     const { host } = hostWithFolders([], {});

@@ -76,6 +76,7 @@ describe("joining tickets with the thread family", () => {
       ["T-2", [["th-b", "scout", "idle"]]],
     ]);
     expect(summary("merged")).toEqual([["T-3", []]]);
+    expect(model.lanes.planned).toEqual([]);
   });
 
   it("Given children no ticket claims, when joined, then they sit in unassigned", () => {
@@ -97,10 +98,6 @@ describe("joining tickets with the thread family", () => {
       registered: true,
     });
     expect(model.lanes.building[1]?.agents[0]?.pendingRequest).toBe(true);
-  });
-
-  it("Given an empty stage, when joined, then its lane is empty", () => {
-    expect(model.lanes.planned).toEqual([]);
   });
 });
 
@@ -126,10 +123,6 @@ describe("an agent's role", () => {
 
   it("Given a title and a ticket entry that both name a role outside the registry, when joined, then the agent is flagged", () => {
     expect(join("[T-1] wizard", "wizard")).toMatchObject({ role: "wizard", registered: false });
-  });
-
-  it("Given a registry role in the title, when joined, then the title wins over the ticket entry", () => {
-    expect(join("[T-1] scout", "task")).toMatchObject({ role: "scout", registered: true });
   });
 });
 

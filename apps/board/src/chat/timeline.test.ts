@@ -126,23 +126,6 @@ describe("the chat rows of a thread", () => {
     ]);
   });
 
-  it("Given an empty reply that has finished, when the rows are built, then it is dropped", () => {
-    const rows = timelineRows(
-      source([
-        {
-          kind: "assistant",
-          id: "a1",
-          messageId: "m1",
-          runId: null,
-          text: "",
-          textOmitted: false,
-          streaming: false,
-        },
-      ]),
-    );
-    expect(rows).toEqual([]);
-  });
-
   it("Given an interrupted run, when the rows are built, then the last row says Stopped", () => {
     const rows = timelineRows(source([], [{ id: "r1", status: "interrupted" }]));
     expect(rows).toEqual([{ kind: "notice", id: "r1:stopped", text: "Stopped", error: false }]);

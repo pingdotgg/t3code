@@ -41,9 +41,11 @@ describe("previewInput", () => {
       ignoreWhitespace: true,
       baseRef: "main",
     });
-    expect(previewInput("/p", { kind: "branch-range", baseRef: null }, false)).not.toHaveProperty(
-      "baseRef",
-    );
+    expect(previewInput("/p", { kind: "branch-range", baseRef: null }, false)).toEqual({
+      cwd: "/p",
+      sourceKind: "branch-range",
+      ignoreWhitespace: false,
+    });
     expect(previewInput("/p", { kind: "commit", sha: "abc" }, false)).toEqual({
       cwd: "/p",
       commitSha: "abc",

@@ -43,16 +43,13 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       };
     case "close": {
       const index = state.tabs.findIndex((tab) => tab.id === action.id);
-      if (index < 0) return state;
       const tabs = state.tabs.filter((tab) => tab.id !== action.id);
       if (state.activeId !== action.id) return { tabs, activeId: state.activeId };
       // The tab that slides into the closed one's place, or the one before it at the end.
       return { tabs, activeId: (tabs[index] ?? tabs[index - 1])?.id ?? null };
     }
     case "activate":
-      return state.tabs.some((tab) => tab.id === action.id)
-        ? { ...state, activeId: action.id }
-        : state;
+      return { ...state, activeId: action.id };
     case "update":
       return {
         ...state,

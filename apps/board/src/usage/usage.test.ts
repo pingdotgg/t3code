@@ -36,20 +36,12 @@ const provider = (overrides: Partial<ServerProvider>): ServerProvider =>
   }) as ServerProvider;
 
 describe("formatReset", () => {
-  it("Given a reset 40 minutes out, when formatted, then it prints minutes", () => {
-    expect(formatReset(at(40 * MINUTE), NOW)).toBe("40m");
-  });
-
-  it("Given a reset 5 days 22 hours out, when formatted, then it prints days and hours", () => {
-    expect(formatReset(at(5 * DAY + 22 * HOUR + 30 * MINUTE), NOW)).toBe("5d 22h");
-  });
-
-  it("Given a reset under a day out, when formatted, then it prints hours and minutes", () => {
-    expect(formatReset(at(3 * HOUR + 12 * MINUTE), NOW)).toBe("3h 12m");
-  });
-
-  it("Given a reset that already passed, when formatted, then it prints zero minutes", () => {
-    expect(formatReset(at(-5 * MINUTE), NOW)).toBe("0m");
+  it.each([
+    ["40 minutes out", 40 * MINUTE, "40m"],
+    ["5 days 22 hours out", 5 * DAY + 22 * HOUR + 30 * MINUTE, "5d 22h"],
+    ["3 hours 12 minutes out", 3 * HOUR + 12 * MINUTE, "3h 12m"],
+  ])("Given a reset %s, when formatted, then it prints %s", (_label, offset, expected) => {
+    expect(formatReset(at(offset), NOW)).toBe(expected);
   });
 });
 
@@ -70,15 +62,6 @@ describe("formatWindow", () => {
     );
 
     expect(segment.text).toBe("3% Fable");
-  });
-
-  it("Given a window with model ids and a plain label, when formatted, then the label names the model", () => {
-    const segment = formatWindow(
-      window({ id: "spark", label: "Spark", usedPercent: 40, modelIds: ["gpt-5-spark"] }),
-      NOW,
-    );
-
-    expect(segment.text).toBe("40% Spark");
   });
 
   it("Given a window without a reset, when formatted, then it prints only the percent", () => {

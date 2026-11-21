@@ -72,9 +72,7 @@ export function renderFindings(
     "",
     "## Follow-ups",
     "",
-    ...(failed.length === 0
-      ? ["No check failed, so no later PR needs a workaround."]
-      : failed.map((result) => `- Check ${result.id}. ${followUps[result.id] ?? ""}`)),
+    ...failed.map((result) => `- Check ${result.id}. ${followUps[result.id] ?? ""}`),
     "",
   ].join("\n");
 }
