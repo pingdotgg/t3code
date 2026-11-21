@@ -284,7 +284,7 @@ export const make = Effect.gen(function* () {
             ${jsonText(run.input)}, ${run.parent?.runId ?? null}, ${run.parent?.wait ?? null},
             ${at}, ${at}
           )
-          ON CONFLICT (run_id) DO NOTHING
+          ON CONFLICT DO NOTHING
         `,
       );
     }),
