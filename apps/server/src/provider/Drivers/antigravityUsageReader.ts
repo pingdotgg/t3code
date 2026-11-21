@@ -141,9 +141,11 @@ export const antigravityRateModel = (model: string) => {
       ? "gemini-3.7-flash"
       : model === "gemini-pro-orchestrator-neon"
         ? "gemini-4-neon"
-        : base === "gemini-3-flash"
-          ? "gemini-3-flash-preview"
-          : base;
+        : model === "gemini-pro-orchestrator-g1-pro"
+          ? "gemini-4-argon"
+          : base === "gemini-3-flash"
+            ? "gemini-3-flash-preview"
+            : base;
 };
 
 function withRateModel(record: UsageRecord): UsageRecord {
