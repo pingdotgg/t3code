@@ -216,13 +216,16 @@ function formatServiceStatus(
     ].join("\n");
   }
   const { homeOwner } = status;
+  const waiting = BootService.bootServiceWaitsForHomeOwner(status);
   return [
     "T3 Code service",
-    `  Status: ${status.current ? `${homeOwner === undefined ? "installed" : "waiting"} · t3@${installedVersion}` : "needs an update or repair"}`,
+    `  Status: ${status.current ? `${waiting ? "waiting" : "installed"} · t3@${installedVersion}` : "needs an update or repair"}`,
     ...(homeOwner === undefined
       ? []
       : [
-          `  Waiting: ${BootService.formatBootServiceHomeOwner(homeOwner, status.installedBaseDir)}. The service starts once it stops.`,
+          waiting
+            ? `  Waiting: ${BootService.formatBootServiceHomeOwner(homeOwner, status.installedBaseDir)}. The service starts once it stops.`
+            : `  Owner: ${BootService.formatBootServiceHomeOwner(homeOwner, status.installedBaseDir)}.`,
         ]),
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,

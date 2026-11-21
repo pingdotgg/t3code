@@ -243,6 +243,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       args: [],
     },
     {
+      label: "a stopped service whose home another server owns",
+      status: { ...status, problems: ["service-stopped"] as const, homeOwner: { pid: 4242 } },
+      hint: "service install",
+      args: [],
+    },
+    {
       label: "a restart-pending service",
       status: { ...status, problems: ["restart-pending"] as const },
       hint: "service restart",

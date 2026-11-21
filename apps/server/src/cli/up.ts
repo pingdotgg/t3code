@@ -159,7 +159,7 @@ const formatSetup = (setup: Setup, hints: Hints) => {
       !service.supported
         ? "unavailable"
         : service.installed
-          ? `${service.homeOwner === undefined ? "installed" : "waiting"} · t3@${service.installedVersion ?? packageJson.version}`
+          ? `${BootService.bootServiceWaitsForHomeOwner(service) ? "waiting" : "installed"} · t3@${service.installedVersion ?? packageJson.version}`
           : "not installed",
     ],
     ...(setup.connect === null
@@ -189,7 +189,7 @@ const formatSetup = (setup: Setup, hints: Hints) => {
     ...(service.homeOwner === undefined
       ? []
       : [
-          `The service is not serving: ${BootService.formatBootServiceHomeOwner(service.homeOwner, service.installedBaseDir)}. Until it stops, other devices reach that server instead. ${BootService.BOOT_SERVICE_HOME_OWNER_NEXT}`,
+          `The service is not serving: ${BootService.formatBootServiceHomeOwner(service.homeOwner, service.installedBaseDir)}. Other devices reach that server instead.${BootService.bootServiceWaitsForHomeOwner(service) ? ` ${BootService.BOOT_SERVICE_HOME_OWNER_NEXT}` : ""}`,
         ]),
     ...(setup.host === undefined && setup.lan
       ? ["Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock."]

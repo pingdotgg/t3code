@@ -797,6 +797,10 @@ export const formatBootServiceHomeOwner = (owner: BootServiceHomeOwner, baseDir?
   return `another T3 Code server owns ${baseDir ?? "this T3 home"}${details.length === 0 ? "" : ` (${details.join(", ")})`}`;
 };
 
+/** A stopped service has no launcher to take the home back once its owner stops. */
+export const bootServiceWaitsForHomeOwner = (status: BootServiceStatus) =>
+  status.homeOwner !== undefined && status.problems?.includes("service-stopped") !== true;
+
 export const BOOT_SERVICE_HOME_OWNER_NEXT =
   "Quit that server and the service starts on its own. To run both, give one of them a separate T3 home with `--base-dir`.";
 
