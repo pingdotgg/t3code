@@ -1,6 +1,11 @@
-import { msg } from "gt-i18n";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import { translatableError } from "./errors/translatable.ts";
-import { decodeFilePreviewText, FILE_TEXT_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
+import {
+  decodeFilePreviewText,
+  FILE_TEXT_PREVIEW_MAX_BYTES,
+  type ModelPreviewFormat,
+} from "@t3tools/shared/filePreview";
 
 /** Consume only a bounded prefix, even when a host ignores the requested HTTP range. */
 export async function readFilePreviewResponse(
@@ -44,4 +49,27 @@ export async function readFilePreviewResponse(
     offset += chunk.length;
   }
   return decodeFilePreviewText(bytes);
+}
+
+/** What a 3D file's preview image shows, and why a file may have none. */
+export function modelPreviewCopy(format: ModelPreviewFormat, resolve: MFunctionType = mFallback) {
+  const notice = resolve(msg("Rendered preview of the mesh, viewed from the front right."));
+  switch (format) {
+    case "gltf":
+      return {
+        notice,
+        unavailable: resolve(
+          msg(
+            "This mesh could not be drawn. It may be empty, damaged, compressed, over 64 MB, or keep its data in separate .bin files.",
+          ),
+        ),
+      };
+    default:
+      return {
+        notice,
+        unavailable: resolve(
+          msg("This mesh could not be drawn. It may be empty, damaged, or over 64 MB."),
+        ),
+      };
+  }
 }

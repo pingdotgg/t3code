@@ -32,6 +32,7 @@ export type FilePreviewKind =
   | "rtf"
   | "epub"
   | "ipynb"
+  | "model"
   | "text"
   | "unsupported";
 
@@ -46,6 +47,8 @@ export function filePreviewKind(
   const richDocuments = options?.richDocuments !== false;
   const office = richDocuments ? officePreviewKind(file) : null;
   if (office) return office;
+  // Before archives: a .3mf file is a ZIP, and browsers may type it as one.
+  if (richDocuments && modelPreviewFormatOf(file) !== null) return "model";
   const binary = binaryPreviewKind(file);
   if (binary) return binary;
   if (mime === "application/pdf") return "pdf";
@@ -130,6 +133,66 @@ export function binaryPreviewKind(file: {
   const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
   const inferred = BINARY_MIME_TYPES.get(extension);
   return inferred === "application/vnd.sqlite3" ? "sqlite" : inferred ? "archive" : null;
+}
+
+/** Mesh formats: the server renders their geometry, and clients can draw it in a 3D view. */
+/** `gltf` covers both `.gltf` and binary `.glb` files. */
+export type MeshFormat = "stl" | "obj" | "ply" | "3mf" | "gltf";
+
+/** 3D files the server can show as an image, rendered from their geometry. */
+export type ModelPreviewFormat = MeshFormat;
+
+const MODEL_PREVIEW_MIME_TYPES = new Map<string, ModelPreviewFormat>([
+  ["model/stl", "stl"],
+  ["model/x.stl-binary", "stl"],
+  ["model/x.stl-ascii", "stl"],
+  ["application/sla", "stl"],
+  ["application/vnd.ms-pki.stl", "stl"],
+  ["model/obj", "obj"],
+  ["model/x-ply", "ply"],
+  ["application/ply", "ply"],
+  ["model/3mf", "3mf"],
+  ["application/vnd.ms-package.3dmanufacturing-3dmodel+xml", "3mf"],
+  ["model/gltf-binary", "gltf"],
+  ["model/gltf+json", "gltf"],
+]);
+
+const MODEL_PREVIEW_EXTENSIONS = new Map<string, ModelPreviewFormat>([
+  [".stl", "stl"],
+  [".obj", "obj"],
+  [".ply", "ply"],
+  [".3mf", "3mf"],
+  [".glb", "gltf"],
+  [".gltf", "gltf"],
+]);
+
+/** Types that say nothing about a model, so the extension decides. Linux tags .obj as TGIF. */
+const MODEL_GENERIC_MIME_TYPES = new Set([
+  "",
+  "application/octet-stream",
+  "text/plain",
+  "application/x-tgif",
+]);
+
+export function modelPreviewFormat(path: string): ModelPreviewFormat | null {
+  const extension = /\.[a-z0-9]+$/i.exec(path)?.[0].toLowerCase();
+  return extension ? (MODEL_PREVIEW_EXTENSIONS.get(extension) ?? null) : null;
+}
+
+export function modelPreviewFormatOf(file: {
+  readonly name: string;
+  readonly mimeType?: string;
+}): ModelPreviewFormat | null {
+  const mime = file.mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  const byMime = MODEL_PREVIEW_MIME_TYPES.get(mime);
+  if (byMime) return byMime;
+  const format = modelPreviewFormat(file.name);
+  if (MODEL_GENERIC_MIME_TYPES.has(mime)) return format;
+  // These types name the container a model is stored in, so only the extension can tell.
+  if ((mime === "application/zip" || mime === "application/x-zip-compressed") && format === "3mf") {
+    return format;
+  }
+  return mime === "application/json" && format === "gltf" ? format : null;
 }
 
 export const FILE_TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;

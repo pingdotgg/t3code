@@ -51,6 +51,7 @@ import { useUiStateStore } from "../uiStateStore";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { GUEST_PAGE_PATH } from "../guestPage";
+import { MODEL_VIEWER_PAGE_PATH } from "../modelViewerPage";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
@@ -66,7 +67,8 @@ export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
     // Guest links open on the owner's tunnel host in a browser with no T3 session, and must
     // not trigger pairing or an environment connection.
-    if (location.pathname === GUEST_PAGE_PATH) {
+    // The mobile app's 3D view reads a signed URL and, like a guest, has no session.
+    if (location.pathname === GUEST_PAGE_PATH || location.pathname === MODEL_VIEWER_PAGE_PATH) {
       return {
         authGateState: {
           status: "guest",
@@ -161,7 +163,7 @@ function RootRouteBranch() {
     authGateState.status === "hosted-static",
   );
 
-  if (pathname === GUEST_PAGE_PATH) return <Outlet />;
+  if (pathname === GUEST_PAGE_PATH || pathname === MODEL_VIEWER_PAGE_PATH) return <Outlet />;
 
   if (
     pathname === "/pair" ||

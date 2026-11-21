@@ -2,12 +2,13 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { readFilePreviewResponse } from "@t3tools/client-runtime/file-preview";
+import { modelPreviewCopy, readFilePreviewResponse } from "@t3tools/client-runtime/file-preview";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import {
   filePreviewKind,
+  modelPreviewFormatOf,
   officePreviewKind,
   FILE_TEXT_PREVIEW_MAX_BYTES,
 } from "@t3tools/shared/filePreview";
@@ -22,6 +23,8 @@ import {
   CopyIcon,
   EyeIcon,
   Table2Icon,
+  BoxIcon,
+  ImageIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -41,6 +44,7 @@ import { PreviewImage } from "./PreviewImage";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
+import { MODEL_VIEWER_MAX_BYTES, readModelBytes } from "./modelViewerData";
 import {
   FILE_SURFACE_SUBHEADER_CLASS,
   FileSurfaceAction,
@@ -64,6 +68,8 @@ const MermaidFilePreview = lazy(() =>
 );
 
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
+
+const ModelViewer = lazy(() => import("./ModelViewer"));
 
 const STALE_URL_MS = 5 * 60_000;
 
@@ -95,6 +101,27 @@ function renderedToggleLabel(
     return rendered ? resolve(msg("Show markdown source")) : resolve(msg("Show rendered markdown"));
   if (mode === "table") return rendered ? resolve(msg("Show source")) : resolve(msg("Show table"));
   return rendered ? resolve(msg("Show HTML source")) : resolve(msg("Show rendered page"));
+}
+
+function NoFilePreview(props: { name: string; detail?: string | undefined }) {
+  const extension = props.name.split(".").at(-1);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
+      <p className="text-sm font-medium">
+        <T>No preview for this file</T>
+      </p>
+      <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+        {props.detail ? `${props.detail} ` : null}
+        {extension ? (
+          <T>
+            Save it to open in an app that supports <Var>{extension}</Var> files.
+          </T>
+        ) : (
+          <T>Save it to open in an app that supports this format files.</T>
+        )}
+      </p>
+    </div>
+  );
 }
 
 export function AttachmentFilePreview(props: {
@@ -147,11 +174,8 @@ export function AttachmentFilePreview(props: {
       }
     : null;
   const resource = assetResource ?? attachmentResource;
-  const downloadResource = resource
-    ? resource._tag === "draft-workspace-file"
-      ? resource
-      : { ...resource, disposition: "attachment" as const }
-    : null;
+  // Draft workspace files take a download disposition too: the 3D view reads their raw bytes.
+  const downloadResource = resource ? { ...resource, disposition: "attachment" as const } : null;
   const refresh = useAssetUrlRefresh(
     props.file ? null : (props.asset?.environmentId ?? null),
     props.file ? null : resource,
@@ -199,6 +223,36 @@ export function AttachmentFilePreview(props: {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry must reauthorize the remote file.
   }, [props.file, refresh, revision]);
   const url = props.file ? localUrl : remoteUrl;
+  const modelFormat = kind === "model" ? modelPreviewFormatOf(props) : null;
+  const modelCopy = modelFormat ? modelPreviewCopy(modelFormat, messages) : null;
+  const [missingModelPreviewUrl, setMissingModelPreviewUrl] = useState<string | null>(null);
+  // The notice describes the preview image, so it waits until the image has loaded.
+  const [loadedModelPreviewUrl, setLoadedModelPreviewUrl] = useState<string | null>(null);
+  // 3D files open in the 3D view; the preview image stays one click away and is the fallback
+  // when the file is too large or the device cannot draw it.
+  const [modelImageChosen, setModelImageChosen] = useState(false);
+  const [modelViewerProblem, setModelViewerProblem] = useState<string | null>(null);
+  const offersModelViewer = modelFormat !== null;
+  const showsModelViewer = offersModelViewer && !modelImageChosen && modelViewerProblem === null;
+  // Servers without 3D previews fail the image; local drafts have no server to ask.
+  const modelPreviewUnavailable =
+    modelCopy !== null &&
+    !showsModelViewer &&
+    (props.file != null || (url !== null && missingModelPreviewUrl === url));
+  const loadModelBytes = async (signal: AbortSignal) => {
+    if (props.file) {
+      if (props.file.size > MODEL_VIEWER_MAX_BYTES) {
+        throw new Error(m(msg("This file is too large for the 3D view.")));
+      }
+      return new Uint8Array(await props.file.arrayBuffer());
+    }
+    const target = await prepareDownload();
+    if (!target) throw new Error("Reconnect to the environment and try again.");
+    return readModelBytes(await fetch(target, { signal }), MODEL_VIEWER_MAX_BYTES, signal);
+  };
+  const modelSourceKey = props.file
+    ? blobKey(props.file)
+    : `${props.asset?.environmentId ?? ""}:${JSON.stringify(resource)}:${revision}`;
   const streamsText =
     kind === "text" &&
     (props.sizeBytes > FILE_TEXT_PREVIEW_MAX_BYTES ||
@@ -284,128 +338,137 @@ export function AttachmentFilePreview(props: {
     });
   };
 
-  const body = failure ? (
-    <FileSurfaceFailure
-      message={failure}
-      onRetry={() => {
-        setError(null);
-        setRevision((value) => value + 1);
-      }}
-    />
-  ) : streamsText && url ? (
-    <Suspense fallback={<FileSurfaceLoading />}>
-      <LargeTextViewer
-        key={`${url}:${rendered}:${revision}`}
-        name={props.name}
-        src={url}
-        sizeBytes={props.sizeBytes}
-        onRetry={() => setRevision((value) => value + 1)}
-        delimiter={rendered ? delimiter : null}
-        copyContents={copyContents}
-        wordWrap={wordWrap}
-      />
-    </Suspense>
-  ) : !url || (needsText && !content) ? (
-    <FileSurfaceLoading />
-  ) : needsText && content ? (
-    delimiter && rendered ? (
-      <DelimitedTablePreview name={props.name} text={content.text} delimiter={delimiter} />
-    ) : kind === "mermaid" && rendered ? (
+  const body =
+    showsModelViewer && modelFormat ? (
       <Suspense fallback={<FileSurfaceLoading />}>
-        <MermaidFilePreview text={content.text} />
-      </Suspense>
-    ) : kind === "markdown" && rendered ? (
-      <ScrollArea className="min-h-0 flex-1">
-        <ChatMarkdown
-          text={maskMarkdownFrontmatter(content.text)}
-          cwd={undefined}
-          className="mx-auto max-w-4xl px-6 py-5"
+        <ModelViewer
+          key={modelSourceKey}
+          name={props.name}
+          format={modelFormat}
+          loadBytes={loadModelBytes}
+          onUnavailable={setModelViewerProblem}
         />
-      </ScrollArea>
-    ) : (
-      <ReadOnlySourcePreview name={props.name} text={content.text} wordWrap={wordWrap} />
-    )
-  ) : kind === "archive" || kind === "sqlite" ? (
-    <BinaryFilePreview
-      key={revision}
-      src={url}
-      name={props.name}
-      kind={kind}
-      onRetry={() => setRevision((value) => value + 1)}
-    />
-  ) : kind === "font" ? (
-    <Suspense fallback={<FileSurfaceLoading />}>
-      <FontFilePreview src={url} name={props.name} />
-    </Suspense>
-  ) : officeKind ? (
-    <Suspense fallback={<FileSurfaceLoading />}>
-      <OfficeFilePreview
+      </Suspense>
+    ) : modelPreviewUnavailable ? (
+      <NoFilePreview name={props.name} detail={modelViewerProblem ?? modelCopy?.unavailable} />
+    ) : failure ? (
+      <FileSurfaceFailure
+        message={failure}
+        onRetry={() => {
+          setError(null);
+          setRevision((value) => value + 1);
+        }}
+      />
+    ) : streamsText && url ? (
+      <Suspense fallback={<FileSurfaceLoading />}>
+        <LargeTextViewer
+          key={`${url}:${rendered}:${revision}`}
+          name={props.name}
+          src={url}
+          sizeBytes={props.sizeBytes}
+          onRetry={() => setRevision((value) => value + 1)}
+          delimiter={rendered ? delimiter : null}
+          copyContents={copyContents}
+          wordWrap={wordWrap}
+        />
+      </Suspense>
+    ) : !url || (needsText && !content) ? (
+      <FileSurfaceLoading />
+    ) : needsText && content ? (
+      delimiter && rendered ? (
+        <DelimitedTablePreview name={props.name} text={content.text} delimiter={delimiter} />
+      ) : kind === "mermaid" && rendered ? (
+        <Suspense fallback={<FileSurfaceLoading />}>
+          <MermaidFilePreview text={content.text} />
+        </Suspense>
+      ) : kind === "markdown" && rendered ? (
+        <ScrollArea className="min-h-0 flex-1">
+          <ChatMarkdown
+            text={maskMarkdownFrontmatter(content.text)}
+            cwd={undefined}
+            className="mx-auto max-w-4xl px-6 py-5"
+          />
+        </ScrollArea>
+      ) : (
+        <ReadOnlySourcePreview name={props.name} text={content.text} wordWrap={wordWrap} />
+      )
+    ) : kind === "archive" || kind === "sqlite" ? (
+      <BinaryFilePreview
+        key={revision}
         src={url}
         name={props.name}
-        kind={officeKind}
-        sizeBytes={props.sizeBytes}
+        kind={kind}
+        onRetry={() => setRevision((value) => value + 1)}
       />
-    </Suspense>
-  ) : kind === "pdf" || kind === "html" ? (
-    <BrowserDocumentFrame
-      src={url}
-      title={props.name}
-      pdf={kind === "pdf"}
-      htmlRender={props.htmlRender === true}
-      threadRef={props.threadRef}
-      // Each mount signs or creates a new URL, so the URL cannot identify the file across visits.
-      // A draft keeps its Blob key after upload, so finishing the upload does not reload the PDF.
-      documentKey={
-        kind !== "pdf"
-          ? undefined
-          : props.file
-            ? blobKey(props.file)
-            : props.asset && "attachmentId" in props.asset
-              ? `${props.asset.environmentId}:${props.asset.attachmentId}`
-              : undefined
-      }
-    />
-  ) : kind === "audio" ? (
-    <AudioPreview
-      src={url}
-      name={props.name}
-      onError={() => setError(gt("Unable to load audio."))}
-    />
-  ) : kind === "video" ? (
-    <div className="flex min-h-0 flex-1 items-center justify-center bg-black">
-      <video
-        controls
-        playsInline
+    ) : kind === "font" ? (
+      <Suspense fallback={<FileSurfaceLoading />}>
+        <FontFilePreview src={url} name={props.name} />
+      </Suspense>
+    ) : officeKind ? (
+      <Suspense fallback={<FileSurfaceLoading />}>
+        <OfficeFilePreview
+          src={url}
+          name={props.name}
+          kind={officeKind}
+          sizeBytes={props.sizeBytes}
+        />
+      </Suspense>
+    ) : kind === "pdf" || kind === "html" ? (
+      <BrowserDocumentFrame
         src={url}
-        aria-label={props.name}
-        className="max-h-full max-w-full"
-        onError={() => setError(gt("Unable to load video."))}
+        title={props.name}
+        pdf={kind === "pdf"}
+        htmlRender={props.htmlRender === true}
+        threadRef={props.threadRef}
+        // Each mount signs or creates a new URL, so the URL cannot identify the file across visits.
+        // A draft keeps its Blob key after upload, so finishing the upload does not reload the PDF.
+        documentKey={
+          kind !== "pdf"
+            ? undefined
+            : props.file
+              ? blobKey(props.file)
+              : props.asset && "attachmentId" in props.asset
+                ? `${props.asset.environmentId}:${props.asset.attachmentId}`
+                : undefined
+        }
       />
-    </div>
-  ) : kind === "image" ? (
-    <PreviewImage
-      key={url}
-      src={url}
-      name={props.name}
-      mimeType={props.mimeType}
-      onError={() => setError(gt("Unable to load image."))}
-    />
-  ) : (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
-      <p className="text-sm font-medium">
-        <T>No preview for this file</T>
-      </p>
-      <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-        {props.name.split(".").at(-1) ? (
-          <T>
-            Save it to open in an app that supports <Var>{props.name.split(".").at(-1)}</Var> files.
-          </T>
-        ) : (
-          <T>Save it to open in an app that supports this format files.</T>
-        )}
-      </p>
-    </div>
-  );
+    ) : kind === "audio" ? (
+      <AudioPreview
+        src={url}
+        name={props.name}
+        onError={() => setError(gt("Unable to load audio."))}
+      />
+    ) : kind === "video" ? (
+      <div className="flex min-h-0 flex-1 items-center justify-center bg-black">
+        <video
+          controls
+          playsInline
+          src={url}
+          aria-label={props.name}
+          className="max-h-full max-w-full"
+          onError={() => setError(gt("Unable to load video."))}
+        />
+      </div>
+    ) : modelCopy ? (
+      <PreviewImage
+        key={url}
+        src={url}
+        name={props.name}
+        mimeType="image/png"
+        onLoad={() => setLoadedModelPreviewUrl(url)}
+        onError={() => setMissingModelPreviewUrl(url)}
+      />
+    ) : kind === "image" ? (
+      <PreviewImage
+        key={url}
+        src={url}
+        name={props.name}
+        mimeType={props.mimeType}
+        onError={() => setError(gt("Unable to load image."))}
+      />
+    ) : (
+      <NoFilePreview name={props.name} />
+    );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -424,6 +487,19 @@ export function AttachmentFilePreview(props: {
             </span>
           ) : null}
         </div>
+        {offersModelViewer && !modelViewerProblem ? (
+          <FileSurfaceAction
+            label={showsModelViewer ? gt("Show preview image") : gt("Show 3D view")}
+            pressed={showsModelViewer}
+            onPress={() => setModelImageChosen((value) => !value)}
+          >
+            {showsModelViewer ? (
+              <ImageIcon className="size-3.5" />
+            ) : (
+              <BoxIcon className="size-3.5" />
+            )}
+          </FileSurfaceAction>
+        ) : null}
         {renderedMode ? (
           <FileSurfaceAction
             label={renderedToggleLabel(renderedMode, rendered, messages)}
@@ -508,6 +584,13 @@ export function AttachmentFilePreview(props: {
           </FileSurfaceAction>
         ) : null}
       </div>
+      {modelCopy && !showsModelViewer && url !== null && loadedModelPreviewUrl === url ? (
+        <FileSurfaceNotice>
+          {modelViewerProblem
+            ? `${modelViewerProblem} ${gt("Showing the preview image instead.")}`
+            : modelCopy.notice}
+        </FileSurfaceNotice>
+      ) : null}
       {content?.truncated ? (
         <FileSurfaceNotice>
           {props.sizeBytes > 0
