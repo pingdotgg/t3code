@@ -80,6 +80,36 @@ describe("parseElicitationForm", () => {
       q1__other: "Only on Fridays",
     });
 
+    // Antigravity names the companion `q<n>_other`.
+    const antigravity = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          q1: {
+            type: "string",
+            title: "Which color do you prefer?",
+            oneOf: [
+              { const: "1", title: "Red" },
+              { const: "2", title: "Blue" },
+            ],
+          },
+          q1_other: {
+            type: "string",
+            title: "Other",
+            description: "Optional free-form answer to: Which color do you prefer?",
+          },
+        },
+      },
+      "The agent has a question.",
+    );
+    assert(antigravity !== undefined);
+    assert.deepStrictEqual(
+      antigravity.questions.map((question) => [question.id, question.allowCustomAnswer]),
+      [["q1", undefined]],
+    );
+    assert.deepStrictEqual(antigravity.content({ q1: "2" }), { q1: "2" });
+    assert.deepStrictEqual(antigravity.content({ q1: "Green" }), { q1_other: "Green" });
+
     // A multi-select answer can carry options and free text together, so both fields stay.
     const multi = parseElicitationForm(
       {
