@@ -516,11 +516,12 @@ function* rtf(source: string): Generator<string, void> {
           state.skip = true;
         if (control === "fonttbl") state.fontTable = true;
         else if (control === "deff") state.font = defaultFont = value;
-        else if (control === "f") state.font = value;
-        else if (control === "fcharset" && state.fontTable) {
+        else if (control === "f") {
+          state.font = value;
+          if (state.fontTable) fonts.delete(value);
+        } else if (control === "fcharset" && state.fontTable) {
           const codePage = FONT_CODE_PAGES.get(value);
           if (codePage) fonts.set(state.font, new TextDecoder(codePage));
-          else fonts.delete(state.font);
         }
         if (control === "deleted") state.deleted = value !== 0;
         else if (control === "plain") {
