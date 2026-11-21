@@ -105,6 +105,7 @@ function makeTestAdapter(input: {
   readonly failStartOnce?: Ref.Ref<boolean>;
   readonly refuseStarts?: Ref.Ref<number>;
   readonly refusalCause?: unknown;
+  readonly rejectAttachmentId?: string;
   readonly failInjectionOnce?: Ref.Ref<boolean>;
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
@@ -288,6 +289,20 @@ function makeTestAdapter(input: {
               if (
                 input.refuseStarts !== undefined &&
                 (yield* Ref.getAndUpdate(input.refuseStarts, (left) => Math.max(0, left - 1))) > 0
+              )
+                return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: input.driver,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  cause:
+                    input.refusalCause ?? new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+                });
+              if (
+                input.rejectAttachmentId !== undefined &&
+                turnInput.message.attachments.some(
+                  (attachment) => attachment.id === input.rejectAttachmentId,
+                )
               )
                 return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: input.driver,
@@ -2893,6 +2908,96 @@ describe("orchestration v2 provider switching", () => {
           ProviderReplayHarness.layerWithRegistry(
             {
               name: "refused-start-keeps-native",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: { type: "readOnly" },
+              },
+            },
+            registry,
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.live("a rejected attachment does not fail every later turn in the thread", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("rejected-attachment-later-turns");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const rejected: ChatAttachment = {
+        type: "file",
+        id: "gb18030-export",
+        name: "export.csv",
+        mimeType: "text/csv",
+        sizeBytes: 31,
+      };
+      const registry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          rejectAttachmentId: rejected.id,
+          refusalCause: new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: CLAUDE_DRIVER,
+            detail: "Failed to build ACP attachment prompt",
+          }),
+        }),
+      ]);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const run = Effect.fn("run")(function* (ordinal: number) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`rejected-attachment:${ordinal}`),
+            threadId,
+            messageId: MessageId.make(`rejected-attachment:${ordinal}`),
+            createdBy: "user",
+            creationSource: "web",
+            text: `Request ${ordinal}`,
+            attachments: ordinal === 2 ? [rejected] : [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.payload.ordinal === ordinal &&
+                (event.payload.status === "completed" || event.payload.status === "failed"),
+            ),
+            Stream.runHead,
+          );
+          yield* worker.drain();
+          return (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status;
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("rejected-attachment:create"),
+          threadId,
+          projectId,
+          createdBy: "user",
+          creationSource: "web",
+          title: "Rejected attachment",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        assert.equal(yield* run(1), "completed");
+        assert.equal(yield* run(2), "failed");
+        assert.equal(yield* run(3), "completed");
+        assert.deepEqual((yield* Ref.get(capturedTurns)).at(-1)?.attachments, []);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "rejected-attachment-later-turns",
               runtimePolicyOverride: {
                 cwd,
                 approvalPolicy: "never",
