@@ -16,6 +16,7 @@ import {
   collectExternalUsageLinks,
   collectLimitNotices,
   cursorUsageWindowDetails,
+  usageWindowLabel,
 } from "@t3tools/shared/usageLimitsCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { Fragment, type ReactNode, useId, useState } from "react";
@@ -208,7 +209,9 @@ function PoolWindowCard({
       <View className={wide ? "gap-1" : "flex-row items-start justify-between gap-3"}>
         <View className="gap-1">
           {label !== null ? (
-            <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
+            <Text className="text-sm font-t3-medium text-foreground">
+              {label ?? usageWindowLabel(pool.label, m)}
+            </Text>
           ) : null}
           <View className="flex-row items-baseline gap-1.5">
             <Text className="text-sm text-foreground-muted">
@@ -613,6 +616,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
   const gt = useGT();
+  const m = useMessages();
   return (
     <SettingsScreen title={gt("Account", { $context: "screen title" })}>
       <ScrollView
@@ -656,7 +660,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               ) : null}
             </View>
             <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
-              <Text className="text-sm font-t3-medium text-foreground">{window.label}</Text>
+              <Text className="text-sm font-t3-medium text-foreground">
+                {usageWindowLabel(window.label, m)}
+              </Text>
               <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
                 <T>
                   <Var>{remainingPercent(window)}</Var>% left

@@ -22,6 +22,24 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+/** Translate built-in allowance labels when displaying usage reported by the server. @public */
+export function usageWindowLabel(label: string, resolve: MFunctionType = mFallback): string {
+  switch (label) {
+    case "Session":
+      return resolve(msg("Session", { $context: "short-term provider usage limit" }));
+    case "Weekly":
+      return resolve(msg("Weekly", { $context: "provider usage limit" }));
+    case "Monthly":
+      return resolve(msg("Monthly", { $context: "provider usage limit" }));
+    case "Monthly credit limit":
+      return resolve(msg("Monthly credit limit"));
+    default: {
+      const model = label.startsWith("Weekly · ") ? label.slice("Weekly · ".length) : "";
+      return model ? resolve(msg("Weekly · {model}", { model })) : label;
+    }
+  }
+}
+
 const CURSOR_USAGE_WINDOW_COPY: Readonly<
   Record<string, { readonly label: string; readonly description: string }>
 > = {

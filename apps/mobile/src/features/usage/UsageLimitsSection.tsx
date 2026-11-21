@@ -18,7 +18,12 @@ import {
   remainingPercent,
   resetCountdown,
 } from "@t3tools/shared/usageLimits";
-import { formatDuration, limitsNotice, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
+import {
+  formatDuration,
+  limitsNotice,
+  resetCreditChoices,
+  usageWindowLabel,
+} from "@t3tools/shared/usageLimitsCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
@@ -95,7 +100,7 @@ function WindowRow(props: {
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
-        <Text className="text-sm text-foreground">{window.label}</Text>
+        <Text className="text-sm text-foreground">{usageWindowLabel(window.label, m)}</Text>
         <Text className="text-sm font-t3-medium tabular-nums text-foreground">
           <T>
             <Var>{remaining}</Var>% left

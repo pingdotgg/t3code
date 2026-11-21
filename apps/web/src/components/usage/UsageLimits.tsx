@@ -40,7 +40,11 @@ import {
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
-import { formatResetsIn, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
+import {
+  formatResetsIn,
+  resetCreditChoices,
+  usageWindowLabel,
+} from "@t3tools/shared/usageLimitsCopy";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
@@ -123,10 +127,12 @@ export function usePaceMark(timeLeft: number | null) {
 
 function WindowBar({
   color,
+  label,
   window,
   now,
 }: {
   readonly color: string;
+  readonly label: string;
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
 }) {
@@ -140,7 +146,6 @@ function WindowBar({
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)
     : null;
-  const label = window.label;
   const summary =
     timeLeft === null
       ? resetsIn
@@ -242,15 +247,16 @@ export function LimitWindows({
       {windows.map((window) => {
         const pace = paceOf(window, now);
         const resetsIn = formatResetsIn(window, now, m);
+        const label = usageWindowLabel(window.label, m);
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
-              <span className="truncate text-muted-foreground">{window.label}</span>
+              <span className="truncate text-muted-foreground">{label}</span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
                 {gt("{remaining}% left", { remaining: remainingPercent(window) })}
               </span>
             </span>
-            <WindowBar color={color} window={window} now={now} />
+            <WindowBar color={color} label={label} window={window} now={now} />
             <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
               {pace ? <PaceIcon pace={pace} /> : null}
               <span className="ms-auto shrink-0">{resetsIn ?? ""}</span>

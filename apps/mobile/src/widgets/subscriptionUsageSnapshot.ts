@@ -7,6 +7,7 @@ import {
   type LimitPoolWindow,
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
+import { usageWindowLabel } from "@t3tools/shared/usageLimitsCopy";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../i18n/messages";
@@ -274,7 +275,7 @@ function subscriptionUsageProps(
           windows: fresh
             ? selectedWindows.map((window) => ({
                 kind: window.kind,
-                label: window.label,
+                label: usageWindowLabel(window.label, resolve),
                 remaining: Math.round(window.remainingPercent),
                 reset: window.resets[0]
                   ? isUpcoming(window.resets[0])
