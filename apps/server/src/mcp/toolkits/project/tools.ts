@@ -15,7 +15,9 @@ import {
   ProjectCreatePayload,
   ProjectUpdatePayload,
   ProjectId,
+  OrchestratorMcpAllowLiteralTemplates,
   OrchestratorMcpClientRequestId,
+  OrchestratorMcpLaunchModelSelection,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   SourceControlCloneRepositoryInput,
@@ -141,7 +143,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
       }),
     ),
     title: TrimmedNonEmptyString,
-    modelSelection: Schema.optional(ModelSelection),
+    modelSelection: Schema.optional(OrchestratorMcpLaunchModelSelection),
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),
     workspaceStrategy: Schema.optional(
@@ -155,6 +157,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
         description: "First prompt. Omit it and `attachments` for idle.",
       }),
     ),
+    allowLiteralTemplates: Schema.optional(OrchestratorMcpAllowLiteralTemplates),
     attachments: Schema.optional(Schema.Array(McpAttachmentInput).check(Schema.isMaxLength(8))),
     outputSchema: Schema.optional(
       Schema.Record(Schema.String, Schema.Json).annotate({

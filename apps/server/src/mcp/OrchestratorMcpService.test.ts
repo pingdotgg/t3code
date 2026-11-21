@@ -4776,7 +4776,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
   it.effect("accepts the inherited options it reports back as a delegate target", () =>
     Effect.gen(function* () {
-      // t3_thread_launch keeps a model selection as given, so a thread can hold an option its model lacks.
+      // A thread's selection can hold an option its model lacks, as from an older launch.
       const inherited = {
         instanceId: codexInstanceId,
         model: "gpt-5.4",
@@ -4861,6 +4861,89 @@ describe("OrchestratorMcpService provider resolution", () => {
           ...inherited,
           options: [inherited.options[0]],
         });
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
+  it.effect("refuses an unfilled brief before anything starts, unless sent on purpose", () =>
+    Effect.gen(function* () {
+      const commands: Array<unknown> = [];
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        origin: "app_owned",
+        childThreadId,
+        providerInstanceId: codexInstanceId,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+      };
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(commands.length > 0 ? [task] : [])
+                : childProjection,
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              commands.push(command);
+              return {
+                sequence: 1,
+                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+              } as never;
+            }),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        for (const [brief, match] of [
+          ["Review this.\n\n<<BRIEF>>", "<<BRIEF>>"],
+          ["$(cat brief.md)", "$(cat brief.md)"],
+          ["Do {{ task_name }} now.", "{{ task_name }}"],
+          ["$(< brief.md)", "$(< brief.md)"],
+          ["`cat brief.md`", "`cat brief.md`"],
+        ] as const) {
+          const error = yield* service
+            .delegateTask(scope, { task: brief, mode: "async" })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "invalid_request");
+          assert.include(error.message, JSON.stringify(match));
+          assert.include(error.message, "allowLiteralTemplates: true");
+        }
+        assert.lengthOf(commands, 0);
+
+        // Commands a worker is asked to run are not file substitutions.
+        yield* service.delegateTask(scope, {
+          task: 'Run `git worktree add "$(mktemp -d)/wt"`, then fill {{ secrets["KEY"].value }}.',
+          mode: "async",
+          clientRequestId: "delegate-commands",
+        });
+        yield* service.delegateTask(scope, {
+          task: "Explain the `<<BRIEF>>` placeholder in `$(cat brief.md)`.",
+          allowLiteralTemplates: true,
+          mode: "async",
+          clientRequestId: "delegate-literal",
+        });
+        assert.lengthOf(commands, 2);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),
   );

@@ -4,7 +4,9 @@ import * as Schema from "effect/Schema";
 import {
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpLaunchModelSelection,
   OrchestratorMcpThreadWaitResult,
+  literalTemplateRefusal,
 } from "./orchestratorMcp.ts";
 
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
@@ -80,5 +82,47 @@ describe("orchestrator MCP contracts", () => {
         next,
       }).next,
     ).toBe(next);
+  });
+
+  it("refuses a key a delegate target or launch model selection does not have", () => {
+    for (const target of [
+      { modelSelection: { model: "gpt-5.4" } },
+      JSON.stringify({ model: "gpt-5.4", effort: "max" }),
+    ]) {
+      expect(() => decodeDelegateTaskInput({ task: "Review.", target })).toThrow(
+        /Unknown key "(modelSelection|effort)" in target\. Accepted keys: providerInstanceId, driverKind, model, options, environmentId, projectId\./,
+      );
+    }
+    expect(
+      decodeDelegateTaskInput({
+        task: "Review.",
+        target: { model: "gpt-5.4", options: { effort: "max" } },
+      }).target,
+    ).toEqual({ model: "gpt-5.4", options: [{ id: "effort", value: "max" }] });
+
+    const decodeSelection = Schema.decodeUnknownSync(OrchestratorMcpLaunchModelSelection);
+    expect(() => decodeSelection({ instanceId: "codex", model: "gpt-5.4", effort: "max" })).toThrow(
+      'Unknown key "effort" in modelSelection. Accepted keys: provider, instanceId, model, options.',
+    );
+    expect(decodeSelection({ provider: "codex", model: "gpt-5.4" })).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.4",
+    });
+  });
+
+  it("names the placeholder or file substitution a prompt still holds", () => {
+    expect(literalTemplateRefusal("task", "Review.\n\n<<BRIEF>>")).toContain('"<<BRIEF>>"');
+    expect(literalTemplateRefusal("task", "Do {{ task_name }}.")).toContain('"{{ task_name }}"');
+    for (const text of ["$(cat brief.md)", "x $(<brief.md) y", " `cat brief.md`\n"]) {
+      expect(literalTemplateRefusal("task", text)).toContain("allowLiteralTemplates: true");
+    }
+    for (const text of [
+      'git worktree add "$(mktemp -d)/wt"',
+      '{{ secrets["NAME"].KEY }}',
+      "a << b >> c",
+      "Read it with `cat brief.md`.",
+    ]) {
+      expect(literalTemplateRefusal("task", text)).toBeUndefined();
+    }
   });
 });

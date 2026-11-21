@@ -64,6 +64,8 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  /** The caller is a linked environment. */
+  readonly linked?: true;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -113,6 +115,7 @@ const clientLaunchHarness = (input: {
         label: "Claude Code",
         access: input.runtimeModeCeiling,
         hostedAppUrl: input.hostedAppUrl,
+        ...(input.linked === undefined ? {} : { linked: true }),
       },
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
@@ -378,7 +381,9 @@ it.effect("a launch with a model its provider does not advertise creates no thre
               name: "Opus",
               aliases: ["opus"],
               isCustom: false,
-              capabilities: null,
+              capabilities: {
+                optionDescriptors: [{ id: "fastMode", label: "Fast", type: "boolean" }],
+              },
             }
           : { slug: "gpt-5.4", name: "GPT", isCustom: false, capabilities: null },
       ],
@@ -411,12 +416,12 @@ it.effect("a launch with a model its provider does not advertise creates no thre
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
       ),
     );
-    const launchWith = (instanceId: string, model: string) =>
+    const launchWith = (instanceId: string, model: string, extra: object = {}) =>
       toolkit
         .handle("t3_thread_launch", {
           title: "Fix",
           projectId,
-          modelSelection: { instanceId: ProviderInstanceId.make(instanceId), model },
+          modelSelection: { instanceId: ProviderInstanceId.make(instanceId), model, ...extra },
         })
         .pipe(
           Stream.unwrap,
@@ -436,6 +441,17 @@ it.effect("a launch with a model its provider does not advertise creates no thre
         ),
       });
     }
+    expect(
+      yield* launchWith("claudeAgent", "claude-opus", {
+        options: [{ id: "effort", value: "max" }],
+      }),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("Unknown option effort; supported options: fastMode."),
+    });
+    expect(String(yield* launchWith("claudeAgent", "claude-opus", { effort: "max" }))).toContain(
+      'Unknown key "effort" in modelSelection.',
+    );
     expect(launched).toHaveLength(0);
 
     expect(yield* launchWith("claudeAgent", "Opus")).toMatchObject({
@@ -445,6 +461,60 @@ it.effect("a launch with a model its provider does not advertise creates no thre
       modelSelection: { instanceId: "codex", model: "folder-local" },
     });
     expect(launched).toHaveLength(2);
+  }),
+);
+
+it.effect("a launch whose message still holds a placeholder creates no thread", () =>
+  Effect.gen(function* () {
+    const launchWith = Effect.fn("test.launchWith")(function* (
+      params: { readonly message: string; readonly allowLiteralTemplates?: true },
+      linked?: true,
+    ) {
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "full-access",
+        launched,
+        ...(linked === undefined ? {} : { linked }),
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const result = yield* toolkit
+        .handle("t3_thread_launch", {
+          title: "Review",
+          projectId,
+          ...params,
+          ...(linked === undefined
+            ? {}
+            : {
+                delegatedFrom: {
+                  environmentId: EnvironmentId.make("environment-origin"),
+                  threadId: ThreadId.make("thread-origin"),
+                  title: "Origin",
+                },
+              }),
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      return { result: result.at(-1)?.result, launched };
+    });
+
+    for (const message of ["Review.\n\n<<BRIEF>>", "$(cat x)"]) {
+      const refused = yield* launchWith({ message });
+      expect(refused.result).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("pass allowLiteralTemplates: true"),
+      });
+      expect(refused.launched).toHaveLength(0);
+    }
+    const literal = yield* launchWith({ message: "$(cat x)", allowLiteralTemplates: true });
+    expect(literal.launched[0]?.initialMessage?.text).toBe("$(cat x)");
+    // The origin's delegate_task already checked a linked environment's delegated brief.
+    const delegated = yield* launchWith({ message: "<<BRIEF>>" }, true);
+    expect(delegated.launched).toHaveLength(1);
   }),
 );
 

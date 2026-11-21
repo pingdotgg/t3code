@@ -17,7 +17,10 @@ describe("buildRuntimeInstructions", () => {
   it("links PRs the agent creates, takes over, or pushes to, and no others", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
 
-    assert.include(instructions, "Link each PR you create, take over, or push to");
+    assert.include(instructions, "Link each other PR you create, take over, or push to");
+    // The server links PRs a shell's create command opened.
+    assert.include(instructions, "such as gh pr create, links itself.");
+    assert.notInclude(instructions, "Host tools don't link for you.");
     assert.include(instructions, "every stack layer");
     assert.include(instructions, "link_issue");
     assert.include(instructions, "Skip PRs you only read or review");

@@ -1,5 +1,6 @@
 import {
   CommandId,
+  literalTemplateRefusal,
   MessageId,
   ThreadId,
   OrchestratorMcpFailure,
@@ -215,6 +216,18 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const context = yield* readCaller();
         const { caller } = context;
+        // A linked environment's delegated task was checked by its delegate_task there.
+        const templateRefusal =
+          input.allowLiteralTemplates === true ||
+          input.message === undefined ||
+          (linkOrigin !== undefined && input.delegatedFrom !== undefined)
+            ? undefined
+            : literalTemplateRefusal("message", input.message);
+        if (templateRefusal !== undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: templateRefusal,
+          });
         // A retry with the same key replays the first launch: the ids derive
         // from the caller and the key, and the launch service replays a
         // command it already accepted.
@@ -316,7 +329,15 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             );
             return provider === undefined
               ? Effect.void
-              : OrchestrationMcp.requireAdvertisedModel(provider, model);
+              : OrchestrationMcp.requireAdvertisedModel(provider, model).pipe(
+                  Effect.andThen(
+                    OrchestrationMcp.requireAdvertisedOptions(
+                      provider,
+                      model,
+                      input.modelSelection?.options,
+                    ),
+                  ),
+                );
           };
           const checked = requireModel(yield* registry.getProviders);
           yield* cwd === undefined

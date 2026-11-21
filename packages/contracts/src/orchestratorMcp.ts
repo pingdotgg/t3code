@@ -43,6 +43,7 @@ import {
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
@@ -56,6 +57,50 @@ export const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(Schema
     ),
   )
   .annotate({ description: "Reuse it to retry the same call. A new call gets a new key." });
+
+// No spaces inside `<<NAME>>`, so shift operators such as `a << b >> c` pass.
+const TEMPLATE_MARKER = /<<[A-Za-z_][\w.-]*>>|\{\{\s*[A-Za-z_][\w.-]*\s*\}\}/;
+// Only substitutions that read a file: briefs legitimately carry commands such as `$(mktemp -d)`.
+// Backticks count only as the whole text, since Markdown inline code reads the same.
+const FILE_SUBSTITUTION = /\$\(\s*(?:<|cat\s)[^)]*\)|^\s*`\s*cat\s[^`]*`\s*$/;
+
+/** Refusal for a prompt that still holds a placeholder or a file substitution its sender meant to expand. */
+export function literalTemplateRefusal(field: string, text: string): string | undefined {
+  const match = (TEMPLATE_MARKER.exec(text) ?? FILE_SUBSTITUTION.exec(text))?.[0]?.trim();
+  if (match === undefined) return undefined;
+  const shown = match.length > 80 ? `${match.slice(0, 80)}…` : match;
+  return `${field} contains ${JSON.stringify(shown)}, an unfilled template marker or unexpanded shell substitution. No thread was created. Send the text itself, or pass allowLiteralTemplates: true if it is meant literally.`;
+}
+
+export const OrchestratorMcpAllowLiteralTemplates = Schema.Boolean.annotate({
+  description: "Allow `<<NAME>>`, `{{NAME}}` or `$(cat …)` text on purpose.",
+});
+
+/** A nested Struct drops unknown keys silently; this keeps them so a misplaced setting is refused. */
+const rejectingUnknownKeys = <Fields extends Schema.Struct.Fields>(
+  name: string,
+  struct: Schema.Struct<Fields>,
+) => {
+  const accepted = Object.keys(struct.fields);
+  return Schema.StructWithRest(struct, [Schema.Record(Schema.String, Schema.Unknown)]).check(
+    Schema.makeFilter((value) => {
+      const unknown = Object.keys(value).filter((key) => !accepted.includes(key));
+      if (unknown.length === 0) return undefined;
+      const named = unknown.map((key) => JSON.stringify(key.slice(0, 64))).join(", ");
+      return `Unknown key${unknown.length === 1 ? "" : "s"} ${named} in ${name}. Accepted keys: ${accepted.join(", ")}.`;
+    }),
+  );
+};
+
+export const OrchestratorMcpLaunchModelSelection = rejectingUnknownKeys(
+  "modelSelection",
+  Schema.Struct({
+    provider: Schema.optional(Schema.Unknown),
+    instanceId: Schema.optional(Schema.Unknown),
+    model: Schema.Unknown,
+    options: Schema.optional(Schema.Unknown),
+  }),
+).pipe(Schema.decodeTo(ModelSelection));
 
 // OpenCode 1.15 serializes nested MCP union objects as JSON strings; decode that form at the boundary.
 const OrchestratorMcpScheduleFromJsonString = Schema.fromJsonString(
@@ -168,11 +213,17 @@ export const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
 export type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
 
+const OrchestratorMcpDelegateTarget = rejectingUnknownKeys("target", OrchestratorMcpTarget);
+
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt,
+  allowLiteralTemplates: Schema.optional(OrchestratorMcpAllowLiteralTemplates),
   // Some providers send the whole target object as JSON text.
   target: Schema.optional(
-    Schema.Union([OrchestratorMcpTarget, Schema.fromJsonString(OrchestratorMcpTarget)]),
+    Schema.Union([
+      OrchestratorMcpDelegateTarget,
+      Schema.fromJsonString(OrchestratorMcpDelegateTarget),
+    ]),
   ),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),

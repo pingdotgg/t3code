@@ -63,6 +63,7 @@ import {
   ThreadId,
   isOrchestrationV2WorkActive,
   latestProviderTurnForAttempt,
+  literalTemplateRefusal,
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
@@ -478,7 +479,7 @@ function providerConstraints(
   return constraints;
 }
 
-/** t3_thread_launch keeps a selection as given, so it can hold options its model does not have. */
+/** A thread's selection can hold options its model lacks, as from t3_thread_configure or an older launch. */
 function knownOptions(
   options: ReadonlyArray<ProviderOptionSelection> | undefined,
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
@@ -521,6 +522,25 @@ function invalidOptionSelections(
   }
   return problems;
 }
+
+/** delegate_task and t3_thread_launch accept the same option selections for a model. */
+export const requireAdvertisedOptions = (
+  provider: ServerProvider,
+  model: string,
+  options: ReadonlyArray<ProviderOptionSelection> | undefined,
+) => {
+  const descriptors = advertisedModel(provider, model)?.capabilities?.optionDescriptors;
+  const requested = withLegacyUltracodeEffort(descriptors, options);
+  const invalid = requested === undefined ? [] : invalidOptionSelections(requested, descriptors);
+  return invalid.length === 0
+    ? Effect.void
+    : Effect.fail(
+        failure(
+          "invalid_request",
+          `Model ${model} on provider ${provider.instanceId} rejected options: ${invalid.join(" ")}`,
+        ),
+      );
+};
 
 function taskStatusForRun(
   run: Pick<OrchestrationV2Run, "status" | "restartCancelledBackgroundWork"> | undefined,
@@ -1748,15 +1768,7 @@ const make = Effect.gen(function* () {
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
     const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
-    if (requestedOptions !== undefined) {
-      const invalid = invalidOptionSelections(requestedOptions, descriptors);
-      if (invalid.length > 0) {
-        return yield* failure(
-          "invalid_request",
-          `Model ${model} on provider ${instanceId} rejected options: ${invalid.join(" ")}`,
-        );
-      }
-    }
+    yield* requireAdvertisedOptions(provider, model, input.target?.options);
 
     const inheritsOptions =
       instanceId === inheritedSelection.instanceId &&
@@ -2810,6 +2822,11 @@ const make = Effect.gen(function* () {
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
+      const templateRefusal =
+        input.allowLiteralTemplates === true
+          ? undefined
+          : literalTemplateRefusal("task", input.task);
+      if (templateRefusal !== undefined) return yield* failure("invalid_request", templateRefusal);
       const environmentId =
         input.target === undefined
           ? undefined
