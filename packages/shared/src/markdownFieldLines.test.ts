@@ -19,3 +19,13 @@ it("hard-breaks only paragraphs made entirely of label/value lines", () => {
     text.replace("Name: Acme Ltd\n**Bank:**", "Name: Acme Ltd  \n**Bank:**"),
   );
 });
+
+it("leaves existing hard breaks and newlines inside inline code as written", () => {
+  for (const text of [
+    "Name: Acme\\\nBank: Example",
+    "Name: Acme  \nBank: Example",
+    "Name: `one\nBank: two`",
+  ]) {
+    expect(hardBreakAssistantFieldLines(text)).toBe(text);
+  }
+});

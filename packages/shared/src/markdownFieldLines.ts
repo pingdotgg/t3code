@@ -1,4 +1,4 @@
-import type { RootContent } from "mdast";
+import type { Nodes, RootContent } from "mdast";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
@@ -34,15 +34,31 @@ export function hardBreakAssistantFieldLines(markdown: string): string {
   ) {
     return markdown;
   }
+  const softBreaks: number[] = [];
+  for (const node of parser.parse(markdown).children) {
+    if (isAssistantFieldParagraph(node, markdown)) collectSoftBreaks(node, markdown, softBreaks);
+  }
   let result = "";
   let offset = 0;
-  for (const node of parser.parse(markdown).children) {
-    if (!isAssistantFieldParagraph(node, markdown)) continue;
-    const start = node.position!.start.offset!;
-    const end = node.position!.end.offset!;
-    result +=
-      markdown.slice(offset, start) + markdown.slice(start, end).replace(/(\r\n?|\n)/g, "  $1");
-    offset = end;
+  for (const position of softBreaks) {
+    result += `${markdown.slice(offset, position)}  `;
+    offset = position;
   }
   return result + markdown.slice(offset);
+}
+
+// Soft breaks are the newlines inside text nodes; inline code and `break` nodes keep their source.
+function collectSoftBreaks(node: Nodes, source: string, into: number[]): void {
+  if (node.type === "text") {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined) return;
+    for (const match of source.slice(start, end).matchAll(/\r\n?|\n/g)) {
+      into.push(start + match.index);
+    }
+    return;
+  }
+  if ("children" in node) {
+    for (const child of node.children) collectSoftBreaks(child, source, into);
+  }
 }
