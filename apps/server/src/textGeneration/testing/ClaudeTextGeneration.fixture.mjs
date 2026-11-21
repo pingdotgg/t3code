@@ -69,6 +69,9 @@ if (stdinMustContain && !stdinContent.includes(stdinMustContain)) {
 }
 
 if (process.env.T3_FAKE_CLAUDE_REJECTS_IMAGES === "1" && stdinContent.includes('"type":"image"')) {
+  if (process.env.T3_FAKE_CLAUDE_IMAGE_ATTEMPT_LOG) {
+    NodeFS.appendFileSync(process.env.T3_FAKE_CLAUDE_IMAGE_ATTEMPT_LOG, "image\n");
+  }
   process.stdout.write(
     JSON.stringify({
       type: "result",
