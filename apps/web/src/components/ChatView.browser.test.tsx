@@ -16,6 +16,7 @@ import {
   compileResolvedKeybindingsConfig,
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
+import * as DateTime from "effect/DateTime";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { expect, it, vi } from "vite-plus/test";
@@ -27,12 +28,12 @@ import { AppRoot } from "~/AppRoot";
 import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
-import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { __setClientSettingsForTests, persistClientSettingsPatch } from "~/hooks/useSettings";
 import stylesheet from "~/index.css?inline";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadDetails } from "~/state/threads";
@@ -44,6 +45,7 @@ import {
   assistantItem,
   dispatchedCommands,
   emitThreadEvent,
+  emitVcsStatus,
   hasPendingAssetUrl,
   installFakeEnvironment,
   rejectPendingCommand,
@@ -934,5 +936,134 @@ it("/side sends the draft's attachments and context, and keeps them when it does
       "next draft",
       "/side what is this?",
     ]),
+  );
+});
+
+it("separates local work and opens the current PR only when committed comparison is enabled", async () => {
+  const thread = threadWithHistory("committed-changes", 1);
+  const ref = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  using _environment = installFakeEnvironment([thread], {
+    reviewPreview: (input) => ({
+      cwd: "/project",
+      generatedAt: DateTime.makeUnsafe("2026-11-06T00:00:00Z"),
+      sources: [
+        {
+          id: "branch-range",
+          kind: "branch-range",
+          ...(input.branchMode ? { branchMode: input.branchMode } : {}),
+          title: "Changes",
+          baseRef: "origin/main",
+          headRef: "abcdef1234567890",
+          diff: "",
+          diffHash: input.branchMode ?? "working-tree",
+          truncated: false,
+          files:
+            input.branchMode === "committed"
+              ? []
+              : [{ path: "local.ts", previousPath: null, additions: 100, deletions: 2 }],
+        },
+      ],
+    }),
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await page.viewport(1600, 1000);
+  useRightPanelStore.getState().setThreadPanelOpen(ref, "inline", true);
+  useDiffPanelStore.getState().selectBranchBaseRef(ref, "old-base");
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  const container = document.createElement("div");
+  container.style.cssText = "height: 1000px; width: 1600px;";
+  await using _app = await render(<AppRoot router={router} />, {
+    container,
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+  await act(() =>
+    emitVcsStatus({
+      _tag: "snapshot",
+      local: {
+        isRepo: true,
+        hasPrimaryRemote: true,
+        isDefaultRef: true,
+        refName: "main",
+        hasWorkingTreeChanges: true,
+        workingTree: {
+          files: [{ path: "local.ts", insertions: 100, deletions: 2 }],
+          insertions: 100,
+          deletions: 2,
+        },
+        branchChanges: { baseRef: "origin/main", insertions: 100, deletions: 2 },
+      },
+      remote: null,
+    }),
+  );
+  const changes = page.getByRole("button", { name: /^Changes.*origin\/main/ });
+  await expect.element(changes).toBeVisible();
+  expect(changes.element().textContent).toContain("+100");
+  await expect.element(page.getByRole("button", { name: /^Uncommitted/ })).not.toBeInTheDocument();
+  await userEvent.click(changes);
+  await vi.waitFor(() =>
+    expect(selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, ref)).toEqual({
+      kind: "branch",
+      baseRef: "old-base",
+    }),
+  );
+  await act(() => persistClientSettingsPatch({ changesComparison: "committed" }, async () => {}));
+  await vi.waitFor(() => expect(changes.element().textContent).toContain("+0"));
+  expect(changes.element().textContent).not.toContain("+100");
+  await userEvent.click(page.getByRole("button", { name: /^Uncommitted/ }));
+  await vi.waitFor(() =>
+    expect(selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, ref)).toEqual({
+      kind: "unstaged",
+    }),
+  );
+  await userEvent.click(changes);
+  await vi.waitFor(() =>
+    expect(selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, ref)).toEqual({
+      kind: "branch",
+      baseRef: "old-base",
+    }),
+  );
+  await act(() =>
+    emitVcsStatus({
+      _tag: "remoteUpdated",
+      remote: {
+        hasUpstream: true,
+        aheadCount: 0,
+        behindCount: 0,
+        pr: {
+          number: 42,
+          title: "Current PR",
+          url: "https://github.com/example/repo/pull/42",
+          baseRef: "release",
+          headRef: "main",
+          localRefName: "main",
+          state: "open",
+        },
+      },
+    }),
+  );
+  await expect.element(page.getByRole("button", { name: /^Changes.*#42/ })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: /^Changes.*#42/ }));
+  await vi.waitFor(() =>
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref),
+    ).toMatchObject({ kind: "pull-request", number: 42, detailTab: "code" }),
+  );
+  await act(() => persistClientSettingsPatch({ changesComparison: "all" }, async () => {}));
+  await expect.element(changes).toBeVisible();
+  await vi.waitFor(() => expect(changes.element().textContent).toContain("+100"));
+  await expect.element(page.getByRole("button", { name: /^Uncommitted/ })).not.toBeInTheDocument();
+  await userEvent.click(changes);
+  await vi.waitFor(() =>
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref),
+    ).toMatchObject({ kind: "diff" }),
   );
 });

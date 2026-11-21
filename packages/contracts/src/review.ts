@@ -3,9 +3,14 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { GitCommandError } from "./git.ts";
 import { VcsError } from "./vcs.ts";
 
+export const ReviewBranchDiffMode = Schema.Literals(["committed"]);
+export type ReviewBranchDiffMode = typeof ReviewBranchDiffMode.Type;
+
 export const ReviewDiffPreviewInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   baseRef: Schema.optional(TrimmedNonEmptyString),
+  headRef: Schema.optionalKey(TrimmedNonEmptyString),
+  branchMode: Schema.optionalKey(ReviewBranchDiffMode),
   commitSha: Schema.optional(TrimmedNonEmptyString),
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
   sourceKind: Schema.optionalKey(Schema.Literals(["working-tree", "branch-range"])),
@@ -68,6 +73,7 @@ export type ReviewDiffFileStat = typeof ReviewDiffFileStat.Type;
 export const ReviewDiffPreviewSource = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: ReviewDiffPreviewSourceKind,
+  branchMode: Schema.optionalKey(ReviewBranchDiffMode),
   title: TrimmedNonEmptyString,
   commitSubject: Schema.optionalKey(TrimmedNonEmptyString),
   baseRef: Schema.NullOr(TrimmedNonEmptyString),
@@ -83,6 +89,7 @@ export type ReviewDiffPreviewSource = typeof ReviewDiffPreviewSource.Type;
 export const ReviewDiffFileContentsInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   sourceKind: ReviewDiffPreviewSourceKind,
+  branchMode: Schema.optionalKey(ReviewBranchDiffMode),
   changeType: ReviewDiffChangeType,
   baseRef: Schema.NullOr(TrimmedNonEmptyString),
   headRef: Schema.NullOr(TrimmedNonEmptyString),

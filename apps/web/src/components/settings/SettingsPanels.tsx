@@ -17,6 +17,7 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import {
+  ChangesComparison,
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -154,6 +155,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": msg("12-hour"),
   "24-hour": msg("24-hour"),
 };
+
+const CHANGES_COMPARISON_LABELS: Record<ChangesComparison, string> = {
+  all: msg("All changes, including local work"),
+  committed: msg("Current PR or committed branch"),
+};
+const isChangesComparison = Schema.is(ChangesComparison);
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: msg("Stacked", { $context: "diff layout" }),
@@ -563,6 +570,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
       ? [gt("Diff whitespace changes")]
       : []),
+    ...(settings.changesComparison !== DEFAULT_UNIFIED_SETTINGS.changesComparison
+      ? [gt("Changes comparison")]
+      : []),
     ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? [gt("Diff layout")] : []),
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
       ? [gt("Open pull requests and changes panels proactively")]
@@ -707,6 +717,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      changesComparison: DEFAULT_UNIFIED_SETTINGS.changesComparison,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
@@ -1691,6 +1702,49 @@ export function DiffsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="diffs" title={gt("Diffs")}>
+        <SettingsRow
+          {...setting("changes-comparison")}
+          description={gt(
+            "Choose what Changes compares. With Current PR or committed branch, local work appears under Uncommitted.",
+          )}
+          resetAction={
+            settings.changesComparison !== DEFAULT_UNIFIED_SETTINGS.changesComparison ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset changes comparison to default")}
+                onClick={() =>
+                  updateSettings({ changesComparison: DEFAULT_UNIFIED_SETTINGS.changesComparison })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.changesComparison}
+              onValueChange={(value) => {
+                if (isChangesComparison(value)) {
+                  updateSettings({ changesComparison: value });
+                }
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-64"
+                aria-label={gt("Changes comparison")}
+              >
+                <SelectValue>
+                  {messages(CHANGES_COMPARISON_LABELS[settings.changesComparison])}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                {Object.entries(CHANGES_COMPARISON_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {messages(label)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
         <SettingsRow
           {...setting("diff-layout")}
           description={gt(

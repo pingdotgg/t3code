@@ -133,17 +133,15 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     });
   };
   const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
-  const addDiffSurface = () => {
+  const openChangesFromThreadPanel = (scope: "branch" | "unstaged") => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
-    useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
+    useDiffPanelStore.getState().selectGitScope(activeThreadRef, scope);
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   };
-  const addDiffSurfaceStable = useStableCallback(addDiffSurface);
-  const openChangesFromThreadPanel = () => {
-    addDiffSurface();
-  };
   const openChangesFromThreadPanelStable = useStableCallback(openChangesFromThreadPanel);
+  const addDiffSurface = () => openChangesFromThreadPanel("branch");
+  const addDiffSurfaceStable = useStableCallback(addDiffSurface);
   const addFilesSurface = () => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");

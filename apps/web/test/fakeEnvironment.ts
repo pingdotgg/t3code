@@ -23,6 +23,8 @@ import {
   WsRpcGroup,
   type VcsStatusStreamEvent,
   type ModelSelection,
+  type ReviewDiffPreviewInput,
+  type ReviewDiffPreviewResult,
   type OrchestrationProjectShell,
   type OrchestrationV2Command,
   type OrchestrationV2ProjectedTurnItem,
@@ -430,7 +432,8 @@ let pendingDispatches: Array<{
 }> = [];
 let pendingAssetUrls: Array<Deferred.Deferred<AssetCreateUrlResult>> = [];
 let sequence = 1;
-let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
+let reviewPreview: ((input: ReviewDiffPreviewInput) => ReviewDiffPreviewResult) | null = null;
+const vcsStatusSubscribers = new Set<Queue.Queue<VcsStatusStreamEvent>>();
 
 const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>) => () => void) =>
   Stream.unwrap(
@@ -446,6 +449,8 @@ const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>
   );
 
 const handlers: Record<string, (input: never) => unknown> = {
+  [WS_METHODS.reviewGetDiffPreview]: (input: ReviewDiffPreviewInput) =>
+    reviewPreview ? Effect.succeed(reviewPreview(input)) : Effect.never,
   // Recorded, and accepted only when the scenario asks, since a pending command holds every
   // later command on its thread. Accepted commands' events never arrive.
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -540,10 +545,8 @@ const handlers: Record<string, (input: never) => unknown> = {
   },
   [WS_METHODS.subscribeVcsStatus]: () =>
     subscribe<VcsStatusStreamEvent>([], (queue) => {
-      vcsStatusSubscriber = queue;
-      return () => {
-        if (vcsStatusSubscriber === queue) vcsStatusSubscriber = null;
-      };
+      vcsStatusSubscribers.add(queue);
+      return () => vcsStatusSubscribers.delete(queue);
     }),
   [WS_METHODS.subscribeServerConfig]: () =>
     subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig() }]),
@@ -607,6 +610,7 @@ export function installFakeEnvironment(
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
+    readonly reviewPreview?: (input: ReviewDiffPreviewInput) => ReviewDiffPreviewResult;
   },
 ): Disposable {
   threads = fixtures;
@@ -628,6 +632,7 @@ export function installFakeEnvironment(
     })),
   ];
   holdCommand = options?.holdCommand ?? (() => false);
+  reviewPreview = options?.reviewPreview ?? null;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -656,6 +661,7 @@ export function installFakeEnvironment(
       holdCommand = () => false;
       pendingDispatches = [];
       pendingAssetUrls = [];
+      reviewPreview = null;
     },
   };
 }
@@ -748,6 +754,9 @@ export function runningRun(threadId: ThreadId, id: string, ordinal: number, user
 export { userItem };
 
 export async function emitVcsStatus(event: VcsStatusStreamEvent): Promise<void> {
-  if (vcsStatusSubscriber === null) throw new Error("No VCS status subscription");
-  await Effect.runPromise(Queue.offer(vcsStatusSubscriber, event));
+  if (vcsStatusSubscribers.size === 0) throw new Error("No VCS status subscription");
+  // Every fixture thread shares one project cwd, so each subscription watches the same repo.
+  await Effect.runPromise(
+    Effect.forEach(vcsStatusSubscribers, (queue) => Queue.offer(queue, event), { discard: true }),
+  );
 }

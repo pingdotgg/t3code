@@ -21,6 +21,7 @@ interface GitDiffFileContentsSource {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly sourceKind: ReviewDiffPreviewSourceKind;
+  readonly branchMode?: ReviewDiffFileContentsInput["branchMode"];
   readonly baseRef: string | null;
   readonly headRef: string | null;
   readonly cacheKey: string;
@@ -157,6 +158,7 @@ export function createGitDiffFileContentsLoader<E>(
         changeType,
         baseRef: source.baseRef,
         headRef: source.headRef,
+        ...(source.branchMode ? { branchMode: source.branchMode } : {}),
         oldPath,
         newPath,
       },
