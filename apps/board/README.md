@@ -135,7 +135,7 @@ Creating a board opens a dialog with the name and the **Orchestrator** picker. T
 
 On create, the app does this in order:
 
-1. Writes the 18 role files from `roles/` into `<board folder>/roles/`.
+1. Writes the 16 role files from `roles/` into `<board folder>/roles/`.
 2. Starts the orchestrator with `orchestration.launchThread` in the project root, with the rendered `src/orchestrator/brief.md` as its first message. The brief names the board folder by absolute path, the store files and who writes each, the ticket stages, the role registry, the builder cap, and the rule that the user is reached only through `foryou.jsonl` or `request_secret`.
 3. Saves the thread id in `board.json`, then waits for the first sign of life. The dialog closes when the orchestrator has produced text. A model the instance does not offer makes the first run fail, which the engine reports only on the run, so the dialog shows that failure, the board goes back to having no orchestrator, and the failed thread is archived. **Try again** retries without a second board folder.
 
@@ -147,7 +147,13 @@ The orchestrator tab of the right sidebar streams the orchestrator thread and se
 
 Every agent the orchestrator starts is a role from `src/orchestrator/roles.ts`, started with `delegate_task`: `role` is the role's `t3Role`, `isolation` is its isolation, `target` is its model, `title` is `[<ticket key>] <role name>`, and `task` starts with `Read <board folder>/roles/<role>.md and act as that role.` T3 cannot limit a child's tools, so a read-only role stays read-only only because its file says so.
 
-The role files port omp's `task`, `scout`, `reviewer`, `security-reviewer`, and `sonic`, the `comment-sicko` and `poteto-agent` roles from pstack-omp, the two thermo-nuclear reviewers from thermos-omp, and the nine `egm-*` roles. The omp-only front matter (`tools`, `model`, `spawns`, `thinking-level`) is dropped, and an `output` schema became a `Return` section. The models copy omp's `modelRoles`: `reviewer` runs `claude-fable-5-1` at `xhigh`, `scout` runs `claude-sonnet-5-5` at `medium`, `task` runs `claude-sonnet-5-5` at `high`, `sonic` runs `claude-haiku-5-5` at `low`, and every other role runs `claude-opus-5-5` at `high`. A role whose Claude model the orchestrator's instance does not offer uses the orchestrator's model, and the brief says so under the registry table. A Codex orchestrator's children inherit its model.
+The role files port omp's `task`, `scout`, `reviewer`, `security-reviewer`, and `sonic`, the `comment-sicko` and `poteto-agent` roles from pstack-omp, and the nine `egm-*` roles. The omp-only front matter (`tools`, `model`, `spawns`, `thinking-level`) is dropped, and an `output` schema became a `Return` section. The models follow Anthropic's model guide, not omp's settings: `reviewer`, `scout`, and `task` run `claude-sonnet-5-5` at `medium`, `security-reviewer` runs `claude-opus-5-5` at `high`, `sonic` runs `claude-haiku-5-5` at `low`, and every other role runs `claude-opus-5-5` at `medium`. No role uses `claude-fable-5-1` or `xhigh`. `sonic` stays off source code. A role whose Claude model the orchestrator's instance does not offer uses the orchestrator's model, and the brief says so under the registry table. A Codex orchestrator's children inherit its model.
+
+### Reviews and usage
+
+Every ticket runs the board's review template with the `review-loop` skill's mechanics. A template names the author checks the builder runs before it reports code-ready and the reviewer lanes the orchestrator starts after, each as its own `delegate_task` child. The system template, **Review loop**, is the `review-loop` skill as written, and every board starts on it. **Settings, Reviews** lists the templates and builds custom ones from the skills the Claude instances report, saved in `local-state.json` under `reviewTemplates`. The **Review** menu on the orchestrator card picks the board's template, which `board.json` stores as `reviewTemplate`, and a pick during a run sends the orchestrator one message.
+
+The launch facts carry one line per usage window of the orchestrator's provider, such as `Claude weekly 82%, resets in 5d 22h`. While the card is on screen, a window that passes 50, 80, or 95 percent sends the orchestrator one `Usage notice:` message with that line. For you card bodies render as markdown, with images shown as their alt text.
 
 ### Sign-in
 
@@ -196,7 +202,7 @@ The peek drawer lists each check with its result and the six merge-ready conditi
 | Condition                                      | Holds when                                                                                                                                                                 |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | CI green on the head                           | the ticket has a pull request, it is not closed, every check passed or was skipped, none is stuck, and the checks ran on the ticket's `headSha` when the engine reports it |
-| Independent reviews, introduced findings fixed | at least two roles gave a verdict, and each role's latest verdict has no P0 or P1                                                                                          |
+| Independent reviews, introduced findings fixed | at least one role gave a verdict, and each role's latest verdict has no P0 or P1                                                                                           |
 | Fix-round delta re-reviewed                    | the ticket has no fix rounds, or a review role's thread has a `round` at or past `fixRounds`                                                                               |
 | Touched READMEs pass                           | the ticket's evidence folder holds a file whose name has `readme-check`, `readme-pass`, or `readme-lint`                                                                   |
 | Parent merged or ready                         | every `dependsOn` ticket is `merged`, or is `awaiting_approval` and the orchestrator's merge approval carries a note on the merge order                                    |

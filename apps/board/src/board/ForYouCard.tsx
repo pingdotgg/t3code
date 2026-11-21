@@ -1,6 +1,7 @@
 import { Check } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
+import { ChatMarkdown } from "../chat/Markdown";
 import { cardTitle, type CardState, type CardView, type ForYouItem } from "../domain/forYou";
 import { describeTrackerWrite } from "../issues/issueLinks";
 import { answerItem, type ForYouTarget } from "../foryou/actions";
@@ -120,9 +121,9 @@ export function ForYouCard({ view, context }: { view: CardView; context: CardCon
       {card.origin === "file" ? (
         <>
           {card.item.body.trim() !== "" && (
-            <p className="text-[12px] break-words whitespace-pre-wrap text-muted">
-              {card.item.body}
-            </p>
+            <div className="text-[12px] break-words text-muted">
+              <ChatMarkdown text={card.item.body} untrusted />
+            </div>
           )}
           {card.item.kind === "merge_approval" && <MergeApprovalConditions item={card.item} />}
           {card.item.kind === "tracker_write" && (

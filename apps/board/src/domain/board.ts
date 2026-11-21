@@ -20,6 +20,8 @@ export const Board = Schema.Struct({
   createdAt: Text,
   archived: Schema.Boolean,
   builderCap: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  /** The name of the board's review template. No value means the system template. */
+  reviewTemplate: Schema.optionalKey(Text),
 });
 export type Board = typeof Board.Type;
 

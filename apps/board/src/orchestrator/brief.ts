@@ -1,7 +1,9 @@
 import * as Result from "effect/Result";
 
 import { mergeForYou, openCards } from "../domain/forYou";
+import { type ReviewTemplate, templateFacts } from "../domain/reviewTemplate";
 import { parseTickets, type TicketStage } from "../domain/ticket";
+import { type UsageReading, usageFacts } from "../usage/usageNotice";
 import template from "./brief.md?raw";
 import { DEFAULT_ROLES, type ResolvedRole } from "./roles";
 
@@ -13,6 +15,9 @@ export interface BoardFacts {
   readonly project: string;
   /** The project's absolute path, which is the orchestrator's working folder. */
   readonly projectDir: string;
+  readonly reviewTemplate: ReviewTemplate;
+  /** The orchestrator's provider's usage windows when the board launched. */
+  readonly usage: ReadonlyArray<UsageReading>;
 }
 
 function targetText({ target }: ResolvedRole): string {
@@ -49,12 +54,14 @@ export function renderRules(roles: ReadonlyArray<ResolvedRole> = DEFAULT_ROLES):
   return RULES.replaceAll("{{roles}}", rolesTable(roles));
 }
 
-/** The board's folder, builder cap, and project. */
+/** The board's folder, builder cap, project, review template, and usage. */
 export function renderFacts(input: BoardFacts): string {
   return FACTS.replaceAll("{{boardDir}}", input.boardDir)
     .replaceAll("{{builderCap}}", String(input.builderCap))
     .replaceAll("{{project}}", input.project)
-    .replaceAll("{{projectDir}}", input.projectDir);
+    .replaceAll("{{projectDir}}", input.projectDir)
+    .replaceAll("{{reviewTemplate}}", templateFacts(input.reviewTemplate))
+    .replaceAll("{{usage}}", usageFacts(input.usage));
 }
 
 export interface StoreFiles {

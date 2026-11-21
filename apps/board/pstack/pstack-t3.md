@@ -24,23 +24,25 @@ Reach the human only through `foryou.jsonl` in the board folder, and through `re
 
 ## Role map
 
-The board's role registry is authority. It lists 18 roles, each with a T3 role, an isolation, a target, and a read-only flag. With the standard registry, map pstack roles as follows.
+The board's role registry is authority. It lists each role with a T3 role, an isolation, a target, and a read-only flag. With the standard registry, map pstack roles as follows.
 
-| Pstack role         | Registry role       | Contract                                                        |
-| ------------------- | ------------------- | --------------------------------------------------------------- |
-| `explorer`          | `scout`             | Read-only reconnaissance and narrow evidence gathering.         |
-| `watcher`           | `scout`             | Observe one exact generation or external transition, then stop. |
-| `researcher`        | `scout`             | Source-verified external or repository research.                |
-| `planner`           | `task`              | Technical decomposition and sequencing.                         |
-| `designer`          | `task`              | Non-visual or product-design candidates.                        |
-| `implementer`       | `task`              | Bounded implementation with explicit write scope.               |
-| `owner`             | `task`              | Coupled multi-step implementation retained through follow-ups.  |
-| `mechanical`        | `sonic`             | Fully specified low-judgment edits.                             |
-| `reviewer`          | `reviewer`          | Independent code, protocol, behavioral, or quality review.      |
-| `security reviewer` | `security-reviewer` | Independent read-only security review.                          |
-| `synthesizer`       | `reviewer`          | Synthesis over frozen reports.                                  |
+| Pstack role         | Registry role       | Contract                                                                                             |
+| ------------------- | ------------------- | ---------------------------------------------------------------------------------------------------- |
+| `explorer`          | `scout`             | Read-only reconnaissance and narrow evidence gathering.                                              |
+| `watcher`           | `scout`             | Observe one exact generation or external transition, then stop.                                      |
+| `researcher`        | `scout`             | Source-verified external or repository research.                                                     |
+| `planner`           | `task`              | Technical decomposition and sequencing.                                                              |
+| `designer`          | `task`              | Non-visual or product-design candidates.                                                             |
+| `implementer`       | `task`              | Bounded implementation with explicit write scope.                                                    |
+| `owner`             | `task`              | Coupled multi-step implementation retained through follow-ups.                                       |
+| `mechanical`        | `sonic`             | Fully specified steps that never touch source code: tests, logs, data, and text moved word for word. |
+| `reviewer`          | `reviewer`          | Independent code, protocol, behavioral, or quality review.                                           |
+| `security reviewer` | `security-reviewer` | Independent read-only security review.                                                               |
+| `synthesizer`       | `reviewer`          | Synthesis over frozen reports.                                                                       |
 
-Use `poteto-agent` when the child must own a whole pstack workflow. It reads `$poteto-mode` first and selects the playbook. Use `comment-sicko` for read-only adversarial review of comments and documentation. Use the `thermo-nuclear-*` roles for branch audits and the `egm-*` roles for document review panels. Start a fresh `poteto-agent` for each new task and send it a follow-up only when the new work strictly needs state that lives in it.
+Use `poteto-agent` when the child must own a whole pstack workflow. It reads `$poteto-mode` first and selects the playbook. Use `comment-sicko` for read-only adversarial review of comments and documentation. Use the `egm-*` roles for document review panels. Start a fresh `poteto-agent` for each new task and send it a follow-up only when the new work strictly needs state that lives in it.
+
+Any skill step that says to start a subagent, a scout, a task, a reviewer, or a read-only agent is a `delegate_task` call with the registry role that matches it in the table above, such as `scout` for a read-only investigator and `reviewer` for a reviewer. This covers user skills such as `pre-pr-reviewer` and `no-comments`, and a skill that names a harness tool such as `Task`, `Agent`, or `subagent_type`. A child that runs such a skill as an author check makes those calls itself, because the check is its assignment. Every other child never calls `delegate_task`.
 
 A read-only role stays read-only only because its role file says so. T3 cannot limit a child's tools, so repeat the restriction in the brief.
 
@@ -60,7 +62,7 @@ The bounded outcome and the one writer responsible for it.
 
 Observable results, one per line.
 
-Add `Verify`, `Forbidden`, and `Report` when the assignment is non-trivial. Every brief starts with the instruction to read the role's file and act as that role, as the host rules say. Tell every child not to call `delegate_task`, not to ask the user, not to edit outside its scope, and not to claim completion without running its assigned verification. Tell child workers to skip project-wide formatting, linting, and test suites. The root owns shared validation.
+Add `Verify`, `Forbidden`, and `Report` when the assignment is non-trivial. Every brief starts with the instruction to read the role's file and act as that role, as the host rules say. Tell every child not to call `delegate_task` except for the skill steps above, not to ask the user, not to edit outside its scope, and not to claim completion without running its assigned verification. Tell child workers to skip project-wide formatting, linting, and test suites. The root owns shared validation.
 
 Name a skill in a brief as `$name` at the start of a word, for example `$no-comments`. T3 expands only that form, and only in a message it sends. A skill name inside backticks, or glued to other characters, stays plain text. Both Claude and Codex list the plugin's skills under the plugin's name, so the mention that expands is `$pstack-t3:<name>`, for example `$pstack-t3:no-comments`. The skill files themselves say `$no-comments`. Write the prefixed form in a message you send.
 

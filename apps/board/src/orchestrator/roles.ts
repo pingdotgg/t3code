@@ -33,12 +33,14 @@ export const roleFiles: ReadonlyMap<string, string> = new Map(
   Object.entries(ROLE_SOURCES).map(([path, text]) => [path.slice(path.lastIndexOf("/") + 1), text]),
 );
 
-// The models copy omp's `modelRoles` and `task.agentModelOverrides`.
-const REVIEW: ClaudeModel = { slug: "claude-fable-5-1", effort: "xhigh" };
+// Models follow Anthropic's model guide, not omp's settings: routine lanes on Sonnet, security on
+// Opus at high, mechanical steps on Haiku. No role uses Fable or xhigh.
+const REVIEW: ClaudeModel = { slug: "claude-sonnet-5-5", effort: "medium" };
+const SECURITY: ClaudeModel = { slug: "claude-opus-5-5", effort: "high" };
 const SCOUT: ClaudeModel = { slug: "claude-sonnet-5-5", effort: "medium" };
-const TASK: ClaudeModel = { slug: "claude-sonnet-5-5", effort: "high" };
+const TASK: ClaudeModel = { slug: "claude-sonnet-5-5", effort: "medium" };
 const SONIC: ClaudeModel = { slug: "claude-haiku-5-5", effort: "low" };
-const DEFAULT: ClaudeModel = { slug: "claude-opus-5-5", effort: "high" };
+const DEFAULT: ClaudeModel = { slug: "claude-opus-5-5", effort: "medium" };
 
 const spec = (
   name: string,
@@ -52,12 +54,10 @@ const SPECS: ReadonlyArray<RoleSpec> = [
   spec("task", "implementation", "worktree", false, TASK),
   spec("scout", "research", "shared", true, SCOUT),
   spec("reviewer", "review", "shared", true, REVIEW),
-  spec("security-reviewer", "review", "shared", true),
+  spec("security-reviewer", "review", "shared", true, SECURITY),
   spec("sonic", "implementation", "worktree", false, SONIC),
   spec("comment-sicko", "review", "shared", true),
   spec("poteto-agent", "general", "worktree", false),
-  spec("thermo-nuclear-review-subagent", "review", "shared", true),
-  spec("thermo-nuclear-code-quality-review-subagent", "review", "shared", true),
   spec("egm-bootstrap-orchestrator", "general", "worktree", false),
   spec("egm-codebase-details", "review", "shared", true),
   spec("egm-comprehension", "review", "shared", true),

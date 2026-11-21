@@ -2,6 +2,7 @@ import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import { type Board, parseBoard } from "../domain/board";
+import { SYSTEM_TEMPLATE } from "../domain/reviewTemplate";
 import type { ProjectFiles } from "../store/boardFiles";
 import {
   type LaunchPorts,
@@ -62,7 +63,14 @@ const boardJson = (store: Map<string, string>) => {
   return Result.isSuccess(parsed) ? parsed.success : null;
 };
 
-const target = { cwd: CWD, folder: "claude-connector", board: BOARD, project: "Connector" };
+const target = {
+  cwd: CWD,
+  folder: "claude-connector",
+  board: BOARD,
+  project: "Connector",
+  reviewTemplate: SYSTEM_TEMPLATE,
+  usage: [],
+};
 
 describe("launching an orchestrator", () => {
   it("Given a board, when the orchestrator launches, then the roles are copied, the first message holds only the board facts, it runs on the orchestrator instance, and the thread id is saved", async () => {

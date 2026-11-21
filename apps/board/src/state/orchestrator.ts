@@ -9,10 +9,13 @@ import { createEnvironmentRpcCommand, runAtomCommand } from "@t3tools/client-run
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 
 import { engineBridge } from "../connection/bridge";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { BOARDS_DIR } from "../domain/board";
+import { pickTemplate } from "../domain/reviewTemplate";
+import { parseTickets } from "../domain/ticket";
 import { renderRules, type StoreFiles } from "../orchestrator/brief";
 import {
   launchOrchestrator,
@@ -23,9 +26,10 @@ import { planAgentsInstance, planOrchestratorInstance } from "../orchestrator/or
 import { resolveRoles, ROLES } from "../orchestrator/roles";
 import { CODEX_TRACKER_WRITES } from "../providers/providers";
 import type { ValidBoard } from "../store/boardFiles";
-import { boardEngine, newId, projectBoardsAtom } from "./boards";
+import { readingsFor } from "../usage/usageNotice";
+import { boardEngine, localState, newId, projectBoardsAtom } from "./boards";
 import { engineConnectionAtom, engineEnvironmentIdAtom, environmentProjects } from "./projects";
-import { engineSettingsAtom, serverEnvironment } from "./server";
+import { engineProvidersAtom, engineSettingsAtom, serverEnvironment } from "./server";
 
 const launchThread = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "board:thread:launch",
@@ -144,12 +148,41 @@ export async function startBoardOrchestrator(
         folder: listed.folder,
         board: listed.board,
         project: project.title,
+        reviewTemplate: pickTemplate(
+          listed.board.reviewTemplate,
+          (await localState.read()).reviewTemplates,
+        ),
+        usage: readingsFor(registry.get(engineProvidersAtom), selection.instanceId, Date.now()),
       },
       selection,
     );
     return { ...listed, board };
   } finally {
     registry.refresh(projectBoardsAtom(project.id));
+  }
+}
+
+const stagesOf = (text: string | null): ReadonlyMap<string, string> => {
+  const parsed = text === null ? null : parseTickets(text);
+  return new Map(
+    parsed !== null && Result.isSuccess(parsed)
+      ? parsed.success.map((ticket) => [ticket.key, ticket.stage])
+      : [],
+  );
+};
+
+const REVIEWED = new Set(["verifying", "pr", "awaiting_approval", "merged"]);
+
+/** Marks a ticket entering `reviewing` and one leaving it for a stage that follows a clean verdict. */
+function markReviews(before: string | null, after: string | null) {
+  const earlier = stagesOf(before);
+  for (const [key, stage] of stagesOf(after)) {
+    const was = earlier.get(key);
+    if (stage === "reviewing" && was !== "reviewing") {
+      performance.mark("board:review-start", { detail: { key } });
+    } else if (was === "reviewing" && REVIEWED.has(stage)) {
+      performance.mark("board:review-clean", { detail: { key } });
+    }
   }
 }
 
@@ -188,6 +221,9 @@ export const boardStoreAtom = Atom.family((key: string) =>
             const next = { tickets, forYou, decisions };
             const last = Option.getOrNull(get.self<StoreFiles | null>()) ?? null;
             if (!sameFiles(last, next)) {
+              if (last !== null && last.tickets !== next.tickets) {
+                markReviews(last.tickets, next.tickets);
+              }
               if (last !== null && last.forYou !== next.forYou) {
                 performance.mark("board:foryou-file-change", { detail: { key } });
               }

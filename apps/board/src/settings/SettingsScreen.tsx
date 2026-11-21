@@ -6,6 +6,7 @@ import { engineSettingsAtom } from "../state/server";
 import { CleanupPage } from "./CleanupPage";
 import { Select } from "./controls/Select";
 import { IntegrationsPage } from "./IntegrationsPage";
+import { ReviewsPage } from "./ReviewsPage";
 import { pageTitle, SettingsNav, type SettingsPage } from "./SettingsNav";
 import { UpdatesPage } from "./UpdatesPage";
 import { type SaveStatus, useSettingsWrite } from "./useSettingsWrite";
@@ -40,6 +41,7 @@ const PAGE_PAINTED = {
   cleanup: paintedMarker("board:cleanup-painted"),
   integrations: paintedMarker("board:integrations-painted"),
   updates: paintedMarker("board:updates-painted"),
+  reviews: paintedMarker("board:reviews-painted"),
 } satisfies Record<SettingsPage, ReturnType<typeof paintedMarker>>;
 
 export function SettingsScreen({
@@ -109,6 +111,8 @@ export function SettingsScreen({
             <IntegrationsPage environmentId={environmentId} />
           ) : page === "updates" ? (
             <UpdatesPage settings={settings} save={(input) => void save(input)} />
+          ) : page === "reviews" ? (
+            <ReviewsPage environmentId={environmentId} />
           ) : (
             <CleanupPage
               settings={settings}

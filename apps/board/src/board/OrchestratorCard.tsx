@@ -1,23 +1,34 @@
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { Plus } from "lucide-react";
-import { useState } from "react";
+import { ListChecks, Plus } from "lucide-react";
+import { useContext, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { BOARD_KEY, useArtifacts } from "../artifacts/ArtifactsContext";
 import { isRunLive } from "../chat/timeline";
+import { pickTemplate, SYSTEM_TEMPLATE } from "../domain/reviewTemplate";
 import { STAGE_LABEL, TICKET_STAGES } from "../domain/ticket";
 import { AddFromIssue } from "../issues/AddFromIssue";
 import type { OrchestratorStats } from "../orchestrator/brief";
+import { baseInstanceId } from "../orchestrator/orchestratorInstance";
+import { reviewTemplatesAtom, setBoardReviewTemplate, usageNoticeAtom } from "../state/reviews";
 import { useEnvironmentThread } from "../state/threads";
 import type { ValidBoard } from "../store/boardFiles";
+import { PopMenu } from "../ui/PopMenu";
 import { ArtifactCards } from "./ArtifactCards";
 import { ArtifactCount } from "./ArtifactCount";
 import { ORCHESTRATOR_BOX } from "./layout";
 
 /** Cards stack in columns this tall, which is as many as fit beside the card. */
 const ARTIFACT_ROWS = 5;
+
+/** Mounts the board's usage watch, which messages the orchestrator when a usage window passes a level. */
+function UsageWatch({ instanceId, threadId }: { instanceId: string; threadId: string }) {
+  useAtomValue(usageNoticeAtom(`${baseInstanceId(instanceId)}/${threadId}`));
+  return null;
+}
 
 /** A board's orchestrator on the canvas: its tickets by stage, what waits on the user, and its builders against the cap. */
 export function OrchestratorCard({
@@ -39,6 +50,10 @@ export function OrchestratorCard({
   );
   const { groups, expanded } = useArtifacts();
   const [adding, setAdding] = useState(false);
+  const registry = useContext(RegistryContext);
+  const custom = useAtomValue(reviewTemplatesAtom);
+  const [pickError, setPickError] = useState<string | null>(null);
+  const picked = pickTemplate(board.reviewTemplate, custom);
   const status =
     board.orchestratorThreadId === null
       ? "Not started"
@@ -67,6 +82,32 @@ export function OrchestratorCard({
             Add from tracker
           </button>
         )}
+        <div onPointerDown={(event) => event.stopPropagation()}>
+          <PopMenu
+            label="Review template"
+            align="start"
+            triggerClass="inline-flex shrink-0 items-center gap-1 rounded border border-line px-1.5 text-[11px] leading-5 text-muted hover:bg-hover hover:text-fg"
+            trigger={
+              <>
+                <ListChecks className="size-3" aria-hidden />
+                Review
+              </>
+            }
+            items={[SYSTEM_TEMPLATE, ...custom].map((template) => ({
+              label: template.name,
+              hint: template.name === picked.name ? "Current" : undefined,
+              onSelect: () => {
+                setPickError(null);
+                void setBoardReviewTemplate(
+                  registry,
+                  project,
+                  listed,
+                  template === SYSTEM_TEMPLATE ? undefined : template.name,
+                ).then(setPickError);
+              },
+            }))}
+          />
+        </div>
         <span data-testid="card-status" className="text-[11px] text-muted">
           {status}
         </span>
@@ -104,6 +145,11 @@ export function OrchestratorCard({
           ? "No decisions yet"
           : `${stats.latestDecision.time}  ${stats.latestDecision.decision}`}
       </p>
+      {pickError !== null && (
+        <p role="alert" className="mt-1 text-[11px] break-words text-red-400">
+          {pickError}
+        </p>
+      )}
       {stats.problems.map((problem) => (
         <p key={problem} role="alert" className="mt-1 text-[11px] break-words text-red-400">
           {problem}
@@ -113,6 +159,12 @@ export function OrchestratorCard({
         <div className="absolute top-0" style={{ left: "calc(100% + 16px)" }}>
           <ArtifactCards artifacts={groups.board} rows={ARTIFACT_ROWS} />
         </div>
+      )}
+      {board.orchestratorThreadId !== null && projection !== null && (
+        <UsageWatch
+          instanceId={projection.thread.modelSelection.instanceId}
+          threadId={board.orchestratorThreadId}
+        />
       )}
       {adding &&
         board.orchestratorThreadId !== null &&

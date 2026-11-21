@@ -119,12 +119,12 @@ describe("merge readiness", () => {
     ).toEqual(["ci_green", "readmes_pass", "parent_ready"]);
   });
 
-  it("Given a ticket with no pull request, one review, an unreviewed fix round, no evidence, and a ready parent with no merge-order note, when readiness is computed, then all six are missing", () => {
+  it("Given a ticket with no pull request, no review, an unreviewed fix round, no evidence, and a ready parent with no merge-order note, when readiness is computed, then all six are missing", () => {
     const parent = ticketOf({ key: "T-0", stage: "awaiting_approval" });
     const ticket = ticketOf({
       key: "T-1",
       dependsOn: ["T-0"],
-      verdicts: [clean[0]!],
+      verdicts: [],
       fixRounds: 2,
       threads: [{ threadId: "th-1", role: "reviewer", round: 1 }],
     });

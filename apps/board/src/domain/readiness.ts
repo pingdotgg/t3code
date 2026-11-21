@@ -125,9 +125,7 @@ function latestVerdicts(verdicts: NonNullable<Ticket["verdicts"]>) {
 
 function reviewsState(ticket: Ticket): string | null {
   const latest = latestVerdicts(ticket.verdicts ?? []);
-  if (latest.length < 2) {
-    return latest.length === 0 ? "No reviews yet" : "Only one independent review";
-  }
+  if (latest.length === 0) return "No reviews yet";
   const open = latest.filter((verdict) => (verdict.p0 ?? 0) + (verdict.p1 ?? 0) > 0);
   return open.length === 0
     ? null
