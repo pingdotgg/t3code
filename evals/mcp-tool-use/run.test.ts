@@ -1461,6 +1461,16 @@ it("cli-review-threads' raw arm binds each thread id to its own reply", () => {
       "gh api repos/acme/app/pulls/212/comments/9002/replies -f body=ok",
     ),
   );
+  // A variable bound by a later gh call in the same command is that call's, not the reply's.
+  const readWithVariable = (id: string) =>
+    `gh api graphql -f query='query($t: ID!) { node(id: $t) { id } }' -f t=${id}`;
+  assert.isFalse(passes(`${withVariable("PRRT_kwDOA1")} && ${readWithVariable("PRRT_kwDOA2")}`));
+  assert.isTrue(
+    passes(
+      `${withVariable("PRRT_kwDOA1")} && ${readWithVariable("PRRT_kwDOA3")}`,
+      "gh api repos/acme/app/pulls/212/comments/9002/replies -f body=ok",
+    ),
+  );
 });
 
 it("cli-babysit-green's raw arm needs a finished wait that reported green", () => {
