@@ -19,6 +19,7 @@ function pointer(type: string, values: PointerEventInit = {}) {
 
 function gesture(
   extraOptions: Partial<ConstructorParameters<typeof SidebarPointerSensor>[0]["options"]> = {},
+  press: PointerEventInit = {},
 ) {
   const callbacks = {
     onStart: vi.fn(),
@@ -31,7 +32,7 @@ function gesture(
   const onFinish = vi.fn();
   const props = {
     active: "thread",
-    event: pointer("pointerdown"),
+    event: pointer("pointerdown", press),
     options: { distance: 6, onAttach: vi.fn(), onFinish, ...extraOptions },
     ...callbacks,
   } as unknown as SensorProps<ConstructorParameters<typeof SidebarPointerSensor>[0]["options"]>;
@@ -100,5 +101,24 @@ describe("sidebar pointer lifecycle", () => {
     expect(drag.onCancel).toHaveBeenCalledOnce();
     expect(drag.onEnd).not.toHaveBeenCalled();
     expect(drag.onFinish).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  // regression: #26548 a pen tip slides past the mouse drag distance during an ordinary tap
+  it("keeps a pen tap that slides a few pixels as a click, while a mouse still drags", () => {
+    using _environment = setup();
+    const onClick = vi.fn();
+    document.body.addEventListener("click", onClick);
+    const tap = gesture({}, { pointerType: "pen" });
+    document.dispatchEvent(pointer("pointermove", { pointerType: "pen", clientX: 18 }));
+    document.dispatchEvent(pointer("pointerup", { pointerType: "pen", buttons: 0, clientX: 18 }));
+    document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    document.body.removeEventListener("click", onClick);
+
+    expect(tap.onStart).not.toHaveBeenCalled();
+    expect(onClick).toHaveBeenCalledOnce();
+
+    const drag = gesture({}, { pointerType: "mouse" });
+    document.dispatchEvent(pointer("pointermove", { pointerType: "mouse", clientX: 18 }));
+    expect(drag.onStart).toHaveBeenCalledOnce();
   });
 });

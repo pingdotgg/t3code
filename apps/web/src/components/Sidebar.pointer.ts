@@ -12,6 +12,10 @@ type Options = {
   onDrop?: (point: { x: number; y: number }) => boolean;
 };
 
+// A pen tip slides further than a mouse during a tap. Chromium's stylus click slop on ChromeOS,
+// which it derived from tap data (gesture_configuration_aura.cc).
+const PEN_CLICK_SLOP = 10;
+
 export class SidebarPointerSensor {
   static activators = [
     {
@@ -25,9 +29,14 @@ export class SidebarPointerSensor {
   private readonly pointer: PointerEvent;
   private readonly document: Document;
   private readonly window: Window;
+  private readonly distance: number;
 
   constructor(private readonly props: Omit<SensorProps<Options>, "activeNode" | "context">) {
     this.pointer = props.event as PointerEvent;
+    this.distance =
+      this.pointer.pointerType === "pen"
+        ? Math.max(props.options.distance, PEN_CLICK_SLOP)
+        : props.options.distance;
     this.document = getOwnerDocument(this.pointer.target);
     this.window = getWindow(this.pointer.target);
     this.document.addEventListener("pointermove", this.move, { passive: false, capture: true });
@@ -41,7 +50,7 @@ export class SidebarPointerSensor {
     this.document.addEventListener("dragstart", this.preventDefault);
     this.document.addEventListener("contextmenu", this.preventDefault);
     props.options.onAttach(this);
-    props.onPending(props.active, { distance: props.options.distance }, this.coordinates());
+    props.onPending(props.active, { distance: this.distance }, this.coordinates());
   }
 
   private coordinates = () => ({ x: this.pointer.clientX, y: this.pointer.clientY });
@@ -71,10 +80,10 @@ export class SidebarPointerSensor {
         x: event.clientX - this.pointer.clientX,
         y: event.clientY - this.pointer.clientY,
       };
-      if (Math.hypot(offset.x, offset.y) <= this.props.options.distance) {
+      if (Math.hypot(offset.x, offset.y) <= this.distance) {
         this.props.onPending(
           this.props.active,
-          { distance: this.props.options.distance },
+          { distance: this.distance },
           this.coordinates(),
           offset,
         );
