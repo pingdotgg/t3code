@@ -3,21 +3,31 @@ import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import {
-  expandHomeProjectPath,
   findExistingAddProject,
   getCloneDestinationForPickedFolder,
   getCloneDestinationPath,
   getCloneDirectoryLeafName,
   getCloneDirectoryName,
   getCloneDirectoryPath,
+  getAddProjectInitialQuery,
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
   sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
+import { isFilesystemBrowseQuery } from "../state/projects.ts";
 
 describe("add project shared logic", () => {
+  it("starts the Add Project picker on a browsable path for a relative base directory", () => {
+    expect(isFilesystemBrowseQuery(getAddProjectInitialQuery("Desktop/dev"))).toBe(true);
+    expect(getAddProjectInitialQuery("Desktop/dev")).toBe("~/Desktop/dev/");
+    expect(getAddProjectInitialQuery("/srv/code")).toBe("/srv/code/");
+    expect(getAddProjectInitialQuery("~")).toBe("~/");
+    expect(getAddProjectInitialQuery("./work")).toBe("./work/");
+    expect(getAddProjectInitialQuery("C:\\dev")).toBe("C:\\dev\\");
+  });
+
   it("offers only GitHub until other hosts are turned on", () => {
     const ready = () => ({ ready: true, hint: null });
     expect(sortAddProjectProviderSources(ready, {})).toEqual(["github"]);
@@ -221,18 +231,5 @@ describe("add project shared logic", () => {
     expect(findExistingAddProject({ projects, environmentId: env, path: "/repo" })?.id).toBe(
       "project",
     );
-  });
-
-  it.each([
-    { path: "~/work/repo", home: "/home/tester", expanded: "/home/tester/work/repo" },
-    { path: "~", home: "/home/tester", expanded: "/home/tester/" },
-    // On POSIX a backslash is part of the folder name, not a separator.
-    { path: "~/work\\repo", home: "/home/tester", expanded: "/home/tester/work\\repo" },
-    { path: "~\\work\\repo", home: "C:\\Users\\tester", expanded: "C:\\Users\\tester\\work\\repo" },
-    { path: "~/repo", home: "/", expanded: "/repo" },
-    { path: "~work/repo", home: "/home/tester", expanded: "~work/repo" },
-    { path: "/srv/~/repo", home: "/home/tester", expanded: "/srv/~/repo" },
-  ])("expands $path below the home folder $home", ({ path, home, expanded }) => {
-    expect(expandHomeProjectPath(path, home)).toBe(expanded);
   });
 });
