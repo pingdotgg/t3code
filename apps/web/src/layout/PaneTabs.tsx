@@ -417,17 +417,39 @@ function markPaneLit(entry: PaneStrip, scrollLeft: number): void {
     return;
   }
   const [startProperty, endProperty] = entry.litProperties;
-  setPaneLitProperty(lit.host, startProperty, `${Math.round(lit.offset + start)}px`);
-  setPaneLitProperty(lit.host, endProperty, `${Math.round(lit.offset + end)}px`);
+  for (const cut of litCuts(lit.host)) {
+    setPaneLitProperty(cut, startProperty, `${Math.round(lit.offset + start)}px`);
+    setPaneLitProperty(cut, endProperty, `${Math.round(lit.offset + end)}px`);
+  }
 }
 
-function setPaneLitProperty(host: HTMLElement, property: string, value: string): void {
-  if (host.style.getPropertyValue(property) !== value) host.style.setProperty(property, value);
+/**
+ * The cuts that leave room for the lit rim (index.css) take its span on
+ * themselves: inheriting it from the pane would restyle every child of the
+ * pane whenever the pane moves.
+ */
+function litCuts(host: HTMLElement): NodeListOf<HTMLElement> {
+  return host.querySelectorAll<HTMLElement>(':scope > [data-pane-cut$="notch"]');
+}
+
+/** A pane's cuts, mounted again (SurfaceHost.tsx PaneCuts), take its lit span. */
+export function markPaneCutsLit(host: HTMLElement): void {
+  for (const entry of paneStrips.values()) {
+    if (entry.lit?.host === host) markPaneLit(entry, entry.strip.scrollLeft);
+  }
+}
+
+function setPaneLitProperty(element: HTMLElement, property: string, value: string): void {
+  if (element.style.getPropertyValue(property) !== value) {
+    element.style.setProperty(property, value);
+  }
 }
 
 function clearPaneLit(entry: PaneStrip): void {
   if (!entry.lit) return;
-  for (const property of entry.litProperties) entry.lit.host.style.removeProperty(property);
+  for (const cut of litCuts(entry.lit.host)) {
+    for (const property of entry.litProperties) cut.style.removeProperty(property);
+  }
 }
 
 function paneStripFor(key: string, role?: "panel"): PaneStrip {
