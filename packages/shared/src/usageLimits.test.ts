@@ -17,7 +17,6 @@ import {
   withUsageLimitsCommands,
   collectLimitAccounts,
   collectExternalUsageLinks,
-  collectLimitNotices,
   collectLimitPools,
   elapsedShare,
   exhaustedUsageWindow,
@@ -26,6 +25,7 @@ import {
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
+import { collectLimitNotices } from "./usageLimitsCopy.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
 
@@ -663,7 +663,7 @@ describe("pools", () => {
     expect(accounts.map((account) => account.key)).toEqual([
       "env-a:business",
       "env-a:personal",
-      "hub:x.json",
+      "env-a:hub:x.json",
     ]);
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(8);
     const withoutEmail = (id: string, workspaceId: string) => {
@@ -693,8 +693,8 @@ describe("pools", () => {
       ],
     ]);
     expect(collectLimitAccounts(sameFile).map((account) => account.key)).toEqual([
-      "hub:a.json:ws-1",
-      "hub:a.json:ws-2",
+      "env-a:hub:a.json:ws-1",
+      "env-b:hub:a.json:ws-2",
     ]);
     expect(accounts[1]?.environments.map((environment) => environment.label)).toEqual([
       "Laptop",
@@ -739,33 +739,147 @@ describe("pools", () => {
     });
     expect(collectLimitAccounts(withOther(unreadable)).map((account) => account.key)).toEqual([
       "env-a:codex",
-      "hub:claude.json",
+      "env-a:hub:claude.json",
     ]);
   });
 
-  it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
-    const seat = {
-      id: "claude-team-seat.json",
-      driver: claude,
-      usageLimits: { checkedAt, windows: [window] },
-    };
-    const hub = { ...source, accounts: [seat] };
+  it.each([
+    [
+      "one remote hub under environment-local ids",
+      "http://hub:8317",
+      "laptop-hub",
+      "http://hub:8317",
+      1,
+    ],
+    ["two remote hubs under one id", "http://hub:8317", "hub", "http://hub-8317", 2],
+    [
+      "two remote hubs under paths of one origin",
+      "https://proxy.example/team-a",
+      "hub-b",
+      "https://proxy.example/team-b",
+      2,
+    ],
+    [
+      "a shared IPv6 tailnet hub",
+      "http://[fd7a:115c:a1e0::1]:8317",
+      "hub",
+      "http://[fd7a:115c:a1e0::1]:8317",
+      1,
+    ],
+    [
+      "each machine's own localhost hub",
+      "http://localhost:8317",
+      "hub",
+      "http://localhost:8317",
+      2,
+    ],
+    ["each machine's own IPv6 loopback hub", "http://[::1]:8317", "hub", "http://[::1]:8317", 2],
+    [
+      "each machine's own localhost subdomain hub",
+      "http://hub.localhost:8317",
+      "hub",
+      "http://hub.localhost:8317",
+      2,
+    ],
+    [
+      "each machine's own trailing-dot localhost subdomain hub",
+      "http://hub.localhost.:8317",
+      "hub",
+      "http://hub.localhost.:8317",
+      2,
+    ],
+    [
+      "each machine's own mapped IPv4 loopback hub",
+      "http://[::ffff:7f00:1]:8317",
+      "hub",
+      "http://[::ffff:7f00:1]:8317",
+      2,
+    ],
+    ["each machine's own wildcard hub", "http://0.0.0.0:8317", "hub", "http://0.0.0.0:8317", 2],
+    ["hubs that report no endpoint", undefined, "hub", undefined, 2],
+  ] as const)(
+    "keeps email-less hub identity across environments: %s",
+    (_, firstEndpoint, secondId, secondEndpoint, count) => {
+      const seat = {
+        id: "claude-team-seat.json",
+        driver: claude,
+        usageLimits: { checkedAt, windows: [window] },
+      };
+      const hubAt = (id: string, endpoint: string | undefined) => ({
+        ...source,
+        id: UsageLimitSourceId.make(id),
+        ...(endpoint ? { origin: new URL(endpoint).origin, endpoint } : {}),
+        accounts: [seat],
+      });
+      const input = new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: { providers: [], usageLimitSources: [hubAt("hub", firstEndpoint)] },
+          },
+        ],
+        [
+          EnvironmentId.make("env-b"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: { providers: [], usageLimitSources: [hubAt(secondId, secondEndpoint)] },
+          },
+        ],
+      ]);
+      const accounts = collectLimitAccounts(input);
+      expect(accounts).toHaveLength(count);
+      expect(accounts[0]?.displayName).toBe("claude-team-seat");
+    },
+  );
+
+  it("keeps public keys apart for different logins in one hub file", () => {
+    const hubAt = (id: string, email: string, usedPercent: number) => ({
+      ...source,
+      id: UsageLimitSourceId.make(id),
+      origin: "https://hub.test",
+      endpoint: "https://hub.test",
+      accounts: [
+        {
+          id: "seat.json",
+          driver: claude,
+          email,
+          usageLimits: { checkedAt, windows: [{ ...window, usedPercent }] },
+        },
+      ],
+    });
     const input = new Map([
       [
         EnvironmentId.make("env-a"),
-        { ...laptop, serverConfig: { providers: [], usageLimitSources: [hub] } },
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [hubAt("first", "old@example.com", 10)],
+          },
+        },
       ],
       [
         EnvironmentId.make("env-b"),
         {
           entry: { target: { label: "Desktop" } },
-          serverConfig: { providers: [], usageLimitSources: [hub] },
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [hubAt("second", "new@example.com", 80)],
+          },
         },
       ],
     ]);
     const accounts = collectLimitAccounts(input);
-    expect(accounts.map((account) => account.key)).toEqual(["hub:claude-team-seat.json"]);
-    expect(accounts[0]?.displayName).toBe("claude-team-seat");
+    expect(accounts.map((account) => account.key)).toEqual([
+      "env-a:first:seat.json",
+      "env-b:second:seat.json",
+    ]);
+    const columns = collectLimitPools(accounts, Date.parse(checkedAt))[0]?.windows[0]?.columns;
+    expect(columns?.map((column) => [column.account.email, column.window?.usedPercent])).toEqual([
+      ["new@example.com", 80],
+      ["old@example.com", 10],
+    ]);
   });
 
   it("labels a default-named instance merged with a hub account by e-mail, keeping a chosen name", () => {
@@ -964,7 +1078,7 @@ describe("pools", () => {
     const [session, week] = pools[0]!.windows;
     const untimed = collectLimitPools(
       collectLimitAccounts(input).map((account) =>
-        account.key === "hub:b"
+        account.key === "env-a:hub:b"
           ? {
               ...account,
               limits: {
@@ -986,8 +1100,8 @@ describe("pools", () => {
     expect(
       session?.resets.map((reset) => [reset.member.account.key, reset.restoresPercent]),
     ).toEqual([
-      ["hub:a", 40],
-      ["hub:b", 20],
+      ["env-a:hub:a", 40],
+      ["env-a:hub:b", 20],
     ]);
     expect(week).toMatchObject({ id: "seven_day", remainingPercent: 80, members: [{}] });
     // Codex reports `primary` for both its five-hour and (on Go) monthly window.
@@ -1026,8 +1140,14 @@ describe("pools", () => {
       ["weekly", 1],
       ["monthly", 1],
     ]);
-    expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
-    expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
+    expect(session?.members.map((member) => member.account.key)).toEqual([
+      "env-a:hub:a",
+      "env-a:hub:b",
+    ]);
+    expect(pools[0]?.accounts.map((account) => account.key)).toEqual([
+      "env-a:hub:a",
+      "env-a:hub:b",
+    ]);
   });
 });
 
@@ -1267,6 +1387,7 @@ describe("/usage-limits", () => {
       id: UsageLimitSourceId.make("hub"),
       kind: "cliproxy" as const,
       label: "Accounts",
+      origin: "http://hub:8317",
       checkedAt: limits.checkedAt,
       accounts: [
         {
@@ -1433,6 +1554,72 @@ describe("/usage-limits", () => {
       plan: "Codex OSS",
     });
     expect(report?.notices).toEqual([]);
+  });
+
+  it("shows a proxied instance the hub accounts its model routes to, of any driver", () => {
+    const routed = [
+      {
+        ...sources[0]!,
+        accounts: sources[0]!.accounts.map((account) =>
+          account.id === "oss" ? { ...account, models: ["gpt-5.6-sol"] } : account,
+        ),
+      },
+    ];
+    const proxy = provider({
+      instanceId: ProviderInstanceId.make("claudex"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      auth: { status: "authenticated", type: "customEndpoint", endpoint: "http://hub:8317" },
+    });
+    // regression: #30778 a local login the hub does not route to is not this thread's account
+    const unrelated = provider({
+      instanceId: ProviderInstanceId.make("codex-personal"),
+      usageLimits: limits,
+      auth: { status: "authenticated", email: "personal@example.com" },
+    });
+    const ids = (instance: ServerProvider, model: string | null) =>
+      collectProviderUsageLimits(
+        instance.instanceId,
+        [selected, proxy, unrelated],
+        routed,
+        now,
+        model,
+      )?.accounts.map((account) => account.id);
+    expect(ids(proxy, "gpt-5.6-sol[1m]")).toEqual(["codex", "hub:oss"]);
+    // regression: #30778 another hub's model list does not decide this hub's routing
+    const other = {
+      ...routed[0]!,
+      id: UsageLimitSourceId.make("other"),
+      origin: "http://other:8317",
+      accounts: [
+        {
+          id: "x",
+          driver: ProviderDriverKind.make("grok"),
+          models: ["gpt-5.6-sol"],
+          usageLimits: limits,
+        },
+      ],
+    };
+    expect(
+      collectProviderUsageLimits(
+        proxy.instanceId,
+        [selected, proxy],
+        [other, ...routed],
+        now,
+        "gpt-5.6-sol",
+      )?.accounts.map((account) => account.id),
+    ).toEqual(["codex", "hub:oss"]);
+    // regression: #30778 a custom endpoint other than the hub does not follow the hub's routing
+    const elsewhere = { ...proxy, auth: { ...proxy.auth, endpoint: "http://other:8317" } };
+    expect(
+      collectProviderUsageLimits(
+        proxy.instanceId,
+        [selected, elsewhere],
+        routed,
+        now,
+        "gpt-5.6-sol",
+      ),
+    ).toBeNull();
+    expect(ids(selected, "gpt-5.6-sol")).toEqual(["codex", "codex-personal", "hub:oss"]);
   });
 
   it("keeps the freshest usable native duplicate and the freshest native credits in either order", () => {
