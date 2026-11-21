@@ -354,7 +354,7 @@ function ThreadListV2ShelfHeader(
   const label = m(copy.label);
   return (
     <ThreadListV2Section
-      label={props.expanded ? label : gt("{label} ({count})", { label, count: props.count })}
+      label={gt("{label} ({count})", { label, count: props.count })}
       pane={props.pane}
       tone={props.kind === "snoozed" ? "snoozed" : "default"}
       disclosure={{
