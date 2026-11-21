@@ -269,6 +269,7 @@ export const replayServer = (
                   borrowers.current -= 1;
                 }),
             ),
+      retire: Effect.void,
       forget: Effect.void,
     });
   });

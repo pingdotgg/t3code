@@ -85,6 +85,35 @@ it.effect("shares concurrent borrowers and closes after the idle TTL", () =>
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
+it.effect("retire hands new borrowers a fresh server and closes the old one on release", () =>
+  Effect.gen(function* () {
+    const testRuntime = yield* makeRuntime;
+    const release = yield* Deferred.make<void>();
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const owner = yield* OpenCodeServerOwner.make({
+          binaryPath: "opencode",
+          directory: "/project",
+        });
+        const session = yield* owner
+          .withServer((server) => Deferred.await(release).pipe(Effect.as(server.url)))
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(testRuntime.started);
+        yield* owner.retire;
+        expect(yield* Ref.get(testRuntime.closes)).toBe(0);
+        expect(yield* owner.withServer((server) => Effect.succeed(server.url))).toBe(
+          "http://127.0.0.1:2",
+        );
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(session)).toBe("http://127.0.0.1:1");
+        expect(yield* Ref.get(testRuntime.closes)).toBe(1);
+        yield* owner.retire;
+        expect(yield* Ref.get(testRuntime.closes)).toBe(2);
+      }),
+    ).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, testRuntime.runtime));
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
 it.effect("retries a failed start and closes on owner scope shutdown", () =>
   Effect.gen(function* () {
     const testRuntime = yield* makeRuntime;
