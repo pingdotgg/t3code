@@ -23,7 +23,7 @@ export function ThreadSideChatsRow(props: {
   return (
     <View
       className={cn(
-        "flex-row items-center gap-2 py-2 pl-4",
+        "flex-row items-center gap-2 pl-4",
         Platform.OS === "android" ? "bg-thread-canvas" : "bg-screen",
       )}
     >
@@ -35,7 +35,12 @@ export function ThreadSideChatsRow(props: {
       <Text className="text-xs text-foreground-muted">
         <T>Side chats</T>
       </Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-1">
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        className="flex-1"
+      >
         <View className="flex-row gap-1 pr-4">
           {sideChats.map((sideChat) => {
             const needs =
@@ -55,22 +60,26 @@ export function ThreadSideChatsRow(props: {
                       ? gt("Open side chat {title}, needs approval", { title: sideChat.title })
                       : gt("Open side chat {title}, needs input", { title: sideChat.title })
                 }
-                className="max-w-48 flex-row items-center gap-1.5 rounded-full bg-subtle px-2.5 py-1"
+                className="min-h-[44px] min-w-[44px] max-w-48 items-center justify-center"
                 onPress={() =>
                   openLinkedThread({ environmentId: props.environmentId, threadId: sideChat.id })
                 }
               >
-                {needs === null ? null : (
-                  <View
-                    className={cn(
-                      "h-1.5 w-1.5 shrink-0 rounded-full",
-                      needs === "approval" ? "bg-warning-foreground" : "bg-adaptive-indigo-600-300",
-                    )}
-                  />
-                )}
-                <Text className="shrink text-xs text-foreground" numberOfLines={1}>
-                  {sideChat.title}
-                </Text>
+                <View className="max-w-full flex-row items-center gap-1.5 rounded-full bg-subtle px-2.5 py-1">
+                  {needs === null ? null : (
+                    <View
+                      className={cn(
+                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                        needs === "approval"
+                          ? "bg-warning-foreground"
+                          : "bg-adaptive-indigo-600-300",
+                      )}
+                    />
+                  )}
+                  <Text className="shrink text-xs text-foreground" numberOfLines={1}>
+                    {sideChat.title}
+                  </Text>
+                </View>
               </Pressable>
             );
           })}
