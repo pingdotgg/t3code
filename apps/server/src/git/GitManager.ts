@@ -229,6 +229,8 @@ interface PrLookupGitReads {
   readonly remotes: Effect.Effect<string, GitCommandError>;
   readonly config: (key: string) => Effect.Effect<string | null, GitCommandError>;
   readonly remoteUrl: (remoteName: string) => Effect.Effect<string | null, GitCommandError>;
+  // Set when a load using these reads settled without asking the provider.
+  settledWithoutRequest: boolean;
 }
 // Cache lookups run with the caller's context, so a lookup's loader can share its reads.
 class CurrentPrLookupGitReads extends Context.Reference<PrLookupGitReads | undefined>(
@@ -1396,15 +1398,15 @@ export const make = Effect.gen(function* () {
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       const load = Effect.gen(function* () {
+        const reads = yield* currentPrLookupGitReads(cwd);
         const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
-        if (!lookup) {
-          return { latest: null, headContext };
-        }
         if (
-          details.localBranchExists &&
-          (details.upstreamRef === null || headContext.remoteName === null) &&
-          (yield* isUnpublishedBranch(cwd, headContext))
+          !lookup ||
+          (details.localBranchExists &&
+            (details.upstreamRef === null || headContext.remoteName === null) &&
+            (yield* isUnpublishedBranch(cwd, headContext)))
         ) {
+          reads.settledWithoutRequest = true;
           return { latest: null, headContext };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext, details.defaultBranch);
@@ -1657,6 +1659,7 @@ export const make = Effect.gen(function* () {
       config: (key) => readOnce(readConfigs, key, () => gitCore.readConfigValue(cwd, key)),
       remoteUrl: (remoteName) =>
         readOnce(readRemoteUrls, remoteName, () => readRemoteUrl(cwd, remoteName)),
+      settledWithoutRequest: false,
     };
   };
   const currentPrLookupGitReads = (cwd: string) =>
@@ -3089,9 +3092,12 @@ export const make = Effect.gen(function* () {
     }
     // A load this lookup starts reuses the remotes it just read. The identity check below reads
     // again on purpose: it has to see a remote that changed during the provider request.
+    const loadReads = makePrLookupGitReads(cacheCwd, liveRemotes);
     let cached = yield* getPrLookup(cacheKey).pipe(
-      Effect.provideService(CurrentPrLookupGitReads, makePrLookupGitReads(cacheCwd, liveRemotes)),
+      Effect.provideService(CurrentPrLookupGitReads, loadReads),
     );
+    // This lookup's own load just read that state and made no request to wait through.
+    if (loadReads.settledWithoutRequest) return null;
     // Lookup may use a fork instead of the saved upstream; verify the remote actually queried.
     const identityRemoteName = (headContext: BranchHeadContext) =>
       headContext.remoteName ?? remoteName ?? undefined;

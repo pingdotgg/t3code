@@ -1247,7 +1247,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("an unpublished branch PR lookup reads remotes once and its identity twice", () =>
+  it.effect("an unpublished branch PR lookup reads each remote setting once", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -1265,13 +1265,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/local-only" }),
       ).toBeNull();
       const count = (args: string) => gitCommands.filter((command) => command === args).length;
-      // The identity check after the provider request rereads the branch remote and its URL.
       expect({
         remoteLists: count("remote"),
         branchRemoteReads: count("config --get branch.feature/local-only.remote"),
         originUrlReads: count("config --get-all remote.origin.url"),
-      }).toEqual({ remoteLists: 1, branchRemoteReads: 2, originUrlReads: 2 });
-      expect(gitCommands.length).toBeLessThanOrEqual(11);
+      }).toEqual({ remoteLists: 1, branchRemoteReads: 1, originUrlReads: 1 });
+      expect(gitCommands.length).toBe(9);
     }),
   );
 
