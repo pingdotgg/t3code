@@ -18,6 +18,12 @@ import type * as WorkflowStore from "./WorkflowStore.ts";
 /** Hook ids of workflows start with this; a scheduled task's hook id never does. */
 export const HOOK_PREFIX = "wf-";
 
+// The dot between the two parts is never in either, so no two hooks share an id.
+const hookPart = (part: string) => encodeURIComponent(part).replaceAll(".", "%2E");
+/** The id of the hook `name` of `workflow`, which its URL and its secret are kept by. */
+export const hookId = (workflow: string, name: string) =>
+  `${HOOK_PREFIX}${hookPart(workflow)}.${hookPart(name)}`;
+
 export class WorkflowNotRegisteredError extends Schema.TaggedError<WorkflowNotRegisteredError>()(
   "WorkflowNotRegisteredError",
   { workflow: Schema.String, version: Schema.optional(Schema.Number) },

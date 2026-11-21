@@ -21,7 +21,13 @@ import {
   KeyValues,
   Runs,
 } from "./stepServices.ts";
-import type { OpenedTrigger, ScheduleTrigger, Trigger, WebhookTrigger } from "./triggers.ts";
+import {
+  checkTriggers,
+  type OpenedTrigger,
+  type ScheduleTrigger,
+  type Trigger,
+  type WebhookTrigger,
+} from "./triggers.ts";
 import type { WorkflowAgents } from "./WorkflowAgents.ts";
 import { unavailable, WorkflowForge } from "./WorkflowForge.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
@@ -620,6 +626,7 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
   ]);
   // Read once now, so a duration that does not parse fails the file and not a paused run later.
   for (const rest of options.resumeAfter ?? []) Duration.fromInputUnsafe(rest);
+  checkTriggers(name, options.triggers ?? []);
   return definitionOf(name, options, body);
 };
 

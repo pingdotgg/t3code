@@ -98,6 +98,25 @@ export const webhook = (
   return { kind: "webhook", name, key: options?.key };
 };
 
+/** Refuses two hooks of one name, or two triggers that would fire on the same thing. */
+export const checkTriggers = (
+  workflow: string,
+  triggers: ReadonlyArray<ScheduleTrigger | WebhookTrigger | OpenedTrigger>,
+) => {
+  const seen = new Set<string>();
+  for (const trigger of triggers) {
+    const id = trigger.kind === "webhook" ? `webhook:${trigger.name}` : trigger.id;
+    if (seen.has(id)) {
+      throw new Error(
+        trigger.kind === "webhook"
+          ? `workflow("${workflow}") has two hooks named "${trigger.name}". Give each its own name.`
+          : `workflow("${workflow}") lists the same ${trigger.kind === "schedule" ? "schedule" : "trigger"} twice. List it once.`,
+      );
+    }
+    seen.add(id);
+  }
+};
+
 const openedId = (
   kind: OpenedTrigger["kind"],
   options: {
