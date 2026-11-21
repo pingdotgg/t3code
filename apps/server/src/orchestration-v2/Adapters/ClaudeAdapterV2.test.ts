@@ -24110,6 +24110,227 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect(
+    "keeps a later wake's tool request out of a Monitor continuation while its replay is paused",
+    () =>
+      Effect.gen(function* () {
+        const digestStarted = yield* Deferred.make<void>();
+        const releaseDigest = yield* Deferred.make<void>();
+        let pauseDigest = false;
+        yield* Effect.gen(function* () {
+          const harness = yield* makeWorkflowHarnessWithOptions({ close: Queue.shutdown });
+          const now = yield* DateTime.now;
+          const approvalPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd: "/workspace",
+          });
+          const monitorTaskId = "bmonitorreplay";
+          const monitorToolUseId = "toolu_monitor_replay";
+          const bashToolUseId = "toolu_01PausedReplayBash";
+          const startTurn = (attempt: string, providerTurnOrdinal: number, continuation: boolean) =>
+            harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make(attempt),
+                text: continuation ? "Background task completed." : "Watch the run.",
+                attachments: [],
+                providerTurnOrdinal,
+                runtimePolicy: approvalPolicy,
+                ...(continuation
+                  ? {
+                      messageCreatedBy: "agent" as const,
+                      messageCreationSource: "provider" as const,
+                    }
+                  : {}),
+              }),
+            );
+          yield* startTurn("attempt-claude-paused-replay-1", 1, false);
+          for (const frame of [
+            claudeSdkFrame({
+              type: "assistant",
+              message: {
+                model: "claude-sonnet-4-6",
+                id: "msg_monitor_replay",
+                type: "message",
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: monitorToolUseId,
+                    name: "Monitor",
+                    input: { description: "line monitor", command: "./watch.sh" },
+                  },
+                ],
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 1, output_tokens: 1 },
+              },
+              parent_tool_use_id: null,
+              uuid: "00000000-0000-4000-8000-000000003201",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: monitorTaskId,
+              tool_use_id: monitorToolUseId,
+              description: "line monitor",
+              is_backgrounded: true,
+              task_type: "local_bash",
+              uuid: "00000000-0000-4000-8000-000000003202",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "user",
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "tool_result",
+                    tool_use_id: monitorToolUseId,
+                    content: `Monitor started (task ${monitorTaskId}). You will be notified on each event.`,
+                  },
+                ],
+              },
+              parent_tool_use_id: null,
+              uuid: "00000000-0000-4000-8000-000000003203",
+              session_id: WAKE_NATIVE_SESSION,
+              tool_use_result: { taskId: monitorTaskId, persistent: false },
+            }),
+          ]) {
+            yield* harness.offerAndWait(frame);
+          }
+          yield* launchWorkflow({
+            harness,
+            snapshotUuid: "00000000-0000-4000-8000-000000003204",
+          });
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000003205",
+              result: "Watching and running.",
+            }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+
+          // A Monitor event wakes Claude; the workflow finishes inside that wake.
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* Queue.take(harness.continuationReceipts);
+          assert.equal(harness.continuationRequests[0]?.notification?.source.kind, "monitor");
+          yield* harness.offerAndWait(
+            workflowNotification({
+              uuid: "00000000-0000-4000-8000-000000003206",
+              status: "completed",
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000003207",
+              result: "Noted.",
+              origin: { kind: "task-notification" },
+            }),
+          );
+          // A later wake's tool_use stays buffered behind the Monitor continuation.
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "init",
+              uuid: "00000000-0000-4000-8000-000000003208",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "assistant",
+              message: {
+                model: "claude-sonnet-4-6",
+                id: "msg_paused_replay_bash",
+                type: "message",
+                role: "assistant",
+                content: [
+                  { type: "tool_use", id: bashToolUseId, name: "Bash", input: { command: "ls" } },
+                ],
+              },
+              parent_tool_use_id: null,
+              uuid: "00000000-0000-4000-8000-000000003209",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+
+          // The Monitor continuation attaches, then its replay pauses on a transcript read.
+          pauseDigest = true;
+          const replay = yield* startTurn("attempt-claude-paused-replay-2", 2, true).pipe(
+            Effect.forkScoped,
+          );
+          yield* Deferred.await(digestStarted);
+          // @effect-diagnostics-next-line abortControllerInEffect:off - Claude, not the test fiber, owns the request.
+          const withdrawal = new AbortController();
+          const listening = Promise.withResolvers<void>();
+          const addEventListener = withdrawal.signal.addEventListener.bind(withdrawal.signal);
+          withdrawal.signal.addEventListener = (
+            ...args: Parameters<AbortSignal["addEventListener"]>
+          ) => {
+            addEventListener(...args);
+            listening.resolve();
+          };
+          const decision = yield* Effect.promise(() =>
+            harness.getOpenedOptions()!.canUseTool!(
+              "Bash",
+              { command: "ls" },
+              {
+                signal: withdrawal.signal,
+                toolUseID: bashToolUseId,
+                requestId: "request-paused-replay-bash",
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          yield* Effect.promise(() => listening.promise);
+          yield* Deferred.succeed(releaseDigest, undefined);
+          yield* Fiber.join(replay);
+
+          assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
+          assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+          const bashRuns = () =>
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === bashToolUseId
+                ? [event.turnItem.runId]
+                : [],
+            );
+          // The Monitor continuation settles without the later wake's tool, which gets its own run.
+          yield* Queue.take(harness.terminalReceipts);
+          assert.isEmpty(bashRuns());
+          yield* Queue.take(harness.continuationReceipts);
+          yield* startTurn("attempt-claude-paused-replay-3", 3, true);
+          yield* harness.until(() => bashRuns().length > 0);
+          assert.isTrue(
+            bashRuns().every((runId) => runId === RunId.make("run-attempt-claude-paused-replay-3")),
+          );
+        }).pipe(
+          Effect.provideService(WorkflowAgentTranscriptReadObserver, () =>
+            Effect.gen(function* () {
+              if (pauseDigest) {
+                pauseDigest = false;
+                yield* Deferred.succeed(digestStarted, undefined);
+                yield* Deferred.await(releaseDigest);
+              }
+            }),
+          ),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect.each([
     ["api_error", false, false],
     ["aborted_streaming", false, false],

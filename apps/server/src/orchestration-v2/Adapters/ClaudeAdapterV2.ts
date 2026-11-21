@@ -4568,6 +4568,14 @@ function toSessionPermissionUpdates(
   ];
 }
 
+const awaitAbortSignal = (signal: AbortSignal) =>
+  Effect.callback<void>((resume) => {
+    const abort = () => resume(Effect.void);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    return Effect.sync(() => signal.removeEventListener("abort", abort));
+  });
+
 export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecision")(function* (
   decision: Deferred.Deferred<ClaudeApprovalResponse>,
   signal: AbortSignal,
@@ -12545,13 +12553,52 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* handleRoutedSdkMessage(input);
         });
 
+        const isToolUseBuffered = (nativeThreadId: string, toolUseId: string) =>
+          Effect.map(Ref.get(wakeBuffers), (buffers) =>
+            (buffers.get(nativeThreadId)?.messages ?? []).some(
+              (message) =>
+                message.type === "assistant" &&
+                message.message.content.some(
+                  (block) => block.type === "tool_use" && block.id === toolUseId,
+                ),
+            ),
+          );
+
+        // A wake replay attaches its turn under the lock and then suspends on transcript reads, and
+        // Claude can ask for a later wake's tool meanwhile. Wait for the replay; a tool still
+        // buffered after it belongs to a wake this turn did not drain.
+        const activeTurnForToolRequest = Effect.fnUntraced(function* (
+          signal: AbortSignal,
+          toolUseId: string,
+        ) {
+          const attached = yield* Ref.get(activeTurn);
+          if (attached === null || !(yield* Ref.get(wakeBuffers)).has(attached.nativeThreadId)) {
+            return attached;
+          }
+          return yield* Effect.raceFirst(
+            sdkMessageLock.withPermits(1)(
+              Effect.gen(function* () {
+                const context = yield* Ref.get(activeTurn);
+                if (context === null) return null;
+                return (yield* isToolUseBuffered(context.nativeThreadId, toolUseId))
+                  ? null
+                  : context;
+              }),
+            ),
+            awaitAbortSignal(signal).pipe(Effect.as(null)),
+          );
+        });
+
         const canUseToolEffect = Effect.fn("ClaudeAdapterV2.canUseTool")(function* (
           toolName: Parameters<CanUseTool>[0],
           toolInput: Parameters<CanUseTool>[1],
           callbackOptions: Parameters<CanUseTool>[2],
           options?: { readonly startToolCall?: boolean },
         ) {
-          const context = yield* Ref.get(activeTurn);
+          const context = yield* activeTurnForToolRequest(
+            callbackOptions.signal,
+            callbackOptions.toolUseID,
+          );
           if (context === null) {
             return {
               behavior: "deny",
