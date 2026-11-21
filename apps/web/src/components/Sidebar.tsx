@@ -105,6 +105,7 @@ import {
 } from "../keybindings";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { isMacPlatform } from "~/lib/utils";
+import { type MixerSelection, soloMixerKey, toggleMixerKey } from "~/lib/mixerSelection";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
@@ -1020,8 +1021,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectScopeFilter = useComboboxFilter();
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
-  // Safari may click after Ctrl+click opens settings; suppress that selection until the picker reopens.
-  const suppressNextScopeChangeRef = useRef(false);
   const highlightedProjectScopeKeyRef = useRef<string | null>(null);
   // Hold dropped rows until server placement is confirmed; block another pickup from replacing the hold.
   const [optimisticDrop, setOptimisticDrop] = useState<SidebarOptimisticDrop | null>(null);
@@ -1144,12 +1143,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
+  const projectScopeKeyOrder = scopeGroups.map((project) => project.projectKey);
+  const projectScopeSelection = projectScopeKeys.length === 0 ? null : projectScopeKeys;
+  // The stored list uses [] for all projects, so turning the last one off cannot be stored.
+  const applyProjectScopeSelection = (next: MixerSelection<string>) => {
+    if (next?.length === 0) return;
+    setProjectScopeKeys(next ?? []);
+  };
   const toggleProjectScopeKey = (key: string) =>
-    setProjectScopeKeys(
-      projectScopeKeys.includes(key)
-        ? projectScopeKeys.filter((candidate) => candidate !== key)
-        : [...projectScopeKeys, key],
-    );
+    applyProjectScopeSelection(toggleMixerKey(projectScopeKeyOrder, projectScopeSelection, key));
+  const soloProjectScopeKey = (key: string) =>
+    applyProjectScopeSelection(soloMixerKey(projectScopeKeyOrder, projectScopeSelection, key));
   // The widened scope outlives the reveal, so it is written back to the persisted
   // scope. Route changes arrive from history, links and the palette, and only this
   // component holds the project groups that decide a widening, so no single
@@ -1253,7 +1257,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     ) => {
       event.preventDefault();
       event.stopPropagation();
-      suppressNextScopeChangeRef.current = true;
       dispatchProjectScopeMenu({ type: "project-settings-opened" });
       openProjectSettings(projectGroup);
     },
@@ -2681,7 +2684,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 threadProjectGroup && !threadProjectGroup.archived
                   ? {
                       label: threadProjectGroup.displayName,
-                      isActive: projectScopeKeys.includes(threadProjectGroup.projectKey),
+                      isActive:
+                        projectScopeKeys.length === 1 &&
+                        projectScopeKeys[0] === threadProjectGroup.projectKey,
                     }
                   : null,
               isPinned,
@@ -2726,13 +2731,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         }
         switch (clicked.value) {
           case "filter-by-project":
-            if (threadProjectGroup) {
-              setProjectScopeKeys(
-                projectScopeKeys.includes(threadProjectGroup.projectKey)
-                  ? []
-                  : [threadProjectGroup.projectKey],
-              );
-            }
+            if (threadProjectGroup) soloProjectScopeKey(threadProjectGroup.projectKey);
             return;
           case "project-settings":
             if (threadProjectGroup)
@@ -3048,7 +3047,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   open={projectScopeMenuState.open}
                   onOpenChange={(open, eventDetails) => {
                     if (eventDetails.isCanceled) return;
-                    if (open) suppressNextScopeChangeRef.current = false;
                     dispatchProjectScopeMenu({ type: "open-changed", open });
                   }}
                   onItemHighlighted={(item) => {
@@ -3056,23 +3054,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   }}
                   value={selectedProjectScopeItem}
                   onValueChange={(item, eventDetails) => {
-                    if (suppressNextScopeChangeRef.current) {
-                      suppressNextScopeChangeRef.current = false;
-                      return;
-                    }
                     if (!item) return;
                     if (item.value === "all") {
                       setProjectScopeKeys([]);
-                    } else if (
-                      eventDetails.event instanceof MouseEvent &&
-                      eventDetails.event.shiftKey
-                    ) {
-                      // Canceling skips Base UI's commit, which would freeze the search query, and its close.
-                      eventDetails.cancel();
-                      toggleProjectScopeKey(item.value);
-                    } else {
-                      setProjectScopeKeys([item.value]);
+                      return;
                     }
+                    if (!(eventDetails.event instanceof MouseEvent)) {
+                      setProjectScopeKeys([item.value]);
+                      return;
+                    }
+                    // Canceling skips Base UI's commit, which would freeze the search query, and its close.
+                    eventDetails.cancel();
+                    // macOS turns Ctrl+click into contextmenu, and Safari may still send the click.
+                    if (eventDetails.event.ctrlKey && isMacPlatform(navigator.platform)) return;
+                    if (eventDetails.event.altKey) soloProjectScopeKey(item.value);
+                    else toggleProjectScopeKey(item.value);
                   }}
                 >
                   <ComboboxTrigger
@@ -3173,9 +3169,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     <ComboboxList aria-multiselectable>
                       {(item: (typeof projectScopeItems)[number]) => {
                         const project = projectGroupByScopeKey.get(item.value) ?? null;
-                        const isSelected = project
-                          ? projectScopeKeys.includes(item.value)
-                          : projectScopeKeys.length === 0;
+                        const isSelected =
+                          projectScopeKeys.length === 0 ||
+                          (project !== null && projectScopeKeys.includes(item.value));
                         return (
                           <ComboboxItem
                             key={item.value}
@@ -3185,7 +3181,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             // The icon badge marks selection; Base UI's single value would shade one row.
                             data-selected={undefined}
                             onContextMenu={(event) => {
-                              if (project) handleProjectSettings(event, project);
+                              if (!project) return;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              soloProjectScopeKey(project.projectKey);
                             }}
                           >
                             <ProjectScopeRowIcon isSelected={isSelected}>

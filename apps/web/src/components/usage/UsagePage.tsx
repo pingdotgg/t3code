@@ -102,6 +102,12 @@ import {
   rankProvidersByMetric,
 } from "./usageProviders";
 import {
+  type MixerSelection,
+  mixerRowHandlers,
+  soloMixerKey,
+  toggleMixerKey,
+} from "../../lib/mixerSelection";
+import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
   type UsagePagePreferences,
@@ -1214,6 +1220,10 @@ function UsageEnvironmentFilter({
   const hasIssue =
     selectedEnvironments.some((environment) => environment.error !== null) ||
     contractMismatches.length > 0;
+  const environmentIds = environments.map((environment) => environment.environmentId);
+  const enabledEnvironmentIds = selectedEnvironmentIds && [...selectedEnvironmentIds];
+  const applyEnvironmentSelection = (next: MixerSelection<EnvironmentId>) =>
+    onSelectionChange(next && new Set(next));
 
   return (
     <Menu>
@@ -1270,12 +1280,20 @@ function UsageEnvironmentFilter({
               key={environment.environmentId}
               checked={checked}
               closeOnClick={false}
-              onCheckedChange={(nextChecked) => {
-                const next = new Set(selectedEnvironments.map((entry) => entry.environmentId));
-                if (nextChecked) next.add(environment.environmentId);
-                else next.delete(environment.environmentId);
-                onSelectionChange(next.size === environments.length ? null : next);
-              }}
+              {...mixerRowHandlers({
+                toggle: () =>
+                  applyEnvironmentSelection(
+                    toggleMixerKey(
+                      environmentIds,
+                      enabledEnvironmentIds,
+                      environment.environmentId,
+                    ),
+                  ),
+                solo: () =>
+                  applyEnvironmentSelection(
+                    soloMixerKey(environmentIds, enabledEnvironmentIds, environment.environmentId),
+                  ),
+              })}
             >
               <span className="flex min-w-0 items-center gap-3">
                 <span className="min-w-0 flex-1 truncate">{environment.label}</span>
@@ -1329,6 +1347,9 @@ function UsageProviderFilter({
 }) {
   const gt = useGT();
   const visible = PROVIDER_ORDER.filter((provider) => !hiddenProviders.has(provider));
+  const enabledProviders = hiddenProviders.size === 0 ? null : visible;
+  const applyProviderSelection = (next: MixerSelection<UsageProviderKind>) =>
+    onChange(next === null ? [] : PROVIDER_ORDER.filter((provider) => !next.includes(provider)));
   const label =
     visible.length === PROVIDER_ORDER.length
       ? gt("All providers")
@@ -1363,13 +1384,12 @@ function UsageProviderFilter({
             key={provider}
             checked={!hiddenProviders.has(provider)}
             closeOnClick={false}
-            onCheckedChange={(checked) =>
-              onChange(
-                PROVIDER_ORDER.filter((entry) =>
-                  entry === provider ? !checked : hiddenProviders.has(entry),
-                ),
-              )
-            }
+            {...mixerRowHandlers({
+              toggle: () =>
+                applyProviderSelection(toggleMixerKey(PROVIDER_ORDER, enabledProviders, provider)),
+              solo: () =>
+                applyProviderSelection(soloMixerKey(PROVIDER_ORDER, enabledProviders, provider)),
+            })}
           >
             <span className="flex min-w-0 items-center gap-2">
               <ProviderMark provider={provider} className="size-3.5" />
