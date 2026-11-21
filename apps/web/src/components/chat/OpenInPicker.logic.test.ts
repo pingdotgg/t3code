@@ -19,8 +19,22 @@ describe("shouldShowOpenInPicker", () => {
           primaryEnvironmentId,
           hostEnvironmentId,
           remoteOpenMode: "local-exec",
+          isDesktopWslBackend: false,
         }),
       ).toBe(visible);
     }
+  });
+
+  it("shows a desktop-managed WSL backend that runs editors itself", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "Project",
+        activeThreadEnvironmentId: EnvironmentId.make("wsl-secondary"),
+        primaryEnvironmentId: EnvironmentId.make("primary"),
+        hostEnvironmentId: null,
+        remoteOpenMode: "local-exec",
+        isDesktopWslBackend: true,
+      }),
+    ).toBe(true);
   });
 });

@@ -8,6 +8,7 @@ export function shouldShowOpenInPicker(input: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly hostEnvironmentId: string | null;
   readonly remoteOpenMode: RemoteOpenMode;
+  readonly isDesktopWslBackend: boolean;
 }): boolean {
   if (!input.activeProjectName) return false;
   if (
@@ -16,5 +17,7 @@ export function shouldShowOpenInPicker(input: {
   ) {
     return true;
   }
+  // Desktop-managed WSL backends run on this machine and reach Windows editors through interop.
+  if (input.isDesktopWslBackend) return true;
   return input.remoteOpenMode !== "local-exec";
 }
