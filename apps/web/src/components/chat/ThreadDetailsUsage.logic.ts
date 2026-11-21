@@ -30,6 +30,7 @@ export function resolveThreadDetailsLimits(
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
   now: number,
+  serving: { readonly sourceId: string; readonly accountId: string } | null = null,
 ): ThreadDetailsLimits | null {
   const provider = providers.find((entry) => entry.instanceId === providerInstanceId);
   if (!provider) return null;
@@ -43,7 +44,17 @@ export function resolveThreadDetailsLimits(
   const hubs = instanceHubs(provider, sources);
   if (limitsNotice(own) === null || hubs.length === 0) return { kind: "instance", limits: own };
   // An instance sent to a hub reads no limits of its own; its hub pools the accounts it spends.
-  return hubPool(provider.driver, model, providers, hubs, now) ?? { kind: "instance", limits: own };
+  // The account the hub names as serving this thread, even if its cached model list is stale.
+  const servingHubs = hubs.map((hub) => ({
+    ...hub,
+    accounts: hub.accounts.flatMap(({ models: _, ...account }) =>
+      hub.id === serving?.sourceId && account.id === serving.accountId ? [account] : [],
+    ),
+  }));
+  return (
+    hubPool(provider.driver, model, providers, servingHubs, now) ??
+    hubPool(provider.driver, model, providers, hubs, now) ?? { kind: "instance", limits: own }
+  );
 }
 
 export function nextPoolReset(window: LimitPoolWindow, now: number) {

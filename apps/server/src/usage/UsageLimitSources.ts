@@ -2,6 +2,7 @@ import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
+  type UsageLimitSourceServingAccountInput,
   type ProviderConsumeResetCreditResult,
   type ProviderDriverKind,
   type ServerSettings,
@@ -40,8 +41,24 @@ export class UsageLimitSources extends Context.Service<
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
+    readonly servingAccount: (
+      input: UsageLimitSourceServingAccountInput,
+    ) => Effect.Effect<string | null>;
   }
 >()("t3/usage/UsageLimitSources") {}
+
+// Hubs route sessions under their own provider names.
+const SESSION_ROUTED_PROVIDERS: Partial<Record<string, "claude" | "codex">> = {
+  claudeAgent: "claude",
+  codex: "codex",
+};
+
+function hubEndpoint(value: string) {
+  const url = URL.parse(value);
+  return url && /^https?:$/.test(url.protocol)
+    ? `${url.origin}${url.pathname.replace(/(\/management\.html)?\/*$/i, "")}`
+    : undefined;
+}
 
 function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   if (config.label) return config.label;
@@ -119,17 +136,12 @@ export const make = Effect.gen(function* () {
     config: UsageLimitSourceConfig,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const url = URL.parse(config.url);
+    const endpoint = hubEndpoint(config.url);
     const base = {
       id,
       kind: config.kind,
       label: sourceLabel(id, config),
-      ...(url && /^https?:$/.test(url.protocol)
-        ? {
-            origin: url.origin,
-            endpoint: `${url.origin}${url.pathname.replace(/(\/management\.html)?\/*$/i, "")}`,
-          }
-        : {}),
+      ...(endpoint ? { origin: new URL(endpoint).origin, endpoint } : {}),
       checkedAt,
     } as const;
     const managementKey = yield* readManagementKey(config);
@@ -201,6 +213,21 @@ export const make = Effect.gen(function* () {
     return result;
   }, refreshLock.withPermits(1));
 
+  // Any miss, such as a hub without session routing, answers null so the card shows the pool.
+  const servingAccount = Effect.fn("UsageLimitSources.servingAccount")(
+    function* (input: UsageLimitSourceServingAccountInput) {
+      const provider = SESSION_ROUTED_PROVIDERS[input.driver];
+      const settings = yield* settingsService.getSettings;
+      const config = settings.usageLimitSources[input.sourceId];
+      if (!provider || !config?.enabled || hubEndpoint(config.url) !== input.endpoint) return null;
+      const managementKey = yield* readManagementKey(config);
+      if (managementKey.length === 0) return null;
+      return yield* api.servingAccount({ url: config.url, managementKey }, provider, input.session);
+    },
+    Effect.timeout("5 seconds"),
+    Effect.orElseSucceed(() => null),
+  );
+
   yield* settingsService.streamChanges.pipe(
     Stream.map((settings) => settings.usageLimitSources),
     Stream.changes,
@@ -233,6 +260,7 @@ export const make = Effect.gen(function* () {
   return {
     current: Ref.get(stateRef),
     consumeResetCredit,
+    servingAccount,
     refresh,
     get streamChanges() {
       return Stream.unwrap(

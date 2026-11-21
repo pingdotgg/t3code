@@ -4099,6 +4099,11 @@ export default function ChatView(props: ChatViewProps) {
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
                   usage={{
+                    environmentId: activeThread.environmentId,
+                    nativeSessionId:
+                      activeProviderThread?.providerInstanceId === activeProviderInstanceId
+                        ? (activeProviderThread.nativeThreadRef?.nativeId ?? null)
+                        : null,
                     providerInstanceId: activeProviderInstanceId,
                     model: activeUsageModel,
                     providers: providerStatuses,

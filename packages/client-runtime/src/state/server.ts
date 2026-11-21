@@ -1590,6 +1590,13 @@ export function createServerEnvironmentAtoms<R, E>(
       refreshIntervalMs: 5_000,
       idleTtlMs: 0,
     }),
+    // A hub can move a session to another account mid-turn, so re-read it on the hub's cadence.
+    usageLimitSourceServingAccount: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:usage-limit-source-serving-account",
+      tag: WS_METHODS.providerUsageLimitSourceServingAccount,
+      staleTimeMs: 30_000,
+      refreshIntervalMs: 60_000,
+    }),
     scheduledTaskWebhookDeliveries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:scheduled-task:webhook-deliveries",
       tag: WS_METHODS.scheduledTasksListWebhookDeliveries,

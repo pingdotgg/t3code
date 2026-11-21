@@ -101,6 +101,16 @@ export type UsageLimitSourceSnapshot = typeof UsageLimitSourceSnapshot.Type;
 export const UsageLimitSourceSnapshots = ForwardCompatibleArray(UsageLimitSourceSnapshot);
 export type UsageLimitSourceSnapshots = typeof UsageLimitSourceSnapshots.Type;
 
+/** A native session id, which a hub with session routing maps to the account serving it. */
+export const UsageLimitSourceServingAccountInput = Schema.Struct({
+  sourceId: UsageLimitSourceId,
+  /** The hub's endpoint as the client saw it, so a hub replaced under the same id answers nothing. */
+  endpoint: TrimmedNonEmptyString,
+  driver: ProviderDriverKind,
+  session: TrimmedNonEmptyString,
+});
+export type UsageLimitSourceServingAccountInput = typeof UsageLimitSourceServingAccountInput.Type;
+
 export const UsageLimitSourceConsumeResetCreditInput = Schema.Struct({
   sourceId: UsageLimitSourceId,
   accountId: TrimmedNonEmptyString,
