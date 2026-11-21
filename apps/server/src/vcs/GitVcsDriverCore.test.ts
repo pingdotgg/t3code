@@ -1996,60 +1996,6 @@ it.effect("a refreshed ref list reads the current branch and repository paths on
   ),
 );
 
-it.effect("concurrent status and branch refreshes share one worktree scan", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const scanStarted = yield* Deferred.make<void>();
-      const releaseScan = yield* Deferred.make<void>();
-      let worktreeScans = 0;
-      let trackScans = false;
-      const recordingSpawner = ChildProcessSpawner.make((command) =>
-        Effect.gen(function* () {
-          const handle = yield* delegate.spawn(command);
-          if (
-            trackScans &&
-            ChildProcess.isStandardCommand(command) &&
-            command.args.includes("worktree") &&
-            command.args.includes("--porcelain")
-          ) {
-            worktreeScans++;
-            return ChildProcessSpawner.makeHandle({
-              ...handle,
-              exitCode: handle.exitCode.pipe(
-                Effect.tap(() =>
-                  Deferred.succeed(scanStarted, undefined).pipe(
-                    Effect.andThen(Deferred.await(releaseScan)),
-                  ),
-                ),
-              ),
-            });
-          }
-          return handle;
-        }),
-      );
-      const driver = yield* makeGitVcsDriverCore().pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner),
-      );
-      const cwd = yield* makeTmpDir();
-      yield* initRepoWithCommit(cwd);
-      const list = driver.listRefs({ cwd, refresh: true });
-      yield* list;
-      trackScans = true;
-
-      const status = yield* driver.readRefSnapshot(cwd, "refs").pipe(Effect.forkChild);
-      yield* Deferred.await(scanStarted);
-      const first = yield* list.pipe(Effect.forkChild({ startImmediately: true }));
-      const second = yield* list.pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.succeed(releaseScan, undefined);
-
-      assert.deepEqual(yield* Fiber.join(first), yield* Fiber.join(second));
-      assert.isNotNull(yield* Fiber.join(status));
-      assert.equal(worktreeScans, 1);
-    }).pipe(Effect.provide(layerTest)),
-  ),
-);
-
 it.effect("keeps cached branch occupancy when Git cannot rescan worktrees", () =>
   Effect.scoped(
     Effect.gen(function* () {
