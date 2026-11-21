@@ -10,6 +10,8 @@ import {
   threadRelationshipRowStatus,
 } from "./threadRelationships.ts";
 
+const testEnvironmentId = EnvironmentId.make("environment-test");
+
 describe("thread relationships", () => {
   it.each([
     ["running", "completed"],
@@ -18,6 +20,7 @@ describe("thread relationships", () => {
     const parent = ThreadId.make("parent");
     const child = ThreadId.make("child");
     const graph = deriveThreadRelationshipGraph({
+      environmentId: testEnvironmentId,
       threads: [
         {
           id: parent,
@@ -45,6 +48,7 @@ describe("thread relationships", () => {
     const parent = ThreadId.make("missing-parent");
     const child = ThreadId.make("child");
     const graph = deriveThreadRelationshipGraph({
+      environmentId: testEnvironmentId,
       threads: [
         {
           id: child,
@@ -76,7 +80,11 @@ describe("thread relationships", () => {
         subagents: [],
         contextTransfers: [],
       } as never;
-      const graph = deriveThreadRelationshipGraph({ threads: [], projection });
+      const graph = deriveThreadRelationshipGraph({
+        threads: [],
+        projection,
+        environmentId: testEnvironmentId,
+      });
       expect(immediateThreadRelationships(graph, child)).toEqual([
         expect.objectContaining({
           threadId: parent,
@@ -126,6 +134,7 @@ describe("thread relationships", () => {
     const parent = ThreadId.make("thread-parent");
     const child = ThreadId.make("thread-child");
     const graph = deriveThreadRelationshipGraph({
+      environmentId: testEnvironmentId,
       threads: [
         {
           id: child,
@@ -153,6 +162,7 @@ describe("thread relationships", () => {
     const child = ThreadId.make("thread-child");
     const missing = ThreadId.make("thread-missing");
     const graph = deriveThreadRelationshipGraph({
+      environmentId: testEnvironmentId,
       threads: [
         {
           id: root,
@@ -183,6 +193,7 @@ describe("thread relationships", () => {
     const child = ThreadId.make("thread-child");
     const transferTarget = ThreadId.make("thread-transfer");
     const graph = deriveThreadRelationshipGraph({
+      environmentId: testEnvironmentId,
       threads: [
         {
           id: parent,
@@ -266,6 +277,7 @@ describe("thread relationships", () => {
     } as const;
 
     const graph = deriveThreadRelationshipGraph({
+      environmentId: testEnvironmentId,
       threads: [liveChild, staleArchivedChild] as never,
       projection: null,
     });
@@ -365,6 +377,7 @@ function orderedLineageIds(input: {
   readonly projection?: unknown;
 }): ReadonlyArray<ThreadId> {
   const graph = deriveThreadRelationshipGraph({
+    environmentId: testEnvironmentId,
     threads: input.threads as never,
     projection: (input.projection ?? null) as never,
   });
