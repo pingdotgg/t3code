@@ -60,6 +60,8 @@ pub(crate) struct ChatView {
     expanded_ids: HashSet<String>,
     copied_code_key: Option<String>,
     model_label: String,
+    /// Project root; tool row paths under it show relative, as in Conn.
+    workspace_root: Option<String>,
     scroll_handle: ScrollHandle,
     stick_to_bottom: bool,
     textarea: Entity<TextareaState>,
@@ -80,7 +82,6 @@ impl fmt::Debug for ChatView {
 
 impl EventEmitter<ChatEvent> for ChatView {}
 
-#[expect(dead_code, reason = "public API mounted by the orchestrator in shell")]
 impl ChatView {
     /// Creates a new [`ChatView`] styled with `tokens`.
     pub(crate) fn new(tokens: Tokens, window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
@@ -114,6 +115,7 @@ impl ChatView {
             expanded_ids: HashSet::new(),
             copied_code_key: None,
             model_label: "Default model".to_owned(),
+            workspace_root: None,
             scroll_handle: ScrollHandle::new(),
             stick_to_bottom: true,
             textarea,
@@ -174,6 +176,26 @@ impl ChatView {
     }
 
     /// Sets the model display label shown in the composer footer.
+    /// Sets the project root used to shorten tool row paths.
+    pub(crate) fn set_workspace_root(&mut self, root: Option<String>, cx: &mut Context<'_, Self>) {
+        if self.workspace_root != root {
+            self.workspace_root = root;
+            cx.notify();
+        }
+    }
+
+    /// `Read /private/tmp/x/src/main.rs` → `Read src/main.rs` under root `/tmp/x`.
+    fn relative_title(&self, title: &str) -> String {
+        let Some(root) = self.workspace_root.as_deref() else {
+            return title.to_owned();
+        };
+        let root = root.trim_end_matches('/');
+        let private = format!("/private{root}");
+        title
+            .replace(&format!("{private}/"), "")
+            .replace(&format!("{root}/"), "")
+    }
+
     pub(crate) fn set_model_label(&mut self, label: String, cx: &mut Context<'_, Self>) {
         if self.model_label == label {
             return;
@@ -299,7 +321,10 @@ impl ChatView {
                 title,
                 detail,
                 status,
-            } => self.render_tool_row(id, kind, title, detail.as_deref(), *status, cx),
+            } => {
+                let title = self.relative_title(title);
+                self.render_tool_row(id, kind, &title, detail.as_deref(), *status, cx)
+            }
             TimelineEntry::Approval { id, title, detail } => {
                 self.render_approval_card(id, title, detail.as_deref())
             }

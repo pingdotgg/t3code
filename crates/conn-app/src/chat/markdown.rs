@@ -813,8 +813,9 @@ fn build_styled_text(spans: &[InlineSpan], tokens: &Tokens) -> StyledText {
             styled = true;
         }
         if span.style.code {
-            style.background_color = Some(hsla(tokens.code_background));
-            style.color = Some(hsla(tokens.code_foreground));
+            // Conn: `.chat-markdown :not(pre) > code` = foreground 10% chip, foreground text.
+            style.background_color = Some(hsla(tokens.foreground.with_alpha(0.10)));
+            style.color = Some(hsla(tokens.foreground));
             styled = true;
         }
         if span.link.is_some() {

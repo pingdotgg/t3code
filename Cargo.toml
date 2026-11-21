@@ -42,6 +42,17 @@ tokio-tungstenite = "0.29"
 tracing = "=0.1.44"
 url = "2"
 
+# Embedded Chromium (CEF-on-demand, feature-gated in conn-web; pinned to match .refs/threadbear)
+bzip2 = "=0.6.1"
+cc = "=1.11.3"
+cef = { version = "=156.4.0", default-features = false }
+cef-dll-sys = { version = "=156.4.0", features = ["dox"] }
+libc = "=0.2.191"
+sha1 = "=0.10.7"
+sha2 = "=0.10.9"
+tar = { version = "=0.4.46", default-features = false }
+ureq = { version = "=3.5.1", default-features = false, features = ["rustls"] }
+
 # BeautifulRust + Threadbear lint set.
 # `unsafe_code` is forbidden per-crate in conn-client, conn-state, and conn-theme;
 # conn-app (AppKit shims) and conn-web (CEF FFI) require `// SAFETY:` on every block.

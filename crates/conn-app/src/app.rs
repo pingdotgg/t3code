@@ -3,15 +3,15 @@
 use std::collections::{HashMap, HashSet};
 
 use conn_client::{ClientEvent, Connection, ConnectionStatus, ServerConfig};
-use conn_state::{LayoutState, RightPanelTab, ShellState, ThreadActivity, ThreadState};
+use conn_state::{LayoutState, RightPanelTab, ShellState, ThreadState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::{
-    App, Context, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding,
-    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window,
-    WindowControlArea, actions, div, px,
+    App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
+    IntoElement, KeyBinding, ParentElement as _, Render, StatefulInteractiveElement as _,
+    Styled as _, Window, WindowControlArea, actions, div, px,
 };
 
-use crate::fixture::{demo_shell_state, thread_activity};
+use crate::fixture::demo_shell_state;
 use crate::header::render_chat_header;
 use crate::icons;
 use crate::shell::{CardJoin, inset_card, two_tone_divider};
@@ -57,6 +57,7 @@ pub(crate) struct ConnApp {
     status: Option<ConnectionStatus>,
     /// Timelines of subscribed threads, by thread id.
     threads: HashMap<String, ThreadState>,
+    chat: Entity<crate::chat::ChatView>,
 }
 
 impl std::fmt::Debug for ConnApp {
@@ -78,10 +79,19 @@ impl ConnApp {
         theme_id: String,
         tokens: Tokens,
         server: Option<ServerConfig>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let mut layout = LayoutState::default();
+        let chat = cx.new(|cx| crate::chat::ChatView::new(tokens.clone(), window, cx));
+        cx.subscribe(
+            &chat,
+            |app, _chat, event: &crate::chat::ChatEvent, cx| match event {
+                crate::chat::ChatEvent::Send(text) => app.send_prompt(text.clone(), cx),
+                crate::chat::ChatEvent::Stop => app.stop_selected(cx),
+            },
+        )
+        .detach();
         let (shell, connection) = match server {
             Some(config) => {
                 let (connection, events) = Connection::start(config, crate::live::RT.handle());
@@ -111,7 +121,33 @@ impl ConnApp {
             connection,
             status: None,
             threads: HashMap::new(),
+            chat,
         }
+    }
+
+    /// Pushes the selected thread's timeline (and title/model) into the chat view.
+    fn sync_chat(&self, cx: &mut Context<'_, Self>) {
+        let selected = self.layout.selected_thread_id.as_deref();
+        let shell_thread = selected.and_then(|id| self.shell.thread(id));
+        let title = shell_thread.map(|t| t.title.clone());
+        let root = shell_thread.and_then(|t| {
+            t.worktree_path.clone().or_else(|| {
+                self.shell
+                    .project(&t.project_id)
+                    .map(|p| p.workspace_root.clone())
+            })
+        });
+        let model = shell_thread.and_then(|t| t.model_selection.model.as_str().map(str::to_owned));
+        let timeline = selected.and_then(|id| self.threads.get(id));
+        let fallback = selected.map(conn_state::ThreadState::new);
+        let thread = timeline.or(fallback.as_ref());
+        self.chat.update(cx, |chat, cx| {
+            chat.set_workspace_root(root, cx);
+            chat.set_thread(thread, title, cx);
+            if let Some(model) = model {
+                chat.set_model_label(model, cx);
+            }
+        });
     }
 
     /// Moves connection events onto the GPUI thread, one batch per wake.
@@ -129,6 +165,7 @@ impl ConnApp {
                     for event in batch {
                         app.apply_event(event);
                     }
+                    app.sync_chat(cx);
                     cx.notify();
                 });
                 if alive.is_err() {
@@ -277,6 +314,7 @@ impl ConnApp {
         if project_id.is_some() {
             self.layout.selected_project_id = project_id;
         }
+        self.sync_chat(cx);
         cx.notify();
     }
 
@@ -391,75 +429,7 @@ impl ConnApp {
             right: self.layout.right_panel_open,
         };
 
-        let active_thread = self
-            .layout
-            .selected_thread_id
-            .as_deref()
-            .and_then(|id| self.shell.thread(id));
-
-        let fg = hsla(self.tokens.foreground);
-        let muted = hsla(self.tokens.muted_foreground);
-
-        let body = if let Some(thread) = active_thread {
-            let activity_label = match thread_activity(&self.shell, thread) {
-                ThreadActivity::Working => "Working",
-                ThreadActivity::NeedsAttention => "Needs attention",
-                ThreadActivity::Failed => "Failed",
-                ThreadActivity::Idle => "Idle",
-            };
-
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .gap(px(12.0))
-                .px(px(24.0))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .size(px(44.0))
-                        .rounded(px(12.0))
-                        .bg(hsla(self.tokens.shell_tile))
-                        .border_1()
-                        .border_color(hsla(self.tokens.shell_tile_border))
-                        .child(icons::chrome(
-                            gpui_kit::assets::IconName::MessageSquare,
-                            muted,
-                        )),
-                )
-                .child(
-                    div()
-                        .text_size(px(14.0))
-                        .font_weight(gpui_kit::FontWeight::MEDIUM)
-                        .text_color(fg)
-                        .child(thread.title.clone()),
-                )
-                .child(
-                    div()
-                        .text_size(px(self.geometry.ui_font_size_px))
-                        .line_height(px(self.geometry.ui_line_height_px))
-                        .text_color(muted)
-                        .child(format!(
-                            "Status: {activity_label} · Chat timeline lands in Phase 3"
-                        )),
-                )
-        } else {
-            div()
-                .flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .text_size(px(self.geometry.ui_font_size_px))
-                .line_height(px(self.geometry.ui_line_height_px))
-                .text_color(muted)
-                .child("Select a thread from the sidebar")
-        };
-
-        let chat_card = inset_card(&self.tokens, &self.geometry, join).child(body);
+        let chat_card = inset_card(&self.tokens, &self.geometry, join).child(self.chat.clone());
 
         div()
             .flex()
@@ -603,6 +573,8 @@ impl ConnApp {
     /// Replaces the active theme tokens and updates `gpui-kit`'s global theme.
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
         apply_kit_theme(&tokens, cx);
+        self.chat
+            .update(cx, |chat, cx| chat.set_tokens(tokens.clone(), cx));
         self.tokens = tokens;
         cx.notify();
     }

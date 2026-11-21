@@ -45,10 +45,6 @@ impl AssetSource for PhosphorAssets {
 ///
 /// The orchestrator chains this with `gpui_kit::assets::AllAssets` when initializing GPUI.
 #[must_use]
-#[expect(
-    dead_code,
-    reason = "wired into the application AssetSource by the orchestrator"
-)]
 pub(crate) fn phosphor_assets() -> PhosphorAssets {
     PhosphorAssets
 }
