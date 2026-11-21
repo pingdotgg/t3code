@@ -164,6 +164,7 @@ const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetail
 });
 const NON_REPOSITORY_REMOTE_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitRemoteStatusDetails>({
   isRepo: false,
+  hasPrimaryRemote: false,
   defaultBranch: null,
   isDefaultBranch: false,
   branch: null,
@@ -1843,8 +1844,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     {
       capacity: 2_048,
+      // A remote added outside T3 Code must show on the next status read, so only a hit is kept.
       timeToLive: Exit.match({
-        onSuccess: () => STATUS_ORIGIN_EXISTS_CACHE_TTL,
+        onSuccess: (exists) => (exists ? STATUS_ORIGIN_EXISTS_CACHE_TTL : Duration.zero),
         onFailure: () => Duration.zero,
       }),
     },
@@ -2072,9 +2074,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return parsedRemoteRef?.branchName ?? branchName;
   });
 
+  const hasAnyRemote = (cwd: string) =>
+    resolveRepositoryPaths(cwd).pipe(
+      Effect.orElseSucceed(() => null),
+      Effect.flatMap((paths) =>
+        paths === null
+          ? listRemoteNames(cwd).pipe(Effect.map((remoteNames) => remoteNames.length > 0))
+          : Cache.get(primaryRemoteExistsCache, paths.gitCommonDir),
+      ),
+    );
+
   // Local-only repositories are normal and status polls them, so the span succeeds with null.
   // Callers that need a remote fail in their own span.
   const findPrimaryRemoteName = Effect.fn("resolvePrimaryRemoteName")(function* (cwd: string) {
+    if (!(yield* hasAnyRemote(cwd))) {
+      return null;
+    }
     if (yield* originRemoteExists(cwd)) {
       return "origin";
     }
@@ -2618,7 +2633,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    const defaultBranch = yield* resolvePrimaryDefaultBranchName(cwd);
+    const hasPrimaryRemote = yield* hasAnyRemote(cwd);
+    const defaultBranch = hasPrimaryRemote ? yield* resolvePrimaryDefaultBranchName(cwd) : null;
     const isDefaultBranch =
       branch !== null &&
       (branch === defaultBranch ||
@@ -2632,6 +2648,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     return {
       isRepo: true,
+      hasPrimaryRemote,
       defaultBranch,
       isDefaultBranch,
       branch,
@@ -2753,7 +2770,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
       );
     // diff-index does not read status output, so both spawn together; a non-repository discards it.
-    const [statusResult, numstatResult, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
+    const [statusResult, numstatResult, [hasPrimaryRemote, defaultBranch]] = yield* Effect.all(
       [
         readStatus,
         readNumstat("HEAD").pipe(
@@ -2779,17 +2796,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           }),
           Effect.result,
         ),
-        statusCacheKey
-          ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
-          : resolvePrimaryDefaultBranchName(cwd).pipe(Effect.orElseSucceed(() => null)),
-        statusCacheKey
-          ? Cache.get(primaryRemoteExistsCache, statusCacheKey).pipe(
-              Effect.orElseSucceed(() => false),
-            )
-          : listRemoteNames(cwd).pipe(
-              Effect.map((remoteNames) => remoteNames.length > 0),
-              Effect.orElseSucceed(() => false),
+        (statusCacheKey
+          ? Cache.get(primaryRemoteExistsCache, statusCacheKey)
+          : listRemoteNames(cwd).pipe(Effect.map((remoteNames) => remoteNames.length > 0))
+        ).pipe(
+          Effect.orElseSucceed(() => false),
+          Effect.flatMap((hasRemote) =>
+            (hasRemote
+              ? statusCacheKey
+                ? Cache.get(defaultBranchCache, statusCacheKey)
+                : resolvePrimaryDefaultBranchName(cwd)
+              : Effect.succeed(null)
+            ).pipe(
+              Effect.orElseSucceed(() => null),
+              Effect.map((defaultBranch) => [hasRemote, defaultBranch] as const),
             ),
+          ),
+        ),
       ],
       { concurrency: "unbounded" },
     );

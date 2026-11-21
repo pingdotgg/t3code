@@ -1286,7 +1286,7 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
-    const hostingProvider = details.isRepo
+    const hostingProvider = details.hasOriginRemote
       ? yield* resolveHostingProvider(cwd, details.branch)
       : null;
 
@@ -1611,7 +1611,7 @@ export const make = Effect.gen(function* () {
     }
 
     const { pr, headSha } =
-      details.branch !== null
+      details.branch !== null && details.hasPrimaryRemote
         ? yield* lookupStatusPr(
             cwd,
             {
