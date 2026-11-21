@@ -188,6 +188,26 @@ function resetStores(): () => void {
 describe("useBrowserHistoryStore", () => {
   beforeEach(resetStores);
 
+  it("keeps a visit another open tab saved when this tab records one", () => {
+    const storage = useBrowserHistoryStore.persist.getOptions().storage!;
+    const storageKey = useBrowserHistoryStore.persist.getOptions().name!;
+    storage.setItem(storageKey, {
+      state: {
+        byProjectKey: { "proj-a": [{ url: "http://a.test/first", lastVisitedAt: 1 }] },
+        projectKeyByThreadKey: {},
+      },
+      version: 1,
+    });
+    useBrowserHistoryStore.getState().recordVisit("proj-a", "http://a.test/second", 2);
+    const saved = storage.getItem(storageKey) as {
+      state: { byProjectKey: Record<string, BrowserHistoryEntry[]> };
+    };
+    expect(saved.state.byProjectKey["proj-a"]?.map((visit) => visit.url)).toEqual([
+      "http://a.test/second",
+      "http://a.test/first",
+    ]);
+  });
+
   it("titles only pages already in history when they settle", () => {
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
     settle("http://a.test/", "Should not create");
