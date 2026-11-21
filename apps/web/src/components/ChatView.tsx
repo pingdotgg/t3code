@@ -4176,9 +4176,7 @@ export default function ChatView(props: ChatViewProps) {
       <RevertConfirmHost
         threadKey={routeThreadKey}
         environmentId={environmentId}
-        taskFolderPath={
-          (activeProject?.trackedFolders?.length ?? 0) > 0 ? activeThreadWorktreePath : null
-        }
+        taskFolderPath={activeThreadWorktreePath}
         projection={serverProjection}
         worktreePath={activeThread?.worktreePath ?? null}
         onConfirm={onConfirmRevertStable}

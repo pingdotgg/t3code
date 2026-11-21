@@ -210,7 +210,7 @@ export function openRevertConfirm(threadKey: string, pending: PendingRevert): vo
 export function RevertConfirmHost(props: {
   readonly threadKey: string;
   readonly environmentId: EnvironmentId;
-  /** The thread's worktree when its project tracks folders, where it may be a task folder. */
+  /** The thread's worktree, which may be a task folder. */
   readonly taskFolderPath: string | null;
   readonly projection: Pick<
     OrchestrationV2ThreadProjection,
