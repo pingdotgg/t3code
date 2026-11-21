@@ -14,7 +14,28 @@
 //!   arrive as [`ClientEvent::Shell`] / [`ClientEvent::Thread`].
 //! - [`Connection::call`] / [`Connection::call_json`]: unary RPCs.
 
+mod auth;
+mod driver;
+mod wire;
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 use thiserror::Error;
+use tokio::sync::{mpsc, oneshot};
+
+use crate::driver::Command;
+
+/// Capacity of the bounded [`ClientEvent`] channel returned by [`Connection::start`].
+const EVENT_CHANNEL_CAPACITY: usize = 1024;
+
+/// Capacity of the bounded per-stream item channel returned by [`Connection::stream_json`].
+const STREAM_CHANNEL_CAPACITY: usize = 256;
+
+const TAG_DISPATCH_COMMAND: &str = "orchestration.dispatchCommand";
 
 /// Errors returned by the `conn-server` transport layer.
 #[derive(Debug, Error)]
@@ -67,7 +88,9 @@ pub enum ConnectionStatus {
     Connecting,
     Connected,
     /// Lost; retrying after a backoff.
-    Reconnecting { attempt: u32 },
+    Reconnecting {
+        attempt: u32,
+    },
     Failed(String),
 }
 
@@ -90,8 +113,302 @@ pub enum ClientEvent {
     },
 }
 
+/// Opaque identifier for a generic RPC stream created by [`Connection::stream_json`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StreamId(u64);
+
 /// Handle to a running connection. Cheap to clone; every method is non-blocking.
 #[derive(Clone, Debug)]
 pub struct Connection {
-    _private: (),
+    cmd_tx: mpsc::UnboundedSender<Command>,
+    next_stream_id: Arc<AtomicU64>,
+}
+
+impl Connection {
+    /// Spawns the connection task on `rt` and returns a cloneable [`Connection`] handle plus a
+    /// bounded receiver of [`ClientEvent`]s.
+    #[must_use]
+    pub fn start(
+        config: ServerConfig,
+        rt: &tokio::runtime::Handle,
+    ) -> (Self, mpsc::Receiver<ClientEvent>) {
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let (events_tx, events_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+        rt.spawn(driver::run(config, cmd_rx, events_tx));
+        let conn = Self {
+            cmd_tx,
+            next_stream_id: Arc::new(AtomicU64::new(1)),
+        };
+        (conn, events_rx)
+    }
+
+    /// Subscribes to `orchestration.subscribeShell`.
+    ///
+    /// Items arrive as [`ClientEvent::Shell`]. Automatically resubscribes after reconnect using
+    /// the last observed sequence as `afterSequence`.
+    pub fn subscribe_shell(&self) {
+        let _ = self.cmd_tx.send(Command::SubscribeShell);
+    }
+
+    /// Subscribes to `orchestration.subscribeThread` for `thread_id`.
+    ///
+    /// Items arrive as [`ClientEvent::Thread`]. Automatically resubscribes after reconnect using
+    /// the last observed sequence as `afterSequence`.
+    pub fn subscribe_thread(&self, thread_id: &str) {
+        let _ = self
+            .cmd_tx
+            .send(Command::SubscribeThread(thread_id.to_owned()));
+    }
+
+    /// Interrupts and removes the thread subscription for `thread_id`.
+    pub fn unsubscribe_thread(&self, thread_id: &str) {
+        let _ = self
+            .cmd_tx
+            .send(Command::UnsubscribeThread(thread_id.to_owned()));
+    }
+
+    /// Calls a unary RPC method with raw JSON payload and response.
+    ///
+    /// Safe to await from any async executor (including GPUI's main executor).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::Rpc`] if the server ends the request with a failure exit,
+    /// [`ClientError::Connection`] if the socket disconnects mid-call, or [`ClientError::Closed`]
+    /// if the connection task has shut down.
+    pub async fn call_json(&self, tag: &str, payload: Value) -> Result<Value, ClientError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::Call {
+                tag: tag.to_owned(),
+                payload,
+                reply: reply_tx,
+            })
+            .map_err(|_| ClientError::Closed)?;
+        reply_rx.await.map_err(|_| ClientError::Closed)?
+    }
+
+    /// Calls a typed unary RPC method.
+    ///
+    /// Safe to await from any async executor (including GPUI's main executor).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::Codec`] if serialization or deserialization fails, or any transport
+    /// or RPC error from [`Self::call_json`].
+    pub async fn call<P: Serialize, R: DeserializeOwned>(
+        &self,
+        tag: &str,
+        payload: &P,
+    ) -> Result<R, ClientError> {
+        let payload_json = serde_json::to_value(payload)?;
+        let response_json = self.call_json(tag, payload_json).await?;
+        Ok(serde_json::from_value(response_json)?)
+    }
+
+    /// Dispatches an orchestration v2 command via `orchestration.dispatchCommand`.
+    ///
+    /// Safe to await from any async executor (including GPUI's main executor).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::Codec`] if serialization fails, or any transport or RPC error from
+    /// [`Self::call_json`].
+    pub async fn dispatch_command(
+        &self,
+        command: conn_contract::OrchestrationV2Command,
+    ) -> Result<Value, ClientError> {
+        let payload = serde_json::to_value(&command)?;
+        self.call_json(TAG_DISPATCH_COMMAND, payload).await
+    }
+
+    /// Starts a generic streaming RPC call, returning a [`StreamId`] and a bounded receiver of
+    /// raw JSON items.
+    ///
+    /// Dropping the receiver or calling [`Self::cancel_stream`] sends a `FromClient::Interrupt`
+    /// to the server.
+    #[must_use]
+    pub fn stream_json(&self, tag: &str, payload: Value) -> (StreamId, mpsc::Receiver<Value>) {
+        let stream_id = StreamId(self.next_stream_id.fetch_add(1, Ordering::Relaxed));
+        let (tx, rx) = mpsc::channel(STREAM_CHANNEL_CAPACITY);
+        let _ = self.cmd_tx.send(Command::StartStream {
+            stream_id,
+            tag: tag.to_owned(),
+            payload,
+            tx,
+        });
+        (stream_id, rx)
+    }
+
+    /// Cancels an active stream started by [`Self::stream_json`].
+    pub fn cancel_stream(&self, stream_id: StreamId) {
+        let _ = self.cmd_tx.send(Command::CancelStream(stream_id));
+    }
+
+    /// Cleanly closes the connection and stops its background task.
+    pub fn close(&self) {
+        let _ = self.cmd_tx.send(Command::Close);
+    }
+}
+
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Connection>();
+    assert_send_sync::<ClientError>();
+    assert_send_sync::<ServerConfig>();
+    assert_send_sync::<ClientEvent>();
+    assert_send_sync::<StreamId>();
+};
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use conn_wire::{Exit, FromClient, FromServer, RequestId, encode_server_frame, frame_parts};
+    use futures::{SinkExt, StreamExt};
+    use serde_json::json;
+    use tokio::net::TcpListener;
+    use tokio::sync::mpsc;
+    use tokio_tungstenite::tungstenite::Message;
+
+    use super::*;
+
+    #[tokio::test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test uses assert! for diffs while propagating setup errors with ?"
+    )]
+    async fn sends_ack_for_split_chunks_handles_unary_and_interrupts_stream()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let (seen_tx, mut seen_rx) = mpsc::unbounded_channel::<FromClient>();
+
+        let server_task = tokio::spawn(async move {
+            let Ok((tcp, _)) = listener.accept().await else {
+                return;
+            };
+            let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
+                return;
+            };
+
+            while let Some(Ok(Message::Text(text))) = ws.next().await {
+                let Ok(frames) = conn_wire::decode_client_message(&text) else {
+                    continue;
+                };
+                for frame in frames {
+                    let _ = seen_tx.send(frame.clone());
+                    if let FromClient::Request(req) = frame {
+                        match req.tag.as_str() {
+                            "test.echo" => {
+                                let reply = FromServer::Exit {
+                                    request_id: req.id,
+                                    exit: Exit::success(json!({ "ok": true, "in": req.payload })),
+                                };
+                                let _ = ws
+                                    .send(Message::Text(encode_server_frame(&reply).into()))
+                                    .await;
+                            }
+                            "test.fail" => {
+                                let reply = FromServer::Exit {
+                                    request_id: req.id,
+                                    exit: Exit::fail(json!({ "_tag": "Boom" })),
+                                };
+                                let _ = ws
+                                    .send(Message::Text(encode_server_frame(&reply).into()))
+                                    .await;
+                            }
+                            "test.stream" => {
+                                let big = "a".repeat(200);
+                                let chunk = FromServer::Chunk {
+                                    request_id: req.id,
+                                    values: vec![json!({ "chunk": 1, "pad": big })],
+                                };
+                                let raw = encode_server_frame(&chunk);
+                                for part in frame_parts::split(&raw, 64) {
+                                    let _ = ws.send(Message::Text(part.into())).await;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        });
+
+        let config = ServerConfig {
+            http_base_url: url::Url::parse(&format!("http://{addr}"))?,
+            credential: Credential::Bearer("test-bearer".to_owned()),
+        };
+        let (conn, mut events) = Connection::start(config, &tokio::runtime::Handle::current());
+
+        // Wait for Connected.
+        let mut connected = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            if let Ok(Some(ClientEvent::Status(ConnectionStatus::Connected))) =
+                tokio::time::timeout(Duration::from_secs(1), events.recv()).await
+            {
+                connected = true;
+                break;
+            }
+        }
+        assert!(connected, "client must reach Connected status");
+
+        // Unary success.
+        let echo = conn.call_json("test.echo", json!({ "n": 7 })).await?;
+        assert_eq!(
+            echo,
+            json!({ "ok": true, "in": { "n": 7 } }),
+            "unary call_json must return server success value"
+        );
+
+        // Unary failure.
+        let err = conn.call_json("test.fail", json!({})).await;
+        assert!(
+            matches!(err, Err(ClientError::Rpc(_))),
+            "failure exit must map to ClientError::Rpc, got {err:?}"
+        );
+
+        // Split stream chunk -> verify item arrives, Ack is sent, and cancel_stream sends Interrupt.
+        let (stream_id, mut stream_rx) = conn.stream_json("test.stream", json!({}));
+        let item = tokio::time::timeout(Duration::from_secs(5), stream_rx.recv())
+            .await?
+            .ok_or("stream closed before yielding item")?;
+        assert_eq!(
+            item["chunk"],
+            json!(1),
+            "reassembled split chunk item must reach stream receiver"
+        );
+
+        conn.cancel_stream(stream_id);
+
+        let mut saw_ack = false;
+        let mut saw_interrupt = false;
+        let check_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < check_deadline && !(saw_ack && saw_interrupt) {
+            if let Ok(Some(frame)) =
+                tokio::time::timeout(Duration::from_millis(500), seen_rx.recv()).await
+            {
+                match frame {
+                    FromClient::Ack {
+                        request_id: RequestId::Number(_),
+                    } => saw_ack = true,
+                    FromClient::Interrupt {
+                        request_id: RequestId::Number(_),
+                    } => saw_interrupt = true,
+                    _ => {}
+                }
+            }
+        }
+        assert!(saw_ack, "client must send Ack after receiving a Chunk");
+        assert!(
+            saw_interrupt,
+            "client must send Interrupt when cancel_stream is called"
+        );
+
+        conn.close();
+        let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+        Ok(())
+    }
 }
