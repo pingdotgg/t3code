@@ -348,7 +348,7 @@ export default function DiffPanel({
     threadCwd: activeCwd ?? null,
   });
   const gitRepositoryPath = useDiffPanelStore((state) =>
-    selectThreadGitRepository(state.gitRepositoryByThreadKey, routeThreadRef),
+    selectThreadGitRepository(state.gitRepositoryByThreadKey, panelThreadRef),
   );
   const gitRepository =
     gitRepositories.find((repository) => repository.repositoryPath === gitRepositoryPath) ??
@@ -993,12 +993,17 @@ export default function DiffPanel({
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
     if (!panelThreadRef) return;
-    useDiffPanelStore.getState().selectBranchBaseRef(panelThreadRef, baseRef);
+    const store = useDiffPanelStore.getState();
+    // A base ref belongs to the repository shown, including the one a plain folder falls back to.
+    if (gitRepositoryPath === null && gitRepository !== null) {
+      store.selectGitRepository(panelThreadRef, gitRepository.repositoryPath);
+    }
+    store.selectBranchBaseRef(panelThreadRef, baseRef);
   };
   const selectGitRepository = (value: string) => {
     const nextPath = value === THREAD_FOLDER ? null : value;
-    if (!routeThreadRef || nextPath === (gitRepository?.repositoryPath ?? null)) return;
-    useDiffPanelStore.getState().selectGitRepository(routeThreadRef, nextPath);
+    if (!panelThreadRef || nextPath === (gitRepository?.repositoryPath ?? null)) return;
+    useDiffPanelStore.getState().selectGitRepository(panelThreadRef, nextPath);
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
