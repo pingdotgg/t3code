@@ -7,6 +7,7 @@ import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -108,8 +109,10 @@ function resolveSpawnExecutableWithNode(
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
     const normalizedPathEntry = normalizePathEntry(pathEntry, platform);
     if (normalizedPathEntry.length === 0) continue;
-    for (const candidate of candidates) {
-      const candidatePath = path.join(normalizedPathEntry, candidate);
+    const names = readPathDirectoryNamesSync(normalizedPathEntry, path.isAbsolute);
+    if (names === null) continue;
+    for (const name of pathDirectoryProbeNames(candidates, names, platform)) {
+      const candidatePath = path.join(normalizedPathEntry, name);
       if (isExecutable(candidatePath)) return candidatePath;
     }
   }
@@ -576,9 +579,55 @@ export const CommandResolutionCache = Context.Reference<Map<string, CommandResol
   },
 );
 
+// Lowercased name to the names as listed; a case-sensitive directory can hold several.
+type PathDirectoryNames = ReadonlyMap<string, ReadonlyArray<string>>;
+
 interface PathDirectoryListing {
-  readonly modified: number | null | undefined;
-  readonly names: ReadonlySet<string> | undefined;
+  readonly modified: number;
+  readonly names: PathDirectoryNames;
+}
+
+const PATH_DIRECTORY_LISTINGS_MAX_ENTRIES = 1024;
+// A directory changed within a coarse filesystem's timestamp step (FAT: 2 s) can change again
+// without moving its mtime, so its listing serves the lookups waiting on it but is not kept.
+const PATH_DIRECTORY_SETTLE_MS = 2_000;
+
+function isSettledListing(
+  directory: string,
+  modified: number,
+  nowMs: number,
+  isAbsolute: (path: string) => boolean,
+): boolean {
+  // A relative entry names a different directory whenever the working directory changes.
+  return isAbsolute(directory) && nowMs - modified >= PATH_DIRECTORY_SETTLE_MS;
+}
+
+function indexDirectoryNames(entries: ReadonlyArray<string>): PathDirectoryNames {
+  const names = new Map<string, string[]>();
+  for (const entry of entries) {
+    const key = entry.toLowerCase();
+    const listed = names.get(key);
+    if (listed) listed.push(entry);
+    else names.set(key, [entry]);
+  }
+  return names;
+}
+
+// File names to stat in one PATH directory, in candidate order. A listing gives the real
+// spelling, so only names that exist are probed; without one every case variant is tried.
+function pathDirectoryProbeNames(
+  candidates: ReadonlyArray<string>,
+  names: PathDirectoryNames | undefined,
+  platform: NodeJS.Platform,
+): ReadonlyArray<string> {
+  if (names === undefined) return candidates;
+  const probe: string[] = [];
+  for (const candidate of candidates) {
+    for (const name of names.get(candidate.toLowerCase()) ?? []) {
+      if ((platform === "win32" || name === candidate) && !probe.includes(name)) probe.push(name);
+    }
+  }
+  return probe;
 }
 
 const directoryMtime = (directory: string) =>
@@ -589,32 +638,82 @@ const directoryMtime = (directory: string) =>
     Effect.catch((error) => Effect.succeed(error.reason._tag === "NotFound" ? null : undefined)),
   );
 
-// Timestamp before reading so concurrent additions change the next mtime check; missing listings fall back to direct probes.
+interface ListedPathDirectory {
+  /** Undefined when the directory cannot be listed; lookups then probe every candidate. */
+  readonly names: PathDirectoryNames | undefined;
+  readonly settled: boolean;
+}
+
+// Keyed by mtime and directory, so a directory that changed is a new entry. The mtime is read
+// before the listing, so an entry added meanwhile moves the next mtime past this key.
+const pathDirectoryListingKey = (directory: string, modified: number) =>
+  `${modified}${COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR}${directory}`;
+
 const listPathDirectory = Effect.fnUntraced(function* (
-  directory: string,
-): Effect.fn.Return<PathDirectoryListing, never, FileSystem.FileSystem> {
-  const modified = yield* directoryMtime(directory);
-  if (modified == null) return { modified, names: modified === null ? new Set() : undefined };
+  key: string,
+): Effect.fn.Return<ListedPathDirectory, never, FileSystem.FileSystem | Path.Path> {
+  const separator = key.indexOf(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
+  const modified = Number(key.slice(0, separator));
+  const directory = key.slice(separator + 1);
   const entries = yield* FileSystem.FileSystem.use((fileSystem) =>
     fileSystem.readDirectory(directory),
   ).pipe(Effect.orElseSucceed(() => undefined));
-  return { modified, names: entries && new Set(entries.map((entry) => entry.toLowerCase())) };
+  const path = yield* Path.Path;
+  return {
+    names: entries && indexDirectoryNames(entries),
+    settled:
+      entries !== undefined &&
+      isSettledListing(directory, modified, yield* Clock.currentTimeMillis, path.isAbsolute),
+  };
 });
 
-const PathDirectoryListings = Context.Reference<
-  Cache.Cache<string, PathDirectoryListing, never, FileSystem.FileSystem> | undefined
->("@t3tools/shared/shell/PathDirectoryListings", { defaultValue: () => undefined });
+export const makePathDirectoryListings = Cache.makeWith(listPathDirectory, {
+  capacity: PATH_DIRECTORY_LISTINGS_MAX_ENTRIES,
+  timeToLive: (exit) =>
+    Exit.isSuccess(exit) && exit.value.settled ? Duration.infinity : Duration.zero,
+  requireServicesAt: "lookup",
+});
 
-export const withPathDirectoryListings =
-  /* Directory reads are cached inside one shell operation; a span for each lookup adds noise. */
-  Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
-    const listings = yield* Cache.make({
-      capacity: 1024,
-      lookup: listPathDirectory,
-      requireServicesAt: "lookup",
-    });
-    return yield* effect.pipe(Effect.provideService(PathDirectoryListings, listings));
-  });
+/** PATH directory listings for the process, reused while a directory's mtime is unchanged. */
+export const PathDirectoryListings = Context.Reference(
+  "@t3tools/shared/shell/PathDirectoryListings",
+  { defaultValue: () => Effect.runSync(makePathDirectoryListings) },
+);
+
+const syncPathDirectoryListings = new Map<string, PathDirectoryListing>();
+
+function readPathDirectoryNamesSync(
+  directory: string,
+  isAbsolute: (path: string) => boolean,
+): PathDirectoryNames | null | undefined {
+  let modified: number;
+  try {
+    const stats = NodeFS.statSync(directory);
+    if (!stats.isDirectory()) return undefined;
+    modified = stats.mtimeMs;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : undefined;
+  }
+  const cached = syncPathDirectoryListings.get(directory);
+  if (cached?.modified === modified) return cached.names;
+  let names: PathDirectoryNames;
+  try {
+    names = indexDirectoryNames(NodeFS.readdirSync(directory));
+  } catch {
+    return undefined;
+  }
+  // The synchronous resolver runs outside an Effect, so it compares against the host clock.
+  // @effect-diagnostics-next-line globalDate:off
+  if (isSettledListing(directory, modified, Date.now(), isAbsolute)) {
+    syncPathDirectoryListings.delete(directory);
+    if (syncPathDirectoryListings.size >= PATH_DIRECTORY_LISTINGS_MAX_ENTRIES) {
+      const oldest = syncPathDirectoryListings.keys().next().value;
+      if (oldest !== undefined) syncPathDirectoryListings.delete(oldest);
+    }
+    syncPathDirectoryListings.set(directory, { modified, names });
+  }
+  return names;
+}
 
 // An injected resolver or locator may answer differently for the same search, so its
 // entries are kept apart from every other resolver's.
@@ -688,14 +787,14 @@ const findOnPath = Effect.fnUntraced(function* (
   const listings = yield* PathDirectoryListings;
   const matches: string[] = [];
   for (const pathEntry of pathEntries) {
-    let listing = listings && (yield* Cache.get(listings, pathEntry));
-    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
-      yield* Cache.invalidate(listings, pathEntry);
-      listing = yield* Cache.get(listings, pathEntry);
-    }
-    for (const candidate of commandCandidates) {
-      if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
-      const candidatePath = path.join(pathEntry, candidate);
+    const modified = yield* directoryMtime(pathEntry);
+    if (modified === null) continue;
+    const names =
+      modified === undefined
+        ? undefined
+        : (yield* Cache.get(listings, pathDirectoryListingKey(pathEntry, modified))).names;
+    for (const name of pathDirectoryProbeNames(commandCandidates, names, platform)) {
+      const candidatePath = path.join(pathEntry, name);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
         matches.push(candidatePath);
         if (isLast(candidatePath)) return matches;

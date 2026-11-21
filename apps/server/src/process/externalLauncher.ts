@@ -15,11 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  isCommandAvailable,
-  resolveSpawnCommand,
-  withPathDirectoryListings,
-} from "@t3tools/shared/shell";
+import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -503,7 +499,7 @@ const readEditorEnv = Effect.fn("externalLauncher.readEditorEnv")(function* () {
 const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
   const platform = yield* HostProcess.Platform;
   const env = yield* readEditorEnv();
-  return yield* buildAvailableEditors(platform, env).pipe(withPathDirectoryListings);
+  return yield* buildAvailableEditors(platform, env);
 });
 
 const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileManagerRevealKind")(

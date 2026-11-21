@@ -22,6 +22,8 @@ import {
   pathSetupCommand,
   CommandAvailability,
   CommandResolutionCache,
+  makePathDirectoryListings,
+  PathDirectoryListings,
   type CommandAvailabilityChecker,
   gitForWindowsBash,
   isCommandAvailable,
@@ -39,7 +41,6 @@ import {
   windowsEnvironmentValueCommand,
   SpawnExecutableResolution,
   WindowsShellEnvironment,
-  withPathDirectoryListings,
   type WindowsShellEnvironmentReader,
   XcodeGitLocation,
 } from "./shell.ts";
@@ -591,7 +592,8 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
             stat: (filePath) =>
               Effect.sync(() => {
                 probed.push(filePath);
-                return { type: "Directory" } as FileSystem.File.Info;
+                // No mtime, so no listing: every candidate is probed directly.
+                return { type: "Directory", mtime: Option.none() } as FileSystem.File.Info;
               }),
           }),
         ),
@@ -609,7 +611,8 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       });
 
       // Windows PATH directories can be case-sensitive; preserve both spellings.
-      expect(probed).toHaveLength(8);
+      expect(probed).toEqual(expect.arrayContaining(["C:\\bin", "C:\\BIN"]));
+      expect(probed).toHaveLength(2 + 8);
     }),
   );
 
@@ -635,7 +638,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
               ...fs,
               stat: (filePath) =>
                 fs.stat(
-                  filePath === executable || filePath === decoy
+                  filePath === cwd || filePath === executable || filePath === decoy
                     ? filePath
                     : path.join(cwd, "missing"),
                 ),
@@ -646,7 +649,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }),
   );
 
-  it.effect("probes only listed PATH names and relists a directory that changes", () =>
+  it.effect("lists each PATH directory once, probes only listed names, and relists on change", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -655,20 +658,29 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       yield* fs.writeFileString(path.join(first, "cursor.CMD"), "");
       yield* fs.writeFileString(path.join(second, "cursor.EXE"), "");
       const env = { PATH: `${first};${second}`, PATHEXT: ".EXE;.CMD" };
+      // Past the settle window of both directories, including the far-future mtime set below.
+      yield* TestClock.setTime(4_200_000_000_000);
       const probed: Array<string> = [];
+      const listed: Array<string> = [];
       yield* Effect.gen(function* () {
         expect(yield* resolveCommandPath("cursor", { env })).toBe(path.join(first, "cursor.CMD"));
         expect(yield* isCommandAvailable("absent", { env })).toBe(false);
+        expect(yield* isCommandAvailable("also-absent", { env })).toBe(false);
+        expect(listed).toEqual([first, second]);
         yield* fs.writeFileString(path.join(second, "late.EXE"), "");
         yield* fs.utimes(second, 4_102_444_800, 4_102_444_800);
         expect(yield* resolveCommandPath("late", { env })).toBe(path.join(second, "late.EXE"));
+        expect(listed).toEqual([first, second, second]);
       }).pipe(
-        withPathDirectoryListings,
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
           stat: (file) => {
             if (file !== first && file !== second) probed.push(file);
             return fs.stat(file);
+          },
+          readDirectory: (directory, options) => {
+            listed.push(directory);
+            return fs.readDirectory(directory, options);
           },
         }),
       );
@@ -676,6 +688,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
     }).pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(CommandResolutionCache, new Map()),
+      Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
     ),
   );
 });

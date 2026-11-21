@@ -4,13 +4,16 @@ import type { ManagedPolicyLimits } from "@t3tools/contracts";
 import { EDITORS, REMOTE_CAPABLE_EDITOR_IDS } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { makePathDirectoryListings, PathDirectoryListings } from "@t3tools/shared/shell";
 import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
+import * as DateTime from "effect/DateTime";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 import type * as Electron from "electron";
 
@@ -549,6 +552,8 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+const FIXTURE_MTIME = DateTime.makeUnsafe("2026-01-01T00:00:00Z");
+
 describe("probeRemoteEditors PATH scan", () => {
   const platform = HostProcess.Platform.defaultValue();
   const launcherName = (command: string) => (platform === "win32" ? `${command}.cmd` : command);
@@ -570,6 +575,10 @@ describe("probeRemoteEditors PATH scan", () => {
       yield* fs.writeFileString(file, "#!/bin/sh\n");
       if (platform !== "win32") yield* fs.chmod(file, 0o755);
     }
+    // Listings of directories changed moments ago are not kept, so age them past that window.
+    const mtime = DateTime.toDateUtc(FIXTURE_MTIME);
+    for (const dir of dirs) yield* fs.utimes(dir, mtime, mtime);
+    yield* TestClock.setTime(DateTime.toEpochMillis(FIXTURE_MTIME) + 60_000);
     return {
       root,
       env: {
@@ -581,7 +590,10 @@ describe("probeRemoteEditors PATH scan", () => {
     };
   });
 
-  const countingFileSystem = (counter: { stat: number; reads: Map<string, number> }) =>
+  const countingFileSystem = (
+    counter: { stat: number; reads: Map<string, number> },
+    options: { readonly unlisted?: boolean } = {},
+  ) =>
     Layer.effect(
       FileSystem.FileSystem,
       Effect.gen(function* () {
@@ -592,9 +604,12 @@ describe("probeRemoteEditors PATH scan", () => {
             counter.stat += 1;
             return fs.stat(target);
           },
-          readDirectory: (target, options) => {
+          readDirectory: (target, readOptions) => {
             counter.reads.set(target, (counter.reads.get(target) ?? 0) + 1);
-            return fs.readDirectory(target, options);
+            // Unreadable directories fall back to probing every candidate name.
+            return options.unlisted === true
+              ? fs.readDirectory(`${target}-unlisted`)
+              : fs.readDirectory(target, readOptions);
           },
         });
       }),
@@ -621,7 +636,8 @@ describe("probeRemoteEditors PATH scan", () => {
       const uncachedEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x1` };
       const cachedEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x2` };
       const uncached = yield* serialReference(uncachedEnv).pipe(
-        Effect.provide(countingFileSystem(uncachedCounter)),
+        Effect.provide(countingFileSystem(uncachedCounter, { unlisted: true })),
+        Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
       );
       const cached = yield* probeRemoteEditors
         .handler(undefined)
@@ -629,6 +645,7 @@ describe("probeRemoteEditors PATH scan", () => {
           Effect.provideService(HostProcess.Environment, cachedEnv),
           Effect.provideService(HostProcess.Platform, platform),
           Effect.provide(countingFileSystem(cachedCounter)),
+          Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
         );
       // The host can add editors from app folders the fixture can't redirect (e.g. /Applications).
       const fixtureEditors = ["cursor", "vscode", "zed", "webstorm"];
@@ -645,7 +662,7 @@ describe("probeRemoteEditors PATH scan", () => {
         .map((entry) => cachedCounter.reads.get(entry) ?? 0);
       assert.isAbove(Math.max(...pathReads), 0);
       assert.isAtMost(Math.max(...pathReads), 1);
-      // Without the listings, Windows stats every PATH entry x PATHEXT candidate for each editor;
+      // Unlisted, Windows stats every PATH entry x PATHEXT candidate for each editor;
       // elsewhere there is no PATHEXT, so the stat count is about the same either way.
       if (platform === "win32") {
         assert.isBelow(cachedCounter.stat, uncachedCounter.stat / 2);
