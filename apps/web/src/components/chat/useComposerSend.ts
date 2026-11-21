@@ -1741,21 +1741,8 @@ export function useComposerSend(input: ComposerSendInput) {
     });
     if (ready) return onSendLatest(...args);
   };
-  const captureDetachedSend = useStableCallback(
-    () =>
-      async (...args: Parameters<typeof onSend>) => {
-        args[0]?.preventDefault();
-        const refresh =
-          args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
-            ? null
-            : refreshBeforeSend();
-        if (refresh === null) return onSend(...args);
-        sendInFlightRef.current = true;
-        const ready = await refresh.finally(() => {
-          sendInFlightRef.current = false;
-        });
-        if (ready) return onSend(...args);
-      },
-  );
+  // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
+  // only time a detached send runs, so the draft keeps the environment it was dictated for.
+  const captureDetachedSend = useStableCallback(() => onSend);
   return { onSend: onSendWithRouting, captureDetachedSend };
 }
