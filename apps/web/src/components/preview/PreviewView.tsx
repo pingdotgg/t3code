@@ -79,6 +79,8 @@ import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu, type PreviewMoreMenuActions } from "./PreviewMoreMenu";
+import { BrowserImportWizard } from "~/components/settings/BrowserImportWizard";
+import { useBrowserCookieImport } from "~/components/settings/useBrowserCookieImport";
 import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
 import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
@@ -272,6 +274,15 @@ export function PreviewView({
   // IPC interprets undefined profile ids as all profiles.
   const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
   const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId, messages);
+  const cookieImport = useBrowserCookieImport();
+  const { importSession } = cookieImport;
+  const canImportCookiesInTab =
+    Boolean(previewBridge) &&
+    snapshot !== null &&
+    runtimeTabId !== null &&
+    activeProfileId !== INCOGNITO_BROWSER_PROFILE_ID &&
+    (!serverOwnsRendering || nativeServerTab) &&
+    (primaryEnvironmentId === null || threadRef.environmentId === primaryEnvironmentId);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
@@ -1059,6 +1070,22 @@ export function PreviewView({
                 ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
                 : {})}
               profileName={activeProfileName}
+              {...(canImportCookiesInTab
+                ? {
+                    cookieImport: {
+                      sources: cookieImport.sources,
+                      importableSources: cookieImport.importableSources,
+                      denial: cookieImport.cookieImportDenial,
+                      canImport:
+                        cookieImport.settingsHydrated &&
+                        cookieImport.primaryEnvironment != null &&
+                        !cookieImport.importInFlight,
+                      environmentConnected: cookieImport.primaryEnvironment != null,
+                      onLoadSources: cookieImport.loadSources,
+                      onSelectSource: cookieImport.startImportSession,
+                    },
+                  }
+                : {})}
               findShortcutLabel={shortcutLabelForCommand(keybindings, "preview.find", {
                 context: { previewFocus: true },
               })}
@@ -1199,6 +1226,29 @@ export function PreviewView({
           </div>
         ) : null}
       </div>
+      {importSession ? (
+        <BrowserImportWizard
+          source={importSession.source}
+          destinationEnvironmentName={importSession.environmentName}
+          targetProfiles={cookieImport.listedProfiles.map((profile) => ({
+            id: profile.id,
+            name: profile.name,
+          }))}
+          canCreateProfile={cookieImport.settingsHydrated && !cookieImport.atProfileLimit}
+          preferredTargetProfileId={activeProfileId}
+          onImport={(input) =>
+            cookieImport.runWizardImport(importSession.source, importSession.environmentId, input)
+          }
+          onRefreshSource={() => cookieImport.refreshImportSource(importSession.source.id)}
+          onCheckFullDiskAccess={
+            window.desktopBridge
+              ? () => window.desktopBridge!.checkSystemPermission("full-disk-access")
+              : undefined
+          }
+          onOpenFullDiskAccessSettings={cookieImport.openFullDiskAccessSettings}
+          onClose={() => cookieImport.setImportSession(null)}
+        />
+      ) : null}
     </div>
   );
 }
