@@ -33,6 +33,7 @@ import {
   forgejoCommit,
   forgejoChecks,
   forgejoReactions,
+  WIP_TITLE,
 } from "./forgejoPullRequestJson.ts";
 import { ForgejoBranchStatusChecks, markRequiredForgejoChecks } from "./forgejoRequiredChecks.ts";
 import { definition } from "../shared/definition.ts";
@@ -51,7 +52,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   mentions: true,
   referenceSigils: [],
   labels: true,
-  // Forgejo's public API has no thread replies/resolution or draft conversion endpoint.
+  // Forgejo's public API has no thread replies/resolution endpoint.
   review: {
     inlineComment: true,
     reply: false,
@@ -580,6 +581,22 @@ export const make = Effect.gen(function* () {
             path: `${pullPath(input)}/update?style=${input.updateMethod ?? "merge"}`,
             method: "POST",
           });
+        case "draft":
+        case "ready":
+          // Forgejo has no draft flag to set: a title starting with its WIP prefix is the draft.
+          return getPull(input).pipe(
+            Effect.flatMap((pr) => {
+              const title =
+                input.action === "ready"
+                  ? pr.title.replace(WIP_TITLE, "")
+                  : WIP_TITLE.test(pr.title)
+                    ? pr.title
+                    : `WIP: ${pr.title}`;
+              return title === pr.title
+                ? Effect.void
+                : write({ ...input, path: pullPath(input), method: "PATCH", body: { title } });
+            }),
+          );
         default:
           return unsupported(input.action);
       }
