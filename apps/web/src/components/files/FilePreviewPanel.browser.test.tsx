@@ -333,7 +333,7 @@ describe("source file focus", () => {
 });
 
 describe("source file scroll", () => {
-  it("returns a file tab to where it was scrolled after another file was shown", async () => {
+  it("returns a file to where it was scrolled after another file or thread was shown", async () => {
     using _settings = setup();
     const style = document.createElement("style");
     style.textContent = appCss;
@@ -363,6 +363,13 @@ describe("source file scroll", () => {
     await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(0));
     await screen.rerender(sourceFile("a.ts", 2000));
 
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+
+    // Switching threads unmounts the whole panel; coming back mounts a new one.
+    await screen.rerender(<div />);
+    await vi.waitFor(() => expect(scroller()).toBeNull());
+    await screen.rerender(sourceFile("a.ts", 2000));
+    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
     await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
   });
 
