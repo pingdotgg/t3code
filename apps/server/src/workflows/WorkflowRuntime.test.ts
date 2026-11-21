@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import Migration0100 from "../persistence/Migrations/106_Workflows.ts";
 import Migration0101 from "../persistence/Migrations/107_WorkflowTriggers.ts";
@@ -286,5 +287,64 @@ it.effect("a file that never finishes loading is given up on, and later files st
       loaded.map((definition) => definition.name),
       ["greet"],
     );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a file given up on registers nothing into the file that loads after it", () =>
+  Effect.gen(function* () {
+    const { at, fileSystem } = yield* setup();
+    yield* fileSystem.writeFileString(
+      at("slow.ts"),
+      'await new Promise((resolve) => { globalThis.t3TestResume = resolve; });\nT3.workflow("slow", { version: 1, payload: Schema.Struct({}) }, () => Effect.void);\n',
+    );
+    // The second file goes on loading until the first one's top level has run to its end.
+    yield* fileSystem.writeFileString(
+      at("next.ts"),
+      `${greet("hi")}globalThis.t3TestResume();\nawait new Promise((resolve) => setImmediate(resolve));\n`,
+    );
+    yield* WorkflowRuntime.loadDefinitions(at("slow.ts"), 0, 50).pipe(Effect.flip);
+    const loaded = yield* WorkflowRuntime.loadDefinitions(at("next.ts"));
+    assert.deepStrictEqual(
+      loaded.map((definition) => definition.name),
+      ["greet"],
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+// Vitest's module runner loads a file its own way; only Node keeps a CommonJS file by its path.
+it.live("a file without imports or exports loads again after it changes", () =>
+  Effect.gen(function* () {
+    const { at, fileSystem } = yield* setup();
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    yield* fileSystem.writeFileString(at("greet.ts"), greet("hi"));
+    const twice = `
+      import * as NodeFS from "node:fs";
+      import * as NodeServices from "@effect/platform-node/NodeServices";
+      import * as Effect from "effect/Effect";
+      import { loadDefinitions } from ${JSON.stringify(new URL("./WorkflowRuntime.ts", import.meta.url).href)};
+      const file = process.argv.at(-1);
+      const program = Effect.gen(function* () {
+        const first = yield* loadDefinitions(file, 1);
+        NodeFS.writeFileSync(file, NodeFS.readFileSync(file, "utf8").replace('"hi"', '"hello"'));
+        const second = yield* loadDefinitions(file, 2);
+        return [first.length, second.length];
+      });
+      console.log(JSON.stringify(await Effect.runPromise(Effect.provide(program, NodeServices.layer))));
+    `;
+    const child = yield* spawner.spawn(
+      ChildProcess.make(
+        process.execPath,
+        ["--input-type=module", "--eval", twice, at("greet.ts")],
+        { cwd: import.meta.dirname },
+      ),
+    );
+    const [stdout, stderr] = yield* Effect.all(
+      [
+        child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+        child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+      ],
+      { concurrency: "unbounded" },
+    );
+    assert.equal(stdout.trim(), "[1,1]", stderr);
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
