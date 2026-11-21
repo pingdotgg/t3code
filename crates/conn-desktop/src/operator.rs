@@ -5,6 +5,8 @@
 //! annotations (Slice 3).
 //!
 //! Protocol summary (see `../conn/FORK.md`):
+//! - Auth: Operator's Local API expects `Authorization: Bearer <token>` (or `X-Operator-Token`)
+//!   from Operator → Settings → Local API.
 //! - `POST <origin>/dictate/start`  with `{"session":"<id>"}` -> 2xx started, 400/404 unsupported.
 //! - `POST <origin>/dictate/wait`   with `{"session":"<id>"}` -> 2xx `{"text":"..."}`, 504 still
 //!   waiting (caller retries while active), 400/404 unsupported (older Operator without wait).
@@ -12,8 +14,10 @@
 //! - `POST <origin>/dictate/cancel` with `{"session":"<id>"}` -> 2xx cancelled.
 //! - Legacy fallback: `POST <origin>/dictate` (empty body) for Operator builds before sessions.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
 
@@ -26,6 +30,120 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 /// Operator gives up around 120s (504), so we allow 130s.
 const TRANSCRIPT_TIMEOUT: Duration = Duration::from_secs(130);
 
+/// Local Operator connection configuration saved on this Mac.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorConfig {
+    pub base_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+impl Default for OperatorConfig {
+    fn default() -> Self {
+        Self {
+            base_url: DEFAULT_OPERATOR_URL.to_owned(),
+            token: None,
+        }
+    }
+}
+
+impl OperatorConfig {
+    /// Default config file path (`~/Library/Application Support/conn-gpui/operator.json`),
+    /// overridable with `CONN_GPUI_CONFIG_DIR` for isolated dev/test sessions.
+    #[must_use]
+    pub fn default_path() -> Option<PathBuf> {
+        if let Some(dir) = std::env::var_os("CONN_GPUI_CONFIG_DIR") {
+            return Some(PathBuf::from(dir).join("operator.json"));
+        }
+        let home = std::env::var_os("HOME")?;
+        Some(
+            PathBuf::from(home)
+                .join("Library/Application Support/conn-gpui")
+                .join("operator.json"),
+        )
+    }
+
+    /// Loads saved config from `path`, falling back to [`Default`].
+    #[must_use]
+    pub fn load_from(path: &Path) -> Self {
+        let mut cfg: Self = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+        if cfg.base_url.trim().is_empty() {
+            cfg.base_url = DEFAULT_OPERATOR_URL.to_owned();
+        }
+        cfg.token = cfg
+            .token
+            .map(|t| t.trim().to_owned())
+            .filter(|t| !t.is_empty());
+        cfg
+    }
+
+    /// Loads config from the default path, with `CONN_OPERATOR_URL` / `CONN_OPERATOR_TOKEN`
+    /// environment overrides taking precedence.
+    #[must_use]
+    pub fn load_effective() -> Self {
+        let mut cfg = Self::default_path()
+            .map(|p| Self::load_from(&p))
+            .unwrap_or_default();
+        if let Ok(url) = std::env::var("CONN_OPERATOR_URL") {
+            let trimmed = url.trim();
+            if !trimmed.is_empty() {
+                cfg.base_url = trimmed.to_owned();
+            }
+        }
+        if let Ok(tok) = std::env::var("CONN_OPERATOR_TOKEN") {
+            let trimmed = tok.trim();
+            if !trimmed.is_empty() {
+                cfg.token = Some(trimmed.to_owned());
+            }
+        }
+        cfg
+    }
+
+    /// Persists config atomically to `path` with `0600` permissions on Unix.
+    pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let clean = Self {
+            base_url: if self.base_url.trim().is_empty() {
+                DEFAULT_OPERATOR_URL.to_owned()
+            } else {
+                self.base_url.trim().to_owned()
+            },
+            token: self
+                .token
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(ToOwned::to_owned),
+        };
+        let json = serde_json::to_string_pretty(&clean)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
+        std::fs::rename(tmp, path)
+    }
+
+    /// Persists config to [`Self::default_path`].
+    pub fn save_default(&self) -> std::io::Result<()> {
+        let path = Self::default_path().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "cannot resolve Operator config directory",
+            )
+        })?;
+        self.save_to(&path)
+    }
+}
+
 /// Errors from talking to local Operator.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OperatorError {
@@ -35,8 +153,10 @@ pub enum OperatorError {
     InvalidSessionId(String),
     #[error("Operator is not reachable at {url}: {message}")]
     Unreachable { url: String, message: String },
-    #[error("Operator rejected the request (HTTP {status}).")]
-    Rejected { status: u16 },
+    #[error("Operator requires a Local API token: {0}")]
+    Unauthorized(String),
+    #[error("Operator rejected the request (HTTP {status}): {message}")]
+    Rejected { status: u16, message: String },
 }
 
 pub type OperatorResult<T> = Result<T, OperatorError>;
@@ -70,21 +190,11 @@ pub fn is_valid_session_id(session_id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-/// Resolves the configured Operator base URL from `CONN_OPERATOR_URL`, falling back to
-/// [`DEFAULT_OPERATOR_URL`].
-#[must_use]
-pub fn configured_operator_url() -> String {
-    std::env::var("CONN_OPERATOR_URL")
-        .ok()
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_OPERATOR_URL.to_owned())
-}
-
 /// Client for local Operator HTTP dictation sessions.
 #[derive(Debug, Clone)]
 pub struct OperatorClient {
     base_origin: Url,
+    token: Option<String>,
     origin_header: Option<String>,
     http: reqwest::Client,
 }
@@ -99,7 +209,6 @@ impl OperatorClient {
                 "only http(s) URLs with a host are allowed".to_owned(),
             ));
         }
-        // Normalize down to origin (`scheme://host[:port]/`).
         let origin_str = parsed.origin().ascii_serialization();
         let base_origin = Url::parse(&origin_str)
             .map_err(|err| OperatorError::InvalidBaseUrl(err.to_string()))?;
@@ -114,14 +223,29 @@ impl OperatorClient {
 
         Ok(Self {
             base_origin,
+            token: None,
             origin_header: None,
             http,
         })
     }
 
-    /// Creates a client for [`configured_operator_url`].
-    pub fn from_env() -> OperatorResult<Self> {
-        Self::new(&configured_operator_url())
+    /// Creates a client from saved [`OperatorConfig`] and env overrides (`CONN_OPERATOR_URL`,
+    /// `CONN_OPERATOR_TOKEN`).
+    pub fn from_config() -> OperatorResult<Self> {
+        let cfg = OperatorConfig::load_effective();
+        let mut client = Self::new(&cfg.base_url)?;
+        if let Some(token) = cfg.token {
+            client = client.with_token(token);
+        }
+        Ok(client)
+    }
+
+    /// Sets the Operator Local API token sent as `Authorization: Bearer <token>`.
+    #[must_use]
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        let trimmed = token.into().trim().to_owned();
+        self.token = (!trimmed.is_empty()).then_some(trimmed);
+        self
     }
 
     /// Sets an optional `Origin` header (used by Browser Annotations so Operator enforces its
@@ -147,6 +271,9 @@ impl OperatorClient {
     ) -> OperatorResult<(u16, String)> {
         let url = self.endpoint(path)?;
         let mut req = self.http.post(url.clone()).timeout(timeout);
+        if let Some(token) = &self.token {
+            req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"));
+        }
         if let Some(origin) = &self.origin_header {
             req = req.header(reqwest::header::ORIGIN, origin);
         }
@@ -168,13 +295,17 @@ impl OperatorClient {
     pub async fn start(&self, session_id: &str) -> OperatorResult<DictationStart> {
         validate_session(session_id)?;
         let body = json!({ "session": session_id }).to_string();
-        let (status, _) = self
+        let (status, text) = self
             .post_json("/dictate/start", Some(body), CONTROL_TIMEOUT)
             .await?;
         match status {
             200..=299 => Ok(DictationStart::Started),
             400 | 404 => Ok(DictationStart::Unsupported),
-            other => Err(OperatorError::Rejected { status: other }),
+            401 => Err(OperatorError::Unauthorized(parse_error_message(&text))),
+            other => Err(OperatorError::Rejected {
+                status: other,
+                message: parse_error_message(&text),
+            }),
         }
     }
 
@@ -189,7 +320,11 @@ impl OperatorClient {
             200..=299 => Ok(DictationWait::Transcript(parse_transcript(&text))),
             504 => Ok(DictationWait::StillWaiting),
             400 | 404 => Ok(DictationWait::Unsupported),
-            other => Err(OperatorError::Rejected { status: other }),
+            401 => Err(OperatorError::Unauthorized(parse_error_message(&text))),
+            other => Err(OperatorError::Rejected {
+                status: other,
+                message: parse_error_message(&text),
+            }),
         }
     }
 
@@ -200,10 +335,13 @@ impl OperatorClient {
         let (status, text) = self
             .post_json("/dictate/stop", Some(body), TRANSCRIPT_TIMEOUT)
             .await?;
-        if (200..=299).contains(&status) {
-            Ok(parse_transcript(&text))
-        } else {
-            Err(OperatorError::Rejected { status })
+        match status {
+            200..=299 => Ok(parse_transcript(&text)),
+            401 => Err(OperatorError::Unauthorized(parse_error_message(&text))),
+            other => Err(OperatorError::Rejected {
+                status: other,
+                message: parse_error_message(&text),
+            }),
         }
     }
 
@@ -211,23 +349,29 @@ impl OperatorClient {
     pub async fn cancel(&self, session_id: &str) -> OperatorResult<()> {
         validate_session(session_id)?;
         let body = json!({ "session": session_id }).to_string();
-        let (status, _) = self
+        let (status, text) = self
             .post_json("/dictate/cancel", Some(body), CONTROL_TIMEOUT)
             .await?;
-        if (200..=299).contains(&status) {
-            Ok(())
-        } else {
-            Err(OperatorError::Rejected { status })
+        match status {
+            200..=299 => Ok(()),
+            401 => Err(OperatorError::Unauthorized(parse_error_message(&text))),
+            other => Err(OperatorError::Rejected {
+                status: other,
+                message: parse_error_message(&text),
+            }),
         }
     }
 
     /// Legacy sessionless fallback (`POST /dictate`) for older Operator builds.
     pub async fn legacy_toggle(&self) -> OperatorResult<()> {
-        let (status, _) = self.post_json("/dictate", None, CONTROL_TIMEOUT).await?;
-        if (200..=299).contains(&status) {
-            Ok(())
-        } else {
-            Err(OperatorError::Rejected { status })
+        let (status, text) = self.post_json("/dictate", None, CONTROL_TIMEOUT).await?;
+        match status {
+            200..=299 => Ok(()),
+            401 => Err(OperatorError::Unauthorized(parse_error_message(&text))),
+            other => Err(OperatorError::Rejected {
+                status: other,
+                message: parse_error_message(&text),
+            }),
         }
     }
 }
@@ -247,6 +391,19 @@ pub fn parse_transcript(body: &str) -> String {
         .ok()
         .and_then(|v| v.get("text")?.as_str().map(ToOwned::to_owned))
         .unwrap_or_default()
+}
+
+fn parse_error_message(body: &str) -> String {
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .or_else(|| v.get("message"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "request rejected".to_owned())
 }
 
 #[cfg(test)]
@@ -298,8 +455,20 @@ mod tests {
         assert_eq!(parse_transcript("not json"), "");
     }
 
+    #[test]
+    fn config_round_trips_to_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("operator.json");
+        let cfg = OperatorConfig {
+            base_url: "http://127.0.0.1:12321".to_owned(),
+            token: Some("op_test_token".to_owned()),
+        };
+        cfg.save_to(&path).unwrap();
+        assert_eq!(OperatorConfig::load_from(&path), cfg);
+    }
+
     #[tokio::test]
-    async fn start_wait_504_then_transcript_and_origin_header() {
+    async fn start_wait_504_then_transcript_with_bearer_token_and_origin() {
         let (base, handle) = spawn_mock_operator(vec![
             ("/dictate/start", 200, "{}"),
             ("/dictate/wait", 504, "{}"),
@@ -309,6 +478,7 @@ mod tests {
 
         let client = OperatorClient::new(&base)
             .unwrap()
+            .with_token("secret-local-token")
             .with_origin("https://myapp.test");
         assert_eq!(client.start("sess-1").await, Ok(DictationStart::Started));
         assert_eq!(client.wait("sess-1").await, Ok(DictationWait::StillWaiting));
@@ -318,17 +488,20 @@ mod tests {
         );
 
         let seen = handle.await.unwrap();
-        assert!(
-            seen[0]
-                .to_ascii_lowercase()
-                .contains("origin: https://myapp.test")
-        );
+        let headers_lc = seen[0].to_ascii_lowercase();
+        assert!(headers_lc.contains("authorization: bearer secret-local-token"));
+        assert!(headers_lc.contains("origin: https://myapp.test"));
         assert!(seen[0].contains(r#"{"session":"sess-1"}"#));
     }
 
     #[tokio::test]
-    async fn stop_cancel_and_unsupported_404() {
+    async fn unauthorized_401_and_stop_cancel_and_404() {
         let (base, handle) = spawn_mock_operator(vec![
+            (
+                "/dictate/start",
+                401,
+                r#"{"error":"Send the Local API token as Authorization: Bearer <token>."}"#,
+            ),
             ("/dictate/start", 404, "{}"),
             ("/dictate/stop", 200, r#"{"text":"manual stop"}"#),
             ("/dictate/cancel", 200, "{}"),
@@ -336,6 +509,12 @@ mod tests {
         .await;
 
         let client = OperatorClient::new(&base).unwrap();
+        assert_eq!(
+            client.start("sess-2").await,
+            Err(OperatorError::Unauthorized(
+                "Send the Local API token as Authorization: Bearer <token>.".to_owned()
+            ))
+        );
         assert_eq!(
             client.start("sess-2").await,
             Ok(DictationStart::Unsupported)

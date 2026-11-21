@@ -635,7 +635,7 @@ impl Composer {
         cx.spawn_in(window, async move |this, cx| {
             let start_res = crate::live::RT
                 .spawn(async move {
-                    let client = OperatorClient::from_env()?;
+                    let client = OperatorClient::from_config()?;
                     match client.start(&sid_for_start).await? {
                         DictationStart::Started => Ok(DictationStart::Started),
                         DictationStart::Unsupported => {
@@ -666,7 +666,7 @@ impl Composer {
                     if !still_same {
                         let sid = session_id.clone();
                         crate::live::RT.spawn(async move {
-                            if let Ok(client) = OperatorClient::from_env() {
+                            if let Ok(client) = OperatorClient::from_config() {
                                 let _ = client.cancel(&sid).await;
                             }
                         });
@@ -708,7 +708,7 @@ impl Composer {
                 let sid = session_id.clone();
                 let wait_res = crate::live::RT
                     .spawn(async move {
-                        let client = OperatorClient::from_env()?;
+                        let client = OperatorClient::from_config()?;
                         client.wait(&sid).await
                     })
                     .await;
@@ -767,7 +767,7 @@ impl Composer {
         cx.spawn_in(window, async move |this, cx| {
             let stop_res = crate::live::RT
                 .spawn(async move {
-                    let client = OperatorClient::from_env()?;
+                    let client = OperatorClient::from_config()?;
                     client.stop(&sid).await
                 })
                 .await;
@@ -799,7 +799,7 @@ impl Composer {
         self.dictation_error = None;
         cx.notify();
         crate::live::RT.spawn(async move {
-            if let Ok(client) = OperatorClient::from_env() {
+            if let Ok(client) = OperatorClient::from_config() {
                 let _ = client.cancel(&session_id).await;
             }
         });
@@ -2021,6 +2021,9 @@ fn friendly_operator_error(err: &conn_desktop::operator::OperatorError) -> Strin
     match err {
         conn_desktop::operator::OperatorError::Unreachable { .. } => {
             "Operator isn't running".to_owned()
+        }
+        conn_desktop::operator::OperatorError::Unauthorized(_) => {
+            "Set Operator token in ⌘, → Connections".to_owned()
         }
         other => other.to_string(),
     }

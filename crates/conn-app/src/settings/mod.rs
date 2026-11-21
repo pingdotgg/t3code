@@ -157,6 +157,9 @@ pub(crate) struct SettingsModal {
     themes: Vec<ThemeOption>,
     search_input: Entity<InputState>,
     _search_sub: Subscription,
+    operator_url_input: Entity<InputState>,
+    operator_token_input: Entity<InputState>,
+    operator_saved_notice: Option<String>,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -208,6 +211,21 @@ impl SettingsModal {
             }
         });
 
+        let operator_cfg = conn_desktop::operator::OperatorConfig::load_effective();
+        let operator_url = operator_cfg.base_url.clone();
+        let operator_token = operator_cfg.token.unwrap_or_default();
+        let operator_url_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(conn_desktop::operator::DEFAULT_OPERATOR_URL)
+                .default_value(operator_url)
+        });
+        let operator_token_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Paste token from Operator → Settings → Local API")
+                .masked(true)
+                .default_value(operator_token)
+        });
+
         Self {
             tokens,
             geometry: ShellGeometry::default(),
@@ -219,6 +237,9 @@ impl SettingsModal {
             themes,
             search_input,
             _search_sub: search_sub,
+            operator_url_input,
+            operator_token_input,
+            operator_saved_notice: None,
             focus_handle,
             scroll: ScrollHandle::new(),
         }
@@ -262,6 +283,28 @@ impl SettingsModal {
     fn select_theme(&mut self, theme_id: String, cx: &mut Context<'_, Self>) {
         self.active_theme_id = theme_id.clone();
         cx.emit(SettingsEvent::ApplyTheme(theme_id));
+        cx.notify();
+    }
+
+    fn save_operator_config(&mut self, cx: &mut Context<'_, Self>) {
+        let base_url = self.operator_url_input.read(cx).value().trim().to_owned();
+        let raw_token = self.operator_token_input.read(cx).value().trim().to_owned();
+        let cfg = conn_desktop::operator::OperatorConfig {
+            base_url: if base_url.is_empty() {
+                conn_desktop::operator::DEFAULT_OPERATOR_URL.to_owned()
+            } else {
+                base_url
+            },
+            token: (!raw_token.is_empty()).then_some(raw_token),
+        };
+        self.operator_saved_notice = match cfg.save_default() {
+            Ok(()) => Some(if cfg.token.is_some() {
+                "Saved".to_owned()
+            } else {
+                "Cleared token".to_owned()
+            }),
+            Err(err) => Some(format!("Save failed: {err}")),
+        };
         cx.notify();
     }
 
@@ -659,7 +702,7 @@ impl SettingsModal {
             );
         }
 
-        if "connection server url websocket status transport orbit profile sync workspaces"
+        if "connection server url websocket status transport orbit profile sync workspaces operator dictation voice token"
             .contains(needle)
         {
             sections.push(self.render_connections_page(cx));
@@ -1082,6 +1125,63 @@ impl SettingsModal {
             &self.geometry,
         ));
 
+        let operator_save_btn = div()
+            .id("conn-settings-operator-save")
+            .px(px(10.0))
+            .py(px(5.0))
+            .rounded(px(7.0))
+            .bg(control_bg)
+            .border_1()
+            .border_color(control_border)
+            .text_size(px(12.0))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(fg)
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover_bg))
+            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.save_operator_config(cx);
+            }))
+            .child("Save");
+
+        let operator_notice = self.operator_saved_notice.as_ref().map(|msg| {
+            div()
+                .text_size(px(12.0))
+                .text_color(hsla(self.tokens.success))
+                .child(msg.clone())
+        });
+
+        let operator_rows = vec![
+            settings_row(
+                "Local API URL",
+                Some("Operator local HTTP endpoint on this Mac (default http://127.0.0.1:12321)."),
+                div()
+                    .w(px(240.0))
+                    .child(Input::new(&self.operator_url_input))
+                    .into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ),
+            settings_row(
+                "Local API token",
+                Some("Copy from Operator → Settings → Local API (sent as Authorization: Bearer)."),
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .w(px(200.0))
+                            .child(Input::new(&self.operator_token_input)),
+                    )
+                    .children(operator_notice)
+                    .child(operator_save_btn)
+                    .into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ),
+        ];
+
         div()
             .flex()
             .flex_col()
@@ -1096,6 +1196,12 @@ impl SettingsModal {
             .child(settings_section(
                 "Orbit profile sync",
                 orbit_rows,
+                &self.tokens,
+                &self.geometry,
+            ))
+            .child(settings_section(
+                "Operator dictation",
+                operator_rows,
                 &self.tokens,
                 &self.geometry,
             ))
