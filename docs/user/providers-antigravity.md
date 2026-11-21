@@ -107,6 +107,12 @@ on its own; to share a folder like that one, list it in `~/.gemini/config/skills
 (or a project's `.agents/skills.json`), and T3 Code shows the skills it declares,
 honoring `inherits`, `include_only`, and `exclude`.
 
+Antigravity threads follow the same global rules as the CLI: `~/.gemini/AGENTS.md`,
+`~/.gemini/GEMINI.md`, `~/.gemini/config/AGENTS.md`, `~/.gemini/config/GEMINI.md`,
+`~/.gemini/config/rules.json`, and the `~/.gemini/config/rules` folder. On Windows,
+T3 Code copies the rule files when a session starts, so an edit to one applies from
+the next session.
+
 Antigravity receives images and audio directly, and reads PDFs and text files as
 documents. Other attachments, including videos, are passed as a saved file path for
 the agent to inspect with its tools.

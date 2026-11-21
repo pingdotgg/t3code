@@ -256,6 +256,9 @@ class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkE
 const antigravityUserConfigFiles = [
   ["AGENTS.md"],
   ["GEMINI.md"],
+  ["config", "AGENTS.md"],
+  ["config", "GEMINI.md"],
+  ["config", "rules.json"],
   ["config", "skills.json"],
 ] as const;
 
@@ -274,6 +277,11 @@ const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(functio
   for (const [link, target, type] of [
     [links[0], targets[0], directoryType],
     [links[1], targets[1], directoryType],
+    [
+      path.join(input.profileDirectory, "config", "rules"),
+      path.join(userGemini, "config", "rules"),
+      directoryType,
+    ],
     // File symlinks need elevation or Developer Mode on Windows, so config files are copied there.
     ...(input.platform === "win32"
       ? []
