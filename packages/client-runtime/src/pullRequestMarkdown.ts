@@ -165,93 +165,6 @@ function mediaTableAt(
   return { end, rows: hasMedia ? rows : null };
 }
 
-// Up to three spaces, then a bracketed label (escapes allowed), then a colon.
-const DEFINITION_START = / {0,3}\[((?:[^\\\]\[]|\\.){1,999})\]:/y;
-const QUOTE_PREFIX = /^(?: {0,3}>[ \t]?)*/u;
-const FENCE = /^ {0,3}(`{3,}|~{3,})/u;
-const LIST_ITEM = /^[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]+/u;
-const TITLE = /^[ \t]*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\))[ \t]*$/u;
-
-const normalizeLabel = (label: string) => label.replace(/\s+/gu, " ").trim().toLowerCase();
-
-/**
- * The first definition of each label in the body, as authored, each joined onto one line so it
- * stands outside the quote or list it was written in. A definition starts a paragraph, outside
- * code; its destination and title may continue on the next lines.
- */
-function referenceDefinitions(body: string): string[] {
-  const definitions = new Map<string, string>();
-  const lines = body.split(/\r\n|\r|\n/u);
-  const content = (line: string) => line.slice(QUOTE_PREFIX.exec(line)![0].length);
-  let fence: string | null = null;
-  let paragraph = false;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = content(lines[index]!);
-    const fenceMark = FENCE.exec(line)?.[1];
-    if (fence !== null) {
-      if (fenceMark && fenceMark[0] === fence[0] && fenceMark.length >= fence.length) fence = null;
-      continue;
-    }
-    if (fenceMark) {
-      fence = fenceMark;
-      paragraph = false;
-      continue;
-    }
-    if (line.trim() === "") {
-      paragraph = false;
-      continue;
-    }
-    // A list item's first line starts its own paragraph.
-    const item = LIST_ITEM.exec(line)?.[0].length ?? 0;
-    if (item > 0) paragraph = false;
-    DEFINITION_START.lastIndex = item;
-    const start = paragraph ? null : DEFINITION_START.exec(line);
-    if (!start || !/\S/u.test(start[1]!)) {
-      paragraph = true;
-      continue;
-    }
-    // The destination may sit on the next line, and a title after it on its own line.
-    let rest = line.slice(item + start[0].length);
-    const parts = [line.slice(item).trimEnd()];
-    let end = index;
-    if (rest.trim() === "" && index + 1 < lines.length) {
-      end += 1;
-      rest = content(lines[end]!);
-      parts.push(rest.trim());
-    }
-    const destination = /^[ \t]*(<[^<>\n]*>|[^\s<>]+)/u.exec(rest);
-    if (!destination) {
-      paragraph = true;
-      continue;
-    }
-    let after = rest.slice(destination[0].length);
-    // A title that opens after the destination may close on a later line of the paragraph.
-    while (
-      /^[ \t]+["'(]/u.test(after) &&
-      !TITLE.test(after) &&
-      end + 1 < lines.length &&
-      content(lines[end + 1]!).trim() !== ""
-    ) {
-      end += 1;
-      const next = content(lines[end]!).trim();
-      after = `${after} ${next}`;
-      parts.push(next);
-    }
-    if (after.trim() !== "" && !TITLE.test(after)) {
-      paragraph = true;
-      continue;
-    }
-    if (after.trim() === "" && end + 1 < lines.length && TITLE.test(content(lines[end + 1]!))) {
-      end += 1;
-      parts.push(content(lines[end]!).trim());
-    }
-    const label = normalizeLabel(start[1]!);
-    if (!definitions.has(label)) definitions.set(label, parts.join(" ").trim());
-    index = end;
-  }
-  return [...definitions.values()];
-}
-
 /**
  * Each markdown segment renders as its own document, so it leads with the body's definitions.
  * Leading, they win over a later redefinition in the segment, as the first one does in the body.
@@ -280,12 +193,21 @@ function withDefinitions(
   };
 }
 
-export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
+/**
+ * The first definition of each label in a body, each on one line so it stands outside the quote or
+ * list it was written in, as the client's Markdown parser reads them.
+ */
+export type FindReferenceDefinitions = (body: string) => ReadonlyArray<string>;
+
+export function splitPullRequestBody(
+  body: string,
+  findDefinitions: FindReferenceDefinitions,
+): ReadonlyArray<PullRequestBodySegment> {
   const segments = splitBodyAt(body, 0);
   // One markdown segment is the whole body, which resolves its own references.
   const whole = segments.length === 1 && segments[0]!.kind === "markdown";
   if (whole || !body.includes("]:")) return segments;
-  const definitions = referenceDefinitions(body);
+  const definitions = findDefinitions(body);
   if (definitions.length === 0) return segments;
   const leading = `${definitions.join("\n")}\n\n`;
   return segments.map((segment) => withDefinitions(segment, leading));

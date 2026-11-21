@@ -1,11 +1,12 @@
 import type { Element, ElementContent, Root, Text } from "hast";
-import { renderToHtml } from "@pierre/words";
+import { renderToHtml, type RenderOptions as WordsRenderOptions } from "@pierre/words";
 import { decodeHTML, decodeHTMLAttribute } from "entities";
 import { find, html as htmlSchema, svg as svgSchema } from "property-information";
 import { resolveCodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { resolveCodexFileCitationLink } from "@t3tools/shared/codexFileCitations";
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
 import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-request-references";
+import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
 import {
   rehypeNormalizeLocalEditorLinks,
@@ -75,6 +76,8 @@ const PARAGRAPH_SCOPE = new Set([
   "button",
 ]);
 
+type RenderOptions = Omit<WordsRenderOptions, "frontmatter">;
+
 const decoder = new TextDecoder();
 const decode = (value: string) => (value.includes("&") ? decodeHTML(value) : value);
 
@@ -101,15 +104,19 @@ function properties(source: string | undefined, inSvg: boolean): Element["proper
   return result;
 }
 
-/** Markdown images Words wrote, as `<img src=… alt=… />`; raw HTML images keep their own form. */
-const markdownImages = new WeakSet<Element>();
+interface Tokenized {
+  readonly root: Root;
+  /** Elements with a `data-sourcepos`, which raw HTML can write too. */
+  readonly positioned: Element[];
+}
 
 /**
  * Hast for Words' HTML. Its own markup is well formed; raw HTML closes where its end tags say,
  * and is sanitized afterwards, so a misnested tag can only change structure, never safety.
  */
-function tokenize(html: string, offsetOf: (byte: number) => number): Root {
+function tokenize(html: string, offsetOf: (byte: number) => number): Tokenized {
   const root: Root = { type: "root", children: [] };
+  const positioned: Element[] = [];
   const stack: Array<Root | Element> = [root];
   let svgDepth = 0;
   let last = 0;
@@ -168,9 +175,7 @@ function tokenize(html: string, offsetOf: (byte: number) => number): Root {
         start: { line: 1, column: start! + 1, offset: start! },
         end: { line: 1, column: end! + 1, offset: end! },
       };
-    }
-    if (tagName === "img" && match[4] && /^\s+src=/.test(match[3] ?? "")) {
-      markdownImages.add(element);
+      positioned.push(element);
     }
     const parent = stack.at(-1)!;
     (parent.children as ElementContent[]).push(element);
@@ -197,6 +202,46 @@ function tokenize(html: string, offsetOf: (byte: number) => number): Root {
   if (end?.type === "text") {
     end.value = end.value.replace(/\n$/, "");
     if (end.value.trim() === "") root.children.pop();
+  }
+  return { root, positioned };
+}
+
+const positionKey = (node: Element) =>
+  `${node.tagName.toLowerCase()}:${node.position!.start.offset}-${node.position!.end.offset}`;
+
+/**
+ * Words' HTML for `markdown` as hast. A position marks what Words generated, so raw HTML that
+ * writes its own `data-sourcepos` keeps none: Words' elements are those it also writes with raw
+ * HTML escaped, and a range claimed more often than that is trusted for none of its claimants.
+ */
+function parse(markdown: string, options: RenderOptions): Root {
+  const offsetOf = utf16Offsets(markdown);
+  const render = (escapeHtml?: true) =>
+    tokenize(
+      decoder.decode(
+        renderToHtml(markdown, {
+          ...options,
+          ...(escapeHtml ? { escapeHtml } : {}),
+          sourcePositions: true,
+        }),
+      ),
+      offsetOf,
+    );
+  const { root, positioned } = render();
+  if (options.escapeHtml || options.skipHtml || !/data-sourcepos/i.test(markdown)) return root;
+  const generated = new Map<string, number>();
+  for (const node of render(true).positioned) {
+    const key = positionKey(node);
+    generated.set(key, (generated.get(key) ?? 0) + 1);
+  }
+  const claimed = new Map<string, number>();
+  for (const node of positioned) {
+    const key = positionKey(node);
+    claimed.set(key, (claimed.get(key) ?? 0) + 1);
+  }
+  for (const node of positioned) {
+    const key = positionKey(node);
+    if (claimed.get(key)! > (generated.get(key) ?? 0)) delete node.position;
   }
   return root;
 }
@@ -241,7 +286,12 @@ const isElement = (node: unknown, tagName?: string): node is Element =>
 
 const isElementNode = (node: ElementContent): node is Element => node.type === "element";
 
-const isMarkdownImage = (node: unknown) => isElement(node, "img") && markdownImages.has(node);
+const isMarkdownImage = (node: unknown): boolean =>
+  (isElement(node, "img") && node.position !== undefined) ||
+  (isElement(node, "a") &&
+    node.position !== undefined &&
+    node.children.length === 1 &&
+    isMarkdownImage(node.children[0]));
 
 const BREAK: ElementContent = { type: "element", tagName: "br", properties: {}, children: [] };
 
@@ -269,7 +319,7 @@ const MATH_PROPERTIES = new Set([
   "strokeWidth",
   "textAnchor",
 ]);
-const MATH_STYLE = /^(?:display|vertical-align|overflow|margin)$/;
+const MATH_STYLE = /^(?:display|vertical-align|overflow|margin|white-space)$/;
 
 function sanitizeMath(node: Element): Element | null {
   if (!MATH_ELEMENTS.has(node.tagName)) return null;
@@ -295,18 +345,16 @@ function sanitizeMath(node: Element): Element | null {
   return { ...node, properties, children };
 }
 
-const ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\r?\n|$)/i;
-// What rewriteInsights opens each insight block with.
-const INSIGHT_MARKER = "[!T3-INSIGHT]";
-
 interface Walk {
-  /** Words' hast for more Markdown, rendered with the same options. */
-  readonly render: (markdown: string) => Root;
+  /** Words' hast for more Markdown, rendered with the same options; `indent` as leadingWhitespace's. */
+  readonly render: (markdown: string, indent: number) => Root;
   readonly source: string;
   readonly options: WordsHastOptions;
   readonly math: Map<string, Element>;
   /** A per-render id prefix for math placeholders, which authored ids cannot share. */
   readonly mathKey: string;
+  /** What insightSource opened each insight block with, when it opened any. */
+  readonly insightMarker: RegExp | null;
 }
 
 /** UTF-16 offsets for the UTF-8 byte offsets in Words' `data-sourcepos`. */
@@ -393,30 +441,85 @@ function codexDirective(node: Element, walk: Walk, inLink: boolean): ElementCont
 
 const INLINE_PREFIX = "t3-markdown-inline-prefix:";
 
+function stripPositions(node: ElementContent) {
+  delete node.position;
+  if (node.type === "element") node.children.forEach(stripPositions);
+}
+
 /**
  * remarkNormalizeListItemIndentation: four spaces after a list marker make indented code, but
- * agents mean wide indentation, so code starting on the marker's line is Markdown again.
+ * agents mean wide indentation, so code starting on the marker's line is Markdown again. True
+ * when it recovered the item, whose children it then has transformed.
  */
-function recoverIndentedCode(item: Element, walk: Walk) {
+function recoverIndentedCode(
+  item: Element,
+  list: Root | Element,
+  walk: Walk,
+  inLink: boolean,
+  inCode: boolean,
+): boolean {
   const code = item.children.find((child) => child.type === "element");
   const start = code?.position?.start.offset;
   const itemStart = item.position?.start.offset;
-  if (!isElement(code, "pre") || start === undefined || itemStart === undefined) return;
-  if (!/^[\t ]/.test(textOf(code))) return;
+  if (!isElement(code, "pre") || start === undefined || itemStart === undefined) return false;
+  const value = textOf(code);
+  if (!/^[\t ]/.test(value)) return false;
   if (walk.source.slice(itemStart, start).includes("\n") || /[`~]/.test(walk.source[start]!)) {
-    return;
+    return false;
   }
+  // The trimmed first line sets where the item's content starts.
+  const indent = [.../^[\t ]*/.exec(value)![0]].reduce(
+    (column, character) => (character === "\t" ? (Math.floor(column / 4) + 1) * 4 : column + 1),
+    0,
+  );
   // The prefix keeps block syntax at the start, such as `#`, from opening a block.
-  const recovered = walk.render(`${INLINE_PREFIX}${textOf(code).trim()}`);
-  const paragraph = recovered?.children.find((child) => child.type === "element");
+  const source = `${INLINE_PREFIX}${value.trim()}`;
+  const recovered = walk.render(source, indent);
+  const paragraph = recovered.children.find((child) => child.type === "element");
   const first = isElement(paragraph, "p") ? paragraph.children[0] : undefined;
-  if (!recovered || first?.type !== "text" || !first.value.startsWith(INLINE_PREFIX)) return;
+  if (first?.type !== "text" || !first.value.startsWith(INLINE_PREFIX)) return false;
   first.value = first.value.slice(INLINE_PREFIX.length);
   if (first.value === "") paragraph!.children.shift();
-  const blocks = recovered.children.filter(
+  transform(recovered, { ...walk, source }, inLink, inCode);
+  transform(item, walk, inLink, inCode);
+  let blocks = recovered.children.filter(
     (child) => !(child.type === "text" && child.value.trim() === ""),
   ) as ElementContent[];
-  item.children.splice(item.children.indexOf(code), 1, ...blocks);
+  // Their positions point into `source`, not the message.
+  blocks.forEach(stripPositions);
+  let at = item.children.indexOf(code);
+  let remove = 1;
+  if (!isLooseList(list, walk.source)) {
+    // A tight item shows its text bare, as remark-rehype unwraps its paragraphs.
+    blocks = blocks.flatMap((block, index) => [
+      ...(index > 0 ? [{ type: "text", value: "\n" } as Text] : []),
+      ...(isElement(block, "p") ? block.children : [block]),
+    ]);
+    const isBlank = (node: ElementContent | undefined) =>
+      node?.type === "text" && node.value.trim() === "";
+    if (at === 1 && isBlank(item.children[0])) [at, remove] = [0, 2];
+    if (at + remove === item.children.length - 1 && isBlank(item.children.at(-1))) remove++;
+  }
+  item.children.splice(at, remove, ...blocks);
+  return true;
+}
+
+/** remark-rehype's listLoose: a blank line between items, or an item Words wrote as paragraphs. */
+function isLooseList(list: Root | Element, source: string): boolean {
+  const items = (list.children as ElementContent[]).filter((child): child is Element =>
+    isElement(child, "li"),
+  );
+  return items.some(
+    (item, index) =>
+      item.children.some((child) => isElement(child, "p")) ||
+      (index > 0 &&
+        /\n[ \t>]*\n/.test(
+          source.slice(
+            items[index - 1]!.position?.end.offset ?? 0,
+            item.position?.start.offset ?? 0,
+          ),
+        )),
+  );
 }
 
 const WRITTEN_NUMBER = /[ \t]*(\d{1,9})[.)]/y;
@@ -553,30 +656,39 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
       props.dataInlineCode = "";
     } else if (tagName === "ol" && walk.options.extensions.userMessage) {
       keepListNumbers(child, walk.source);
-    } else if (tagName === "li" && isElement(child.children.find(isElementNode), "pre")) {
-      recoverIndentedCode(child, walk);
-    } else if (tagName === "li" && isElement(child.children[0], "input")) {
-      props.className = ["task-list-item"];
-      const { checked } = child.children[0].properties;
-      child.children[0].properties = { type: "checkbox", checked, disabled: true };
-      if (node.type === "element") node.properties.className = ["contains-task-list"];
+    } else if (tagName === "li") {
+      const firstBlock = child.children.find(isElementNode);
+      if (isElement(firstBlock, "pre") && recoverIndentedCode(child, node, walk, inLink, inCode)) {
+        continue;
+      }
+      // Tight items put the checkbox directly in `<li>`, loose ones inside its first `<p>`.
+      const checkbox = isElement(child.children[0], "input")
+        ? child.children[0]
+        : isElement(firstBlock, "p") && isElement(firstBlock.children[0], "input")
+          ? firstBlock.children[0]
+          : undefined;
+      if (checkbox) {
+        props.className = ["task-list-item"];
+        const { checked } = checkbox.properties;
+        checkbox.properties = { type: "checkbox", checked, disabled: true };
+        if (node.type === "element") node.properties.className = ["contains-task-list"];
+      }
+      breakLines(child, walk.options.breaks);
     } else if (tagName === "p") {
       breakLines(child, walk.options.breaks);
     } else if (tagName === "blockquote") {
       // remarkGithubAlerts
       const paragraph = child.children.find((item) => item.type === "element");
       const first = isElement(paragraph, "p") ? paragraph.children[0] : undefined;
-      const match =
-        first?.type !== "text"
-          ? null
-          : walk.options.insights && first.value.startsWith(INSIGHT_MARKER)
-            ? ([
-                first.value.startsWith(`${INSIGHT_MARKER}\n`)
-                  ? `${INSIGHT_MARKER}\n`
-                  : INSIGHT_MARKER,
-                "insight",
-              ] as const)
-            : ALERT.exec(first.value);
+      const text = first?.type === "text" ? first.value : "";
+      const insight = walk.insightMarker?.exec(text);
+      const alert = GITHUB_ALERT_MARKER.exec(text);
+      // An alert marker followed by more inline content on its line is text, as remarkGithubAlerts reads it.
+      const match = insight
+        ? ([insight[0], "insight"] as const)
+        : alert && (alert[0].endsWith("\n") || (paragraph as Element).children.length === 1)
+          ? alert
+          : null;
       if (match && first?.type === "text" && isElement(paragraph, "p")) {
         first.value = first.value.slice(match[0].length);
         if (first.value === "") paragraph.children.shift();
@@ -616,22 +728,40 @@ function imageOwnsLine(items: ElementContent[], at: number): boolean {
   return startsLine && endsLine;
 }
 
+const isBlockElement = (node: ElementContent | undefined) =>
+  node?.type === "element" && CLOSES_PARAGRAPH.has(node.tagName);
+
 function breakLines(paragraph: Element, breaks: boolean) {
   const items = paragraph.children;
   for (let at = 0; at < items.length; at++) {
     const item = items[at]!;
-    if (item.type === "element" && breaks && item.tagName !== "code") breakLines(item, breaks);
+    if (
+      item.type === "element" &&
+      breaks &&
+      item.tagName !== "code" &&
+      !CLOSES_PARAGRAPH.has(item.tagName)
+    ) {
+      breakLines(item, breaks);
+    }
     if (item.type !== "text" || !item.value.includes("\n")) continue;
     const afterImage = imageOwnsLine(items, at - 1);
     const beforeImage = imageOwnsLine(items, at + 1);
+    const afterBlock = isBlockElement(items[at - 1]) || (at === 0 && paragraph.tagName === "li");
+    const beforeBlock =
+      isBlockElement(items[at + 1]) || (at === items.length - 1 && paragraph.tagName === "li");
     const lines = item.value.split("\n");
     const parts: ElementContent[] = [];
     lines.forEach((line, index) => {
-      // A hard break's own line ending follows its <br>, and adds no second one.
+      // A hard break's own line ending follows its <br>, and adds no second one;
+      // structural line endings around a list item's block children stay breaks between blocks.
       const afterHardBreak = index === 1 && isElement(items[at - 1], "br");
+      const blockBoundary =
+        (index === 1 && lines[0] === "" && afterBlock) ||
+        (index === lines.length - 1 && line === "" && beforeBlock);
       const breaksHere =
         index > 0 &&
         !afterHardBreak &&
+        !blockBoundary &&
         (breaks || (index === 1 && afterImage) || (index === lines.length - 1 && beforeImage));
       if (index > 0) {
         if (breaksHere) {
@@ -660,6 +790,18 @@ function breakLines(paragraph: Element, breaks: boolean) {
  * The wrapper copying reads (markdown-clipboard's MATH_SELECTOR): the formula's TeX, as the source
  * Words drew it from, so copying any part of a formula copies the whole of it.
  */
+// A formula wider than its block scrolls, with room for the glyphs that reach past its box; in a
+// table it keeps its width and the table scrolls.
+const MATH_SCROLL = [
+  "max-w-full",
+  "overflow-x-auto",
+  "overflow-y-hidden",
+  "px-0.5",
+  "py-0.75",
+  "in-[.chat-markdown-table-container]:max-w-none",
+  "in-[.chat-markdown-table-container]:overflow-visible",
+];
+
 function mathWrapper(svg: Element): Element {
   const tex = String(svg.properties.ariaLabel ?? "").trim();
   const display = /display:\s*block/.test(String(svg.properties.style ?? ""));
@@ -668,12 +810,12 @@ function mathWrapper(svg: Element): Element {
     tagName: "span",
     properties: display
       ? {
-          className: ["chat-markdown-math-display", "block", "max-w-full", "overflow-x-auto"],
+          className: ["chat-markdown-math-display", "block", ...MATH_SCROLL],
           dataMarkdownMath: "display",
           dataMarkdownCopy: `\\[\n${tex}\n\\]\n\n`,
         }
       : {
-          className: ["inline-block", "max-w-full", "align-middle"],
+          className: ["inline-block", "align-middle", ...MATH_SCROLL],
           dataMarkdownMath: "inline",
           dataMarkdownCopy: `\\(${tex}\\)`,
         },
@@ -699,42 +841,127 @@ const preserveImageSourceMeta = rehypePreserveImageSourceMeta();
 const normalizeLocalEditorLinks = rehypeNormalizeLocalEditorLinks();
 const groupChipPunctuation = rehypeChipPunctuation();
 
+const INSIGHT_OPENING = /^( {0,3})(`?)★ Insight[ \t]+─{3,}\2[ \t]*$/u;
+const INSIGHT_CLOSING = /^( {0,3})(`?)─{3,}\2[ \t]*$/u;
+
+interface InsightSource {
+  readonly source: string;
+  readonly tree: Root;
+  readonly marker: RegExp;
+  /** The offset in the message for an offset in `source`. */
+  readonly toOriginal: (offset: number) => number;
+}
+
 /**
  * remarkAssistantInsights: a `★ Insight ───` line opens a quoted insight block, which a `───` line
- * at the same indentation closes; the end of the text closes one that never does.
+ * at the same indentation closes; the end of the text closes one that never does. Lines in code
+ * neither open nor close one, and an opening Words does not read as a quote's first line, as in
+ * an HTML block or a quote's lazy line, stays text.
  */
-function rewriteInsights(text: string): string {
-  if (!text.includes("★ Insight")) return text;
-  let indent: string | undefined;
-  let fence: string | undefined;
-  return text
-    .split(/(?<=\n)/u)
-    .map((line) => {
-      const value = line.replace(/[\r\n]+$/u, "");
-      const ending = line.slice(value.length);
-      const quoted = indent === undefined ? line : `> ${line}`;
-      // Code shows its lines as written, so they neither open nor close an insight.
-      const fenceMark = /^ {0,3}(`{3,}|~{3,})/u.exec(value)?.[1];
-      if (fenceMark && (fence === undefined || fenceMark[0] === fence[0])) {
-        if (fence === undefined) fence = fenceMark;
-        else if (fenceMark.length >= fence.length) fence = undefined;
-        return quoted;
+function insightSource(text: string, options: RenderOptions): InsightSource | null {
+  if (!text.includes("★ Insight")) return null;
+  const code: Array<readonly [number, number]> = [];
+  const findCode = (node: Root | Element) => {
+    for (const child of node.children) {
+      if (child.type !== "element") continue;
+      if (child.tagName === "pre" && child.position) {
+        code.push([child.position.start.offset!, child.position.end.offset!]);
+      } else findCode(child);
+    }
+  };
+  findCode(parse(text, options));
+  const nonce = Math.random().toString(36).slice(2);
+  const marker = new RegExp(String.raw`^\[!T3-INSIGHT-${nonce}-(\d+)\](?:\r?\n)?`);
+  const anywhere = new RegExp(String.raw`\[!T3-INSIGHT-${nonce}-(\d+)\]`, "g");
+  const lines = text.split(/(?<=\n)/u);
+  const skipped = new Set<number>();
+  for (;;) {
+    // Each line's offset in the message and in the source, and how much longer it got.
+    const offsets: Array<{ original: number; source: number; length: number; delta: number }> = [];
+    let original = 0;
+    let rewritten = 0;
+    let opened = 0;
+    let indent: string | undefined;
+    const source = lines
+      .map((line, lineIndex) => {
+        const value = line.replace(/[\r\n]+$/u, "");
+        const ending = line.slice(value.length);
+        const inCode = code.some(([start, end]) => original >= start && original < end);
+        let output = line;
+        if (indent === undefined) {
+          const opening = inCode ? null : INSIGHT_OPENING.exec(value);
+          if (opening && !skipped.has(lineIndex)) {
+            indent = opening[1] ?? "";
+            opened++;
+            output = `> [!T3-INSIGHT-${nonce}-${lineIndex}]${ending}`;
+          }
+        } else {
+          const closing = inCode ? null : INSIGHT_CLOSING.exec(value);
+          if (closing && closing[1] === indent) {
+            indent = undefined;
+            output = ending;
+          } else output = `> ${line}`;
+        }
+        offsets.push({
+          original,
+          source: rewritten,
+          length: line.length,
+          delta: output.length - line.length,
+        });
+        original += line.length;
+        rewritten += output.length;
+        return output;
+      })
+      .join("");
+    if (opened === 0) return null;
+    const tree = parse(source, options);
+    let stranded = false;
+    const visit = (node: Root | Element, quoteStart: Text | undefined) => {
+      for (const child of node.children) {
+        if (child.type === "text") {
+          for (const found of child.value.matchAll(anywhere)) {
+            if (child === quoteStart && found.index === 0) continue;
+            skipped.add(Number(found[1]));
+            stranded = true;
+          }
+        } else if (child.type === "element") {
+          const paragraph =
+            child.tagName === "blockquote" ? child.children.find(isElementNode) : undefined;
+          const first = isElement(paragraph, "p") ? paragraph.children[0] : undefined;
+          visit(child, first?.type === "text" ? first : quoteStart);
+        }
       }
-      if (fence !== undefined) return quoted;
-      if (indent === undefined) {
-        const opening = /^( {0,3})(`?)★ Insight[ \t]+─{3,}\2[ \t]*$/u.exec(value);
-        if (!opening) return line;
-        indent = opening[1] ?? "";
-        return `> ${INSIGHT_MARKER}${ending}`;
-      }
-      const closing = /^( {0,3})(`?)─{3,}\2[ \t]*$/u.exec(value);
-      if (closing && closing[1] === indent) {
-        indent = undefined;
-        return ending;
-      }
-      return quoted;
-    })
-    .join("");
+    };
+    visit(tree, undefined);
+    if (stranded) continue;
+    return {
+      source,
+      tree,
+      marker,
+      toOriginal: (offset) => {
+        const line = offsets.findLast((entry) => entry.source <= offset) ?? offsets[0]!;
+        return (
+          line.original + Math.min(Math.max(offset - line.source - line.delta, 0), line.length)
+        );
+      },
+    };
+  }
+}
+
+/** Positions that point into an insight's rewritten source, moved back into the message. */
+function restorePositions(node: Root | Element, toOriginal: (offset: number) => number) {
+  for (const child of node.children) {
+    if (child.type !== "element") continue;
+    if (child.position) {
+      const start = toOriginal(child.position.start.offset!);
+      const end = toOriginal(child.position.end.offset!);
+      child.position = {
+        start: { line: 1, column: start + 1, offset: start },
+        end: { line: 1, column: end + 1, offset: end },
+      };
+    }
+    restorePositions(child, toOriginal);
+  }
 }
 
 const PREVIEW_SEPARATED = new Set([
@@ -851,8 +1078,7 @@ function makeInert(node: Root | Element) {
 /** ChatMarkdown's sanitized hast for `text`, rendered by Words. */
 export function wordsHast(text: string, options: WordsHastOptions): Root {
   const { extensions } = options;
-  const source = options.insights ? rewriteInsights(text) : text;
-  const renderOptions = {
+  const renderOptions: RenderOptions = {
     math: options.math,
     // llm-math's `\(…\)` and `\[…\]`, which agents write as often as `$`.
     texDelimiters: options.math,
@@ -866,24 +1092,27 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
       ? { skipHtml: true }
       : { escapeHtml: options.escapeHtml }),
   };
-  const html = renderToHtml(source, { ...renderOptions, sourcePositions: true });
-  const tree = tokenize(decoder.decode(html), utf16Offsets(source));
+  const insights = options.insights ? insightSource(text, renderOptions) : null;
+  const source = insights?.source ?? text;
+  const tree = insights?.tree ?? parse(source, renderOptions);
   const walk: Walk = {
-    render: (markdown) =>
-      tokenize(
-        decoder.decode(renderToHtml(markdown, { ...renderOptions, sourcePositions: true })),
-        utf16Offsets(markdown),
-      ),
+    render: (markdown, indent) =>
+      parse(markdown, {
+        ...renderOptions,
+        leadingWhitespace: extensions.leadingWhitespace === true && { indent },
+      }),
     source,
     options,
     math: new Map(),
     mathKey: `t3-math-${Math.random().toString(36).slice(2)}`,
+    insightMarker: insights?.marker ?? null,
   };
   transform(tree, walk, false, false);
   preserveImageSourceMeta(tree as never);
   normalizeLocalEditorLinks(tree as never);
   const hast = sanitizeChatHast(tree);
   if (walk.math.size > 0) restoreMath(hast, walk.math);
+  if (insights) restorePositions(hast, insights.toOriginal);
   if (extensions.inert) makeInert(hast);
   if (extensions.preview) return flattenPreview(hast, extensions.preview);
   addHeadingIds(hast);
@@ -906,11 +1135,6 @@ export interface CodexDirectiveSource {
 
 /** The Codex directives in `markdown`, as Words reads them. */
 export function codexDirectiveSources(markdown: string): CodexDirectiveSource[] {
-  const html = renderToHtml(markdown, {
-    windowsPaths: true,
-    sourcePositions: true,
-    directives: CODEX_DIRECTIVES,
-  });
   const found: CodexDirectiveSource[] = [];
   const visit = (node: Root | Element, inLink: boolean) => {
     for (const child of node.children) {
@@ -918,27 +1142,34 @@ export function codexDirectiveSources(markdown: string): CodexDirectiveSource[] 
       const name = child.properties.dataDirective;
       if (typeof name === "string" && child.position) {
         const { start, end } = child.position;
-        const written = markdown.slice(start.offset, end.offset);
-        const open = written.indexOf("[");
-        const close = written.lastIndexOf(
-          "]",
-          written.includes("{") ? written.indexOf("{") : undefined,
-        );
-        const attributes = directiveAttributes(child);
         found.push({
           name,
-          attributes,
+          attributes: directiveAttributes(child),
           start: start.offset!,
           end: end.offset!,
-          label: open >= 0 && close > open ? written.slice(open + 1, close) : "",
+          label: directiveLabel(markdown.slice(start.offset, end.offset)),
           inLink,
         });
       }
       visit(child, inLink || child.tagName === "a");
     }
   };
-  visit(tokenize(decoder.decode(html), utf16Offsets(markdown)), false);
+  visit(parse(markdown, { windowsPaths: true, directives: CODEX_DIRECTIVES }), false);
   return found;
+}
+
+/** The label of a directive as written, `:name[label]{…}`: brackets nest in it, and `\` escapes. */
+function directiveLabel(written: string): string {
+  const open = written.indexOf("[");
+  if (open < 0) return "";
+  let depth = 0;
+  for (let index = open; index < written.length; index++) {
+    const character = written[index];
+    if (character === "\\") index++;
+    else if (character === "[") depth++;
+    else if (character === "]" && --depth === 0) return written.slice(open + 1, index);
+  }
+  return "";
 }
 
 /**
@@ -949,21 +1180,18 @@ export function markdownTree(
   markdown: string,
   options: { skipHtml?: boolean; singleTilde?: boolean; math?: boolean } = {},
 ): Root {
-  const html = renderToHtml(markdown, {
+  return parse(markdown, {
     windowsPaths: true,
-    sourcePositions: true,
     skipHtml: options.skipHtml === true,
     singleTilde: options.singleTilde !== false,
     math: options.math === true,
     texDelimiters: options.math === true,
   });
-  return tokenize(decoder.decode(html), utf16Offsets(markdown));
 }
 
 /** The formulas Words reads in `text`, as source offsets, for editors that keep math as source. */
 export function markdownMathRanges(text: string): Array<{ start: number; end: number }> {
   if (!/[$\\]|(?:`{3,}|~{3,})[ \t]*math\b/.test(text)) return [];
-  const html = renderToHtml(text, { math: true, texDelimiters: true, sourcePositions: true });
   const ranges: Array<{ start: number; end: number }> = [];
   const visit = (node: Root | Element) => {
     for (const child of node.children) {
@@ -977,6 +1205,61 @@ export function markdownMathRanges(text: string): Array<{ start: number; end: nu
       visit(child);
     }
   };
-  visit(tokenize(decoder.decode(html), utf16Offsets(text)));
+  visit(parse(text, { math: true, texDelimiters: true }));
   return ranges;
+}
+
+/** The HTML comments Words reads as raw HTML in `markdown`, not as code or text, as source offsets. */
+export function markdownHtmlComments(markdown: string): Array<{ start: number; end: number }> {
+  const openers = [...markdown.matchAll(/<!--(?!-?>)/g)].map((match) => match.index);
+  if (openers.length === 0) return [];
+  // A mark after each opener keeps a comment a comment; Words writes only real ones unescaped.
+  let marked = "";
+  let from = 0;
+  for (const [index, at] of openers.entries()) {
+    marked += `${markdown.slice(from, at + 4)}\uE000${index}\uE001`;
+    from = at + 4;
+  }
+  const html = decoder.decode(renderToHtml(marked + markdown.slice(from), { windowsPaths: true }));
+  return [...html.matchAll(/<!--\uE000(\d+)\uE001/g)].map((match) => {
+    const start = openers[Number(match[1])]!;
+    const close = markdown.indexOf("-->", start + 4);
+    return { start, end: close < 0 ? markdown.length : close + 3 };
+  });
+}
+
+/**
+ * The first definition of each label in `markdown`, as one line of Markdown. Words decides which
+ * `[label]:` text defines one: each label is looked up again after the text.
+ */
+export function markdownReferenceDefinitions(markdown: string): string[] {
+  const labels = new Map<string, string>();
+  for (const match of markdown.matchAll(/\[((?:[^\\[\]]|\\.){1,999})\]:/g)) {
+    const key = match[1]!.replace(/\s+/g, " ").trim().toLowerCase();
+    // `[^1]:` is a footnote.
+    if (key !== "" && !key.startsWith("^") && !labels.has(key)) labels.set(key, match[1]!);
+  }
+  if (labels.size === 0) return [];
+  let probe = `${markdown}\n\n`;
+  const lookups = new Map<number, string>();
+  for (const label of labels.values()) {
+    lookups.set(probe.length, label);
+    probe += `[${label}]\n\n`;
+  }
+  const definitions: string[] = [];
+  const visit = (node: Root | Element) => {
+    for (const child of node.children) {
+      if (child.type !== "element") continue;
+      const label = lookups.get(child.position?.start.offset ?? -1);
+      if (child.tagName === "a" && label !== undefined) {
+        const href = String(child.properties.href ?? "").replace(/[<>\\\n]/g, encodeURIComponent);
+        const title = child.properties.title;
+        definitions.push(
+          `[${label}]: <${href}>${typeof title === "string" ? ` "${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&")}"` : ""}`,
+        );
+      } else visit(child);
+    }
+  };
+  visit(parse(probe, { windowsPaths: true }));
+  return definitions;
 }

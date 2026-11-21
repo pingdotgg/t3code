@@ -28,6 +28,7 @@ import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { markdownImageSources } from "../../lib/markdownImageSources";
+import { markdownReferenceDefinitions } from "../../lib/markdownDocument";
 import { FilePreviewGallery, useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
 import {
@@ -121,7 +122,10 @@ export function PullRequestMarkdown(props: {
 }) {
   const mediaContext = useContext(PullRequestMediaContext);
   const changeRequestUrl = useContext(ChangeRequestUrlContext);
-  const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
+  const segments = useMemo(
+    () => splitPullRequestBody(props.markdown, markdownReferenceDefinitions),
+    [props.markdown],
+  );
   const [undoneTicks, setUndoneTicks] = useState(0);
   const gallery: FilePreviewItem[] = markdownImageSources(
     props.imageGroupMarkdown ?? props.markdown,

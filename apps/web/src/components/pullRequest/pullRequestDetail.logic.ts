@@ -7,7 +7,7 @@ import {
 import { stripInlineContextReferences } from "~/lib/composerContextReferences";
 import type { Nodes } from "hast";
 
-import { markdownTree } from "~/markdown/wordsHast";
+import { markdownHtmlComments, markdownTree } from "~/markdown/wordsHast";
 import {
   sourceControlClients,
   type ChangeRequestTerminology,
@@ -694,31 +694,11 @@ export function pagePullRequestConversationItems(
 function readableBody(raw: string): string | null {
   if (visibleBody(raw) === null) return null;
   const body = raw.replace(/\r\n?/gu, "\n");
-  // Code blocks and code spans show their comments as source.
-  const code: Array<[number, number]> = [];
-  const visit = (node: Nodes) => {
-    if (node.type === "element" && node.tagName === "pre" && node.position) {
-      code.push([node.position.start.offset ?? 0, node.position.end.offset ?? body.length]);
-    }
-    if ("children" in node) for (const child of node.children) visit(child);
-  };
-  visit(markdownTree(body));
-  for (const span of body.matchAll(/(`+)[^`]*?\1/gu)) {
-    code.push([span.index, span.index + span[0].length]);
-  }
-  const codeEnd = (at: number) => code.find(([start, end]) => at >= start && at < end)?.[1];
   let readable = "";
   let from = 0;
-  const comments = /<!--[\s\S]*?(?:-->|$)/gu;
-  for (let comment = comments.exec(body); comment; comment = comments.exec(body)) {
-    const start = comment.index;
-    // An opener in code is source, so the next comment can only start past that code.
-    const skipTo = codeEnd(start);
-    if (skipTo !== undefined) {
-      comments.lastIndex = skipTo;
-      continue;
-    }
-    const end = start + comment[0].length;
+  for (const { start, end } of markdownHtmlComments(body)) {
+    // A comment opened inside another one ends with it.
+    if (start < from) continue;
     readable += body.slice(from, start);
     // A line that was all comment is dropped rather than left as a blank one.
     const ownLine = /(?:^|\n)[ \t>]*$/u.test(readable) && /^[ \t]*(?:\n|$)/u.test(body.slice(end));
