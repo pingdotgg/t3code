@@ -1,13 +1,21 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { SpeechStreamEvent, DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
-import type { SpeechService, SpeechStream } from "./SpeechService.ts";
-import { runSpeechSocket } from "./stream.ts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSessionId,
+  SpeechStreamEvent,
+  DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+} from "@t3tools/contracts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
+import { SpeechService, type SpeechStream } from "./SpeechService.ts";
+import { runSpeechSocket, speechStreamRouteLayer } from "./stream.ts";
 import type * as NetAddress from "effect/net/NetAddress";
 
 const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamEvent));
@@ -166,4 +174,74 @@ it.live("processes pipelined audio before the finish command", () => {
       }
     },
   ).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest));
+});
+
+it.live("stops in-flight work, closes the socket, and releases the stream on invalidation", () => {
+  const feeding = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<boolean>();
+  let feedInterrupted = false;
+  const sessionId = AuthSessionId.make("speech-test");
+  const stream: SpeechStream = {
+    feed: () =>
+      Effect.sync(() => feeding.resolve()).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() => Effect.sync(() => (feedInterrupted = true))),
+      ),
+    finish: Effect.never,
+  };
+  return Effect.gen(function* () {
+    const invalidated = yield* Deferred.make<void>();
+    yield* Layer.build(
+      HttpRouter.serve(speechStreamRouteLayer, {
+        disableLogger: true,
+        disableListenLog: true,
+      }).pipe(
+        Layer.provide(
+          Layer.mock(EnvironmentAuth.EnvironmentAuth, {
+            authenticateWebSocketUpgrade: () =>
+              Effect.succeed({
+                sessionId,
+                subject: "speech-test",
+                method: "bearer-access-token",
+                scopes: [AuthOrchestrationOperateScope],
+                proofKeyThumbprint: "thumbprint",
+              }),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(SessionStore.SessionStore, {
+            cookieName: "test",
+            legacyCookieName: undefined,
+            awaitInvalidation: (id, proofKeyThumbprint) =>
+              id === sessionId && proofKeyThumbprint === "thumbprint"
+                ? Deferred.await(invalidated)
+                : Effect.never,
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(SpeechService, {
+            startStream: () =>
+              Effect.acquireRelease(Effect.succeed(stream), () =>
+                Effect.sync(() => released.resolve(feedInterrupted)),
+              ),
+          }),
+        ),
+      ),
+    );
+    const server = yield* HttpServer.HttpServer;
+    const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
+    const connection = client(`${origin}/ws/voice`);
+    yield* Effect.addFinalizer(() => Effect.sync(() => connection.socket.close()));
+    const closed = new Promise<void>((resolve) =>
+      connection.socket.addEventListener("close", () => resolve(), { once: true }),
+    );
+    expect(yield* Effect.promise(() => connection.next())).toEqual({ type: "ready" });
+    connection.socket.send(new Float32Array([0.25]));
+    yield* Effect.promise(() => feeding.promise);
+    yield* Deferred.succeed(invalidated, undefined);
+    const [, interruptedBeforeRelease] = yield* Effect.promise(() =>
+      Promise.all([closed, released.promise]),
+    );
+    expect(interruptedBeforeRelease).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest));
 });
