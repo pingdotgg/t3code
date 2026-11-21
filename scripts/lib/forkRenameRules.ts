@@ -879,7 +879,7 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     class: "kept",
     reason:
       "The executable name as a quoted literal in the files that install and run the CLI; forkCliArtifacts.ts keeps the t3 fallback.",
-    path: /forkCliArtifacts|forkCliArchive|fork-cli-release-assets|cliRelease|build-cli-archive|install\.(?:sh|ps1|test\.ts)|pinnedRuntime|selfUpdate|update(?:\.test)?\.ts|ForkCliInstall|tunnel(?:\.test)?\.ts|DesktopWsl|serviceLauncher|npm-launcher/,
+    path: /forkCliArtifacts|forkCliArchive|fork-cli-release-assets|cliRelease|build-cli-archive|install\.(?:sh|ps1)|scripts\/install\.test\.ts|pinnedRuntime|selfUpdate|update(?:\.test)?\.ts|ForkCliInstall|tunnel(?:\.test)?\.ts|DesktopWsl|serviceLauncher|npm-launcher/,
     test: (o) =>
       o.token === "t3" &&
       (/["'`]t3["'`]/.test(o.line) || /forkCliArchive|fork-cli-release-assets/.test(o.path)),
@@ -902,7 +902,7 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
         /^t3\\?\.exe/.test(at)
       );
     },
-    path: /forkCliArtifacts|forkCliArchive|cliRelease|build-cli-archive|build-desktop-artifact|install\.(?:sh|ps1|test\.ts)|pinnedRuntime|selfUpdate|update(?:\.test)?\.ts|ForkCliInstall|tunnel(?:\.test)?\.ts|DesktopWsl|fork-cli-release-assets|serviceLauncher|smoke-cli|npm-launcher/,
+    path: /forkCliArtifacts|forkCliArchive|cliRelease|build-cli-archive|build-desktop-artifact|install\.(?:sh|ps1)|scripts\/install\.test\.ts|pinnedRuntime|selfUpdate|update(?:\.test)?\.ts|ForkCliInstall|tunnel(?:\.test)?\.ts|DesktopWsl|fork-cli-release-assets|serviceLauncher|smoke-cli|npm-launcher/,
   },
   {
     id: "upstream-repo-fields",

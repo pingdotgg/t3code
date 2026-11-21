@@ -234,6 +234,17 @@ describe("FORK_RENAME_RULES", () => {
     ["apps/server/src/provider/model-manifest.json", '"t3CodeRange": ">=0.0.44",', "kept"],
     ["apps/server/src/provider/x.ts", "satisfies(version, entry.t3CodeRange)", "kept"],
     ["scripts/install.test.ts", 'pack(root, "legacy", { t3: "t3 v1.2.3" })', "kept"],
+    // The server's install tests follow the renamed launcher, unlike scripts/install.test.ts.
+    [
+      "apps/server/src/cli/install.test.ts",
+      '  return { link: path.join(binDir, "t3") };',
+      "display",
+    ],
+    [
+      "apps/server/src/cli/uninstall.test.ts",
+      'const exe = path.join(versionsDir, "1.0.0/t3");',
+      "identifier",
+    ],
     // Mobile keeps its own names but follows renamed shared code.
     ["apps/mobile/src/lib/a.ts", 'import { T3_PROJECT_FILE_NAME } from "x";', "identifier"],
     [

@@ -88,7 +88,7 @@ it.live("reports failure when the Windows cleanup shell cannot start", () =>
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer))),
 );
 
-it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 uninstall command", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("lathe uninstall command", (it) => {
   it.effect("names another home's service it leaves installed", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -139,7 +139,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 uninstall com
   );
 });
 
-it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
+it.layer(NodeServices.layer)("lathe uninstall launcher", (it) => {
   it.effect("claims only a launcher that points into this home's runtime tree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -149,15 +149,15 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
         .makeTempDirectoryScoped({ prefix: "lathe-uninstall-" })
         .pipe(Effect.flatMap(fs.realPath));
       const versionsDir = path.join(root, "runtime/versions");
-      const exe = path.join(versionsDir, "1.0.0/t3");
-      const otherExe = path.join(root, "other/runtime/versions/1.0.0/t3");
-      const copy = path.join(root, "copy/t3");
+      const exe = path.join(versionsDir, "1.0.0/lathe");
+      const otherExe = path.join(root, "other/runtime/versions/1.0.0/lathe");
+      const copy = path.join(root, "copy/lathe");
       for (const file of [exe, otherExe, copy]) {
         yield* fs.makeDirectory(path.dirname(file), { recursive: true });
         yield* fs.writeFileString(file, "");
       }
-      const ours = path.join(root, "bin/t3");
-      const theirs = path.join(root, "other/bin/t3");
+      const ours = path.join(root, "bin/lathe");
+      const theirs = path.join(root, "other/bin/lathe");
       yield* fs.makeDirectory(path.dirname(ours), { recursive: true });
       yield* fs.makeDirectory(path.dirname(theirs), { recursive: true });
       yield* fs.symlink(exe, ours);
@@ -169,7 +169,7 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, versionsDir }));
       // A script launcher execs by absolute path, so argv0 names the executable.
       const scriptDir = path.join(root, "script-bin");
-      const script = path.join(scriptDir, "t3");
+      const script = path.join(scriptDir, "lathe");
       yield* fs.makeDirectory(scriptDir);
       yield* fs.writeFileString(script, posixLauncherScript(exe), { mode: 0o755 });
       assert.equal(
@@ -201,8 +201,8 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       const throughAlias = path.join(root, "bin/lathe-alias");
       const pruned = path.join(root, "bin/lathe-pruned");
       yield* fs.symlink(root, path.join(root, "alias"));
-      yield* fs.symlink(path.join(root, "alias/runtime/versions/1.0.0/t3"), throughAlias);
-      yield* fs.symlink(path.join(versionsDir, "0.9.0/t3"), pruned);
+      yield* fs.symlink(path.join(root, "alias/runtime/versions/1.0.0/lathe"), throughAlias);
+      yield* fs.symlink(path.join(versionsDir, "0.9.0/lathe"), pruned);
       // Another program inside a version is not a launcher.
       const sibling = path.join(root, "bin/lathe-sibling");
       yield* fs.symlink(path.join(versionsDir, "1.0.0/node"), sibling);
@@ -246,15 +246,15 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
 });
 
 it.live.runIf(HostProcess.Platform.defaultValue() === "win32")(
-  "t3 uninstall has cmd.exe remove the runtime directory, preserving spaces and literal environment-variable syntax",
+  "lathe uninstall has cmd.exe remove the runtime directory, preserving spaces and literal environment-variable syntax",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "lathe-uninstall-" });
-      const runtimeDir = path.join(root, "t3 home %COMSPEC% !COMSPEC! & data", "runtime");
+      const runtimeDir = path.join(root, "lathe home %COMSPEC% !COMSPEC! & data", "runtime");
       yield* fs.makeDirectory(path.join(runtimeDir, "versions", "1.0.0"), { recursive: true });
-      yield* fs.writeFileString(path.join(runtimeDir, "versions", "1.0.0", "t3.exe"), "");
+      yield* fs.writeFileString(path.join(runtimeDir, "versions", "1.0.0", "lathe.exe"), "");
 
       const child = spawnWindowsRemoval(
         yield* Config.String("ComSpec").pipe(Config.withDefault("cmd.exe")),
