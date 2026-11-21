@@ -3564,8 +3564,8 @@ const make = Effect.gen(function* () {
         shell,
         yield* Clock.currentTimeMillis,
         input.afterPosition === undefined &&
-          input.beforePosition === undefined &&
-          input.itemId === undefined,
+          input.itemId === undefined &&
+          (input.beforePosition === undefined || input.beforePosition >= timeline.totalItems),
       );
       const recentRuns = target.runs
         .toSorted((left, right) => right.ordinal - left.ordinal)
