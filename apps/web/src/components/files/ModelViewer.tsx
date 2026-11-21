@@ -578,11 +578,8 @@ export default function ModelViewer(props: {
           )}
         </ol>
       ) : null}
-      <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-1 border-t border-border/60 px-3 py-1 text-2xs text-muted-foreground">
-        <span className="min-w-0 grow basis-48 truncate">
-          <T>Drag to orbit · Shift drag to pan · Scroll to zoom</T>
-        </span>
-        <span ref={statusRef} className="shrink-0 font-mono" />
+      <div className="flex min-h-9 shrink-0 flex-wrap items-center justify-end gap-1 border-t border-border/60 px-3 py-1 text-2xs text-muted-foreground">
+        <span ref={statusRef} className="mr-auto shrink-0 font-mono" />
         {(
           [
             ["top", gt("Top", { $context: "3D view preset" })],
@@ -592,8 +589,8 @@ export default function ModelViewer(props: {
         ).map(([preset, label]) => (
           <Button
             key={preset}
-            size="micro"
-            variant="ghost-muted"
+            size="xs"
+            variant="outline"
             disabled={!scene}
             onClick={() => scene?.setPreset(preset)}
           >
@@ -601,25 +598,26 @@ export default function ModelViewer(props: {
           </Button>
         ))}
         <Button
-          size="micro"
-          variant="ghost-muted"
+          size="xs"
+          variant="outline"
           disabled={!scene}
           onClick={() => scene?.setPreset("fit")}
         >
           <T>Fit</T>
         </Button>
-        <Toggle
+        <Button
           size="xs"
-          variant="ghost"
+          variant="outline"
           disabled={!scene}
-          pressed={wireframe}
-          onPressedChange={(pressed) => {
-            setWireframe(pressed);
-            scene?.setWireframe(pressed);
+          aria-pressed={wireframe}
+          data-pressed={wireframe ? "" : undefined}
+          onClick={() => {
+            setWireframe(!wireframe);
+            scene?.setWireframe(!wireframe);
           }}
         >
           <T>Wireframe</T>
-        </Toggle>
+        </Button>
       </div>
     </div>
   );
