@@ -492,6 +492,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
+    id: "machine-bar",
+    title: msg("Machine bar"),
+    to: "/settings/general",
+    searchTerms: [msg("machines hub power load memory agents room next thread top strip")],
+  },
+  {
     id: "boring-sidebar",
     title: msg("Boring sidebar (group by project)"),
     to: "/settings/labs",
@@ -845,6 +851,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/maintenance",
     scope: "environment-defaults",
     searchTerms: [msg("caffeinate sleep prevent stay awake power laptop lid inhibit")],
+  },
+  {
+    id: "machine-agent-limit",
+    title: msg("Agent limit"),
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    searchTerms: [msg("machine bar most agents working at once cap room memory")],
   },
   {
     id: "background-activity",

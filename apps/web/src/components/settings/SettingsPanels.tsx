@@ -532,6 +532,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? [gt("Working section")]
       : []),
+    ...(settings.machineBarEnabled !== DEFAULT_UNIFIED_SETTINGS.machineBarEnabled
+      ? [gt("Machine bar")]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? [gt("Auto-settle inactive threads")]
       : []),
@@ -604,6 +607,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(isBackgroundActivityDirty ? [gt("Background activity")] : []),
     ...(settings.keepAwakeWhileAgentsWork !== DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork
       ? [gt("Keep awake while agents work")]
+      : []),
+    ...(settings.machineStatus.maxWorkingAgents !==
+    DEFAULT_UNIFIED_SETTINGS.machineStatus.maxWorkingAgents
+      ? [gt("Agent limit")]
       : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
       ? [gt("New thread mode")]
@@ -723,6 +730,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      machineBarEnabled: DEFAULT_UNIFIED_SETTINGS.machineBarEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -734,6 +742,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       keepAwakeWhileAgentsWork: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork,
+      machineStatus: DEFAULT_UNIFIED_SETTINGS.machineStatus,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
@@ -966,6 +975,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label={gt("Working section")}
+            />
+          }
+        />
+        <SettingsRow
+          {...setting("machine-bar")}
+          description={
+            <T>
+              Show a strip under the header with each connected machine's load and room for more
+              agents, the Claude limits, and where the next thread fits. Hidden in narrow windows.
+            </T>
+          }
+          resetAction={
+            settings.machineBarEnabled !== DEFAULT_UNIFIED_SETTINGS.machineBarEnabled ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset machine bar to default")}
+                onClick={() =>
+                  updateSettings({ machineBarEnabled: DEFAULT_UNIFIED_SETTINGS.machineBarEnabled })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.machineBarEnabled}
+              onCheckedChange={(checked) => updateSettings({ machineBarEnabled: Boolean(checked) })}
+              aria-label={gt("Machine bar")}
             />
           }
         />
@@ -2369,6 +2404,13 @@ export function MaintenanceSettingsPanel() {
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
+  const mixedAgentLimit = useScopedSettingsMixed(["machineStatus"]);
+  const agentLimitLabel = (value: string | null) =>
+    value === null
+      ? gt("Mixed")
+      : value === "none"
+        ? gt("Memory only")
+        : gt("{count, plural, one {# agent} other {# agents}}", { count: Number(value) });
 
   return (
     <SettingsPageContainer>
@@ -2476,6 +2518,48 @@ export function MaintenanceSettingsPanel() {
               }
               aria-label={gt("Keep awake while agents work")}
             />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["machineStatus"]}
+          {...setting("machine-agent-limit")}
+          description={gt(
+            "The most agents this machine should run at once. The machine bar never offers more room than this. With Memory only, free memory and load alone decide.",
+          )}
+          resetAction={
+            settings.machineStatus.maxWorkingAgents !==
+            DEFAULT_UNIFIED_SETTINGS.machineStatus.maxWorkingAgents ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset agent limit to default")}
+                onClick={() =>
+                  updateSettings({ machineStatus: DEFAULT_UNIFIED_SETTINGS.machineStatus })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={
+                mixedAgentLimit ? null : String(settings.machineStatus.maxWorkingAgents ?? "none")
+              }
+              onValueChange={(value) => {
+                if (value === null) return;
+                const limit = value === "none" ? null : Number(value);
+                updateSettings({ machineStatus: { maxWorkingAgents: limit } });
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("Agent limit")}>
+                <SelectValue>{agentLimitLabel}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {["none", "1", "2", "3", "4", "5", "6", "8"].map((value) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {agentLimitLabel(value)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
       </SettingsSection>

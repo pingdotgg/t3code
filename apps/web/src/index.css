@@ -121,6 +121,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --glass-saturation: 1.14;
   --desktop-window-right-resize-inset: 0px;
   --workspace-topbar-height: 52px;
+  /* Space each column leaves under its header for the machine bar; the app shell sets it. */
+  --machine-bar-height: 0px;
   --workspace-controls-top: 0px;
   --workspace-controls-left: calc(env(safe-area-inset-left) + 0.75rem);
   --workspace-controls-right: calc(env(safe-area-inset-right) + 0.75rem);

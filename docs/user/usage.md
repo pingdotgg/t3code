@@ -201,6 +201,20 @@ Claude quotas. Tap it to open **Usage → Limits**; on Android this works while 
 the background, otherwise open the app from the launcher. On iOS, use **Edit Widget** to choose
 Session, Weekly, or both for each provider. Reopen T3 to refresh expired readings.
 
+## Machine bar
+
+On web and desktop windows wider than 768 px, a strip under the header shows each connected
+machine: working agents (over its agent limit, when one is set), free memory, and how many more
+agents fit. Green means room, amber means the machine is at its limit or its memory reserve, red
+means memory, CPU, or disk pressure, and grey means offline. Hover or click a machine for its CPU
+load, memory, swap, disk, pressure, and the agents it runs. The strip also shows each Claude
+account's 5-hour and weekly use, and where the next thread fits, with the model Auto would pick
+there.
+
+Room is free memory minus a reserve (15% of RAM, at least 512 MB), divided by 700 MB per agent,
+and none while the machine is under pressure. Set each machine's limit in **Settings →
+Maintenance → Agent limit**. Hide the strip on a device in **Settings → General → Machine bar**.
+
 ## Keyboard shortcuts
 
 On web and desktop, open Usage from the command palette. While on Usage,
