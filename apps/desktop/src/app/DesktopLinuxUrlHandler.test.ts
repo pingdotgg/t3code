@@ -27,9 +27,31 @@ interface RecordedRegistration {
   readonly commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }>;
   readonly copies: Array<{ readonly source: string; readonly destination: string }>;
   readonly icons: Array<{ readonly path: string; readonly bytes: ReadonlyArray<number> }>;
+  readonly removals: string[];
 }
 
 const ICON_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+const APP_ID_ENTRY_PATH = "/home/alice/.local/share/applications/com.t3tools.T3Code.desktop";
+const URL_HANDLER_ENTRY_PATH =
+  "/home/alice/.local/share/applications/com.t3tools.T3Code.UrlHandler.desktop";
+const ICON_PATH = "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png";
+const XDG_MIME_DEFAULT = {
+  command: "xdg-mime",
+  args: ["default", "com.t3tools.T3Code.UrlHandler.desktop", "x-scheme-handler/t3code"],
+};
+const currentEntries = (execTarget: string) => ({
+  [APP_ID_ENTRY_PATH]: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+    displayName: "T3 Code (Alpha)",
+    execTarget,
+    iconPath: ICON_PATH,
+  }),
+  [URL_HANDLER_ENTRY_PATH]: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+    displayName: "T3 Code (Alpha)",
+    execTarget,
+    scheme: "t3code",
+    iconPath: ICON_PATH,
+  }),
+});
 
 const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {}) =>
   DesktopEnvironment.DesktopEnvironment.of({
@@ -39,6 +61,7 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     displayName: "T3 Code (Alpha)",
     linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
+    linuxSystemApplicationsDirs: ["/usr/local/share/applications", "/usr/share/applications"],
     desktopLauncherPath: Option.none(),
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
     path,
@@ -70,7 +93,8 @@ const layerHandler = (
     readonly updateDesktopDatabaseStarted?: Deferred.Deferred<void>;
     readonly xdgMimeExitCode?: number;
     readonly writeError?: PlatformError.PlatformError;
-    readonly existingEntry?: string;
+    readonly existingEntries?: Readonly<Record<string, string>>;
+    readonly installedEntries?: ReadonlyArray<string>;
     readonly iconSource?: string;
     readonly iconWriteError?: PlatformError.PlatformError;
   } = {},
@@ -115,7 +139,12 @@ const layerHandler = (
               : Effect.sync(() => {
                   recorded.icons.push({ path, bytes: [...bytes] });
                 }),
-          readFileString: () => Effect.succeed(input.existingEntry ?? ""),
+          readFileString: (path) => Effect.succeed(input.existingEntries?.[path] ?? ""),
+          exists: (path) => Effect.succeed(input.installedEntries?.includes(path) ?? false),
+          remove: (path) =>
+            Effect.sync(() => {
+              recorded.removals.push(path);
+            }),
           makeDirectory: (path) =>
             Effect.sync(() => {
               recorded.directories.push(path);
@@ -137,8 +166,9 @@ const layerHandler = (
             };
             if (childProcess.command === "update-desktop-database") {
               assert.isTrue(
-                recorded.files.length > 0 || input.existingEntry !== undefined,
-                "the desktop entry must exist before refreshing the MIME cache",
+                recorded.files.some(({ path }) => path === URL_HANDLER_ENTRY_PATH) ||
+                  input.existingEntries?.[URL_HANDLER_ENTRY_PATH] !== undefined,
+                "the URL handler entry must exist before refreshing the MIME cache",
               );
             }
             recorded.commands.push({
@@ -181,6 +211,7 @@ const emptyRecording = (): RecordedRegistration => ({
   commands: [],
   copies: [],
   icons: [],
+  removals: [],
 });
 
 describe("DesktopLinuxUrlHandler", () => {
@@ -234,33 +265,30 @@ describe("DesktopLinuxUrlHandler", () => {
   });
 
   it.effect(
-    "writes the handler entry, refreshes the MIME cache, and claims the scheme default",
+    "writes the app-id and handler entries, refreshes the MIME cache, and claims the scheme default",
     () => {
       const recorded = emptyRecording();
 
       return Effect.gen(function* () {
         yield* runRegister(recorded);
 
-        assert.deepEqual(recorded.directories, ["/home/alice/.local/share/applications"]);
-        assert.equal(recorded.files.length, 1);
-        assert.equal(
-          recorded.files[0]?.path,
-          "/home/alice/.local/share/applications/com.t3tools.T3Code.desktop",
+        assert.deepEqual(
+          recorded.files.map(({ path }) => path),
+          [APP_ID_ENTRY_PATH, URL_HANDLER_ENTRY_PATH],
         );
         assert.include(
-          recorded.files[0]?.content,
+          recorded.files[1]?.content,
           "Exec=/home/alice/Applications/T3-Code.AppImage %U",
         );
-        assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
+        // A second association would make the portal show a chooser.
+        assert.notInclude(recorded.files[0]?.content, "MimeType=");
+        assert.include(recorded.files[1]?.content, "MimeType=x-scheme-handler/t3code;");
         assert.deepEqual(recorded.commands, [
           {
             command: "update-desktop-database",
             args: ["/home/alice/.local/share/applications"],
           },
-          {
-            command: "xdg-mime",
-            args: ["default", "com.t3tools.T3Code.desktop", "x-scheme-handler/t3code"],
-          },
+          XDG_MIME_DEFAULT,
         ]);
       });
     },
@@ -272,14 +300,9 @@ describe("DesktopLinuxUrlHandler", () => {
     return Effect.gen(function* () {
       yield* runRegister(recorded, { environment: { appImagePath: Option.none() } });
 
-      assert.include(
-        recorded.files[0]?.content,
-        DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
-          displayName: "T3 Code (Alpha)",
-          execTarget: process.execPath,
-          scheme: "t3code",
-          iconPath: "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png",
-        }),
+      assert.deepEqual(
+        recorded.files.map(({ content }) => content),
+        Object.values(currentEntries(process.execPath)),
       );
     });
   });
@@ -301,12 +324,7 @@ describe("DesktopLinuxUrlHandler", () => {
 
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
-        existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
-          displayName: "T3 Code (Alpha)",
-          execTarget: "/home/alice/Applications/T3-Code.AppImage",
-          scheme: "t3code",
-          iconPath: "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png",
-        }),
+        existingEntries: currentEntries("/home/alice/Applications/T3-Code.AppImage"),
       });
 
       assert.deepEqual(recorded.files, []);
@@ -316,30 +334,102 @@ describe("DesktopLinuxUrlHandler", () => {
           command: "update-desktop-database",
           args: ["/home/alice/.local/share/applications"],
         },
-        {
-          command: "xdg-mime",
-          args: ["default", "com.t3tools.T3Code.desktop", "x-scheme-handler/t3code"],
-        },
+        XDG_MIME_DEFAULT,
       ]);
+    });
+  });
+
+  it.effect.each([
+    {
+      label: "a legacy generated entry",
+      previous: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+        displayName: "T3 Code (Alpha)",
+        execTarget: "/usr/lib/electron/electron",
+        scheme: "t3code",
+      }).replace("X-T3Code-Generated=true\n", ""),
+      removed: true,
+    },
+    {
+      label: "a generated app-id entry",
+      previous: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+        displayName: "T3 Code (Alpha)",
+        execTarget: "/usr/lib/electron/electron",
+      }),
+      removed: true,
+    },
+    {
+      label: "a user's own entry",
+      previous: [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=T3 Code",
+        "Exec=t3code --ozone-platform=x11 %U",
+        "MimeType=x-scheme-handler/t3code;",
+        "",
+      ].join("\n"),
+      removed: false,
+    },
+  ])(
+    "keeps an installed launcher visible, handles the scheme, and handles $label",
+    ({ previous, removed }) => {
+      const recorded = emptyRecording();
+
+      return Effect.gen(function* () {
+        // The installed launcher need not declare the scheme itself.
+        yield* runRegister(recorded, {
+          environment: { appImagePath: Option.none() },
+          installedEntries: ["/usr/share/applications/com.t3tools.T3Code.desktop"],
+          existingEntries: { [APP_ID_ENTRY_PATH]: previous },
+        });
+
+        assert.deepEqual(
+          recorded.files.map(({ path }) => path),
+          [URL_HANDLER_ENTRY_PATH],
+        );
+        assert.deepEqual(recorded.removals, removed ? [APP_ID_ENTRY_PATH] : []);
+        assert.deepEqual(recorded.commands, [
+          {
+            command: "update-desktop-database",
+            args: ["/home/alice/.local/share/applications"],
+          },
+          XDG_MIME_DEFAULT,
+        ]);
+      });
+    },
+  );
+
+  it.effect("does not treat $XDG_DATA_HOME as an installed entry", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        environment: {
+          linuxSystemApplicationsDirs: [
+            "/home/alice/.local/share/applications",
+            "/usr/share/applications",
+          ],
+        },
+        installedEntries: [APP_ID_ENTRY_PATH],
+      });
+
+      assert.deepEqual(
+        recorded.files.map(({ path }) => path),
+        [APP_ID_ENTRY_PATH, URL_HANDLER_ENTRY_PATH],
+      );
+      assert.deepEqual(recorded.removals, []);
     });
   });
 
   it.effect("installs a persistent icon even when the desktop entry is already current", () => {
     const recorded = emptyRecording();
-    const iconPath = "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png";
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
         iconSource: "/tmp/.mount_T3/resources/icon.png",
-        existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
-          displayName: "T3 Code (Alpha)",
-          execTarget: "/home/alice/Applications/T3-Code.AppImage",
-          scheme: "t3code",
-          iconPath,
-        }),
+        existingEntries: currentEntries("/home/alice/Applications/T3-Code.AppImage"),
       });
       assert.deepEqual(recorded.files, []);
       assert.deepEqual(recorded.copies, [], "icon must not be copied out of the app bundle");
-      assert.deepEqual(recorded.icons, [{ path: iconPath, bytes: [...ICON_BYTES] }]);
+      assert.deepEqual(recorded.icons, [{ path: ICON_PATH, bytes: [...ICON_BYTES] }]);
       assert.equal(recorded.commands.at(-1)?.command, "xdg-mime");
     });
   });
@@ -356,7 +446,7 @@ describe("DesktopLinuxUrlHandler", () => {
           description: "read-only icon directory",
         }),
       });
-      assert.equal(recorded.files.length, 1);
+      assert.equal(recorded.files.length, 2);
       assert.deepEqual(
         recorded.commands.map(({ command }) => command),
         ["update-desktop-database", "xdg-mime"],
@@ -400,7 +490,7 @@ describe("DesktopLinuxUrlHandler", () => {
           module: "FileSystem",
           method: "writeFileString",
           description: "read-only filesystem",
-          pathOrDescriptor: "/home/alice/.local/share/applications/com.t3tools.T3Code.desktop",
+          pathOrDescriptor: APP_ID_ENTRY_PATH,
         }),
       });
 
@@ -408,7 +498,7 @@ describe("DesktopLinuxUrlHandler", () => {
         desktopDatabaseFailed.commands.map(({ command }) => command),
         ["update-desktop-database", "xdg-mime"],
       );
-      assert.equal(xdgMimeFailed.files.length, 1);
+      assert.equal(xdgMimeFailed.files.length, 2);
       assert.deepEqual(writeFailed.commands, []);
     });
   });
