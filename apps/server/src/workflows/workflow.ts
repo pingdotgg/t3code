@@ -536,7 +536,8 @@ const invokeAs = Effect.fn("workflow.invoke")(function* <P, A>(
   StepFailed,
   InRun
 > {
-  const run = yield* RunContext;
+  // Taken before the child starts: a name already used would refuse the wait after the start.
+  const run = yield* claim(name);
   yield* step(
     `${name}/start`,
     { returns: Schema.String },
@@ -548,7 +549,7 @@ const invokeAs = Effect.fn("workflow.invoke")(function* <P, A>(
       }),
     ).pipe(Effect.map((started) => started.runId)),
   );
-  const ended = yield* waitAs("wait", name, { returns: ChildEnd });
+  const ended = yield* waitClaimed(run, "wait", name, { returns: ChildEnd });
   if (Option.isNone(ended)) {
     return yield* new StepFailed({ step: name, reason: "the wait ended without an outcome" });
   }
