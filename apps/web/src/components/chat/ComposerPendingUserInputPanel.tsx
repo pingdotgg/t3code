@@ -211,7 +211,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             : gt("Hide the question and its options")
         }
         data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
-        className="px-4 py-1.5"
+        className="px-2 [&:is(button)]:rounded-b-sm"
       >
         <ComposerBanner.Content>
           <span
@@ -263,7 +263,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
-          <ComposerBanner.Body className="ps-6 pe-4 pb-1 wrap-anywhere sm:ps-5.5">
+          <ComposerBanner.Body className="ps-4 pe-2 pb-1 wrap-anywhere sm:ps-3.5">
             <ChatMarkdown
               text={activeQuestion.question}
               cwd={cwd}
