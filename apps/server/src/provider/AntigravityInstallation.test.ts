@@ -28,8 +28,8 @@ import { type AntigravityCliReleaseAsset } from "./antigravityCliRelease.ts";
 
 const serverContents = "antigravity runtime\n";
 const previousReleaseId = "1".repeat(64);
-const previousVersion = "1.5.3";
-const assetVersion = "1.5.5";
+const previousVersion = "1.5.10";
+const assetVersion = "1.5.11";
 const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 // One regular member, `antigravity`, holding serverContents.
 const cliTarball = Buffer.from(
@@ -200,7 +200,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
           if (request.url.includes("/manifests/")) {
             return Effect.gen(function* () {
               yield* options.beforeManifest ?? Effect.void;
-              const version = options.nativeVersion ?? "1.5.7";
+              const version = options.nativeVersion ?? "1.5.13";
               const folder = platform === "win32" ? "windows-x64" : "linux-x64";
               const manifest = {
                 version,
@@ -302,11 +302,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         yield* installation.start;
         expect(yield* terminalState(installation)).toMatchObject({
           phase: "succeeded",
-          installedVersion: "1.5.7",
+          installedVersion: "1.5.13",
         });
         yield* Deferred.await(stagingReleased);
         const resolved = yield* installation.resolve();
-        expect(resolved).toMatchObject({ source: "managed", version: "1.5.7" });
+        expect(resolved).toMatchObject({ source: "managed", version: "1.5.13" });
         expect(validations).toHaveLength(1);
         expect(yield* fs.exists(legacyDirectory)).toBe(false);
         expect(yield* fs.readFileString(resolved.executablePath)).toBe(serverContents);
@@ -316,7 +316,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           native: true,
           archive,
           platform,
-          nativeVersion: "1.5.6",
+          nativeVersion: "1.5.12",
         });
         expect(yield* restarted.installation.start).toMatchObject({
           phase: "verifying",
@@ -324,7 +324,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         });
         expect(yield* terminalState(restarted.installation)).toMatchObject({
           phase: "succeeded",
-          installedVersion: "1.5.7",
+          installedVersion: "1.5.13",
         });
         expect(restarted.requests.filter((url) => url.includes("storage.googleapis.com"))).toEqual(
           [],
@@ -372,7 +372,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         yield* installation.checkForUpdate;
         if (enabled) {
           yield* installation.changes.pipe(
-            Stream.filter((value) => value.version === "1.5.7"),
+            Stream.filter((value) => value.version === "1.5.13"),
             Stream.runHead,
           );
           yield* installation.state;
@@ -397,7 +397,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
                 {
                   driver: "antigravity",
                   t3CodeRange: ">=0.0.42",
-                  ranges: [{ range: ">=1.5.7", status: "broken" }],
+                  ranges: [{ range: ">=1.5.13", status: "broken" }],
                 },
               ],
             } satisfies ModelManifest.ModelManifestData)
@@ -437,20 +437,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       const recovery = yield* makeHarness({
         baseDir: first.baseDir,
         native: true,
-        nativeVersion: "1.5.6",
+        nativeVersion: "1.5.12",
         archive: Buffer.from("recovery runtime"),
         platform: "win32",
         manifest,
       });
       yield* recovery.installation.checkForUpdate;
       expect(yield* recovery.installation.state).toMatchObject({
-        installedVersion: "1.5.7",
-        version: "1.5.6",
+        installedVersion: "1.5.13",
+        version: "1.5.12",
       });
       yield* recovery.installation.start;
       expect(yield* terminalState(recovery.installation)).toMatchObject({
         phase: "succeeded",
-        installedVersion: "1.5.6",
+        installedVersion: "1.5.12",
       });
     }),
   );
@@ -468,21 +468,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       const next = yield* makeHarness({
         baseDir: first.baseDir,
         native: true,
-        nativeVersion: "1.5.8",
+        nativeVersion: "1.5.14",
         archive: Buffer.from("next runtime"),
         platform: "win32",
       });
       yield* next.installation.start;
       expect(yield* terminalState(next.installation)).toMatchObject({
         phase: "succeeded",
-        installedVersion: "1.5.8",
+        installedVersion: "1.5.14",
       });
       const nextPath = (yield* next.installation.resolve()).executablePath;
       expect(nextPath).not.toBe(initialPath);
       const republished = yield* makeHarness({
         baseDir: first.baseDir,
         native: true,
-        nativeVersion: "1.5.8",
+        nativeVersion: "1.5.14",
         archive: Buffer.from("republished runtime"),
         platform: "win32",
       });
@@ -499,7 +499,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       yield* offline.installation.start;
       expect(yield* terminalState(offline.installation)).toMatchObject({
         phase: "succeeded",
-        installedVersion: "1.5.8",
+        installedVersion: "1.5.14",
       });
       expect(offline.requests.filter((url) => url.includes("storage.googleapis.com"))).toEqual([]);
     }),
@@ -532,7 +532,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       const result = yield* Effect.result(installation.start);
       // Without an acceptable release, start re-verifies the installed one.
       if (result._tag === "Success") yield* terminalState(installation);
-      expect(validations.map(({ version }) => version)).not.toContain("1.5.7");
+      expect(validations.map(({ version }) => version)).not.toContain("1.5.13");
       expect(requests.some((url) => url.startsWith("https://example.com"))).toBe(false);
       yield* expectPreviousRelease(installation);
     }),
@@ -1108,7 +1108,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect((yield* terminalState(installation)).phase).toBe("succeeded");
       yield* Deferred.await(stagingReleased);
       const current = yield* installation.resolve();
-      expect(current.version).toBe("1.5.7");
+      expect(current.version).toBe("1.5.13");
       expect(current.executablePath).not.toBe(oldExecutable.executablePath);
       expect(yield* fs.readFileString(oldExecutable.executablePath)).toBe(serverContents);
       expect(yield* installation.remove().pipe(Effect.flip)).toMatchObject({ operation: "remove" });
@@ -1315,7 +1315,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         yield* installation.start;
         expect(yield* terminalState(installation)).toMatchObject({
           phase: "succeeded",
-          installedVersion: "1.5.7",
+          installedVersion: "1.5.13",
         });
         yield* Deferred.await(stagingReleased);
 
@@ -1341,7 +1341,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           const relocked = yield* makeHarness({ baseDir, native: true });
           expect(yield* relocked.installation.state).toMatchObject({
             phase: "idle",
-            installedVersion: "1.5.7",
+            installedVersion: "1.5.13",
           });
           expect((yield* fs.stat(releaseDir)).mode & 0o777).toBe(0o500);
           expect((yield* fs.stat(installed.executablePath)).mode & 0o777).toBe(0o555);
@@ -1371,12 +1371,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         yield* restarted.installation.start;
         expect(yield* terminalState(restarted.installation)).toMatchObject({
           phase: "succeeded",
-          installedVersion: "1.5.7",
+          installedVersion: "1.5.13",
         });
         yield* Deferred.await(restarted.stagingReleased);
 
         const repaired = yield* restarted.installation.resolve();
-        expect(repaired.version).toBe("1.5.7");
+        expect(repaired.version).toBe("1.5.13");
         expect(yield* fs.readFileString(repaired.executablePath)).toBe(serverContents);
         if (hostPlatform !== "win32") {
           expect((yield* fs.stat(releaseDir)).mode & 0o777).toBe(0o500);
@@ -1491,7 +1491,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
             yield* unreadableRecord.installation.start;
             expect(yield* terminalState(unreadableRecord.installation)).toMatchObject({
               phase: "succeeded",
-              installedVersion: "1.5.7",
+              installedVersion: "1.5.13",
             });
             yield* Deferred.await(unreadableRecord.stagingReleased);
           }
@@ -1510,7 +1510,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         yield* repairedFromFile.installation.start;
         expect(yield* terminalState(repairedFromFile.installation)).toMatchObject({
           phase: "succeeded",
-          installedVersion: "1.5.7",
+          installedVersion: "1.5.13",
         });
         yield* Deferred.await(repairedFromFile.stagingReleased);
         expect(yield* fs.readFileString(installed.executablePath)).toBe(serverContents);
@@ -1600,13 +1600,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           expect(acquired).toMatchObject({
             source: "override",
             executablePath: installed.executablePath,
-            version: "1.5.7",
+            version: "1.5.13",
           });
           if (symlinkResolveFiber !== null) {
             expect(yield* Fiber.join(symlinkResolveFiber)).toMatchObject({
               source: "override",
               executablePath: installed.executablePath,
-              version: "1.5.7",
+              version: "1.5.13",
             });
           }
           expect(yield* fs.readFileString(acquired.executablePath)).toBe(serverContents);
@@ -1638,7 +1638,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
             path.join(outsideReleaseDir, ".install-complete.json"),
             encodeJsonString({
               releaseId: path.basename(releaseDir),
-              version: "1.5.7",
+              version: "1.5.13",
               executable: { name: executableName, bytes: Buffer.byteLength(serverContents) },
             }),
           );

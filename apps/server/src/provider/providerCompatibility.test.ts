@@ -143,9 +143,16 @@ describe("provider compatibility", () => {
       const advisory = resolveProviderCompatibility(policies, antigravity, version);
       assert.strictEqual(advisory?.status, "broken", version);
     }
-    const supported = resolveProviderCompatibility(policies, antigravity, "1.5.11");
-    assert.strictEqual(supported?.status, "supported");
-    assert.strictEqual(supported?.recommendedRange, ">=1.5.12 <2");
+    for (const version of ["1.5.0", "1.5.7", "1.5.9"]) {
+      const advisory = resolveProviderCompatibility(policies, antigravity, version);
+      assert.strictEqual(advisory?.status, "unsupported", version);
+      assert.strictEqual(advisory?.recommendedRange, ">=1.5.12 <2", version);
+    }
+    for (const version of ["1.5.10", "1.5.11"]) {
+      const supported = resolveProviderCompatibility(policies, antigravity, version);
+      assert.strictEqual(supported?.status, "supported", version);
+      assert.strictEqual(supported?.recommendedRange, ">=1.5.12 <2", version);
+    }
     // Stable releases before 0.1.10 cannot install the CLI, so they keep the policy they shipped with.
     assert.strictEqual(
       resolveProviderCompatibility(policies, antigravity, "1.4.5", "0.1.9")?.status,

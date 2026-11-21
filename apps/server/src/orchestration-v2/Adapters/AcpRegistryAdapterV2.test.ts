@@ -453,74 +453,77 @@ const claudeUnrelatedChildren = [
 
 describe("AcpRegistryAdapterV2", () => {
   it.effect.each([
-    { commandPath: "/root/.local/bin/agy", offers: 1 },
-    { commandPath: "C:\\tools\\agy.exe", offers: 1 },
-    { commandPath: "/opt/bin/other-agent", offers: 0 },
-  ])("continues late output only for agy ($commandPath)", ({ commandPath, offers }) =>
-    Effect.gen(function* () {
-      const gate = makeProviderReplayGate(["wake"]);
-      const update = (sessionUpdate: Record<string, unknown>) =>
-        claudeFrames.update(CLAUDE_ROOT_SESSION, sessionUpdate);
-      const session = yield* openClaudeReplaySession(
-        [
-          {
-            type: "expect_outbound",
-            frame: { kind: "request", method: "initialize", params: "<any>" },
-          },
-          {
-            type: "emit_inbound",
-            frame: {
-              kind: "response",
-              method: "initialize",
-              result: {
-                protocolVersion: 1,
-                agentInfo: { name: "Antigravity ACP Server", version: "1.5.9" },
-                agentCapabilities: { loadSession: true },
-                authMethods: [],
+    { commandPath: "/root/.local/bin/agy", version: "1.5.11", offers: 1 },
+    { commandPath: "C:\\tools\\agy.exe", version: "1.5.11", offers: 1 },
+    { commandPath: "/root/.local/bin/agy", version: "1.5.9", offers: 0 },
+    { commandPath: "/opt/bin/other-agent", version: "1.5.11", offers: 0 },
+  ])(
+    "continues late output only for agy >= 1.5.10 ($commandPath, $version)",
+    ({ commandPath, version, offers }) =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["wake"]);
+        const update = (sessionUpdate: Record<string, unknown>) =>
+          claudeFrames.update(CLAUDE_ROOT_SESSION, sessionUpdate);
+        const session = yield* openClaudeReplaySession(
+          [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: {
+                  protocolVersion: 1,
+                  agentInfo: { name: "Antigravity ACP Server", version },
+                  agentCapabilities: { loadSession: true },
+                  authMethods: [],
+                },
               },
             },
-          },
-          claudeFrames.open[2],
-          claudeFrames.open[3],
-          claudeFrames.prompt(1)[0],
-          {
-            type: "emit_inbound",
-            frame: {
-              kind: "response",
-              method: "session/prompt",
-              result: { stopReason: "end_turn" },
+            claudeFrames.open[2],
+            claudeFrames.open[3],
+            claudeFrames.prompt(1)[0],
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
             },
-          },
-          {
-            ...update({
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: "Background work finished." },
-            }),
-            label: "wake",
-          },
-          // agy ends each reply with usage_update; this one ends before the continuation run starts.
-          update({ sessionUpdate: "usage_update", used: 100, size: 1000 }),
-          claudeMarker("late output received"),
-        ],
-        gate,
-        true,
-        { source: "local", commandPath, commandArgs: ["acp"] },
-      );
-      yield* session.runtime.startTurn(session.turnInput(1));
-      assert.equal((yield* session.terminal).status, "completed");
-      gate.release("wake");
-      yield* session.throughMarker("late output received");
-      assert.lengthOf(session.offers, offers, "late output must only wake agy");
-      if (offers === 0) return;
-      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
-      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
-      yield* TestClock.adjust("3 seconds");
-      const continued = yield* session.until((event) => event.type === "turn.terminal");
-      assert.include(JSON.stringify(continued), "Background work finished.");
-      const terminal = continued.at(-1)!;
-      if (terminal.type !== "turn.terminal") throw new Error("Missing continuation terminal");
-      assert.equal(terminal.status, "completed");
-    }).pipe(Effect.provide(layerTest)),
+            {
+              ...update({
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Background work finished." },
+              }),
+              label: "wake",
+            },
+            // agy ends each reply with usage_update; this one ends before the continuation run starts.
+            update({ sessionUpdate: "usage_update", used: 100, size: 1000 }),
+            claudeMarker("late output received"),
+          ],
+          gate,
+          true,
+          { source: "local", commandPath, commandArgs: ["acp"] },
+        );
+        yield* session.runtime.startTurn(session.turnInput(1));
+        assert.equal((yield* session.terminal).status, "completed");
+        gate.release("wake");
+        yield* session.throughMarker("late output received");
+        assert.lengthOf(session.offers, offers, "late output must only wake agy");
+        if (offers === 0) return;
+        yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+        yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+        yield* TestClock.adjust("3 seconds");
+        const continued = yield* session.until((event) => event.type === "turn.terminal");
+        assert.include(JSON.stringify(continued), "Background work finished.");
+        const terminal = continued.at(-1)!;
+        if (terminal.type !== "turn.terminal") throw new Error("Missing continuation terminal");
+        assert.equal(terminal.status, "completed");
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each(["approval-required", "full-access"] as const)(
@@ -541,7 +544,7 @@ describe("AcpRegistryAdapterV2", () => {
                 method: "initialize",
                 result: {
                   protocolVersion: 1,
-                  agentInfo: { name: "Antigravity ACP Server", version: "1.5.9" },
+                  agentInfo: { name: "Antigravity ACP Server", version: "1.5.11" },
                   agentCapabilities: { loadSession: true },
                   authMethods: [],
                 },
