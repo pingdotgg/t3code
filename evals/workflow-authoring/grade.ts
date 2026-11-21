@@ -33,7 +33,10 @@ import type { WorkflowRun } from "../../apps/server/src/workflows/WorkflowStore.
 
 export type AgentTurnInput = Parameters<WorkflowAgents["Service"]["start"]>[0];
 
-/** One server holding the file's workflows. `restart` is the same database under a new engine. */
+/**
+ * One server holding the file's workflows. Each `server` call is one lifetime of it: the file
+ * loaded afresh and a new engine on the same database, as after a restart.
+ */
 export interface World {
   readonly definitions: ReadonlyArray<WorkflowDefinition>;
   /** Every agent turn the workflows asked for, in order. */
@@ -68,7 +71,11 @@ export interface Case {
   }>;
 }
 
+// Across every grade in the process: a load under an address used before would get that module.
+let lifetimes = 0;
+
 const world = Effect.fn("gradeWorkflow.world")(function* (
+  file: string,
   definitions: ReadonlyArray<WorkflowDefinition>,
   agent: (turn: AgentTurnInput) => Partial<AgentResult>,
 ) {
@@ -122,17 +129,24 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
       return yield* Effect.succeed("ended" as const);
     }),
   });
-  const engine = WorkflowEngine.layer(definitions).pipe(
-    Layer.provide(Layer.succeed(WorkflowAgents, agents)),
-    Layer.provide(database),
-    Layer.provide(NodeCrypto.layer),
-    Layer.orDie,
-  );
+  const engine = (loaded: ReadonlyArray<WorkflowDefinition>) =>
+    WorkflowEngine.layer(loaded).pipe(
+      Layer.provide(Layer.succeed(WorkflowAgents, agents)),
+      Layer.provide(database),
+      Layer.provide(NodeCrypto.layer),
+      Layer.orDie,
+    );
   return {
     definitions,
     turns,
     server: (use) =>
-      Effect.scoped(Effect.provide(Effect.flatMap(Workflows.Workflows, use), engine)),
+      loadDefinitions(file, ++lifetimes).pipe(
+        Effect.orDie,
+        Effect.provideService(Path.Path, path),
+        Effect.flatMap((loaded) =>
+          Effect.scoped(Effect.provide(Effect.flatMap(Workflows.Workflows, use), engine(loaded))),
+        ),
+      ),
     reaches: (workflows, runId, ...statuses) =>
       workflows
         .waitFor(runId, (run) => statuses.includes(run.status))
@@ -157,7 +171,7 @@ const problemsWith = Effect.fn("gradeWorkflow.problemsWith")(function* (file: st
   }
   const problems: Array<string> = [];
   for (const scenario of entry.scenarios) {
-    const found = yield* world(loaded.success, scenario.agent).pipe(
+    const found = yield* world(file, loaded.success, scenario.agent).pipe(
       Effect.flatMap(scenario.check),
       Effect.scoped,
       Effect.catch((error) => Effect.succeed([error.message])),
