@@ -8029,8 +8029,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
           started.initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;
-        const usesMcpOverAcp =
-          started.initializeResult.agentCapabilities?.mcpCapabilities?.acp === true;
+        // A replacement agent can negotiate another MCP transport, so read the installed one.
+        const installedAgentCapabilities = () =>
+          (Ref.getUnsafe(activeSessionSetup)?.initializeResult ?? started.initializeResult)
+            .agentCapabilities;
+        const usesMcpOverAcp = () =>
+          installedAgentCapabilities()?.mcpCapabilities?.acp === true &&
+          runtimeMcpBridge !== undefined;
         const supportsImagePrompts = acpSupportsImagePrompts({
           flavorSupportsImagePrompts: flavor.supportsImagePrompts,
           negotiatedImage:
@@ -8080,7 +8085,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           rememberTerminalEnvironment(sessionId, currentMcpContext);
           if (
-            usesMcpOverAcp &&
+            usesMcpOverAcp() &&
             runtimeMcpBridge !== undefined &&
             currentMcpContext.authorization !== undefined
           ) {
@@ -8088,7 +8093,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(activeMcpAuthorization, currentMcpContext.authorization);
             return false;
           }
-          if (options.allowReload !== false && (canLoadSession || canResumeSession)) {
+          if (options.allowReload !== false && sessionRuntime.mcpCredentialRotation === "reload") {
             // Reloading resets native children and pending agent state the background work still owns.
             if (yield* sessionRuntime.hasPendingBackgroundWork ?? Effect.succeed(false)) {
               return yield* new ProviderAdapter.ProviderAdapterMcpRotationBlockedError({
@@ -9906,12 +9911,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return providerSession;
           },
           canResumeAfterRestart: canLoadSession || canResumeSession,
-          mcpCredentialRotation:
-            usesMcpOverAcp && runtimeMcpBridge !== undefined
-              ? "live"
-              : canLoadSession || canResumeSession
-                ? "reload"
-                : "none",
+          get mcpCredentialRotation() {
+            const agent = installedAgentCapabilities();
+            if (usesMcpOverAcp()) return "live" as const;
+            return agent?.loadSession === true || agent?.sessionCapabilities?.resume != null
+              ? ("reload" as const)
+              : ("none" as const);
+          },
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ...(flavor.getModelContextWindow === undefined
             ? {}
