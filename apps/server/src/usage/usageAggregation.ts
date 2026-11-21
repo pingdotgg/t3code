@@ -223,6 +223,7 @@ export class UsageAggregator {
     readonly day: string;
     readonly hourIndex: number;
     readonly provider: string;
+    readonly upstreamProvider: string;
     readonly model: string;
     readonly source: string;
     readonly bucket: MutableBucket;
@@ -296,7 +297,14 @@ export class UsageAggregator {
       this.#hourlyWindow === null
         ? -1
         : Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS);
-    return this.#bucketFor(day, hourIndex, record.provider, record.model, source);
+    return this.#bucketFor(
+      day,
+      hourIndex,
+      record.provider,
+      record.upstreamProvider ?? "",
+      record.model,
+      source,
+    );
   }
 
   #accumulate(bucket: MutableBucket, record: UsageRecord): void {
@@ -359,6 +367,7 @@ export class UsageAggregator {
     day: string,
     hourIndex: number,
     provider: string,
+    upstreamProvider: string,
     model: string,
     source: string,
   ): MutableBucket {
@@ -368,6 +377,7 @@ export class UsageAggregator {
       last.day === day &&
       last.hourIndex === hourIndex &&
       last.provider === provider &&
+      last.upstreamProvider === upstreamProvider &&
       last.model === model &&
       last.source === source
     ) {
@@ -376,7 +386,7 @@ export class UsageAggregator {
     const window = this.#hourlyWindow;
     const hourStart =
       window === null ? "" : new Date(window.sinceTimeMs + hourIndex * HOUR_MS).toISOString();
-    const key = `${day}\u0000${hourStart}\u0000${provider}\u0000${model}\u0000${source}`;
+    const key = `${day}\u0000${hourStart}\u0000${provider}\u0000${upstreamProvider}\u0000${model}\u0000${source}`;
     let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
@@ -395,7 +405,7 @@ export class UsageAggregator {
       };
       this.#buckets.set(key, bucket);
     }
-    this.#lastBucket = { day, hourIndex, provider, model, source, bucket };
+    this.#lastBucket = { day, hourIndex, provider, upstreamProvider, model, source, bucket };
     return bucket;
   }
 
@@ -406,8 +416,14 @@ export class UsageAggregator {
     this.#seen.clear();
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
-      const [day = "", hourStart = "", provider = "", model = "", sourcePath = ""] =
-        key.split("\u0000");
+      const [
+        day = "",
+        hourStart = "",
+        provider = "",
+        upstreamProvider = "",
+        model = "",
+        sourcePath = "",
+      ] = key.split("\u0000");
       const category = bucket.categoryCostUsd;
       const fastCostUsd = roundUsd(bucket.fastCostUsd);
       const ultrafastCostUsd = roundUsd(bucket.ultrafastCostUsd);
@@ -417,6 +433,7 @@ export class UsageAggregator {
         ...(hourStart === "" ? {} : { hourStart }),
         provider: provider as UsageBucket["provider"],
         model,
+        ...(upstreamProvider === "" ? {} : { upstreamProvider }),
         ...(sourcePath === "" ? {} : { sourcePath }),
         totals: { ...bucket.totals },
         costUsd: bucket.costUsd,
