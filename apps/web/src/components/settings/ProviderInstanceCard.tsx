@@ -19,7 +19,9 @@ import * as Result from "effect/Result";
 import { Fragment, useState, type ReactElement, type ReactNode } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
+  FileLinkInstructionsSetting,
   isProviderDriverKind,
+  makeProviderSettingsSchema,
   resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -88,6 +90,13 @@ import {
 } from "./providerStatus";
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+// Connect with ChatGPT owns Codex's launch settings, but not the guidance its agents get.
+const CODEX_MANAGED_SETTINGS_FORM = {
+  settingsSchema: makeProviderSettingsSchema({
+    fileLinkInstructions: FileLinkInstructionsSetting,
+  }),
+};
 
 function ProviderStatusDiagnostic({
   detail,
@@ -1436,7 +1445,21 @@ export function ProviderInstanceCard({
             title={gt("Runtime")}
             headerPlacement="outside"
           >
-            {runtime ?? runtimeFields}
+            {runtime === undefined ? (
+              runtimeFields
+            ) : (
+              <>
+                {runtime}
+                <ProviderSettingsForm
+                  definition={CODEX_MANAGED_SETTINGS_FORM}
+                  value={instance.config}
+                  idPrefix={`provider-instance-${instanceId}`}
+                  variant="settings"
+                  onChange={updateConfig}
+                  environmentId={environmentId}
+                />
+              </>
+            )}
           </FoldedSettingsSection>
         </div>
       ) : !driverOption || deriveProviderSettingsFields(driverOption, undefined, m).length > 0 ? (

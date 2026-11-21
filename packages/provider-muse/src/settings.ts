@@ -3,6 +3,7 @@ import {
   CustomModelSetting,
   makeBinaryPathSetting,
   makeProviderSettingsSchema,
+  FileLinkInstructionsSetting,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -25,7 +26,8 @@ export const MuseSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    fileLinkInstructions: FileLinkInstructionsSetting,
   },
-  { order: ["binaryPath"] },
+  { order: ["binaryPath", "fileLinkInstructions"] },
 );
 export type MuseSettings = typeof MuseSettings.Type;

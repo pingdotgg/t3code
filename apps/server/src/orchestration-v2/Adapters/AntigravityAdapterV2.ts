@@ -84,6 +84,7 @@ export type AntigravityAdapterV2RuntimeInput = Omit<
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly selfInvocation: SelfInvocation;
+  readonly fileLinkInstructions?: string | undefined;
   readonly makeRuntime: (
     input: AntigravityAdapterV2RuntimeInput,
   ) => Effect.Effect<
@@ -327,6 +328,7 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
     instanceId: options.instanceId,
     flavor: makeAntigravityAcpAdapterFlavor({ ...options, ...services }),
     selfInvocation: options.selfInvocation,
+    fileLinkInstructions: options.fileLinkInstructions,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.continuationRequests === undefined
       ? {}

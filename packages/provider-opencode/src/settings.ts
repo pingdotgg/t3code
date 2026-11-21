@@ -3,6 +3,7 @@ import {
   CustomModelSetting,
   makeBinaryPathSetting,
   makeProviderSettingsSchema,
+  FileLinkInstructionsSetting,
   secretSetting,
   SettingsSecretValue,
   TrimmedString,
@@ -54,9 +55,10 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    fileLinkInstructions: FileLinkInstructionsSetting,
   },
   {
-    order: ["binaryPath", "serverUrl", "serverPassword"],
+    order: ["binaryPath", "serverUrl", "serverPassword", "fileLinkInstructions"],
   },
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;

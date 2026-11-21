@@ -1,5 +1,6 @@
 import * as NodeAssert from "node:assert/strict";
 
+import { FILE_LINK_INSTRUCTIONS_MAX_LENGTH } from "@t3tools/contracts";
 import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { describe, it } from "vite-plus/test";
 
@@ -11,6 +12,12 @@ import {
 describe("buildCodexAdditionalContext", () => {
   describe.each([
     { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
+    {
+      model: "custom-model-longest-file-link-instructions",
+      modelName: "Custom 🦊 Model",
+      reasoningEffort: "xhigh",
+      fileLinkInstructions: "界".repeat(FILE_LINK_INSTRUCTIONS_MAX_LENGTH),
+    },
   ])("with runtime $model", (runtime) => {
     it.each([undefined, { browser: true, device: true }])(
       "keeps every entry within Codex's per-entry cap with tools %j",

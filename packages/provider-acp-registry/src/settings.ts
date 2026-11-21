@@ -1,4 +1,9 @@
-import { CustomModelSetting, TrimmedString, makeProviderSettingsSchema } from "@t3tools/contracts";
+import {
+  CustomModelSetting,
+  FileLinkInstructionsSetting,
+  TrimmedString,
+  makeProviderSettingsSchema,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -62,9 +67,10 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    fileLinkInstructions: FileLinkInstructionsSetting,
   },
   {
-    order: ["source", "agentId", "commandPath", "authMethodId"],
+    order: ["source", "agentId", "commandPath", "authMethodId", "fileLinkInstructions"],
   },
 );
 export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;

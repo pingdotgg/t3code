@@ -350,6 +350,7 @@ Limits: the shell is simulated, so a CLI's output is the simulator's reading of 
 ## Where T3's text lives
 
 - `packages/provider-core/src/server/runtimeInstructions.ts`
+- `packages/contracts/src/settings.ts` (`DEFAULT_FILE_LINK_INSTRUCTIONS`)
 - `packages/provider-core/src/server/orchestrationInstructions.ts`
 - `apps/server/src/provider/CodexDeveloperInstructions.ts`
 - `apps/server/src/mcp/toolkits/*/tools.ts` (tool descriptions)
