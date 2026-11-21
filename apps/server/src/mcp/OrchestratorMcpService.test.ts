@@ -617,7 +617,7 @@ describe("OrchestratorMcpService", () => {
       const childThreadId = ThreadId.make("thread:mcp-next-child");
       const taskId = NodeId.make("node:mcp-next-task");
       let finished = false;
-      let pendingRequest = false;
+      let pendingRequest: "live" | "message" | null = null;
       const parentProjection = () =>
         ({
           thread: { id: parentThreadId },
@@ -652,7 +652,16 @@ describe("OrchestratorMcpService", () => {
           subagents: [],
           providerThreads: [],
           providerTurns: [],
-          runtimeRequests: pendingRequest ? [{ status: "pending" }] : [],
+          runtimeRequests:
+            pendingRequest === null
+              ? []
+              : [
+                  {
+                    kind: "user_input",
+                    status: "pending",
+                    responseCapability: { type: pendingRequest },
+                  },
+                ],
           nodes: [],
           turnItems: [],
         }) as unknown as OrchestrationV2ThreadProjection;
@@ -705,11 +714,16 @@ describe("OrchestratorMcpService", () => {
         assert.equal(waiting.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
 
         // A child waiting on a question or approval needs an answer, not a wake.
-        pendingRequest = true;
+        pendingRequest = "live";
         const asking = yield* service.waitForThread(scope, { threadId: childThreadId });
         assert.isTrue(asking.timedOut);
         assert.notProperty(asking, "next");
-        pendingRequest = false;
+
+        // A question answered by message does not stop the child.
+        pendingRequest = "message";
+        const working = yield* service.waitForThread(scope, { threadId: childThreadId });
+        assert.equal(working.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
+        pendingRequest = null;
 
         finished = true;
         const completed = yield* service.taskStatus(scope, taskId);
