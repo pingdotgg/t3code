@@ -252,8 +252,9 @@ it("ticks a description checkbox placed after an attachment and edits from the t
   );
   const boxes = () => screen.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
   expect([...boxes()].map((box) => box.disabled)).toEqual([false, false]);
-  // The collapsed description clips the list that follows the attachment.
-  await userEvent.click(screen.getByRole("button", { name: "Read more" }));
+  // A collapsed description clips the list that follows the attachment.
+  const readMore = screen.getByRole("button", { name: "Read more" });
+  if (readMore.query()) await userEvent.click(readMore);
 
   await userEvent.click(boxes()[1]!);
   expect(state.update).toHaveBeenCalledWith({

@@ -1916,6 +1916,7 @@ describe("deriveMessagesTimelineRows", () => {
       "third-steer",
       [`turn-fold:${runId}:steer:third-steer`, "Continued for 5s", null],
       "final",
+      "late-subagent",
     ]);
   });
 

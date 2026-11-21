@@ -1065,7 +1065,6 @@ it("a subagent tab shows its read-only bar under no header of its own", async ()
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
-  useRightPanelStore.getState().openThread(parentRef, subagent.id);
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
   );
@@ -1073,6 +1072,9 @@ it("a subagent tab shows its read-only bar under no header of its own", async ()
   await using screen = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
     router: false,
+  });
+  await act(() => {
+    useRightPanelStore.getState().openThread(parentRef, subagent.id);
   });
   const pane = screen.getByTestId("side-thread-pane");
   // No header of its own: the tab names it, and only a side chat has actions to put in one.
