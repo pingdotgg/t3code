@@ -175,6 +175,8 @@ function layerProjectionStore(
       listAppOwnedChildThreadIds: () => Effect.die("unused listAppOwnedChildThreadIds"),
       getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
       getTurnItem: () => Effect.die("unused turn item read"),
+      resolveProviderTurnOrdinal: () => Effect.die("unused resolveProviderTurnOrdinal"),
+      findSubagentIdentity: () => Effect.die("unused findSubagentIdentity"),
       getMessagesById: () => Effect.die("unused getMessagesById"),
       getThreadRecords: () => Effect.die("unused record read"),
       getRuntimeRequest: () => Effect.die("unused getRuntimeRequest"),

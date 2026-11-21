@@ -1682,21 +1682,41 @@ export const layer: Layer.Layer<
           ) {
             const moved = event.subagent;
             const detached = yield* Ref.modify(openRunOwnedSubagents, (current) => {
-              const subagentIds = new Set([moved.id]);
+              const subagentIds = new Set<NodeId>([moved.id]);
               for (const subagent of current.subagents.values()) {
-                if (subagent.threadId === moved.childThreadId) subagentIds.add(subagent.id);
+                if (
+                  subagent.childThreadId === moved.childThreadId ||
+                  subagent.threadId === moved.childThreadId
+                ) {
+                  subagentIds.add(subagent.id);
+                }
+              }
+              for (const item of current.turnItems.values()) {
+                if (item.childThreadId === moved.childThreadId) {
+                  subagentIds.add(item.subagentId);
+                  if (item.nodeId !== null) subagentIds.add(item.nodeId);
+                }
               }
               const childTurnItems = new Map(
                 [...current.childTurnItems].filter(
                   ([, item]) => item.threadId !== moved.childThreadId,
                 ),
               );
-              const turnItems = new Map(current.turnItems);
-              turnItems.delete(moved.id);
+              const turnItems = new Map(
+                [...current.turnItems].filter(
+                  ([subagentId, item]) =>
+                    !subagentIds.has(subagentId) && item.childThreadId !== moved.childThreadId,
+                ),
+              );
               const detachedItems = new Set(
                 [...current.childTurnItems.values(), ...current.turnItems.values()]
                   .filter(
-                    (item) => item.threadId === moved.childThreadId || item.nodeId === moved.id,
+                    (item) =>
+                      item.threadId === moved.childThreadId ||
+                      (item.nodeId !== null && subagentIds.has(item.nodeId)) ||
+                      (item.type === "subagent" &&
+                        (item.childThreadId === moved.childThreadId ||
+                          subagentIds.has(item.subagentId))),
                   )
                   .map((item) => item.id),
               );
@@ -1708,7 +1728,11 @@ export const layer: Layer.Layer<
                   childTurnItems,
                   nodes: new Map(
                     [...current.nodes].filter(
-                      ([id, node]) => id !== moved.id && node.threadId !== moved.childThreadId,
+                      ([id, node]) =>
+                        !subagentIds.has(id) &&
+                        node.threadId !== moved.childThreadId &&
+                        (moved.providerThreadId === null ||
+                          node.providerThreadId !== moved.providerThreadId),
                     ),
                   ),
                   linkedChildThreadIds: new Set(
@@ -1805,7 +1829,7 @@ export const layer: Layer.Layer<
           if (isRootProviderThreadUpdate && rootTerminalAlreadySeen && storedEvents.length === 0) {
             yield* Ref.set(providerThreadOwnerLost, true);
           }
-          return storedEvents.length;
+          return storedEvents;
         });
         // The timer only wakes ingestion. The flush runs as an ingestion step outside any provider
         // batch, so it stays ordered with routing and snapshots, and a write has committed when
@@ -1841,6 +1865,29 @@ export const layer: Layer.Layer<
           idleFlushWake = undefined;
           return wake === undefined ? Effect.void : Fiber.interrupt(wake.fiber);
         });
+        const trackedEventFromStored = (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+          storedEvents: Effect.Success<ReturnType<typeof ingestDelivered>>,
+        ): ProviderAdapter.ProviderAdapterV2Event => {
+          if (storedEvents.length === 0) return event;
+          if (event.type === "subagent.updated") {
+            const stored = storedEvents.find((item) => item.event.type === "subagent.updated");
+            if (stored?.event.type === "subagent.updated") {
+              return { ...event, subagent: stored.event.payload };
+            }
+          } else if (event.type === "node.updated") {
+            const stored = storedEvents.find((item) => item.event.type === "node.updated");
+            if (stored?.event.type === "node.updated") {
+              return { ...event, node: stored.event.payload };
+            }
+          } else if (event.type === "turn_item.updated") {
+            const stored = storedEvents.find((item) => item.event.type === "turn-item.updated");
+            if (stored?.event.type === "turn-item.updated") {
+              return { ...event, turnItem: stored.event.payload };
+            }
+          }
+          return event;
+        };
         // Per-tick ingestion avoids adding a span for every idle wake.
         const flushIdleAssistantText = Effect.fnUntraced(function* (wokeAt: number) {
           // A tick means its timer slept until `wokeAt`, but the wall clock can still read up
@@ -1857,8 +1904,8 @@ export const layer: Layer.Layer<
             if (!routeProviderEvent(event, routeIdentity, yield* Ref.get(eventRouting))[0])
               continue;
             // A failed write fails ingestion like any provider write.
-            yield* ingestDelivered(event, event);
-            yield* trackChildLifecycle(event, true);
+            const stored = yield* ingestDelivered(event, event);
+            yield* trackChildLifecycle(trackedEventFromStored(event, stored), true);
           }
           yield* scheduleIdleFlush;
         });
@@ -1877,7 +1924,7 @@ export const layer: Layer.Layer<
           ) {
             yield* Ref.set(latestRootProviderTurn, event.providerTurn);
           }
-          let storedEventCount = 0;
+          let storedEvents: Effect.Success<ReturnType<typeof ingestDelivered>> = [];
           const deliveredEvent = assistantStreaming.filter(
             event,
             DateTime.toEpochMillis(yield* DateTime.now),
@@ -1902,7 +1949,7 @@ export const layer: Layer.Layer<
                 shouldStartProviderTurn().pipe(Effect.orElseSucceed(() => true)),
               ]),
             );
-            storedEventCount = stored;
+            storedEvents = stored;
             if (!owned) {
               yield* Ref.get(latestProviderThread).pipe(
                 Effect.flatMap((providerThread) =>
@@ -1923,7 +1970,7 @@ export const layer: Layer.Layer<
               );
             }
           } else if (deliveredEvent) {
-            storedEventCount = yield* ingestDelivered(event, deliveredEvent);
+            storedEvents = yield* ingestDelivered(event, deliveredEvent);
           } else if (
             event.type === "turn_item.updated" &&
             (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning") &&
@@ -1937,6 +1984,8 @@ export const layer: Layer.Layer<
             });
             reservedHeldTurnItemIds.add(event.turnItem.id);
           }
+          const storedEventCount = storedEvents.length;
+          const trackedEvent = trackedEventFromStored(event, storedEvents);
           if (event.type === "provider_thread.updated") {
             if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
               yield* Ref.set(latestProviderThread, event.providerThread);
@@ -1971,7 +2020,17 @@ export const layer: Layer.Layer<
               pendingBackgroundProviderTurns.delete(event.providerTurnId);
             }
           }
-          yield* trackChildLifecycle(event, deliveredEvent !== null);
+          // A deduplicated preserveIdentity node.updated matched the stored node, so skip tracking its raw ID.
+          if (
+            !(
+              event.type === "node.updated" &&
+              event.preserveIdentity === true &&
+              deliveredEvent !== null &&
+              storedEventCount === 0
+            )
+          ) {
+            yield* trackChildLifecycle(trackedEvent, deliveredEvent !== null);
+          }
           yield* scheduleIdleFlush;
         });
         const providerEventFiber = yield* eventSink

@@ -12,6 +12,7 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
+  OrchestrationV2UserMessageInputIntent,
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
@@ -114,6 +115,7 @@ export function makeSubagentConversationArtifacts(input: {
   readonly providerTurnId: ProviderTurnId | null;
   readonly nativeItemRef: OrchestrationV2ProviderRef | null;
   readonly role: "user" | "assistant";
+  readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
   readonly text: string;
   readonly workflowScript?: boolean;
   readonly ordinal: number;
@@ -169,7 +171,7 @@ export function makeSubagentConversationArtifacts(input: {
           type: "user_message",
           ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
           ...(input.workflowScript === undefined ? {} : { workflowScript: input.workflowScript }),
-          inputIntent: "turn_start",
+          inputIntent: input.inputIntent ?? "turn_start",
           attachments: [],
         }
       : {
