@@ -3528,6 +3528,7 @@ it.effect.each([
     if (scenario === "reload-blocked") {
       const unloads = yield* Queue.unbounded<string>();
       const pendingBackgroundWork = yield* Ref.make(true);
+      const failUnload = yield* Ref.make(false);
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -3863,6 +3864,60 @@ it.effect.each([
         assert.equal(runlessRecovered!.providerSessionId, broadLoadedConfig!.providerSessionId);
         assert.isFalse(runlessRecovered!.browserToolsAvailable);
 
+        // A failed unload may leave the thread loaded, where a resume ignores new config: keep the old credential.
+        const unloadFailedThreadId = ThreadId.make("thread-provider-session-manager-unload-failed");
+        const unloadFailedProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: unloadFailedThreadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: unloadFailedThreadId, now }),
+          ],
+        });
+        yield* manager.open({
+          threadId: unloadFailedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const beforeFailedUnload = yield* mcpSessions.read(unloadFailedThreadId);
+        yield* runtime.resumeThread({
+          threadId: unloadFailedThreadId,
+          providerThread: unloadFailedProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId: unloadFailedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-unload-failed-typed"),
+          attemptId: RunAttemptId.make("attempt-unload-failed-typed"),
+          requireRunScopedMcp: true,
+        });
+        const stagedToken = (yield* mcpSessions.read(
+          unloadFailedThreadId,
+        ))!.authorizationHeader.replace(/^Bearer\s+/, "");
+        yield* Ref.set(failUnload, true);
+        const unloadFailed = yield* runtime
+          .resumeThread({
+            threadId: unloadFailedThreadId,
+            providerThread: unloadFailedProviderThread,
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.flip);
+        assert.equal(unloadFailed._tag, "ProviderAdapterMcpRotationBlockedError");
+        assert.isUndefined(yield* registry.resolve(stagedToken));
+        assert.equal(
+          (yield* mcpSessions.read(unloadFailedThreadId))?.authorizationHeader,
+          beforeFailedUnload!.authorizationHeader,
+        );
+
         yield* manager.close(providerSessionId);
       });
 
@@ -3875,6 +3930,9 @@ it.effect.each([
               idleTimeoutMs: 1_000,
               unloads,
               hasPendingBackgroundWorkForThread: Ref.get(pendingBackgroundWork),
+              beforeUnload: Ref.get(failUnload).pipe(
+                Effect.flatMap((fail) => (fail ? Effect.die("unload failed") : Effect.void)),
+              ),
               serverSettingsLayer,
             }),
             serverSettingsLayer,

@@ -8072,7 +8072,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const syncMcpCredentialForSession = Effect.fnUntraced(function* (
           sessionId: string,
           threadId: ThreadId | null,
-          options?: { readonly allowReload?: boolean },
+          options: { readonly allowReload?: boolean; readonly providerThreadId: ProviderThreadId },
         ) {
           const currentMcpContext = yield* readMcpContext(threadId);
           if (currentMcpContext.authorization === (yield* Ref.get(activeMcpAuthorization))) {
@@ -8088,7 +8088,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(activeMcpAuthorization, currentMcpContext.authorization);
             return false;
           }
-          if (options?.allowReload !== false && (canLoadSession || canResumeSession)) {
+          if (options.allowReload !== false && (canLoadSession || canResumeSession)) {
+            // Reloading resets native children and pending agent state the background work still owns.
+            if (yield* sessionRuntime.hasPendingBackgroundWork ?? Effect.succeed(false)) {
+              return yield* new ProviderAdapter.ProviderAdapterMcpRotationBlockedError({
+                driver,
+                providerSessionId: input.providerSessionId,
+                providerThreadId: options.providerThreadId,
+                detail:
+                  "Cannot refresh MCP credentials while background work is running on this thread.",
+              });
+            }
             return true;
           }
           // Non-loadable agents or continuation wakes keep their active session; do not record as applied.
@@ -9346,6 +9356,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (yield* Ref.get(activeSessionId)) === requestedSessionId &&
               (yield* syncMcpCredentialForSession(requestedSessionId, turnInput.threadId, {
                 allowReload: !isContinuationTurn,
+                providerThreadId: turnInput.providerThread.id,
               }));
             const needsSessionActivation =
               (yield* Ref.get(activeSessionId)) !== requestedSessionId ||
@@ -10053,22 +10064,36 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     (yield* syncMcpCredentialForSession(
                       sessionId,
                       threadInput.providerThread.appThreadId,
-                    ));
+                      { providerThreadId: threadInput.providerThread.id },
+                    ).pipe(Effect.tapError(() => restorePreviousItemIdentity)));
                   if (
                     (yield* Ref.get(activeSessionId)) !== sessionId ||
                     restartAfterInterrupt ||
                     mcpReloadRequired
                   ) {
                     yield* Ref.set(snapshot, emptySnapshotState());
+                    const nextSelection = threadInput.modelSelection ?? input.modelSelection;
+                    const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
+                    // load/resume can invoke client methods; install the incoming policy before activation.
+                    const previousRuntimePolicy = latestRuntimePolicy;
+                    latestRuntimePolicy = nextRuntimePolicy;
                     const activated = yield* activateSession(
                       sessionId,
                       threadInput.providerThread.appThreadId,
-                    ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
+                    ).pipe(
+                      Effect.tapError(() =>
+                        restorePreviousItemIdentity.pipe(
+                          Effect.andThen(
+                            Effect.sync(() => {
+                              latestRuntimePolicy = previousRuntimePolicy;
+                            }),
+                          ),
+                        ),
+                      ),
+                    );
                     yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* Ref.set(loadingSessionId, null);
                     yield* setActiveSessionSetup(activated);
-                    const nextSelection = threadInput.modelSelection ?? input.modelSelection;
-                    const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
                     yield* configureSession(activated, nextSelection, nextRuntimePolicy);
                     yield* Ref.set(activeSelection, nextSelection);
                     yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
@@ -10085,14 +10110,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             },
             (effect, threadInput) =>
               effect.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterResumeThreadError({
-                      driver,
-                      providerSessionId: input.providerSessionId,
-                      providerThreadId: threadInput.providerThread.id,
-                      cause,
-                    }),
+                // Keep the tag so the caller fails the run instead of opening a fresh native thread.
+                Effect.mapError((cause) =>
+                  cause._tag === "ProviderAdapterMcpRotationBlockedError"
+                    ? cause
+                    : new ProviderAdapter.ProviderAdapterResumeThreadError({
+                        driver,
+                        providerSessionId: input.providerSessionId,
+                        providerThreadId: threadInput.providerThread.id,
+                        cause,
+                      }),
                 ),
               ),
           ),

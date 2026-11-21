@@ -13224,6 +13224,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !existing.stopping &&
             isClaudeProviderContinuationTurn(turnInput)
           ) {
+            // The turn's run may have rotated the credential; the retained query must carry it.
+            // Reopening would end the wake, so a failed refresh keeps the query and is logged.
+            if (canUpdateMcpLive(existing)) {
+              yield* syncMcpServersLive(existing).pipe(
+                Effect.catchCauseIf(
+                  (cause) => !Cause.hasInterruptsOnly(cause),
+                  () =>
+                    Effect.logWarning("orchestration-v2.claude-live-mcp-refresh-failed", {
+                      threadId: turnInput.threadId,
+                      reason: "continuation",
+                    }),
+                ),
+              );
+            }
             return existing;
           }
           const policyCompatible =

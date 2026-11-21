@@ -300,6 +300,8 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
     const connection = yield* connectionFor(request.connectionId);
     connections.delete(request.connectionId);
     const sessionId = connection.sessionId;
+    const disconnectAuthorization = authorization;
+    const disconnectGeneration = authorizationGeneration;
     if (sessionId !== null) {
       yield* Effect.gen(function* () {
         const response = yield* Effect.tryPromise({
@@ -308,7 +310,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
               method: "DELETE",
               signal,
               headers: {
-                authorization,
+                authorization: disconnectAuthorization,
                 "mcp-session-id": sessionId,
                 ...(connection.protocolVersion === null
                   ? {}
@@ -335,8 +337,17 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
               }),
             ),
         }),
-        // Restore a session that failed to close, so a retry or dispose can close it.
-        Effect.onError(() => Effect.sync(() => connections.set(request.connectionId, connection))),
+        // Restore a session that failed to close, so a retry or dispose can close it. A rotation
+        // during the DELETE missed this connection, so it reconnects instead of reusing the old session.
+        Effect.onError(() =>
+          Effect.sync(() => {
+            if (disconnectGeneration !== authorizationGeneration) {
+              connection.sessionId = null;
+              connection.needsReconnect = connection.hasInitialized;
+            }
+            connections.set(request.connectionId, connection);
+          }),
+        ),
       );
     }
     return {};
