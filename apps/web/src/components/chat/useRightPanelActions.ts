@@ -148,10 +148,14 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     onDiffPanelOpen?.();
   };
   const addDiffSurfaceStable = useStableCallback(addDiffSurface);
-  const openChangesFromThreadPanel = () => {
+  // Null is the thread's own folder; a path is one of the repositories listed beside it.
+  const openRepositoryChanges = (repositoryPath: string | null) => {
+    if (!activeThreadRef || !isServerThread || !diffAvailable) return;
+    useDiffPanelStore.getState().selectGitRepository(activeThreadRef, repositoryPath);
     addDiffSurface();
   };
-  const openChangesFromThreadPanelStable = useStableCallback(openChangesFromThreadPanel);
+  const openChangesFromThreadPanelStable = useStableCallback(() => openRepositoryChanges(null));
+  const openRepositoryChangesFromThreadPanelStable = useStableCallback(openRepositoryChanges);
   const addFilesSurface = () => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
@@ -362,6 +366,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     onOpenTurnDiffStable,
     onToggleDiffStable,
     openChangesFromThreadPanelStable,
+    openRepositoryChangesFromThreadPanelStable,
     openFileSurfaceStable,
     toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
