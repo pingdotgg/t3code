@@ -3,6 +3,7 @@ import {
   AntigravitySettings,
   ProviderDriverKind,
   ProviderSetupError,
+  type ServerProvider,
   settingsSecretLiteral,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -18,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -69,7 +71,14 @@ import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeL
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
 import { makeAntigravityUsageProbe } from "../antigravityUsageLimits.ts";
+import { runManagedInstallationUpdate } from "../managedInstallationUpdate.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilities,
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import {
   defaultProviderContinuationIdentity,
@@ -81,6 +90,7 @@ import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIden
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
+const MANAGED_ANTIGRAVITY_LOCK_KEY = "antigravity-managed";
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
@@ -112,7 +122,8 @@ export type AntigravityDriverEnv =
   | McpProviderSessions.McpProviderSessions
   | ModelCatalog.ModelCatalog
   | Path.Path
-  | ProviderEventLoggers.ProviderEventLoggers;
+  | ProviderEventLoggers.ProviderEventLoggers
+  | ProviderLatestVersions.ProviderLatestVersions;
 
 export const AntigravityDriver: ProviderDriver<
   AntigravitySettings,
@@ -142,6 +153,7 @@ export const AntigravityDriver: ProviderDriver<
     const selfInvocation = yield* resolveSelfInvocation();
     const installation = yield* AntigravityInstallation.AntigravityInstallation;
     const loggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER);
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
@@ -556,6 +568,44 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
+    const resolveMaintenance = Effect.fn("AntigravityDriver.resolveMaintenance")(function* () {
+      const hasCustomBinary = settings.binaryPath.trim().length > 0;
+      const executable = yield* installation
+        .resolve(settings.binaryPath, processEnvironment)
+        .pipe(Effect.option);
+      const withdrawnInstalledVersion =
+        !hasCustomBinary && Option.isNone(executable)
+          ? (yield* installation.state).installedVersion
+          : null;
+      const isManaged =
+        !hasCustomBinary &&
+        ((Option.isSome(executable) && executable.value.source === "managed") ||
+          withdrawnInstalledVersion !== null);
+      if (!isManaged) {
+        return makeManualOnlyProviderMaintenanceCapabilities({
+          provider: DRIVER,
+          packageName: null,
+          ...(Option.isSome(executable) ? { installPath: executable.value.executablePath } : {}),
+        });
+      }
+      return {
+        provider: DRIVER,
+        packageName: null,
+        update: null,
+        managedUpdate: {
+          lockKey: MANAGED_ANTIGRAVITY_LOCK_KEY,
+          run: (onProgress) => runManagedInstallationUpdate(installation, onProgress),
+        },
+        latestVersionCacheKey: MANAGED_ANTIGRAVITY_LOCK_KEY,
+        lookupLatestVersion: installation.lookupLatestVersion,
+        // A withdrawn managed runtime must treat any eligible replacement (including a rollback)
+        // as an available update.
+        ...(withdrawnInstalledVersion !== null
+          ? { compareVersions: (current: string, latest: string) => (current === latest ? 0 : -1) }
+          : {}),
+      } satisfies ProviderMaintenanceCapabilities;
+    });
+
     const usage = yield* makeAntigravityUsageProbe({
       profileDirectory,
       authMethod: auth.authMethod,
@@ -565,12 +615,40 @@ export const AntigravityDriver: ProviderDriver<
       Effect.provideService(Digest.Digest, digest),
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
+    const enrichVersionAdvisory = Effect.fn("AntigravityDriver.enrichVersionAdvisory")(function* (
+      snapshot: ServerProvider,
+      enableProviderUpdateChecks: boolean,
+    ) {
+      const maintenanceCapabilities = yield* resolveMaintenance();
+      const candidateSnapshot =
+        settings.binaryPath.trim().length === 0 && snapshot.version === null
+          ? yield* installation.state.pipe(
+              Effect.map((installState) =>
+                installState.installedVersion !== null
+                  ? { ...snapshot, installed: true, version: installState.installedVersion }
+                  : snapshot,
+              ),
+            )
+          : snapshot;
+      const enriched = yield* enrichProviderSnapshotWithVersionAdvisory(
+        candidateSnapshot,
+        maintenanceCapabilities,
+        { enableProviderUpdateChecks },
+      ).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+      );
+      return enriched.versionAdvisory;
+    });
+
     const provider = yield* makeAntigravityProvider(settings, {
       environment: processEnvironment,
       stampIdentity: classifyModels,
       probe,
       probeUsage: usage.probe,
       clearUsage: usage.clear,
+      resolveMaintenance,
+      enrichVersionAdvisory,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
       supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),

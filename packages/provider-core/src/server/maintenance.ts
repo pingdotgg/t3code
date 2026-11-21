@@ -5,6 +5,8 @@ export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly update: ProviderMaintenanceCommandAction | null;
+  /** In-process updater for T3-managed runtimes that have no manual shell command. */
+  readonly managedUpdate?: ProviderMaintenanceManagedAction;
   /** undefined defers to npm; null means the installer could not determine the latest version. */
   readonly latestVersion?: string | null;
   /**
@@ -28,4 +30,15 @@ export interface ProviderMaintenanceCommandAction {
   readonly lockKey: string;
   /** The provider's environment, including its PATH and custom home. */
   readonly env?: NodeJS.ProcessEnv;
+}
+
+export type ProviderMaintenanceManagedUpdateResult =
+  | { readonly status: "succeeded" }
+  | { readonly status: "failed"; readonly message: string };
+
+export interface ProviderMaintenanceManagedAction {
+  readonly lockKey: string;
+  readonly run: (
+    onProgress: (line: string) => Effect.Effect<void>,
+  ) => Effect.Effect<ProviderMaintenanceManagedUpdateResult>;
 }

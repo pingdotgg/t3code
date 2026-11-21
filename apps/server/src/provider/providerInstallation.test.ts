@@ -276,6 +276,18 @@ describe("provider installation routing", () => {
         assert.deepEqual(checked, [work.instanceId, personal.instanceId]);
         assert.deepEqual(harness.refreshedInstances, [work.instanceId, personal.instanceId]);
         assert.strictEqual(harness.watches(), 1);
+
+        // Deduplicates the same operationId when triggered from the installation stream watcher,
+        // and refreshes all enabled managed instances for a new sidebar-triggered operationId.
+        yield* harness.router.refreshManagedAntigravityInstances("install-1");
+        assert.deepEqual(checked, [work.instanceId, personal.instanceId]);
+        yield* harness.router.refreshManagedAntigravityInstances("install-2");
+        assert.deepEqual(checked, [
+          work.instanceId,
+          personal.instanceId,
+          work.instanceId,
+          personal.instanceId,
+        ]);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

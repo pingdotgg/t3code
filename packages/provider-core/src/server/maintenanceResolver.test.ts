@@ -2750,3 +2750,72 @@ it("pins only owned package-manager installs and preserves their execution conte
   }
   expect(makeTargetedProviderUpdateAction(capabilities, "2.0.0; rm -rf /")).toBeNull();
 });
+
+it.effect("enriches managed-update capabilities with canUpdate=true and no shell command", () =>
+  Effect.gen(function* () {
+    let lookups = 0;
+    const capabilities = {
+      provider: driver("antigravity"),
+      packageName: null,
+      update: null,
+      managedUpdate: {
+        lockKey: "antigravity-managed",
+        run: () => Effect.succeed({ status: "succeeded" as const }),
+      },
+      lookupLatestVersion: Effect.sync(() => {
+        lookups += 1;
+        return "1.5.15";
+      }),
+    };
+    const installed: ServerProvider = {
+      instanceId: ProviderInstanceId.make("antigravity"),
+      driver: driver("antigravity"),
+      enabled: true,
+      installed: true,
+      version: "1.5.14",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-21T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+    const latestVersions = yield* ProviderLatestVersions.make();
+    const enrich = (enableProviderUpdateChecks: boolean) =>
+      enrichProviderSnapshotWithVersionAdvisory(installed, capabilities, {
+        enableProviderUpdateChecks,
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Managed update check must not call npm")),
+        ),
+        Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+      );
+
+    expect((yield* enrich(false)).versionAdvisory).toMatchObject({
+      status: "unknown",
+      latestVersion: null,
+      updateCommand: null,
+      canUpdate: true,
+      canInstallVersion: false,
+    });
+    expect(lookups).toBe(0);
+
+    expect((yield* enrich(true)).versionAdvisory).toMatchObject({
+      status: "behind_latest",
+      currentVersion: "1.5.14",
+      latestVersion: "1.5.15",
+      updateCommand: null,
+      canUpdate: true,
+      canInstallVersion: false,
+    });
+    expect((yield* enrich(true)).versionAdvisory?.latestVersion).toBe("1.5.15");
+    expect(lookups).toBe(1);
+
+    yield* invalidateLatestProviderVersion(capabilities).pipe(
+      Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+    );
+    expect((yield* enrich(true)).versionAdvisory?.latestVersion).toBe("1.5.15");
+    expect(lookups).toBe(2);
+  }),
+);

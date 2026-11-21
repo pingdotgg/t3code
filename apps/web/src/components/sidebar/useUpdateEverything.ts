@@ -92,9 +92,13 @@ export function useUpdateEverything(
       providerMachines: providers.machines.map((machine) => ({
         environmentId: machine.environmentId,
         label: machine.label,
-        providers: machine.candidates.map(
-          (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
-        ),
+        providers: [
+          ...new Set(
+            machine.candidates.map(
+              (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
+            ),
+          ),
+        ],
       })),
     },
     resolve,

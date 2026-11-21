@@ -13,7 +13,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -324,6 +324,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
+  const serviceScope = yield* Effect.scope;
   const runMaintenanceCommand = (
     update: ProviderMaintenanceCommandAction,
     onProgress: (line: string) => Effect.Effect<void>,
@@ -435,7 +436,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       provider,
     );
     const update = capabilities.update;
-    if (!update) {
+    const managedUpdate = update === null ? (capabilities.managedUpdate ?? null) : null;
+    const lockKey = update?.lockKey ?? managedUpdate?.lockKey ?? null;
+    if (!lockKey) {
       return yield* new ServerProviderUpdateError({
         provider,
         reason: "This provider does not support one-click updates.",
@@ -491,7 +494,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               provider,
               { fresh: true },
             );
-            if (!fresh.update || fresh.update.lockKey !== update.lockKey) {
+            const freshUpdate = fresh.update;
+            const freshManagedUpdate = freshUpdate === null ? (fresh.managedUpdate ?? null) : null;
+            const freshLockKey = freshUpdate?.lockKey ?? freshManagedUpdate?.lockKey ?? null;
+            if (!freshLockKey || freshLockKey !== lockKey) {
               return yield* finish(
                 makeUpdateState({
                   status: "failed",
@@ -520,23 +526,29 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               candidateVersion,
             );
             const command =
-              targetVersion !== undefined
-                ? makeTargetedProviderUpdateAction(fresh, targetVersion)
-                : resolveLatestProviderUpdateAction(fresh, candidateVersion);
+              freshUpdate !== null
+                ? targetVersion !== undefined
+                  ? makeTargetedProviderUpdateAction(fresh, targetVersion)
+                  : resolveLatestProviderUpdateAction(fresh, candidateVersion)
+                : null;
+            const managedAction = targetVersion === undefined ? freshManagedUpdate : null;
+            const managedMissingCandidate =
+              command === null && managedAction !== null && candidateVersion === null;
             const rejected =
               targetVersion !== undefined
                 ? !command ||
                   advisory?.recommendedVersion !== targetVersion ||
                   advisory.status !== "supported"
                 : advisory?.status === "broken" || advisory?.status === "unsupported";
-            if (rejected || !command) {
+            if (managedMissingCandidate || rejected || (!command && !managedAction)) {
               return yield* finish(
                 makeUpdateState({
                   status: "failed",
                   startedAt,
                   finishedAt: yield* nowIso,
-                  message:
-                    targetVersion !== undefined
+                  message: managedMissingCandidate
+                    ? "Could not determine the latest provider version. Check your network connection and try again."
+                    : targetVersion !== undefined
                       ? "This version is no longer recommended or this installer cannot install a specific version. Refresh provider settings."
                       : "The latest provider version is incompatible with this T3 Code release. Review provider settings.",
                 }),
@@ -579,34 +591,70 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               }
             }
 
-            const sharingInstances = yield* instancesSharingInstallation(
-              instanceId,
-              provider,
-              update.lockKey,
-            );
-            yield* setRunningMessage("Waiting for running provider work to finish.");
-            const result = yield* installationGate.update(
-              sharingInstances,
-              setRunningMessage(`Running ${describeCommand(command)}`).pipe(
-                Effect.andThen(runMaintenanceCommand(command, setRunningMessage)),
-              ),
-            );
-            const finishedAt = yield* nowIso;
-            if (result.timedOut || result.exitCode !== 0) {
-              yield* Effect.logWarning("Provider update command failed", {
+            let finishedAt: string;
+            let updateOutput: string | null = null;
+            if (command !== null) {
+              const sharingInstances = yield* instancesSharingInstallation(
+                instanceId,
                 provider,
-                command: describeCommand(command),
-                exitCode: result.exitCode,
-                timedOut: result.timedOut,
-                output: commandOutput(result),
-              });
+                lockKey,
+              );
+              yield* setRunningMessage("Waiting for running provider work to finish.");
+              const result = yield* installationGate.update(
+                sharingInstances,
+                setRunningMessage(`Running ${describeCommand(command)}`).pipe(
+                  Effect.andThen(runMaintenanceCommand(command, setRunningMessage)),
+                ),
+              );
+              finishedAt = yield* nowIso;
+              updateOutput = commandOutput(result);
+              if (result.timedOut || result.exitCode !== 0) {
+                yield* Effect.logWarning("Provider update command failed", {
+                  provider,
+                  command: describeCommand(command),
+                  exitCode: result.exitCode,
+                  timedOut: result.timedOut,
+                  output: updateOutput,
+                });
+                return yield* finish(
+                  makeUpdateState({
+                    status: "failed",
+                    startedAt,
+                    finishedAt,
+                    message: failureMessage(result),
+                    output: updateOutput,
+                  }),
+                );
+              }
+            } else if (managedAction !== null) {
+              // Managed runtimes download into a versioned directory and swap active.json atomically,
+              // so live sessions keep their leased binaries without blocking on the installation gate.
+              yield* setRunningMessage("Updating managed runtime");
+              const managedResult = yield* managedAction.run(setRunningMessage);
+              finishedAt = yield* nowIso;
+              if (managedResult.status === "failed") {
+                yield* Effect.logWarning("Managed provider update failed", {
+                  provider,
+                  message: managedResult.message,
+                });
+                return yield* finish(
+                  makeUpdateState({
+                    status: "failed",
+                    startedAt,
+                    finishedAt,
+                    message: managedResult.message,
+                    output: null,
+                  }),
+                );
+              }
+            } else {
               return yield* finish(
                 makeUpdateState({
                   status: "failed",
                   startedAt,
-                  finishedAt,
-                  message: failureMessage(result),
-                  output: commandOutput(result),
+                  finishedAt: yield* nowIso,
+                  message: "This provider does not support one-click updates.",
+                  output: null,
                 }),
               );
             }
@@ -647,19 +695,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             const stillOutdated =
               targetVersion === undefined &&
               verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
+            const completionSubject = command !== null ? "Update command" : "Provider update";
             return yield* finish(
               makeUpdateState({
                 status: couldNotVerify || stillOutdated ? "unchanged" : "succeeded",
                 startedAt,
                 finishedAt,
                 message: couldNotVerify
-                  ? "Update command completed, but T3 Code could not verify the provider version."
+                  ? `${completionSubject} completed, but T3 Code could not verify the provider version.`
                   : stillOutdated
-                    ? "Update command completed, but T3 Code still detects an outdated provider version."
+                    ? `${completionSubject} completed, but T3 Code still detects an outdated provider version.`
                     : needsOpenCodeServerRestart(verifiedProviders)
                       ? OPENCODE_SERVER_RESTART_MESSAGE
                       : "Provider updated.",
-                output: commandOutput(result),
+                output: updateOutput,
               }),
             );
           },
@@ -685,15 +734,17 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       },
     );
 
-    return yield* commandCoordinator
+    const coordinated = commandCoordinator
       .withCommandLock({
         targetKey,
-        lockKey: update.lockKey,
+        lockKey,
         onQueued: setQueuedState,
         run: runProviderUpdate(),
       })
       .pipe(
-        // A dropped request interrupts the update; a "running" state would spin until restart.
+        // A dropped request interrupts a CLI update; a "running" state would spin until restart.
+        // Managed updates run in serviceScope below so a client disconnect cannot strand their
+        // background installer, and only server shutdown triggers this handler.
         Effect.onInterrupt(() =>
           Effect.gen(function* () {
             // A finished state stays, even if the request drops while it is being written.
@@ -717,11 +768,18 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             : error,
         ),
       );
+
+    if (managedUpdate !== null) {
+      // Managed installers fork into their own service scope and outlive a dropped RPC; keep
+      // lock ownership, progress updates, and post-install verification alive with them.
+      const fiber = yield* Effect.forkIn(coordinated, serviceScope, { startImmediately: true });
+      return yield* Fiber.join(fiber);
+    }
+
+    return yield* coordinated;
   });
 
   return ProviderMaintenanceRunner.of({
     updateProvider,
   });
 });
-
-export const layer = Layer.effect(ProviderMaintenanceRunner, make());

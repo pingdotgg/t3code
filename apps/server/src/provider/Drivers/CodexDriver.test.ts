@@ -62,9 +62,25 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(
     Layer.mock(CodexInstallation.CodexInstallation)({
       managedDirectory: "unused-managed-installation",
+      state: Effect.succeed({
+        driver: CodexDriver.driverKind,
+        operationId: null,
+        phase: "idle" as const,
+        downloadedBytes: 0,
+        totalBytes: null,
+        version: null,
+        installedVersion: null,
+        canRemove: false,
+        message: null,
+      }),
+      lookupLatestVersion: Effect.succeed(null),
     }),
   ),
-  Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+  Layer.provideMerge(
+    Layer.mock(ServerSecretStore.ServerSecretStore)({
+      get: () => Effect.succeedNone,
+    }),
+  ),
   Layer.provideMerge(
     Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
       endpoint: Effect.succeed("unused-private-pipe"),
@@ -952,5 +968,131 @@ it.layer(layerTest)("CodexDriver", (it) => {
 
       yield* Queue.take(probes);
     }),
+  );
+
+  it.effect(
+    "resolves managed Codex one-click updates and advisories only for managed binaries, including withdrawn rollbacks",
+    () =>
+      Effect.gen(function* () {
+        const installation = yield* CodexInstallation.CodexInstallation;
+        const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+        const makeManaged = (options: {
+          readonly id: string;
+          readonly resolve: CodexInstallation.CodexInstallation["Service"]["resolve"];
+          readonly state?: Partial<import("@t3tools/contracts").ProviderInstallState>;
+          readonly latestVersion?: string | null;
+        }) =>
+          CodexDriver.create({
+            instanceId: ProviderInstanceId.make(options.id),
+            displayName: "Codex Managed",
+            enabled: true,
+            environment: [],
+            config: { ...CodexDriver.defaultConfig(), setupMode: "managed" },
+          }).pipe(
+            Effect.provideService(
+              CodexInstallation.CodexInstallation,
+              CodexInstallation.CodexInstallation.of({
+                ...installation,
+                resolve: options.resolve,
+                state: Effect.succeed({
+                  driver: CodexDriver.driverKind,
+                  operationId: null,
+                  phase: "idle",
+                  downloadedBytes: 0,
+                  totalBytes: null,
+                  version: null,
+                  installedVersion: null,
+                  source: null,
+                  canRemove: false,
+                  message: null,
+                  ...options.state,
+                }),
+                lookupLatestVersion: Effect.succeed(options.latestVersion ?? null),
+              }),
+            ),
+          );
+
+        const managed = yield* makeManaged({
+          id: "codex-managed-ok",
+          resolve: () =>
+            Effect.succeed({
+              executablePath: "/managed/codex/0.166.0/bin/codex",
+              source: "managed",
+              version: "0.166.0",
+              managedVersionDirectory: "/managed/codex/0.166.0",
+            }),
+          state: { source: "managed", installedVersion: "0.166.0" },
+          latestVersion: "0.171.0",
+        });
+        yield* latestVersions.invalidate("codex-managed");
+        const managedPull = yield* Stream.toPull(
+          managed.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.versionAdvisory?.latestVersion === "0.171.0"),
+          ),
+        );
+        yield* managed.snapshot.refresh;
+        const [managedSnapshot] = yield* managedPull;
+        expect(managedSnapshot?.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          currentVersion: "0.166.0",
+          latestVersion: "0.171.0",
+          canUpdate: true,
+          updateCommand: null,
+        });
+        const managedCapabilities = yield* managed.snapshot.resolveMaintenance({ fresh: true });
+        expect(managedCapabilities.update).toBeNull();
+        expect(managedCapabilities.managedUpdate?.lockKey).toBe("codex-managed");
+
+        // A withdrawn managed Codex fails resolve() yet stays installed=true with a rollback advisory.
+        const withdrawn = yield* makeManaged({
+          id: "codex-managed-withdrawn",
+          resolve: () =>
+            Effect.fail(
+              new CodexInstallation.CodexInstallationError({
+                operation: "resolve",
+                detail: "Update the managed Codex installation to continue.",
+              }),
+            ),
+          state: { source: "managed", installedVersion: "0.172.0" },
+          latestVersion: "0.171.0",
+        });
+        yield* latestVersions.invalidate("codex-managed");
+        const withdrawnPull = yield* Stream.toPull(
+          withdrawn.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.versionAdvisory?.latestVersion === "0.171.0"),
+          ),
+        );
+        yield* withdrawn.snapshot.refresh;
+        const [withdrawnSnapshot] = yield* withdrawnPull;
+        expect(withdrawnSnapshot).toMatchObject({
+          installed: true,
+          version: "0.172.0",
+          status: "error",
+          versionAdvisory: {
+            status: "behind_latest",
+            currentVersion: "0.172.0",
+            latestVersion: "0.171.0",
+            canUpdate: true,
+            updateCommand: null,
+          },
+        });
+
+        const local = yield* makeManaged({
+          id: "codex-managed-local",
+          resolve: () =>
+            Effect.succeed({
+              executablePath: "/usr/local/bin/codex",
+              source: "local",
+              version: "0.166.0",
+              managedVersionDirectory: null,
+            }),
+          state: { source: "local", installedVersion: "0.166.0" },
+          latestVersion: "0.171.0",
+        });
+        const localCapabilities = yield* local.snapshot.resolveMaintenance({ fresh: true });
+        expect(localCapabilities.update).toBeNull();
+        expect(localCapabilities.managedUpdate).toBeUndefined();
+        expect(localCapabilities.installPath).toBe("/usr/local/bin/codex");
+      }),
   );
 });

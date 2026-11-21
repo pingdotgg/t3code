@@ -11,6 +11,7 @@ import {
   type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -40,6 +41,11 @@ import {
   isCommandMissingCause,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+  type ProviderSnapshotSettings,
+} from "@t3tools/provider-core/server/snapshotSettings";
 import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
 
 import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
@@ -155,6 +161,23 @@ function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupEr
   );
 }
 
+function sameVersionAdvisory(
+  left: ServerProvider["versionAdvisory"],
+  right: ServerProvider["versionAdvisory"],
+): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  return (
+    left.status === right.status &&
+    left.currentVersion === right.currentVersion &&
+    left.latestVersion === right.latestVersion &&
+    left.updateCommand === right.updateCommand &&
+    left.canUpdate === right.canUpdate &&
+    left.canInstallVersion === right.canInstallVersion &&
+    left.message === right.message
+  );
+}
+
 interface AntigravityProviderState {
   readonly draft: ServerProviderDraft;
   readonly authRevision: number;
@@ -170,7 +193,13 @@ interface AntigravityProviderOptions {
   readonly supportsTextGeneration: Effect.Effect<boolean>;
   readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
   readonly clearUsage?: Effect.Effect<void>;
-  readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
+  readonly resolveMaintenance?: (options?: {
+    readonly fresh?: boolean;
+  }) => Effect.Effect<ProviderMaintenanceCapabilities>;
+  readonly enrichVersionAdvisory?: (
+    snapshot: ServerProvider,
+    enableProviderUpdateChecks: boolean,
+  ) => Effect.Effect<ServerProvider["versionAdvisory"]>;
   readonly auth?: { readonly type: string; readonly label: string };
 }
 
@@ -320,8 +349,20 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const applyCheck = (state: AntigravityProviderState) => {
       if (state.authRevision !== before.authRevision) return state;
-      const { message: _previousMessage, ...draft } = state.draft;
+      const {
+        message: _previousMessage,
+        versionAdvisory: previousVersionAdvisory,
+        ...draft
+      } = state.draft;
       const authenticated = draft.auth.status === "authenticated";
+      const nextInstalled = !missingInstallation;
+      // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
+      const nextVersion = version === "unknown" ? draft.version : version || draft.version;
+      const keepVersionAdvisory =
+        previousVersionAdvisory !== undefined &&
+        nextInstalled &&
+        draft.installed &&
+        nextVersion === draft.version;
       const message =
         errorMessage ??
         (authenticated
@@ -333,9 +374,9 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         ...state,
         draft: {
           ...draft,
-          installed: !missingInstallation,
-          // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
-          version: version === "unknown" ? draft.version : version || draft.version,
+          installed: nextInstalled,
+          version: nextVersion,
+          ...(keepVersionAdvisory ? { versionAdvisory: previousVersionAdvisory } : {}),
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
           usageLimits: missingInstallation ? undefined : draft.usageLimits,
@@ -369,25 +410,56 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     return yield* options.stampIdentity(next.draft);
   });
 
-  const maintenanceCapabilities =
-    options.maintenanceCapabilities ??
-    makeManualOnlyProviderMaintenanceCapabilities({
-      provider: ProviderDriverKind.make("antigravity"),
-      packageName: null,
-    });
-  const managed = yield* makeManagedServerProvider({
-    resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
-    getSettings: Effect.succeed(settings),
-    streamSettings: Stream.empty,
-    haveSettingsChanged: () => false,
+  const defaultMaintenanceCapabilities = makeManualOnlyProviderMaintenanceCapabilities({
+    provider: ProviderDriverKind.make("antigravity"),
+    packageName: null,
+  });
+  const resolveMaintenance =
+    options.resolveMaintenance ?? (() => Effect.succeed(defaultMaintenanceCapabilities));
+  const snapshotSettings = yield* makeProviderSnapshotSettingsSource(settings);
+  const managed = yield* makeManagedServerProvider<ProviderSnapshotSettings<AntigravitySettings>>({
+    resolveMaintenance,
+    getSettings: snapshotSettings.getSettings,
+    streamSettings: snapshotSettings.streamSettings,
+    haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+    checkProviderOnSettingsChange: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
-    enrichSnapshot: ({ publishSnapshot }) =>
-      SubscriptionRef.changes(metadata).pipe(
+    enrichSnapshot: ({ settings: currentSettings, snapshot, publishSnapshot }) => {
+      const streamMetadata = SubscriptionRef.changes(metadata).pipe(
         Stream.runForEach((state) =>
           options.stampIdentity(state.draft).pipe(Effect.flatMap(publishSnapshot)),
         ),
-      ),
+      );
+      if (!options.enrichVersionAdvisory) {
+        return streamMetadata;
+      }
+      const enrichAdvisory = options
+        .enrichVersionAdvisory(snapshot, currentSettings.enableProviderUpdateChecks)
+        .pipe(
+          Effect.flatMap((versionAdvisory) =>
+            SubscriptionRef.update(metadata, (state) => {
+              if (
+                state.draft.version !== snapshot.version ||
+                state.draft.installed !== snapshot.installed ||
+                sameVersionAdvisory(state.draft.versionAdvisory, versionAdvisory)
+              ) {
+                return state;
+              }
+              const { versionAdvisory: _previous, ...rest } = state.draft;
+              return {
+                ...state,
+                draft: versionAdvisory ? { ...rest, versionAdvisory } : rest,
+              };
+            }),
+          ),
+          Effect.ignoreCause({ log: true }),
+        );
+      return Effect.all([streamMetadata, enrichAdvisory], {
+        concurrency: "unbounded",
+        discard: true,
+      });
+    },
   });
   yield* Deferred.succeed(republish, managed.refresh);
 
@@ -407,7 +479,22 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       ) {
         return state;
       }
-      const { message: _previousMessage, ...draft } = state.draft;
+      const {
+        message: _previousMessage,
+        versionAdvisory: previousVersionAdvisory,
+        ...draft
+      } = state.draft;
+      const handshakeVersion = started.initializeResult.agentInfo?.version;
+      // Preserve a newer authoritative version from checkProvider so an older leased session
+      // finishing its handshake after an upgrade cannot regress draft.version, while still
+      // allowing custom-launcher handshakes to populate or advance the version.
+      const nextVersion =
+        handshakeVersion &&
+        (!draft.version || compareSemverVersions(handshakeVersion, draft.version) >= 0)
+          ? handshakeVersion
+          : draft.version;
+      const keepVersionAdvisory =
+        previousVersionAdvisory !== undefined && nextVersion === draft.version;
       const workspaces = draft.workspaceSnapshots ?? [];
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
       return {
@@ -416,7 +503,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           ...draft,
           installed: true,
           status: "ready",
-          version: started.initializeResult.agentInfo?.version || draft.version,
+          version: nextVersion,
+          ...(keepVersionAdvisory ? { versionAdvisory: previousVersionAdvisory } : {}),
           auth: {
             status: "authenticated",
             type: options.auth?.type ?? "oauth-personal",

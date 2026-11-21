@@ -16,7 +16,11 @@ import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
+import {
+  EnvironmentHttpApi,
+  ProviderDriverKind,
+  type RepositoryIdentity,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -673,6 +677,8 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
     const codex = yield* CodexInstallation.CodexInstallation;
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const providers = yield* ProviderRegistry.ProviderRegistry;
+    const providerInstallation = yield* ProviderInstallation.ProviderInstallation;
+    const scope = yield* Effect.scope;
     yield* Stream.merge(
       antigravity.changes.pipe(
         Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
@@ -691,6 +697,15 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
               (instance) => providers.refreshInstance(instance.instanceId),
               { discard: true },
             ),
+          ),
+          Effect.andThen(
+            state.driver === ProviderDriverKind.make("antigravity") &&
+              state.phase === "succeeded" &&
+              state.installedVersion !== null
+              ? providerInstallation
+                  .refreshManagedAntigravityInstances(state.operationId)
+                  .pipe(Effect.forkIn(scope), Effect.asVoid)
+              : Effect.void,
           ),
         ),
       ),
@@ -753,8 +768,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
   ProviderUsageLimitsIngestion.layer,
-  layerProviderInstallationRefresh,
-  ProviderInstallation.layer,
+  layerProviderInstallationRefresh.pipe(Layer.provideMerge(ProviderInstallation.layer)),
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
