@@ -51,6 +51,7 @@ import { isElectron } from "../env";
 import { shouldShowThreadJumpHintsForModifiers } from "../keybindings";
 import { isTerminalFocused, subscribeToTerminalFocusChanges } from "../lib/terminalFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
+import { isInSideChatPane } from "../lib/sideChatPane";
 import { isModelPickerOpen, subscribeToModelPickerVisibility } from "../modelPickerVisibility";
 import { shortcutModifierStore } from "../shortcutModifierState";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -664,6 +665,19 @@ type ThreadStatusInput = Pick<
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
   blockedOnThreadWait?: boolean | undefined;
 };
+
+// Opening a thread moves focus from its row to the composer, so F2 there renames it too.
+// A collapsed sidebar is inert, and its row could not show the rename field.
+export function isOpenThreadRenameKey(event: KeyboardEvent, threadKey: string): boolean {
+  const target = event.target;
+  if (event.key !== "F2" || event.isComposing || event.keyCode === 229) return false;
+  if (!(target instanceof Element) || isInSideChatPane(target)) return false;
+  if (target.closest('[data-testid="composer-editor"]') === null) return false;
+  const rows = document.querySelectorAll(`[data-sidebar-row="${CSS.escape(threadKey)}"]`);
+  return Array.from(rows).some(
+    (row) => row.closest('[hidden], [inert], [aria-hidden="true"]') === null,
+  );
+}
 
 // Read at event time: subscribing Sidebar to terminal or modifier state re-renders every row.
 export function threadShortcutContext(routeThreadRef: ScopedThreadRef | null) {

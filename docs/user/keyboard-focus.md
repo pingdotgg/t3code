@@ -28,7 +28,8 @@ can be remapped in Settings > Keybindings.
 
 Tab moves through each thread and its buttons. Up and Down also move between threads
 without opening them; Enter opens the focused thread or toggles a group. Right and Left
-expand and collapse groups. `F2` renames the focused thread.
+expand and collapse groups. `F2` renames the focused thread. With focus in the main message
+input, `F2` renames the open thread when the sidebar shows it.
 
 Press `Shift+F10` or the Context Menu key to open the focused thread's menu. Use the arrow
 keys to move through it, Enter to choose, and Escape to close it.

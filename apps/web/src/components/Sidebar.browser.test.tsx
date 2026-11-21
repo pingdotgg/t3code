@@ -55,6 +55,9 @@ vi.mock(import("../state/server"), async (original) => {
     { key: "mod+1", command: "thread.jump.1" },
     { key: "mod+2", command: "thread.jump.2" },
     { key: "mod+shift+[", command: "thread.previous" },
+    { key: "shift+f2", command: "thread.next" },
+    // Bound, but not while the composer has focus.
+    { key: "f2", command: "terminal.toggle", when: "!composerFocus" },
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
@@ -327,6 +330,96 @@ describe("sidebar thread rename", () => {
       expect(updateMetadata).not.toHaveBeenCalled();
     },
   );
+
+  // Opening a thread moves focus from its row to the composer, where F2 used to do nothing.
+  it.each([
+    { focus: "the composer", renames: true },
+    { focus: "another field in the composer", editor: false, renames: false },
+    { focus: "a side chat composer", sideChat: true, renames: false },
+    { focus: "the composer with the sidebar collapsed", sidebarCollapsed: true, renames: false },
+    {
+      focus: "the composer as a bound shortcut",
+      keys: "{Shift>}{F2}{/Shift}",
+      opens: "/local/thread-1",
+      renames: false,
+    },
+    { focus: "the composer during IME composition", composing: true, renames: false },
+  ])("F2 from $focus renames the open thread: $renames", async (row) => {
+    const { renames, keys = "{F2}", composing = false, opens, ...scenario } = row;
+    const { tree } = createTestContext(scenario);
+    await using screen = await render(tree);
+    const field = screen.getByRole("textbox", { name: "Outside the sidebar" });
+    await userEvent.click(field);
+
+    if (composing) {
+      const key = new KeyboardEvent("keydown", { key: "F2", bubbles: true, isComposing: true });
+      await act(() => void field.element().dispatchEvent(key));
+    } else await userEvent.keyboard(keys);
+
+    const input = screen.getByRole("textbox", { name: "Thread title" });
+    if (renames) {
+      await expect.element(input).toHaveValue("Fix the login redirect");
+      await expect.element(input).toHaveFocus();
+    } else {
+      // A collapsed sidebar is inert, which hides its content from role queries.
+      await vi.waitFor(() =>
+        expect(document.querySelector('input[aria-label="Thread title"]')).toBeNull(),
+      );
+    }
+    if (opens) {
+      await vi.waitFor(() => expect(screen.router?.history.location.pathname).toBe(opens));
+    }
+  });
+
+  function createTestContext({
+    editor = true,
+    sideChat = false,
+    sidebarCollapsed = false,
+  }: { editor?: boolean; sideChat?: boolean; sidebarCollapsed?: boolean } = {}) {
+    const activeProject = project("active");
+    const routeThreadRef: ScopedThreadRef = {
+      environmentId: activeProject.environmentId,
+      threadId: ThreadId.make("thread-0"),
+    };
+    vi.mocked(readEnvironmentScope).mockReturnValue(true);
+    vi.mocked(useEnvironmentScope).mockReturnValue(true);
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([
+      { ...threadShell(activeProject.id, 0), title: "Fix the login redirect" },
+      threadShell(activeProject.id, 1),
+    ]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef,
+    });
+    const tree = (
+      <>
+        <div inert={sidebarCollapsed}>
+          <SidebarProvider>
+            <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+          </SidebarProvider>
+        </div>
+        <div {...(sideChat ? { "data-side-chat-pane": "side-thread" } : {})}>
+          <div data-workspace-area="composer">
+            <textarea
+              aria-label="Outside the sidebar"
+              {...(editor ? { "data-testid": "composer-editor" } : {})}
+            />
+          </div>
+        </div>
+      </>
+    );
+    return { tree };
+  }
 });
 
 describe("sidebar thread menu", () => {
