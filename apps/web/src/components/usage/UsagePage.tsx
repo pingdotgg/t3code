@@ -631,7 +631,7 @@ function UsageOverview({
   const gt = useGT();
   const locale = useLocale();
   const m = useMessages();
-  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
+  const [breakdown, setBreakdown] = useState<"model" | "project" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
   const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
@@ -667,6 +667,14 @@ function UsageOverview({
       : merged.models;
   const breakdownPeak = breakdownModels.reduce(
     (peak, model) => Math.max(peak, metric === "tokens" ? model.totalTokens : model.costUsd),
+    0,
+  );
+  const breakdownProjects =
+    breakdown === "project" && metric === "tokens"
+      ? merged.projects.toSorted((a, b) => b.totalTokens - a.totalTokens || b.costUsd - a.costUsd)
+      : merged.projects;
+  const projectPeak = breakdownProjects.reduce(
+    (peak, project) => Math.max(peak, metric === "tokens" ? project.totalTokens : project.costUsd),
     0,
   );
   const rankedProviders = rankProvidersByMetric(activeProviders, merged.providers, metric);
@@ -900,12 +908,15 @@ function UsageOverview({
             value={[breakdown]}
             onValueChange={(next) => {
               const value = next[0];
-              if (value === "model" || value === "time") setBreakdown(value);
+              if (value === "model" || value === "project" || value === "time") {
+                setBreakdown(value);
+              }
             }}
           >
             {(
               [
                 { value: "model", label: gt("Model") },
+                { value: "project", label: gt("Project") },
                 { value: "time", label: shownHourly ? gt("Hour") : gt("Day") },
               ] as const
             ).map((option) => (
@@ -994,6 +1005,93 @@ function UsageOverview({
                       <td className={cn("py-2.5 pr-2 pl-6", rowFigures)}>
                         {formatTokens(model.totalTokens)}
                       </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        ) : breakdown === "project" ? (
+          <table className={cn("w-full text-sm", figureClass(loadingPartial))}>
+            <thead>
+              <tr className="border-b border-border text-right text-xs text-muted-foreground">
+                <th className="py-2 pr-3 pl-2 text-left font-normal">#</th>
+                <th className="w-full py-2 text-left font-normal">
+                  <T>Project</T>
+                </th>
+                <th className="py-2 pl-6 font-normal">
+                  <T>Cost</T>
+                </th>
+                <th className="hidden py-2 pl-6 font-normal sm:table-cell">
+                  <T context="column heading, percentage share">Share</T>
+                </th>
+                <th className="py-2 pr-2 pl-6 font-normal">
+                  <T>Tokens</T>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {breakdownProjects.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                    <T>No activity in this window.</T>
+                  </td>
+                </tr>
+              ) : (
+                breakdownProjects.map((project, index) => {
+                  const value = metric === "tokens" ? project.totalTokens : project.costUsd;
+                  const costUnknown = isModelCostUnknown(project);
+                  return (
+                    <tr
+                      key={project.key}
+                      className="border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums"
+                    >
+                      <td className="py-2.5 pr-3 pl-2 text-left text-xs">{index + 1}</td>
+                      <td className="py-2.5 text-left whitespace-normal">
+                        <span className={project.kind === "project" ? "text-foreground" : ""}>
+                          {project.kind === "project" ? project.title : gt("No project")}
+                        </span>
+                        {project.kind === "project" && selectedEnvironments.length > 1 ? (
+                          <span className="ml-1.5 text-xs">{project.environmentLabel}</span>
+                        ) : null}
+                        {project.duplicateTitleId !== null ? (
+                          <span className="block text-xs">
+                            {gt("ID {id}", { id: project.duplicateTitleId })}
+                          </span>
+                        ) : null}
+                        {value > 0 && projectPeak > 0 ? (
+                          <div aria-hidden className="mt-1.5 h-0.5 max-w-48">
+                            <div
+                              className="h-full rounded-full bg-foreground/60"
+                              style={{ width: `max(0.5rem, ${(value / projectPeak) * 100}%)` }}
+                            />
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="py-2.5 pl-6 text-foreground">
+                        {costUnknown ? (
+                          <span className="text-muted-foreground">
+                            <T>Unpriced</T>
+                          </span>
+                        ) : (
+                          <>
+                            {formatUsd(project.costUsd, locale)}
+                            {project.unpricedRecords > 0 ? (
+                              <span className="block text-xs text-muted-foreground">
+                                <T>Some unpriced</T>
+                              </span>
+                            ) : null}
+                          </>
+                        )}
+                      </td>
+                      <td className="hidden py-2.5 pl-6 sm:table-cell">
+                        {metric === "tokens"
+                          ? formatPercent(project.tokenShare)
+                          : costUnknown
+                            ? ""
+                            : formatPercent(project.costShare)}
+                      </td>
+                      <td className="py-2.5 pr-2 pl-6">{formatTokens(project.totalTokens)}</td>
                     </tr>
                   );
                 })
