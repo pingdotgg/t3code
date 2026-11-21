@@ -6,6 +6,7 @@ export default defineConfig({
   documents: ["src/**/*.graphql"],
   scalars: {
     GitObjectID: "effect/Schema#String",
+    GitSSHRemote: "effect/Schema#String",
     GitRefname: "effect/Schema#String",
     // Preserve GitHub's strings for comparison with other reads.
     DateTime: "effect/Schema#String",
