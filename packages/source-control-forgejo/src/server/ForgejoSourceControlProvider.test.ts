@@ -576,6 +576,7 @@ it.effect("opens Forgejo Actions check links on the pull request's server", () =
 
 it.effect.each([
   ["Ready", false, true, false, "mergeable"],
+  ["Conflicting", false, false, false, "conflicting"],
   ["Draft", true, false, true, "unknown"],
   ["WIP: Legacy draft", undefined, false, true, "unknown"],
   ["WIP: Explicitly ready", false, false, false, "unknown"],
