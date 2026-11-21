@@ -417,6 +417,31 @@ const failed = (expect: Parameters<typeof gradeSample>[0], run: SampleRun) =>
     .filter((check) => !check.pass)
     .map((check) => check.check);
 
+it("grades contracted negatives in a delegated blocker report", () => {
+  const testCase = NodeFS.readFileSync(
+    new URL("./cases/threads-vs-tasks.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map((line) => decodeDeviceCase(line))
+    .find((entry) => entry.id === "tt-delegate-completed-with-blocker")!;
+  for (const [report, passes] of [
+    ["The suite didn't run because the delegate needs a staging credential.", true],
+    ["The tests weren’t executed because the delegate needs a staging credential.", true],
+    ["The suite ran with a staging credential.", false],
+    ["The suite didn't run.", false],
+  ] as const) {
+    const errors = failed(testCase.expect, {
+      calls: [{ step: 0, tool: "task_status", input: { taskId: "task-1" } }],
+      text: report,
+      finalText: report,
+      stopReason: "end_turn",
+    });
+    assert.equal(errors.length === 0, passes, report);
+  }
+});
+
 it("passes a good run and names every rule a bad run breaks", () => {
   const expect = {
     calls: [{ tool: "delegate_task", args: { task: "~FINDING", "target.options": "~max" } }],
@@ -765,8 +790,8 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
   assert.notInclude(reminders?.join(), "Codebase and user instructions");
 
   const prompt = buildMessages(makeSample(childCase, base)).at(-1)?.content.at(-1);
-  assert.equal(prompt?.text, taskPrompt({ task: childCase.prompt, role: "implementation" }));
-  assert.notEqual(prompt?.text, childCase.prompt);
+  assert.include(prompt?.text, taskPrompt({ task: childCase.prompt, role: "implementation" }));
+  assert.include(prompt?.text, "Your parent agent assigned this work to you.");
 });
 
 it("lists link tools only while a case turns the beta on, and sends chips as T3 projects them", () => {

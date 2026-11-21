@@ -11,11 +11,13 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
+  withMessageSenderNote,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
-  type OrchestrationV2HistoricalMessage,
+  OrchestrationV2HistoricalMessage,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -29,6 +31,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   historicalMessage,
   historyCost,
+  renderHistory,
   REPLACEMENT_HANDOFF_TOKEN_CAP,
 } from "@t3tools/provider-core/server/handoffBudget";
 import {
@@ -42,6 +45,7 @@ import {
 } from "./ProjectionStore.ts";
 
 const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
+const decodeHistoricalMessage = Schema.decodeUnknownSync(OrchestrationV2HistoricalMessage);
 const encodeHandoff = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2ContextHandoffJson));
 const decodeHandoff = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ContextHandoffJson),
@@ -729,7 +733,11 @@ it.effect(
         ordinal: 1,
       });
       if (source.type !== "user_message") return assert.fail("Expected user message fixture");
-      const forwarded = { ...source, senderThreadId: ThreadId.make("thread:coordinator") };
+      const forwarded = {
+        ...source,
+        createdBy: "agent" as const,
+        senderThreadId: ThreadId.make("thread:coordinator"),
+      };
       const human = {
         ...source,
         id: TurnItemId.make("item:human"),
@@ -741,6 +749,12 @@ it.effect(
         id: TurnItemId.make("item:notice"),
         messageId: MessageId.make("message:notice"),
         text: "The delegated review finished.",
+      };
+      const scheduled = {
+        ...source,
+        scheduledTaskId: ScheduledTaskId.make("nightly-checks"),
+        id: TurnItemId.make("item:scheduled"),
+        messageId: MessageId.make("message:scheduled"),
       };
       const missingMessage = {
         ...source,
@@ -765,6 +779,7 @@ it.effect(
       const canonicalMessages = [
         conversationMessage(forwarded),
         conversationMessage(human),
+        conversationMessage(scheduled),
         {
           ...conversationMessage(notice),
           notification: {
@@ -790,6 +805,12 @@ it.effect(
           speaker: { label: "Reviewer", model: "review-model" },
         },
         historicalMessage(missingMessage)!,
+        { ...known, text: withMessageSenderNote(forwarded, forwarded.text) },
+        {
+          ...historicalMessage(scheduled)!,
+          provenance: { createdBy: "system", creationSource: "web" },
+          text: withMessageSenderNote(scheduled, scheduled.text),
+        },
       ];
       const requested: Array<ReadonlyArray<TurnItemId>> = [];
       const thread = threadFixture(source.threadId);
@@ -801,7 +822,7 @@ it.effect(
           occurredAt: thread.createdAt,
           payload: thread,
         }),
-        turnItems: [forwarded, human, notice, missingMessage],
+        turnItems: [forwarded, human, notice, missingMessage, scheduled],
       };
       const refreshed = yield* refreshHistoricalMessageSources(saved).pipe(
         Effect.provide(
@@ -823,7 +844,7 @@ it.effect(
         ),
       );
       assert.lengthOf(requested, 1);
-      assert.lengthOf(requested[0]!, 6);
+      assert.lengthOf(requested[0]!, 7);
       assert.deepEqual(refreshed[0]?.provenance, known.provenance);
       assert.equal(refreshed[0]?.status, "interrupted");
       assert.isUndefined(refreshed[1]?.provenance);
@@ -836,9 +857,18 @@ it.effect(
       assert.deepEqual(refreshed[8], saved[8]);
       assert.isTrue(refreshed[9]?.senderUnknown);
       assert.deepEqual(
-        refreshed.map((entry) => entry.text),
-        saved.map((entry) => entry.text),
+        refreshed.slice(0, -2).map((entry) => entry.text),
+        saved.slice(0, -2).map((entry) => entry.text),
       );
+      assert.equal(refreshed.at(-2)?.text, forwarded.text);
+      assert.deepEqual(refreshed.at(-2)?.provenance, known.provenance);
+      for (const entry of [historicalMessage(scheduled)!, refreshed.at(-1)!]) {
+        assert.equal(entry.text, scheduled.text);
+        const stored = decodeHistoricalMessage(entry);
+        const rendered = renderHistory([stored], "Historical context");
+        assert.include(rendered, 'scheduled task "nightly-checks"');
+        assert.notInclude(rendered, "Carry out the configured task");
+      }
       assert.isUndefined(saved[0]?.provenance);
     }),
 );

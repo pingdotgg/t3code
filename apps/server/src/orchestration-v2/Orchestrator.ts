@@ -1020,7 +1020,11 @@ function delegatedCompletionWakeDetail(
       const task = tasks.find((candidate) => candidate.id === taskId);
       // A follow-up gets a fresh task id; the child thread links it to the task delegate_task returned.
       const thread = task?.childThreadId == null ? "" : ` in child thread ${task.childThreadId}`;
-      const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${thread}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
+      const status =
+        task?.status === "completed"
+          ? "child run completed, assignment outcome unverified"
+          : task?.status;
+      const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${thread}${status === undefined ? " reached a terminal state" : ` [${status}]`}`;
       if (task?.result != null) {
         const detail = `${label}:\n${task.result}`;
         const bytes = Buffer.byteLength(detail);

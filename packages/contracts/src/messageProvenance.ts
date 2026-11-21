@@ -19,6 +19,8 @@ export const OrchestrationV2LinkedSender = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   title: Schema.String,
+  /** The receiving server matched the sending MCP link to the thread's originating link. */
+  fromOriginatingLink: Schema.optional(Schema.Literal(true)),
 });
 export type OrchestrationV2LinkedSender = typeof OrchestrationV2LinkedSender.Type;
 

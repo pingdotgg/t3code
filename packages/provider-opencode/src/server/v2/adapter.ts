@@ -368,7 +368,7 @@ interface ThreadState {
   /** Execution starts seen; lets a check that awaited OpenCode notice a run that began meanwhile. */
   starts: number;
   directory: string;
-  agent: string;
+  agent: string | undefined;
   title: string | undefined;
   rules: ReadonlyArray<Rule> | undefined;
   policy: RulesPolicy;
@@ -859,8 +859,7 @@ const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
   left.id === right?.id &&
   (left.variant ?? "default") === (right?.variant ?? "default");
 
-const agentFor = (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-  input.runtimePolicy.interactionMode === "plan" ? "plan" : "build";
+const agentFor = (policy: RulesPolicy) => (policy.interactionMode === "plan" ? "plan" : "build");
 
 const commandOf = (text: string) => {
   const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
@@ -1017,7 +1016,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       unsettledStarted: false,
       starts: 0,
       directory,
-      agent: "build",
+      agent: undefined,
       title: undefined,
       rules: undefined,
       policy: input.runtimePolicy,
@@ -4214,10 +4213,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       preserveBrowser = true,
     ) {
       const plan = policy.interactionMode === "plan";
+      const agent = thread.agent ?? agentFor(policy);
       const paths =
         policy.runtimeMode === "full-access" && !plan
           ? []
-          : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
+          : yield* pathsFor(thread.directory, plan ? [agent, "plan"] : [agent]);
       const mcpServerName = appThreadId === null ? null : yield* mcpServerNameFor(appThreadId);
       const previous = thread.rules;
       return {
@@ -4293,14 +4293,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         existing.providerThread = providerThread;
         existing.model = native.model;
         existing.directory = directory;
-        existing.agent = native.agent ?? existing.agent;
+        existing.agent = native.agent;
         existing.title = native.title;
         existing.rules = native.permissions ?? [];
         return existing;
       }
       const state = newThreadState(native.id, providerThread, directory, undefined);
       state.model = native.model;
-      state.agent = native.agent ?? state.agent;
+      state.agent = native.agent;
       state.title = native.title;
       state.rules = native.permissions ?? [];
       threads.set(native.id, state);
@@ -4968,8 +4968,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           const directory = threadInput.runtimePolicy.cwd ?? host.paths.cwd;
           const policy = threadInput.runtimePolicy;
+          const agent = agentFor(policy);
           const { rules: permissions } = yield* rulesFor(
-            { directory, agent: "build", grants: [], rules: undefined },
+            { directory, agent, grants: [], rules: undefined },
             policy,
             threadInput.threadId,
           );
@@ -4977,6 +4978,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // A session created with a title is never titled by OpenCode's own model.
           const created = yield* client.session.create({
             location: Location.PublicRef.make({ directory: AbsolutePath.make(directory) }),
+            agent: Agent.ID.make(agent),
             model,
             permissions,
             ...(title === undefined ? {} : { title }),
@@ -5006,7 +5008,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             {
               id: created.id,
               model: created.model,
-              agent: created.agent,
+              agent: created.agent ?? agent,
               title: title ?? created.title,
               permissions,
             },
@@ -5149,7 +5151,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 });
               }
               // Switch to the plan agent before writing rules to retain its own path allows.
-              const agent = agentFor(turnInput);
+              const agent = agentFor(turnInput.runtimePolicy);
               if (agent !== state.agent) {
                 yield* client.session.switchAgent({
                   sessionID: Session.ID.make(sessionId),

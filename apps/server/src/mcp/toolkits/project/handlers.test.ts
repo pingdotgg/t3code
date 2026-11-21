@@ -10,6 +10,7 @@ import {
   type Project as ProjectRecord,
   type ModelSelection,
   type RuntimeMode,
+  type OrchestrationV2DelegatedFrom,
   type OrchestrationV2ThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
@@ -56,6 +57,7 @@ const clientLaunchHarness = (input: {
   readonly overrideModel?: ModelSelection;
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly clientSessionId?: string;
+  readonly linkedSender?: OrchestrationV2DelegatedFrom;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
   readonly hostedAppUrl?: string;
@@ -104,6 +106,9 @@ const clientLaunchHarness = (input: {
       client: {
         sessionId: clientSessionId,
         label: "Claude Code",
+        ...(input.linkedSender === undefined
+          ? {}
+          : { linked: true, senderThread: input.linkedSender }),
         access: input.runtimeModeCeiling,
         hostedAppUrl: input.hostedAppUrl,
       },
@@ -208,6 +213,7 @@ it.effect(
           readonly targeted?: false;
           readonly overrideModel?: ModelSelection;
           readonly hostedAppUrl?: string;
+          readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
           readonly refusedByCeiling?: true;
         },
       ) {
@@ -217,6 +223,7 @@ it.effect(
           runtimeModeCeiling,
           defaultRuntimeMode,
           launched,
+          ...(input.delegatedFrom === undefined ? {} : { linkedSender: input.delegatedFrom }),
           ...(overrideModel === undefined ? {} : { overrideModel }),
           ...(hostedAppUrl === undefined ? {} : { hostedAppUrl }),
           ...(refusedByCeiling === undefined ? {} : { refusedByCeiling }),
@@ -245,6 +252,22 @@ it.effect(
       });
       expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
       expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
+
+      const parent = {
+        environmentId: EnvironmentId.make("remote"),
+        threadId: ThreadId.make("parent"),
+        title: "Coordinator",
+      };
+      const delegated = yield* launchWith("full-access", "approval-required", {
+        title: "Review",
+        message: "Review the diff",
+        delegatedFrom: parent,
+      });
+      expect(delegated.launched[0]?.initialMessage?.linkedSender).toEqual({
+        ...parent,
+        fromOriginatingLink: true,
+      });
+      expect(delegated.launched[0]?.delegatedFrom).toEqual(parent);
 
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
         title: "Fix",

@@ -355,12 +355,17 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
 
       // A link's delegated task names its parent there; only a link's launch may.
       const delegatedFrom = {
-        environmentId: "environment-laptop",
-        threadId: "thread:laptop-parent",
+        environmentId: EnvironmentId.make("environment-laptop"),
+        threadId: ThreadId.make("thread:laptop-parent"),
         title: "Laptop parent",
       };
-      const task = yield* launch(laptop, "Delegated from the laptop", { delegatedFrom });
+      const origin = { ...laptop, client: { ...laptop.client!, senderThread: delegatedFrom } };
+      const task = yield* launch(origin, "Delegated from the laptop", { delegatedFrom });
       assert.deepEqual((yield* projections.getThreadShell(task))?.delegatedFrom, delegatedFrom);
+      const mismatched = yield* launch(origin, "Other parent", {
+        delegatedFrom: { ...delegatedFrom, threadId: "other" },
+      });
+      assert.equal((yield* projections.getThreadShell(mismatched))?.delegatedFrom, undefined);
       const claimed = yield* launch(claudeCode, "Claims a parent", { delegatedFrom });
       assert.equal((yield* projections.getThreadShell(claimed))?.delegatedFrom, undefined);
     }),

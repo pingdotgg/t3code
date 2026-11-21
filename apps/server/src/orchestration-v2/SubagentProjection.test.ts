@@ -549,7 +549,7 @@ it("reports a provider's stop reason for a completed run without an assistant re
   } satisfies OrchestrationV2TurnItem;
   assert.equal(
     subagentResultForRun({ ...projection, turnItems: [notice] }, run).text,
-    `Child task completed without an assistant result.\n\n${notice.message}`,
+    `Child run completed without an assistant result.\n\n${notice.message}`,
   );
 });
 

@@ -3,15 +3,17 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2HistoricalMessage,
   OrchestrationV2ProviderThread,
+  OrchestrationV2TurnItem,
   ProjectFactId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { withMessageSenderNote } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { HandoffSummary } from "../project/conversationSummaries/conversationSummarySchedule.ts";
 import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
 import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
-import { messageProvenance } from "@t3tools/provider-core/server/messageProvenance";
+import { historicalMessageProvenance } from "@t3tools/provider-core/server/messageProvenance";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -32,7 +34,7 @@ const MESSAGE_KINDS: ReadonlySet<string> = new Set([
   "peer_reply",
 ]);
 
-/** Stored history can lack sender metadata; recover attribution without replacing its text. */
+/** Recover sender metadata from the original turn before delivering stored history. */
 export const refreshHistoricalMessageSources = Effect.fn(
   "orchestrationV2.refreshHistoricalMessageSources",
 )(function* (messages: ReadonlyArray<OrchestrationV2HistoricalMessage>) {
@@ -44,7 +46,13 @@ export const refreshHistoricalMessageSources = Effect.fn(
     ids.add(message.itemId);
     byThread.set(message.threadId, ids);
   }
-  const canonical = new Map<string, OrchestrationV2HistoricalMessage>();
+  const canonical = new Map<
+    string,
+    {
+      history: OrchestrationV2HistoricalMessage;
+      userItem?: Extract<OrchestrationV2TurnItem, { type: "user_message" }>;
+    }
+  >();
   const key = (threadId: ThreadId, itemId: TurnItemId) => JSON.stringify([threadId, itemId]);
   for (const [threadId, ids] of byThread) {
     const items = yield* projections
@@ -79,7 +87,7 @@ export const refreshHistoricalMessageSources = Effect.fn(
       const historical = historicalMessage(item);
       if (historical === null) continue;
       if (item.type !== "user_message") {
-        canonical.set(key(threadId, item.id), historical);
+        canonical.set(key(threadId, item.id), { history: historical });
         continue;
       }
       const source = sourceMessages.get(item.messageId);
@@ -91,30 +99,45 @@ export const refreshHistoricalMessageSources = Effect.fn(
         source.role === "user" &&
         conversationEvidenceText(source.text) === historical.text
       ) {
-        const provenance = messageProvenance(source);
+        const provenance = historicalMessageProvenance({
+          ...source,
+          scheduledTaskId: source.scheduledTaskId ?? item.scheduledTaskId,
+        });
         const { provenance: _provenance, ...rest } = historical;
         canonical.set(key(threadId, item.id), {
-          ...rest,
-          ...(provenance === undefined ? {} : { provenance }),
+          history: { ...rest, ...(provenance === undefined ? {} : { provenance }) },
+          userItem: item,
         });
       } else {
-        canonical.set(
-          key(threadId, item.id),
-          historical.provenance === undefined ? { ...historical, senderUnknown: true } : historical,
-        );
+        canonical.set(key(threadId, item.id), {
+          history:
+            historical.provenance === undefined
+              ? { ...historical, senderUnknown: true }
+              : historical,
+          userItem: item,
+        });
       }
     }
   }
   return messages.map((message): OrchestrationV2HistoricalMessage => {
     if (!MESSAGE_KINDS.has(message.kind)) return message;
-    const source = canonical.get(key(message.threadId, message.itemId));
+    const record = canonical.get(key(message.threadId, message.itemId));
+    const source = record?.history;
+    const text = conversationEvidenceText(message.text);
+    // Older handoffs stored the sender note inside the body. Only unwrap an exact source match.
+    const legacyNote =
+      record?.userItem !== undefined &&
+      text.startsWith("[T3 Code:") &&
+      source?.text !== text &&
+      conversationEvidenceText(withMessageSenderNote(record.userItem, record.userItem.text)) ===
+        text;
     if (
       source === undefined ||
       source.senderUnknown === true ||
       source.runId !== message.runId ||
       (source.kind !== message.kind &&
         !(source.kind === "peer_reply" && message.kind === "assistant_message")) ||
-      source.text !== conversationEvidenceText(message.text)
+      (source.text !== text && !legacyNote)
     ) {
       return message.role === "user" &&
         message.provenance === undefined &&
@@ -130,6 +153,7 @@ export const refreshHistoricalMessageSources = Effect.fn(
     } = message;
     return {
       ...saved,
+      ...(legacyNote ? { text: source.text } : {}),
       role: source.role,
       ...(source.provenance === undefined ? {} : { provenance: source.provenance }),
       ...(source.speaker === undefined ? {} : { speaker: source.speaker }),

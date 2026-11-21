@@ -1189,7 +1189,10 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       assert.equal(wake.status, "queued");
       const message = rewritten.messages.find((row) => row.id === delivery.messageId);
       assert.deepEqual(message?.delegatedCompletion?.taskIds, [siblingId]);
-      assert.equal(message?.text, `Delegated task ${siblingId} [completed]:\nchild finished`);
+      assert.equal(
+        message?.text,
+        `Delegated task ${siblingId} [child run completed, assignment outcome unverified]:\nchild finished`,
+      );
 
       yield* acknowledge(siblingId);
       const cancelled = yield* orchestrator.getThreadProjection(threadId);
@@ -5090,7 +5093,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       assert.equal(task?.status, "completed");
       assert.equal(
         task?.result,
-        `Child task completed without an assistant result.\n\n${stopReason}`,
+        `Child run completed without an assistant result.\n\n${stopReason}`,
       );
       assert.isUndefined(task?.cancelledRunId);
     }),

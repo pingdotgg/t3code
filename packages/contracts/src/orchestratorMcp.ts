@@ -226,8 +226,9 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   childNodeId: NodeId,
   status: OrchestratorMcpDelegatedTaskStatus.annotate({
     description:
-      "starting means the child's provider has not started its turn yet, so no work has begun.",
+      "Execution status. In starting, the provider has yet to begin its turn. When completed, read the child's summary to assess the assignment.",
   }),
+  assignmentOutcome: Schema.optional(Schema.Literal("unverified")),
   workState: Schema.Literals(["working", "waiting_for_children", "result_available"]),
   hasPendingChildRuns: Schema.Boolean,
   latestTerminalRunId: Schema.NullOr(RunId),

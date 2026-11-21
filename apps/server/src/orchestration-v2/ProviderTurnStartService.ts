@@ -87,6 +87,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   formatMessageWithProvenance,
+  liveMessagePurpose,
   messageProvenance,
 } from "@t3tools/provider-core/server/messageProvenance";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -1061,10 +1062,11 @@ export const layer: Layer.Layer<
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
       const goalCommand = goalDriver && parseNativeGoalCommand(providerMessage) !== null;
       const provenance = messageProvenance(providerMessage);
+      const purpose = liveMessagePurpose(providerMessage, projection.thread);
       const renderMessage = (text: string) =>
         isNativeMaintenanceCommand(providerMessage) || goalCommand
           ? text
-          : formatMessageWithProvenance(text, provenance);
+          : formatMessageWithProvenance(text, provenance, purpose);
       let userText = renderMessage(
         projectComposerContextForProvider({
           text: providerMessage.text,

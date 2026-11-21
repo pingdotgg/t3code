@@ -25,7 +25,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
 import {
-  messageProvenance,
+  historicalMessageProvenance,
   messageProvenanceLabel,
 } from "@t3tools/provider-core/server/messageProvenance";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
@@ -215,7 +215,7 @@ export const readForkHistoryItems = Effect.fn(
 });
 
 function userMessageLabel(item: Extract<OrchestrationV2TurnItem, { type: "user_message" }>) {
-  const provenance = messageProvenance(item);
+  const provenance = historicalMessageProvenance(item);
   return provenance === undefined ? "User" : messageProvenanceLabel(provenance);
 }
 

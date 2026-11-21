@@ -135,6 +135,7 @@ import {
   type McpThreadInvocationScope,
   requireThreadScope,
   threadLinkFor,
+  linkedMessageSender,
 } from "./McpInvocationContext.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import {
@@ -1983,6 +1984,7 @@ const make = Effect.gen(function* () {
       childRunId: childRun?.id ?? null,
       childNodeId: task.id,
       status,
+      ...(status === "completed" ? { assignmentOutcome: "unverified" as const } : {}),
       workState,
       hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
       providerInstanceId: modelSelection.instanceId,
@@ -2178,6 +2180,7 @@ const make = Effect.gen(function* () {
       childRunId: null,
       childNodeId: task.id,
       status,
+      ...(status === "completed" ? { assignmentOutcome: "unverified" as const } : {}),
       workState: terminal ? "result_available" : "working",
       hasPendingChildRuns: false,
       providerInstanceId: task.providerInstanceId,
@@ -3712,11 +3715,9 @@ const make = Effect.gen(function* () {
             operation: "thread-send",
           }),
           threadId: input.threadId,
-          ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
-          // A linked environment's agent has no thread here; the link names it.
-          ...(parent === undefined && scope.client?.senderThread !== undefined
-            ? { linkedSender: scope.client.senderThread }
-            : {}),
+          ...(parent === undefined
+            ? linkedMessageSender(scope.client, target.thread.linkOrigin)
+            : { senderThreadId: parent.thread.id }),
           messageId,
           text: input.message,
           attachments: [],

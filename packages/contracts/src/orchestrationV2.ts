@@ -1279,7 +1279,12 @@ export type OrchestrationV2ProviderThread = typeof OrchestrationV2ProviderThread
 export const OrchestrationV2HistoricalMessage = Schema.Struct({
   role: Schema.Literals(["user", "assistant"]),
   text: Schema.String,
-  provenance: Schema.optional(OrchestrationV2MessageProvenance),
+  provenance: Schema.optional(
+    Schema.Struct({
+      ...OrchestrationV2MessageProvenance.fields,
+      scheduledTaskId: Schema.optional(ScheduledTaskId),
+    }),
+  ),
   senderUnknown: Schema.optional(Schema.Literal(true)),
   speaker: Schema.optional(OrchestrationV2MessageSpeaker),
   runStatus: Schema.optional(Schema.String),
@@ -3261,6 +3266,7 @@ export const OrchestrationV2Command = Schema.Union([
         titleSeed: Schema.optional(TrimmedNonEmptyString),
         scheduledTaskId: Schema.optional(ScheduledTaskId),
         senderThreadId: Schema.optional(ThreadId),
+        linkedSender: Schema.optional(OrchestrationV2LinkedSender),
         workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
       }),
     ),
