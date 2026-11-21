@@ -296,10 +296,7 @@ impl PeerLinks {
     }
 
     fn own_label(&self) -> String {
-        self.environment.descriptor["label"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned()
+        self.environment.label()
     }
 
     /// Whether the Linked environments beta (Settings → Labs) is on here.

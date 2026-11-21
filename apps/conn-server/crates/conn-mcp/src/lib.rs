@@ -53,7 +53,8 @@ pub struct McpConfig {
     /// Worktree defaults, git status and setup terminals.
     pub worktrees: Option<WorktreeConfig>,
     pub environment_id: String,
-    pub label: String,
+    /// The environment's label; it can change while the server runs.
+    pub label: Label,
     pub server_version: String,
     /// `ExecutionEnvironmentDescriptor.platform`: `{os, arch}`.
     pub platform: Value,
@@ -117,6 +118,38 @@ pub type PullRequestHost = Arc<
         + Send
         + Sync,
 >;
+
+/// A label read on each use, so a renamed environment answers with its new name.
+#[derive(Clone)]
+pub struct Label(Arc<dyn Fn() -> String + Send + Sync>);
+
+impl Label {
+    pub fn live(read: impl Fn() -> String + Send + Sync + 'static) -> Self {
+        Self(Arc::new(read))
+    }
+
+    pub fn get(&self) -> String {
+        (self.0)()
+    }
+}
+
+impl From<String> for Label {
+    fn from(label: String) -> Self {
+        Self::live(move || label.clone())
+    }
+}
+
+impl From<&str> for Label {
+    fn from(label: &str) -> Self {
+        label.to_owned().into()
+    }
+}
+
+impl std::fmt::Debug for Label {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
+    }
+}
 
 pub type ProviderRefresh = Arc<dyn Fn(String) -> conn_engine::BoxFuture<'static, ()> + Send + Sync>;
 

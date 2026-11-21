@@ -508,7 +508,9 @@ is effort per turn, token use, and the 4b verifier. **Orbit must change:** repla
 
 ### 4e. The instance descriptor, live (the "Orbit row")
 
-- **Today:** the label comes from `/etc/machine-info`, read once at start [brief]. The
+- **Today:** the label (`--label`, `HOSTNAME`, `/etc/hostname`, the host name) and
+  `orbitInstance` are re-read live: `SIGHUP`, an inotify watch on `/etc/orbit/` and a 2 s
+  poll (`docs/orbit-instance-reload.md`). The
   fields of `/etc/orbit/instance` are `ORBIT_INSTANCE_ID`, `ORBIT_INSTANCE`, `ORBIT_PROJECT`,
   `ORBIT_PROJECT_ID`, `ORBIT_PROJECT_NAME`, `ORBIT_NODE`, `ORBIT_URL`, and optionally
   `ORBIT_DEV_PORTS` and `ORBIT_DEV_PORTS_TAKEN` [code, `InstanceContainer.php:452-457`].

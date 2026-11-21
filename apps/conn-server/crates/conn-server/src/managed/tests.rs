@@ -339,7 +339,9 @@ impl Lab {
         let app = AppState {
             table: Arc::new(crate::method_table(&deps)),
             auth: crate::auth::AuthStore::in_memory(),
-            descriptor: Arc::new(crate::environment::descriptor(ENV, "Lab", false, None)),
+            descriptor: crate::environment::fixed_descriptor(crate::environment::descriptor(
+                ENV, "Lab", false, None,
+            )),
             engine: Some(engine),
             deps,
         };

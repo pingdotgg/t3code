@@ -57,9 +57,18 @@ impl ServeOptions {
     /// Reads the `serve` command line, including a desktop bootstrap envelope. Exits on any
     /// other command, after running it.
     pub fn from_args() -> Self {
+        Self::from_args_with(|| {})
+    }
+
+    /// [`Self::from_args`], calling `on_serve` once the command is `serve`, before the
+    /// bootstrap envelope is read (it can wait up to a second).
+    pub fn from_args_with(on_serve: impl FnOnce()) -> Self {
         let raw: Vec<String> = std::env::args().skip(1).collect();
         match cli::parse(raw.clone()) {
-            Ok(Command::Serve(args)) => Self::from_serve_args(args, &raw),
+            Ok(Command::Serve(args)) => {
+                on_serve();
+                Self::from_serve_args(args, &raw)
+            }
             Ok(other) => std::process::exit(cli::run(other)),
             Err(message) => {
                 eprintln!("{message}\n\n{}", cli::USAGE);
@@ -147,6 +156,9 @@ pub async fn serve_with_instances(
         sdk_host: _,
         managed_provision,
     } = options;
+    // SIGHUP asks for a reload (`reload.rs`). Its default action stops the process, so the
+    // handler goes in before any startup work an Orbit finalize could overlap.
+    let hangup = or_exit(crate::reload::hangup(), "cannot handle SIGHUP");
     // A managed target never starts on partial input.
     let provision = match managed_provision {
         Some(path) => Some(or_exit(
@@ -218,6 +230,8 @@ pub async fn serve_with_instances(
         "cannot load the state directory",
     );
     let environment = Arc::new(environment);
+    // The label and Orbit Instance facts follow the file, the hostname and SIGHUP.
+    crate::reload::start(environment.clone(), hangup);
     let restart = environment.restart.clone();
     let auth = environment.auth.clone();
     if inert {
@@ -384,7 +398,7 @@ pub async fn serve_with_instances(
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: auth.clone(),
-        descriptor: Arc::new(environment.descriptor.clone()),
+        descriptor: environment.subscribe_descriptor(),
         engine: Some(engine.clone()),
         deps,
     };

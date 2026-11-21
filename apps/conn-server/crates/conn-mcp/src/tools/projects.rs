@@ -61,7 +61,7 @@ pub(super) fn environment(cx: &Cx<'_>) -> Value {
     if let Some(settings) = &config.settings {
         return json!({
             "environmentId": config.environment_id,
-            "label": config.label,
+            "label": config.label.get(),
             "serverVersion": config.server_version,
             "platform": config.platform,
             "preferences": crate::peers::preferences(&(settings.read)()),
@@ -69,7 +69,7 @@ pub(super) fn environment(cx: &Cx<'_>) -> Value {
     }
     json!({
         "environmentId": config.environment_id,
-        "label": config.label,
+        "label": config.label.get(),
         "serverVersion": config.server_version,
         "platform": config.platform,
         "preferences": {

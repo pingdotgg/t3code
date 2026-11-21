@@ -941,10 +941,13 @@ against a fake Gateway on loopback; not yet against a lab Gateway. Legacy peer l
 The task worker grant (item 6) rides on it: a fixed allowlist per admitted turn and an
 engine `DispatchGuard` that checks ownership atomically with each command.
 
-## Orbit Instance facts at startup
+## Orbit Instance facts at startup, and live
 
 Conn Server reads Orbit’s existing `/etc/orbit/instance` at startup and publishes the optional
 `orbitInstance` in the environment descriptor, alongside its persisted environment ID.
+Since 2026-11-21 it also re-reads the file and the label while it runs: on `SIGHUP`, on an
+inotify event in `/etc/orbit/` (Linux), and every 2 s. Open config streams get a new
+`snapshot`; sockets stay open. See `docs/orbit-instance-reload.md`.
 The descriptor requires both positive, JavaScript-safe IDs. It keeps the optional Project,
 Instance and Node labels, plus a valid HTTP(S) URL. A host without the file or an older file
 without both IDs still starts. The reader caps the file at 64 KiB.

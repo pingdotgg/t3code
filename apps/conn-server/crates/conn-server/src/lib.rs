@@ -19,6 +19,7 @@ pub mod oauth;
 pub mod orbit_link;
 pub mod peers;
 mod project;
+pub mod reload;
 pub mod restart;
 pub mod routes;
 pub mod scopes;

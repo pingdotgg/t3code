@@ -86,7 +86,7 @@ fn main() {
     let state = AppState {
         table: Arc::new(table),
         auth: auth.clone(),
-        descriptor: Arc::new(environment.descriptor.clone()),
+        descriptor: environment.subscribe_descriptor(),
         engine: None,
         deps: Default::default(),
     };

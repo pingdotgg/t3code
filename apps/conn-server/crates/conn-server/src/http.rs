@@ -38,8 +38,8 @@ pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 pub struct AppState {
     pub table: Arc<MethodTable>,
     pub auth: Arc<AuthStore>,
-    /// `ExecutionEnvironmentDescriptor`.
-    pub descriptor: Arc<Value>,
+    /// `ExecutionEnvironmentDescriptor`, current after each reload (`crate::reload`).
+    pub descriptor: tokio::sync::watch::Receiver<Value>,
     /// Backs the orchestration snapshot routes; without it they answer 404.
     pub engine: Option<Arc<dyn Engine>>,
     /// The services the method table was built from, for the routes in `routes/`.
@@ -145,7 +145,7 @@ async fn health(State(state): State<AppState>) -> Json<Value> {
 }
 
 async fn descriptor(State(state): State<AppState>) -> Json<Value> {
-    Json(state.descriptor.as_ref().clone())
+    Json(state.descriptor.borrow().clone())
 }
 
 async fn session_state(State(state): State<AppState>, headers: HeaderMap) -> Json<Value> {
@@ -621,7 +621,7 @@ async fn thread_transcript(
     let Ok(_permit) = TRANSCRIPT_EXPORTS.acquire().await else {
         return internal_reason("orchestration_thread_snapshot_failed");
     };
-    let environment_id = state.descriptor["environmentId"]
+    let environment_id = state.descriptor.borrow()["environmentId"]
         .as_str()
         .unwrap_or("")
         .to_owned();
@@ -909,7 +909,7 @@ mod tests {
         let state = AppState {
             table: Arc::new(MethodTable::new()),
             auth: auth.clone(),
-            descriptor: Arc::new(crate::environment::descriptor(
+            descriptor: crate::environment::fixed_descriptor(crate::environment::descriptor(
                 "env-test", "Test", false, None,
             )),
             engine,
@@ -943,7 +943,7 @@ mod tests {
         let state = AppState {
             table: Arc::new(MethodTable::new()),
             auth: auth.clone(),
-            descriptor: Arc::new(crate::environment::descriptor(
+            descriptor: crate::environment::fixed_descriptor(crate::environment::descriptor(
                 "env-test", "Test", false, None,
             )),
             engine: None,
@@ -1672,7 +1672,7 @@ mod tests {
         let state = AppState {
             table: Arc::new(MethodTable::new()),
             auth: auth.clone(),
-            descriptor: Arc::new(crate::environment::descriptor(
+            descriptor: crate::environment::fixed_descriptor(crate::environment::descriptor(
                 "env-test", "Test", false, None,
             )),
             engine: None,

@@ -1310,7 +1310,7 @@ async fn http_diff_shares_the_rpc_panels_cache_and_skips_account_verification() 
     let state = crate::AppState {
         table: table.clone(),
         auth,
-        descriptor: Arc::new(json!({})),
+        descriptor: crate::environment::fixed_descriptor(json!({})),
         engine: deps.engine.clone(),
         deps,
     };

@@ -36,7 +36,7 @@ pub fn router() -> Router<AppState> {
 pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
     let engine = deps.engine.clone()?;
     let environment = deps.environment.clone()?;
-    let descriptor = &environment.descriptor;
+    let descriptor = environment.descriptor();
     let providers = deps.providers.clone();
     let defaults = environment.clone();
     let directory = environment.clone();
@@ -58,7 +58,10 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
         }),
         engine,
         environment_id: environment.environment_id().to_owned(),
-        label: descriptor["label"].as_str().unwrap_or_default().to_owned(),
+        label: {
+            let environment = environment.clone();
+            conn_mcp::Label::live(move || environment.label())
+        },
         server_version: descriptor["serverVersion"]
             .as_str()
             .unwrap_or_default()

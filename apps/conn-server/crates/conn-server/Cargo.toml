@@ -53,8 +53,10 @@ tokio = { workspace = true, features = ["signal", "fs", "io-std"] }
 rusqlite.workspace = true
 # Signals a process (`signalProcess`) without forking `/bin/kill`; already in the tree.
 # `event`: `poll` waits for the desktop bootstrap line with a deadline.
-# `fs`: nonblocking workflow script opens also reject FIFOs without waiting.
-rustix = { workspace = true, features = ["process", "event", "fs"] }
+# `fs`: nonblocking workflow script opens also reject FIFOs without waiting; on Linux, inotify
+# watches the Orbit Instance folder (`reload.rs`).
+# `system`: `uname` gives the machine's name without starting `hostname`.
+rustix = { workspace = true, features = ["process", "event", "fs", "system"] }
 # Already in the tree through axum: the Stream trait an asset response body implements.
 futures-core = "0.3"
 # Parses the Orbit Instance URL the same way the TypeScript server does. Already in the graph.

@@ -96,7 +96,7 @@ async fn run(state_dir: &Path, project: &Path, config_out: &Path) {
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: AuthStore::in_memory(),
-        descriptor: Arc::new(environment.descriptor.clone()),
+        descriptor: environment.subscribe_descriptor(),
         engine: Some(engine),
         deps,
     };

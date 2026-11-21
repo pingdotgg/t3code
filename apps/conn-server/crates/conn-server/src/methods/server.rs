@@ -179,6 +179,8 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let (env, providers) = (environment.clone(), deps.clone());
     let themes = deps.files.as_ref().map(|files| files.themes.clone());
     table.stream("subscribeServerConfig", move |_, input: Value| {
+        // Subscribed before the snapshot is built: a reload in between sends a new one.
+        let descriptor = env.subscribe_descriptor();
         let config = server_config(&env, current_providers(&providers));
         let env = env.clone();
         let deps = providers.clone();
@@ -186,7 +188,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         let themes = themes
             .clone()
             .filter(|_| input["environmentThemes"] == Value::Bool(true));
-        async move { Ok(config_stream(env, deps, config?, themes)) }
+        async move { Ok(config_stream(env, deps, config?, descriptor, themes)) }
     });
     let env = environment.clone();
     table.stream("subscribeAuthAccess", move |ctx, _: Value| {
@@ -234,7 +236,7 @@ pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Result
     let state_dir = environment.state_dir.display();
     let keybindings = environment.keybindings.snapshot();
     let mut config: ServerConfig = conn_contract::from_json(json!({
-        "environment": environment.descriptor,
+        "environment": environment.descriptor(),
         "auth": environment.auth.descriptor(),
         "cwd": environment.cwd,
         "keybindingsConfigPath": environment.keybindings.path(),
@@ -273,11 +275,14 @@ fn themes_event(snapshot: &conn_files::themes::Snapshot) -> Value {
 const PROVIDER_STATUS_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// The config snapshot, then `settingsUpdated` after each settings write and
-/// `keybindingsUpdated` after each keybinding write, until the client unsubscribes.
+/// `keybindingsUpdated` after each keybinding write, until the client unsubscribes. A new
+/// descriptor (`crate::reload`) sends a whole new `snapshot`: the contract has no event for
+/// the environment alone, and clients replace their config with each snapshot.
 fn config_stream(
     env: Arc<Environment>,
     deps: Deps,
     config: Value,
+    mut descriptor: tokio::sync::watch::Receiver<Value>,
     themes: Option<conn_files::themes::Themes>,
 ) -> ItemStream {
     let (tx, rx) = mpsc::channel::<Result<Value, Failure>>(4);
@@ -332,6 +337,13 @@ fn config_stream(
                         let _ = tokio::task::spawn_blocking(move || themes.refresh()).await;
                     }
                     continue;
+                }
+                changed = descriptor.changed() => {
+                    if changed.is_err() { break; }
+                    let Ok(config) = server_config(&env, current_providers(&deps)) else { continue };
+                    seen_providers = config["providers"].clone();
+                    pending_providers = None;
+                    json!({ "version": 1, "type": "snapshot", "config": config })
                 }
                 changed = settings.changed() => {
                     if changed.is_err() { break; }
@@ -437,7 +449,7 @@ fn lifecycle_events(environment: &Environment) -> Vec<Value> {
             "sequence": 0,
             "type": "welcome",
             "payload": {
-                "environment": environment.descriptor,
+                "environment": environment.descriptor(),
                 "cwd": environment.cwd,
                 "projectName": project_name,
                 "bootstrapStatus": "complete",
@@ -447,7 +459,7 @@ fn lifecycle_events(environment: &Environment) -> Vec<Value> {
             "version": 1,
             "sequence": 1,
             "type": "ready",
-            "payload": { "at": conn_support::time::iso_from_ms(conn_support::time::now_ms()), "environment": environment.descriptor },
+            "payload": { "at": conn_support::time::iso_from_ms(conn_support::time::now_ms()), "environment": environment.descriptor() },
         }),
     ]
 }
@@ -500,7 +512,13 @@ mod tests {
             .into(),
             ..Deps::default()
         };
-        let mut stream = config_stream(env.clone(), deps.clone(), config, None);
+        let mut stream = config_stream(
+            env.clone(),
+            deps.clone(),
+            config,
+            env.subscribe_descriptor(),
+            None,
+        );
         assert_eq!(stream.recv().await.unwrap().unwrap()["type"], "snapshot");
         env.settings
             .update(json!({ "enableAgentBrowserAccess": false }), None)

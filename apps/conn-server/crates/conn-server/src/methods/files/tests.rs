@@ -191,7 +191,7 @@ async fn uploads_and_serves_attachments_over_http() {
     let state = crate::AppState {
         table: Arc::new(MethodTable::new()),
         auth: AuthStore::in_memory(),
-        descriptor: Arc::new(json!({})),
+        descriptor: crate::environment::fixed_descriptor(json!({})),
         engine: None,
         deps: s.deps.clone(),
     };
