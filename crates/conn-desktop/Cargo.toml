@@ -8,12 +8,21 @@ publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-reqwest.workspace = true
+# Native roots so HTTP MCP servers on Orbit's local CA (`*.test`) are trusted, as in Conn.
+reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }
 serde.workspace = true
-serde_json.workspace = true
+# Keep JSON object order: tool input schemas list form fields, `.mcp.json` lists servers.
+serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
 url.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# Safe `killpg` for stopping a stdio MCP server's whole process group.
+nix = { version = "=0.31.3", default-features = false, features = ["signal"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["process", "io-util", "rt-multi-thread", "macros"] }
 
 [lints]
 workspace = true
