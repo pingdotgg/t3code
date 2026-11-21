@@ -64,7 +64,7 @@ Every start needs a `--key`: starting twice with the same key returns the same r
 
 ## Follow runs in the app
 
-Open the Workflows page with **Open workflows** in the command palette; on mobile, use the **Workflows** tab. Filter by **Needs you**, **Running**, or **All** (skipped runs stay hidden unless toggled on), open child runs from their parent, and answer questions, resume paused runs, or cancel active runs (requires permission to operate threads).
+Open the Workflows page with **Open workflows** in the command palette of the web or desktop app. Filter by **Needs you**, **Running**, or **All** (skipped runs stay hidden unless toggled on), open child runs from their parent, and answer questions, resume paused runs, or cancel active runs (requires permission to operate threads).
 
 ### Agent threads
 

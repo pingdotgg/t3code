@@ -1,13 +1,9 @@
 import { msg } from "gt-react-native";
 
-export const NAVIGATION_TAB_ORDER = [
-  "threads",
-  "pullRequests",
-  "issues",
-  "workflows",
-  "usage",
-] as const;
-export type NavigationTab = (typeof NAVIGATION_TAB_ORDER)[number];
+export const NAVIGATION_TAB_ORDER = ["threads", "pullRequests", "issues", "usage"] as const;
+/** Built, but left out of the tab bar while workflows are a soft launch on web. */
+type UnlistedTab = "workflows";
+export type NavigationTab = (typeof NAVIGATION_TAB_ORDER)[number] | UnlistedTab;
 
 const SHARED_SLOT_TABS = ["pullRequests", "issues"] as const;
 export type SharedSlotTab = (typeof SHARED_SLOT_TABS)[number];
