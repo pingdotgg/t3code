@@ -390,6 +390,8 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             enrichProviderSnapshotWithVersionAdvisory(
               refreshedProvider,
               maintenanceCapabilities,
+              // Pre/post-update verification must not treat a stale cached version as live proof.
+              { fallbackToStale: false },
             ).pipe(
               Effect.provideService(HttpClient.HttpClient, httpClient),
               Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),

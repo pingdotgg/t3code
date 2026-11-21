@@ -3,7 +3,7 @@ import { managedUpdatesDenial } from "@t3tools/client-runtime/contract-labels";
 import { type DesktopBridge, type DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { type ComponentProps, useId, useRef, useState } from "react";
+import { type ComponentProps, type ReactNode, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../../env";
@@ -371,6 +371,7 @@ function SidebarUpdateControl() {
   };
 
   const runEverything = async () => {
+    if (!everything.hasUpdates && localUpdateVersion === null) return;
     const bridge = window.desktopBridge;
     setIsConfirmingEverything(false);
     setIsActionPending(true);
@@ -409,17 +410,6 @@ function SidebarUpdateControl() {
     );
   };
 
-  if (!isElectron && !runsEverything && !isRunningEverything) return null;
-
-  const statusIcon = (
-    <DesktopUpdateStatusIcon
-      key={showCheckIcon ? checkAnimationKey : iconStatus}
-      downloadPercent={state?.downloadPercent ?? null}
-      isCheckAnimating={showCheckIcon && !prefersReducedMotion}
-      onCheckAnimationIteration={handleCheckAnimationIteration}
-      status={iconStatus}
-    />
-  );
   const confirmDialog = (
     <UpdateEverythingDialog
       open={isConfirmingEverything}
@@ -433,170 +423,189 @@ function SidebarUpdateControl() {
     />
   );
 
-  if (run !== null) {
-    const local: UpdateRunLocalState =
-      run.localVersion === null
-        ? null
-        : state?.status === "downloading"
-          ? { status: "downloading", percent: state.downloadPercent }
-          : { status: "waiting" };
-    return (
-      <SidebarMenuItem className="@container/sidebar-update ml-auto flex min-w-8 flex-1">
-        <SidebarUpdateCapsule
-          run={run}
-          local={local}
-          icon={statusIcon}
-          {...(run.localVersion === null && action === "install" && window.desktopBridge
-            ? {
-                onRestart: async () => {
-                  saveUpdateEverythingResult({
-                    localVersion: localUpdateVersion,
-                    updatedServers: 0,
-                    updatedProviders: 0,
-                    failures: [],
-                    restarting: [],
-                  });
-                  if (!(await installLocalUpdate(window.desktopBridge!))) {
-                    clearSavedUpdateEverythingResult();
-                  }
-                },
-              }
-            : {})}
-        />
-        {confirmDialog}
-      </SidebarMenuItem>
+  let control: ReactNode = null;
+  if (isElectron || runsEverything || isRunningEverything) {
+    const statusIcon = (
+      <DesktopUpdateStatusIcon
+        key={showCheckIcon ? checkAnimationKey : iconStatus}
+        downloadPercent={state?.downloadPercent ?? null}
+        isCheckAnimating={showCheckIcon && !prefersReducedMotion}
+        onCheckAnimationIteration={handleCheckAnimationIteration}
+        status={iconStatus}
+      />
     );
+
+    if (run !== null) {
+      const local: UpdateRunLocalState =
+        run.localVersion === null
+          ? null
+          : state?.status === "downloading"
+            ? { status: "downloading", percent: state.downloadPercent }
+            : { status: "waiting" };
+      control = (
+        <SidebarMenuItem className="@container/sidebar-update ml-auto flex min-w-8 flex-1">
+          <SidebarUpdateCapsule
+            run={run}
+            local={local}
+            icon={statusIcon}
+            {...(run.localVersion === null && action === "install" && window.desktopBridge
+              ? {
+                  onRestart: async () => {
+                    saveUpdateEverythingResult({
+                      localVersion: localUpdateVersion,
+                      updatedServers: 0,
+                      updatedProviders: 0,
+                      failures: [],
+                      restarting: [],
+                    });
+                    if (!(await installLocalUpdate(window.desktopBridge!))) {
+                      clearSavedUpdateEverythingResult();
+                    }
+                  },
+                }
+              : {})}
+          />
+        </SidebarMenuItem>
+      );
+    } else {
+      const updateButton = (
+        <button
+          type="button"
+          aria-label={
+            idleTooltip?.detail
+              ? gt("{tooltip}: {detail}", { tooltip, detail: idleTooltip.detail })
+              : tooltip
+          }
+          aria-disabled={isInteractionDisabled || undefined}
+          className={cn(
+            "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
+            isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
+            showUpdateIconState
+              ? cn(
+                  "bg-sidebar-control-surface text-sidebar-foreground",
+                  !isInteractionDisabled && "hover:bg-sidebar-row-hover",
+                )
+              : cn(
+                  "text-(--sidebar-icon-color)",
+                  !isInteractionDisabled &&
+                    "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                ),
+            disabled && !showUpdateIconState && "opacity-60",
+          )}
+          onClick={handleAction}
+          onBlur={() => {
+            suppressReleaseNotesFocusOpen.current = false;
+            setReleaseNotesTriggerFocusVisible(false);
+          }}
+          onFocus={(event) => {
+            const focusVisible = event.currentTarget.matches(":focus-visible");
+            setReleaseNotesTriggerFocusVisible(focusVisible);
+            if (!showReleaseNotesPopover || !focusVisible) return;
+            if (suppressReleaseNotesFocusOpen.current) {
+              suppressReleaseNotesFocusOpen.current = false;
+              return;
+            }
+            flushSync(() => releaseNotesPopoverHandle.open(releaseNotesTriggerId));
+          }}
+          onKeyDown={(event) => {
+            if (!showReleaseNotesPopover) return;
+            openSidebarUpdateReleaseNotesPopoverOnForwardTab(
+              event,
+              releaseNotesPopoverHandle,
+              releaseNotesTriggerId,
+            );
+          }}
+        >
+          {statusIcon}
+        </button>
+      );
+
+      control = (
+        <SidebarMenuItem className="ml-auto shrink-0">
+          <Popover
+            handle={releaseNotesPopoverHandle}
+            open={releaseNotesOpen && showReleaseNotesPopover}
+            triggerId={releaseNotesTriggerId}
+            onOpenChange={(open, details) => {
+              if (open && !showReleaseNotesPopover) {
+                details.cancel();
+                return;
+              }
+              handleSidebarUpdateReleaseNotesPopoverOpenChange(open, details);
+              if (!details.isCanceled) setReleaseNotesOpen(open);
+            }}
+          >
+            <Tooltip disabled={showReleaseNotesPopover}>
+              <TooltipTrigger
+                id={releaseNotesTriggerId}
+                render={
+                  <PopoverTrigger
+                    {...(!showReleaseNotesPopover
+                      ? {
+                          "aria-controls": undefined,
+                          "aria-expanded": undefined,
+                          "aria-haspopup": undefined,
+                        }
+                      : {})}
+                    closeDelay={150}
+                    handle={releaseNotesPopoverHandle}
+                    id={releaseNotesTriggerId}
+                    openOnHover={showReleaseNotesPopover}
+                    render={updateButton}
+                  />
+                }
+              />
+              {!showReleaseNotesPopover ? (
+                <TooltipPopup
+                  align="center"
+                  side="top"
+                  variant={showUpdateDetails ? "glass" : "default"}
+                >
+                  {idleTooltip?.detail ? (
+                    <div className="text-left">
+                      <div className="font-medium">{idleTooltip.title}</div>
+                      <div className="text-muted-foreground">{idleTooltip.detail}</div>
+                    </div>
+                  ) : (
+                    <span className="whitespace-pre-line">{tooltip}</span>
+                  )}
+                </TooltipPopup>
+              ) : null}
+            </Tooltip>
+            {showReleaseNotesPopover && state ? (
+              <PopoverPopup
+                align="center"
+                aria-label={gt("Update release notes")}
+                initialFocus={false}
+                onKeyDownCapture={(event) => {
+                  if (
+                    event.key === "Escape" &&
+                    releaseNotesPopupRef.current?.contains(document.activeElement)
+                  ) {
+                    suppressReleaseNotesFocusOpen.current = true;
+                  }
+                }}
+                ref={releaseNotesPopupRef}
+                side="top"
+                tooltipStyle
+              >
+                <SidebarUpdateReleaseNotes
+                  shell={window.desktopBridge}
+                  state={state}
+                  tooltip={tooltip}
+                />
+              </PopoverPopup>
+            ) : null}
+          </Popover>
+        </SidebarMenuItem>
+      );
+    }
   }
 
-  const updateButton = (
-    <button
-      type="button"
-      aria-label={
-        idleTooltip?.detail
-          ? gt("{tooltip}: {detail}", { tooltip, detail: idleTooltip.detail })
-          : tooltip
-      }
-      aria-disabled={isInteractionDisabled || undefined}
-      className={cn(
-        "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
-        isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
-        showUpdateIconState
-          ? cn(
-              "bg-sidebar-control-surface text-sidebar-foreground",
-              !isInteractionDisabled && "hover:bg-sidebar-row-hover",
-            )
-          : cn(
-              "text-(--sidebar-icon-color)",
-              !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-            ),
-        disabled && !showUpdateIconState && "opacity-60",
-      )}
-      onClick={handleAction}
-      onBlur={() => {
-        suppressReleaseNotesFocusOpen.current = false;
-        setReleaseNotesTriggerFocusVisible(false);
-      }}
-      onFocus={(event) => {
-        const focusVisible = event.currentTarget.matches(":focus-visible");
-        setReleaseNotesTriggerFocusVisible(focusVisible);
-        if (!showReleaseNotesPopover || !focusVisible) return;
-        if (suppressReleaseNotesFocusOpen.current) {
-          suppressReleaseNotesFocusOpen.current = false;
-          return;
-        }
-        flushSync(() => releaseNotesPopoverHandle.open(releaseNotesTriggerId));
-      }}
-      onKeyDown={(event) => {
-        if (!showReleaseNotesPopover) return;
-        openSidebarUpdateReleaseNotesPopoverOnForwardTab(
-          event,
-          releaseNotesPopoverHandle,
-          releaseNotesTriggerId,
-        );
-      }}
-    >
-      {statusIcon}
-    </button>
-  );
-
   return (
-    <SidebarMenuItem className="ml-auto shrink-0">
-      <Popover
-        handle={releaseNotesPopoverHandle}
-        open={releaseNotesOpen && showReleaseNotesPopover}
-        triggerId={releaseNotesTriggerId}
-        onOpenChange={(open, details) => {
-          if (open && !showReleaseNotesPopover) {
-            details.cancel();
-            return;
-          }
-          handleSidebarUpdateReleaseNotesPopoverOpenChange(open, details);
-          if (!details.isCanceled) setReleaseNotesOpen(open);
-        }}
-      >
-        <Tooltip disabled={showReleaseNotesPopover}>
-          <TooltipTrigger
-            id={releaseNotesTriggerId}
-            render={
-              <PopoverTrigger
-                {...(!showReleaseNotesPopover
-                  ? {
-                      "aria-controls": undefined,
-                      "aria-expanded": undefined,
-                      "aria-haspopup": undefined,
-                    }
-                  : {})}
-                closeDelay={150}
-                handle={releaseNotesPopoverHandle}
-                id={releaseNotesTriggerId}
-                openOnHover={showReleaseNotesPopover}
-                render={updateButton}
-              />
-            }
-          />
-          {!showReleaseNotesPopover ? (
-            <TooltipPopup
-              align="center"
-              side="top"
-              variant={showUpdateDetails ? "glass" : "default"}
-            >
-              {idleTooltip?.detail ? (
-                <div className="text-left">
-                  <div className="font-medium">{idleTooltip.title}</div>
-                  <div className="text-muted-foreground">{idleTooltip.detail}</div>
-                </div>
-              ) : (
-                <span className="whitespace-pre-line">{tooltip}</span>
-              )}
-            </TooltipPopup>
-          ) : null}
-        </Tooltip>
-        {showReleaseNotesPopover && state ? (
-          <PopoverPopup
-            align="center"
-            aria-label={gt("Update release notes")}
-            initialFocus={false}
-            onKeyDownCapture={(event) => {
-              if (
-                event.key === "Escape" &&
-                releaseNotesPopupRef.current?.contains(document.activeElement)
-              ) {
-                suppressReleaseNotesFocusOpen.current = true;
-              }
-            }}
-            ref={releaseNotesPopupRef}
-            side="top"
-            tooltipStyle
-          >
-            <SidebarUpdateReleaseNotes
-              shell={window.desktopBridge}
-              state={state}
-              tooltip={tooltip}
-            />
-          </PopoverPopup>
-        ) : null}
-      </Popover>
+    <>
+      {control}
       {confirmDialog}
-    </SidebarMenuItem>
+    </>
   );
 }

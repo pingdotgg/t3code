@@ -3146,8 +3146,11 @@ it.layer(
           skills: [],
         } as const satisfies ServerProvider;
         const refreshCalls = yield* Ref.make(0);
+        const latestSnapshot = yield* Ref.make<ServerProvider>(provider);
         const probeStarted = yield* Deferred.make<void>();
         const releaseProbe = yield* Deferred.make<void>();
+        const stalePassStarted = yield* Deferred.make<void>();
+        const releaseStalePass = yield* Deferred.make<void>();
         const instances = [
           {
             instanceId,
@@ -3163,12 +3166,19 @@ it.layer(
                     packageName: null,
                   }),
                 ),
-              getSnapshot: Effect.succeed(provider),
+              getSnapshot: Ref.get(latestSnapshot),
               refresh: Effect.gen(function* () {
-                yield* Ref.update(refreshCalls, (count) => count + 1);
-                yield* Deferred.succeed(probeStarted, undefined);
-                yield* Deferred.await(releaseProbe);
-                return provider;
+                const call = yield* Ref.updateAndGet(refreshCalls, (count) => count + 1);
+                if (call === 1) {
+                  yield* Deferred.succeed(probeStarted, undefined);
+                  yield* Deferred.await(releaseProbe);
+                } else if (call === 3) {
+                  yield* Deferred.succeed(stalePassStarted, undefined);
+                  yield* Deferred.await(releaseStalePass);
+                }
+                const next = { ...provider, version: `1.0.${call}` };
+                yield* Ref.set(latestSnapshot, next);
+                return next;
               }),
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
@@ -3188,11 +3198,19 @@ it.layer(
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
           },
         );
+        const layerModelManifest = Layer.succeed(ModelManifest.ModelManifest, {
+          current: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          forceRefresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          refreshOnDemand: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          refreshInBackground: Effect.void,
+        });
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
             Layer.provide(layerUnusedMutator),
+            Layer.provide(layerModelManifest),
             Layer.provideMerge(instanceRegistryLayer),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -3211,12 +3229,33 @@ it.layer(
           yield* Effect.yieldNow;
           assert.strictEqual(yield* Ref.get(refreshCalls), 1);
           yield* Deferred.succeed(releaseProbe, undefined);
-          expect(yield* Fiber.join(first)).toEqual([expect.objectContaining(provider)]);
-          expect(yield* Fiber.join(second)).toEqual([expect.objectContaining(provider)]);
+          expect(yield* Fiber.join(first)).toEqual([
+            expect.objectContaining({ ...provider, version: "1.0.1" }),
+          ]);
+          expect(yield* Fiber.join(second)).toEqual([
+            expect.objectContaining({ ...provider, version: "1.0.1" }),
+          ]);
           assert.strictEqual(yield* Ref.get(refreshCalls), 1);
 
           yield* registry.refresh();
           assert.strictEqual(yield* Ref.get(refreshCalls), 2);
+
+          // A refresh requested after `invalidateModelCaches` must not return a pass started before invalidation.
+          const preInvalidation = yield* registry.refresh().pipe(Effect.forkChild);
+          yield* Deferred.await(stalePassStarted);
+          yield* registry.invalidateModelCaches({});
+          const postInvalidation = yield* registry.refresh().pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          assert.strictEqual(yield* Ref.get(refreshCalls), 3);
+
+          yield* Deferred.succeed(releaseStalePass, undefined);
+          expect(yield* Fiber.join(preInvalidation)).toEqual([
+            expect.objectContaining({ ...provider, version: "1.0.3" }),
+          ]);
+          expect(yield* Fiber.join(postInvalidation)).toEqual([
+            expect.objectContaining({ ...provider, version: "1.0.4" }),
+          ]);
+          assert.strictEqual(yield* Ref.get(refreshCalls), 4);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

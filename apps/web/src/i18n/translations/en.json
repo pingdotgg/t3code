@@ -12069,6 +12069,7 @@
     }
   ],
   "e7f35f60e6229cf5": "Desktop app",
+  "16203ae7ad6bf2e4": "Nothing to update",
   "77be1b7e2a1d3d31": "{count, plural, one {Update {count} machine?} other {Update {count} machines?}}",
   "e4892b21e88abb60": "{count, plural, one {{count} provider update} other {{count} provider updates}}",
   "36d530903a763a14": "Checking for more…",

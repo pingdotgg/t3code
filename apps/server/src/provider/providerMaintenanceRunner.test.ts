@@ -283,6 +283,7 @@ function layerFailingLatestLookupAfterFirst() {
         }
         return yield* lookup;
       }),
+    lastKnown: () => Effect.succeed(null),
     invalidate: () => Effect.void,
     invalidateAll: Effect.void,
   });

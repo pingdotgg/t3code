@@ -10,6 +10,8 @@ import type { UpdateEverythingRow } from "./updateEverything.logic";
 const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
   return {
+    version: 0,
+    isElectron: true,
     update: null as DesktopUpdateState | null,
     hasUpdates: false,
     rows: [] as ReadonlyArray<UpdateEverythingRow>,
@@ -18,6 +20,7 @@ const mocks = vi.hoisted(() => {
       return () => listeners.delete(listener);
     },
     notify: () => {
+      mocks.version += 1;
       for (const listener of listeners) listener();
     },
   };
@@ -30,21 +33,28 @@ vi.mock("../../state/desktopUpdate", async (importOriginal) => ({
     () => mocks.update,
   ),
 }));
-// The pill only renders in the desktop app.
 vi.mock("../../env", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../env")>()),
-  isElectron: true,
+  get isElectron() {
+    return mocks.isElectron;
+  },
 }));
-vi.mock("./useUpdateEverything", () => ({
-  useUpdateEverything: () => ({
-    hasUpdates: mocks.hasUpdates,
-    summary: "Update everything",
-    version: null,
-    providerCount: 0,
-    rows: mocks.rows,
-    restarts: [],
-  }),
-}));
+vi.mock("./useUpdateEverything", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useUpdateEverything: () => {
+      useSyncExternalStore(mocks.subscribe, () => mocks.version);
+      return {
+        hasUpdates: mocks.hasUpdates,
+        summary: "Update everything",
+        version: null,
+        providerCount: 0,
+        rows: mocks.rows,
+        restarts: [],
+      };
+    },
+  };
+});
 
 function nightlyUpdate(releaseNotes: DesktopUpdateState["releaseNotes"]): DesktopUpdateState {
   return {
@@ -74,10 +84,16 @@ const RELEASE_NOTES: DesktopUpdateState["releaseNotes"] = [
 function setup(
   update: DesktopUpdateState | null,
   {
+    isElectron = true,
     hasUpdates = false,
     rows = [],
-  }: { hasUpdates?: boolean; rows?: ReadonlyArray<UpdateEverythingRow> } = {},
+  }: {
+    isElectron?: boolean;
+    hasUpdates?: boolean;
+    rows?: ReadonlyArray<UpdateEverythingRow>;
+  } = {},
 ) {
+  mocks.isElectron = isElectron;
   mocks.update = update;
   mocks.hasUpdates = hasUpdates;
   mocks.rows = rows;
@@ -166,5 +182,72 @@ describe("SidebarUpdatePill update everything", () => {
     const row = table.getByRole("row", { name: new RegExp(label) });
     await expect.element(row.getByRole("cell", { name: label, exact: true })).toBeVisible();
     await expect.element(row.getByRole("cell", { name: "Claude", exact: true })).toBeVisible();
+  });
+
+  it("avoids an empty 0-machine table and disables Update when only skipped machines remain", async () => {
+    setup(null, {
+      hasUpdates: true,
+      rows: [
+        {
+          environmentId: null,
+          label: "Remote box",
+          app: null,
+          skipped: "not connected",
+          providers: [],
+        },
+      ],
+    });
+    await using screen = await render(<SidebarUpdatePill />);
+    await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
+
+    await expect.element(page.getByText("Nothing to update")).toBeVisible();
+    await expect.element(page.getByText("1 skipped")).toBeVisible();
+    await expect.element(page.getByText("Update 0 machines?")).not.toBeInTheDocument();
+    await expect.element(page.getByRole("table")).not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeDisabled();
+  });
+
+  it("keeps the dialog mounted without losing state on web when updates clear while it is open", async () => {
+    const skippedRow: UpdateEverythingRow = {
+      environmentId: null,
+      label: "Remote box",
+      app: null,
+      skipped: "not connected",
+      providers: [],
+    };
+    setup(null, {
+      isElectron: false,
+      hasUpdates: true,
+      rows: [
+        {
+          environmentId: null,
+          label: "Local server",
+          app: null,
+          skipped: null,
+          providers: ["Codex"],
+        },
+        skippedRow,
+      ],
+    });
+    await using screen = await render(<SidebarUpdatePill />);
+    await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
+
+    await expect.element(page.getByText("Update 1 machine?")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "1 skipped" }));
+    await expect.element(page.getByText("Remote box")).toBeVisible();
+
+    await act(() => {
+      mocks.hasUpdates = false;
+      mocks.rows = [skippedRow];
+      mocks.notify();
+    });
+
+    await expect
+      .element(screen.getByRole("button", { name: "Update everything" }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByText("Nothing to update")).toBeVisible();
+    await expect.element(page.getByText("Remote box")).toBeVisible();
+    await expect.element(page.getByRole("table")).not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeDisabled();
   });
 });

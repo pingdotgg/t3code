@@ -12067,6 +12067,7 @@
     }
   ],
   "e7f35f60e6229cf5": "Skrivbordsapp",
+  "16203ae7ad6bf2e4": "Inget att uppdatera",
   "77be1b7e2a1d3d31": "{count, plural, one {Uppdatera {count} dator?} other {Uppdatera {count} datorer?}}",
   "e4892b21e88abb60": "{count, plural, one {{count} leverantörsuppdatering} other {{count} leverantörsuppdateringar}}",
   "36d530903a763a14": "Söker efter fler…",

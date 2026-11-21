@@ -1489,13 +1489,20 @@ export function latestProviderVersionCacheKeys(
 
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
+  options?: { readonly fallbackToStale?: boolean },
 ) {
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const installerKey = installerLatestVersionKey(maintenanceCapabilities);
+  const canFallBackToNpm =
+    maintenanceCapabilities.latestVersion === undefined &&
+    maintenanceCapabilities.packageName !== null;
   if (installerKey && maintenanceCapabilities.lookupLatestVersion) {
     const installable = yield* latestVersions.cached(
       installerKey,
       maintenanceCapabilities.lookupLatestVersion,
+      // When npm is a live fallback (such as bun without npm CLI on PATH), null means
+      // "fall through to npm" rather than "reuse a stale installer answer".
+      { fallbackToStale: options?.fallbackToStale === true && !canFallBackToNpm },
     );
     if (installable !== null) return installable;
   }
@@ -1507,7 +1514,16 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
     return null;
   }
 
-  return yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName));
+  const npmLatest = yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName), {
+    fallbackToStale: options?.fallbackToStale === true,
+  });
+  if (npmLatest !== null) return npmLatest;
+  // When both the installer lookup and the live npm fallback fail, preserve the last-known
+  // installer version for advisory display so a registry outage does not drop a known update.
+  if (options?.fallbackToStale === true && installerKey) {
+    return yield* latestVersions.lastKnown(installerKey);
+  }
+  return null;
 });
 
 export const invalidateLatestProviderVersion = Effect.fn("invalidateLatestProviderVersion")(
@@ -1527,7 +1543,8 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
   snapshot: ServerProvider,
   maintenanceCapabilities?: ProviderMaintenanceCapabilities,
   options?: {
-    readonly enableProviderUpdateChecks: boolean | undefined;
+    readonly enableProviderUpdateChecks?: boolean | undefined;
+    readonly fallbackToStale?: boolean | undefined;
   },
 ) {
   const capabilities =
@@ -1551,7 +1568,9 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
     };
   }
 
-  const latestVersion = yield* resolveLatestProviderVersion(capabilities);
+  const latestVersion = yield* resolveLatestProviderVersion(capabilities, {
+    fallbackToStale: options?.fallbackToStale !== false,
+  });
   return {
     ...snapshot,
     versionAdvisory: createProviderVersionAdvisory({

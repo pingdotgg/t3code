@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 
@@ -131,6 +132,33 @@ describe("ProviderLatestVersions", () => {
       expect(yield* Fiber.join(owner)).toBe("2.0.0");
       expect(yield* latestVersions.cached("cli", lookup)).toBe("2.0.0");
       expect(lookups).toBe(1);
+    }),
+  );
+
+  it.effect("falls back to the last known version when a refreshed lookup returns null", () =>
+    Effect.gen(function* () {
+      const latestVersions = yield* ProviderLatestVersions.make();
+      const responses: Array<string | null> = ["2.0.0", null, "2.1.0"];
+      let lookups = 0;
+      const lookup = Effect.sync(() => responses[lookups++] ?? null);
+
+      expect(yield* latestVersions.cached("@example/cli", lookup)).toBe("2.0.0");
+      yield* latestVersions.invalidate("@example/cli");
+
+      // A failed lookup after invalidation still caches null for MISSING_TTL, while stale fallback and lastKnown retain 2.0.0.
+      expect(yield* latestVersions.cached("@example/cli", lookup, { fallbackToStale: true })).toBe(
+        "2.0.0",
+      );
+      expect(yield* latestVersions.lastKnown("@example/cli")).toBe("2.0.0");
+      expect(yield* latestVersions.cached("@example/cli", lookup)).toBeNull();
+      expect(lookups).toBe(2);
+
+      // Once MISSING_TTL elapses, the next lookup refreshes cleanly.
+      yield* TestClock.adjust("1 minute");
+      expect(yield* latestVersions.cached("@example/cli", lookup, { fallbackToStale: true })).toBe(
+        "2.1.0",
+      );
+      expect(lookups).toBe(3);
     }),
   );
 });
