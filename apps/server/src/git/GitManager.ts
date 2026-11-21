@@ -46,11 +46,13 @@ import {
   type VcsCreateWorktreeResult,
 } from "@lathe/contracts";
 import { hasProjectSettingsOverrides, resolveProjectSettings } from "@lathe/shared/projectSettings";
+import { FORK_IDENTITY } from "@lathe/shared/forkIdentity";
 import {
   mergeGitStatusParts,
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
+  WORKTREE_BRANCH_PREFIX,
 } from "@lathe/shared/git";
 import { isSshRemoteUrl } from "@lathe/shared/sourceControl";
 import {
@@ -300,9 +302,14 @@ function resolveHeadRepositoryNameWithOwner(pullRequest: PullRequestHeadRemoteIn
   return normalizeOptionalString(pullRequest.headRepositoryNameWithOwner);
 }
 
-// Both names `resolvePullRequestWorktreeLocalBranchName` gives a fork pull request's branch.
+// Both names `resolvePullRequestWorktreeLocalBranchName` gives a fork pull request's branch,
+// and the ones it gave before the Lathe rename.
+const PULL_REQUEST_WORKTREE_BRANCH = new RegExp(
+  `^(?:${WORKTREE_BRANCH_PREFIX}|${FORK_IDENTITY.legacyWorktreeBranchPrefix})[/-]pr-\\d+[/-]`,
+  "u",
+);
 function isPullRequestWorktreeLocalBranchName(branch: string): boolean {
-  return /^t3code[/-]pr-\d+[/-]/u.test(branch);
+  return PULL_REQUEST_WORKTREE_BRANCH.test(branch);
 }
 
 function resolvePullRequestWorktreeLocalBranchName(
