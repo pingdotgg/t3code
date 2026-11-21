@@ -371,6 +371,36 @@ describe("promptStashStore", () => {
     }
   });
 
+  it("lets open tabs restore an entry whose encoding tab closed mid-encode", async () => {
+    const storage = createMemoryStorage();
+    const readerWindow = new EventTarget();
+    const writerWindow = new EventTarget();
+    vi.stubGlobal("localStorage", storage);
+    vi.stubGlobal("window", readerWindow);
+    vi.resetModules();
+    try {
+      const { usePromptStashStore: reader } = await import("./promptStashStore");
+      vi.stubGlobal("window", writerWindow);
+      vi.resetModules();
+      const { usePromptStashStore: writer } = await import("./promptStashStore");
+      const entry = makeEntry({ id: "closed-mid-encode" });
+      writer.getState().stashEntry({ ...entry, pendingImageCount: 1 });
+      writer.getState().stashEntry(makeEntry({ id: "settled" }));
+
+      writerWindow.dispatchEvent(new Event("pagehide"));
+      notifyStorage(readerWindow, storage);
+
+      expect(reader.getState().takeEntry(entry.id).entry).toMatchObject({
+        pendingImageCount: 0,
+        unreadableImageNames: ["image 1 (not saved before reload)"],
+      });
+      expect(reader.getState().entries.map((candidate) => candidate.id)).toEqual(["settled"]);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+
   it.each([PROMPT_STASH_STORAGE_KEY, null])(
     "empties the stash when another tab removes its storage (event key %s)",
     async (key) => {

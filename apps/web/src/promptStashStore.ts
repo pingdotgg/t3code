@@ -86,6 +86,7 @@ const { storage: baseStashStorage, durable: storageIsDurable } = resolveBaseStor
 
 const unpersistedFinalizedEntryIds = new Set<string>();
 const recoveredEntryIds = new Set<string>();
+const encodingEntryIds = new Set<string>();
 let memoryEntries: ReadonlyArray<PromptStashEntry> = [];
 
 // Clear the composer only after a durable write; debounce cannot confirm durability.
@@ -197,6 +198,7 @@ export const usePromptStashStore = create<PromptStashStoreState>()(() => ({
     if (!written) {
       return { evicted: null, written: false, durable: false };
     }
+    if (entry.pendingImageCount) encodingEntryIds.add(entry.id);
     publishEntries(nextEntries);
     return { evicted: evicted && recoverEntry(evicted), written: true, durable };
   },
@@ -210,10 +212,12 @@ export const usePromptStashStore = create<PromptStashStoreState>()(() => ({
     const nextEntries = entries.filter((candidate) => candidate.id !== entryId);
     const { durable } = persistEntries(nextEntries);
     unpersistedFinalizedEntryIds.delete(entryId);
+    encodingEntryIds.delete(entryId);
     publishEntries(nextEntries);
     return { entry, durable };
   },
   finalizeEntryImages: (entryId, images) => {
+    encodingEntryIds.delete(entryId);
     const entries = latestEntries();
     const index = entries.findIndex((candidate) => candidate.id === entryId);
     const existing = index === -1 ? undefined : entries[index];
@@ -248,6 +252,16 @@ if (storageIsDurable && typeof window !== "undefined") {
     // A queued event can describe an older write than the value now in storage.
     const latest = latestEntries();
     if (latest !== memoryEntries) publishEntries(latest);
+  });
+  // Other open tabs wait on this tab's encoding; tell them it will not finish.
+  window.addEventListener("pagehide", () => {
+    if (encodingEntryIds.size === 0) return;
+    const entries = latestEntries();
+    persistEntries(
+      entries.map((entry) =>
+        encodingEntryIds.has(entry.id) ? clearOrphanedPendingImages(entry) : entry,
+      ),
+    );
   });
 }
 
