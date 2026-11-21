@@ -37,7 +37,11 @@ import { PullRequestActorAvatar, PullRequestActorLabel } from "./pullRequestPres
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
-import type { PendingReviewComment } from "./pullRequestReviewStore";
+import {
+  pullRequestThreadReplyKey,
+  usePullRequestReviewStore,
+  type PendingReviewComment,
+} from "./pullRequestReviewStore";
 import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
@@ -233,12 +237,8 @@ export function ReviewThreadCard({
 }) {
   const gt = useGT();
   const [expanded, setExpanded] = useState(hidden !== undefined || !thread.isResolved);
-  const [replying, setReplying] = useState(false);
-  const [reply, setReply] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
-  const sendingRef = useRef(false);
-  const replyRef = useRef<HTMLTextAreaElement>(null);
   const [loadedPage, setLoadedPage] = useState<
     (PullRequestThreadCommentsResult & { readonly threadId: string }) | null
   >(null);
@@ -267,15 +267,8 @@ export function ReviewThreadCard({
     }
   };
 
-  const send = async (text: string) => {
-    const trimmed = text.trim();
-    if (trimmed.length === 0 || pending || sendingRef.current) return;
-    sendingRef.current = true;
-    const result = await settlePromise(() => onReply(trimmed));
-    sendingRef.current = false;
-    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    if (!result.value) return;
-    // Replies return no comment; retain loaded data and reopen pagination for a later read.
+  // Replies return no comment; retain loaded data and reopen pagination for a later read.
+  const keepLoadedPage = () =>
     setLoadedPage((previous) =>
       previous?.threadId === thread.id
         ? {
@@ -284,9 +277,6 @@ export function ReviewThreadCard({
           }
         : previous,
     );
-    setReply("");
-    setReplying(false);
-  };
   const loadMore = async () => {
     if (nextCommentsCursor === null || loadingMore) return;
     setLoadingMore(true);
@@ -433,67 +423,134 @@ export function ReviewThreadCard({
               </Button>
             </div>
           ) : null}
-
-          {canReply ? (
-            replying ? (
-              <SpeechTextField
-                environmentId={environmentId}
-                projectId={reference.projectId}
-                ownerKey={JSON.stringify(["pr-reply", environmentId, reference, thread.id])}
-                text={reply}
-                textareaRef={replyRef}
-                onTextChange={setReply}
-                disabled={pending}
-              >
-                {(speech) => (
-                  <div className="mt-2">
-                    <PullRequestMarkdownTextarea
-                      ref={replyRef}
-                      readOnly={speech.freezesEditor}
-                      autoFocus
-                      size="sm"
-                      completionScope={completionScope}
-                      value={reply}
-                      placeholder={gt("Reply", { $context: "noun, placeholder" })}
-                      aria-label={gt("Reply to this conversation")}
-                      onValueChange={setReply}
-                      onKeyDown={submitKeys({
-                        value: reply,
-                        pending,
-                        allowEmpty: speech.blocksSubmission,
-                        onSubmit: () => speech.submitAfterDictation((text) => void send(text)),
-                        onCancel: () =>
-                          speech.state.phase === "idle" ? setReplying(false) : speech.cancel(),
-                      })}
-                    />
-                    <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-                      <TextFieldSpeechControls speech={speech} disabled={pending} />
-                      <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
-                        <T>Cancel</T>
-                      </Button>
-                      <Button
-                        size="xs"
-                        disabled={
-                          speech.preparing ||
-                          pending ||
-                          (!speech.blocksSubmission && reply.trim().length === 0)
-                        }
-                        onClick={() => speech.submitAfterDictation((text) => void send(text))}
-                      >
-                        <T context="verb, button">Reply</T>
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </SpeechTextField>
-            ) : (
-              <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
-                <T context="verb, button">Reply</T>
-              </Button>
-            )
-          ) : null}
         </>
       ) : null}
+      {/* Stays mounted while collapsed so an unsent reply survives. */}
+      {canReply ? (
+        <div hidden={!expanded}>
+          <PullRequestThreadReplyForm
+            environmentId={environmentId}
+            reference={reference}
+            threadId={thread.id}
+            completionScope={completionScope}
+            pending={pending}
+            collapsed={!expanded}
+            onReply={onReply}
+            onSent={keepLoadedPage}
+          />
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+export function PullRequestThreadReplyForm({
+  environmentId,
+  reference,
+  threadId,
+  completionScope,
+  pending: actionPending,
+  collapsed = false,
+  className,
+  onReply,
+  onSent,
+}: {
+  environmentId: EnvironmentId;
+  reference: PullRequestRef;
+  threadId: string;
+  completionScope: PullRequestCompletionScope | null;
+  pending: boolean;
+  /** Stops dictation, which would keep recording behind hidden controls. */
+  collapsed?: boolean;
+  className?: string;
+  onReply: (body: string) => Promise<boolean>;
+  onSent?: () => void;
+}) {
+  // Resolving, reopening, or filtering remounts the form, so the draft lives in the store.
+  const replyKey = pullRequestThreadReplyKey(reference, threadId);
+  const reply = usePullRequestReviewStore((store) => store.replies[replyKey] ?? "");
+  const sending = usePullRequestReviewStore((store) => store.pendingReplies[replyKey] === true);
+  const pending = actionPending || sending;
+  const storeReply = usePullRequestReviewStore((store) => store.setReply);
+  const clearReply = usePullRequestReviewStore((store) => store.clearReply);
+  const setReply = (next: string) => storeReply(replyKey, next);
+  const [replying, setReplying] = useState(reply.length > 0);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
+  const gt = useGT();
+
+  const send = async (text: string) => {
+    const trimmed = text.trim();
+    const store = usePullRequestReviewStore.getState();
+    if (trimmed.length === 0 || pending || store.pendingReplies[replyKey]) return;
+    store.setReplyPending(replyKey, true);
+    const result = await settlePromise(() => onReply(trimmed));
+    store.setReplyPending(replyKey, false);
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    if (!result.value) return;
+    onSent?.();
+    clearReply(replyKey, trimmed);
+    setReplying(false);
+  };
+
+  if (!replying) {
+    return (
+      <div className={cn("mt-2", className)}>
+        <Button size="xs" variant="ghost" onClick={() => setReplying(true)}>
+          <T context="verb, button">Reply</T>
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <SpeechTextField
+      environmentId={environmentId}
+      projectId={reference.projectId}
+      ownerKey={JSON.stringify(["pr-reply", environmentId, reference, threadId])}
+      text={reply}
+      textareaRef={replyRef}
+      onTextChange={setReply}
+      disabled={pending || collapsed}
+    >
+      {(speech) => (
+        <div className={cn("mt-2", className)}>
+          <PullRequestMarkdownTextarea
+            ref={replyRef}
+            readOnly={speech.freezesEditor}
+            autoFocus
+            size="sm"
+            completionScope={completionScope}
+            value={reply}
+            placeholder={gt("Reply", { $context: "noun, placeholder" })}
+            aria-label={gt("Reply to this conversation")}
+            onValueChange={setReply}
+            onKeyDown={submitKeys({
+              value: reply,
+              pending,
+              allowEmpty: speech.blocksSubmission,
+              onSubmit: () => speech.submitAfterDictation((text) => void send(text)),
+              onCancel: () =>
+                speech.state.phase === "idle" ? setReplying(false) : speech.cancel(),
+            })}
+          />
+          <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+            <TextFieldSpeechControls speech={speech} disabled={pending} />
+            <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
+              <T>Cancel</T>
+            </Button>
+            <Button
+              size="xs"
+              disabled={
+                speech.preparing ||
+                pending ||
+                (!speech.blocksSubmission && reply.trim().length === 0)
+              }
+              onClick={() => speech.submitAfterDictation((text) => void send(text))}
+            >
+              <T context="verb, button">Reply</T>
+            </Button>
+          </div>
+        </div>
+      )}
+    </SpeechTextField>
   );
 }

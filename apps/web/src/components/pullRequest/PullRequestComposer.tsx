@@ -7,7 +7,7 @@ import { useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { PullRequestCommentForm } from "./PullRequestCommentForm";
+import { PullRequestCommentForm, type PullRequestQuoteRequest } from "./PullRequestCommentForm";
 import { PullRequestReviewForm } from "./PullRequestReviewForm";
 import {
   pullRequestReviewKey,
@@ -27,6 +27,7 @@ export function PullRequestComposer({
   onCommented,
   onReviewSubmitted,
   openReviewRequest,
+  quoteRequest,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -39,6 +40,7 @@ export function PullRequestComposer({
   onCommented: () => void;
   onReviewSubmitted: () => void;
   openReviewRequest?: number | undefined;
+  quoteRequest?: PullRequestQuoteRequest | undefined;
 }) {
   const gt = useGT();
   const term = changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest);
@@ -59,6 +61,12 @@ export function PullRequestComposer({
   if (openReviewRequest !== answeredOpenRequest) {
     setAnsweredOpenRequest(openReviewRequest);
     setRequestedMode("review");
+    setOpen(true);
+  }
+  const [answeredQuoteRequest, setAnsweredQuoteRequest] = useState(quoteRequest);
+  if (quoteRequest !== answeredQuoteRequest) {
+    setAnsweredQuoteRequest(quoteRequest);
+    setRequestedMode("comment");
     setOpen(true);
   }
 
@@ -205,9 +213,14 @@ export function PullRequestComposer({
               detail={detail}
               actionPending={actionPending}
               textareaRef={commentRef}
+              quoteRequest={quoteRequest}
               onCommentAction={onCommentAction}
               onCommented={onCommented}
               onClose={() => setOpen(false)}
+              onQuoted={() => {
+                setRequestedMode("comment");
+                setOpen(true);
+              }}
             />
           </div>
         ) : null}

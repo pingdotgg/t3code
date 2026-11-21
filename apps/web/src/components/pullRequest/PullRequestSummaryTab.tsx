@@ -20,6 +20,7 @@ import {
   HammerIcon,
   ListFilterIcon,
   MessageSquarePlusIcon,
+  ReplyIcon,
   TagIcon,
   UsersIcon,
 } from "lucide-react";
@@ -73,6 +74,7 @@ import {
   pullRequestConversationItemComments,
   pullRequestConversationItems,
   pullRequestFindingKey,
+  pullRequestQuoteReply,
   pullRequestReviewOutcome,
   visibleBody,
   type PullRequestChatSubject,
@@ -99,6 +101,7 @@ import {
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { canReactPullRequestComment } from "@t3tools/client-runtime/pull-request-reactions";
 import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton";
+import { PullRequestThreadReplyForm } from "./PullRequestReviewAnnotation";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 
@@ -111,9 +114,11 @@ function reviewerKey(login: string): string {
 function CommentIdentity({
   comment,
   detail,
+  action,
 }: {
-  comment: PullRequestComment;
+  comment: Pick<PullRequestComment, "author" | "createdAt" | "url">;
   detail: PullRequestDetailView;
+  action?: string;
 }) {
   const gt = useGT();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
@@ -124,6 +129,7 @@ function CommentIdentity({
   return (
     <h2 className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
       <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
+      {action ? <span className="text-muted-foreground">{action}</span> : null}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -287,9 +293,10 @@ function CollapsedComment({
   resolveButton,
   detail,
   thread,
-  replyCount = 0,
+  count = null,
   replies = null,
   moreReplies = null,
+  replyForm = null,
   onAddToChat,
 }: {
   comment: PullRequestComment;
@@ -300,12 +307,13 @@ function CollapsedComment({
   resolveButton: ReactNode;
   detail: PullRequestDetailView;
   thread: PullRequestConversationThread | undefined;
-  replyCount?: number;
+  /** What the collapsed card holds, such as "2 replies". */
+  count?: string | null;
   replies?: ReactNode;
   moreReplies?: ReactNode;
+  replyForm?: ((collapsed: boolean) => ReactNode) | null;
   onAddToChat?: (() => void) | undefined;
 }) {
-  const gt = useGT();
   const [open, setOpen] = useState(false);
   const statusTriggerRef = useRef<HTMLButtonElement>(null);
   return (
@@ -314,12 +322,8 @@ function CollapsedComment({
         <div className="p-3">
           <div className="flex flex-wrap items-baseline gap-2">
             <CommentIdentity comment={comment} detail={detail} />
-            {replyCount > 0 ? (
-              <span className="shrink-0 py-1 text-xs text-muted-foreground">
-                {gt("{count, plural, one {{count} reply} other {{count} replies}}", {
-                  count: replyCount,
-                })}
-              </span>
+            {count ? (
+              <span className="shrink-0 py-1 text-xs text-muted-foreground">{count}</span>
             ) : null}
             <CollapsibleTrigger
               ref={statusTriggerRef}
@@ -356,6 +360,12 @@ function CollapsedComment({
             </div>
           ) : null}
         </CollapsiblePanel>
+        {/* Stays mounted while collapsed so an unsent reply survives. */}
+        {replyForm ? (
+          <div hidden={!open} className="px-3 pb-3">
+            {replyForm(!open)}
+          </div>
+        ) : null}
         {moreReplies ? <div className="px-3 pb-3">{moreReplies}</div> : null}
       </article>
     </Collapsible>
@@ -466,6 +476,7 @@ const CommentFilterSchema = Schema.Struct({ bots: Schema.Boolean, resolved: Sche
 const DEFAULT_COMMENT_FILTER: typeof CommentFilterSchema.Type = { bots: false, resolved: false };
 
 export function PullRequestSummaryTab({
+  active = true,
   revealUrl,
   onRevealSettled,
   scrollerRef,
@@ -481,9 +492,11 @@ export function PullRequestSummaryTab({
   fixCheckLabel: requestedFixCheckLabel,
   onFixFinding,
   onAddToChat,
+  onQuoteReply,
   onRefresh,
   onRefreshChecks = onRefresh,
 }: {
+  active?: boolean;
   /** A clicked link to scroll to, until onRevealSettled reports it shown. */
   revealUrl?: string | undefined;
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
@@ -501,6 +514,8 @@ export function PullRequestSummaryTab({
   onFixFinding?: (finding: PullRequestFinding) => void;
   /** Absent where there is no composer beside the panel to add a remark to. */
   onAddToChat?: (subject: PullRequestChatSubject) => void;
+  /** Absent when the viewer cannot comment; opens the composer with the comment quoted. */
+  onQuoteReply?: (quote: string) => void;
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
@@ -701,6 +716,42 @@ export function PullRequestSummaryTab({
   };
 
   const completionScope = pullRequestCompletionScope(detail, environmentId, reference);
+  const replyToThread = useAtomCommand(pullRequestEnvironment.replyToThread, {
+    reportFailure: false,
+  });
+  const [threadReplyPending, setThreadReplyPending] = useState(false);
+  const canReplyToThreads = detail.capabilities.review.reply && detail.viewerPermissions.comment;
+  const sendThreadReply = async (threadId: string, body: string) => {
+    if (threadReplyPending) return false;
+    setThreadReplyPending(true);
+    const result = await replyToThread({ environmentId, input: { ...reference, threadId, body } });
+    setThreadReplyPending(false);
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: m(msg("Reply could not be posted")) });
+      return false;
+    }
+    onRefresh();
+    return true;
+  };
+  const threadReplyForm = (
+    thread: PullRequestConversationThread,
+    className?: string,
+    collapsed = false,
+  ) =>
+    canReplyToThreads ? (
+      <PullRequestThreadReplyForm
+        // Host thread ids can collide across pull requests.
+        key={`${detail.url}:${thread.id}`}
+        environmentId={environmentId}
+        reference={reference}
+        threadId={thread.id}
+        completionScope={completionScope}
+        pending={threadReplyPending}
+        collapsed={collapsed || !active}
+        {...(className === undefined ? {} : { className })}
+        onReply={(body) => sendThreadReply(thread.id, body)}
+      />
+    ) : null;
   const commentEditing: CommentEditing = {
     cwd: detail.workspaceRoot,
     environmentId,
@@ -770,6 +821,8 @@ export function PullRequestSummaryTab({
           : { kind: "thread", thread };
     // A reply goes with its conversation, from the card that heads it.
     const chat = reply ? null : chatSubject(comment, thread);
+    // Review threads take real replies; anything else can only be answered by quoting it.
+    const canQuote = onQuoteReply && !reply && thread === undefined && body !== null;
     return (
       <article
         key={`${detail.url}:${comment.id}`}
@@ -806,6 +859,33 @@ export function PullRequestSummaryTab({
           {onAddToChat && chat !== null ? (
             <AddToChatButton onClick={() => onAddToChat(chat)} />
           ) : null}
+          {onQuoteReply && canQuote ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              className="shrink-0"
+              // Keeps the reader's text selection alive through the click.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={(event) => {
+                const card = event.currentTarget.closest("article");
+                const selection = window.getSelection();
+                const selected =
+                  card && selection && !selection.isCollapsed && selection.rangeCount > 0
+                    ? card.contains(selection.getRangeAt(0).commonAncestorContainer)
+                      ? selection.toString()
+                      : undefined
+                    : undefined;
+                onQuoteReply(pullRequestQuoteReply(comment, selected));
+              }}
+            >
+              <span className="inline-flex items-baseline gap-1">
+                <ReplyIcon className="size-3 self-center" />
+                <span>
+                  <T>Quote reply</T>
+                </span>
+              </span>
+            </Button>
+          ) : null}
           {reactionBarFor(comment)}
         </div>
         {reply ? null : (
@@ -820,48 +900,105 @@ export function PullRequestSummaryTab({
     );
   };
 
-  const renderItem = (item: PullRequestConversationItem) => {
-    const comment = item.kind === "comment" ? item.comment : item.root;
-    const thread = item.kind === "thread" ? item.thread : undefined;
-    const replies =
-      item.kind === "thread" && item.replies.length > 0 ? (
-        <div className="ml-4 space-y-2 border-l-2 border-border/60 pl-3">
-          {item.replies.map((reply) => renderCommentCard(reply, undefined, { reply: true }))}
+  const countOf = (count: number, kind: "thread" | "reply"): string | null => {
+    if (count === 0) return null;
+    return kind === "thread"
+      ? gt("{count, plural, one {{count} thread} other {{count} threads}}", { count })
+      : gt("{count, plural, one {{count} reply} other {{count} replies}}", { count });
+  };
+
+  const renderItem = (item: PullRequestConversationItem): ReactNode => {
+    if (item.kind === "review") {
+      const threads = (
+        <div className="ml-4 space-y-3 border-l-2 border-border/60 pl-3">
+          {item.threads.map(renderItem)}
         </div>
-      ) : null;
-    const moreReplies =
-      item.kind === "thread" && item.hasMoreReplies ? <PullRequestMoreReplies {...item} /> : null;
-    if (isPullRequestCommentFinished(comment, thread)) {
-      const chat = chatSubject(comment, thread);
+      );
+      const review = item.review;
+      // A dismissed review collapses together with the threads it posted.
+      if (review !== null && isPullRequestCommentFinished(review)) {
+        return renderCollapsed(
+          { kind: "comment", id: review.id, createdAt: review.createdAt, comment: review },
+          threads,
+          countOf(item.threads.length, "thread"),
+        );
+      }
       return (
-        <CollapsedComment
-          key={`${detail.url}:${item.kind}:${item.id}`}
-          comment={comment}
-          editing={commentEditing}
-          detail={detail}
-          thread={thread}
-          label={
-            thread?.isResolved
-              ? gt("Resolved", { $context: "review thread state" })
-              : gt("Review dismissed")
-          }
-          body={visibleBody(comment.body)}
-          replyCount={item.kind === "thread" ? item.replies.length + item.moreReplies : 0}
-          replies={replies}
-          moreReplies={moreReplies}
-          onAddToChat={onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined}
-          reactionBar={reactionBarFor(comment)}
-          resolveButton={resolveButtonFor(thread)}
-        />
+        <div key={`${detail.url}:review:${item.id}`} className="space-y-2">
+          {review === null ? (
+            <div className="px-1 py-0.5">
+              <CommentIdentity
+                comment={item}
+                detail={detail}
+                action={gt("reviewed", { $context: "review author action" })}
+              />
+            </div>
+          ) : (
+            renderCommentCard(review, undefined)
+          )}
+          {threads}
+        </div>
       );
     }
-    if (item.kind === "comment") return renderCommentCard(comment, undefined);
+    const thread = item.kind === "thread" ? item.thread : undefined;
+    if (isPullRequestCommentFinished(item.kind === "comment" ? item.comment : item.root, thread)) {
+      return renderCollapsed(
+        item,
+        threadReplies(item),
+        item.kind === "thread" ? countOf(item.replies.length + item.moreReplies, "reply") : null,
+      );
+    }
+    if (item.kind === "comment") return renderCommentCard(item.comment, undefined);
     return (
       <div key={`${detail.url}:thread:${item.id}`} className="space-y-2">
-        {renderCommentCard(comment, thread)}
-        {replies}
-        {moreReplies}
+        {renderCommentCard(item.root, item.thread)}
+        {threadReplies(item)}
+        {item.hasMoreReplies ? <PullRequestMoreReplies {...item} /> : null}
+        {threadReplyForm(item.thread, "mt-0")}
       </div>
+    );
+  };
+
+  const threadReplies = (item: PullRequestConversationItem) =>
+    item.kind === "thread" && item.replies.length > 0 ? (
+      <div className="ml-4 space-y-2 border-l-2 border-border/60 pl-3">
+        {item.replies.map((reply) => renderCommentCard(reply, undefined, { reply: true }))}
+      </div>
+    ) : null;
+
+  const renderCollapsed = (
+    item: Exclude<PullRequestConversationItem, { kind: "review" }>,
+    replies: ReactNode,
+    count: string | null,
+  ) => {
+    const comment = item.kind === "comment" ? item.comment : item.root;
+    const thread = item.kind === "thread" ? item.thread : undefined;
+    const chat = chatSubject(comment, thread);
+    return (
+      <CollapsedComment
+        key={`${detail.url}:${item.kind}:${item.id}`}
+        comment={comment}
+        editing={commentEditing}
+        detail={detail}
+        thread={thread}
+        label={
+          thread?.isResolved
+            ? gt("Resolved", { $context: "review thread state" })
+            : gt("Review dismissed")
+        }
+        body={visibleBody(comment.body)}
+        count={count}
+        replies={replies}
+        moreReplies={
+          item.kind === "thread" && item.hasMoreReplies ? (
+            <PullRequestMoreReplies {...item} />
+          ) : null
+        }
+        replyForm={thread ? (collapsed) => threadReplyForm(thread, "mt-0", collapsed) : null}
+        onAddToChat={onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined}
+        reactionBar={reactionBarFor(comment)}
+        resolveButton={resolveButtonFor(thread)}
+      />
     );
   };
 
