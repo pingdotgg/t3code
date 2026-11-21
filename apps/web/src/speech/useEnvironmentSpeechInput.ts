@@ -403,14 +403,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       return;
     }
     setSetup(INITIAL_SETUP);
-    await session.start(createTarget(), (latestStatus) => {
-      if (
-        request !== startRequestRef.current ||
-        latestRef.current.session !== session ||
-        latestRef.current.input.ownerKey !== owner ||
-        latestRef.current.input.disabled
-      )
-        return;
+    const stillCurrent = () =>
+      request === startRequestRef.current &&
+      latestRef.current.session === session &&
+      latestRef.current.input.ownerKey === owner &&
+      !latestRef.current.input.disabled;
+    const handleStatus = async (latestStatus: EnvironmentSpeechStatus) => {
+      if (!stillCurrent()) return;
       setStatus({ prepared, value: latestStatus });
       if (!latestStatus.supported) {
         session.cancel();
@@ -421,9 +420,29 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         });
       } else if (latestStatus.state === "missing-model") {
         session.cancel();
-        void loadSetupCatalog(prepared, latestStatus.modelId, latestStatus.benchmarkTier, request);
+        await loadSetupCatalog(prepared, latestStatus.modelId, latestStatus.benchmarkTier, request);
       }
-    });
+    };
+
+    if (currentStatus?.supported && currentStatus.state === "missing-model") {
+      // Setup must remain usable without opening the microphone.
+      const latestStatus = await probeSpeechStatus(prepared, true).catch((error: unknown) => {
+        if (stillCurrent()) {
+          toastManager.add({
+            type: "error",
+            title: m(msg("Could not start voice input")),
+            description: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return null;
+      });
+      if (!stillCurrent() || !latestStatus) return;
+      await handleStatus(latestStatus);
+      if (!latestStatus.supported || latestStatus.state === "missing-model" || !stillCurrent())
+        return;
+    }
+
+    await session.start(createTarget(), (latestStatus) => void handleStatus(latestStatus));
   });
 
   const downloadSetupModel = useStableCallback(async () => {
