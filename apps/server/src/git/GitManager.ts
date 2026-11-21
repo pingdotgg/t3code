@@ -2063,8 +2063,9 @@ export const make = Effect.gen(function* () {
         parsedByNumber.set(pr.number, pr);
       }
     }
-    // A host that targets another repository (gh's upstream) misses a pull request opened
-    // inside the branch's own repository, such as one merged into a fork's default branch.
+    // A host that targets another repository (gh's upstream) misses a pull request merged
+    // inside the branch's own repository. An open one there must not stand in for the
+    // upstream pull request the user can still create.
     if (
       parsedByNumber.size === 0 &&
       headContext.isCrossRepository &&
@@ -2080,7 +2081,8 @@ export const make = Effect.gen(function* () {
         repository: headContext.headRepositoryNameWithOwner,
       });
       for (const pr of pullRequests.map(toPullRequestInfo)) {
-        if (matchesBranchHeadContext(pr, sameRepository)) parsedByNumber.set(pr.number, pr);
+        if (pr.state === "merged" && matchesBranchHeadContext(pr, sameRepository))
+          parsedByNumber.set(pr.number, pr);
       }
     }
 

@@ -2755,7 +2755,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["branch", "--track", "feature/published", "origin/main"]);
       yield* runGit(repoDir, ["branch", "--track", "t3code/pr-300/main", "origin/main"]);
       yield* runGit(repoDir, ["branch", "--track", "feature/fork-merged", "origin/main"]);
-      yield* runGit(repoDir, ["push", "origin", "feature/published", "feature/fork-merged"]);
+      yield* runGit(repoDir, ["branch", "--track", "feature/fork-open", "origin/main"]);
+      yield* runGit(repoDir, [
+        "push",
+        "origin",
+        "feature/published",
+        "feature/fork-merged",
+        "feature/fork-open",
+      ]);
       yield* configureVisibleRemoteUrlWithLocalRewrite(
         repoDir,
         "origin",
@@ -2779,6 +2786,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               baseRefName: "main",
               headRefName: "feature/fork-merged",
               state: "merged",
+              isCrossRepository: false,
+              headRepositoryNameWithOwner: "contributor/codething-mvp",
+              headRepositoryOwnerLogin: "contributor",
+            },
+            {
+              number: 13,
+              title: "Open inside the fork",
+              url: "https://github.com/contributor/codething-mvp/pull/13",
+              baseRefName: "main",
+              headRefName: "feature/fork-open",
+              state: "open",
               isCrossRepository: false,
               headRepositoryNameWithOwner: "contributor/codething-mvp",
               headRepositoryOwnerLogin: "contributor",
@@ -2845,6 +2863,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         state: "merged",
         repositoryKey: "github.com/contributor/codething-mvp",
       });
+      // An open one there would hide Create PR for the upstream pull request.
+      expect(
+        yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/fork-open" }),
+      ).toBeNull();
     }),
   );
 
