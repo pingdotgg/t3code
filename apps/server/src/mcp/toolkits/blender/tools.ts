@@ -16,6 +16,7 @@ import * as Struct from "effect/Struct";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../../assets/WorkspacePreviewRevisions.ts";
 import * as Blender from "../../../blender/Blender.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
@@ -78,6 +79,7 @@ export const BlenderToolkit = Toolkit.make(
       Orchestrator.OrchestratorV2,
       ServerConfig.ServerConfig,
       WorkspacePaths.WorkspacePaths,
+      WorkspacePreviewRevisions.WorkspacePreviewRevisions,
     ],
   })
     .annotate(Tool.Readonly, true)
