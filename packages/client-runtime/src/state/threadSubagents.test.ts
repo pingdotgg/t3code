@@ -27,7 +27,7 @@ function subagent(
     driver: ProviderDriverKind.make("codex"),
     providerInstanceId: ProviderInstanceId.make("codex"),
     providerThreadId: null,
-    childThreadId: ThreadId.make("thread-child"),
+    childThreadId: ThreadId.make(`thread-child-${id}`),
     nativeTaskRef: null,
     prompt: "Do the thing",
     title: "Worker",
@@ -348,6 +348,10 @@ describe("deriveThreadTurnSubagents", () => {
     });
 
     expect(turn?.subagents.map((entry) => entry.childThreadId)).toEqual([child]);
+    expect(turn?.subagents[0]).toMatchObject({
+      title: "Redirect: only markdown",
+      model: "gpt-5.4",
+    });
     expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
   });
 });

@@ -30,6 +30,25 @@ function orderKey(subagent: Subagent): number {
   return DateTime.toEpochMillis(subagent.startedAt ?? subagent.updatedAt);
 }
 
+// A follow-up call to a running or finished child (OpenCode's task_id) is another record for the
+// same agent; list it once, in its first slot, with the latest call's state.
+function mergeResumedSubagents(sorted: ReadonlyArray<Subagent>): ReadonlyArray<Subagent> {
+  const merged: Array<Subagent> = [];
+  const slotByChild = new Map<string, number>();
+  for (const subagent of sorted) {
+    const slot =
+      subagent.childThreadId === null ? undefined : slotByChild.get(subagent.childThreadId);
+    if (slot === undefined) {
+      if (subagent.childThreadId !== null) slotByChild.set(subagent.childThreadId, merged.length);
+      merged.push(subagent);
+      continue;
+    }
+    const earlier = merged[slot]!;
+    merged[slot] = { ...subagent, model: subagent.model ?? earlier.model };
+  }
+  return merged;
+}
+
 export function deriveThreadTurnSubagents(
   projection: Pick<Projection, "runs" | "subagents">,
 ): ThreadTurnSubagents | null {
@@ -65,14 +84,16 @@ export function deriveThreadTurnSubagents(
     eligible.some((subagent) => subagent.runId === latestStartedRun.id);
   const runId =
     activeRun?.id ?? (latestStartedRunHasAgents ? latestStartedRun.id : latestUpdated.runId);
-  const subagents = copySorted(
-    eligible.filter(
-      (subagent) =>
-        subagent.runId === runId ||
-        isActiveSubagentStatus(subagent.status) ||
-        subagent.workflow !== undefined,
+  const subagents = mergeResumedSubagents(
+    copySorted(
+      eligible.filter(
+        (subagent) =>
+          subagent.runId === runId ||
+          isActiveSubagentStatus(subagent.status) ||
+          subagent.workflow !== undefined,
+      ),
+      (left, right) => orderKey(left) - orderKey(right) || left.id.localeCompare(right.id),
     ),
-    (left, right) => orderKey(left) - orderKey(right) || left.id.localeCompare(right.id),
   );
   if (subagents.length === 0) return null;
 
