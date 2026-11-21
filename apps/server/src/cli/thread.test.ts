@@ -241,6 +241,8 @@ it.effect("--wait lasts until background work the agent waits on wakes it and th
           status: "completed",
           timedOut: false,
           resultRun: { runId: wakeRun, status: "completed" },
+          // The wake run submits the result the first run owes, which the server stores there.
+          output: { head: "abc" },
         },
       ],
       // The wake run starts from a notification, which the messages view leaves out.
@@ -256,29 +258,7 @@ it.effect("--wait lasts until background work the agent waits on wakes it and th
         { threadId, runId, timeoutMs: 15_000, untilDelegatedWorkSettled: true },
       ],
     );
-    assert.deepStrictEqual(outcome, { type: "ended", runId: wakeRun, status: "completed" });
-  }),
-);
-
-it.effect("--wait returns the result a woken run submits for the run that asked for it", () =>
-  Effect.gen(function* () {
-    const wakeRun = RunId.make("run-2");
-    const { tools } = scriptedTools({
-      t3_thread_wait: [
-        { threadId, runId, status: "completed", timedOut: false },
-        {
-          threadId,
-          runId,
-          status: "completed",
-          timedOut: false,
-          resultRun: { runId: wakeRun, status: "completed" },
-          output: { head: "abc" },
-        },
-      ],
-      t3_thread_read: laterRunReads(wakeRun, []),
-    });
-
-    assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId, true), {
+    assert.deepStrictEqual(outcome, {
       type: "ended",
       runId: wakeRun,
       status: "completed",
