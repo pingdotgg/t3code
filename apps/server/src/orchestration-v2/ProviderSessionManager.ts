@@ -2029,6 +2029,17 @@ export const layerWithOptions = (
         },
       );
 
+      // A native child can first use a prompt-unload resource after its parent's timer started.
+      const rescheduleParentUnload = Effect.fn("ProviderSessionManager.rescheduleParentUnload")(
+        function* (providerSessionId: ProviderSessionId, threadId: ThreadId) {
+          const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
+          const pending = entry?.idleThreadUnloads.get(threadId);
+          if (entry === undefined || pending === undefined || pending.fiber === null) return;
+          if (!(yield* unloadsPromptly(entry.runtime, pending.providerThread))) return;
+          yield* scheduleThreadUnload(providerSessionId, pending.providerThread.id);
+        },
+      );
+
       // Provider clients list a delegated child as an ordinary conversation, so a
       // finished one is archived once its parent has the result.
       const delegatedChildArchive = Effect.fn("ProviderSessionManager.delegatedChildArchive")(
@@ -2989,6 +3000,12 @@ export const layerWithOptions = (
               Effect.andThen(
                 event.type === "provider_session.updated"
                   ? persistProviderSessionUpdate(entry, event)
+                  : Effect.void,
+              ),
+              Effect.andThen(
+                event.type === "subagent.updated" &&
+                  !isOrchestrationV2WorkActive(event.subagent.status)
+                  ? rescheduleParentUnload(entry.runtime.providerSessionId, event.subagent.threadId)
                   : Effect.void,
               ),
               Effect.andThen(
