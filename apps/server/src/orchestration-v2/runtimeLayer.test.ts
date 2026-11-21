@@ -4627,6 +4627,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     { reason: "not-found", activityFails: true },
     { reason: "forbidden", activityFails: true },
     { reason: "cli-unauthenticated", activityFails: false },
+    { reason: "rate-limited", activityFails: false },
   ] as const)(
     "handles repeated host read failures: $reason (activity fails: $activityFails)",
     ({ reason, activityFails }) =>
@@ -4752,7 +4753,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         }
 
         const thread = yield* orchestrator.getThreadShell(threadId);
-        if (reason !== "failed") {
+        if (reason !== "failed" && reason !== "rate-limited") {
           assert.isUndefined(thread?.pullRequests?.[0]?.watch);
           const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
           const stopped = messages.filter((message) => message.notification !== undefined);
@@ -4771,15 +4772,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           return;
         }
         assert.isDefined(thread?.pullRequests?.[0]?.watch);
-        assert.deepEqual(yield* summaries, []);
+        // A long rate limit is reported once and the watch stays on for when it lifts.
+        const paused = reason === "rate-limited" ? ["#8: rate limited, still watching"] : [];
+        assert.deepEqual(yield* summaries, paused);
         disconnected = false;
         genericFailure = false;
         passed = true;
         yield* sweep;
-        assert.deepEqual(yield* summaries, ["#8: checks passed"]);
+        assert.deepEqual(yield* summaries, [...paused, "#8: checks passed"]);
         yield* TestClock.adjust("10 minutes");
         yield* sweep;
-        assert.deepEqual(yield* summaries, ["#8: checks passed"]);
+        assert.deepEqual(yield* summaries, [...paused, "#8: checks passed"]);
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
           commandId: CommandId.make(`pr-watch-unreadable-stop-${reason}-${activityFails}`),

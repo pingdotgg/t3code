@@ -378,7 +378,7 @@ first asks whether anything changed and reads the pull request only when it did,
 watching inside GitHub's rate limit. Comments from your own account do not wake it. When the pull
 request merges or closes, watching ends, and the agent is woken once unless it merged or closed the
 pull request itself with the host's CLI. A reopened pull request needs a new watch. Watching also ends after 10 wakes in a row that bring only comments, after 8
-failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
+failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching; a pause that lasts 20 minutes wakes the agent once to say so.
 Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
 watch. Watching a pull request again does not repeat check or conflict news its last
 watch already reported; unlinking the pull request clears that. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
