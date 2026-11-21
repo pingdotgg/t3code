@@ -6,12 +6,19 @@ import { DesktopUpdateChannelSchema, DesktopUpdateStateSchema } from "./ipc.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
 
+// Fork: swap and disk for the thread details "Machine resources" rows; null where not reported.
+const HostCapacityBytes = Schema.optionalKey(Schema.NullOr(NonNegativeInt));
+
 export const HostResourcesSnapshot = Schema.Struct({
   sampledAt: NonNegativeInt,
   cpuUtilization: Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
+  swapTotalBytes: HostCapacityBytes,
+  swapFreeBytes: HostCapacityBytes,
+  diskTotalBytes: HostCapacityBytes,
+  diskFreeBytes: HostCapacityBytes,
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 

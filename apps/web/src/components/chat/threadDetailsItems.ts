@@ -27,6 +27,7 @@ export const THREAD_DETAILS_ITEMS = [
   { id: "sideChats", label: msg("Side chats"), defaultVisible: true },
   { id: "usage", label: msg("Usage limits"), defaultVisible: false },
   { id: "context", label: msg("Context window"), defaultVisible: false },
+  { id: "machineResources", label: msg("Machine resources"), defaultVisible: false },
 ] as const;
 
 export type ThreadDetailsItemId = (typeof THREAD_DETAILS_ITEMS)[number]["id"];

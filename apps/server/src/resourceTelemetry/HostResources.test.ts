@@ -42,7 +42,10 @@ const MiB = 1024 ** 2;
 const cgroup = "/sys/fs/cgroup/t3.slice/server.scope";
 const unlimitedCgroup = {
   "/proc/self/cgroup": ["0::/t3.slice/server.scope\n"],
-  "/proc/meminfo": [`MemTotal: ${4 * 1024 * 1024} kB\nMemAvailable: ${2 * 1024 * 1024} kB\n`],
+  "/proc/meminfo": [
+    `MemTotal: ${4 * 1024 * 1024} kB\nMemAvailable: ${2 * 1024 * 1024} kB\n` +
+      `SwapTotal: ${8 * 1024 * 1024} kB\nSwapFree: ${6 * 1024 * 1024} kB\n`,
+  ],
   [`${cgroup}/cpu.max`]: ["max 100000\n"],
   [`${cgroup}/cpu.stat`]: ["usage_usec 5000000\n"],
   [`${cgroup}/memory.max`]: ["max\n"],
@@ -204,6 +207,8 @@ describe("HostResources.layer", () => {
       assert.strictEqual(snapshot.cpuCount, 8);
       assert.closeTo(snapshot.cpuUtilization ?? Number.NaN, 0.25, 1e-9);
       assert.strictEqual(snapshot.availableMemoryBytes, 2 * GiB);
+      assert.strictEqual(snapshot.swapTotalBytes, 8 * GiB);
+      assert.strictEqual(snapshot.swapFreeBytes, 6 * GiB);
     }).pipe(Effect.provide(linuxHost(unlimitedCgroup))),
   );
 

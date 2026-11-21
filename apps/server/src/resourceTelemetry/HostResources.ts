@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect FileSystem has no statfs, which the disk row needs.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -141,10 +143,16 @@ const make = Effect.fn("makeHostResources")(function* () {
     let totalMemoryBytes = NodeOS.totalmem();
     // On Windows libuv returns GlobalMemoryStatusEx.ullAvailPhys, including standby memory.
     let availableMemoryBytes = NodeOS.freemem();
+    let swap: { totalBytes: number; freeBytes: number } | null = null;
     if (platform === "linux") {
       const meminfo = yield* readFile("/proc/meminfo");
       const available = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo)?.[1];
       if (available) availableMemoryBytes = Number(available) * 1024;
+      const swapTotal = cgroupNumber(meminfo, /^SwapTotal:\s+(\d+)\s+kB$/m);
+      const swapFree = cgroupNumber(meminfo, /^SwapFree:\s+(\d+)\s+kB$/m);
+      if (swapTotal !== null && swapFree !== null) {
+        swap = { totalBytes: swapTotal * 1024, freeBytes: swapFree * 1024 };
+      }
     } else if (platform === "darwin") {
       const output = yield* spawner
         .string(ChildProcess.make("/usr/bin/vm_stat", [], { stdin: "ignore", stderr: "ignore" }))
@@ -172,12 +180,20 @@ const make = Effect.fn("makeHostResources")(function* () {
         memoryMax - (memoryCurrent - reclaimable),
       );
     }
+    const disk = yield* Effect.tryPromise({
+      try: () => NodeFSP.statfs("/"),
+      catch: () => null,
+    }).pipe(Effect.orElseSucceed(() => null));
     return {
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
+      swapTotalBytes: swap?.totalBytes ?? null,
+      swapFreeBytes: swap?.freeBytes ?? null,
+      diskTotalBytes: disk === null ? null : disk.blocks * disk.bsize,
+      diskFreeBytes: disk === null ? null : disk.bavail * disk.bsize,
     };
   });
 
