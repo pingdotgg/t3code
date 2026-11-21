@@ -225,6 +225,27 @@ function ProviderAccount({
       }),
     );
   }
+  function sendTerminalInput() {
+    void send({ type: "terminal", data: `${values.input ?? ""}\r` }).then((sent) => {
+      if (sent) setDraft({ id: "", values: {} });
+    });
+  }
+  function sendCredentials() {
+    void send({ type: "credentials", values }).then((sent) => {
+      if (sent) setDraft({ id: "", values: {} });
+    });
+  }
+  function sendCallback() {
+    if (!state?.flowId || !values.callback?.trim()) return;
+    void run(() =>
+      complete({
+        environmentId,
+        input: { instanceId, flowId: state.flowId!, callbackUrl: values.callback! },
+      }),
+    ).then((sent) => {
+      if (sent) setDraft({ id: "", values: {} });
+    });
+  }
   function field(name: string, label: string, secret: boolean) {
     return (
       <TextInput
@@ -239,6 +260,11 @@ function ProviderAccount({
         maxLength={secret && interaction?.type === "terminal" ? 4_095 : 16_384}
         value={values[name] ?? ""}
         onChangeText={(value) => setDraft({ id: draftId, values: { ...values, [name]: value } })}
+        onSubmitEditing={() => {
+          if (interaction?.type === "terminal") sendTerminalInput();
+          else if (interaction?.type === "credentials") sendCredentials();
+          else sendCallback();
+        }}
       />
     );
   }
@@ -465,11 +491,7 @@ function ProviderAccount({
                 icon="arrow.up"
                 label={gt("Send response")}
                 disabled={disabled}
-                onPress={() => {
-                  void send({ type: "terminal", data: `${values.input ?? ""}\r` }).then((sent) => {
-                    if (sent) setDraft({ id: "", values: {} });
-                  });
-                }}
+                onPress={sendTerminalInput}
               />
             </>
           ) : null}
@@ -482,11 +504,7 @@ function ProviderAccount({
                 icon="person.crop.circle"
                 label={gt("Connect")}
                 disabled={disabled}
-                onPress={() => {
-                  void send({ type: "credentials", values }).then((sent) => {
-                    if (sent) setDraft({ id: "", values: {} });
-                  });
-                }}
+                onPress={sendCredentials}
               />
             </>
           ) : null}
@@ -497,17 +515,7 @@ function ProviderAccount({
                 icon="arrow.right"
                 label={gt("Continue")}
                 disabled={disabled || !values.callback?.trim()}
-                onPress={() => {
-                  if (!state?.flowId) return;
-                  void run(() =>
-                    complete({
-                      environmentId,
-                      input: { instanceId, flowId: state.flowId!, callbackUrl: values.callback! },
-                    }),
-                  ).then((sent) => {
-                    if (sent) setDraft({ id: "", values: {} });
-                  });
-                }}
+                onPress={sendCallback}
               />
             </>
           ) : null}
