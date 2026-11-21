@@ -6326,6 +6326,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
       yield* harness.offerAndWait(
+        makeAssistantTextFrame({
+          uuid: "00000000-0000-4000-8000-000000002505",
+          text: "Build answer.",
+        }),
+      );
+      yield* harness.offerAndWait(
         claudeSdkFrame({
           ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000002500", result: "Built." }),
           user_message_uuid: harness.promptUuid(0),
@@ -6350,6 +6356,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         (event) => event.type === "message.updated" && event.message.text === "Steer reply.",
       );
       assert.equal(reply?.type === "message.updated" ? reply.message.runId : null, input.runId);
+      // Claude ended its native turn on this answer before it read the steer, so the timeline
+      // must not fold it away as a progress note of the run's last reply.
+      const answer = harness.events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "assistant_message" &&
+          event.turnItem.text === "Build answer.",
+      );
+      assert.equal(
+        answer?.type === "turn_item.updated" && answer.turnItem.type === "assistant_message"
+          ? answer.turnItem.phase
+          : null,
+        "final_answer",
+      );
       assert.deepEqual(
         harness.events.flatMap((event) =>
           event.type === "steer.updated" ? [[event.messageId, event.status]] : [],
