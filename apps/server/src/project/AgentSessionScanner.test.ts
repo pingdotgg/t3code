@@ -973,9 +973,46 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("lists only projects with conversations inside the import window", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-window-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-window-codex-");
+        const mixedWorkspace = yield* makeTempDir("t3code-window-mixed-");
+        const olderWorkspace = yield* makeTempDir("t3code-window-older-");
+
+        for (const [workspace, name, ageDays] of [
+          [mixedWorkspace, "recent", 1],
+          [mixedWorkspace, "old", 31],
+          [olderWorkspace, "older", 45],
+          [olderWorkspace, "oldest", 60],
+        ] as const) {
+          yield* writeTranscript({
+            filePath: path.join(
+              claudeHomePath,
+              "projects",
+              `-${path.basename(workspace)}`,
+              `${name}.jsonl`,
+            ),
+            contents: claudeSessionLine(workspace),
+            mtimeMs: nowMs - ageDays * 24 * 60 * 60 * 1000,
+          });
+        }
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
+          { path: mixedWorkspace, threadCount: 1 },
+        ]);
+      }),
+    );
+
     it.effect("drops candidates whose directory no longer exists", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-02T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
 
@@ -994,6 +1031,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("excludes the home directory, temporary root, and T3 data directory", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-02T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
@@ -1021,6 +1059,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("excludes T3-managed worktree sandboxes", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-02T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const fileSystem = yield* FileSystem.FileSystem;
@@ -1042,6 +1081,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("folds linked git worktrees into their checkout and reports real origins", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-10T00:00:00.000Z"));
         const fileSystem = yield* FileSystem.FileSystem;
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
@@ -1301,6 +1341,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("excludes sandboxes under the configured worktrees dir without .t3 in the path", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-02T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
@@ -1323,6 +1364,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("excludes sandboxes reached through a symlink into the worktrees dir", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-02T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
@@ -1348,6 +1390,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("finds the cwd on a later line when the first records carry none", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-02T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const workspace = yield* makeTempDir("t3code-workspace-");
@@ -1368,6 +1411,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("reads a complete transcript record at the exact chunk boundary", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-02T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const workspace = yield* makeTempDir("t3code-workspace-");
@@ -1392,6 +1436,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("skips malformed transcripts without failing the scan", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-05-04T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const workspace = yield* makeTempDir("t3code-workspace-");
@@ -1432,6 +1477,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-05-04T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const workspace = yield* makeTempDir("t3code-workspace-");
@@ -1462,6 +1508,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("discovers projects whose Codex rollouts are zstd-compressed", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-05-04T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const workspace = yield* makeTempDir("t3code-workspace-");

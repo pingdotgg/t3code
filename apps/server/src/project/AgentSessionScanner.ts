@@ -1950,7 +1950,16 @@ export const make = Effect.gen(function* () {
 
   const scan: AgentSessionScanner["Service"]["scan"] = Effect.gen(function* () {
     cachedCandidates = yield* collectCandidates();
-    const { candidates: raw, truncated } = cachedCandidates;
+    const { candidates: collected, truncated } = cachedCandidates;
+    // Import skips conversations older than the window, so only those inside it count toward a
+    // project. Future-dated files still count, so clock skew cannot hide a project.
+    const cutoffMs = DateTime.toEpochMillis(yield* DateTime.now) - RECENT_THREAD_WINDOW_MS;
+    const raw = collected.flatMap((candidate) => {
+      const threadCount = candidate.transcripts.filter(
+        (transcript) => transcript.mtimeMs !== null && transcript.mtimeMs >= cutoffMs,
+      ).length;
+      return threadCount === 0 ? [] : [{ ...candidate, threadCount }];
+    });
 
     const merged = new Map<
       string,

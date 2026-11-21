@@ -64,13 +64,14 @@ app with a code from **Settings → Sharing & access**.
 
 ## Projects
 
-T3 Code finds directories that Claude Code, Codex or Pi has used. Git repositories
-are listed first, newest activity on top. When the remote is on GitHub, the
-group shows the repository as `owner/name`. Clones with the same remote share
-one group. Directories that are not git repositories sit under "Other folders".
+T3 Code finds directories that Claude Code, Codex or Pi has used in the last 30
+days. Git repositories are listed first, newest activity on top. When the remote
+is on GitHub, the group shows the repository as `owner/name`. Clones with the
+same remote share one group. Directories that are not git repositories sit under
+"Other folders".
 
-The page offers git repositories active within the last 30 days with at least
-three conversations, already checked. Projects already in T3 Code are not checked
+The page offers git repositories with at least three conversations in that time,
+already checked. Projects already in T3 Code are not checked
 again. Uncheck the box to start without them, or
 select **Review all** to pick from everything found, with "Select all" and
 "Select none". Linked worktrees of bare repositories
