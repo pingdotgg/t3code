@@ -38,6 +38,14 @@ export function assertMusePermissionOutput(
       ["command", "resolved", "decline"],
     ],
   );
+  for (const request of requests) {
+    const status = request.decision === "decline" ? "cancelled" : "completed";
+    assert.equal(projection.nodes.find((node) => node.id === request.nodeId)?.status, status);
+    assert.equal(
+      projection.turnItems.find((item) => item.nodeId === request.nodeId)?.status,
+      status,
+    );
+  }
   const approval = projection.turnItems.find((item) => item.type === "approval_request");
   const options = approval?.type === "approval_request" ? (approval.options ?? []) : [];
   assert.includeDeepMembers(
