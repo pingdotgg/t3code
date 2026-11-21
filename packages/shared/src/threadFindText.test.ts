@@ -241,3 +241,29 @@ it("indexes image destinations rendered as file chips", () => {
     ),
   ).toEqual(["notes.ts · L42–64 "]);
 });
+
+it("keeps label/value lines apart in assistant text while prose still wraps", () => {
+  const text = [
+    "Name: **Acme Ltd**",
+    "IBAN: GB00 TEST 0000 0000 0000 00",
+    "",
+    "**Bank:** Example Bank",
+    "*Reference*: INV-001",
+    "",
+    "Wrapped prose: split by",
+    "a newline in the source.",
+    "",
+    "```text",
+    "Name: Acme Ltd",
+    "Bank: Example Bank",
+    "```",
+  ].join("\n");
+  expect(assistantSegments(text)).toEqual([
+    "Name: Acme Ltd",
+    " IBAN: GB00 TEST 0000 0000 0000 00",
+    "Bank: Example Bank",
+    " Reference: INV-001",
+    "Wrapped prose: split by a newline in the source.",
+    "Name: Acme Ltd\nBank: Example Bank\n",
+  ]);
+});

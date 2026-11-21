@@ -752,7 +752,8 @@ function remarkNormalizeLinksAndTagInlineCode() {
   };
 }
 
-const ASSISTANT_FIELD_LINE = /^[\p{L}][\p{L}\p{N} /_-]{0,31}:[ \t]+\S/u;
+// `Label: value`, also with the label in bold or italics (`**Label:** value`, `*Label*: value`).
+const ASSISTANT_FIELD_LINE = /^(\*{1,2}|_{1,2})?[\p{L}][\p{L}\p{N} /_-]{0,31}(?:\1:|:\1)[ \t]+\S/u;
 
 export function remarkAssistantFieldLines(): Transformer<Root> {
   const addLineBreaks = remarkBreaks();

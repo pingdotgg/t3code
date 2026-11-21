@@ -869,40 +869,6 @@ describe("MessagesTimeline messages", () => {
     }
   });
 
-  it("keeps assistant label lines separate while prose still wraps", async () => {
-    const source = [
-      "Name: **Acme Ltd**",
-      "Bank: Example Bank",
-      "IBAN: GB00 TEST 0000 0000 0000 00",
-      "Reference: INV-001",
-      "",
-      "This is ordinary prose split by",
-      "a newline in the source.",
-      "",
-      "```text",
-      "Name: Acme Ltd",
-      "Bank: Example Bank",
-      "```",
-    ].join("\n");
-    await using screen = await renderTimeline([message(source, { role: "assistant" })]);
-    const reply = screen.container.querySelector<HTMLElement>(".chat-markdown")!;
-    const [fields, prose] = reply.querySelectorAll("p");
-    expect(fields?.querySelectorAll("br")).toHaveLength(3);
-    expect(fields?.querySelector("strong")?.textContent).toBe("Acme Ltd");
-    expect(prose?.querySelector("br")).toBeNull();
-    expect(reply.querySelector("pre br")).toBeNull();
-    expect(
-      searchableMessageSegments({ role: "assistant", text: source, streaming: false })
-        ?.slice(0, 4)
-        .map((line) => line.trim()),
-    ).toEqual([
-      "Name: Acme Ltd",
-      "Bank: Example Bank",
-      "IBAN: GB00 TEST 0000 0000 0000 00",
-      "Reference: INV-001",
-    ]);
-  });
-
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
     const source = [
       'Without reading a file, do you have <global-agent-instructions scope="workspace">',
