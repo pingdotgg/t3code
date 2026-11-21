@@ -173,12 +173,14 @@ pub(crate) fn render_panel_header(
     let muted = to_hsla(props.tokens.muted_foreground);
     let highlight = to_hsla(props.tokens.shell_highlight);
 
-    let mut left_strip = h_flex()
-        .flex_1()
+    let mut tab_strip = h_flex()
+        .id("right-panel-tab-strip")
         .min_w_0()
+        .flex_shrink(1.0)
         .h_full()
         .items_center()
-        .gap(px(4.0));
+        .gap(px(4.0))
+        .overflow_x_scroll();
 
     for (idx, tab) in props.open_tabs.iter().enumerate() {
         let active = tab == props.active_tab;
@@ -271,7 +273,7 @@ pub(crate) fn render_panel_header(
             .child(close_slot)
             .child(div().min_w_0().truncate().child(label));
 
-        left_strip = left_strip.child(tab_el);
+        tab_strip = tab_strip.child(tab_el);
     }
 
     // Trailing `+` trigger and anchored `dropdown-glass` add-panel menu.
@@ -307,7 +309,14 @@ pub(crate) fn render_panel_header(
         ));
     }
 
-    left_strip = left_strip.child(add_anchor);
+    let left_strip = h_flex()
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .items_center()
+        .gap(px(4.0))
+        .child(tab_strip)
+        .child(add_anchor);
 
     // Far-right layout controls: maximize/restore, dock-to-bottom, close/toggle right panel.
     let max_icon = if props.maximized {

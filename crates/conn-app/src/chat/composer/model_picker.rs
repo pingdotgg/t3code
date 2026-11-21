@@ -129,26 +129,48 @@ impl ModelCatalog {
         Self { providers: groups }
     }
 
-    /// Looks up a model by `(instance_id, slug)` or by `slug` alone.
+    /// Looks up a model by `(instance_id, slug)` or by `slug` / short alias alone.
     #[must_use]
     pub(crate) fn find_model(
         &self,
         instance_id: Option<&str>,
         model_slug: &str,
     ) -> Option<&ModelOption> {
+        let exact = |m: &&ModelOption| m.slug == model_slug || m.name == model_slug;
         if let Some(id) = instance_id
             && let Some(group) = self.providers.iter().find(|p| p.instance_id == id)
-            && let Some(found) = group
-                .models
-                .iter()
-                .find(|m| m.slug == model_slug || m.name == model_slug)
+            && let Some(found) = group.models.iter().find(exact)
+        {
+            return Some(found);
+        }
+        if let Some(found) = self
+            .providers
+            .iter()
+            .flat_map(|p| p.models.iter())
+            .find(exact)
+        {
+            return Some(found);
+        }
+        let needle = model_slug.trim().to_ascii_lowercase();
+        if needle.is_empty() {
+            return None;
+        }
+        let alias = |m: &&ModelOption| {
+            m.short_name
+                .as_deref()
+                .is_some_and(|s| s.eq_ignore_ascii_case(&needle))
+                || m.slug.to_ascii_lowercase().contains(&needle)
+        };
+        if let Some(id) = instance_id
+            && let Some(group) = self.providers.iter().find(|p| p.instance_id == id)
+            && let Some(found) = group.models.iter().find(alias)
         {
             return Some(found);
         }
         self.providers
             .iter()
             .flat_map(|p| p.models.iter())
-            .find(|m| m.slug == model_slug || m.name == model_slug)
+            .find(alias)
     }
 
     /// Returns the models visible for the active provider tab and search query.

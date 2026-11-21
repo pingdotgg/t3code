@@ -436,7 +436,8 @@ impl SettingsModal {
                     .w_full()
                     .max_w(px(720.0))
                     .px(px(28.0))
-                    .py(px(20.0))
+                    .pt(px(20.0))
+                    .pb(px(32.0))
                     .gap(px(20.0))
                     .child(page_content),
             )

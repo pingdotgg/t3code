@@ -1043,7 +1043,9 @@ impl Render for Composer {
                 composer.toggle_model_picker(window, cx);
             }))
             .child(crate::icons::provider_mark(
-                driver.unwrap_or_default(),
+                driver
+                    .filter(|d| !d.is_empty())
+                    .unwrap_or(model_label.as_str()),
                 16.0,
                 if self.model_picker_open { fg } else { muted },
             ))

@@ -25,8 +25,9 @@ use crate::panels::chrome::{self, ConnTooltipExt as _, UI_LINE_HEIGHT_PX, UI_TEX
 use crate::panels::color::to_hsla;
 use crate::panels::header::superhero_icon;
 
-/// Minimum width of each insight card (`minmax(10rem, 1fr)` = 160px).
-const CARD_MIN_WIDTH_PX: f32 = 160.0;
+/// Minimum width of each insight card (130px lets all 4 columns fit a standard right panel
+/// without clipping while still enabling horizontal scrolling on narrower splits).
+const CARD_MIN_WIDTH_PX: f32 = 130.0;
 /// Gap between insight cards (`gap-0.5` = 2px).
 const GRID_GAP_PX: f32 = 2.0;
 /// Outer corner radius of the insights group (`12px`, matching lanes).
@@ -231,7 +232,7 @@ fn render_insight_card(
         .flex_shrink(1.0)
         .flex_basis(px(0.0))
         .gap(px(4.0))
-        .px(px(12.0))
+        .px(px(10.0))
         .pt(px(10.0))
         .pb(px(8.0))
         .bg(card_bg)

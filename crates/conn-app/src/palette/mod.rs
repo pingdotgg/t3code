@@ -508,7 +508,10 @@ impl Render for CommandPalette {
             Appearance::Light => 0.22,
         };
         let scrim = hsla_alpha(self.tokens.background, scrim_alpha);
-        let glass_bg = hsla(self.tokens.shell_overlay);
+        // GPUI cannot blur in-window content behind popovers, so use `popover` (matching
+        // `dropdown-glass`'s `@supports not (backdrop-filter)` fallback) instead of a translucent
+        // overlay that lets unblurred chat text bleed through.
+        let glass_bg = hsla(self.tokens.popover);
         let glass_edge = hsla(self.tokens.glass_divider);
         let muted = hsla(self.tokens.muted_foreground);
 
