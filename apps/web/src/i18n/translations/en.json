@@ -9377,7 +9377,7 @@
   "33fbce50a4ea67e6": "Additional CLI arguments passed on session start.",
   "abdee70d90cb26a3": "Compact after 100,000 to 1,000,000 tokens. Leave empty to use Claude's default.",
   "f907b2466603538e": "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
-  "484df18e29b21047": "Google accounts use your subscription; API keys and Agent Platform bill usage.",
+  "9610fb9f4d9849ec": "Google account and Gemini Enterprise use your existing plan. Gemini API key and Agent Platform charge per use to your key or Google Cloud project.",
   "931df01584748bf9": "Gemini or Vertex AI express key. Stored separately on the host.",
   "8bf0f6ed8dd4b77e": "Required for Gemini Enterprise. Agent Platform uses it when no API key is set.",
   "7c735c8fbd3fb6e3": "Region for Gemini Enterprise or Agent Platform.",
