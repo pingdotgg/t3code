@@ -42,7 +42,7 @@ export function VideoThumbnailImage(props: {
   readonly contentFit?: "cover" | "contain";
 }) {
   const { cacheKey, source } = props;
-  // Extraction starts only while the screen is focused; leaving it skips queued loads.
+  // When the last focused tile unsubscribes, its queued or running load stops.
   const isFocused = useIsFocused();
   const loaded = useAtomValue(
     source && isFocused ? videoThumbnailAtom({ cacheKey, source }) : noVideoThumbnail,
