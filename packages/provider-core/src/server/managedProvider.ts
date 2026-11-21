@@ -73,6 +73,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean | ((snapshot: ServerProvider) => boolean);
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
+  /** False publishes a failed usage probe as-is instead of keeping the last good read. */
+  readonly retainUsageLimitsOnProbeFailure?: boolean;
 }): Effect.fn.Return<
   ManagedServerProvider,
   ServerSettingsError,
@@ -221,10 +223,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           : probedSnapshot.usageLimits === undefined &&
               state.snapshot.usageLimits !== usageBeforeProbe
             ? state.snapshot.usageLimits
-            : resolveUsageLimitsAfterProbe({
-                published: state.snapshot.usageLimits,
-                probed: probedSnapshot.usageLimits,
-              });
+            : input.retainUsageLimitsOnProbeFailure === false &&
+                probedSnapshot.usageLimits?.unavailable?.reason === "probeFailed"
+              ? probedSnapshot.usageLimits
+              : resolveUsageLimitsAfterProbe({
+                  published: state.snapshot.usageLimits,
+                  probed: probedSnapshot.usageLimits,
+                });
         const workspaceId =
           usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
         const usageAuthLabel =
