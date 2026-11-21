@@ -385,6 +385,8 @@ interface ServerTab {
   desktopViewportChanges: number;
   /** Settles at the desktop page's next main-frame resize. */
   desktopResize: PromiseWithResolvers<void>;
+  /** The last resize failed undrawn, so the tab's setting is a size the page never took. */
+  desktopResizeUndrawn: boolean;
   loading: boolean;
   loadError: PreviewAutomationLoadError | undefined;
   /** The renderer crash this page died of, or the one the page it replaced died of. */
@@ -1189,6 +1191,7 @@ const make = Effect.gen(function* () {
       desktopViewportStale: true,
       desktopViewportChanges: 0,
       desktopResize: Promise.withResolvers<void>(),
+      desktopResizeUndrawn: false,
       loading: false,
       loadError: undefined,
       // The page a crash left behind is blank; the session still names what crashed.
@@ -2821,7 +2824,8 @@ const make = Effect.gen(function* () {
             viewport: tab.page.viewportSize() ?? UNATTACHED_FILL_VIEWPORT,
           };
         }
-        const changed = from?.width !== to?.width || from?.height !== to?.height;
+        const changed =
+          tab.desktopResizeUndrawn || from?.width !== to?.width || from?.height !== to?.height;
         const remainingMs = () => Math.max(0, deadlineMs - performance.now());
         const within = <A>(promise: Promise<A>, ms: number) =>
           runPromise(
@@ -2855,7 +2859,9 @@ const make = Effect.gen(function* () {
         const changes = tab.desktopViewportChanges;
         const measured = await within(measureDesktopViewport(tab), remainingMs());
         // A window that does not paint, such as a minimized one, never draws the new size.
-        if (undrawn && (measured?.width !== to?.width || measured?.height !== to?.height)) {
+        tab.desktopResizeUndrawn =
+          undrawn && (measured?.width !== to?.width || measured?.height !== to?.height);
+        if (tab.desktopResizeUndrawn) {
           throw new ServerBrowserPage.ServerBrowserOperationError({
             tag: "PreviewAutomationExecutionError",
             message:

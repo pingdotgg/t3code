@@ -3086,6 +3086,21 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
       }
       yield* TestClock.adjust("1 second");
       expect(Exit.isFailure(yield* Fiber.join(undrawn))).toBe(true);
+      // The same size again still waits for a draw rather than reporting the old size.
+      const retried = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "freeform", width: 1440, height: 900 },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      let retriedEvent = yield* PubSub.take(events);
+      while (retriedEvent.type !== "resized" || retriedEvent.tabId !== tabId) {
+        retriedEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isFailure(yield* Fiber.join(retried))).toBe(true);
       heldStill = null;
       unpainted.resolve();
       expect(yield* resize({ mode: "fill" }, 1234, 700)).toEqual({ width: 1234, height: 700 });
