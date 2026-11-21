@@ -119,6 +119,13 @@ export const layer = HttpApiBuilder.group(
           })
           .pipe(Effect.result);
         if (Result.isFailure(started)) {
+          if (started.failure._tag === "WorkflowInputError") {
+            return json(
+              400,
+              { error: "invalid_request", problem: started.failure.problem },
+              "invalid",
+            );
+          }
           yield* Effect.logWarning("Workflow hook delivery failed", { hookId: params.hookId });
           return json(500, { error: "internal_error" }, "error");
         }
