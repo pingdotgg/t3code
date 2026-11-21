@@ -671,6 +671,16 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
           }),
       ),
     );
+  // Windows' first kill step is an immediate `taskkill /T /F`. Codex exits on stdin EOF once the
+  // client below closes, so give it the grace first; a probe still running then is tree-killed.
+  if ((yield* HostProcess.Platform) === "win32") {
+    yield* Effect.addFinalizer(() =>
+      child.exitCode.pipe(
+        Effect.ignore,
+        Effect.timeoutOption(CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER),
+      ),
+    );
+  }
   const clientContext = yield* Layer.build(CodexClient.layerChildProcess(child));
   const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
     Effect.provide(clientContext),
