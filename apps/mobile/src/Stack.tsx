@@ -153,7 +153,7 @@ import {
 import { ShowcaseReadyMarker } from "./features/showcase/ShowcaseCaptureCoordinator";
 import { immersiveRoute, modalRoute, pageRoute, sheetRoute } from "./features/layout/route-options";
 import { deriveLayout } from "./lib/layout";
-import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
+import { useDeviceType, useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { isPresentedRoute } from "./native/workspace-stack-projection";
 import { workspaceDetailRouter } from "./features/layout/workspace/workspace-detail-selection";
 
@@ -216,14 +216,14 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   ConnectionsNew: msg("Add Environment"),
 };
 
-// Thread settings keep the Duo's vertical bar so cancel, search, filter and confirm sit in the
-// rail. The picker stack spans the sheet so its header reaches the rail, and insets its content.
-const THREAD_SETTINGS_ROUTE = sheetRoute({
-  detent: "full",
+const { sheetAllowedDetents: THREAD_SETTINGS_DETENTS, ...THREAD_SETTINGS_ROUTE } = sheetRoute({
+  detent: 0.72,
+  maxDetent: 1,
   header: "none",
   android: "card",
   spansRail: true,
 });
+const THREAD_SETTINGS_COVER_DETENTS = [0.92, 1];
 
 // Search sheets push on Android like the branch picker; a formSheet there leaves the list's
 // header peeking above it once the keyboard opens.
@@ -906,6 +906,7 @@ registerPresentedRoutes(
 
 export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navigator }) {
   const { width, height } = useWindowDimensions();
+  const deviceType = useDeviceType();
   const nativeMetrics = useNativeLayoutMetrics();
   const usesSplitView = deriveLayout({ width, height, nativeMetrics }).usesSplitView;
   const resolve = useMessages();
@@ -923,6 +924,17 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
               : resolve(ROUTE_TITLES[route.name]);
         return {
           ...(title === undefined ? {} : { title }),
+          ...(Platform.OS === "ios" &&
+          (route.name === "ThreadSettingsSheet" ||
+            route.name === "NewTaskThreadSettings" ||
+            route.name === "SettingsScheduledTaskModel")
+            ? {
+                sheetAllowedDetents:
+                  deviceType === "duo-folded"
+                    ? THREAD_SETTINGS_COVER_DETENTS
+                    : THREAD_SETTINGS_DETENTS,
+              }
+            : {}),
           ...(Platform.OS === "android"
             ? {
                 animation: androidWorkspaceDestinationAnimation(
