@@ -15,7 +15,6 @@ import type {
   EnvironmentSpeechStatus,
   ProjectId,
   SpeechBenchmarkTier,
-  ThreadId,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { chooseSetupSpeechModel } from "@t3tools/shared/speech";
@@ -84,8 +83,6 @@ type HookInput = {
   /** The draft's project: its vocabulary on that environment and its name become recognition hints. */
   readonly projectId?: ProjectId | null | undefined;
   readonly projectName?: string | null | undefined;
-  /** The active thread: used on the server to enrich optional transcript cleanup with live context. */
-  readonly threadId?: ThreadId | null | undefined;
   readonly ownerKey: string;
   readonly disabled?: boolean | undefined;
   /**
@@ -314,7 +311,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       const current = latestRef.current;
       return {
         environmentId: current.input.environmentId,
-        threadId: current.input.threadId ?? null,
         projectName: current.input.projectName ?? null,
         projectWords: current.projectWords,
         clientSettings: current.clientSettings,

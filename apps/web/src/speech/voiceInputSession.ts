@@ -18,7 +18,6 @@ import type {
   SpeechPostProcessingOptions,
   SpeechStreamText,
   SpeechTranscriptionOptions,
-  ThreadId,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, EnvironmentInternalError } from "@t3tools/contracts";
 import { resolveSpeechVocabulary } from "@t3tools/shared/speech";
@@ -48,7 +47,6 @@ type DraftInput = {
 /** What a recording needs from its editor, read once when it starts. */
 export type VoiceRecordingContext = {
   readonly environmentId: EnvironmentId;
-  readonly threadId?: ThreadId | null | undefined;
   readonly projectName: string | null;
   readonly projectWords: SpeechCustomWords;
   readonly clientSettings: ClientSettings;
@@ -134,7 +132,6 @@ export class VoiceInputSession {
           readonly cleanup: SpeechPostProcessingOptions | null;
           readonly cleanupGrant: string | null;
           readonly cleanupPrepared: PreparedConnection | null;
-          readonly threadId: ThreadId | null;
         }
       | undefined;
     const platformInput = {
@@ -158,7 +155,6 @@ export class VoiceInputSession {
         recordingPreferences = {
           cleanupGrant,
           cleanupPrepared: context.cleanupPrepared,
-          threadId: context.threadId ?? null,
           cleanup: cleanupEnabled
             ? {
                 speechCustomWords,
@@ -218,7 +214,6 @@ export class VoiceInputSession {
           cleanupContext(options.draft),
           preferences.cleanup,
           () => hasAudioConsent() && preferences.cleanupGrant === readCleanupGrant(),
-          preferences.threadId,
         ),
         options,
       ).then((result) => result.text);
