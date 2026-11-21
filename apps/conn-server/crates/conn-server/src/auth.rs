@@ -562,6 +562,28 @@ struct AuthFile {
     version: u32,
     sessions: Vec<StoredSession>,
     pairing_links: Vec<StoredPairing>,
+    /// T3 pairing codes spent or revoked here. T3's table still lists them as unspent, so
+    /// neither a later carry-over nor [`AuthStore::exchange`]'s look into T3's table may take
+    /// them again. Each goes when its code would have expired.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    spent_t3_pairing: Vec<SpentT3Pairing>,
+    /// When T3's state was last carried over into this file. A code T3's CLI wrote after it
+    /// may be exchanged from T3's table; one from before was carried (or deliberately left
+    /// out) and is decided by this file alone. A file without it (carried by an older
+    /// version, whose spent codes left no record) takes no code from T3's table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    t3_carried_at_ms: Option<u64>,
+}
+
+/// See `exchange_t3_code`: how long before the carry a T3 code may have been stamped and
+/// still missed it.
+const T3_CARRY_MARGIN_MS: u64 = 5 * 60 * 1000;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SpentT3Pairing {
+    id: String,
+    expires_at_ms: u64,
 }
 
 #[derive(Clone)]
@@ -584,6 +606,10 @@ struct State {
     /// When each session last opened a socket, kept in memory so a socket open writes no
     /// file. Holds only ids of live sessions.
     last_connected: HashMap<String, u64>,
+    /// `AuthFile::spent_t3_pairing`: id to the code's expiry.
+    spent_t3: HashMap<String, u64>,
+    /// `AuthFile::t3_carried_at_ms`.
+    t3_carried_at: Option<u64>,
     stamp: Option<Stamp>,
 }
 
@@ -607,6 +633,8 @@ impl State {
             keep
         });
         self.tickets.retain(|_, ticket| ticket.expires_at_ms > now);
+        self.spent_t3
+            .retain(|_, expires_at_ms| *expires_at_ms > now);
         let sessions = &self.sessions;
         self.last_connected
             .retain(|id, _| sessions.values().any(|s| &s.id == id));
@@ -804,6 +832,9 @@ impl AuthStore {
             let Some(grant) = state.pairing.remove(&key) else {
                 return Vec::new();
             };
+            if grant.t3 {
+                state.spent_t3.insert(grant.id.clone(), grant.expires_at_ms);
+            }
             let mut client = client.clone();
             if client.label.is_none() {
                 client.label = grant.label.clone();
@@ -822,6 +853,75 @@ impl AuthStore {
                 AccessChange::PairingLinkRemoved(grant.id),
                 AccessChange::ClientUpserted(id),
             ]
+        });
+        if let Err(error) = written {
+            eprintln!("conn-server: could not save auth state: {error}");
+            return Err(ExchangeError::Storage);
+        }
+        if matches!(outcome, Err(ExchangeError::InvalidCredential)) {
+            return self.exchange_t3_code(code, requested, client);
+        }
+        outcome
+    }
+
+    /// A code T3's CLI made in this state folder after the carry-over (Conn desktop's SSH
+    /// setup runs `t3 auth pairing create`): spent here once, as a code of this server.
+    fn exchange_t3_code(
+        &self,
+        code: &str,
+        requested: Option<&[String]>,
+        client: ClientInfo,
+    ) -> Result<IssuedSession, ExchangeError> {
+        let Some(dir) = self.file.as_ref().and_then(|f| f.parent()) else {
+            return Err(ExchangeError::InvalidCredential);
+        };
+        let link = match crate::t3_carry::read_t3_pairing_code(dir, code, now_ms()) {
+            Ok(Some(link)) => link,
+            Ok(None) => return Err(ExchangeError::InvalidCredential),
+            Err(error) => {
+                eprintln!("conn-server: cannot read the T3 server's pairing codes: {error}");
+                return Err(ExchangeError::InvalidCredential);
+            }
+        };
+        let mut outcome = Err(ExchangeError::InvalidCredential);
+        let written = self.write(|state| {
+            // Spent, revoked or carried over here: this server's record decides. Only a code
+            // made after the carry-over is T3's table's to give, and only while it is valid
+            // (checked again under the lock: the spent record goes at the code's expiry).
+            // T3 stamps `createdAt` before it inserts the row, so a code stamped shortly
+            // before the read may still miss the carry: a margin takes it here. A carried
+            // code inside the margin is in `state.pairing` or `spent_t3`, checked below.
+            let made_after_carry = state
+                .t3_carried_at
+                .is_some_and(|at| link.created_at_ms >= at.saturating_sub(T3_CARRY_MARGIN_MS));
+            if !made_after_carry
+                || link.expires_at_ms <= now_ms()
+                || state.spent_t3.contains_key(&link.id)
+                || state.pairing.values().any(|l| l.id == link.id)
+            {
+                return Vec::new();
+            }
+            let scopes = narrow(link.scopes.clone(), requested);
+            if scopes.is_empty() {
+                outcome = Err(ExchangeError::ScopeNotGranted);
+                return Vec::new();
+            }
+            let mut client = client.clone();
+            if client.label.is_none() {
+                client.label = link.label.clone();
+            }
+            let (token, session) =
+                new_session(link.subject.clone(), scopes, client, SESSION_TTL_MS);
+            let issued = IssuedSession {
+                token: token.clone(),
+                principal: principal_of(&session),
+                client: session.client.clone(),
+            };
+            let id = session.id.clone();
+            state.sessions.insert(hash(&token), session);
+            state.spent_t3.insert(link.id.clone(), link.expires_at_ms);
+            outcome = Ok(issued);
+            vec![AccessChange::ClientUpserted(id)]
         });
         if let Err(error) = written {
             eprintln!("conn-server: could not save auth state: {error}");
@@ -925,6 +1025,9 @@ impl AuthStore {
             let Some(grant) = state.pairing.remove(&key) else {
                 return Vec::new();
             };
+            if grant.t3 {
+                state.spent_t3.insert(grant.id.clone(), grant.expires_at_ms);
+            }
             let level = grant
                 .subject
                 .strip_prefix(MCP_APPROVAL_SUBJECT_PREFIX)
@@ -1118,11 +1221,31 @@ impl AuthStore {
             .map(|(_, s)| session_to_contract(s, &state, current))
     }
 
+    /// Drops every session carried over from T3. An inert rehearsal copy calls it, so the
+    /// original's clients cannot drive the copy; sessions issued here stay.
+    pub fn drop_t3_sessions(&self) -> io::Result<usize> {
+        let mut dropped = 0;
+        self.write(|state| {
+            let before = state.sessions.len();
+            state.sessions.retain(|_, s| !s.t3_signed);
+            dropped = before - state.sessions.len();
+            Vec::new()
+        })?;
+        Ok(dropped)
+    }
+
     pub fn revoke_pairing_link(&self, id: &str) -> io::Result<bool> {
         let mut revoked = false;
         self.write(|state| {
             let before = state.pairing.len();
-            state.pairing.retain(|_, l| l.id != id);
+            let spent = &mut state.spent_t3;
+            state.pairing.retain(|_, l| {
+                let keep = l.id != id;
+                if !keep && l.t3 {
+                    spent.insert(l.id.clone(), l.expires_at_ms);
+                }
+                keep
+            });
             revoked = state.pairing.len() != before;
             if revoked {
                 vec![AccessChange::PairingLinkRemoved(id.to_owned())]
@@ -1347,6 +1470,12 @@ impl AuthStore {
         };
         state.sessions.clear();
         state.pairing.clear();
+        state.spent_t3 = file
+            .spent_t3_pairing
+            .into_iter()
+            .map(|s| (s.id, s.expires_at_ms))
+            .collect();
+        state.t3_carried_at = file.t3_carried_at_ms;
         for session in file.sessions {
             if let Some(hash) = decode_hex(&session.token_hash) {
                 state.sessions.insert(hash, session);
@@ -1387,12 +1516,22 @@ impl AuthStore {
             || next
                 .sessions
                 .keys()
-                .any(|k| !state.sessions.contains_key(k));
+                .any(|k| !state.sessions.contains_key(k))
+            || next.spent_t3 != state.spent_t3;
         if changed && let Some(path) = &self.file {
             let file = AuthFile {
                 version: 1,
                 sessions: next.sessions.values().cloned().collect(),
                 pairing_links: next.pairing.values().cloned().collect(),
+                spent_t3_pairing: next
+                    .spent_t3
+                    .iter()
+                    .map(|(id, expires_at_ms)| SpentT3Pairing {
+                        id: id.clone(),
+                        expires_at_ms: *expires_at_ms,
+                    })
+                    .collect(),
+                t3_carried_at_ms: next.t3_carried_at,
             };
             let bytes = serde_json::to_vec_pretty(&file).map_err(io::Error::other)?;
             write_private(path, &bytes)?;
@@ -1543,23 +1682,41 @@ pub(crate) struct T3PairingLink {
 /// Under the auth file's lock, so a CLI write cannot be lost. An `auth.json` that appeared
 /// meanwhile is kept (`false`). With `replace` (an earlier carry-over's file, read again from
 /// T3), sessions and pairing links issued here since are kept; T3's are read afresh.
+///
+/// `read_at` is when T3's table was read: a code T3 makes after it is the fallback's
+/// (`t3CarriedAtMs`). On `replace` over an existing file, T3's sessions and codes come back
+/// only when this file still holds them or T3 made them after the file's carry: one revoked
+/// or spent here never returns, even from a file an older version wrote.
 pub(crate) fn write_t3_import(
     path: &Path,
-    sessions: Vec<T3Session>,
-    links: Vec<T3PairingLink>,
+    mut sessions: Vec<T3Session>,
+    mut links: Vec<T3PairingLink>,
     replace: bool,
+    read_at: u64,
 ) -> io::Result<bool> {
     let _lock = lock_file(path)?;
     if !replace && path.exists() {
         return Ok(false);
     }
     // A file that cannot be read stops the start: it may hold sessions issued here.
-    let earlier: AuthFile = match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => AuthFile::default(),
+    let (earlier, existed): (AuthFile, bool) = match fs::read(path) {
+        Ok(bytes) => (
+            serde_json::from_slice(&bytes)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+            true,
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (AuthFile::default(), false),
         Err(error) => return Err(error),
     };
+    if existed {
+        let after = |at: u64| earlier.t3_carried_at_ms.is_some_and(|cut| at >= cut);
+        sessions.retain(|s| {
+            after(s.issued_at_ms) || earlier.sessions.iter().any(|e| e.t3_signed && e.id == s.id)
+        });
+        links.retain(|l| {
+            after(l.created_at_ms) || earlier.pairing_links.iter().any(|e| e.t3 && e.id == l.id)
+        });
+    }
     let own_sessions: Vec<StoredSession> = earlier
         .sessions
         .into_iter()
@@ -1570,6 +1727,7 @@ pub(crate) fn write_t3_import(
         .into_iter()
         .filter(|l| !l.t3)
         .collect();
+    let spent = earlier.spent_t3_pairing;
     let mut file = AuthFile {
         version: 1,
         sessions: sessions
@@ -1591,6 +1749,7 @@ pub(crate) fn write_t3_import(
             .collect(),
         pairing_links: links
             .into_iter()
+            .filter(|l| !spent.iter().any(|s| s.id == l.id))
             .map(|l| StoredPairing {
                 id: l.id,
                 code_hash: hex(&hash(&l.credential.trim().to_ascii_uppercase())),
@@ -1602,6 +1761,8 @@ pub(crate) fn write_t3_import(
                 t3: true,
             })
             .collect(),
+        spent_t3_pairing: spent,
+        t3_carried_at_ms: Some(read_at),
     };
     file.sessions.extend(own_sessions);
     file.pairing_links.extend(own_links);
@@ -2507,12 +2668,13 @@ mod tests {
                 &file,
                 vec![session("a"), session("b")],
                 vec![link("p1", "AAAA")],
-                false
+                false,
+                now_ms(),
             )
             .unwrap()
         );
         // Without `replace`, an existing file is kept.
-        assert!(!write_t3_import(&file, vec![], vec![], false).unwrap());
+        assert!(!write_t3_import(&file, vec![], vec![], false, now_ms()).unwrap());
         let store = AuthStore::open(file.clone()).unwrap();
         let own = store
             .issue_session(SessionRequest {
@@ -2524,8 +2686,8 @@ mod tests {
             .unwrap();
         drop(store);
         // T3 revoked "b" and spent "p1" in between: the re-read drops them, keeps the CLI one.
-        assert!(write_t3_import(&file, vec![session("a")], vec![], true).unwrap());
-        let store = AuthStore::open(file).unwrap();
+        assert!(write_t3_import(&file, vec![session("a")], vec![], true, now_ms()).unwrap());
+        let store = AuthStore::open(file.clone()).unwrap();
         let ids: Vec<String> = store
             .client_sessions(None)
             .into_iter()
@@ -2534,6 +2696,29 @@ mod tests {
         assert!(ids.contains(&"a".to_owned()) && !ids.contains(&"b".to_owned()));
         assert!(store.authenticate_bearer(&own.token).is_some());
         assert!(store.pairing_links().is_empty());
+        drop(store);
+        // A re-read never brings back what this file dropped (revoked or spent here), even
+        // from a file without a carry time; what T3 made after the carry comes in.
+        let mut bare: serde_json::Value =
+            serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        bare.as_object_mut().unwrap().remove("t3CarriedAtMs");
+        fs::write(&file, serde_json::to_vec(&bare).unwrap()).unwrap();
+        assert!(
+            write_t3_import(&file, vec![session("b")], vec![link("p1", "AAAA")], true, 0).unwrap()
+        );
+        let store = AuthStore::open(file.clone()).unwrap();
+        assert!(
+            store
+                .client_sessions(None)
+                .iter()
+                .all(|s| s.session_id != "b")
+        );
+        assert!(store.pairing_links().is_empty());
+        drop(store);
+        let mut late = link("p2", "BBBB");
+        late.created_at_ms = u64::MAX / 2;
+        assert!(write_t3_import(&file, vec![], vec![late], true, 0).unwrap());
+        assert_eq!(AuthStore::open(file).unwrap().pairing_links().len(), 1);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -2560,6 +2745,7 @@ mod tests {
                 expires_at_ms: later,
             }],
             false,
+            now_ms(),
         )
         .unwrap();
         let store = AuthStore::open(dir.join("auth.json")).unwrap();

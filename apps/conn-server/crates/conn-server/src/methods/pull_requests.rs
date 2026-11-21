@@ -574,6 +574,10 @@ impl Panel {
         input: &Value,
     ) -> Result<Value, Failure> {
         let action = text(input, "action");
+        // A rehearsal copy (`CONN_SERVER_INERT`) never acts on a repository host.
+        if crate::serve::inert() {
+            return Err(action_unavailable(input));
+        }
         if action == "delete-branch"
             || input.get("stackNumber").is_some()
             || !run_action::SERVED.contains(&action)

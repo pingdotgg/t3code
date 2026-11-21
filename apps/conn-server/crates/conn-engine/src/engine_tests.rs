@@ -626,6 +626,38 @@ async fn a_restart_sends_an_undelivered_message_again() {
     assert_eq!(p["messages"][1]["text"], "echo: late");
 }
 
+/// An inert rehearsal copy (`recover_runs` off) leaves a run it found active as it was: no
+/// provider turn starts, so the copy never repeats the original's work.
+#[tokio::test(flavor = "current_thread")]
+async fn without_recovery_an_active_run_stays_as_found() {
+    let db = TempDb::new("restart-inert");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        let inner = engine.inner().clone();
+        let command = message("t1", "c2", "late");
+        inner
+            .write(move |tx| {
+                let handler = crate::commands::handler("message.dispatch").unwrap();
+                handler(tx, command)
+                    .map(|_| ())
+                    .map_err(|_| "rejected".to_owned())
+            })
+            .await
+            .unwrap();
+    }
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(db.path());
+    config.providers = vec![provider.clone()];
+    config.recover_runs = false;
+    let engine = SqliteEngine::open(config).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let p = projection(&engine, "t1").await;
+    assert_ne!(p["runs"][0]["status"], "completed");
+    assert_ne!(p["runs"][0]["status"], "cancelled");
+    assert_eq!(p["messages"].as_array().map(Vec::len), Some(1));
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn launch_thread_creates_and_starts_in_one_call() {
     let db = TempDb::new("launch");

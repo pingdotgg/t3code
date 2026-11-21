@@ -72,6 +72,10 @@ async fn hook(
     let Some(tasks) = state.deps.scheduled_tasks.clone() else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // A rehearsal copy holds the original's hooks: a delivery there must start nothing.
+    if crate::serve::inert() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     // The router answers HEAD with the GET route; link checkers probe with HEAD.
     if method == Method::HEAD {
         let mut response = answer(

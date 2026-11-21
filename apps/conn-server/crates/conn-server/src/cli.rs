@@ -56,7 +56,10 @@ session and its process close; 0 keeps them open. Default 30, as the T3 server.
 an .mjs script run with node. Default: conn-sdk-host beside this binary, else
 sdk-host/index.mjs beside it (the release tarball), else the checkout's
 helpers/sdk-host/index.mjs.
-Environment: T3CODE_HOME, T3CODE_PORT, T3CODE_HOST, T3CODE_MODE, T3CODE_BOOTSTRAP_FD, CONN_SERVER_BROWSER_PATH.";
+CONN_SERVER_INERT=1 serves a rehearsal copy of a state folder: it imports and answers, but runs
+no agent (no providers, no run recovery, no scheduled tasks, no task followers or PR sweeps).
+Environment: T3CODE_HOME, T3CODE_PORT, T3CODE_HOST, T3CODE_MODE, T3CODE_BOOTSTRAP_FD, CONN_SERVER_BROWSER_PATH,
+CONN_SERVER_INERT.";
 
 pub const DEFAULT_PORT: u16 = 3773;
 

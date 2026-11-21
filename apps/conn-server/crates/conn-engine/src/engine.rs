@@ -66,6 +66,11 @@ pub struct EngineConfig {
     /// Every stored timestamp and the idle release read it. Default: the system clock. A
     /// replay sets a [`crate::ManualClock`], as T3's tests run on Effect's `TestClock`.
     pub clock: Arc<dyn crate::Clock>,
+    /// Recover the runs and rollbacks a previous process left active (`restart.rs`), as the
+    /// T3 server does at start. Default on. Off for an inert rehearsal copy
+    /// (`CONN_SERVER_INERT`): its runs stay as imported, so nothing continues or touches a
+    /// workspace the original still owns.
+    pub recover_runs: bool,
 }
 
 /// See [`EngineConfig::command_output_tap`].
@@ -124,6 +129,7 @@ impl EngineConfig {
             runtime_policy_override: None,
             command_output_tap: None,
             clock: Arc::new(crate::SystemClock),
+            recover_runs: true,
         }
     }
 }
@@ -255,8 +261,11 @@ impl SqliteEngine {
         let mut store = Store::open(&config.database)?;
         store.set_clock(config.clock.clone());
         store.generates_titles = config.title_generator.is_some();
-        let unfinished = store.unfinished_runs()?;
-        let pending_rollbacks = store.pending_rollbacks()?;
+        let (unfinished, pending_rollbacks) = if config.recover_runs {
+            (store.unfinished_runs()?, store.pending_rollbacks()?)
+        } else {
+            Default::default()
+        };
         let mut tx = store.tx()?;
         for project in &config.projects {
             tx.ensure_project(

@@ -100,8 +100,9 @@ pub fn carry_t3_state(state_dir: &Path) -> Result<Option<CarryReport>, String> {
         let (sessions, skipped) = read_sessions(&conn, now)?;
         let links = read_pairing_links(&conn, now)?;
         let (count, link_count) = (sessions.len(), links.len());
-        let written = crate::auth::write_t3_import(&auth, sessions, links, is_pending(AUTH_FILE))
-            .map_err(|e| format!("t3 carry: cannot write {}: {e}", auth.display()))?;
+        let written =
+            crate::auth::write_t3_import(&auth, sessions, links, is_pending(AUTH_FILE), now)
+                .map_err(|e| format!("t3 carry: cannot write {}: {e}", auth.display()))?;
         if written {
             report.sessions = Some(count);
             report.sessions_skipped = skipped;
@@ -226,16 +227,50 @@ fn read_sessions(conn: &Connection, now: u64) -> Result<(Vec<T3Session>, usize),
 
 /// Unspent one-time pairing codes a client could still exchange here.
 fn read_pairing_links(conn: &Connection, now: u64) -> Result<Vec<T3PairingLink>, String> {
+    query_pairing_links(conn, now, None)
+}
+
+/// One pairing code that T3's own CLI made after the carry-over: `t3 auth pairing create
+/// --base-dir ~/.t3`, which Conn desktop's SSH setup runs on the host, writes T3's table even
+/// while this server owns the folder. Only a plain one-time code (subject `one-time-token`),
+/// read-only, by its code (case-insensitive, as codes here are). `None` when the folder has no
+/// T3 state or no such unspent code. Blocking.
+pub(crate) fn read_t3_pairing_code(
+    state_dir: &Path,
+    code: &str,
+    now: u64,
+) -> Result<Option<T3PairingLink>, String> {
+    let source = state_dir.join(T3_STATE_FILE);
+    if !source.is_file() {
+        return Ok(None);
+    }
+    let conn = conn_engine::open_t3_read_only(&source)?;
+    Ok(query_pairing_links(&conn, now, Some(code))?
+        .into_iter()
+        .next())
+}
+
+/// With `code`, only the plain one-time code with that credential.
+fn query_pairing_links(
+    conn: &Connection,
+    now: u64,
+    code: Option<&str>,
+) -> Result<Vec<T3PairingLink>, String> {
     let cols = columns(conn, "auth_pairing_links")?;
     if cols.is_empty() {
         return Ok(Vec::new());
     }
+    let only_code = if code.is_some() {
+        "AND subject = 'one-time-token' AND upper(trim(credential)) = ?1"
+    } else {
+        ""
+    };
     let sql = format!(
         "SELECT id, credential, scopes, subject, label, created_at, expires_at
          FROM t3.auth_pairing_links
          WHERE revoked_at IS NULL AND consumed_at IS NULL AND method = 'one-time-token'
            AND (subject NOT LIKE 'mcp-approval:%' OR subject LIKE 'mcp-approval:peer-link:%')
-           AND {proof} IS NULL AND {approval} = 0 AND {denied} = 0
+           AND {proof} IS NULL AND {approval} = 0 AND {denied} = 0 {only_code}
          ORDER BY created_at, id",
         proof = if cols.iter().any(|c| c == "proof_key_thumbprint") {
             "proof_key_thumbprint"
@@ -254,7 +289,11 @@ fn read_pairing_links(conn: &Connection, now: u64) -> Result<Vec<T3PairingLink>,
         },
     );
     let mut stmt = conn.prepare(&sql).map_err(err)?;
-    let mut rows = stmt.query([]).map_err(err)?;
+    let mut rows = match code {
+        Some(code) => stmt.query([code.trim().to_ascii_uppercase()]),
+        None => stmt.query([]),
+    }
+    .map_err(err)?;
     let mut links = Vec::new();
     while let Some(row) = rows.next().map_err(err)? {
         let Some(expires_at_ms) = row.get::<_, String>(6).ok().as_deref().and_then(ms) else {
@@ -467,6 +506,154 @@ mod tests {
             std::env::temp_dir().join(format!("conn-server-{name}-{}", crate::auth::random_hex(6)));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// Conn desktop's SSH setup runs `t3 auth pairing create --base-dir ~/.t3` on a host
+    /// this server already serves: T3's CLI writes the code to T3's table, after the carry.
+    #[test]
+    fn codes_t3_writes_after_the_carry_are_spent_here_once() {
+        use crate::auth::{AuthStore, ClientInfo, ExchangeError};
+        let dir = temp_dir("t3-late-code");
+        let t3 = Connection::open(dir.join(T3_STATE_FILE)).unwrap();
+        t3.execute_batch(T3_TABLES).unwrap();
+        let add_at = |id: &str, code: &str, subject: &str, created: &str| {
+            t3.execute(
+                "INSERT INTO auth_pairing_links (id, credential, method, scopes, subject,
+                   label, created_at, expires_at) VALUES (?1, ?2, 'one-time-token',
+                   '[\"orchestration:read\"]', ?3, 'ssh', ?4, '2999-01-01T00:00:00.000Z')",
+                [id, code, subject, created],
+            )
+            .unwrap();
+        };
+        // Made after the carry-over below.
+        let add = |id: &str, code: &str, subject: &str| {
+            add_at(id, code, subject, "2998-01-01T00:00:00.000Z");
+        };
+        add_at(
+            "carried-2",
+            "FGHJKMNPQRST",
+            "one-time-token",
+            "2026-11-21T00:00:00.000Z",
+        );
+        carry_t3_state(&dir).unwrap().expect("first start");
+        let exchange = |store: &AuthStore, code: &str| {
+            store
+                .exchange(code, None, ClientInfo::default())
+                .map(|issued| issued.principal.scopes)
+        };
+        let store = AuthStore::open(dir.join(AUTH_FILE)).unwrap();
+
+        // A carried code, spent here: T3's table still lists it, and that must not count.
+        assert!(exchange(&store, "FGHJKMNPQRST").is_ok());
+        assert!(matches!(
+            exchange(&store, "FGHJKMNPQRST"),
+            Err(ExchangeError::InvalidCredential)
+        ));
+        // A carried code revoked here stays revoked.
+        assert!(store.revoke_pairing_link("open").unwrap());
+        assert!(matches!(
+            exchange(&store, "ABCDEFGHJKMN"),
+            Err(ExchangeError::InvalidCredential)
+        ));
+
+        // Written by T3's CLI after the carry: works once, case-insensitively.
+        add("late", "GHJKMNPQRSTV", "one-time-token");
+        add(
+            "late-peer",
+            "HJKMNPQRSTVW",
+            "mcp-approval:peer-link:full-access",
+        );
+        assert_eq!(
+            exchange(&store, "ghjkmnpqrstv").unwrap(),
+            vec!["orchestration:read".to_owned()]
+        );
+        assert!(matches!(
+            exchange(&store, "GHJKMNPQRSTV"),
+            Err(ExchangeError::InvalidCredential)
+        ));
+        // Spent means spent for a process that opens the file afresh too.
+        drop(store);
+        let store = AuthStore::open(dir.join(AUTH_FILE)).unwrap();
+        assert!(matches!(
+            exchange(&store, "GHJKMNPQRSTV"),
+            Err(ExchangeError::InvalidCredential)
+        ));
+        assert!(matches!(
+            exchange(&store, "FGHJKMNPQRST"),
+            Err(ExchangeError::InvalidCredential)
+        ));
+        assert!(matches!(
+            exchange(&store, "ABCDEFGHJKMN"),
+            Err(ExchangeError::InvalidCredential)
+        ));
+        // Only plain one-time codes: a peer-link code is for a peer link, and T3's spent,
+        // purpose-bound and unknown codes stay refused.
+        for code in [
+            "HJKMNPQRSTVW",
+            "BCDEFGHJKMNP",
+            "DEFGHJKMNPQR",
+            "JKMNPQRSTVWX",
+        ] {
+            assert!(
+                matches!(
+                    exchange(&store, code),
+                    Err(ExchangeError::InvalidCredential)
+                ),
+                "{code}"
+            );
+        }
+        drop(store);
+        drop(t3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A code from before the carry-over is this file's to decide, even when the file lost
+    /// track of it; and a file written before carry times were kept takes none from T3.
+    #[test]
+    fn codes_from_before_the_carry_never_come_from_t3s_table() {
+        use crate::auth::{AuthStore, ClientInfo};
+        let dir = temp_dir("t3-early-code");
+        let t3 = Connection::open(dir.join(T3_STATE_FILE)).unwrap();
+        t3.execute_batch(T3_TABLES).unwrap();
+        carry_t3_state(&dir).unwrap().expect("first start");
+        // As if the carried code had been spent here by a version without spent records.
+        t3.execute(
+            "INSERT INTO auth_pairing_links (id, credential, method, scopes, subject, label,
+               created_at, expires_at) VALUES ('early', 'KMNPQRSTVWXY', 'one-time-token',
+               '[\"orchestration:read\"]', 'one-time-token', 'ssh', '2000-01-01T00:00:00.000Z',
+               '2999-01-01T00:00:00.000Z')",
+            [],
+        )
+        .unwrap();
+        let store = AuthStore::open(dir.join(AUTH_FILE)).unwrap();
+        assert!(
+            store
+                .exchange("KMNPQRSTVWXY", None, ClientInfo::default())
+                .is_err()
+        );
+        // An auth file without a carry time (an older version's): no code from T3's table.
+        drop(store);
+        let path = dir.join(AUTH_FILE);
+        let mut file: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        file.as_object_mut().unwrap().remove("t3CarriedAtMs");
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        t3.execute(
+            "INSERT INTO auth_pairing_links (id, credential, method, scopes, subject, label,
+               created_at, expires_at) VALUES ('late', 'MNPQRSTVWXYZ', 'one-time-token',
+               '[\"orchestration:read\"]', 'one-time-token', 'ssh', '2998-01-01T00:00:00.000Z',
+               '2999-01-01T00:00:00.000Z')",
+            [],
+        )
+        .unwrap();
+        let store = AuthStore::open(path).unwrap();
+        assert!(
+            store
+                .exchange("MNPQRSTVWXYZ", None, ClientInfo::default())
+                .is_err()
+        );
+        drop(t3);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -220,6 +220,8 @@ export const RUN_DROPPED = [
   "ANDROID_HOME", "ANDROID_SDK_ROOT", "LOCALAPPDATA", "EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS",
   // The machine's switch for the local server scan (`T3CODE_PORT_DISCOVERY=0`).
   "T3CODE_PORT_DISCOVERY",
+  // A rehearsal copy's switch (`serve.rs`): a test server must run its providers.
+  "CONN_SERVER_INERT",
 ];
 
 /** The prefix of the cargo runner's temp folders: `conn-run-<runner pid>-XXXXXX`. */

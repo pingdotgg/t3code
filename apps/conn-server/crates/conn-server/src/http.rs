@@ -59,6 +59,7 @@ impl std::fmt::Debug for AppState {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(root))
         .route("/health", get(health))
         .route("/.well-known/t3/environment", get(descriptor))
         .route("/api/auth/session", get(session_state))
@@ -116,6 +117,19 @@ async fn cors(request: Request, next: Next) -> Response {
         HeaderValue::from_static("600"),
     );
     response
+}
+
+/// The T3 server serves its web client here. This server has none (clients are the Conn apps),
+/// but the root must still answer 2xx: Conn desktop's SSH setup (`__ssh-helper wait-ready`,
+/// `packages/ssh`) probes `GET /` on the host's loopback server before it reuses it, and
+/// without a 2xx it would neither attach nor start a second server.
+async fn root() -> Response {
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        "<!doctype html><meta charset=\"utf-8\"><title>Conn Server</title>\
+         <p>This is a Conn Server. Connect to it from a Conn app.</p>\n",
+    )
+        .into_response()
 }
 
 async fn health(State(state): State<AppState>) -> Json<Value> {
@@ -177,7 +191,10 @@ async fn token(
     headers: HeaderMap,
     Form(request): Form<TokenRequest>,
 ) -> Response {
-    no_store(exchange_token(&state, peer, &headers, request))
+    // The exchange writes `auth.json` and may read T3's pairing table: blocking work.
+    let exchanged =
+        tokio::task::spawn_blocking(move || exchange_token(&state, peer, &headers, request)).await;
+    no_store(exchanged.unwrap_or_else(|_| internal_reason("access_token_issuance_failed")))
 }
 
 fn exchange_token(
@@ -874,6 +891,14 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
+
+    /// Conn desktop's SSH setup reuses a host's server only when `GET /` answers 2xx.
+    #[tokio::test]
+    async fn the_root_answers_for_the_ssh_readiness_probe() {
+        let (addr, _) = serve().await;
+        let (status, _) = call(addr, "GET / HTTP/1.1", "").await;
+        assert_eq!(status, 200);
+    }
 
     async fn serve() -> (std::net::SocketAddr, Arc<AuthStore>) {
         serve_with(None).await
