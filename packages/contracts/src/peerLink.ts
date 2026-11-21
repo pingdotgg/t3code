@@ -210,6 +210,19 @@ export const PeerLinkClientPairingCredential = Schema.Struct({
 });
 export type PeerLinkClientPairingCredential = typeof PeerLinkClientPairingCredential.Type;
 
+/** A thread here that the linked environment delegated: its parent there is done. */
+export const PeerLinkParentDoneRequest = Schema.Struct({
+  threadId: ThreadId,
+  parentThreadId: ThreadId,
+});
+export type PeerLinkParentDoneRequest = typeof PeerLinkParentDoneRequest.Type;
+
+export const PeerLinkParentDoneResult = Schema.Struct({
+  /** `thread_not_found`: the thread is gone here, so nothing is left to settle. */
+  outcome: Schema.Literals(["marked", "thread_not_found"]),
+});
+export type PeerLinkParentDoneResult = typeof PeerLinkParentDoneResult.Type;
+
 /**
  * The user's answer to an agent asking to link an environment. The pairing
  * code is used once to link and is never recorded; the thread learns only the

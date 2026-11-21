@@ -31,6 +31,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerHttp from "../http.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as PeerHttp from "./http.ts";
 import * as PeerClientPairing from "./PeerClientPairing.ts";
@@ -85,6 +86,10 @@ export const servePeer = <E, R, E2 = never, R2 = never>(
   tools: Layer.Layer<never, E, R>,
   /** More of its HTTP routes, whose handlers get the same auth and settings. */
   routes: Layer.Layer<never, E2, R2> = Layer.empty,
+  /** Its threads, as the routes a link calls outside `/mcp` see them. */
+  threads: Layer.Layer<ThreadManagement.ThreadManagementService> = Layer.mock(
+    ThreadManagement.ThreadManagementService,
+  )({}),
 ) =>
   Effect.gen(function* () {
     const descriptor = yield* Ref.make(initial);
@@ -137,7 +142,9 @@ export const servePeer = <E, R, E2 = never, R2 = never>(
             ),
           ),
         ),
-        Layer.provide(PeerHttp.layer.pipe(Layer.provide(PeerClientPairing.layerIssuer))),
+        Layer.provide(
+          PeerHttp.layer.pipe(Layer.provide(PeerClientPairing.layerIssuer), Layer.provide(threads)),
+        ),
         Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
         Layer.provide(AuthHttp.layerAuthenticatedAuth),
       ),

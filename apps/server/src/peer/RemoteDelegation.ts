@@ -132,6 +132,8 @@ export class RemoteDelegation extends Context.Service<
     /**
      * Follows every open remote task until it ends, including after a
      * restart, and a finished one again when a Stop here owes it a stop there.
+     * Tells the thread there of each task a settled, archived or deleted parent
+     * here delegated that the parent is done, until it has it.
      */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
@@ -953,6 +955,120 @@ const make = Effect.gen(function* () {
       );
     });
 
+  /**
+   * Tells each thread there, one at a time, that its task's parent here is done, so it settles
+   * as a subagent would. A parent active again is owed nothing; a thread gone there counts as
+   * told. A failing link ends the pass: one attempt per retry however much it is owed.
+   */
+  const tellParentDonePass = Effect.fn("RemoteDelegation.tellParentDonePass")(function* (
+    environmentId: EnvironmentId,
+  ) {
+    const owed = yield* projections.getRemoteTasksOwedParentDone({ environmentId });
+    const told = new Set<string>();
+    let refused = false;
+    for (const { parentThreadId, taskId, threadId } of owed) {
+      const key = `${parentThreadId}\0${threadId}`;
+      if (!told.has(key)) {
+        const stillOwed = (yield* projections.getRemoteTasksOwedParentDone({
+          parentThreadId,
+        })).some((row) => row.taskId === taskId);
+        if (!stillOwed) {
+          yield* Effect.logDebug("remote-delegation.parent-done-not-owed", {
+            parentThreadId,
+            threadId,
+          });
+          continue;
+        }
+        if (
+          (yield* links.tellParentDone(environmentId, { threadId, parentThreadId })) === "refused"
+        ) {
+          yield* Effect.logWarning("remote-delegation.parent-done-refused", {
+            parentThreadId,
+            environmentId,
+            threadId,
+          });
+          refused = true;
+          continue;
+        }
+        told.add(key);
+      }
+      yield* threads.dispatch({
+        type: "delegated_task.remote.parent-done",
+        commandId: CommandId.make(
+          `command:remote-parent-done:${parentThreadId}:${taskId}:${yield* random.uuidV4()}`,
+        ),
+        threadId: parentThreadId,
+        taskId,
+      });
+    }
+    if (refused) {
+      return yield* new Cause.UnknownError(
+        undefined,
+        "A linked environment refused a parent's end.",
+      );
+    }
+    yield* Effect.logDebug("remote-delegation.parent-done-told", {
+      environmentId,
+      owed: owed.length,
+      told: told.size,
+    });
+  });
+
+  const tellingParentDone = new Map<EnvironmentId, { again: boolean }>();
+
+  /**
+   * `tellParentDonePass` until it gets there, with at most one pass per environment, retried
+   * with back-off. Work owed meanwhile runs one more pass; nothing is recorded until the thread
+   * there has it.
+   */
+  const tellParentDone = (environmentId: EnvironmentId) =>
+    Effect.suspend(() => {
+      const running = tellingParentDone.get(environmentId);
+      if (running !== undefined) {
+        running.again = true;
+        return Effect.void;
+      }
+      const state = { again: false };
+      tellingParentDone.set(environmentId, state);
+      return tellParentDonePass(environmentId).pipe(
+        failOnDefect,
+        Effect.retry(followRetry),
+        Effect.ignoreCause({ log: true }),
+        Effect.repeat({
+          while: () => {
+            if (state.again) {
+              state.again = false;
+              return true;
+            }
+            tellingParentDone.delete(environmentId);
+            return false;
+          },
+        }),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (tellingParentDone.get(environmentId) === state) {
+              tellingParentDone.delete(environmentId);
+            }
+          }),
+        ),
+      );
+    });
+
+  /** Tells each environment the tasks of `parentThreadId` (or of every done parent) owe it. */
+  const tellOwedParentDone = (parentThreadId?: ThreadId) =>
+    projections
+      .getRemoteTasksOwedParentDone(parentThreadId === undefined ? undefined : { parentThreadId })
+      .pipe(
+        Effect.flatMap((owed) =>
+          Effect.forEach(
+            new Set(owed.map((row) => row.environmentId)),
+            (environmentId) => tellParentDone(environmentId).pipe(Effect.forkIn(followers)),
+            { discard: true },
+          ),
+        ),
+        Effect.ignoreCause({ log: true }),
+      );
+
   const cancel: RemoteDelegation["Service"]["cancel"] = Effect.fn("RemoteDelegation.cancel")(
     function* (scope, task, input) {
       const remote = task.remoteChild;
@@ -1049,11 +1165,16 @@ const make = Effect.gen(function* () {
         yield* Stream.runForEach(threads.streamDomainEvents, (event) =>
           event.type === "subagent.updated" && event.payload.remoteChild?.stoppedThere === false
             ? followOne(event.threadId, event.payload.id).pipe(Effect.forkIn(followers))
-            : Effect.void,
+            : event.type === "thread.settled" ||
+                event.type === "thread.archived" ||
+                event.type === "thread.deleted"
+              ? tellOwedParentDone(event.threadId).pipe(Effect.forkIn(followers))
+              : Effect.void,
         ).pipe(
           Effect.ignoreCause({ log: true }),
           Effect.forkIn(followers, { startImmediately: true }),
         );
+        yield* tellOwedParentDone().pipe(Effect.forkIn(followers));
         const open = yield* projections.getOpenRemoteDelegatedTasks;
         yield* Effect.forEach(
           open,

@@ -10,6 +10,8 @@ import {
   type PeerLinkCreateInput,
   PeerLinkError,
   type PeerLinkName,
+  type PeerLinkParentDoneRequest,
+  type PeerLinkParentDoneResult,
   type PeerLinkSummary,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -44,6 +46,7 @@ import * as ServerSettings from "../serverSettings.ts";
 const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
   .add(EnvironmentHttpApi.groups.metadata)
   .add(EnvironmentHttpApi.groups.mcpOAuth)
+  .add(EnvironmentHttpApi.groups.peerLink)
   .annotateMerge(EnvironmentHttpApi.annotations);
 
 /** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
@@ -132,6 +135,15 @@ export class PeerLinks extends Context.Service<
       environmentId: EnvironmentId,
       expiresAt: DateTime.Utc,
     ) => Effect.Effect<void>;
+    /**
+     * Tells a thread there, which this environment delegated, that its parent here is done.
+     * `refused`: the peer has that thread, but not as this parent's task. Any failure of the
+     * link itself fails, so one unreachable peer is retried once for all it is owed.
+     */
+    readonly tellParentDone: (
+      environmentId: EnvironmentId,
+      request: PeerLinkParentDoneRequest,
+    ) => Effect.Effect<PeerLinkParentDoneResult["outcome"] | "refused", PeerLinkError>;
   }
 >()("t3/peer/PeerLinks") {}
 
@@ -151,6 +163,7 @@ interface PeerLinkRow {
 const decodeUrls = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
 const encodeUrls = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
 const decodeAccess = Schema.decodeUnknownEffect(AuthMcpClientAccess);
+const isPeerLinkError = Schema.is(PeerLinkError);
 
 /** Fails with a fixed storage error that keeps its cause; the log gets the details. */
 const failStorage = (cause: unknown) =>
@@ -327,7 +340,12 @@ const make = Effect.gen(function* () {
 
   /** Signs in to the peer's `/mcp` with a pairing code: register, decide, exchange. */
   const signIn = Effect.fn("PeerLinks.signIn")(
-    function* (origin: string, input: PeerLinkCreateInput, clientName: string) {
+    function* (
+      origin: string,
+      input: PeerLinkCreateInput,
+      clientName: string,
+      environmentId: EnvironmentId,
+    ) {
       const client = yield* clientFor(origin);
       // Only the peer's own refusals are rejections. A dropped connection or
       // an answer this version cannot read is classified below.
@@ -337,6 +355,7 @@ const make = Effect.gen(function* () {
             client_name: clientName,
             redirect_uris: [LINK_REDIRECT_URI],
             software_id: MCP_PEER_LINK_SOFTWARE_ID,
+            t3_environment_id: environmentId,
           },
         })
         .pipe(
@@ -555,7 +574,12 @@ const make = Effect.gen(function* () {
         message: `${peer.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
       });
     }
-    const issued = yield* signIn(primary, input, `${LINK_CLIENT_NAME_PREFIX}${self.label}`);
+    const issued = yield* signIn(
+      primary,
+      input,
+      `${LINK_CLIENT_NAME_PREFIX}${self.label}`,
+      self.environmentId,
+    );
     const now = yield* DateTime.now;
     const linked: PeerLink = {
       environmentId: peer.environmentId,
@@ -764,6 +788,43 @@ const make = Effect.gen(function* () {
       WHERE environment_id = ${environmentId} AND expires_at < ${DateTime.formatIso(expiresAt)}
     `.pipe(Effect.asVoid, Effect.ignoreCause({ log: true }));
 
+  const tellParentDone: PeerLinks["Service"]["tellParentDone"] = Effect.fn(
+    "PeerLinks.tellParentDone",
+  )(function* (environmentId, request) {
+    const peer = yield* resolve(environmentId);
+    const { label } = peer.link;
+    if (peer.capabilities.linkParentDone !== true) {
+      return yield* new PeerLinkError({
+        reason: "incompatible",
+        message: `${label} runs a T3 Code version that cannot settle a task with its parent here. Update it.`,
+      });
+    }
+    const client = yield* clientFor(peer.url);
+    return yield* client.peerLink
+      .parentDone({ headers: { authorization: `Bearer ${peer.token}` }, payload: request })
+      .pipe(
+        Effect.timeout(probeTimeout(peer.url)),
+        Effect.map((result) => result.outcome),
+        Effect.catchTags({
+          EnvironmentHttpForbiddenError: () => Effect.succeed("refused" as const),
+          EnvironmentHttpUnauthorizedError: () =>
+            Effect.fail(
+              new PeerLinkError({
+                reason: "expired",
+                message: `${label} no longer accepts this link's session for this. Link it again with a new pairing code from ${label}.`,
+              }),
+            ),
+        }),
+        Effect.catchIf(
+          (error) => !isPeerLinkError(error),
+          () =>
+            Effect.fail(
+              new PeerLinkError({ reason: "unreachable", message: `${label} did not answer.` }),
+            ),
+        ),
+      );
+  });
+
   return PeerLinks.of({
     enabled,
     link,
@@ -775,6 +836,7 @@ const make = Effect.gen(function* () {
     resolve,
     recordOutcome,
     recordExpiry,
+    tellParentDone,
   });
 });
 

@@ -134,6 +134,7 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
         ...current,
         stops: [...current.stops, `delegated-tasks.stop ${input.threadId}`],
       })),
+
     waitForThread: (input) =>
       Ref.update(seen, (current) => ({ ...current, waits: [...current.waits, input] })).pipe(
         Effect.as({ threadId: input.threadId, run: run("completed"), timedOut: false }),
@@ -626,6 +627,16 @@ it.effect("runs any tool that takes a linked environment there", () =>
         action: "archive",
       });
       expect(archived.isError).toBe(false);
+      // An agent never tells a thread there its parent is done.
+      const parentDone = yield* a
+        .call("thread:laptop-full", "t3_thread_organize", {
+          environmentId: box.environmentId,
+          threadId: boxThread,
+          action: "settle",
+          parentDone: true,
+        })
+        .pipe(Effect.flip);
+      expect(parentDone.message).toContain('Unknown argument "parentDone"');
       expect((yield* Ref.get(seen)).stops).toEqual([`thread.archive ${boxThread}`]);
 
       // This environment's own id keeps the call here.

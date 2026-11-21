@@ -104,6 +104,7 @@ import type * as Statement from "effect/sql/Statement";
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import { DELEGATED_TASK_MESSAGE_CONDITION } from "./delegatedTaskMessage.ts";
+import { REMOTE_TASK_OWED_PARENT_DONE_CONDITION } from "./remoteParentDone.ts";
 import {
   DEFERRED_COMMAND_MESSAGE_CONDITION,
   JAVASCRIPT_TRIM_WHITESPACE,
@@ -221,6 +222,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "branch"
   | "worktreePath"
   | "lineage"
+  | "delegatedFrom"
   | "pullRequests"
   | "linkedPullRequest"
   | "branchPullRequest"
@@ -695,6 +697,22 @@ export interface ProjectionStoreV2Shape {
    */
   readonly getOpenRemoteDelegatedTasks: Effect.Effect<
     ReadonlyArray<{ readonly parentThreadId: ThreadId; readonly taskId: NodeId }>,
+    ProjectionStoreV2Error
+  >;
+  /**
+   * Delegated tasks in a linked environment whose parent here is settled, archived or deleted,
+   * and whose thread there has not confirmed it: of one parent, of one environment, or all.
+   */
+  readonly getRemoteTasksOwedParentDone: (filter?: {
+    readonly parentThreadId?: ThreadId;
+    readonly environmentId?: EnvironmentId;
+  }) => Effect.Effect<
+    ReadonlyArray<{
+      readonly parentThreadId: ThreadId;
+      readonly taskId: NodeId;
+      readonly environmentId: EnvironmentId;
+      readonly threadId: ThreadId;
+    }>,
     ProjectionStoreV2Error
   >;
   readonly getTurnStartContext: (
@@ -5017,7 +5035,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ${booleanInt(options.autoResume)}
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
                 )
-                -- A subagent of a settled, archived or deleted parent is abandoned work.
+                -- A subagent of a settled, archived or deleted parent is abandoned work,
+                -- and so is a task whose parent in a linked environment is done.
+                AND json_extract(t.payload_json, '$.delegatedFrom.parentDoneAt') IS NULL
                 AND NOT EXISTS (
                   SELECT 1 FROM orchestration_v2_projection_threads parent
                   WHERE json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
@@ -8919,6 +8939,45 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
 
+    const getRemoteTasksOwedParentDone: ProjectionStoreV2Shape["getRemoteTasksOwedParentDone"] = (
+      filter,
+    ) =>
+      // Unaliased, so the partial index's predicate matches as spelled. Named, as SQLite
+      // otherwise takes `child_thread_id IS NULL` for selective, and it matches native subagents.
+      sql<{
+        readonly subagent_id: string;
+        readonly thread_id: string;
+        readonly environment_id: string;
+        readonly remote_thread_id: string;
+      }>`
+        SELECT subagent_id, thread_id,
+          json_extract(payload_json, '$.remoteChild.environmentId') AS environment_id,
+          json_extract(payload_json, '$.remoteChild.threadId') AS remote_thread_id
+        FROM orchestration_v2_projection_subagents
+          INDEXED BY orchestration_v2_projection_subagents_remote_parent_done_idx
+        WHERE ${sql.literal(REMOTE_TASK_OWED_PARENT_DONE_CONDITION)}${filter?.parentThreadId === undefined ? sql`` : sql` AND thread_id = ${filter.parentThreadId}`}${filter?.environmentId === undefined ? sql`` : sql` AND json_extract(payload_json, '$.remoteChild.environmentId') = ${filter.environmentId}`}
+          AND EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_threads parent
+            WHERE parent.thread_id = orchestration_v2_projection_subagents.thread_id
+              AND (
+                parent.deleted_at IS NOT NULL
+                OR parent.archived_at IS NOT NULL
+                OR json_extract(parent.payload_json, '$.settledOverride') IS 'settled'
+              )
+          )
+        ORDER BY thread_id, subagent_id
+      `.pipe(
+        Effect.map((rows) =>
+          rows.map((row) => ({
+            parentThreadId: ThreadId.make(row.thread_id),
+            taskId: NodeId.make(row.subagent_id),
+            environmentId: EnvironmentId.make(row.environment_id),
+            threadId: ThreadId.make(row.remote_thread_id),
+          })),
+        ),
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      );
+
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] =
       Effect.fn("ProjectionStore.getThreadsWithPullRequests")(
         function* (threadId) {
@@ -9794,6 +9853,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadLinkMetadata: readOnReader(getThreadLinkMetadata),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
+      getRemoteTasksOwedParentDone: (filter) =>
+        getRemoteTasksOwedParentDone(filter).pipe(NodeSqliteClient.readOnly),
       getThreadProjection: readOnReader(getThreadProjection),
       getTurnStartContext: readOnReader(getTurnStartContext),
       getTurnStartHistory: readOnReader(getTurnStartHistory),

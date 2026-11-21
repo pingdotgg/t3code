@@ -692,6 +692,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.interrupt.unresponsive":
     case "thread.stop":
     case "provider.switch":
+    case "delegated_task.remote.parent-done":
+    case "thread.delegated-from.parent-done":
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.remote.request":
@@ -7323,6 +7325,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       projection = applyToProjection(projection, event);
     }
+    // The parent that delegated this thread is working with it again, so it no longer settles
+    // as that parent's done task.
+    const delegatedFrom = projection.thread.delegatedFrom;
+    if (
+      delegatedFrom?.parentDoneAt !== undefined &&
+      command.linkedSender?.environmentId === delegatedFrom.environmentId &&
+      command.linkedSender.threadId === delegatedFrom.threadId
+    ) {
+      const event = yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        providerInstanceId: projection.thread.providerInstanceId,
+        occurredAt: yield* DateTime.now,
+        payload: {
+          ...projection.thread,
+          delegatedFrom: { ...delegatedFrom, parentDoneAt: undefined },
+        },
+      });
+      projection = applyToProjection(projection, event);
+    }
     // Background wakes and delegated completions continue work the user already snoozed, so
     // only a message someone actually sent ends the snooze.
     const automaticWake =
@@ -10659,6 +10684,98 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           stopCount: (remoteChild.stopCount ?? 0) + 1,
         },
         updatedAt: now,
+      },
+    });
+  });
+
+  const dispatchRemoteDelegatedTaskParentDone = Effect.fn(
+    "orchestrationV2.dispatch.remoteDelegatedTaskParentDone",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "delegated_task.remote.parent-done" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const { subagents } = yield* projectionStore
+      .getThreadRecords(command.threadId, ["subagents"], { subagentIds: [command.taskId] })
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    const task = subagents[0];
+    const remoteChild = task?.remoteChild;
+    if (
+      task === undefined ||
+      task.origin !== "app_owned" ||
+      remoteChild === undefined ||
+      remoteChild.parentDoneThere === true
+    ) {
+      return;
+    }
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "subagent.updated",
+      threadId: command.threadId,
+      ...(task.runId === null ? {} : { runId: task.runId }),
+      nodeId: task.id,
+      driver: task.driver,
+      occurredAt: now,
+      payload: {
+        ...task,
+        remoteChild: { ...remoteChild, parentDoneThere: true },
+        updatedAt: now,
+      },
+    });
+  });
+
+  const dispatchDelegatedFromParentDone = Effect.fn(
+    "orchestrationV2.dispatch.delegatedFromParentDone",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "thread.delegated-from.parent-done" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    const delegatedFrom = thread.delegatedFrom;
+    if (
+      thread.deletedAt !== null ||
+      delegatedFrom == null ||
+      delegatedFrom.environmentId !== command.parent.environmentId ||
+      delegatedFrom.threadId !== command.parent.threadId
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is not a live task delegated by thread ${command.parent.threadId} of environment ${command.parent.environmentId}.`,
+      });
+    }
+    if (delegatedFrom.parentDoneAt !== undefined) return;
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.metadata-updated",
+      threadId: command.threadId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      // updatedAt stays: the mark is not activity, and auto-settle compares it.
+      payload: {
+        ...thread,
+        delegatedFrom: { ...delegatedFrom, parentDoneAt: DateTime.formatIso(now) },
       },
     });
   });
@@ -15936,6 +16053,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "delegated_task.remote.stop":
         yield* dispatchRemoteDelegatedTaskStop(command, events);
         break;
+      case "delegated_task.remote.parent-done":
+        yield* dispatchRemoteDelegatedTaskParentDone(command, events);
+        break;
+      case "thread.delegated-from.parent-done":
+        yield* dispatchDelegatedFromParentDone(command, events);
+        break;
       case "delegated_task.wake-policy":
         updateDelegatedCompletionOnlyRunId = yield* dispatchDelegatedTaskWakePolicy(
           command,
@@ -16090,6 +16213,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
+          // A delivery retried after it landed finds the parent's end already recorded.
+          command.type === "thread.delegated-from.parent-done" ||
+          command.type === "delegated_task.remote.parent-done" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),
         (_planned) =>
           new OrchestratorDispatchError({

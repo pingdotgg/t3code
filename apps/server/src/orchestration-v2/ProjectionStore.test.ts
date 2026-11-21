@@ -1534,6 +1534,38 @@ it.effect("reads a delegated child's recent, unfinished and task runs without it
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("finds remote tasks owed their parent's end without scanning every subagent", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const traced = traceSqlStatements();
+    for (const filter of [
+      undefined,
+      { parentThreadId: ThreadId.make("thread:owed-parent-done") },
+      { environmentId: EnvironmentId.make("environment:owed-parent-done") },
+    ]) {
+      yield* store.getRemoteTasksOwedParentDone(filter).pipe(Effect.withTracer(traced.tracer));
+    }
+    const statements = traced.statements.filter((statement) =>
+      statement.includes("FROM orchestration_v2_projection_subagents"),
+    );
+    assert.lengthOf(statements, 3);
+    for (const statement of statements) {
+      const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${statement}`,
+      ))
+        .map((row) => row.detail)
+        .join("\n");
+      assert.match(
+        plan,
+        /^(SCAN|SEARCH) orchestration_v2_projection_subagents USING INDEX orchestration_v2_projection_subagents_remote_parent_done_idx/m,
+      );
+      assert.notInclude(plan, "TEMP B-TREE");
+      assert.match(plan, /SEARCH parent (EXISTS )?USING (INDEX \w+|PRIMARY KEY) \(thread_id=\?\)/);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("shells flag a latest run triggered by a provider background wake", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
@@ -8890,6 +8922,38 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         payload: limitItem,
       });
       yield* applyRun("failed");
+      yield* assertSummary("Plan limit reached.", "usage_limit");
+      // A task a linked environment delegated is resumed until its parent there is done.
+      const undelegated = yield* store.getThread(threadId);
+      const delegatedFrom = {
+        environmentId: EnvironmentId.make("environment:limit-shell-parent"),
+        threadId: ThreadId.make("thread:limit-shell-parent"),
+        title: "Parent there",
+      };
+      const limitCandidate = store
+        .getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })
+        .pipe(Effect.map((candidates) => candidates.find((row) => row.id === threadId)));
+      for (const [key, payload] of [
+        ["delegated", { ...undelegated, delegatedFrom }],
+        [
+          "parent-done",
+          {
+            ...undelegated,
+            delegatedFrom: { ...delegatedFrom, parentDoneAt: DateTime.formatIso(now) },
+          },
+        ],
+        ["undelegated", undelegated],
+      ] as const) {
+        yield* store.apply({
+          id: EventId.make(`event:limit-shell:${key}`),
+          type: "thread.metadata-updated",
+          threadId,
+          occurredAt: now,
+          payload,
+        });
+        if (key === "parent-done") assert.isUndefined(yield* limitCandidate);
+        else assert.isDefined(yield* limitCandidate);
+      }
       yield* assertSummary("Plan limit reached.", "usage_limit");
       const queuedRunId = RunId.make("run:limit-shell:queued");
       yield* store.apply({

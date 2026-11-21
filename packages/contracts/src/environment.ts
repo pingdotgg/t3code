@@ -194,6 +194,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** A full-access link can ask this server for a one-time pairing credential for a client
       of the linking environment. Absent on servers from before it. */
   linkClientPairing: Schema.optionalKey(Schema.Boolean),
+  /** Takes a delegating environment's word that a task's parent there is done
+      (`/api/peer-link/parent-done`), from a link session bound to that environment. */
+  linkParentDone: Schema.optionalKey(Schema.Boolean),
   /** Mints pairing codes that approve one agent sign-in at a set level (`AUTO-…`). */
   mcpApprovalCodes: Schema.optionalKey(Schema.Boolean),
   peerLinkPairingCodes: Schema.optionalKey(Schema.Boolean),
