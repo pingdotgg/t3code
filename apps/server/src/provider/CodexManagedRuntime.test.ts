@@ -123,7 +123,7 @@ it.live.each(
             assert.equal(runtime.homeLayout.mode, "direct");
           } else {
             assert.include(effective.config.homePath, instanceId);
-            assert.include(effective.config.homePath, "userdata/providers/codex");
+            assert.include(effective.config.homePath, path.join("userdata", "providers", "codex"));
             assert.equal(runtime.homeLayout.mode, "authOverlay");
             assert.equal(
               yield* fs.readLink(path.join(effective.config.homePath, "sessions")),
@@ -199,6 +199,7 @@ it.live.each(
           assert.include(args, "features.api_key_model_discovery=true");
           assert.include(args, "features.multi_agent=false");
           assert.include(args, "features.multi_agent_v2=false");
+          assert.include(args, "agents.enabled=false");
           assert.notInclude(effective.config.launchArgs, "model_catalog_json");
           assert.notInclude(effective.config.launchArgs, "x-openai-chatpass-test");
           assert.include(provider, "supports_websockets=false");
