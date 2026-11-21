@@ -104,5 +104,10 @@ describe("pullRequestAttachments", () => {
       { url: "https://example.com/demo.mp4", media: "video", caption: "Video 3" },
       { url: "https://example.com/screenshot.png", media: "image", caption: "Image 4" },
     ]);
+    expect(
+      pullRequestAttachments(
+        'Fixes the sync! See [the log](https://example.com/log.png).\n\n<IMG SRC="https://example.com/raw.png">',
+      ),
+    ).toEqual([{ url: "https://example.com/raw.png", media: "image", caption: "Image 1" }]);
   });
 });
