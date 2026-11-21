@@ -1,9 +1,9 @@
 import {
-  PanelBottomIcon,
   PanelRightIcon,
   SquareMenuIcon,
   Maximize2Icon,
   Minimize2Icon,
+  SquareTerminalIcon,
 } from "lucide-react";
 import { useGT } from "gt-react";
 import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
@@ -106,7 +106,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               size="sm"
               disabled={!terminalAvailable}
             >
-              <PanelBottomIcon className="size-4" />
+              <SquareTerminalIcon className="size-4" />
             </Toggle>
           </TooltipTrigger>
           <TooltipPopup side="bottom">
