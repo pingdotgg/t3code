@@ -13,8 +13,8 @@ import {
   hubRoutes,
   instanceHubs,
   type LimitPoolWindow,
-  limitsNotice,
 } from "@t3tools/shared/usageLimits";
+import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 
 export type ThreadDetailsLimits =
   | { readonly kind: "instance"; readonly limits: ServerProviderUsageLimits }
