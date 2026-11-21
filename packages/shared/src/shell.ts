@@ -939,7 +939,8 @@ export interface SpawnCommandOptions extends CommandAvailabilityOptions {
   readonly bypassNpmShim?: boolean;
 }
 
-// `*` is one argument that is not an option. These forms read refs or config
+// `*` is one argument that is not an option and `*...` one or more of them;
+// `--format=*` takes formats of ref-only atoms. These forms read refs or config
 // only, so git starts no hook, helper, pager, editor or lazy fetch for them.
 const CONSOLE_FREE_GIT_READS = [
   "rev-parse --git-path index",
@@ -949,13 +950,39 @@ const CONSOLE_FREE_GIT_READS = [
   "rev-parse --path-format=absolute --git-path index --git-common-dir --show-toplevel",
   "rev-parse --symbolic-full-name HEAD",
   "rev-parse --abbrev-ref --symbolic-full-name @{upstream}",
+  "rev-parse --verify --quiet --symbolic-full-name *",
   "symbolic-ref --quiet HEAD",
   "symbolic-ref *",
   "remote",
+  "remote -v",
   "remote get-url *",
   "remote get-url -- *",
   "config --get *",
+  "config --get-all *",
+  "config --get-regexp *",
+  "for-each-ref --format=* *...",
+  "for-each-ref --count=1 --format=* *...",
 ].map((form) => form.split(" "));
+
+// Atoms that read only the ref itself, never the object it points at.
+const REF_ONLY_FORMAT =
+  /^--format=(?:%\((?:refname|objectname|upstream)(?::[a-z0-9=-]+)?\)|%00|\t)+$/;
+
+const isOperand = (arg: string | undefined) => arg !== undefined && !arg.startsWith("-");
+
+function matchesGitRead(form: ReadonlyArray<string>, args: ReadonlyArray<string>): boolean {
+  const variadic = form.at(-1) === "*...";
+  const fixed = variadic ? form.slice(0, -1) : form;
+  if (variadic ? args.length <= fixed.length : args.length !== fixed.length) return false;
+  return (
+    fixed.every((part, i) => {
+      const arg = args[i]!;
+      if (part === "*") return isOperand(arg);
+      if (part === "--format=*") return REF_ONLY_FORMAT.test(arg);
+      return part === arg;
+    }) && args.slice(fixed.length).every(isOperand)
+  );
+}
 
 export function runsGitWithoutConsole(
   platform: NodeJS.Platform,
@@ -970,15 +997,17 @@ export function runsGitWithoutConsole(
     return false;
   }
   if (!GIT_FOR_WINDOWS_BUILDS.some((candidate) => candidate === build)) return false;
-  const rest =
-    args[0] === "--git-dir" && args[1] !== undefined && !args[1].startsWith("-")
-      ? args.slice(2)
-      : args;
-  return CONSOLE_FREE_GIT_READS.some(
-    (form) =>
-      form.length === rest.length &&
-      form.every((part, i) => part === rest[i] || (part === "*" && !rest[i]!.startsWith("-"))),
-  );
+  let rest = args;
+  for (;;) {
+    if ((rest[0] === "-C" || rest[0] === "--git-dir") && isOperand(rest[1])) {
+      rest = rest.slice(2);
+    } else if (rest[0]?.startsWith("--git-dir=")) {
+      rest = rest.slice(1);
+    } else {
+      break;
+    }
+  }
+  return CONSOLE_FREE_GIT_READS.some((form) => matchesGitRead(form, rest));
 }
 
 export const resolveSpawnCommand = Effect.fnUntraced(function* (
