@@ -189,7 +189,10 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
           ),
         )
         .mockReturnValueOnce(Effect.succeed(output(json({ changeEntries: [] }))))
-        .mockReturnValueOnce(Effect.succeed(output("[]")));
+        .mockReturnValueOnce(Effect.succeed(output("[]")))
+        .mockReturnValueOnce(
+          Effect.succeed(output(json({ count: 1, value: [{ id: "4f1c", name: "release-1.0" }] }))),
+        );
       const provider = yield* AzureDevOpsPullRequestProvider.make;
       const detail = yield* provider.getChangeRequest({
         cwd: "/w",
@@ -200,7 +203,9 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       expect(detail.headSha).toBe(latestHead);
       expect(argsOfCall(2)).toContain("iterationId=2");
-      expect(mockedExecute).toHaveBeenCalledTimes(4);
+      expect(argsOfCall(4)).toContain("pullRequestLabels");
+      expect(detail.labels).toEqual([{ name: "release-1.0", color: null }]);
+      expect(mockedExecute).toHaveBeenCalledTimes(5);
     }),
   );
 

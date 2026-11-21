@@ -37,6 +37,7 @@ import * as ContextHandoffService from "../ContextHandoffService.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EventSink from "../EventSink.ts";
+import * as ThreadViewers from "../ThreadViewers.ts";
 import * as EventStore from "../EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
@@ -207,6 +208,9 @@ export function runOrchestratorV2ProviderReplayScenario<
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
     readonly managedPolicy?: ManagedPolicyDocument;
+    readonly providerInstances?: Partial<
+      ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+    >;
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -251,6 +255,9 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
     readonly continueThreadsAfterServerUpdate?: boolean;
     readonly managedPolicy?: ManagedPolicyDocument;
     readonly replayGate?: ProviderReplayGate;
+    readonly providerInstances?: Partial<
+      ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+    >;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -288,6 +295,10 @@ export function layerWithRegistry<Error>(
       store: ProjectionStore.ProjectionStoreV2Shape,
     ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly managedPolicy?: ManagedPolicyDocument;
+    /** The instances the ingestor reads snapshots from, such as an endpoint behind a hub. */
+    readonly providerInstances?: Partial<
+      ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+    >;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -349,7 +360,7 @@ export function layerWithRegistry<Error>(
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
-    Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
+    Layer.provide(Layer.mergeAll(layerStores, layerDatabase, ThreadViewers.layer)),
   );
   const layerRuntime = RuntimePolicy.layerEnforcingCeiling.pipe(
     Layer.provide(Layer.merge(layerRuntimeBase, layerServerSettings)),
@@ -360,9 +371,9 @@ export function layerWithRegistry<Error>(
   const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-          getInstance: () => Effect.undefined,
-        }),
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)(
+          options.providerInstances ?? { getInstance: () => Effect.undefined },
+        ),
         layerStores,
         layerEventSinkProvided,
         IdAllocator.layer,
@@ -454,7 +465,12 @@ export function layerWithRegistry<Error>(
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerEventSinkProvided, layerStores, layerProviderSessionManagerProvided),
+      Layer.mergeAll(
+        layerEventSinkProvided,
+        McpAppModelContext.layerEmpty,
+        layerStores,
+        layerProviderSessionManagerProvided,
+      ),
     ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(

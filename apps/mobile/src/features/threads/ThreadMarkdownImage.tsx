@@ -1,10 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { Image } from "expo-image";
+import { T, useGT } from "gt-react-native";
 import { createContext, useContext, useId, useState } from "react";
 import { fetch } from "expo/fetch";
 import { parse, SvgAst, type JsxAST } from "react-native-svg";
@@ -102,6 +102,7 @@ export function ThreadMarkdownImageView(props: {
   readonly actionsSource?: MediaActionsSource;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
+  const gt = useGT();
   const withGallery = useFilePreviewGallery();
   const localSourceIdentifier = useId();
   const sourceIdentifier = props.sourceIdentifier ?? localSourceIdentifier;
@@ -150,9 +151,9 @@ export function ThreadMarkdownImageView(props: {
         <MediaActionsMenu media={mediaActions}>
           <Pressable
             accessibilityRole="imagebutton"
-            accessibilityLabel={props.alt ?? "Markdown image"}
+            accessibilityLabel={props.alt ?? gt("Markdown image")}
             accessibilityHint={
-              mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+              mediaActions.actions.length > 0 ? gt("Touch and hold for media actions") : undefined
             }
             className="items-center justify-center rounded-[10px] bg-md-code-bg"
             style={frameStyle}
@@ -160,8 +161,8 @@ export function ThreadMarkdownImageView(props: {
             {failed ? (
               <Text className="px-3 text-center text-xs text-foreground-muted">
                 {props.unavailableDetail
-                  ? `Image unavailable. ${props.unavailableDetail}`
-                  : "Image unavailable"}
+                  ? gt("Image unavailable. {detail}", { detail: props.unavailableDetail })
+                  : gt("Image unavailable")}
               </Text>
             ) : (
               <AppActivityIndicator />
@@ -174,16 +175,16 @@ export function ThreadMarkdownImageView(props: {
             <ZoomableImagePressable
               key={props.sourceKey}
               accessibilityRole="imagebutton"
-              accessibilityLabel={props.alt ?? "Markdown image"}
+              accessibilityLabel={props.alt ?? gt("Markdown image")}
               accessibilityHint={
-                mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+                mediaActions.actions.length > 0 ? gt("Touch and hold for media actions") : undefined
               }
               onPress={() =>
                 props.onPressPreview(
                   withGallery({
                     kind: "image",
                     uri: props.uri!,
-                    name: props.actionsSource?.name ?? props.alt ?? "Image",
+                    name: props.actionsSource?.name ?? props.alt ?? gt("Image"),
                     sourceIdentifier,
                     actionsSource: props.actionsSource,
                   }),
@@ -257,7 +258,9 @@ function ThreadMarkdownImageLoading() {
       pointerEvents="none"
       style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}
     >
-      <Text className="text-xs text-foreground-muted">Loading image…</Text>
+      <Text className="text-xs text-foreground-muted">
+        <T>Loading image…</T>
+      </Text>
     </View>
   );
 }
@@ -281,6 +284,7 @@ export function ThreadMarkdownImage(props: {
   readonly actionsSource?: MediaActionsSource;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
+  const gt = useGT();
   const withGallery = useFilePreviewGallery();
   const workspaceMutationId = useContext(WorkspaceMutationIdContext);
   const assetUrl = useAssetUrlState(
@@ -318,7 +322,7 @@ export function ThreadMarkdownImage(props: {
       unavailable={assetUrl._tag === "Failure"}
       unavailableDetail={
         assetUrl._tag === "Failure" && assetUrl.reason === "missing-file-access"
-          ? MISSING_FILE_ACCESS_MESSAGE
+          ? gt("This connection cannot read host files. Pair again with a new link to view it.")
           : undefined
       }
       knownSize={assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined}
