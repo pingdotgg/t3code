@@ -699,7 +699,13 @@ describe("IssueService with a standalone tracker", () => {
         writable: false,
       });
       expect((yield* bound.projectScope("web" as ProjectId)).scope).toBe("ENG");
-      expect((yield* bound.projectScope("web" as ProjectId, "ops-12")).scope).toBe("OPS");
+      expect((yield* bound.projectScope("web" as ProjectId, { key: "ops-12" })).scope).toBe("OPS");
+      expect((yield* bound.projectScope("web" as ProjectId, { scope: "ops" })).scope).toBe("OPS");
+      const unboundTeam = yield* Effect.flip(
+        bound.projectScope("web" as ProjectId, { scope: "QA" }),
+      );
+      expect(unboundTeam).toMatchObject({ _tag: "IssueOperationError", reason: "not-found" });
+      expect(unboundTeam.message).toContain("ENG, OPS, acme/web");
       expect(
         yield* bound.detail({
           projectId: "web" as ProjectId,
