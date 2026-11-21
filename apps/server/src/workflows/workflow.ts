@@ -120,6 +120,51 @@ export const text = (error: unknown): string => {
   );
 };
 
+// What a workflow without `returns` returns: any JSON value, or nothing.
+const ANY_JSON = Schema.UndefinedOr(Schema.Json);
+
+/** Where in `value` JSON cannot hold what it finds, with `undefined` counted only when `strict`. */
+const notJson = (value: unknown, at: string, strict: boolean): string | undefined => {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return undefined;
+  if (typeof value === "number") return Number.isFinite(value) ? undefined : `${at} is ${value}`;
+  if (value === undefined) return strict ? `${at} is undefined` : undefined;
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      const found = notJson(item, `${at}[${index}]`, strict);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  const proto = typeof value === "object" ? Object.getPrototypeOf(value) : undefined;
+  if (proto !== Object.prototype && proto !== null) {
+    return `${at} is ${typeof value === "object" ? (proto?.constructor?.name ?? "an object") : `a ${typeof value}`}`;
+  }
+  for (const [key, field] of Object.entries(value as object)) {
+    const found = notJson(field, `${at}.${key}`, strict);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+};
+
+/** A value that did not encode, said with where JSON could not hold it, which `Schema.Json` omits. */
+const encodeFailure = (what: string, error: unknown, value: unknown) => {
+  const where = notJson(value, what, true);
+  return where === undefined ? text(error) : `${text(error)}: ${where}`;
+};
+
+/** A step result the journal cannot store, which fails the step it came from. */
+const unstorable = (error: unknown, value: unknown) =>
+  Effect.die(new Error(encodeFailure("the result", error, value)));
+
+/** What a run without `returns` returns, read as `JSON.stringify` reads it. */
+const untypedResult = (value: unknown): Effect.Effect<Schema.Json> => {
+  const where = notJson(value, "the run's result", false);
+  if (where !== undefined) return Effect.die(new Error(`The run's result is not JSON: ${where}.`));
+  return Effect.succeed(
+    value === undefined ? null : (JSON.parse(JSON.stringify(value)) as Schema.Json),
+  );
+};
+
 /**
  * One journaled action of the step `name`: it happens once, and a replay returns what it stored.
  * A failure marks the step failed and pauses the run here; resuming the run executes it again.
@@ -141,7 +186,7 @@ export const journaled = <A, I, E>(
     error: StepFailed,
     execute: run.inFlight.track(run.runId, execute).pipe(
       // A result the journal cannot store is this step's failure, found before it is journaled.
-      Effect.tap(encodable),
+      Effect.tap((value) => Effect.catch(encodable(value), (error) => unstorable(error, value))),
       // The engine reads its own 64-bit ids as BigInt. What a step calls must not inherit that.
       Effect.provideService(SqlClient.SafeIntegers, false),
       // Also a step that dies: left as a defect the engine would park the run without a word.
@@ -272,12 +317,14 @@ const stepAs = <A, I, X, E>(
         ),
         // A value that does not encode fails the step, so it is never marked done first.
         Effect.tap((value) =>
-          Effect.flatMap(encodeResult(value), (json) =>
-            Effect.andThen(
-              run.store.stepEnded(run.runId, name, "completed", null),
-              // For a person reading the run.
-              Effect.ignore(run.store.stepResult(run.runId, name, json as Schema.Json)),
-            ),
+          Effect.flatMap(
+            Effect.catch(encodeResult(value), (error) => unstorable(error, value)),
+            (json) =>
+              Effect.andThen(
+                run.store.stepEnded(run.runId, name, "completed", null),
+                // For a person reading the run.
+                Effect.ignore(run.store.stepResult(run.runId, name, json as Schema.Json)),
+              ),
           ),
         ),
       ),
@@ -650,7 +697,7 @@ const definitionOf = <P, PI, A, AI, EndError>(
   payload: options.payload as Schema.Codec<unknown, unknown>,
   // Without a schema the result is whatever JSON the body returned: dropping it would be a
   // surprise, and a value that is not JSON pauses the run with the reason.
-  returns: (options.returns ?? Schema.UndefinedOr(Schema.Json)) as Schema.Codec<unknown, unknown>,
+  returns: (options.returns ?? ANY_JSON) as Schema.Codec<unknown, unknown>,
   resumeAfter: options.resumeAfter ?? DEFAULT_RESUME_AFTER,
   triggers: options.triggers ?? [],
   onEnd:
@@ -703,7 +750,19 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
       });
       const input = (yield* Effect.orDie(decodePayload(payload.input))) as never;
       const outcome = yield* definition.body(input, { id: runId }).pipe(
-        Effect.flatMap((value) => Effect.orDie(encodeResult(value))),
+        Effect.flatMap((value) =>
+          definition.returns === ANY_JSON
+            ? untypedResult(value)
+            : encodeResult(value).pipe(
+                Effect.mapError(
+                  (error) =>
+                    new Error(
+                      `The run's result does not fit its returns: ${encodeFailure("the run's result", error, value)}`,
+                    ),
+                ),
+                Effect.orDie,
+              ),
+        ),
         Effect.map((value): typeof Outcome.Type => ({
           outcome: "completed",
           value: (value ?? null) as Schema.Json,
