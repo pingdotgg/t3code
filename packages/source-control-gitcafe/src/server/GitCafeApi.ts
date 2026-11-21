@@ -138,26 +138,37 @@ export const make = Effect.gen(function* () {
       "gitcafe.operation": input.operation,
       "http.request.method": input.method ?? "GET",
     });
-    const credential = yield* credentials
-      .get(host)
-      .pipe(
-        Effect.mapError((cause) =>
-          fail({ status: null, reason: credentialFailure(cause), detail: cause.message, cause }),
-        ),
-      );
-    const origin = `https://${host}`;
     const method = input.method ?? "GET";
+    const readOnly =
+      method === "GET" ||
+      (method === "POST" &&
+        /^\/repos\/[^/]+\/[^/]+\/pulls\/[1-9]\d*\/diff-files$/u.test(input.path));
+    const credential = yield* credentials.get(host).pipe(
+      Effect.catchIf(
+        (error) =>
+          readOnly &&
+          (error._tag === "GitCafeCliMissingError" || error._tag === "GitCafeNotSignedInError"),
+        () => Effect.succeed(null),
+      ),
+      Effect.mapError((cause) =>
+        fail({ status: null, reason: credentialFailure(cause), detail: cause.message, cause }),
+      ),
+    );
+    const origin = `https://${host}`;
     const send = (url: string) => {
       const base = HttpClientRequest.make(method)(url).pipe(
-        HttpClientRequest.bearerToken(Redacted.value(credential.token)),
         HttpClientRequest.setHeaders({ accept: "application/json", "user-agent": "t3code" }),
       );
+      const authenticated =
+        credential === null
+          ? base
+          : base.pipe(HttpClientRequest.bearerToken(Redacted.value(credential.token)));
       return Effect.gen(function* () {
         const response = yield* httpClient
           .execute(
             input.body === undefined
-              ? base
-              : base.pipe(HttpClientRequest.bodyJsonUnsafe(input.body)),
+              ? authenticated
+              : authenticated.pipe(HttpClientRequest.bodyJsonUnsafe(input.body)),
           )
           .pipe(
             // Client spans expose query strings containing branch names.
@@ -191,7 +202,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.annotateCurrentSpan({ "http.response.status_code": status });
     if (status >= 200 && status < 300) return text;
     // The source may hold a newer token than the one that was refused.
-    if (status === 401) yield* credentials.invalidate(host);
+    if (status === 401 && credential !== null) yield* credentials.invalidate(host);
     const problem = Option.getOrUndefined(decodeProblem(text));
     return yield* fail({
       status,
