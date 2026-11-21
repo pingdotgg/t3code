@@ -88,10 +88,10 @@ function hubPool(
   return pools.length > 0 ? { kind: "pool", windows: pools.flatMap(displayLimitWindows) } : null;
 }
 
-export function poolSources(window: LimitPoolWindow): string[] {
+export function poolSources(window: LimitPoolWindow) {
   const hubs = window.members.flatMap(({ account }) =>
     account.environments.length === 0 && account.sourceLabel ? [account.sourceLabel] : [],
   );
   const signedIn = window.members.some(({ account }) => account.environments.length > 0);
-  return [...new Set(hubs), ...(signedIn ? ["Signed-in accounts"] : [])];
+  return { hubs: [...new Set(hubs)], signedIn };
 }

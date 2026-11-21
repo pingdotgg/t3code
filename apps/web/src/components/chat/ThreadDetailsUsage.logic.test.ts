@@ -141,7 +141,7 @@ describe("resolveThreadDetailsLimits", () => {
     ];
     expect(shown(unsupported, sources, "gpt-5.6-sol[1m]")).toEqual({
       kind: "pool",
-      rows: [{ label: "Session", left: 70, accounts: 1, from: ["Hub"] }],
+      rows: [{ label: "Session", left: 70, accounts: 1, from: { hubs: ["Hub"], signedIn: false } }],
     });
   });
 });

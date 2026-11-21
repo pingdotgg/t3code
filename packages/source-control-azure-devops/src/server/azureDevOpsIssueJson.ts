@@ -81,6 +81,7 @@ const Fields = Schema.Struct({
   "System.ChangedDate": Schema.optional(Schema.NullOr(Schema.String)),
   "Microsoft.VSTS.Common.ClosedDate": Schema.optional(Schema.NullOr(Schema.String)),
   "System.Description": Schema.optional(Schema.NullOr(Schema.String)),
+  "Microsoft.VSTS.TCM.ReproSteps": Schema.optional(Schema.NullOr(Schema.String)),
   "System.Tags": Schema.optional(Schema.NullOr(Schema.String)),
   "System.TeamProject": Schema.optional(Schema.NullOr(Schema.String)),
   "System.WorkItemType": Schema.optional(Schema.NullOr(Schema.String)),
@@ -160,11 +161,24 @@ function toLabels(tags: string | null | undefined): ReadonlyArray<IssueLabel> {
   }));
 }
 
+/** The field a work item keeps its text in, which is the one an edit of its body writes. */
+export type BodyField = "System.Description" | "Microsoft.VSTS.TCM.ReproSteps";
+
 export interface AzureDevOpsWorkItem extends TrackerIssueSummary {
   readonly body: string;
+  readonly bodyField: BodyField;
   readonly project: string | null;
   readonly workItemType: string | null;
   readonly relations: ReadonlyArray<typeof Relation.Type>;
+}
+
+/** A Bug has Repro Steps where other types have a Description, and in Agile and CMMI no Description. */
+function bodyFieldOf(fields: typeof Fields.Type): BodyField {
+  const bug = trimmed(fields["System.WorkItemType"])?.toLowerCase() === "bug";
+  return trimmed(fields["System.Description"]) === null &&
+    (bug || trimmed(fields["Microsoft.VSTS.TCM.ReproSteps"]) !== null)
+    ? "Microsoft.VSTS.TCM.ReproSteps"
+    : "System.Description";
 }
 
 /** Null for a row this cannot place: no title, no dates, or no project to build a link from. */
@@ -179,6 +193,7 @@ function toWorkItem(raw: typeof WorkItem.Type, closed: ClosedStates): AzureDevOp
     return null;
   }
   const assignee = toActor(fields["System.AssignedTo"]);
+  const bodyField = bodyFieldOf(fields);
   return {
     key: String(raw.id),
     displayKey: `#${raw.id}`,
@@ -192,7 +207,8 @@ function toWorkItem(raw: typeof WorkItem.Type, closed: ClosedStates): AzureDevOp
     assignees: assignee === null ? [] : [assignee],
     labels: toLabels(fields["System.Tags"]),
     commentCount: Math.max(0, fields["System.CommentCount"] ?? 0),
-    body: fields["System.Description"] ?? "",
+    body: fields[bodyField] ?? "",
+    bodyField,
     project,
     workItemType: trimmed(fields["System.WorkItemType"]),
     relations: raw.relations ?? [],
@@ -424,19 +440,4 @@ export function pullRequestNumberOf(relation: typeof Relation.Type): number | nu
   if (match === null) return null;
   const number = decodeURIComponent(match[1]!).split("/").at(-1) ?? "";
   return /^[1-9]\d{0,9}$/.test(number) ? Number(number) : null;
-}
-
-const Profile = Schema.Struct({
-  emailAddress: Schema.optional(Schema.NullOr(Schema.String)),
-  displayName: Schema.optional(Schema.NullOr(Schema.String)),
-});
-
-const decodeProfile = decodeJsonResult(Profile);
-
-/** `GET profile/profiles/me` names the signed-in account, which WIQL's `@Me` compares against. */
-export function decodeProfileJson(raw: string): Result.Result<string | null, DecodeFailure> {
-  return Result.map(
-    decodeProfile(raw),
-    (profile) => trimmed(profile.emailAddress) ?? trimmed(profile.displayName),
-  );
 }
