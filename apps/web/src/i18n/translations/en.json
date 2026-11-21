@@ -12394,5 +12394,401 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide"
+  "9e91e9a77b664e4e": "Could not start a review guide",
+  "6c4b55cdbe5dd1d0": "{count, plural, one {Checked skills and MCP servers {count} time} other {Checked skills and MCP servers {count} times}}",
+  "651333a8798481cf": "{count, plural, one {Tried to check skills and MCP servers {count} time} other {Tried to check skills and MCP servers {count} times}}",
+  "7aae4f6df36c4e7b": "{count, plural, one {Updated skills and MCP servers {count} time} other {Updated skills and MCP servers {count} times}}",
+  "15eae995296a4525": "{count, plural, one {Tried to update skills and MCP servers {count} time} other {Tried to update skills and MCP servers {count} times}}",
+  "5ba9aa4175d4965c": "{count, plural, one {Installed skills {count} time} other {Installed skills {count} times}}",
+  "f5fb66293e616534": "{count, plural, one {Tried to install skills {count} time} other {Tried to install skills {count} times}}",
+  "c06fc69851054582": "{count, plural, one {Removed skills {count} time} other {Removed skills {count} times}}",
+  "0af78fcce5177598": "{count, plural, one {Tried to remove skills {count} time} other {Tried to remove skills {count} times}}",
+  "37485fa7f7f226be": "Tools can change once the thread is idle.",
+  "4f3c3c9ea0c53a33": "{count, plural, one {{count} preset} other {{count} presets}}",
+  "9ceac16c489b8224": "Tool presets",
+  "17def2719132cf6d": "Tool presets on for this thread: {names}",
+  "7c5686519629005b": "Tool presets",
+  "85ee9aab91f4f082": "Group skills and MCP servers you use together, then turn them on or off for a thread here.",
+  "425973268d32e72f": "Some of its tools are on",
+  "8922ec21b8f34343": "New preset…",
+  "09b2cc99e16394e9": "Edit preset",
+  "e90c2cd19d1164e0": "Another preset has this name.",
+  "0395abb97e34a5b2": "Use at most 48 characters.",
+  "bab0a61cf72813f2": "Not found here",
+  "c13a81315bf3a917": "Frontend",
+  "128c408532da3560": "Skills",
+  "95c6fada35cfde29": "Filter skills",
+  "b66c8f072747a92f": "{count, plural, one {Filter {count} skill…} other {Filter {count} skills…}}",
+  "edf5111abb29e990": "The agents here have no skills.",
+  "724baefb1716842b": "MCP servers",
+  "d131b937e49e4ca0": "Filter MCP servers",
+  "73460bb8f85de189": "{count, plural, one {Filter {count} MCP server…} other {Filter {count} MCP servers…}}",
+  "739bff4fe20ebbd9": "No MCP servers added in Settings → Tools.",
+  "3bbaf90da14d26f7": "New preset",
+  "0b916d8ecea93b04": [
+    "Edit ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "aeccf20447890871": "Pick the skills and servers a thread turns on or off together.",
+  "bfe0090cfc9d4c55": [
+    "It's saved on",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", for every project there."
+  ],
+  "23677886367fa7c1": "Every project on this environment can use the preset.",
+  "eedfb02c8e2462d3": "Name",
+  "b4eeaa957b52dd75": "Delete",
+  "19cfb08bc05e2678": "Save",
+  "28dc39a65f17f258": [
+    "No matches for “",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "”."
+  ],
+  "aa2472c2d4b2b34f": "Source",
+  "80c9ff23955b16bf": "Select all shown",
+  "34c42871f8582aea": "{selected} of {total} selected",
+  "10b18372034587c6": "No description.",
+  "800a59edb318cb52": "Includes scripts",
+  "82990dbfbd4c8964": "{count, plural, one {Install {count} skill} other {Install {count} skills}}",
+  "a78bca4e29bbf0e9": "Install",
+  "751f4792fb286e58": "Add skills",
+  "fc2c82c07d28cb37": [
+    "Installs for every agent on ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", the same way",
+    " ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "npx skills add"
+    },
+    " does."
+  ],
+  "38dc18a023d29ca8": "Find skills",
+  "09478c78cff17e1b": [
+    "A GitHub ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "owner/repo"
+    },
+    ", a git URL, or a folder on the environment."
+  ],
+  "45fce709ba860d8e": [
+    "Skills in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "87e1723a6ac1fc72": [
+    "No skills match “",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "”."
+  ],
+  "054cde6fd8f61594": "Includes scripts",
+  "deff487ae1201141": [
+    "One install takes up to ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " skills. Install the rest afterwards."
+  ],
+  "2ef953767003b232": [
+    {
+      "t": "AlertTriangleIcon",
+      "i": 1
+    },
+    " ",
+    "marks skills with scripts agents can be told to run. Install only sources you trust."
+  ],
+  "28497bec7d8aec23": "{name} details",
+  "665864c4f243bdab": "Built in",
+  "b242a7ef2c71248d": "Command",
+  "26f7420c59e15d9a": "On for this project",
+  "208885aa5b36afa3": "Off for this project",
+  "63a766715018cf7b": "{name} server",
+  "f09a024649948a9a": "Tools",
+  "f1c6ba24a323110d": "Tools · {count}",
+  "3e5516b8456c7d95": "Listing tools",
+  "78d4dfd558f57d68": "List tools again",
+  "823b6cc9e4143931": "Couldn't list this server's tools. {error}",
+  "7393315fd22fb878": "Couldn't list them again. {error}",
+  "82b022e8589ab576": "{count, plural, =0 {No parameters} one {{count} parameter} other {{count} parameters}}",
+  "c2c65853a526f652": "Replaces environment's",
+  "1b5526c7bb929147": "T3 Code's own tools: threads, tasks, the browser and devices. Every agent session gets this server; browser and device tools follow their settings.",
+  "dbff37fff167dee3": "Every agent session gets this server.",
+  "186b8ef748584d7a": "Reset",
+  "2bff570a4eee70f3": "Edit",
+  "a902d5c987e665ab": "Remove",
+  "89966e57b29fbe6b": "Start the server again and list its tools",
+  "9ed47f192a58cf33": "Listing a server's tools starts it, which needs permission to manage providers on this environment.",
+  "78e88355e86b1c5a": "This server offers no tools.",
+  "be481260c73646c4": "Takes no parameters.",
+  "f2fcad2921e9151e": "Required",
+  "4c8673b974aff74c": "Add MCP server",
+  "bbefbae8d0a39698": "Server type",
+  "36996e84011eec18": "Environment variables",
+  "bf48cc45693b320f": "Headers",
+  "2f130a0cfd0a6c69": "Add server",
+  "3bb11e781ccfdfa4": "{label} name {position}",
+  "2dcce37a84df9023": "Stored secret, type to replace",
+  "980036dc61ed4854": "value",
+  "4066011abb0366e7": "{label} value {position}",
+  "44449b6f8788d53c": "Mark {name} as secret",
+  "9bc4cdf7b90846df": "Mark {label} {position} as secret",
+  "4a7fb5537dd3f5d0": "Remove {label} {position}",
+  "ef5ce734e5cf92c9": [
+    "Saved for ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Agents get it in their next session."
+  ],
+  "ba80513db1c398e9": "Paste config (optional)",
+  "07bf0bef4f42c3b6": "Couldn't find a server in that JSON. Fill in the fields below instead.",
+  "8b4538901efee53f": "Name",
+  "09f46e9e3c471a9d": "Type",
+  "8642886e5c629833": "Command",
+  "4d7c2b2e1c32763b": "Command",
+  "0e6e4161438b374d": "Arguments",
+  "f056af23c59f1970": "Add",
+  "ee83402ca7541ae7": "Secret, kept on the server",
+  "95392514ad726da5": "Plain text",
+  "ec1ff98210823074": "Clipboard API is unavailable while copying skill path.",
+  "94b9b5b129338e01": "Failed to copy skill path to the clipboard.",
+  "0be32a1a96cfd221": "Copy path",
+  "fd942c8242b8f700": "No description yet.",
+  "097a099eca5f4c05": "Used by",
+  "d096a7065168503b": "{agent} loads this skill.",
+  "2e185500777d6f32": "{agent} doesn't load this skill.",
+  "34f472902c26d941": "Update",
+  "6901bd96c944d49c": "Remove",
+  "feacc7e5553306de": "On",
+  "be826862e94548aa": "{environment} doesn't have this skill.",
+  "d1aa6bb2e2e7a0b6": "Showing {environment}'s copy.",
+  "ffcb130c9eef2b30": "{environment} has this skill.",
+  "419c3d51462e29ab": "Copy to {environments}",
+  "62941bc2fc23a54c": "{count, plural, one {{files} and {count} more} other {{files} and {count} more}}",
+  "f3a3ee1840bb0e6c": "Copy of the skill",
+  "44051c9e5b21cf9b": "Copy {number}",
+  "029639511d7f0603": "Loading the file viewer",
+  "a5f94c37315d8248": "No agents are enabled.",
+  "4d676e2976e301a6": [
+    "From",
+    " ",
+    {
+      "t": "span",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    }
+  ],
+  "6786119b8b7305ec": "This agent doesn't say where the skill's files are, so they can't be shown.",
+  "93dc0de0566526ef": "Only some of this skill's files are shown.",
+  "03bcd8a7bdd70b19": "script",
+  "daa96817da30a75d": "Agents can run this",
+  "b58bfbb350a12b08": "Files in this skill",
+  "468ae2790b199976": "Preview",
+  "50f59c0c73422e30": "Source",
+  "08abf2a9b16374f6": "Read-only",
+  "e4af454abbcd3cbe": "This file isn't text.",
+  "3391c8e0e43d74b7": "This file can't be previewed here.",
+  "035c3cf43994ddc6": [
+    "Files (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ") · ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "c06d60f791014d06": "This file is large, so only the start is shown.",
+  "03fd99a38953e532": [
+    "Loading ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "…"
+  ],
+  "8a7170d15612358f": "Turned off in the agent's own settings.",
+  "6431bf6c33004272": "{name} skill",
+  "c1f9e74963a2fc8d": "Skills from {source}",
+  "3f9e4c135ac1ff3a": "{count, plural, one {{count} more} other {{count} more}}",
+  "e15f1af7c369473b": "This project",
+  "c778bf0c53535321": "Conflict",
+  "a90a7ba2cf613d75": "Tools",
+  "5aa3018719d023a5": "Couldn't update {name}. {errors}",
+  "167b9c2debb25d31": "Couldn't remove {name}. {errors}",
+  "016c65bc81d7984d": "Environment",
+  "9d21cbf2d972e8bf": "Couldn't copy {name} from {environment}: {error}",
+  "41aedafbdf9c044a": "Couldn't copy {name}. {errors}",
+  "8a98398878132403": "Loading skills…",
+  "116e4fefcb43c27f": "No skill named “{name}” here.",
+  "cac6069c3c39bd59": "Search skills…",
+  "bdf6c42581fca429": "Search skills",
+  "586901e17f3c6636": "Show only skills whose name is used more than once ({count})",
+  "6e232c17c5049453": "Show all skills.",
+  "9d93747f860c301e": "Show only skills whose name is used by different skills. One switch turns all of them on or off.",
+  "5c09f1a381d38123": "Rescanning skills",
+  "aa188c23eb39db90": "Rescan skills",
+  "80dce1b52d2d7ec1": "No skills yet",
+  "f614e1226c835673": "Agents load skills from folders like {personal} and {project}. Add skills from a source, or put one there and rescan.",
+  "89e2a2cb2bd7063e": "No two skills share a name.",
+  "3bce08a3c690ffb2": "No skills match “{query}”",
+  "c96d9c941307cfa8": "No matching skills.",
+  "9351a307542dbb15": "every environment",
+  "4c9670316fcc80d6": "Loading servers…",
+  "cf296bb8df2ba738": "No MCP server named “{name}” here.",
+  "f28895aa392e827f": "This project",
+  "94a92a3e1c0d5be4": "No servers just for this project",
+  "bde88f2f45ccde12": "No servers yet",
+  "c0b3d7f013f6ee4d": "Add one here to give only this project's agents a server, or to point a shared server at a different account.",
+  "5ffcfd253362e1b0": "Servers added here reach every agent, next to the servers each agent already loads from its own config.",
+  "1e97d4bf6142c8e4": "Inherited",
+  "fd069d5f3410a2a6": "Open {name}",
+  "0b65a042c85265ac": "T3 Code's own tools: threads, tasks, the browser and devices.",
+  "cde5a4a1b2191efb": "Command",
+  "4ebad3a0708124a9": "Skills",
+  "d11beda88dc3fc1a": "MCP servers",
+  "40526a7646224722": "Rescan skill folders",
+  "8395aa879d3f515d": "Turning a skill off hides it from Claude, Codex and OpenCode, and from the composer's skill menu. Other agents may still load it on their own. Changes apply to new sessions. For one thread, turn a set of skills and servers on or off with a tool preset in the composer's Tools menu.",
+  "f56b944e987768c9": "Remove",
+  "cf211a29e9f01c3c": [
+    "Deletes the skill's folder and every agent's link to it, as ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "npx skills remove"
+    },
+    " ",
+    "does on ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "."
+  ],
+  "e71fddd6b349fb91": [
+    "Deletes the skill's folder and every agent's link to it, as ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "npx skills remove"
+    },
+    " ",
+    "does in this project."
+  ],
+  "46f0f92c66305d21": [
+    "Deletes the skill's folder and every agent's link to it, as ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "npx skills remove"
+    },
+    " ",
+    "does on this environment."
+  ],
+  "c1ae1d5f508eff28": [
+    "Deletes ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " from every agent's skill folder on ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    ". It wasn't installed from a source, so it can't be added back from here."
+  ],
+  "4ff074f54db69e80": [
+    "Deletes ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " from every agent's skill folder in this project. It wasn't installed from a source, so it can't be added back from here."
+  ],
+  "32e36d52a2878298": [
+    "Deletes ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " from every agent's skill folder on this environment. It wasn't installed from a source, so it can't be added back from here."
+  ],
+  "27b44316eab62b46": "Add server",
+  "9cbeee187fa0e055": "Adding, editing or inspecting servers needs permission to manage providers on this environment.",
+  "c5b6e17993ff800c": "Servers you add here are given to Claude, Codex, Cursor, OpenCode, Grok and other ACP agents. Pi isn't supported yet. Changes apply to new sessions; use Restart agent session to pick them up in an open thread. Open a server to see its tools. For one thread, turn a set of skills and servers on or off with a tool preset in the composer's Tools menu.",
+  "ceac5015a4b944f9": "New agent sessions stop getting this server, and its stored secrets are deleted.",
+  "1899f0dce0f6ed32": "Remove",
+  "c0b7ffb04f492976": "Built in",
+  "c57f6c7b12904ae6": "Replaces environment's",
+  "03fe05dc34f7317b": "On for this project",
+  "1502415f7bd194aa": "Off for this project",
+  "7a7040e18f045de3": "Reset",
+  "5f58bae4fe9b7def": "Edit",
+  "3983d347049d4c86": "Connect an environment to save this.",
+  "0246f296a9647801": "Tools",
+  "0353f9a38ff2e05b": "agent skills SKILL.md disable enable hide turn off slash commands .agents claude codex cursor install add npx skills github repo update remove scripts conflict presets",
+  "708a73f415362f50": "model context protocol mcp add server command url stdio http headers env tools agents",
+  "5143d3531afcfd8d": "This project",
+  "fee76f73cd92285e": "Global",
+  "5e65efd1927ba6b1": "Plugins",
+  "e4d15b4ea36783ac": "Built in",
+  "ce6560a4e22df206": "Lives in this repo",
+  "7c449c6f6fe10f94": "In all your projects",
+  "4797cac7185c71e5": "From the agents' plugins",
+  "3f6e1d48975c68d9": "Ships with the agent",
+  "b96bd1c264cac3d2": "Available to all your agents",
+  "3c4b5ba386401fee": "No enabled agent loads this skill",
+  "36ae26ef1f314d11": "Not available to {agents}",
+  "dfd30342b374850f": "Different skills are named “{name}”, and its switch turns them all on or off. Remove or rename the copy you don't want.",
+  "3eb23136aa990db9": "{name} is reserved for T3 Code's own server.",
+  "cc2d77be2941b135": "Use lowercase letters, digits, - or _, starting with a letter.",
+  "7221500ea3955f0e": "A server with this name already exists.",
+  "991e801362842b57": "Enter the command that starts the server.",
+  "130f3db79991969d": "Enter an http:// or https:// URL."
 }

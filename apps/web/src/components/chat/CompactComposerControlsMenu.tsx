@@ -2,16 +2,19 @@ import type { RuntimeMode } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { memo, useRef } from "react";
 import { EllipsisIcon } from "lucide-react";
-import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Menu, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
+import { type ComposerToolPresets, ComposerToolPresetsSection } from "./ComposerToolPresets";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   runtimeMode: RuntimeMode;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   showPermissions: boolean;
+  /** The tool presets, when their chip moved into this menu. */
+  toolPresets?: ComposerToolPresets | null;
   size?: "sm" | "xs";
   /** Close the portaled popup when its trigger hides. */
   hidden?: boolean;
@@ -49,6 +52,12 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             runtimeModeOptions={props.runtimeModeOptions}
             onRuntimeModeChange={props.onRuntimeModeChange}
           />
+        ) : null}
+        {props.toolPresets ? (
+          <>
+            {props.showPermissions ? <MenuSeparator /> : null}
+            <ComposerToolPresetsSection toolPresets={props.toolPresets} />
+          </>
         ) : null}
       </MenuPopup>
     </Menu>

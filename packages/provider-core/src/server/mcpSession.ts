@@ -1,4 +1,9 @@
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderInstanceId,
+  ResolvedMcpServer,
+  ThreadId,
+} from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
 /**
@@ -6,6 +11,29 @@ import type * as Effect from "effect/Effect";
  * lists only a core set plus `tool_search`, which lists the rest on demand.
  */
 export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";
+
+/**
+ * The user's tools for one thread, resolved from Settings → Tools when the
+ * session is prepared. Adapters add the servers next to `t3-code` and hide
+ * the skills where their provider can.
+ */
+export interface McpProviderSessionTools {
+  /** Enabled servers with secrets materialized, sorted by name. */
+  readonly servers: ReadonlyArray<ResolvedMcpServer>;
+  /** Skill names hidden from the agent, sorted. */
+  readonly disabledSkills: ReadonlyArray<string>;
+  /**
+   * Changes whenever `servers` or `disabledSkills` do, without exposing a
+   * secret. Adapters compare it to decide when a live process is stale.
+   */
+  readonly fingerprint: string;
+}
+
+export const EMPTY_MCP_PROVIDER_SESSION_TOOLS: McpProviderSessionTools = {
+  servers: [],
+  disabledSkills: [],
+  fingerprint: "",
+};
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -20,6 +48,8 @@ export interface McpProviderSessionConfig {
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   /** True while a delegated task this thread started will wake it with its result. */
   readonly hasPendingWake?: Effect.Effect<boolean>;
+  /** Servers and skill switches from Settings → Tools; absent means none. */
+  readonly tools?: McpProviderSessionTools;
 }
 
 export function withAgentDeviceEnvironment(

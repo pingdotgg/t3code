@@ -5384,5 +5384,13 @@
   "ad208e3e32c85029": "Tout masquer",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
-  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours."
+  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
+  "6c4b55cdbe5dd1d0": "{count, plural, one {Skills et serveurs MCP vérifiés {count} fois} other {Skills et serveurs MCP vérifiés {count} fois}}",
+  "651333a8798481cf": "{count, plural, one {Tentative de vérifier les skills et serveurs MCP {count} fois} other {Tentative de vérifier les skills et serveurs MCP {count} fois}}",
+  "7aae4f6df36c4e7b": "{count, plural, one {Skills et serveurs MCP mis à jour {count} fois} other {Skills et serveurs MCP mis à jour {count} fois}}",
+  "15eae995296a4525": "{count, plural, one {Tentative de mettre à jour les skills et serveurs MCP {count} fois} other {Tentative de mettre à jour les skills et serveurs MCP {count} fois}}",
+  "5ba9aa4175d4965c": "{count, plural, one {Skills installés {count} fois} other {Skills installés {count} fois}}",
+  "f5fb66293e616534": "{count, plural, one {Tentative d’installer des skills {count} fois} other {Tentative d’installer des skills {count} fois}}",
+  "c06fc69851054582": "{count, plural, one {Skills supprimés {count} fois} other {Skills supprimés {count} fois}}",
+  "0af78fcce5177598": "{count, plural, one {Tentative de supprimer des skills {count} fois} other {Tentative de supprimer des skills {count} fois}}"
 }

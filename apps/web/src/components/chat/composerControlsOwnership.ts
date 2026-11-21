@@ -6,6 +6,8 @@
 export function resolveComposerControlsOwnership(input: {
   /** Permissions hide while the mode is the default, or while the new-thread strip names it. */
   readonly matchesDefault: boolean;
+  /** The tool presets chip, which follows the mode block and so overflows first. */
+  readonly toolsBlock?: boolean;
   readonly collapsed: boolean;
   /** How many trailing blocks the width measurement moved into the overflow menu. */
   readonly measuredHiddenBlockCount: number;
@@ -16,14 +18,23 @@ export function resolveComposerControlsOwnership(input: {
       ? ("icon" as const)
       : ("label" as const);
   const showModeBlock = accessDisplay !== "hidden";
-  const modeHidden = showModeBlock && input.measuredHiddenBlockCount > 0;
-  const hiddenBlockIds = modeHidden ? (["mode"] as const) : ([] as const);
+  const blockIds: ReadonlyArray<"mode" | "tools"> = [
+    ...(showModeBlock ? (["mode"] as const) : []),
+    ...(input.toolsBlock ? (["tools"] as const) : []),
+  ];
+  const hiddenBlockIds = blockIds.slice(
+    Math.max(0, blockIds.length - input.measuredHiddenBlockCount),
+  );
+  const modeHidden = hiddenBlockIds.includes("mode");
   const overflowShowsPermissions = modeHidden;
   return {
     accessDisplay,
     showModeBlock,
+    blockIds,
     hiddenBlockCount: hiddenBlockIds.length,
     hiddenBlockIds,
+    modeHidden,
+    toolsHidden: hiddenBlockIds.includes("tools"),
     overflowShowsPermissions,
     /** Without a visible chip or an overflow menu holding it, the model picker answers composer.mode. */
     pickerOwnsModeShortcut: !overflowShowsPermissions && (accessDisplay === "hidden" || modeHidden),

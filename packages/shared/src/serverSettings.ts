@@ -407,6 +407,8 @@ export function applyServerSettingsPatch(
     sourceControlHosts: sourceControlHostsPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
     usageModelAliases: usageModelAliasesPatch,
+    mcpServers: mcpServersPatch,
+    toolPresets: toolPresetsPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
@@ -641,6 +643,15 @@ export function applyServerSettingsPatch(
             usageModelAliasesPatch,
           ),
         }
+      : {}),
+    // Each server is replaced whole: deepMerge would mix a stdio and an http
+    // transport, or keep a variable the client removed.
+    ...(mcpServersPatch !== undefined
+      ? { mcpServers: mergeSettingsEntries(current.mcpServers, mcpServersPatch) }
+      : {}),
+    ...(patch.disabledSkills !== undefined ? { disabledSkills: patch.disabledSkills } : {}),
+    ...(toolPresetsPatch !== undefined
+      ? { toolPresets: mergeSettingsEntries(current.toolPresets, toolPresetsPatch) }
       : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }

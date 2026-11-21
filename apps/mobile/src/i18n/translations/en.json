@@ -5391,5 +5391,13 @@
   "ad208e3e32c85029": "Hide all",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool calls in chat",
-  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show."
+  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
+  "6c4b55cdbe5dd1d0": "{count, plural, one {Checked skills and MCP servers {count} time} other {Checked skills and MCP servers {count} times}}",
+  "651333a8798481cf": "{count, plural, one {Tried to check skills and MCP servers {count} time} other {Tried to check skills and MCP servers {count} times}}",
+  "7aae4f6df36c4e7b": "{count, plural, one {Updated skills and MCP servers {count} time} other {Updated skills and MCP servers {count} times}}",
+  "15eae995296a4525": "{count, plural, one {Tried to update skills and MCP servers {count} time} other {Tried to update skills and MCP servers {count} times}}",
+  "5ba9aa4175d4965c": "{count, plural, one {Installed skills {count} time} other {Installed skills {count} times}}",
+  "f5fb66293e616534": "{count, plural, one {Tried to install skills {count} time} other {Tried to install skills {count} times}}",
+  "c06fc69851054582": "{count, plural, one {Removed skills {count} time} other {Removed skills {count} times}}",
+  "0af78fcce5177598": "{count, plural, one {Tried to remove skills {count} time} other {Tried to remove skills {count} times}}"
 }

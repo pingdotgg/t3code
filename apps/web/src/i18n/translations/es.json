@@ -12380,5 +12380,400 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
+  "6c4b55cdbe5dd1d0": "{count, plural, one {Comprobó skills y servidores MCP {count} vez} other {Comprobó skills y servidores MCP {count} veces}}",
+  "651333a8798481cf": "{count, plural, one {Intentó comprobar skills y servidores MCP {count} vez} other {Intentó comprobar skills y servidores MCP {count} veces}}",
+  "7aae4f6df36c4e7b": "{count, plural, one {Actualizó skills y servidores MCP {count} vez} other {Actualizó skills y servidores MCP {count} veces}}",
+  "15eae995296a4525": "{count, plural, one {Intentó actualizar skills y servidores MCP {count} vez} other {Intentó actualizar skills y servidores MCP {count} veces}}",
+  "5ba9aa4175d4965c": "{count, plural, one {Instaló skills {count} vez} other {Instaló skills {count} veces}}",
+  "f5fb66293e616534": "{count, plural, one {Intentó instalar skills {count} vez} other {Intentó instalar skills {count} veces}}",
+  "c06fc69851054582": "{count, plural, one {Quitó skills {count} vez} other {Quitó skills {count} veces}}",
+  "0af78fcce5177598": "{count, plural, one {Intentó quitar skills {count} vez} other {Intentó quitar skills {count} veces}}",
+  "37485fa7f7f226be": "Las herramientas se pueden cambiar cuando el hilo esté inactivo.",
+  "4f3c3c9ea0c53a33": "{count, plural, one {{count} preajuste} other {{count} preajustes}}",
+  "9ceac16c489b8224": "Preajustes de herramientas",
+  "17def2719132cf6d": "Preajustes de herramientas activos en este hilo: {names}",
+  "7c5686519629005b": "Preajustes de herramientas",
+  "85ee9aab91f4f082": "Agrupa las skills y los servidores MCP que usas juntos y actívalos o desactívalos aquí para un hilo.",
+  "425973268d32e72f": "Algunas de sus herramientas están activadas",
+  "8922ec21b8f34343": "Nuevo preajuste…",
+  "09b2cc99e16394e9": "Editar preajuste",
+  "e90c2cd19d1164e0": "Ya hay otro preajuste con este nombre.",
+  "0395abb97e34a5b2": "Usa como máximo 48 caracteres.",
+  "bab0a61cf72813f2": "No se encuentra aquí",
+  "c13a81315bf3a917": "Frontend",
+  "128c408532da3560": "Skills",
+  "95c6fada35cfde29": "Filtrar skills",
+  "b66c8f072747a92f": "{count, plural, one {Filtrar {count} skill…} other {Filtrar {count} skills…}}",
+  "edf5111abb29e990": "Los agentes de aquí no tienen skills.",
+  "724baefb1716842b": "Servidores MCP",
+  "d131b937e49e4ca0": "Filtrar servidores MCP",
+  "73460bb8f85de189": "{count, plural, one {Filtrar {count} servidor MCP…} other {Filtrar {count} servidores MCP…}}",
+  "739bff4fe20ebbd9": "No se ha añadido ningún servidor MCP en Ajustes → Herramientas.",
+  "3bbaf90da14d26f7": "Nuevo preajuste",
+  "0b916d8ecea93b04": [
+    "Editar ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "aeccf20447890871": "Elige las skills y los servidores que un hilo activa o desactiva a la vez.",
+  "bfe0090cfc9d4c55": [
+    "Se guarda en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", para todos sus proyectos."
+  ],
+  "23677886367fa7c1": "Todos los proyectos de este entorno pueden usar el preajuste.",
+  "eedfb02c8e2462d3": "Nombre",
+  "b4eeaa957b52dd75": "Eliminar",
+  "19cfb08bc05e2678": "Guardar",
+  "28dc39a65f17f258": [
+    "No hay resultados para «",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "»."
+  ],
+  "aa2472c2d4b2b34f": "Origen",
+  "80c9ff23955b16bf": "Seleccionar todas las visibles",
+  "34c42871f8582aea": "{selected} de {total} seleccionadas",
+  "10b18372034587c6": "Sin descripción.",
+  "800a59edb318cb52": "Incluye scripts",
+  "82990dbfbd4c8964": "{count, plural, one {Instalar {count} skill} other {Instalar {count} skills}}",
+  "a78bca4e29bbf0e9": "Instalar",
+  "751f4792fb286e58": "Añadir skills",
+  "fc2c82c07d28cb37": [
+    "Se instala para todos los agentes de ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", igual que con",
+    " ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "npx skills add"
+    },
+    "."
+  ],
+  "38dc18a023d29ca8": "Buscar skills",
+  "09478c78cff17e1b": [
+    "Un ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "owner/repo"
+    },
+    " de GitHub, una URL de git o una carpeta del entorno."
+  ],
+  "45fce709ba860d8e": [
+    "Skills de ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "87e1723a6ac1fc72": [
+    "Ninguna skill coincide con «",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "»."
+  ],
+  "054cde6fd8f61594": "Incluye scripts",
+  "deff487ae1201141": [
+    "Cada instalación admite hasta ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " skills. Instala el resto después."
+  ],
+  "2ef953767003b232": [
+    {
+      "t": "AlertTriangleIcon",
+      "i": 1
+    },
+    " ",
+    "marca las skills con scripts que los agentes pueden ejecutar si se lo pides. Instala solo desde orígenes de confianza."
+  ],
+  "28497bec7d8aec23": "Detalles de {name}",
+  "665864c4f243bdab": "Integrado",
+  "b242a7ef2c71248d": "Comando",
+  "26f7420c59e15d9a": "Activado en este proyecto",
+  "208885aa5b36afa3": "Desactivado en este proyecto",
+  "63a766715018cf7b": "Servidor {name}",
+  "f09a024649948a9a": "Herramientas",
+  "f1c6ba24a323110d": "Herramientas · {count}",
+  "3e5516b8456c7d95": "Obteniendo herramientas",
+  "78d4dfd558f57d68": "Volver a obtener las herramientas",
+  "823b6cc9e4143931": "No se pudieron obtener las herramientas de este servidor. {error}",
+  "7393315fd22fb878": "No se pudieron volver a obtener. {error}",
+  "82b022e8589ab576": "{count, plural, =0 {Sin parámetros} one {{count} parámetro} other {{count} parámetros}}",
+  "c2c65853a526f652": "Reemplaza al del entorno",
+  "1b5526c7bb929147": "Las herramientas propias de T3 Code: hilos, tareas, el navegador y los dispositivos. Todas las sesiones de agente reciben este servidor; las herramientas del navegador y de dispositivos siguen sus propios ajustes.",
+  "dbff37fff167dee3": "Todas las sesiones de agente reciben este servidor.",
+  "186b8ef748584d7a": "Restablecer",
+  "2bff570a4eee70f3": "Editar",
+  "a902d5c987e665ab": "Quitar",
+  "89966e57b29fbe6b": "Reiniciar el servidor y obtener sus herramientas",
+  "9ed47f192a58cf33": "Obtener las herramientas de un servidor lo inicia, y para eso necesitas permiso para gestionar proveedores en este entorno.",
+  "78e88355e86b1c5a": "Este servidor no ofrece herramientas.",
+  "be481260c73646c4": "No recibe parámetros.",
+  "f2fcad2921e9151e": "Obligatorio",
+  "4c8673b974aff74c": "Añadir servidor MCP",
+  "bbefbae8d0a39698": "Tipo de servidor",
+  "36996e84011eec18": "Variables de entorno",
+  "bf48cc45693b320f": "Encabezados",
+  "2f130a0cfd0a6c69": "Añadir servidor",
+  "3bb11e781ccfdfa4": "{label}: nombre {position}",
+  "2dcce37a84df9023": "Secreto guardado; escribe para reemplazarlo",
+  "980036dc61ed4854": "valor",
+  "4066011abb0366e7": "{label}: valor {position}",
+  "44449b6f8788d53c": "Marcar {name} como secreto",
+  "9bc4cdf7b90846df": "Marcar {label} {position} como secreto",
+  "4a7fb5537dd3f5d0": "Quitar {label} {position}",
+  "ef5ce734e5cf92c9": [
+    "Se guarda para ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Los agentes lo recibirán en su próxima sesión."
+  ],
+  "ba80513db1c398e9": "Pegar configuración (opcional)",
+  "07bf0bef4f42c3b6": "No se encontró ningún servidor en ese JSON. Rellena los campos de abajo.",
+  "8b4538901efee53f": "Nombre",
+  "09f46e9e3c471a9d": "Tipo",
+  "8642886e5c629833": "Comando",
+  "4d7c2b2e1c32763b": "Comando",
+  "0e6e4161438b374d": "Argumentos",
+  "f056af23c59f1970": "Añadir",
+  "ee83402ca7541ae7": "Secreto, se guarda en el servidor",
+  "95392514ad726da5": "Texto plano",
+  "ec1ff98210823074": "La API del portapapeles no está disponible al copiar la ruta de la skill.",
+  "94b9b5b129338e01": "No se pudo copiar la ruta de la skill al portapapeles.",
+  "0be32a1a96cfd221": "Copiar ruta",
+  "fd942c8242b8f700": "Aún no hay descripción.",
+  "097a099eca5f4c05": "Usada por",
+  "d096a7065168503b": "{agent} carga esta skill.",
+  "2e185500777d6f32": "{agent} no carga esta skill.",
+  "34f472902c26d941": "Actualizar",
+  "6901bd96c944d49c": "Quitar",
+  "feacc7e5553306de": "En",
+  "be826862e94548aa": "{environment} no tiene esta skill.",
+  "d1aa6bb2e2e7a0b6": "Se muestra la copia de {environment}.",
+  "ffcb130c9eef2b30": "{environment} tiene esta skill.",
+  "419c3d51462e29ab": "Copiar a {environments}",
+  "62941bc2fc23a54c": "{count, plural, one {{files} y {count} más} other {{files} y {count} más}}",
+  "f3a3ee1840bb0e6c": "Copia de la skill",
+  "44051c9e5b21cf9b": "Copia {number}",
+  "029639511d7f0603": "Cargando el visor de archivos",
+  "a5f94c37315d8248": "No hay agentes activados.",
+  "4d676e2976e301a6": [
+    "Desde",
+    " ",
+    {
+      "t": "span",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    }
+  ],
+  "6786119b8b7305ec": "Este agente no indica dónde están los archivos de la skill, así que no se pueden mostrar.",
+  "93dc0de0566526ef": "Solo se muestran algunos archivos de esta skill.",
+  "03bcd8a7bdd70b19": "script",
+  "daa96817da30a75d": "Los agentes pueden ejecutarlo",
+  "b58bfbb350a12b08": "Archivos de esta skill",
+  "468ae2790b199976": "Vista previa",
+  "50f59c0c73422e30": "Código fuente",
+  "08abf2a9b16374f6": "Solo lectura",
+  "e4af454abbcd3cbe": "Este archivo no es de texto.",
+  "3391c8e0e43d74b7": "Este archivo no se puede previsualizar aquí.",
+  "035c3cf43994ddc6": [
+    "Archivos (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ") · ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "c06d60f791014d06": "Este archivo es grande, así que solo se muestra el principio.",
+  "03fd99a38953e532": [
+    "Cargando ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "…"
+  ],
+  "8a7170d15612358f": "Desactivada en los ajustes del propio agente.",
+  "6431bf6c33004272": "Skill {name}",
+  "c1f9e74963a2fc8d": "Skills de {source}",
+  "3f9e4c135ac1ff3a": "{count, plural, one {{count} más} other {{count} más}}",
+  "e15f1af7c369473b": "Este proyecto",
+  "c778bf0c53535321": "Conflicto",
+  "a90a7ba2cf613d75": "Herramientas",
+  "5aa3018719d023a5": "No se pudo actualizar {name}. {errors}",
+  "167b9c2debb25d31": "No se pudo quitar {name}. {errors}",
+  "016c65bc81d7984d": "Entorno",
+  "9d21cbf2d972e8bf": "No se pudo copiar {name} desde {environment}: {error}",
+  "41aedafbdf9c044a": "No se pudo copiar {name}. {errors}",
+  "8a98398878132403": "Cargando skills…",
+  "116e4fefcb43c27f": "Aquí no hay ninguna skill llamada «{name}».",
+  "cac6069c3c39bd59": "Buscar skills…",
+  "bdf6c42581fca429": "Buscar skills",
+  "586901e17f3c6636": "Mostrar solo las skills cuyo nombre se repite ({count})",
+  "6e232c17c5049453": "Mostrar todas las skills.",
+  "9d93747f860c301e": "Muestra solo las skills cuyo nombre comparten varias skills distintas. Un mismo interruptor las activa o desactiva todas.",
+  "5c09f1a381d38123": "Volviendo a escanear las skills",
+  "aa188c23eb39db90": "Volver a escanear las skills",
+  "80dce1b52d2d7ec1": "Aún no hay skills",
+  "f614e1226c835673": "Los agentes cargan skills desde carpetas como {personal} y {project}. Añade skills desde un origen o coloca una ahí y vuelve a escanear.",
+  "89e2a2cb2bd7063e": "No hay dos skills con el mismo nombre.",
+  "3bce08a3c690ffb2": "Ninguna skill coincide con «{query}»",
+  "c96d9c941307cfa8": "No hay skills que coincidan.",
+  "9351a307542dbb15": "todos los entornos",
+  "4c9670316fcc80d6": "Cargando servidores…",
+  "cf296bb8df2ba738": "Aquí no hay ningún servidor MCP llamado «{name}».",
+  "f28895aa392e827f": "Este proyecto",
+  "94a92a3e1c0d5be4": "No hay servidores solo para este proyecto",
+  "bde88f2f45ccde12": "Aún no hay servidores",
+  "c0b3d7f013f6ee4d": "Añade uno aquí para dar un servidor solo a los agentes de este proyecto o para apuntar un servidor compartido a otra cuenta.",
+  "5ffcfd253362e1b0": "Los servidores que añadas aquí llegan a todos los agentes, junto a los que cada agente ya carga desde su propia configuración.",
+  "1e97d4bf6142c8e4": "Heredados",
+  "fd069d5f3410a2a6": "Abrir {name}",
+  "0b65a042c85265ac": "Las herramientas propias de T3 Code: hilos, tareas, el navegador y los dispositivos.",
+  "cde5a4a1b2191efb": "Comando",
+  "4ebad3a0708124a9": "Skills",
+  "d11beda88dc3fc1a": "Servidores MCP",
+  "40526a7646224722": "Volver a escanear las carpetas de skills",
+  "8395aa879d3f515d": "Desactivar una skill la oculta a Claude, Codex y OpenCode, y del menú de skills del cuadro de mensaje. Otros agentes pueden seguir cargándola por su cuenta. Los cambios se aplican a las sesiones nuevas. Para un solo hilo, activa o desactiva un conjunto de skills y servidores con un preajuste de herramientas en el menú Herramientas del cuadro de mensaje.",
+  "f56b944e987768c9": "Quitar",
+  "cf211a29e9f01c3c": [
+    "Elimina la carpeta de la skill y el enlace de cada agente a ella, como hace ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "npx skills remove"
+    },
+    " ",
+    "en ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "."
+  ],
+  "e71fddd6b349fb91": [
+    "Elimina la carpeta de la skill y el enlace de cada agente a ella, como hace ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "npx skills remove"
+    },
+    " ",
+    "en este proyecto."
+  ],
+  "46f0f92c66305d21": [
+    "Elimina la carpeta de la skill y el enlace de cada agente a ella, como hace ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "npx skills remove"
+    },
+    " ",
+    "en este entorno."
+  ],
+  "c1ae1d5f508eff28": [
+    "Elimina ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " de la carpeta de skills de cada agente en ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    ". No se instaló desde un origen, así que no se puede volver a añadir desde aquí."
+  ],
+  "4ff074f54db69e80": [
+    "Elimina ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " de la carpeta de skills de cada agente en este proyecto. No se instaló desde un origen, así que no se puede volver a añadir desde aquí."
+  ],
+  "32e36d52a2878298": [
+    "Elimina ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " de la carpeta de skills de cada agente en este entorno. No se instaló desde un origen, así que no se puede volver a añadir desde aquí."
+  ],
+  "27b44316eab62b46": "Añadir servidor",
+  "9cbeee187fa0e055": "Para añadir, editar o inspeccionar servidores necesitas permiso para gestionar proveedores en este entorno.",
+  "c5b6e17993ff800c": "Los servidores que añadas aquí están disponibles para Claude, Codex, Cursor, OpenCode, Grok y otros agentes ACP. Pi aún no es compatible. Los cambios se aplican a las sesiones nuevas; usa «Reiniciar sesión del agente» para aplicarlos en un hilo abierto. Abre un servidor para ver sus herramientas. Para un solo hilo, activa o desactiva un conjunto de skills y servidores con un preajuste de herramientas en el menú Herramientas del cuadro de mensaje.",
+  "ceac5015a4b944f9": "Las sesiones de agente nuevas dejarán de recibir este servidor y se eliminarán sus secretos guardados.",
+  "1899f0dce0f6ed32": "Quitar",
+  "c0b7ffb04f492976": "Integrado",
+  "c57f6c7b12904ae6": "Reemplaza al del entorno",
+  "03fe05dc34f7317b": "Activado en este proyecto",
+  "1502415f7bd194aa": "Desactivado en este proyecto",
+  "7a7040e18f045de3": "Restablecer",
+  "5f58bae4fe9b7def": "Editar",
+  "3983d347049d4c86": "Conecta un entorno para guardar esto.",
+  "0246f296a9647801": "Herramientas",
+  "0353f9a38ff2e05b": "agente agentes skills SKILL.md desactivar activar ocultar apagar comandos de barra .agents claude codex cursor instalar añadir npx skills github repositorio actualizar quitar scripts conflicto preajustes",
+  "708a73f415362f50": "model context protocol mcp añadir servidor comando url stdio http encabezados variables de entorno env herramientas agentes",
+  "5143d3531afcfd8d": "Este proyecto",
+  "fee76f73cd92285e": "Globales",
+  "5e65efd1927ba6b1": "Plugins",
+  "e4d15b4ea36783ac": "Integradas",
+  "ce6560a4e22df206": "Está en este repositorio",
+  "7c449c6f6fe10f94": "En todos tus proyectos",
+  "4797cac7185c71e5": "De los plugins de los agentes",
+  "3f6e1d48975c68d9": "Incluida con el agente",
+  "b96bd1c264cac3d2": "Disponible para todos tus agentes",
+  "3c4b5ba386401fee": "Ningún agente activado carga esta skill",
+  "36ae26ef1f314d11": "No disponible para {agents}",
+  "dfd30342b374850f": "Varias skills se llaman «{name}» y su interruptor las activa o desactiva todas. Quita o cambia el nombre de la copia que no quieras.",
+  "3eb23136aa990db9": "{name} está reservado para el servidor propio de T3 Code.",
+  "cc2d77be2941b135": "Usa minúsculas, dígitos, - o _, empezando por una letra.",
+  "7221500ea3955f0e": "Ya existe un servidor con este nombre.",
+  "991e801362842b57": "Introduce el comando que inicia el servidor.",
+  "130f3db79991969d": "Introduce una URL http:// o https://."
 }
