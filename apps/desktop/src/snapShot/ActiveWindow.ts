@@ -28,6 +28,11 @@ export type ActiveWindow = {
 const MAC_LOOKUP_TIMEOUT_MS = 5_000;
 
 const MAC_HELPER_STRIP_MAX_THICKNESS_RATIO = 0.25;
+// While another app captures it, macOS adds a titled ~66x20 indicator over the window's title bar.
+// Its placement is not documented, so it is matched by size: shorter than any title bar and
+// narrower than any content window.
+const MAC_SHARING_INDICATOR_MAX_WIDTH = 100;
+const MAC_SHARING_INDICATOR_MAX_HEIGHT = 28;
 
 const MacActiveWindowLookup = Schema.Struct({
   owner: Schema.Struct({
@@ -118,8 +123,12 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   );
   // Helpers belong to the content behind them, which may not be the app's largest window.
   const window = visible.find((candidate, index) => {
-    if (candidate.title.trim() !== "") return true;
     const bounds = candidate.bounds;
+    const isSharingIndicator =
+      bounds.width < MAC_SHARING_INDICATOR_MAX_WIDTH &&
+      bounds.height < MAC_SHARING_INDICATOR_MAX_HEIGHT;
+    if (isSharingIndicator) return false;
+    if (candidate.title.trim() !== "") return true;
     return !visible.some((reference, referenceIndex) => {
       if (referenceIndex <= index) return false;
       return (
