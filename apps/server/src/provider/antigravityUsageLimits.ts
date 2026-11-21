@@ -34,7 +34,8 @@ const SUMMARY_WINDOW_MINS = new Map([
   ["weekly", 7 * 24 * 60],
 ]);
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
-const CLI_RENEWAL_TIMEOUT = "30 seconds";
+// Sign-in allows 90s for a cold launch (about a minute on Windows) plus 30s once initialized.
+const CLI_RENEWAL_TIMEOUT = "2 minutes";
 const CLI_RENEWAL_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
 
 export type AntigravityCliTokenRenewalResult = "renewed" | "busy" | "failed";
@@ -561,7 +562,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   });
   const probe = read.pipe(
     Effect.provideService(Digest.Digest, crypto),
-    Effect.timeout("70 seconds"),
+    Effect.timeout("160 seconds"),
     Effect.catch(() =>
       Effect.gen(function* () {
         return makeUnavailableUsageLimits({

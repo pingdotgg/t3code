@@ -1014,10 +1014,10 @@ describe("Antigravity subscription limits", () => {
       yield* Deferred.succeed(release, "failed");
       expect((yield* Fiber.join(first)).unavailable?.reason).toBe("probeFailed");
 
-      // Because clear ran during renewal, no backoff was recorded; the next probe attempts renewal and times out at 30s.
+      // Because clear ran during renewal, no backoff was recorded; the next probe attempts renewal and times out.
       const hung = yield* Effect.forkChild(probe);
       yield* Deferred.await(hungStarted);
-      yield* TestClock.adjust("30 seconds");
+      yield* TestClock.adjust("2 minutes");
       const timedOut = yield* Fiber.join(hung);
       expect(timedOut.unavailable?.reason).toBe("probeFailed");
       expect(timedOut.unavailable?.message).toContain("saved sign-in has expired");
