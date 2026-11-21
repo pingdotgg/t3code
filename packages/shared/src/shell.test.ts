@@ -649,28 +649,31 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }),
   );
 
-  it.effect("probes the requested spelling outside Windows, for case-insensitive volumes", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      yield* fs.writeFileString(path.join(directory, "code"), "");
-      yield* TestClock.setTime(4_200_000_000_000);
-      const probed: Array<string> = [];
-      yield* resolveCommandPath("Code", { env: { PATH: directory } }).pipe(
-        Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(CommandResolutionCache, new Map()),
-        Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
-        Effect.provideService(FileSystem.FileSystem, {
-          ...fs,
-          stat: (file) => {
-            if (file !== directory) probed.push(file);
-            return fs.stat(file);
-          },
-        }),
-      );
-      expect(probed).toEqual([path.join(directory, "Code")]);
-    }),
+  // A drive-letter temp path splits on the POSIX PATH delimiter.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "probes the requested spelling outside Windows, for case-insensitive volumes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        yield* fs.writeFileString(path.join(directory, "code"), "");
+        yield* TestClock.setTime(4_200_000_000_000);
+        const probed: Array<string> = [];
+        yield* resolveCommandPath("Code", { env: { PATH: directory } }).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(CommandResolutionCache, new Map()),
+          Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            stat: (file) => {
+              if (file !== directory) probed.push(file);
+              return fs.stat(file);
+            },
+          }),
+        );
+        expect(probed).toEqual([path.join(directory, "Code")]);
+      }),
   );
 
   it.effect("lists each PATH directory once, probes only listed names, and relists on change", () =>
