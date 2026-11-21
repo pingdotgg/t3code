@@ -104,4 +104,72 @@ describe("parseElicitationForm", () => {
       q0__other: "SQLite",
     });
   });
+
+  it("falls back to the header when the message is blank", () => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          code: { type: "string", title: "Code" },
+          count: { type: "number", minimum: 1 },
+        },
+      },
+      "  ",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => question.question),
+      ["Code", "Question 2"],
+    );
+  });
+
+  it("keeps the message beside a lone field's description", () => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: { code: { type: "integer", description: "Type 713321 to confirm." } },
+        required: ["code"],
+      },
+      "Confirm deleting the staging fixture.",
+      { keepMessage: true },
+    );
+    assert.strictEqual(
+      form?.questions[0]?.question,
+      "Confirm deleting the staging fixture. Type 713321 to confirm.",
+    );
+  });
+
+  it.each([
+    { minItems: undefined, maxItems: 2, hint: " (choose up to 2)" },
+    { minItems: 2, maxItems: undefined, hint: " (choose at least 2)" },
+    { minItems: 2, maxItems: 3, hint: " (choose 2 to 3)" },
+    { minItems: 2, maxItems: 2, hint: " (choose 2)" },
+    { minItems: 1, maxItems: 4, hint: "" },
+  ])("shows selection limits min=$minItems max=$maxItems", ({ minItems, maxItems, hint }) => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          toppings: {
+            type: "array",
+            items: { type: "string", enum: ["olives", "cheese", "basil", "ham"] },
+            minItems,
+            maxItems,
+          },
+        },
+      },
+      "Pick toppings.",
+    );
+    assert.strictEqual(form?.questions[0]?.question, `Pick toppings.${hint}`);
+  });
+
+  it("rejects a form whose required key has no property", () => {
+    assert.strictEqual(
+      parseElicitationForm(
+        { type: "object", properties: { note: { type: "string" } }, required: ["code"] },
+        "Confirm",
+      ),
+      undefined,
+    );
+  });
 });
