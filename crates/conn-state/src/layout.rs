@@ -1,5 +1,5 @@
 /// Minimum sidebar width in CSS pixels.
-pub const SIDEBAR_MIN_WIDTH: f32 = 200.0;
+pub const SIDEBAR_MIN_WIDTH: f32 = 153.0;
 /// Maximum sidebar width in CSS pixels.
 pub const SIDEBAR_MAX_WIDTH: f32 = 480.0;
 /// Default sidebar width in CSS pixels.

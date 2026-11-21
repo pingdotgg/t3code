@@ -30,6 +30,13 @@ pub(crate) fn register_keybindings(cx: &mut App) {
     ]);
 }
 
+/// A panel seam being dragged: which side, where the drag started, and the width then.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SeamDrag {
+    Sidebar { from_x: f32, start: f32 },
+    RightPanel { from_x: f32, start: f32 },
+}
+
 /// Root view of the Conn native desktop shell.
 pub(crate) struct ConnApp {
     tokens: Tokens,
@@ -57,6 +64,7 @@ pub(crate) struct ConnApp {
     right_panel_open_tabs: Vec<RightPanelTab>,
     right_panel_add_menu_open: bool,
     right_panel_maximized: bool,
+    seam_drag: Option<SeamDrag>,
     command_palette: Option<Entity<crate::palette::CommandPalette>>,
     settings_modal: Option<Entity<crate::settings::SettingsModal>>,
     overlay_subscriptions: Vec<gpui_kit::Subscription>,
@@ -148,6 +156,7 @@ impl ConnApp {
             right_panel_open_tabs: vec![RightPanelTab::Files],
             right_panel_add_menu_open: false,
             right_panel_maximized: false,
+            seam_drag: None,
             command_palette: None,
             settings_modal: None,
             overlay_subscriptions: Vec::new(),
@@ -237,6 +246,58 @@ impl ConnApp {
         self.settings_modal = Some(modal);
         self.sync_browser_visibility(cx);
         cx.notify();
+    }
+
+    /// A full-height seam with a 7px drag handle over it (Conn's resizable sidebar and right
+    /// panel). Double-click resets the panel to its default width.
+    fn render_seam(&self, right_panel: bool, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        use gpui_kit::{CursorStyle, MouseButton, MouseDownEvent};
+        let handle = div()
+            .id(if right_panel {
+                "seam-right-panel"
+            } else {
+                "seam-sidebar"
+            })
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(-3.0))
+            .w(px(7.0))
+            .cursor(CursorStyle::ResizeLeftRight)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |app, event: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    let x = f32::from(event.position.x);
+                    if event.click_count >= 2 {
+                        if right_panel {
+                            app.layout
+                                .set_right_panel_width(conn_state::RIGHT_PANEL_DEFAULT_WIDTH);
+                        } else {
+                            app.layout
+                                .set_sidebar_width(conn_state::SIDEBAR_DEFAULT_WIDTH);
+                        }
+                        app.seam_drag = None;
+                    } else if right_panel {
+                        app.seam_drag = Some(SeamDrag::RightPanel {
+                            from_x: x,
+                            start: app.layout.right_panel_width,
+                        });
+                    } else {
+                        app.seam_drag = Some(SeamDrag::Sidebar {
+                            from_x: x,
+                            start: app.layout.sidebar_width,
+                        });
+                    }
+                    cx.notify();
+                }),
+            );
+        div()
+            .relative()
+            .h_full()
+            .flex_shrink_0()
+            .child(two_tone_divider(&self.tokens, &self.geometry))
+            .child(handle)
     }
 
     /// Tells the right panel whether its surfaces are on screen, so the native browser view
@@ -994,7 +1055,7 @@ impl Render for ConnApp {
                     &self.geometry,
                     cx,
                 ))
-                .child(two_tone_divider(&self.tokens, &self.geometry));
+                .child(self.render_seam(false, cx));
         }
 
         let maximized = self.layout.right_panel_open && self.right_panel_maximized;
@@ -1004,7 +1065,7 @@ impl Render for ConnApp {
 
         if self.layout.right_panel_open {
             if !maximized {
-                root = root.child(two_tone_divider(&self.tokens, &self.geometry));
+                root = root.child(self.render_seam(true, cx));
             }
             root = root.child(self.render_right_panel_column(cx));
         }
