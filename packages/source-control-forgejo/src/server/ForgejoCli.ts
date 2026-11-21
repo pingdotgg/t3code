@@ -476,7 +476,14 @@ export const make = Effect.gen(function* () {
       command: "fj",
       cwd: yield* HostProcess.HomeDirectory,
       args: ["--host", login.url, "whoami"],
-    });
+    }).pipe(
+      // whoami reads `GET /user`, which tokens without `read:user` cannot; the API calls that
+      // follow report a real denial with its status.
+      Effect.catchIf(
+        (error) => token !== undefined && error.reason === undefined,
+        () => Effect.void,
+      ),
+    );
     // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
     const refreshed = (yield* readKeys(cwd)).hosts[login.name]?.token;
     if (!refreshed)
@@ -755,7 +762,9 @@ export const make = Effect.gen(function* () {
                 : {}),
         detail:
           status === 401 || status === 403
-            ? "Forgejo denied access. Check this server's `tea login` credentials and permissions."
+            ? body
+              ? `Forgejo denied access (HTTP ${status}): ${body}`
+              : "Forgejo denied access. Check this server's `tea login` credentials and permissions."
             : status === 404
               ? "Forgejo repository or pull request was not found."
               : status === 429

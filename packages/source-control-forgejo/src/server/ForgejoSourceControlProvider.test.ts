@@ -12,7 +12,11 @@ import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts";
+import {
+  VcsProcessExitError,
+  VcsProcessSpawnError,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
 import { firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -1747,6 +1751,14 @@ it.effect("keeps Gitea's failure reason when tea reports an HTTP error", () =>
       assert.include(result.failure.detail, "405");
       assert.include(result.failure.detail, "The head branch is behind the base branch");
     }
+    const denied = yield* cli
+      .api({ cwd: "/repo", repository: "http://forgejo.local:3000/maria/project", path: "user" })
+      .pipe(Effect.result);
+    assert.strictEqual(denied._tag, "Failure");
+    if (denied._tag === "Failure") {
+      assert.strictEqual(denied.failure.reason, "forbidden");
+      assert.include(denied.failure.detail, "required=[read:user]");
+    }
   }).pipe(
     Effect.provideService(
       FileSystem.FileSystem,
@@ -1777,13 +1789,18 @@ it.effect("keeps Gitea's failure reason when tea reports an HTTP error", () =>
                       },
                     ]),
                   )
-                : processOutput(
-                    '{"message":"The head branch is behind the base branch","url":"http://forgejo.local:3000/api/swagger"}',
-                    {
-                      stderr:
-                        "HTTP/1.1 405 Method Not Allowed\nContent-Type: application/json;charset=utf-8\n",
-                    },
-                  ),
+                : input.args.at(-1)?.endsWith("/api/v1/user")
+                  ? processOutput(
+                      '{"message":"token does not have at least one of required scope(s), required=[read:user]"}',
+                      { stderr: "HTTP/1.1 403 Forbidden\n" },
+                    )
+                  : processOutput(
+                      '{"message":"The head branch is behind the base branch","url":"http://forgejo.local:3000/api/swagger"}',
+                      {
+                        stderr:
+                          "HTTP/1.1 405 Method Not Allowed\nContent-Type: application/json;charset=utf-8\n",
+                      },
+                    ),
             ),
         },
       }),
@@ -2139,6 +2156,57 @@ it.effect("loads later fj review pages when the server caps pages below the requ
     Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
   );
 });
+
+// `fj whoami` reads `GET /user`, which a token without `read:user` cannot.
+it.effect("reads through fj with a token that cannot run whoami", () =>
+  Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const result = yield* cli.api({
+      cwd: "/repo",
+      repository: "https://forgejo.local/maria/project",
+      path: "repos/maria/project/pulls/42",
+    });
+    assert.strictEqual(result.stdout, '{"number":42}');
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: { "forgejo.local": { type: "Application", token: "test-token" } },
+            }),
+          ),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        assert.strictEqual(request.headers.authorization, "token test-token");
+        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('{"number":42}')));
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) =>
+            Effect.fail(
+              VcsProcessExitError.fromProcessExit(
+                { operation: input.operation, command: input.command, cwd: input.cwd },
+                {
+                  exitCode: 1,
+                  stderr: "Error: 403 Forbidden: required=[read:user]",
+                  stderrTruncated: false,
+                },
+                "command-failed",
+              ),
+            ),
+        },
+      }),
+    ),
+  ),
+);
 
 it.effect("re-sends an fj write with its method and body to a renamed repository's path", () => {
   const requests: string[] = [];
