@@ -7,6 +7,7 @@ import {
   type ComponentType,
   type KeyboardEvent,
 } from "react";
+import { flushSync } from "react-dom";
 import {
   ArchiveIcon,
   FlaskConicalIcon,
@@ -225,13 +226,15 @@ export function SettingsSidebarNav({
   };
   const handleSearchResultClick = (item: SettingsSearchItem) => {
     clearSearch();
-    onMobileOpenChange(false);
     const targetId = item.targetId ?? item.id;
     revealSettingsSearchTarget(targetId);
     if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
+      // Below md the page is hidden behind the section list; show it before scrolling.
+      flushSync(() => onMobileOpenChange(false));
       scrollToSettingsTarget(targetId);
       return;
     }
+    onMobileOpenChange(false);
     void navigate({
       to: item.to,
       hash: targetId,
