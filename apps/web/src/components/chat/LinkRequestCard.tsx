@@ -29,6 +29,7 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { CheckIcon, LinkIcon, MinusIcon, XIcon } from "lucide-react";
 import { useId, useRef, useState } from "react";
 
+import { useEnvironment } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { mintPairingCodeOn } from "../../state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines } from "../../state/peerLinks";
@@ -216,6 +217,8 @@ function LinkRequestDialog(props: {
       target.kind === "machine" &&
       machines.some((machine) => machine.environmentId === target.environmentId)
     );
+  const source = useEnvironment(props.environmentId);
+  const hosts = source === null || unnamed ? null : { source: source.label, target: targetName };
   const targetId = target.kind === "machine" ? target.environmentId : null;
   const connected = usePreparedConnection(targetId);
   const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
@@ -324,9 +327,16 @@ function LinkRequestDialog(props: {
           title={
             pickMachine || unnamed ? gt("Link a machine") : gt("Link {targetName}", { targetName })
           }
-          description={gt(
-            "Agents here can then launch, message and wait on threads there. Revoke it in that machine's Sharing & access.",
-          )}
+          description={
+            hosts === null
+              ? gt(
+                  "Agents here can then launch, message and wait on threads there. Revoke it in that machine's Sharing & access.",
+                )
+              : gt(
+                  "Agents on {source} can then launch, message and wait on threads on {target}. Revoke it in that machine's Sharing & access.",
+                  hosts,
+                )
+          }
         >
           {steps.length > 1 && !useExisting ? (
             <WizardSteps
@@ -437,7 +447,12 @@ function LinkRequestDialog(props: {
                         </span>
                       </label>
                     )}
-                    <LinkAccessPicker value={access} onChange={setAccess} disabled={busy} />
+                    <LinkAccessPicker
+                      value={access}
+                      onChange={setAccess}
+                      hosts={hosts}
+                      disabled={busy}
+                    />
                   </>
                 )}
               </>

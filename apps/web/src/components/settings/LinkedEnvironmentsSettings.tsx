@@ -333,6 +333,11 @@ export function LinkEnvironmentDialog({
     throughCandidate !== null && via !== null && !throughFailed.has(throughCandidate.environmentId)
       ? throughCandidate
       : null;
+  const targetLabel = (through ?? machine)?.label;
+  const hosts =
+    source === null || targetLabel === undefined
+      ? null
+      : { source: source.label, target: targetLabel };
   const linkBack = useLinkBackOffers(environmentId, targetId === null ? [] : [targetId], open);
   const backOffer = linkBack.offerFor(targetId);
   const ready =
@@ -488,10 +493,17 @@ export function LinkEnvironmentDialog({
             )}
           </DialogTitle>
           <DialogDescription>
-            <T>
-              Agents here can then launch, message and wait on threads there. It appears under
-              Authorized clients in that environment's Sharing & access, where it can be revoked.
-            </T>
+            {hosts === null ? (
+              <T>
+                Agents here can then launch, message and wait on threads there. It appears under
+                Authorized clients in that environment's Sharing & access, where it can be revoked.
+              </T>
+            ) : (
+              gt(
+                "Agents on {source} can then launch, message and wait on threads on {target}. It appears under Authorized clients in that environment's Sharing & access, where it can be revoked.",
+                hosts,
+              )
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -588,7 +600,7 @@ export function LinkEnvironmentDialog({
                 ) : null}
               </label>
             )}
-            <LinkAccessPicker value={access} onChange={setAccess} disabled={busy} />
+            <LinkAccessPicker value={access} onChange={setAccess} hosts={hosts} disabled={busy} />
             {machine === null || source === null ? null : backOffer.kind === "offered" ? (
               <label className="flex cursor-pointer items-start gap-2.5 text-sm has-data-disabled:cursor-default">
                 <Checkbox

@@ -1,27 +1,34 @@
 import { AuthMcpClientAccess } from "@t3tools/contracts";
-import { T, useMessages } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useId } from "react";
 
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
-/** What agents here may do in an environment being linked, with what that does not allow. */
+/** What agents on one machine may do in an environment being linked, with what that does not allow. */
 export function LinkAccessPicker({
   value,
   onChange,
+  hosts = null,
   disabled = false,
 }: {
   readonly value: AuthMcpClientAccess;
   readonly onChange: (access: AuthMcpClientAccess) => void;
+  readonly hosts?: { readonly source: string; readonly target: string } | null;
   readonly disabled?: boolean;
 }) {
   const labelId = useId();
+  const gt = useGT();
   const m = useMessages();
   const selected = accessConfig[value];
   return (
     <div className="space-y-1.5">
       <span id={labelId} className="block text-xs font-medium">
-        <T>What agents here may do there</T>
+        {hosts === null ? (
+          <T>What agents here may do there</T>
+        ) : (
+          gt("What agents on {source} may do on {target}", hosts)
+        )}
       </span>
       <Select
         value={value}
@@ -57,11 +64,18 @@ export function LinkAccessPicker({
       </Select>
       <p className="text-xs text-muted-foreground">
         {m(selected.description)}{" "}
-        <T>
-          An agent never gets more access there than its own mode here. Below full access, it can
-          change only threads this link started, not that machine's own threads, projects or
-          settings.
-        </T>
+        {hosts === null ? (
+          <T>
+            An agent never gets more access there than its own mode here. Below full access, it can
+            change only threads this link started, not that machine's own threads, projects or
+            settings.
+          </T>
+        ) : (
+          gt(
+            "An agent never gets more access on {target} than its own mode on {source}. Below full access, it can change only threads this link started, not that machine's own threads, projects or settings.",
+            hosts,
+          )
+        )}
       </p>
     </div>
   );

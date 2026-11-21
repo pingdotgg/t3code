@@ -216,11 +216,18 @@ export function LinkSeveralEnvironmentsDialog({
               : gt("Link several machines from {source}", { source: sourceLabel })}
           </DialogTitle>
           <DialogDescription>
-            <T>
-              Agents here can then launch, message and wait on threads on each machine you pick.
-              Each appears under Authorized clients in that machine's Sharing & access, where it can
-              be revoked.
-            </T>
+            {sourceLabel === undefined ? (
+              <T>
+                Agents here can then launch, message and wait on threads on each machine you pick.
+                Each appears under Authorized clients in that machine's Sharing & access, where it
+                can be revoked.
+              </T>
+            ) : (
+              gt(
+                "Agents on {source} can then launch, message and wait on threads on each machine you pick. Each appears under Authorized clients in that machine's Sharing & access, where it can be revoked.",
+                { source: sourceLabel },
+              )
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
