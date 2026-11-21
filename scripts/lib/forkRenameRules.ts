@@ -1152,9 +1152,12 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     test: (o) =>
       /^t3(?:code|tools)$/i.test(stem(o)) &&
       // Values tests compare with renamed code: attribution, user agents, DISPLAY,
-      // lint rule names, command-line flags, systemd unit names and storage keys.
+      // lint rule names, command-line flags, systemd unit names, storage keys, DOM
+      // attributes and the preview's certificate approvals file.
       !/attribution|user-?agent|userAgent|DISPLAY/i.test(o.line) &&
-      !/\.slice\b|-protect\.conf|:update-everything-result|t3code\/compile-cache/.test(o.token) &&
+      !/\.slice\b|-protect\.conf|:update-everything-result|t3code\/compile-cache|^data-t3code-|t3code-certificate-approvals/.test(
+        o.token,
+      ) &&
       !/^t3code\/no-/.test(o.token.slice(o.offset)) &&
       // Windows task names, which serviceTaskName renames.
       !/^t3code-PC-/.test(o.token.slice(o.offset)) &&

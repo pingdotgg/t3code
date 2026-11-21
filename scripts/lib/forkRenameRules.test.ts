@@ -245,6 +245,17 @@ describe("FORK_RENAME_RULES", () => {
       'hints: ["  T3   Code ", "t3 code"],',
       "upstream-reference",
     ],
+    // DOM attributes and the approvals file follow the renamed preview code.
+    [
+      "apps/desktop/src/preview/PickPreload.test.ts",
+      'getAttribute("data-t3code-annotation-tool")',
+      "identifier",
+    ],
+    [
+      "apps/desktop/src/preview/BrowserSession.test.ts",
+      "`${dir}/t3code-certificate-approvals.json`",
+      "identifier",
+    ],
     // A Windows task name follows serviceTaskName; the repository name beside it stays.
     [
       "apps/server/src/cloud/bootService.test.ts",
