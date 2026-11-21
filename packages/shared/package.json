@@ -415,6 +415,10 @@
       "types": "./src/autoModel.ts",
       "import": "./src/autoModel.ts"
     },
+    "./machineCapacity": {
+      "types": "./src/machineCapacity.ts",
+      "import": "./src/machineCapacity.ts"
+    },
     "./usageLimits": {
       "types": "./src/usageLimits.ts",
       "import": "./src/usageLimits.ts"

@@ -128,6 +128,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Every protocol-2 server sends this; older mobile builds still read it. */
   environmentThemes: Schema.optionalKey(Schema.Boolean),
   usageLimitSources: Schema.optionalKey(Schema.Boolean),
+  /** Answers `server.getMachineStatus` for the machine bar. */
+  machineStatus: Schema.optionalKey(Schema.Boolean),
   /** Honors `workspaceSnapshotsOnDemand`; older servers send every snapshot and drop them in the stream. */
   providerWorkspaceSnapshotsOnDemand: Schema.optionalKey(Schema.Boolean),
   /** Honors `modelCatalogOnly`; older servers drop the field and probe every provider. */

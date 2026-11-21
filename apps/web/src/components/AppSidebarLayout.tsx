@@ -33,7 +33,10 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
+import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
+import { machineBarAvailableAtom } from "../state/machineStatus";
+import { MachineBar } from "./machineBar/MachineBar";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -459,6 +462,11 @@ export function AppSidebarLayout({
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
       : {}
   ) as CSSProperties;
+  const machineBarEnabled = useClientSettings((settings) => settings.machineBarEnabled);
+  const machineBarAvailable = useAtomValue(machineBarAvailableAtom);
+  // Narrow windows never show the bar, so they must not mount it and poll every machine.
+  const machineBarFits = useMediaQuery({ min: "md" });
+  const machineBarShown = showSidebar && machineBarEnabled && machineBarAvailable && machineBarFits;
   const sidebarProviderStyle = {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
@@ -468,7 +476,7 @@ export function AppSidebarLayout({
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
       <SidebarProvider
-        className="h-dvh! min-h-0!"
+        className={cn("h-dvh! min-h-0!", machineBarShown && "md:[--machine-bar-height:22px]")}
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
         storageKey="chat_thread_sidebar_open"
         style={sidebarProviderStyle}
@@ -500,6 +508,7 @@ export function AppSidebarLayout({
           </>
         ) : null}
         {children}
+        {machineBarShown ? <MachineBar /> : null}
         <BackgroundThreadAnnouncer />
         <SidebarControl showSidebar={showSidebar} />
         {isElectron ? <HistorySwipeNavigation /> : null}
