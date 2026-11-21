@@ -9077,7 +9077,7 @@
     "en tu navegador."
   ],
   "a11d2816a2b3106c": "Cargando la terminal de inicio de sesión…",
-  "b2f7638eb3def111": "Si la última página de localhost no carga, pega aquí su URL completa.",
+  "e0c856a60b186c9f": "Si el inicio de sesión no termina por sí solo, pega aquí el código o la URL completa de la última página.",
   "c749e91a6fec5cf9": "Borrar {field}",
   "95e568730bdde867": "Variables",
   "134c2eb478dce8d9": "Claves de API, URL base y otros ajustes de la CLI por instancia.",

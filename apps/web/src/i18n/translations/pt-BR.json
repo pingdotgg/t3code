@@ -9078,7 +9078,7 @@
     "no seu navegador."
   ],
   "a11d2816a2b3106c": "Carregando terminal de login…",
-  "b2f7638eb3def111": "Se a página final em localhost não carregar, cole a URL completa dela aqui.",
+  "e0c856a60b186c9f": "Se o login não terminar sozinho, cole aqui o código ou a URL completa da última página.",
   "c749e91a6fec5cf9": "Limpar {field}",
   "95e568730bdde867": "Variáveis",
   "134c2eb478dce8d9": "Chaves de API, URLs base e outras configurações de CLI por instância.",

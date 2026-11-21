@@ -216,31 +216,36 @@ describe("Antigravity setup", () => {
       .toBeVisible();
   });
 
-  it("waits for verified auth after submitting a callback to the selected environment", async () => {
-    resetSetup();
-    const callbackUrl = "http://127.0.0.1:5555/?state=test-only&code=test-only";
-    await using screen = await renderSetup();
-    await userEvent.fill(screen.callbackInput(), callbackUrl);
-    await screen.click("Continue");
+  it.each([
+    ["a loopback URL", "http://127.0.0.1:5555/?state=test-only&code=test-only"],
+    ["a pasted sign-in code", "4/test-only_code-value"],
+  ])(
+    "waits for verified auth after submitting %s to the selected environment",
+    async (_, callbackUrl) => {
+      resetSetup();
+      await using screen = await renderSetup();
+      await userEvent.fill(screen.callbackInput(), callbackUrl);
+      await screen.click("Continue");
 
-    expect(setup.completeAuth).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, flowId: "flow-1", callbackUrl },
-    });
-    expect(screen.occurrences("Signed in.")).toBe(0);
-    expect(screen.callbackInput().value).toBe("");
+      expect(setup.completeAuth).toHaveBeenCalledWith({
+        environmentId,
+        input: { instanceId, flowId: "flow-1", callbackUrl },
+      });
+      expect(screen.occurrences("Signed in.")).toBe(0);
+      expect(screen.callbackInput().value).toBe("");
 
-    setup.auth = authState({ phase: "verifying", authorizationUrl: null });
-    await publish();
-    expect(screen.occurrences("Signed in.")).toBe(0);
-    setup.auth = authState({ phase: "succeeded", authorizationUrl: null });
-    await screen.rerender(
-      section({
-        provider: { ...provider, status: "ready", auth: { status: "authenticated" } },
-      }),
-    );
-    expect(screen.occurrences("Signed in.")).toBe(1);
-  });
+      setup.auth = authState({ phase: "verifying", authorizationUrl: null });
+      await publish();
+      expect(screen.occurrences("Signed in.")).toBe(0);
+      setup.auth = authState({ phase: "succeeded", authorizationUrl: null });
+      await screen.rerender(
+        section({
+          provider: { ...provider, status: "ready", auth: { status: "authenticated" } },
+        }),
+      );
+      expect(screen.occurrences("Signed in.")).toBe(1);
+    },
+  );
 
   it("does not send a callback left over from a replaced sign-in flow", async () => {
     resetSetup();
