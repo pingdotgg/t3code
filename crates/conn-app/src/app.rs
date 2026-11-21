@@ -180,6 +180,49 @@ impl ConnApp {
         self.layout.selected_thread_id = Some(thread_id);
     }
 
+    /// Sends `text` to the selected thread over `orchestration.dispatchCommand`.
+    pub(crate) fn send_prompt(&mut self, text: String, cx: &mut Context<'_, Self>) {
+        let (Some(connection), Some(thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let working = self.threads.get(&thread_id).is_some_and(|t| t.working);
+        let command = match crate::commands::send_message(&thread_id, &text, working) {
+            Ok(command) => command,
+            Err(e) => {
+                eprintln!("send: could not build message.dispatch: {e}");
+                return;
+            }
+        };
+        cx.spawn(async move |_, _| {
+            if let Err(e) = connection.dispatch_command(command).await {
+                eprintln!("send: dispatchCommand failed: {e}");
+            }
+        })
+        .detach();
+    }
+
+    /// Stops the selected thread's running turn.
+    pub(crate) fn stop_selected(&mut self, cx: &mut Context<'_, Self>) {
+        let (Some(connection), Some(thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let Ok(command) = crate::commands::stop_thread(&thread_id) else {
+            return;
+        };
+        cx.spawn(async move |_, _| {
+            if let Err(e) = connection.dispatch_command(command).await {
+                eprintln!("stop: dispatchCommand failed: {e}");
+            }
+        })
+        .detach();
+    }
+
     /// State read-out for the automation hook.
     #[cfg(feature = "automation")]
     pub(crate) fn automation_dump(&self) -> serde_json::Value {

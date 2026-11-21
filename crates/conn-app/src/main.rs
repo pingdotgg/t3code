@@ -4,6 +4,7 @@ mod app;
 #[cfg(feature = "automation")]
 mod automation;
 mod colour_space;
+mod commands;
 mod fixture;
 mod header;
 mod icons;

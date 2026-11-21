@@ -12,6 +12,7 @@
 //!   theme background (GPUI's capture has no desktop blur behind the translucent frame).
 //! - `{"cmd":"theme","id":"t3-code-light"}`
 //! - `{"cmd":"select","title":"..."}` or `{"cmd":"select","id":"..."}`
+//! - `{"cmd":"send","text":"..."}` (to the selected thread), `{"cmd":"stop"}`
 //! - `{"cmd":"sidebar"}`, `{"cmd":"panel","tab":"files"}`, `{"cmd":"close-panel"}`
 //! - `{"cmd":"resize","width":1440,"height":900}`
 
@@ -114,6 +115,20 @@ async fn run(
             app.update(cx, |app, cx| app.automation_select(&id, &title, cx))
                 .map_err(|e| err(e.into()))?
         }
+        "send" => {
+            let body = text(cmd, "text").to_owned();
+            app.update(cx, |app, cx| {
+                app.send_prompt(body, cx);
+                json!("ok")
+            })
+            .map_err(|e| err(e.into()))
+        }
+        "stop" => app
+            .update(cx, |app, cx| {
+                app.stop_selected(cx);
+                json!("ok")
+            })
+            .map_err(|e| err(e.into())),
         "sidebar" => app
             .update(cx, |app, cx| {
                 app.toggle_sidebar(cx);
