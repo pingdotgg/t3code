@@ -124,7 +124,6 @@ const snapshotResult = {
   title: "Example",
   loading: false,
   visibleText: "Example",
-  interactiveElements: [],
   accessibilityTree: {},
   consoleEntries: [],
   networkEntries: [],
@@ -421,18 +420,6 @@ it.effect.each([
         url: "http://example.test/",
         loading: false,
         visibleText: "Save your changes",
-        interactiveElements: [
-          {
-            tag: "button",
-            role: "button",
-            name: "Save",
-            selector: "#save",
-            x: 0,
-            y: 0,
-            width: 20,
-            height: 10,
-          },
-        ],
         accessibilityTree: { role: "document", name: "Example" },
         consoleEntries: [],
         networkEntries: [],
@@ -482,7 +469,7 @@ it.effect.each([
         expect(snapshot.isError).toBe(false);
         expect(snapshot.structuredContent).toEqual({
           ...boundedMetadata,
-          omitted: ["accessibilityTree (use interactiveElements locators or preview_evaluate)"],
+          omitted: ["accessibilityTree (use preview_evaluate)"],
         });
         const [identity, text, ...rest] = snapshot.content;
         expect(identity?.type === "text" ? decodeJsonText(identity.text) : null).toEqual({
@@ -492,7 +479,7 @@ it.effect.each([
         expect(rest).toEqual([
           {
             type: "text",
-            text: "Snapshot text was bounded. Omitted: accessibilityTree (use interactiveElements locators or preview_evaluate).",
+            text: "Snapshot text was bounded. Omitted: accessibilityTree (use preview_evaluate).",
           },
           ...(images
             ? [
@@ -890,25 +877,9 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const pageText = "/Users/theo/Code/project\nClaude, Codex · 79 threads\n".repeat(600);
-      const element = (name: string, index: number) => ({
-        tag: "div",
-        role: "presentation",
-        name,
-        selector: `div:nth-of-type(${index})`,
-        x: 0,
-        y: 0,
-        width: 10,
-        height: 10,
-      });
       const oversized = {
         ...snapshotResult,
         visibleText: pageText,
-        interactiveElements: [
-          element(pageText, 1),
-          element(pageText, 2),
-          element(pageText, 3),
-          element("Continue", 4),
-        ],
         accessibilityTree: { nodes: Array.from({ length: 2_000 }, (_, i) => ({ nodeId: `${i}` })) },
         consoleEntries: Array.from({ length: 100 }, (_, i) => ({
           level: "log",
@@ -933,14 +904,10 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
       const parsed = decodeJsonText(body) as {
         readonly accessibilityTree?: unknown;
         readonly visibleText: string;
-        readonly interactiveElements: ReadonlyArray<{ readonly name: string }>;
         readonly consoleEntries: ReadonlyArray<{ readonly text: string }>;
       };
       expect(parsed.accessibilityTree).toBeUndefined();
       expect(parsed.visibleText.length).toBeLessThanOrEqual(8_001);
-      expect(parsed.interactiveElements).toHaveLength(4);
-      expect(parsed.interactiveElements[0]?.name.length).toBeLessThanOrEqual(201);
-      expect(parsed.interactiveElements[3]?.name).toBe("Continue");
       expect(parsed.consoleEntries).toHaveLength(40);
       expect(parsed.consoleEntries[0]?.text).toBe("entry 60");
       expect(notice?.type === "text" ? notice.text : "").toContain("accessibilityTree");
@@ -960,7 +927,6 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
       const oversized = {
         ...snapshotResult,
         title: `t${"😀".repeat(35_000)}`,
-        interactiveElements: [],
         consoleEntries: [{ level: "log", text: `x${"😀".repeat(35_000)}`, timestamp: "t" }],
       };
       yield* serveSnapshots("mcp-bounded-logs-client", oversized);
@@ -992,19 +958,14 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
 it.effect("bounds page text made of wide characters before dropping locators", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      const accessibilityTree = Array.from(
+        { length: 20 },
+        (_, i) => `- button "Button ${i}" [ref=t3-1-e${i}]`,
+      ).join("\n");
       yield* serveSnapshots("mcp-wide-text-client", {
         ...snapshotResult,
         visibleText: "界".repeat(9_000),
-        interactiveElements: Array.from({ length: 20 }, (_, i) => ({
-          tag: "button",
-          role: "button",
-          name: `Button ${i}`,
-          selector: `#button-${i}`,
-          x: 0,
-          y: 0,
-          width: 10,
-          height: 10,
-        })),
+        accessibilityTree,
       });
 
       const snapshot = yield* callSnapshot({ includeImage: false });
@@ -1016,10 +977,10 @@ it.effect("bounds page text made of wide characters before dropping locators", (
       );
       const parsed = decodeJsonText(body) as {
         readonly visibleText: string;
-        readonly interactiveElements: ReadonlyArray<unknown>;
+        readonly accessibilityTree: string;
       };
       expect(parsed.visibleText).toMatch(/^界+…$/);
-      expect(parsed.interactiveElements).toHaveLength(20);
+      expect(parsed.accessibilityTree).toBe(accessibilityTree);
       expect(notice?.type === "text" ? notice.text : "").toContain(
         "visibleText after 4000 characters",
       );

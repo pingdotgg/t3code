@@ -249,7 +249,7 @@ const make = Effect.gen(function* () {
           );
           if (shells.length === 0) return [];
           // One read per listing, not per project, and never cached so Settings changes apply.
-          const bound = yield* bindings.list.pipe(
+          const bound = yield* bindings.list(filter.projectId).pipe(
             // A failed read is not an unbound project: that would list the git host's issues alone.
             Effect.mapError(
               (cause) =>
