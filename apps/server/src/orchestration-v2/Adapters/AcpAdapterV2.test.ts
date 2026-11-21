@@ -9280,7 +9280,11 @@ describe("AcpAdapterV2", () => {
       if (runtime.hasPendingBackgroundWork === undefined) {
         return yield* Effect.die("ACP runtime must expose hasPendingBackgroundWork.");
       }
-      yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
       assert.isFalse(yield* runtime.hasPendingBackgroundWork);
       assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
 
@@ -9310,6 +9314,11 @@ describe("AcpAdapterV2", () => {
       assert.isFalse(
         yield* runtime.hasPendingBackgroundWork,
         "replayed history must not pin background work",
+      );
+      const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
+      assert.deepEqual(
+        snapshot.messages.map((message) => message.text),
+        ["old reply from history"],
       );
     }).pipe(Effect.provide(layerTest)),
   );
