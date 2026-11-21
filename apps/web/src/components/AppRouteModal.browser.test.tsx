@@ -1,11 +1,17 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { assert, describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../test/render";
+import "../index.css";
+import { render, stubGlobal } from "../../test/render";
 import { useCommitOnBlur } from "../hooks/useCommitOnBlur";
 import { AppRouteModal } from "./AppRouteModal";
 
 vi.mock("./chat/GlobalVoiceInputIndicator", () => ({ GlobalVoiceInputIndicator: () => null }));
+// The fullscreen state comes from the desktop bridge, which only the desktop app reads.
+vi.mock("../env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../env")>()),
+  isElectron: true,
+}));
 
 function CommitOnBlurField({ onCommit }: { onCommit: (next: string) => void }) {
   return <input aria-label="Instructions" {...useCommitOnBlur("", onCommit)} />;
@@ -66,5 +72,70 @@ describe("AppRouteModal", () => {
     await userEvent.keyboard("{Escape}");
 
     await expect.element(settings).toHaveAttribute("data-open");
+  });
+
+  it("keeps the title bar above the popup draggable at desktop width", async () => {
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    await page.viewport(1280, 800);
+    await using _viewport = {
+      [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
+    };
+    // A desktop window's native caption strip, as the window controls overlay reports it.
+    Object.defineProperty(navigator, "windowControlsOverlay", {
+      configurable: true,
+      value: {
+        visible: true,
+        getTitlebarAreaRect: () => new DOMRect(0, 0, 1280, 52),
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      },
+    });
+    using _overlay = {
+      [Symbol.dispose]: () => Reflect.deleteProperty(navigator, "windowControlsOverlay"),
+    };
+    await using _screen = await render(
+      <AppRouteModal label="Settings">
+        <p>Settings</p>
+      </AppRouteModal>,
+      { router: "/settings/general" },
+    );
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    await expect.element(settings).toHaveFocus();
+
+    const strip = document.elementFromPoint(window.innerWidth / 2, 20);
+    assert(strip instanceof HTMLElement);
+    expect(settings.element().contains(strip)).toBe(false);
+    expect(getComputedStyle(strip).getPropertyValue("-webkit-app-region")).toBe("drag");
+    expect(strip.getBoundingClientRect()).toMatchObject({ top: 0, height: 52 });
+  });
+
+  it("leaves the title bar as backdrop in macOS fullscreen", async () => {
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    await page.viewport(1280, 800);
+    await using _viewport = {
+      [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
+    };
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "MacIntel" });
+    using _platform = { [Symbol.dispose]: () => Reflect.deleteProperty(navigator, "platform") };
+    using _bridge = stubGlobal("desktopBridge", {
+      getWindowFullscreenState: () => true,
+      onWindowFullscreenStateChange: () => () => undefined,
+    });
+    await using _screen = await render(
+      <AppRouteModal label="Settings">
+        <p>Settings</p>
+      </AppRouteModal>,
+      { router: "/settings/general" },
+    );
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    await expect.element(settings).toHaveFocus();
+
+    const band = document.elementFromPoint(window.innerWidth / 2, 20);
+    assert(band instanceof HTMLElement);
+    expect(getComputedStyle(band).getPropertyValue("-webkit-app-region")).toBe("no-drag");
+    await userEvent.click(page.elementLocator(band), {
+      position: { x: window.innerWidth / 2, y: 20 },
+    });
+    await expect.element(settings).not.toBeInTheDocument();
   });
 });
