@@ -613,20 +613,20 @@ function indexDirectoryNames(entries: ReadonlyArray<string>): PathDirectoryNames
   return names;
 }
 
-// File names to stat in one PATH directory, in candidate order; only names the listing holds in
-// some case. Windows probes the listed spellings; elsewhere the requested spelling, which a
-// case-insensitive volume (macOS default) still resolves.
+// File names to stat in one PATH directory; only names the listing holds in some case. Every
+// requested spelling goes first, in candidate order, so precedence matches an unlisted lookup;
+// Windows then tries the other listed spellings for case-sensitive directories.
 function pathDirectoryProbeNames(
   candidates: ReadonlyArray<string>,
   names: PathDirectoryNames | undefined,
   platform: NodeJS.Platform,
 ): ReadonlyArray<string> {
   if (names === undefined) return candidates;
-  const probe: string[] = [];
-  for (const candidate of candidates) {
-    const listed = names.get(candidate.toLowerCase());
-    if (listed === undefined) continue;
-    for (const name of platform === "win32" ? listed : [candidate]) {
+  const listed = candidates.filter((candidate) => names.has(candidate.toLowerCase()));
+  if (platform !== "win32") return listed;
+  const probe = [...listed];
+  for (const candidate of listed) {
+    for (const name of names.get(candidate.toLowerCase()) ?? []) {
       if (!probe.includes(name)) probe.push(name);
     }
   }

@@ -628,6 +628,9 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
 
         const decoy = path.join(cwd, "audit-command.exe");
         yield* fs.writeFileString(decoy, "");
+        // Listed first; the requested spelling's own variant must still win over it.
+        const caseDecoy = path.join(cwd, "AUDIT-COMMAND.cmd");
+        yield* fs.writeFileString(caseDecoy, "");
         for (const key of ["PATHEXT", "PathExt", "pathext"]) {
           const resolved = yield* resolveCommandPath(command, {
             env: { PATH: cwd, [key]: ".CMD" },
@@ -638,10 +641,12 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
               ...fs,
               stat: (filePath) =>
                 fs.stat(
-                  filePath === cwd || filePath === executable || filePath === decoy
+                  [cwd, executable, decoy, caseDecoy].includes(filePath)
                     ? filePath
                     : path.join(cwd, "missing"),
                 ),
+              readDirectory: () =>
+                Effect.succeed(["AUDIT-COMMAND.cmd", "audit-command.cmd", "audit-command.exe"]),
             }),
           );
           expect(resolved).toBe(executable);
