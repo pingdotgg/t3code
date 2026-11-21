@@ -68,7 +68,7 @@ pub(crate) fn is_loaded() -> bool {
 /// `path` must be null or point to a valid, NUL-terminated C string for the
 /// duration of this call.
 #[unsafe(no_mangle)]
-#[allow(
+#[expect(
     unreachable_pub,
     reason = "exported C symbol required by cef-dll-sys linkage"
 )]
@@ -109,7 +109,7 @@ pub unsafe extern "C" fn cef_load_library(path: *const c_char) -> c_int {
 ///
 /// Always safe to call; signature matches CEF's C API.
 #[unsafe(no_mangle)]
-#[allow(
+#[expect(
     unreachable_pub,
     reason = "exported C symbol required by cef-dll-sys linkage"
 )]
@@ -123,7 +123,7 @@ pub unsafe extern "C" fn cef_unload_library() -> c_int {
 ///
 /// Always safe to call; signature matches CEF's C API.
 #[unsafe(no_mangle)]
-#[allow(
+#[expect(
     unreachable_pub,
     reason = "exported C symbol required by cef-dll-sys linkage"
 )]
@@ -156,7 +156,7 @@ pub unsafe extern "C" fn cef_scoped_library_loader_create(helper: c_int) -> *mut
 ///
 /// Always safe to call; signature matches CEF's C API.
 #[unsafe(no_mangle)]
-#[allow(
+#[expect(
     unreachable_pub,
     reason = "exported C symbol required by cef-dll-sys linkage"
 )]

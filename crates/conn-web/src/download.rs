@@ -42,11 +42,12 @@ pub(crate) fn install(
         &part,
         &pin,
         &mut |received| {
-            let pct = if total > 0 {
-                ((received.min(total).saturating_mul(100)) / total) as u8
-            } else {
-                0
-            };
+            let pct = received
+                .min(total)
+                .saturating_mul(100)
+                .checked_div(total)
+                .and_then(|v| u8::try_from(v).ok())
+                .unwrap_or(0);
             if last_percent != Some(pct) {
                 last_percent = Some(pct);
                 progress(pct);

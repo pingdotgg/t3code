@@ -178,7 +178,7 @@ pub(crate) fn quit() {
 
 /// Callback invoked by `native/appkit_hooks.m` from its main `CFRunLoopTimer`.
 #[unsafe(no_mangle)]
-#[allow(
+#[expect(
     unreachable_pub,
     reason = "C callback invoked by native/appkit_hooks.m"
 )]

@@ -9,31 +9,31 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Pinned CEF build version matching `cef = "=156.4.0"` (`156.4.0+156.0.26`).
-pub const CEF_VERSION: &str = "156.0.26+g8ea0c73+chromium-156.0.8078.88";
+pub(crate) const CEF_VERSION: &str = "156.0.26+g8ea0c73+chromium-156.0.8078.88";
 
 /// Official CEF binary distribution CDN (Spotify).
-pub const CEF_CDN: &str = "https://cef-builds.spotifycdn.com";
+pub(crate) const CEF_CDN: &str = "https://cef-builds.spotifycdn.com";
 
 /// Environment variable overriding the root CEF install directory.
-pub const CEF_DIR_ENV: &str = "CONN_GPUI_CEF_DIR";
+pub(crate) const CEF_DIR_ENV: &str = "CONN_GPUI_CEF_DIR";
 
 /// Environment variable overriding the Chromium user profile directory.
-pub const CEF_PROFILE_DIR_ENV: &str = "CONN_GPUI_CEF_PROFILE_DIR";
+pub(crate) const CEF_PROFILE_DIR_ENV: &str = "CONN_GPUI_CEF_PROFILE_DIR";
 
 /// Framework directory name inside the CEF archive's `Release/` directory.
-pub const FRAMEWORK_NAME: &str = "Chromium Embedded Framework.framework";
+pub(crate) const FRAMEWORK_NAME: &str = "Chromium Embedded Framework.framework";
 
 /// Pseudo-bundle directory wrapping the framework and helper `.app` bundles.
 ///
 /// Using `.bundle` (not `.app`) keeps Finder/LaunchServices from offering it
 /// as a launchable application while giving CEF a valid `main_bundle_path`.
-pub const RUNTIME_BUNDLE_NAME: &str = "Conn Web.bundle";
+pub(crate) const RUNTIME_BUNDLE_NAME: &str = "Conn Web.bundle";
 
 /// Base name for CEF helper app bundles on macOS.
-pub const HELPER_NAME: &str = "Conn Helper";
+pub(crate) const HELPER_NAME: &str = "Conn Helper";
 
 /// Five helper variants Chromium expects beside the framework on macOS.
-pub const HELPER_KINDS: [(&str, &str); 5] = [
+pub(crate) const HELPER_KINDS: [(&str, &str); 5] = [
     ("", ""),
     (" (GPU)", ".gpu"),
     (" (Renderer)", ".renderer"),
@@ -553,11 +553,12 @@ mod tests {
     fn framework_path_extracts_relative_subpath() -> Result<(), WebError> {
         let path = format!("top/Release/{FRAMEWORK_NAME}/Chromium Embedded Framework");
         let extracted = framework_path(Path::new(&path), "top")?;
-        assert_eq!(
-            extracted,
-            Some(PathBuf::from("Chromium Embedded Framework")),
-            "expected relative framework binary path"
-        );
+        let expected = Some(PathBuf::from("Chromium Embedded Framework"));
+        if extracted != expected {
+            return Err(WebError::Runtime(format!(
+                "expected relative framework binary path {expected:?}, got {extracted:?}"
+            )));
+        }
         Ok(())
     }
 
@@ -602,16 +603,20 @@ mod tests {
             &mut |n| last_received = n,
             &cancel,
         )?;
-        assert_eq!(
-            last_received,
-            compressed.len() as u64,
-            "expected full download byte count"
-        );
+        if last_received != compressed.len() as u64 {
+            let _ = std::fs::remove_dir_all(&temp_root);
+            return Err(WebError::Runtime(format!(
+                "expected full download byte count {}, got {last_received}",
+                compressed.len()
+            )));
+        }
         install_from_file(&part, &pin, &layout)?;
-        assert!(
-            is_installed(&layout, &pin),
-            "expected installed marker and framework binary"
-        );
+        if !is_installed(&layout, &pin) {
+            let _ = std::fs::remove_dir_all(&temp_root);
+            return Err(WebError::Runtime(
+                "expected installed marker and framework binary".into(),
+            ));
+        }
         let _ = std::fs::remove_dir_all(&temp_root);
         Ok(())
     }

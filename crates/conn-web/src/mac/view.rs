@@ -328,15 +328,15 @@ wrap_load_handler! {
             let url = frame
                 .map(|f| CefString::from(&f.url()).to_string())
                 .unwrap_or_default();
-            if let Ok(mut current) = self.shared.url.lock() {
-                if !url.is_empty() {
-                    *current = url.clone();
-                }
+            if let Ok(mut current) = self.shared.url.lock()
+                && !url.is_empty()
+            {
+                *current = url.clone();
             }
-            if let Ok(cb) = self.shared.on_load_end.lock() {
-                if let Some(callback) = cb.as_ref() {
-                    callback(&url, http_status_code);
-                }
+            if let Ok(cb) = self.shared.on_load_end.lock()
+                && let Some(callback) = cb.as_ref()
+            {
+                callback(&url, http_status_code);
             }
         }
     }

@@ -62,6 +62,11 @@ impl gpui_kit::AssetSource for AppAssets {
 mod panels;
 
 fn main() {
+    #[cfg(feature = "cef")]
+    if let Some(code) = conn_web::maybe_run_subprocess() {
+        std::process::exit(code);
+    }
+
     let application = gpui_kit::application().with_assets(AppAssets);
     application.run(|cx| {
         gpui_kit::init(cx);

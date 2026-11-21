@@ -5,7 +5,7 @@ pub(crate) mod host;
 
 // Generated from cef-dll-sys's macOS bindings; rustfmt leaves it as written.
 #[rustfmt::skip]
-#[allow(
+#[expect(
     clippy::undocumented_unsafe_blocks,
     unreachable_pub,
     reason = "generated CEF C API forwarders exported for cef-dll-sys linkage"

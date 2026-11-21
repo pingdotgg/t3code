@@ -1386,7 +1386,7 @@ pub unsafe extern "C" fn cef_id_for_command_id_name(name: *const ::std::os::raw:
 }
 
 /// Never called: it only has to compile (see the top of gen-loader.mjs).
-#[allow(dead_code, reason = "never called: it only has to compile")]
+#[expect(dead_code, reason = "never called: it only has to compile")]
 fn signatures_match_the_bindings() {
     let _ = [super::loader_support::cef_load_library as unsafe extern "C" fn(_) -> _, cef_dll_sys::cef_load_library];
     let _ = [super::loader_support::cef_unload_library as unsafe extern "C" fn() -> _, cef_dll_sys::cef_unload_library];

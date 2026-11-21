@@ -176,7 +176,11 @@ mod mac_smoke {
         let exit_code =
             SMOKE.with(|cell| cell.borrow_mut().take().map_or(1, |state| state.exit_code));
         let _ = std::fs::remove_dir_all(&profile_dir);
-        exit_code
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+        // SAFETY: Flush completed and temp profile was removed; `_exit` avoids
+        // Chromium's C++ `CefContext` atexit trap when exiting a short-lived smoke test.
+        unsafe { libc::_exit(exit_code) };
     }
 }
 
