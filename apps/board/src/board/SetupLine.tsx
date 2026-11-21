@@ -1,18 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
 
-import { vcsEnvironment } from "../state/vcs";
+import { lastSetupSnapshotAtom } from "../state/vcs";
 import { type SetupLine, setupLine } from "../state/worktreeSetup";
 import { SetupTerminal } from "./SetupTerminal";
 
 /** T3's setup stream for an agent's thread, as the card line it renders. */
 export function useSetupLine(environmentId: EnvironmentId, threadId: string): SetupLine | null {
-  const result = useAtomValue(
-    vcsEnvironment.worktreeSetup({ environmentId, input: { threadId: ThreadId.make(threadId) } }),
-  );
-  return setupLine(AsyncResult.getOrElse(result, () => null));
+  return setupLine(useAtomValue(lastSetupSnapshotAtom(JSON.stringify([environmentId, threadId]))));
 }
 
 /** What T3 reported when a worktree's setup failed, hung under the agent's card. */

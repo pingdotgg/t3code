@@ -1,5 +1,5 @@
-import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { worktreeSetupStageLabel } from "@t3tools/client-runtime/contract-labels";
+import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 
 export type SetupLine =
   | { readonly kind: "running"; readonly text: string }
