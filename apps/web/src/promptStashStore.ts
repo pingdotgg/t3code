@@ -171,8 +171,11 @@ interface PromptStashStoreState {
     /** False for failed writes or in-memory fallback; the entry will not survive reload. */
     durable: boolean;
   };
-  /** durable=false means removal was not persisted and reload would restore the entry. */
-  takeEntry: (entryId: string) => { entry: PromptStashEntry | null; durable: boolean };
+  /** Restore waits for images. durable=false means the entry could reappear after reload. */
+  takeEntry: (
+    entryId: string,
+    action?: "restore" | "delete",
+  ) => { entry: PromptStashEntry | null; durable: boolean };
   /** attached=false means the entry disappeared while encoding, so images could not be saved. */
   finalizeEntryImages: (
     entryId: string,
@@ -197,15 +200,18 @@ export const usePromptStashStore = create<PromptStashStoreState>()(() => ({
     publishEntries(nextEntries);
     return { evicted: evicted && recoverEntry(evicted), written: true, durable };
   },
-  takeEntry: (entryId) => {
+  takeEntry: (entryId, action = "restore") => {
     const entries = latestEntries();
-    const entry = entries.find((candidate) => candidate.id === entryId) ?? null;
-    if (!entry) return { entry: null, durable: true };
+    const stored = entries.find((candidate) => candidate.id === entryId);
+    const entry = stored && recoverEntry(stored);
+    if (!entry || (action === "restore" && entry.pendingImageCount)) {
+      return { entry: null, durable: true };
+    }
     const nextEntries = entries.filter((candidate) => candidate.id !== entryId);
     const { durable } = persistEntries(nextEntries);
     unpersistedFinalizedEntryIds.delete(entryId);
     publishEntries(nextEntries);
-    return { entry: recoverEntry(entry), durable };
+    return { entry, durable };
   },
   finalizeEntryImages: (entryId, images) => {
     const entries = latestEntries();

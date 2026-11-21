@@ -216,7 +216,7 @@ describe("promptStashStore", () => {
   it("finalizeEntryImages reports false when the entry was already taken", () => {
     const store = usePromptStashStore.getState();
     store.stashEntry({ ...makeEntry({ id: "racing" }), pendingImageCount: 1 });
-    store.takeEntry("racing");
+    store.takeEntry("racing", "delete");
 
     const { attached } = store.finalizeEntryImages("racing", {
       attachments: [],
@@ -240,6 +240,7 @@ describe("promptStashStore", () => {
     const entry = usePromptStashStore.getState().entries[0];
     expect(entry?.pendingImageCount).toBe(0);
     expect(entry?.unreadableImageNames).toHaveLength(2);
+    expect(usePromptStashStore.getState().takeEntry("orphan").entry).toEqual(entry);
   });
 
   it("ignores an unreadable v1 payload seeded under the current key", () => {
@@ -338,6 +339,7 @@ describe("promptStashStore", () => {
       const { usePromptStashStore: writer } = await import("./promptStashStore");
       const entry = makeEntry({ id: "encoding-in-other-tab" });
       writer.getState().stashEntry({ ...entry, pendingImageCount: 1 });
+      expect(reader.getState().takeEntry(entry.id).entry).toBeNull();
       notifyStorage(readerWindow, storage);
 
       expect(reader.getState().entries).toEqual([{ ...entry, pendingImageCount: 1 }]);

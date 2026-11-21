@@ -129,7 +129,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
       if (!highlightedEntry) return;
       event.preventDefault();
       event.stopPropagation();
-      onRestore(highlightedEntry);
+      if (!highlightedEntry.pendingImageCount) onRestore(highlightedEntry);
       return;
     }
     if (event.key === "Backspace" && (event.metaKey || event.ctrlKey)) {
@@ -216,13 +216,16 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                 <ComposerBanner.Content>
                   <button
                     type="button"
-                    className="min-w-0 flex-1 cursor-pointer truncate text-left text-foreground/80 outline-none before:absolute before:inset-0 before:rounded-sm focus-visible:before:ring-2 focus-visible:before:ring-inset focus-visible:before:ring-ring"
+                    className="min-w-0 flex-1 cursor-pointer truncate text-left text-foreground/80 outline-none before:absolute before:inset-0 before:rounded-sm focus-visible:before:ring-2 focus-visible:before:ring-inset focus-visible:before:ring-ring aria-disabled:cursor-default"
                     data-stash-restore={entry.id}
+                    aria-disabled={Boolean(entry.pendingImageCount)}
                     aria-label={gt("Restore stashed prompt: {snippet}", {
                       snippet: stashEntrySnippet(entry, m),
                     })}
                     onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => onRestore(entry)}
+                    onClick={() => {
+                      if (!entry.pendingImageCount) onRestore(entry);
+                    }}
                   >
                     {stashEntrySnippet(entry, m)}
                   </button>
