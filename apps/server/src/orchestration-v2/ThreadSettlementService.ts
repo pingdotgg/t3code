@@ -35,6 +35,10 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import {
+  legacyThreadPullRequestKey,
+  threadPullRequestKeyOf,
+} from "../sourceControl/threadPullRequests.ts";
 import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -85,6 +89,20 @@ function pullRequestMatchesProject(
     sourceControlDefinitions.canonicalRepositoryKey(pullRequest.repositoryKey) ===
       sourceControlDefinitions.canonicalRepositoryKey(project.repositoryIdentity.canonicalKey)
   );
+}
+
+function branchPullRequestKey(pullRequest: GitManager.GitBranchPullRequest): string | null {
+  const parsed = sourceControlDefinitions.parseChangeRequestUrl(pullRequest.url)?.link;
+  if (parsed !== undefined && parsed.number === pullRequest.number) {
+    return threadPullRequestKeyOf(parsed);
+  }
+  const separator = pullRequest.repositoryKey?.indexOf("/") ?? -1;
+  if (pullRequest.repositoryKey == null || separator <= 0) return null;
+  return threadPullRequestKeyOf({
+    host: pullRequest.repositoryKey.slice(0, separator),
+    repository: pullRequest.repositoryKey.slice(separator + 1),
+    number: pullRequest.number,
+  });
 }
 
 type SettlementPullRequestLink = NonNullable<
@@ -481,7 +499,7 @@ export const make = Effect.gen(function* () {
       const reference = thread.linkedPullRequest ?? thread.branchPullRequest;
       if (reference != null) {
         return JSON.stringify([
-          "linked",
+          thread.linkedPullRequest != null ? "linked" : "branch-reference",
           reference.projectId,
           reference.repository,
           reference.number,
@@ -496,6 +514,22 @@ export const make = Effect.gen(function* () {
       );
     };
     const groups = Map.groupBy(lookupCandidates, lookupKey);
+    // A thread with no link of its own does not settle from a pull request another thread links,
+    // archived threads included.
+    const explicitlyLinked = new Set(
+      groups.size === 0
+        ? []
+        : (yield* projections.getThreadsWithPullRequests(undefined, {
+            includeArchived: true,
+          })).flatMap((thread) =>
+            visibleThreadPullRequests(thread.pullRequests ?? []).map(threadPullRequestKeyOf),
+          ),
+    );
+    const ownedByAnotherThread = (pullRequest: GitManager.GitBranchPullRequest | null) => {
+      if (pullRequest === null || pullRequest.state === "open") return false;
+      const key = branchPullRequestKey(pullRequest);
+      return key !== null && explicitlyLinked.has(key);
+    };
 
     // wouldSettle and pullRequestFor run per lookup group; the git and pull request reads they make carry the spans.
     const wouldSettle = Effect.fnUntraced(function* (
@@ -524,6 +558,13 @@ export const make = Effect.gen(function* () {
     ) {
       const thread = group[0]!;
       const reference = thread.linkedPullRequest ?? thread.branchPullRequest;
+      if (
+        thread.linkedPullRequest == null &&
+        reference != null &&
+        explicitlyLinked.has(threadPullRequestKeyOf(legacyThreadPullRequestKey(reference)))
+      ) {
+        return undefined;
+      }
       if (reference != null) {
         // Only matching PR links settle from this merge event; unrelated links require fresh lookup.
         const matchesMerge =
@@ -601,9 +642,14 @@ export const make = Effect.gen(function* () {
         { refresh, confirmTerminal: false },
       );
       noPullRequestRechecks.record(key, nowMs, remembered !== null);
+      if (ownedByAnotherThread(remembered)) return undefined;
       if (refresh || remembered === null || remembered.state === "open") return remembered;
       if (!(yield* wouldSettle(group, remembered))) return undefined;
-      return yield* git.branchPullRequest({ cwd, branch: thread.branch }, { freshGitState: true });
+      const fresh = yield* git.branchPullRequest(
+        { cwd, branch: thread.branch },
+        { freshGitState: true },
+      );
+      return ownedByAnotherThread(fresh) ? undefined : fresh;
     });
 
     // A merge, a shell close and a thread's own events read at once; only scheduled sweeps wait.
