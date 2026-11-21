@@ -5462,5 +5462,16 @@
   "ad208e3e32c85029": "Dölj alla",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
-  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid."
+  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "fb638c0603fa50c6": "{label} har tillämpats.",
+  "2bf11407b8fa9af6": "Försök igen om en minut",
+  "1c0024f6fa9aaabf": "Kan inte användas när du har nått din 5-timmarsgräns",
+  "2de09bcfd5ae8d51": "Kan inte användas när du har nått din veckogräns",
+  "6da3a2f994bd5ab9": "Kan inte användas när du har nått din veckogräns för Opus",
+  "deeb1cbaefcfd9ef": "Kan inte användas när du har nått din veckogräns för Sonnet",
+  "e1ed5d3257be05b3": "Kan inte användas när du har nått en gräns som den inte återställer",
+  "fca7999fdb155f5f": "Återställer inte gränsen du har nått",
+  "068a3432eaa18fdd": "Kan användas när du når en gräns som den återställer",
+  "b1b7a876e0d101db": "Kan inte användas just nu",
+  "6b27e45149b69d70": "Ingen Fable-användning denna vecka att återföra"
 }

@@ -12458,5 +12458,16 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "fb638c0603fa50c6": "{label} angewendet.",
+  "2bf11407b8fa9af6": "Versuche es in einer Minute erneut",
+  "1c0024f6fa9aaabf": "Bei erreichtem 5-Stunden-Limit nicht nutzbar",
+  "2de09bcfd5ae8d51": "Bei erreichtem Wochenlimit nicht nutzbar",
+  "6da3a2f994bd5ab9": "Bei erreichtem wöchentlichem Opus-Limit nicht nutzbar",
+  "deeb1cbaefcfd9ef": "Bei erreichtem wöchentlichem Sonnet-Limit nicht nutzbar",
+  "e1ed5d3257be05b3": "Bei einem erreichten Limit, das nicht aufgefüllt wird, nicht nutzbar",
+  "fca7999fdb155f5f": "Füllt das erreichte Limit nicht auf",
+  "068a3432eaa18fdd": "Nutzbar, sobald du ein Limit erreichst, das damit aufgefüllt wird",
+  "b1b7a876e0d101db": "Derzeit nicht nutzbar",
+  "6b27e45149b69d70": "Diese Woche keine Fable-Nutzung zum Zurückgeben"
 }

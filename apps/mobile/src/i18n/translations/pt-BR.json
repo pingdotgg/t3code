@@ -5456,5 +5456,16 @@
   "ad208e3e32c85029": "Ocultar todas",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
-  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem."
+  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
+  "fb638c0603fa50c6": "{label} aplicado.",
+  "2bf11407b8fa9af6": "Tente novamente em um minuto",
+  "1c0024f6fa9aaabf": "Não pode ser usado enquanto você estiver no limite de 5 horas",
+  "2de09bcfd5ae8d51": "Não pode ser usado enquanto você estiver no limite semanal",
+  "6da3a2f994bd5ab9": "Não pode ser usado enquanto você estiver no limite semanal do Opus",
+  "deeb1cbaefcfd9ef": "Não pode ser usado enquanto você estiver no limite semanal do Sonnet",
+  "e1ed5d3257be05b3": "Não pode ser usado enquanto você estiver em um limite que ele não restaura",
+  "fca7999fdb155f5f": "Não restaura o limite que você atingiu",
+  "068a3432eaa18fdd": "Pode ser usado quando você atingir um limite que ele restaura",
+  "b1b7a876e0d101db": "Não pode ser usado agora",
+  "6b27e45149b69d70": "Nenhum uso do Fable nesta semana para devolver"
 }

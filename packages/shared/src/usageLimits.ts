@@ -11,6 +11,7 @@ import {
   isProviderAvailable,
   PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
+  type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceAccount,
@@ -791,13 +792,27 @@ function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
   return "on";
 }
 
+/** Servers that predate `bankedOptions` list only the resets usable right now. */
+export const bankedResetCreditOptions = (credits: ServerProviderResetCredits) =>
+  credits.bankedOptions ?? credits.options;
+
+/** Banked resets for badges and display gates, including ones still waiting. */
+export const bankedResetCreditCount = (credits: ServerProviderResetCredits | undefined) =>
+  credits?.bankedOptions
+    ? credits.bankedOptions.reduce((sum, option) => sum + option.availableCount, 0)
+    : (credits?.availableCount ?? 0);
+
 /** One redeemable reset as clients offer it; `input` already names the chosen credit. */
 export interface ResetCreditChoice {
   readonly key: string;
   readonly summary: string;
   readonly actionLabel: string;
   readonly confirmDescription: string;
+  /** Shown once the reset is applied. */
+  readonly appliedText: string;
   readonly availableCount: number;
+  /** Set when the reset is banked but can't be redeemed right now; shown in place of the action. */
+  readonly unavailableReason: string | null;
   readonly input: ProviderConsumeResetCreditInput;
 }
 

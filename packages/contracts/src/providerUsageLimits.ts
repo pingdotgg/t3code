@@ -30,6 +30,8 @@ export const ServerProviderResetCreditOption = Schema.Struct({
   description: TrimmedNonEmptyString,
   availableCount: NonNegativeInt,
   expiresAt: Schema.optional(IsoDateTime),
+  /** Banked but not redeemable right now; clients show this in place of the action. */
+  unavailableReason: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderResetCreditOption = typeof ServerProviderResetCreditOption.Type;
 
@@ -40,6 +42,9 @@ export const ServerProviderResetCredits = Schema.Struct({
   nextCreditId: Schema.optional(TrimmedNonEmptyString),
   /** Present when resets differ in what they refill; redeem one by its `creditId`. */
   options: Schema.optional(ForwardCompatibleArray(ServerProviderResetCreditOption)),
+  /** Every banked reset, including ones waiting with an `unavailableReason`; `options` and
+   * the fields above keep their older usable-only meaning for clients that predate this. */
+  bankedOptions: Schema.optional(ForwardCompatibleArray(ServerProviderResetCreditOption)),
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 

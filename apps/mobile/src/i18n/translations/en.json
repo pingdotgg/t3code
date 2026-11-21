@@ -5464,5 +5464,16 @@
   "ad208e3e32c85029": "Hide all",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool calls in chat",
-  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show."
+  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
+  "fb638c0603fa50c6": "{label} applied.",
+  "2bf11407b8fa9af6": "Try again in a minute",
+  "1c0024f6fa9aaabf": "Can't be used while you're at your 5-hour limit",
+  "2de09bcfd5ae8d51": "Can't be used while you're at your weekly limit",
+  "6da3a2f994bd5ab9": "Can't be used while you're at your weekly Opus limit",
+  "deeb1cbaefcfd9ef": "Can't be used while you're at your weekly Sonnet limit",
+  "e1ed5d3257be05b3": "Can't be used while you're at a limit it doesn't refill",
+  "fca7999fdb155f5f": "Doesn't refill the limit you've reached",
+  "068a3432eaa18fdd": "Usable once you reach a limit it refills",
+  "b1b7a876e0d101db": "Can't be used right now",
+  "6b27e45149b69d70": "No Fable usage this week to give back"
 }

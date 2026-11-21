@@ -10,6 +10,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  bankedResetCreditCount,
   type LimitAccount,
   displayLimitWindows,
   cursorUsageWindowDetails,
@@ -26,7 +27,7 @@ import {
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
-import { collectLimitNotices } from "./usageLimitsCopy.ts";
+import { collectLimitNotices, resetCreditChoices } from "./usageLimitsCopy.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
 
@@ -209,6 +210,59 @@ describe("new thread model fallback", () => {
       ).toEqual(usesFallback ? fallback : defaultSelection);
     },
   );
+});
+
+describe("reset credit choices", () => {
+  const input = { instanceId: ProviderInstanceId.make("claudeAgent") };
+  const full = { creditId: "full_a", label: "Full reset", description: "Refills." } as const;
+  const fable = { creditId: "fable_a", label: "Fable reset", description: "Gives back." } as const;
+  const choices = (credits: Parameters<typeof resetCreditChoices>[0]) =>
+    resetCreditChoices(credits, input, now).map((choice) => ({
+      key: choice.key,
+      count: choice.availableCount,
+      reason: choice.unavailableReason,
+      creditId: "creditId" in choice.input ? choice.input.creditId : undefined,
+    }));
+
+  it("shows every banked reset and says why one is waiting instead of offering it", () => {
+    const credits = {
+      availableCount: 0,
+      bankedOptions: [
+        { ...fable, availableCount: 2 },
+        {
+          ...full,
+          availableCount: 1,
+          unavailableReason: "Usable once you reach a limit it refills",
+        },
+      ],
+    };
+    expect(choices(credits)).toEqual([
+      { key: "fable_a", count: 2, reason: null, creditId: "fable_a" },
+      {
+        key: "full_a",
+        count: 1,
+        reason: "Usable once you reach a limit it refills",
+        creditId: "full_a",
+      },
+    ]);
+    expect(bankedResetCreditCount(credits)).toBe(3);
+  });
+
+  it("falls back to an older server's usable-only fields", () => {
+    const credits = {
+      availableCount: 2,
+      nextCreditId: "fable_a",
+      options: [{ ...fable, availableCount: 2 }],
+    };
+    expect(choices(credits)).toEqual([
+      { key: "fable_a", count: 2, reason: null, creditId: "fable_a" },
+    ]);
+    expect(bankedResetCreditCount(credits)).toBe(2);
+    expect(choices({ availableCount: 0 })).toEqual([
+      { key: "next", count: 0, reason: null, creditId: undefined },
+    ]);
+    expect(bankedResetCreditCount(undefined)).toBe(0);
+  });
 });
 
 describe("pace", () => {
