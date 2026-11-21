@@ -31,6 +31,8 @@ export interface ContextMenuItem<T extends string = string> {
   icon?: string;
   separatorBefore?: boolean;
   checked?: boolean;
+  /** Display only: the native menu shows it as an accelerator but does not register it. */
+  shortcut?: KeybindingShortcut;
   children?: readonly ContextMenuItem<T>[];
 }
 
@@ -48,6 +50,7 @@ export interface ContextMenuItemSchemaType {
   readonly icon?: string;
   readonly separatorBefore?: boolean;
   readonly checked?: boolean;
+  readonly shortcut?: KeybindingShortcut;
   readonly children?: readonly ContextMenuItemSchemaType[];
 }
 
@@ -61,6 +64,7 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   icon: Schema.optionalKey(Schema.String),
   separatorBefore: Schema.optionalKey(Schema.Boolean),
   checked: Schema.optionalKey(Schema.Boolean),
+  shortcut: Schema.optionalKey(KeybindingShortcut),
   children: Schema.optionalKey(
     Schema.Array(
       Schema.suspend((): Schema.Codec<ContextMenuItemSchemaType> => ContextMenuItemSchema),

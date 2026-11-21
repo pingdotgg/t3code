@@ -2,6 +2,7 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
 import { m } from "./i18n/messages";
+import { formatShortcutLabel } from "./keybindings";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -489,6 +490,16 @@ export function showContextMenuFallback<T extends string>(
             "margin-inline-start:auto;flex-shrink:0;padding-inline-start:1rem;color:var(--contrast-muted-foreground);font-size:0.75rem;";
           detail.textContent = item.detail;
           button.appendChild(detail);
+        }
+
+        if (item.shortcut) {
+          const shortcut = document.createElement("kbd");
+          shortcut.className =
+            "ms-auto shrink-0 ps-4 font-medium font-sans text-secondary-label text-xs tracking-widest";
+          shortcut.style.cssText =
+            "margin-inline-start:auto;flex-shrink:0;padding-inline-start:1rem;color:var(--contrast-muted-foreground);font-size:0.75rem;letter-spacing:0.1em;";
+          shortcut.textContent = formatShortcutLabel(item.shortcut);
+          button.appendChild(shortcut);
         }
 
         if (hasChildren) {
