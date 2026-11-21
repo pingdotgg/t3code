@@ -8,6 +8,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, assert, expect } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -54,7 +55,7 @@ import {
   type CodexAppServerProviderSnapshot,
 } from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus, type ClaudeCapabilitiesProbe } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -317,6 +318,7 @@ type TestClaudeCapabilities = {
   readonly apiKeySource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly usage?: NonNullable<ClaudeCapabilitiesProbe["usage"]>;
   readonly models?: ReadonlyArray<ModelInfo>;
 };
 
@@ -4640,6 +4642,32 @@ it.layer(
     );
 
     it.effect.each([
+      { baseUrl: "https://proxy.example/api", reason: "unsupported" },
+      { baseUrl: "https://api.anthropic.com", reason: undefined },
+    ])(
+      "preserves quota classification when the Claude probe fails: $baseUrl",
+      ({ baseUrl, reason }) =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            () => Effect.fail(new Cause.TimeoutError("probe timed out")),
+            { ANTHROPIC_BASE_URL: baseUrl },
+          );
+          assert.strictEqual(status.status, "warning");
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(status.usageLimits?.unavailable?.reason, reason);
+          if (reason) assert.deepStrictEqual(status.usageLimits?.windows, []);
+        }).pipe(
+          Effect.provide(
+            layerMockSpawner((args) => {
+              if (args.join(" ") === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              throw new Error("Unexpected command");
+            }),
+          ),
+        ),
+    );
+
+    it.effect.each([
       { source: "inherited HTTPS endpoint", baseUrl: "https://proxy.example/api", overrides: [] },
       {
         source: "instance HTTP endpoint overriding Anthropic",
@@ -4659,6 +4687,10 @@ it.layer(
             tokenSource: "none",
             apiKeySource: "none",
             apiProvider: "firstParty",
+            usage: {
+              rate_limits_available: true,
+              rate_limits: { five_hour: { utilization: 1, resets_at: null } },
+            },
           }),
           environment,
         );
@@ -4666,6 +4698,8 @@ it.layer(
         assert.strictEqual(status.auth.status, "authenticated");
         assert.strictEqual(status.auth.type, "customEndpoint");
         assert.strictEqual(status.auth.label, "Custom API endpoint");
+        assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
+        assert.deepStrictEqual(status.usageLimits?.windows, []);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {
@@ -4697,7 +4731,7 @@ it.layer(
         label: "Custom API endpoint",
       },
     ])(
-      "uses the settings endpoint before the process endpoint: $type / $baseUrl",
+      "uses the project settings endpoint before user and process endpoints: $type / $baseUrl",
       ({ settings, baseUrl, type, label }) =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -4707,13 +4741,13 @@ it.layer(
           });
           yield* fileSystem.writeFileString(
             path.join(configDir, "settings.json"),
-            JSON.stringify(settings),
+            JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://user.example" } }),
           );
           const stateDir = yield* fileSystem.makeTempDirectoryScoped();
           yield* fileSystem.makeDirectory(path.join(stateDir, ".claude"));
           yield* fileSystem.writeFileString(
             path.join(stateDir, ".claude", "settings.json"),
-            JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://state-dir.example" } }),
+            JSON.stringify(settings),
           );
           const status = yield* checkClaudeProviderStatus(
             { ...defaultClaudeSettings, homePath: configDir },
