@@ -22,6 +22,7 @@ import {
   ProviderInteractionMode,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderMcpSignInError,
   PositiveInt,
   ProviderUserInputAnswers,
   ProviderSessionId,
@@ -45,6 +46,20 @@ import type {
   ProviderSelectionTransitionPlan,
 } from "./selectionTransition.ts";
 
+/** The folders of a multi-folder thread besides `cwd`. Single-folder threads omit it. */
+export const ProviderAdapterV2RuntimeWorkspace = Schema.Struct({
+  folders: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      path: Schema.String,
+      isGitRepository: Schema.Boolean,
+    }),
+  ),
+  /** Folder paths outside `cwd`. Adapters grant them as writable roots where the provider can. */
+  extraRoots: Schema.Array(Schema.String),
+});
+export type ProviderAdapterV2RuntimeWorkspace = typeof ProviderAdapterV2RuntimeWorkspace.Type;
+
 export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -56,6 +71,7 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    * it; adapters use it to refuse native mode choices a user makes beside T3 Code's own.
    */
   maxRuntimeMode: Schema.optional(RuntimeMode),
+  workspace: Schema.optional(ProviderAdapterV2RuntimeWorkspace),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
@@ -691,6 +707,26 @@ export interface ProviderAdapterV2McpApps {
   }) => Effect.Effect<{ readonly contents: ReadonlyArray<unknown> }, ProviderAdapterV2Error>;
 }
 
+/**
+ * Signs one of the session's MCP servers in. `start` returns the page to approve
+ * on; `complete` takes the address the browser was sent back to afterwards,
+ * usually a localhost page that may sit on another machine, and finishes here.
+ */
+export interface ProviderAdapterV2McpSignIn {
+  readonly start: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+  }) => Effect.Effect<
+    { readonly authorizationUrl: string | null },
+    ProviderMcpSignInError | ProviderAdapterV2Error
+  >;
+  readonly complete: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+    readonly callbackUrl: string;
+  }) => Effect.Effect<void, ProviderMcpSignInError | ProviderAdapterV2Error>;
+}
+
 export type ProviderAdapterV2SubagentOutcome = {
   readonly status: "completed" | "failed" | "cancelled";
   readonly completedAt: NonNullable<OrchestrationV2Subagent["completedAt"]>;
@@ -804,6 +840,8 @@ export interface ProviderAdapterV2SessionRuntime {
   }) => Effect.Effect<{ readonly feedbackId: string }, ProviderAdapterV2Error>;
   /** Absent means non-interactive apps with plain tool rows. */
   readonly mcpApps?: ProviderAdapterV2McpApps;
+  /** Absent when the agent has no way to sign an MCP server in. */
+  readonly mcpSignIn?: ProviderAdapterV2McpSignIn;
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;
