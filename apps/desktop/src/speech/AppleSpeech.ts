@@ -82,9 +82,11 @@ export const layer = Layer.effect(
     const fileSystem = yield* FileSystem.FileSystem;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const hostEnvironment = yield* HostProcess.Environment;
+    const kernelRelease = yield* HostProcess.KernelRelease;
 
     let helper: string | undefined;
-    if (environment.platform === "darwin") {
+    // macOS 26 is Darwin 25, the helper's minimum deployment target.
+    if (environment.platform === "darwin" && Number.parseInt(kernelRelease, 10) >= 25) {
       const candidate = environment.isPackaged
         ? environment.path.join(environment.resourcesPath, "apple-speech", "t3-apple-speech")
         : environment.path.join(

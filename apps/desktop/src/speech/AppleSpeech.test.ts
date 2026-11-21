@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -39,12 +40,13 @@ function makeProcess(result: HelperOutput) {
   });
 }
 
-function setup(result: HelperOutput) {
+function setup(result: HelperOutput, kernelRelease = "25.0.0") {
   const commands: Array<ReadonlyArray<string>> = [];
   const written: Uint8Array[] = [];
   const layer = AppleSpeech.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.succeed(HostProcess.KernelRelease, kernelRelease),
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
           platform: "darwin",
           isPackaged: true,
@@ -120,13 +122,14 @@ describe("AppleSpeech", () => {
   );
 
   it.effect.each([
-    [0, ["en-US", "fr-FR"], 1],
-    [3, [], 1],
-    [1, [], 2],
+    ["25.0.0", 0, ["en-US", "fr-FR"], 1],
+    ["25.0.0", 3, [], 1],
+    ["25.0.0", 1, [], 2],
+    ["24.6.0", 0, [], 0],
   ] as const)(
-    "resolves locales on helper exit %i to %j with %i probe(s) across two calls",
-    ([exitCode, expected, probes]) => {
-      const { layer, commands } = setup({ stdout: '{"value":"en-US,fr-FR"}', exitCode });
+    "on Darwin %s resolves locales on helper exit %i to %j with %i probe(s) across two calls",
+    ([release, exitCode, expected, probes]) => {
+      const { layer, commands } = setup({ stdout: '{"value":"en-US,fr-FR"}', exitCode }, release);
       return Effect.gen(function* () {
         const speech = yield* AppleSpeech.AppleSpeech;
         assert.deepEqual(yield* speech.supportedLocales, expected);
