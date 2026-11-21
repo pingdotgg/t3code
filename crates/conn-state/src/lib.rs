@@ -72,7 +72,9 @@ impl ShellState {
         &'a self,
         project_id: &'a str,
     ) -> impl Iterator<Item = &'a ThreadShell> + 'a {
-        self.threads.iter().filter(move |t| t.project_id == project_id)
+        self.threads
+            .iter()
+            .filter(move |t| t.project_id == project_id)
     }
 
     pub fn thread(&self, thread_id: &str) -> Option<&ThreadShell> {
