@@ -153,7 +153,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Replace the default OS title bar with T3 Code's. Copy T3 desktop's hidden title bar with dark overlay window controls, the hidden menu bar, and the dark background before first paint from `apps/desktop/src/window/DesktopWindow.ts`. Draw a dark top bar at the overlay height with a drag region, so the close, minimize, and maximize buttons sit on dark.
 - [ ] Leave the window frame to Windows 11, which rounds the corners and draws the caption buttons over the dark overlay. Use no frameless or transparent window.
 - [ ] In `viewport.ts`, implement pan, zoom around the cursor between 0.3 and 2, and fit to content with a 0.7 floor. `Viewport.tsx` renders the dotted canvas with zoom buttons.
-- [ ] In `Sidebar.tsx`, render the empty Projects and Workspace sections and a footer slot.
+- [ ] In `Sidebar.tsx`, render the empty Projects section and a footer slot.
 - [ ] Make `dev:web` run the renderer in a plain browser for web lanes.
 - [ ] Add `dev:windows`. Run from WSL, it builds the main and preload bundles, starts the Vite dev server in WSL, keeps a matching Electron `win32-x64` binary in `C:\Users\Kyle\AppData\Local\agent-board\`, copies the bundles to a Windows folder, and launches `electron.exe` there. The app is a Windows app, and the engine stays in WSL.
 

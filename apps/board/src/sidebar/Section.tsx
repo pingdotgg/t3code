@@ -3,13 +3,11 @@ import { type ReactNode, useState } from "react";
 
 export function Section({
   title,
-  empty,
   className = "",
   actions,
   children,
 }: {
   title: string;
-  empty?: string;
   className?: string;
   /** Small icon buttons on the right of the header. */
   actions?: ReactNode;
@@ -30,7 +28,7 @@ export function Section({
         </button>
         {actions && <div className="flex items-center gap-0.5">{actions}</div>}
       </div>
-      {open && (children ?? <p className="px-2 py-1 text-faint">{empty}</p>)}
+      {open && children}
     </section>
   );
 }

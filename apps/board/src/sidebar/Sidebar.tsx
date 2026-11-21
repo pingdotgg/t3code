@@ -58,7 +58,6 @@ export function Sidebar({
         {adding && <AddProject onDone={() => setAdding(false)} />}
         <ProjectList />
       </Section>
-      <Section title="Workspace" empty="Nothing here yet" className="shrink-0" />
       <div className="flex-1" />
       <div className="flex shrink-0 flex-col gap-2 border-t border-line p-2 text-xs text-muted">
         <div className="flex items-center gap-1">
