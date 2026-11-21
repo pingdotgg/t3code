@@ -1659,6 +1659,10 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     Effect.gen(function* () {
       const { session, providerThread, startTurn, throughPromptSettled } =
         yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      assert.isTrue(
+        session.providerSession.capabilities.tools.supportsBackgroundWait,
+        "Antigravity must advertise supportsBackgroundWait so t3_background_wait is exposed",
+      );
       yield* startTurn(1, false);
       yield* throughPromptSettled;
       const taskIds = ["mock-session-1/task-2"];
@@ -1669,6 +1673,34 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         awaited: true,
       });
       assert.deepEqual(result.matched, taskIds);
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // `waiting=false` lets the run end while the command keeps running, as with a daemon.
+  it.effect("ends the run when t3_background_wait releases a running command", () =>
+    Effect.gen(function* () {
+      const { session, providerThread, command, offers, send, startTurn, ...run } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      yield* run.throughPromptSettled;
+      const taskIds = ["mock-session-1/task-2"];
+      const released = yield* session.awaitBackgroundTasks!({
+        providerThread,
+        taskIds,
+        awaited: false,
+      });
+      assert.deepEqual(released.matched, taskIds);
+      yield* TestClock.adjust("5 seconds");
+      const terminal = (yield* run.throughTerminal).at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      assert.lengthOf(offers, 1, "the released command still wakes the thread when it ends");
     }).pipe(Effect.provide(layerSession)),
   );
 
