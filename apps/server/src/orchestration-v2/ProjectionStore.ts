@@ -8968,16 +8968,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         INDEXED BY idx_orchestration_events_thread_organization
       WHERE stream_id = ${threadId} AND ${sql.literal(THREAD_ORGANIZATION_EVENT_CONDITION)}
     )`;
-    const getIssueAutomationRevision: ProjectionStoreV2Shape["getIssueAutomationRevision"] = (
-      threadId,
-    ) =>
-      sql<{ readonly revision: number }>`
-        SELECT ${issueAutomationRevision(sql`${threadId}`)} AS revision
-      `.pipe(
-        Effect.map((rows) => rows[0]?.revision ?? 0),
-        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
-      );
-    const getIssueAutomationCandidates: ProjectionStoreV2Shape["getIssueAutomationCandidates"] =
+    const getIssueAutomationRevision = Effect.fn("ProjectionStore.getIssueAutomationRevision")(
+      function* (threadId: Parameters<ProjectionStoreV2Shape["getIssueAutomationRevision"]>[0]) {
+        const rows = yield* sql<{ readonly revision: number }>`
+          SELECT ${issueAutomationRevision(sql`${threadId}`)} AS revision
+        `.pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
+        return rows[0]?.revision ?? 0;
+      },
+    );
+    const getIssueAutomationCandidates = Effect.fn("ProjectionStore.getIssueAutomationCandidates")(
       () =>
         sql<{ readonly payload_json: string; readonly revision: number }>`
           SELECT t.payload_json, ${issueAutomationRevision(sql.literal("t.thread_id"))} AS revision
@@ -8993,7 +8992,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ),
           ),
           Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
-        );
+        ),
+    );
 
     const getOpenRemoteDelegatedTasks: ProjectionStoreV2Shape["getOpenRemoteDelegatedTasks"] = sql<{
       readonly thread_id: string;
