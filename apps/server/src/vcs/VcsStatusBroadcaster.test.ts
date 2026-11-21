@@ -1367,6 +1367,12 @@ describe("VcsStatusBroadcaster", () => {
       yield* Queue.take(remoteUpdates);
       assert.equal(state.remoteStatusCalls, remoteCalls + 1);
       assert.equal(state.localStatusCalls, localCalls);
+
+      state.refSnapshot = "fetched";
+      state.currentRemoteStatus = remoteStatusWithPr;
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(remoteUpdates);
+      assert.equal(state.localStatusCalls, localCalls + 1);
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
