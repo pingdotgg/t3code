@@ -422,7 +422,7 @@ const make = Effect.gen(function* () {
           if (stat.size > 64n * 1024n) return false;
           const content = yield* fs.readFileString(marker);
           if (!content.startsWith("gitdir: ")) return false;
-          const gitDir = content.slice(8).trimEnd();
+          const gitDir = content.slice(8).replace(/[\r\n]+$/, "");
           if (gitDir === "") return false;
           if (isNetworkPath(gitDir)) return true;
           return yield* fs.exists(path.resolve(path.dirname(marker), gitDir));
