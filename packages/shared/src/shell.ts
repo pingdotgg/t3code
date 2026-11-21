@@ -658,6 +658,8 @@ const listPathDirectory = Effect.fnUntraced(function* (
   const separator = key.indexOf(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const modified = Number(key.slice(0, separator));
   const directory = key.slice(separator + 1);
+  // Read before listing: a listing that began inside the settle window may miss a same-mtime add.
+  const startedAt = yield* Clock.currentTimeMillis;
   const entries = yield* FileSystem.FileSystem.use((fileSystem) =>
     fileSystem.readDirectory(directory),
   ).pipe(Effect.orElseSucceed(() => undefined));
@@ -665,8 +667,7 @@ const listPathDirectory = Effect.fnUntraced(function* (
   return {
     names: entries && indexDirectoryNames(entries),
     settled:
-      entries !== undefined &&
-      isSettledListing(directory, modified, yield* Clock.currentTimeMillis, path.isAbsolute),
+      entries !== undefined && isSettledListing(directory, modified, startedAt, path.isAbsolute),
   };
 });
 
@@ -699,15 +700,17 @@ function readPathDirectoryNamesSync(
   }
   const cached = syncPathDirectoryListings.get(directory);
   if (cached?.modified === modified) return cached.names;
+  // The synchronous resolver runs outside an Effect, so it compares against the host clock,
+  // read before listing for the same reason as `listPathDirectory`.
+  // @effect-diagnostics-next-line globalDate:off
+  const startedAt = Date.now();
   let names: PathDirectoryNames;
   try {
     names = indexDirectoryNames(NodeFS.readdirSync(directory));
   } catch {
     return undefined;
   }
-  // The synchronous resolver runs outside an Effect, so it compares against the host clock.
-  // @effect-diagnostics-next-line globalDate:off
-  if (isSettledListing(directory, modified, Date.now(), isAbsolute)) {
+  if (isSettledListing(directory, modified, startedAt, isAbsolute)) {
     syncPathDirectoryListings.delete(directory);
     if (syncPathDirectoryListings.size >= PATH_DIRECTORY_LISTINGS_MAX_ENTRIES) {
       const oldest = syncPathDirectoryListings.keys().next().value;

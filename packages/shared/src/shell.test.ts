@@ -681,6 +681,36 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }),
   );
 
+  it.effect("does not keep a listing that began inside the settle window", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      yield* TestClock.setTime(4_200_000_000_000);
+      yield* fs.utimes(directory, 4_199_999_999, 4_199_999_999);
+      const env = { PATH: directory, PATHEXT: ".CMD" };
+      let listings = 0;
+      yield* Effect.gen(function* () {
+        expect(yield* isCommandAvailable("late", { env })).toBe(false);
+        expect(yield* isCommandAvailable("later", { env })).toBe(false);
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          // A slow enumeration that returns after the settle window has passed.
+          readDirectory: (target, options) =>
+            Effect.sync(() => (listings += 1)).pipe(
+              Effect.andThen(TestClock.adjust("5 seconds")),
+              Effect.andThen(fs.readDirectory(target, options)),
+            ),
+        }),
+      );
+      expect(listings).toBe(2);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(CommandResolutionCache, new Map()),
+      Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
+    ),
+  );
+
   it.effect("lists each PATH directory once, probes only listed names, and relists on change", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
