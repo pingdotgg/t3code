@@ -209,7 +209,7 @@ const SLIM_MENU_ACTIONS: MenuAction[] = [
 ];
 
 const SNOOZED_MENU_ACTIONS: MenuAction[] = [
-  { id: "unsnooze", title: msg("Wake thread"), image: "clock" },
+  { id: "unsnooze", title: msg("Wake thread"), image: "bell.badge" },
   {
     id: "delete",
     title: msg("Delete", { $context: "verb, thread action" }),
@@ -982,6 +982,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const snoozePresets = resolveThreadListV2SnoozePresets(
     {
       secondary: swipeActions.secondary,
+      snoozed: snoozedRow,
       now: props.snoozePresetMinute || snoozeGateNow,
       presets: props.snoozePresets,
     },
@@ -1118,7 +1119,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       return layoutThreadListV2RowMenuActions(
         {
           nested,
-          direct: [...direct, localized(SNOOZED_MENU_ACTIONS[0]!)],
+          direct: [
+            ...direct,
+            localized(SNOOZED_MENU_ACTIONS[0]!),
+            {
+              id: "snooze",
+              title: gt("Reschedule"),
+              image: "clock",
+              subactions: snoozePresetActions,
+            },
+          ],
           reorder: [],
           pin: [],
           secondary: [
@@ -1307,7 +1317,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     if (swipeActions.primary === "unsnooze") {
       return {
         accessibilityLabel: gt("Wake {title} now", { title: thread.title }),
-        icon: "clock" as const,
+        icon: "bell.badge" as const,
         label: gt("Wake", { $context: "verb, thread action" }),
         swipeHint: gt("Opens the thread. Swipe left to wake."),
         swipeSnoozeHint: gt("Opens the thread. Swipe left for wake and snooze actions."),

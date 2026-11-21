@@ -6,7 +6,11 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  effectiveSnoozed,
+  threadWokeAt,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   AuthOrchestrationOperateScope,
@@ -964,7 +968,8 @@ export function useThreadActions() {
     }
     const resolved = resolveThreadTarget(target);
     // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
-    if (resolved && !canSnooze(resolved.thread, { now: new Date().toISOString() })) {
+    const now = new Date();
+    if (resolved && !canSnooze(resolved.thread, { now: now.toISOString() })) {
       return AsyncResult.failure(
         Cause.fail(
           new ThreadSnoozeBlockedError({
@@ -974,6 +979,10 @@ export function useThreadActions() {
         ),
       );
     }
+    const previousWake =
+      resolved && effectiveSnoozed(resolved.thread, { now: now.toISOString() })
+        ? resolved.thread.snoozedUntil
+        : null;
     const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
     const result = await snoozeThreadMutation({
       environmentId: target.environmentId,
@@ -983,11 +992,14 @@ export function useThreadActions() {
       action.finish();
       return result;
     }
+    const undoPlan = ThreadUndo.planThreadUndo("snooze", { snoozedUntil: previousWake });
     showThreadUndoNotice({
-      action: "Snoozed",
+      action: previousWake ? "Rescheduled" : "Snoozed",
       claim: action,
-      undo: () => runUndoPlan(target, ThreadUndo.planThreadUndo("snooze")),
-      failureTitle: m(msg("Failed to wake thread")),
+      undo: () => runUndoPlan(target, undoPlan),
+      failureTitle: previousWake
+        ? m(msg("Failed to restore the previous wake time"))
+        : m(msg("Failed to wake thread")),
     });
     return result;
   };

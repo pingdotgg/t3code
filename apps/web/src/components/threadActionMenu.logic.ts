@@ -176,28 +176,33 @@ export function buildThreadActionMenuItems(
             : { id: "settle" as const, label: resolve(msg("Settle thread")), icon: "circle-check" },
         ]
       : []),
+    // A snoozed thread keeps the preset submenu as "Reschedule" so the wake
+    // time can move without waking the thread first.
     ...(state.supports.snooze
       ? [
-          state.isSnoozed
-            ? { id: "unsnooze" as const, label: resolve(msg("Wake thread")), icon: "clock" }
-            : {
-                id: "snooze" as const,
-                label: resolve(msg("Snooze", { $context: "verb, snooze the thread" })),
-                icon: "clock",
-                disabled: !state.canSnoozeNow,
-                children: [
-                  ...state.snoozePresets.map((preset) => ({
-                    id: `snooze:${preset.id}` as const,
-                    label: preset.label,
-                    detail: preset.whenLabel,
-                  })),
-                  {
-                    id: "snooze:custom" as const,
-                    label: resolve(msg("Custom…")),
-                    separatorBefore: state.snoozePresets.length > 0,
-                  },
-                ],
+          ...(state.isSnoozed
+            ? [{ id: "unsnooze" as const, label: resolve(msg("Wake thread")), icon: "bell-ring" }]
+            : []),
+          {
+            id: "snooze" as const,
+            label: state.isSnoozed
+              ? resolve(msg("Reschedule"))
+              : resolve(msg("Snooze", { $context: "verb, snooze the thread" })),
+            icon: "clock",
+            disabled: !state.canSnoozeNow,
+            children: [
+              ...state.snoozePresets.map((preset) => ({
+                id: `snooze:${preset.id}` as const,
+                label: preset.label,
+                detail: preset.whenLabel,
+              })),
+              {
+                id: "snooze:custom" as const,
+                label: resolve(msg("Custom…")),
+                separatorBefore: state.snoozePresets.length > 0,
               },
+            ],
+          },
         ]
       : []),
     {
