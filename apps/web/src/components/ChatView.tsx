@@ -912,7 +912,7 @@ export default function ChatView(props: ChatViewProps) {
           },
           messages,
         );
-  // A linked environment's agent may have delegated this thread from there.
+  // The thread whose agent launched this one, here or in a linked environment.
   const delegatedFrom = activeThread?.delegatedFrom ?? null;
   const delegatedFromEnvironment = useEnvironment(delegatedFrom?.environmentId ?? null);
   const delegatedFromRef =
@@ -959,7 +959,12 @@ export default function ChatView(props: ChatViewProps) {
     const parentRef = delegatedFromRef;
     return {
       title: delegatedFromThread?.title ?? delegatedFrom.title,
-      environmentLabel: delegatedFromEnvironment?.label ?? activeThread?.linkOrigin?.label ?? "",
+      ...(delegatedFrom.environmentId === environmentId
+        ? {}
+        : {
+            environmentLabel:
+              delegatedFromEnvironment?.label ?? activeThread?.linkOrigin?.label ?? "",
+          }),
       // Only an environment this client is connected to can open the parent.
       ...(delegatedFromEnvironment === null
         ? {}
@@ -2870,7 +2875,7 @@ export default function ChatView(props: ChatViewProps) {
   ]);
 
   usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
-  // A delegated task is a remote thread's subagent.
+  // A thread another thread's agent launched, here or from a linked environment, is its agent.
   const isSubagentThread =
     activeThread?.lineage.relationshipToParent === "subagent" || delegatedFrom !== null;
   // Side chats do not nest or start from subagents, and older servers would fork a listed thread.

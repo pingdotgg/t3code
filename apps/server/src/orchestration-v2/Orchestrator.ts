@@ -4014,10 +4014,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       activeProviderThreadId: null,
       pullRequests: [],
       ...(command.linkOrigin === undefined ? {} : { linkOrigin: command.linkOrigin }),
-      // Only stamped work names a remote parent, so a client cannot claim one.
-      ...(command.linkOrigin === undefined || command.delegatedFrom === undefined
-        ? {}
-        : { delegatedFrom: command.delegatedFrom }),
+      // Clients never send one (withCreationProvenance strips it); the MCP launch sets it.
+      ...(command.delegatedFrom === undefined ? {} : { delegatedFrom: command.delegatedFrom }),
       lineage: {
         parentThreadId: null,
         relationshipToParent: null,

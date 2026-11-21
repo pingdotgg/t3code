@@ -568,7 +568,7 @@ export function applyOrchestrationV2ThreadVisit<Thread extends OrchestrationV2Ap
   };
 }
 
-/** A thread another agent drives: a local subagent or a task delegated from a linked environment. */
+/** A thread another agent drives: a local subagent, or a thread another thread's agent launched. */
 export const isDelegatedAppThread = (
   thread: Pick<OrchestrationV2AppThread, "lineage" | "delegatedFrom">,
 ): boolean =>
@@ -3148,7 +3148,7 @@ export const OrchestrationV2Command = Schema.Union([
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
-    /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
+    /** Only the server sets this: the thread whose agent launched this one, here or over a link. */
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
     importedNativeThread: Schema.optional(
       Schema.Struct({

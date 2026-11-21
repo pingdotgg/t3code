@@ -59,8 +59,8 @@ const isChildRunLive = (
 
 /**
  * Whether a thread shows under its parent rather than in thread lists: a
- * subagent, a side chat, or a task a linked environment delegated here whose parent the
- * client lists (`delegatedUnderParent`, by thread key). A task whose parent
+ * subagent, a side chat, or a task a linked environment delegated here or a thread launched
+ * here, whose parent the client lists (`delegatedUnderParent`, by thread key). A task whose parent
  * the client cannot list stays in the lists, so its work is never out of reach.
  */
 export function isShownUnderParent(
@@ -80,6 +80,7 @@ export function resolveListedAncestorThreadRef(
     EnvironmentThreadShell,
     "id" | "environmentId" | "lineage" | "delegatedFrom" | "archivedAt"
   >[],
+  options: { readonly nestLaunchedThreads?: boolean } = {},
 ): ScopedThreadRef {
   const findThread = (target: ScopedThreadRef) =>
     threads.find(
@@ -93,7 +94,11 @@ export function resolveListedAncestorThreadRef(
     if (!isListedThreadLineage(thread.lineage)) {
       if (thread.lineage.parentThreadId === null) return ref;
       parent = { environmentId: thread.environmentId, threadId: thread.lineage.parentThreadId };
-    } else if (thread.delegatedFrom != null) {
+    } else if (
+      thread.delegatedFrom != null &&
+      (options.nestLaunchedThreads !== false ||
+        thread.delegatedFrom.environmentId !== thread.environmentId)
+    ) {
       parent = {
         environmentId: thread.delegatedFrom.environmentId,
         threadId: thread.delegatedFrom.threadId,
@@ -149,11 +154,13 @@ function sideChatRequest(thread: OrchestrationV2ThreadShell): PendingSubagentReq
 
 /**
  * The threads to flag for a subagent's live approval, up its
- * subagent chain and through a side chat to its parent. `delegated` are tasks this
+ * subagent chain and through a side chat or a launch to its parent. `delegated` are tasks this
  * environment's threads delegated to linked environments, with what each one, or its
  * own subagents, asks.
  */
 function pendingSubagentRequestsByThread(
+  environmentId: EnvironmentId,
+  nestLaunchedThreads: boolean,
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
   delegated: ReadonlyArray<{
     readonly parentThreadId: ThreadId;
@@ -162,9 +169,22 @@ function pendingSubagentRequestsByThread(
 ): ReadonlyMap<ThreadId, RolledUpRequest> {
   const requests = new Map<ThreadId, RolledUpRequest>();
   let byId: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> | undefined;
-  const flag = (firstParentId: ThreadId | null, request: RolledUpRequest, seen: Set<ThreadId>) => {
+  // A thread launched from one here shows under its launcher, as a subagent does,
+  // unless the client lists it on its own or its launcher is archived (delegatedUnderParent).
+  const launcherOf = (thread: OrchestrationV2ThreadShell) => {
+    const from = thread.delegatedFrom;
+    if (!nestLaunchedThreads || from?.environmentId !== environmentId) return null;
+    byId ??= new Map(threads.map((candidate) => [candidate.id, candidate] as const));
+    return byId.get(from.threadId)?.archivedAt === null ? from.threadId : null;
+  };
+  const flag = (
+    firstParentId: ThreadId | null,
+    request: RolledUpRequest,
+    seen: Set<ThreadId>,
+    withQuestions = false,
+  ) => {
     // The coordinator answers child questions; approvals and user-only cards need the user.
-    if (request === "user_input") return;
+    if (request === "user_input" && !withQuestions) return;
     byId ??= new Map(threads.map((thread) => [thread.id, thread] as const));
     let parentId = firstParentId;
     while (parentId !== null && !seen.has(parentId)) {
@@ -172,9 +192,11 @@ function pendingSubagentRequestsByThread(
       if (requests.get(parentId) !== "approval") requests.set(parentId, request);
       const parent = byId.get(parentId);
       parentId =
-        parent?.lineage.relationshipToParent === "subagent" || parent?.lineage.sideChat === true
-          ? parent.lineage.parentThreadId
-          : null;
+        parent === undefined
+          ? null
+          : parent.lineage.relationshipToParent === "subagent" || parent.lineage.sideChat === true
+            ? parent.lineage.parentThreadId
+            : launcherOf(parent);
     }
   };
   for (const child of threads) {
@@ -186,7 +208,13 @@ function pendingSubagentRequestsByThread(
       }
       continue;
     }
-    if (child.lineage.relationshipToParent !== "subagent") continue;
+    if (child.lineage.relationshipToParent !== "subagent") {
+      // No agent is woken to answer a launched thread's question, so it needs the user too.
+      const launcherId = launcherOf(child);
+      const request = launcherId === null ? null : rolledUpRequest(child, subagentRequest(child));
+      if (request !== null) flag(launcherId, request, new Set([child.id]), true);
+      continue;
+    }
     const request = rolledUpRequest(child, subagentRequest(child));
     if (request !== null) flag(parentId, request, new Set([child.id]));
   }
@@ -270,7 +298,10 @@ export function createEnvironmentThreadShellAtoms(input: {
   readonly hiddenThreadTagsAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<ReadonlyArray<string> | null>;
+  /** False where the client has no lineage view to reach a thread's launched threads from. */
+  readonly nestLaunchedThreads?: boolean;
 }) {
+  const nestLaunchedThreads = input.nestLaunchedThreads !== false;
   // Point reads and aggregate lists share values without keeping an atom alive
   // for every listed thread. Replaced source objects can be collected.
   const scopedThreads = new WeakMap<
@@ -337,7 +368,11 @@ export function createEnvironmentThreadShellAtoms(input: {
   const localSubagentRequestsAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: ReadonlyMap<ThreadId, RolledUpRequest> = EMPTY_SUBAGENT_REQUESTS;
     return Atom.make((get) => {
-      const next = pendingSubagentRequestsByThread(get(environmentThreadsAtom(environmentId)));
+      const next = pendingSubagentRequestsByThread(
+        environmentId,
+        nestLaunchedThreads,
+        get(environmentThreadsAtom(environmentId)),
+      );
       if (sameRequests(previous, next)) return previous;
       previous = next;
       return next;
@@ -381,6 +416,8 @@ export function createEnvironmentThreadShellAtoms(input: {
         });
         if (delegated.length === 0) continue;
         const requests = pendingSubagentRequestsByThread(
+          environmentId,
+          nestLaunchedThreads,
           get(environmentThreadsAtom(environmentId)),
           delegated,
         );
@@ -738,6 +775,7 @@ export function createEnvironmentThreadShellAtoms(input: {
         if (
           parent !== undefined &&
           environmentIds.has(parent.environmentId) &&
+          (nestLaunchedThreads || parent.environmentId !== environmentId) &&
           // An archived parent leaves navigation; its task there stays listed on its own.
           get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)?.archivedAt ===
             null

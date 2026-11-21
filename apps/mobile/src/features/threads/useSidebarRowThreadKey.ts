@@ -10,6 +10,8 @@ export function useSidebarRowThreadKey(openThreadKey: string | null): string | n
   const threads = useAtomValue(environmentThreadShells.quietThreadShellsAtom);
   const openThreadRef = openThreadKey === null ? null : parseScopedThreadKey(openThreadKey);
   if (openThreadRef === null) return openThreadKey;
-  const rowRef = resolveListedAncestorThreadRef(openThreadRef, threads);
+  const rowRef = resolveListedAncestorThreadRef(openThreadRef, threads, {
+    nestLaunchedThreads: false,
+  });
   return scopedThreadKey(rowRef.environmentId, rowRef.threadId);
 }

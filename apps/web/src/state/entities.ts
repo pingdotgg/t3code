@@ -391,12 +391,16 @@ export function readDelegatedUnderParent(): ReadonlySet<string> {
   return appAtomRegistry.get(environmentThreadShells.delegatedUnderParentAtom);
 }
 
+/** Its parent here: the thread it forked from, its lineage parent, or the thread that launched it. */
 function shellParentThreadId(
-  thread: Pick<OrchestrationV2ThreadShell, "forkedFrom" | "lineage">,
+  thread: Pick<OrchestrationV2ThreadShell, "forkedFrom" | "lineage" | "delegatedFrom">,
+  environmentId: EnvironmentId,
 ): ThreadId | null {
-  return thread.forkedFrom?.type === "run"
-    ? thread.forkedFrom.threadId
-    : thread.lineage.parentThreadId;
+  if (thread.forkedFrom?.type === "run") return thread.forkedFrom.threadId;
+  if (thread.lineage.parentThreadId !== null) return thread.lineage.parentThreadId;
+  return thread.delegatedFrom?.environmentId === environmentId
+    ? thread.delegatedFrom.threadId
+    : null;
 }
 
 /** Retains unchanged reachable shells so unrelated streams do not re-render the panel. */
@@ -404,10 +408,11 @@ export function selectThreadRelationshipShells(
   threadId: ThreadId,
   projection: Pick<ThreadStructure, "thread" | "subagents" | "contextTransfers"> | null,
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+  environmentId: EnvironmentId,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   const named = new Set<string>([threadId]);
   if (projection !== null) {
-    const parentThreadId = shellParentThreadId(projection.thread);
+    const parentThreadId = shellParentThreadId(projection.thread, environmentId);
     if (parentThreadId !== null) named.add(parentThreadId);
     for (const subagent of projection.subagents) {
       if (subagent.childThreadId !== null) named.add(subagent.childThreadId);
@@ -421,10 +426,11 @@ export function selectThreadRelationshipShells(
     }
   }
   const current = threads.find((thread) => thread.id === threadId);
-  const currentParentId = current === undefined ? null : shellParentThreadId(current);
+  const currentParentId =
+    current === undefined ? null : shellParentThreadId(current, environmentId);
   if (currentParentId !== null) named.add(currentParentId);
   return threads.filter(
-    (thread) => named.has(thread.id) || shellParentThreadId(thread) === threadId,
+    (thread) => named.has(thread.id) || shellParentThreadId(thread, environmentId) === threadId,
   );
 }
 
@@ -436,6 +442,7 @@ const relationshipShellsAtomFamily = Atom.family((key: string) => {
       ref.threadId,
       get(environmentThreadDetails.quietThreadAtom(ref))?.projection ?? null,
       get(environmentThreadShells.environmentThreadsAtom(ref.environmentId)),
+      ref.environmentId,
     ).map(
       (thread) =>
         get(

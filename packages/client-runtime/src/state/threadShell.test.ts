@@ -26,7 +26,10 @@ const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
 const otherProjectId = ProjectId.make("other-project");
 
-function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environmentId]) {
+function makeHarness(
+  environmentIds: ReadonlyArray<EnvironmentId> = [environmentId],
+  options: { readonly nestLaunchedThreads?: boolean } = {},
+) {
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<OrchestrationV2ShellSnapshot | null>(v2ShellSnapshot),
   );
@@ -56,6 +59,7 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
       catalogValueAtom,
       snapshotAtom,
       hiddenThreadTagsAtom: () => Atom.make(null),
+      ...options,
     }),
   };
 }
@@ -448,6 +452,123 @@ describe("v2 thread shell lists", () => {
     expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
     disposeInputs();
     disposeParent();
+    disposeNavigation();
+    registry.dispose();
+  });
+
+  it("lists threads launched from a thread here under it, with their questions and approvals", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const launcher = v2ThreadShell;
+    const worker = {
+      ...v2ThreadShell,
+      id: ThreadId.make("worker"),
+      creationSource: "mcp" as const,
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      delegatedFrom: { environmentId, threadId: launcher.id, title: launcher.title },
+    };
+    // The worker launched one of its own, which shows under the worker, so under the launcher.
+    const nested = {
+      ...worker,
+      id: ThreadId.make("nested-worker"),
+      delegatedFrom: { environmentId, threadId: worker.id, title: worker.title },
+    };
+    const request = { id: RuntimeRequestId.make("ask"), createdAt: v2Now };
+    const launcherRef = { environmentId, threadId: launcher.id };
+    const disposeNavigation = registry.mount(threads.navigationThreadShellsAtom);
+    const disposeLauncher = registry.mount(threads.threadShellAtom(launcherRef));
+    const show = (asking: typeof worker, kind: "user_input" | "command") =>
+      registry.set(snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [
+          launcher,
+          ...[worker, nested].map((thread) =>
+            thread === asking ? { ...thread, pendingRuntimeRequest: { ...request, kind } } : thread,
+          ),
+        ],
+      });
+
+    show(worker, "user_input");
+    expect(registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id)).toEqual([
+      launcher.id,
+    ]);
+    // No agent is woken to answer a launched thread's question, so it reaches the user.
+    expect(registry.get(threads.threadShellAtom(launcherRef))?.pendingSubagentRequest).toBe(
+      "user_input",
+    );
+    show(nested, "command");
+    expect(registry.get(threads.threadShellAtom(launcherRef))?.pendingSubagentRequest).toBe(
+      "approval",
+    );
+
+    // An archived launcher leaves navigation, so its worker is listed on its own.
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...launcher, archivedAt: v2Now }, worker],
+    });
+    expect(registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id)).toEqual([
+      worker.id,
+    ]);
+    // A request asked under an archived launcher shows on the row it is listed on, not above it.
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [
+        launcher,
+        { ...worker, archivedAt: v2Now },
+        { ...nested, pendingRuntimeRequest: { ...request, kind: "command" } },
+      ],
+    });
+    expect(registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id)).toEqual([
+      launcher.id,
+      nested.id,
+    ]);
+    expect(registry.get(threads.threadShellAtom(launcherRef))?.pendingSubagentRequest).toBeNull();
+    disposeLauncher();
+    disposeNavigation();
+    registry.dispose();
+  });
+
+  it("keeps launched threads listed where a client cannot list a thread's launched threads", () => {
+    const { registry, threads, snapshotAtom } = makeHarness([environmentId], {
+      nestLaunchedThreads: false,
+    });
+    const launcher = v2ThreadShell;
+    const worker = {
+      ...v2ThreadShell,
+      id: ThreadId.make("worker"),
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      delegatedFrom: { environmentId, threadId: launcher.id, title: launcher.title },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("ask"),
+        createdAt: v2Now,
+        kind: "command" as const,
+      },
+    };
+    const launcherRef = { environmentId, threadId: launcher.id };
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [launcher, worker] });
+    const disposeNavigation = registry.mount(threads.navigationThreadShellsAtom);
+    const disposeLauncher = registry.mount(threads.threadShellAtom(launcherRef));
+    expect(registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id)).toEqual([
+      launcher.id,
+      worker.id,
+    ]);
+    // The worker's own row shows its approval, so the launcher's does not repeat it.
+    expect(registry.get(threads.threadShellAtom(launcherRef))?.pendingSubagentRequest).toBeNull();
+    expect(
+      resolveListedAncestorThreadRef(
+        { environmentId, threadId: worker.id },
+        [launcher, worker].map((thread) => ({
+          id: thread.id,
+          environmentId,
+          lineage: thread.lineage,
+          archivedAt: null,
+          delegatedFrom: thread.delegatedFrom ?? null,
+        })),
+        { nestLaunchedThreads: false },
+      ),
+    ).toEqual({ environmentId, threadId: worker.id });
+    disposeLauncher();
     disposeNavigation();
     registry.dispose();
   });

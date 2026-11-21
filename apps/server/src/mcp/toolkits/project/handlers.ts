@@ -403,6 +403,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             )?.supportedRuntimeModes,
           });
         }
+        // A link's launch may name its parent there, never here; a thread here is always its own
+        // launch's parent.
+        const delegatedFrom =
+          linkOrigin !== undefined
+            ? input.delegatedFrom?.environmentId === scope.environmentId
+              ? undefined
+              : input.delegatedFrom
+            : caller === undefined
+              ? undefined
+              : { environmentId: scope.environmentId, threadId: caller.id, title: caller.title };
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -425,8 +435,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           createdBy: "agent",
           creationSource: "mcp",
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
-          // Kept only alongside linkOrigin: thread.create drops it otherwise.
-          ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
+          ...(delegatedFrom === undefined ? {} : { delegatedFrom }),
         }).pipe(
           Effect.mapError((error) => {
             if (error._tag === "AttachmentClaimError") {

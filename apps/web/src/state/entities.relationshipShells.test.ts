@@ -1,6 +1,7 @@
-import type {
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2ThreadShell,
+import {
+  EnvironmentId,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -16,6 +17,12 @@ const shell = (id: string, parentThreadId: string | null = null) =>
   }) as unknown as OrchestrationV2ThreadShell;
 
 const threadId = "current" as OrchestrationV2ThreadShell["id"];
+const here = EnvironmentId.make("environment-here");
+const launchedFrom = (id: string, launcher: string, environmentId = here) =>
+  ({
+    ...shell(id),
+    delegatedFrom: { environmentId, threadId: launcher, title: launcher },
+  }) as unknown as OrchestrationV2ThreadShell;
 
 describe("selectThreadRelationshipShells", () => {
   it("keeps the thread, its parent, its children and the threads its projection names", () => {
@@ -45,7 +52,9 @@ describe("selectThreadRelationshipShells", () => {
     >;
 
     expect(
-      selectThreadRelationshipShells(threadId, projection, threads).map((thread) => thread.id),
+      selectThreadRelationshipShells(threadId, projection, threads, here).map(
+        (thread) => thread.id,
+      ),
     ).toEqual([
       "current",
       "parent",
@@ -59,9 +68,25 @@ describe("selectThreadRelationshipShells", () => {
   it("finds the parent from the shell before the projection loads", () => {
     const threads = [shell("current", "parent"), shell("parent"), shell("unrelated")];
     expect(
-      selectThreadRelationshipShells(threadId, null as Projection, threads).map(
+      selectThreadRelationshipShells(threadId, null as Projection, threads, here).map(
         (thread) => thread.id,
       ),
     ).toEqual(["current", "parent"]);
+  });
+
+  it("keeps the threads it launched here and the thread that launched it", () => {
+    const threads = [
+      launchedFrom("current", "launcher"),
+      shell("launcher"),
+      launchedFrom("worker", "current"),
+      // A linked environment's task names its parent there by an id this one could share.
+      launchedFrom("linked-task", "current", EnvironmentId.make("environment-elsewhere")),
+      shell("unrelated"),
+    ];
+    expect(
+      selectThreadRelationshipShells(threadId, null as Projection, threads, here).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(["current", "launcher", "worker"]);
   });
 });
