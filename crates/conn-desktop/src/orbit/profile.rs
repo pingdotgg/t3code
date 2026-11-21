@@ -258,8 +258,19 @@ pub struct OrbitSyncSnapshot {
     pub workspaces: Vec<OrbitWorkspace>,
     pub appearance_version: i64,
     pub appearance_base: Option<Map<String, Value>>,
+    #[serde(default)]
+    pub appearance_meta: Option<SectionMeta>,
     pub desktop_version: i64,
     pub desktop_base: Option<Map<String, Value>>,
+    #[serde(default)]
+    pub desktop_meta: Option<SectionMeta>,
+    /// Local backup taken right before "Use the profile" replaces device settings.
+    #[serde(default)]
+    pub appearance_backup: Option<Map<String, Value>>,
+    #[serde(default)]
+    pub desktop_backup: Option<Map<String, Value>>,
+    #[serde(default)]
+    pub backup_saved_at_unix: Option<i64>,
     pub prefs: OrbitSyncPrefs,
 }
 

@@ -188,6 +188,23 @@ impl LinkedItemsPanel {
         panel
     }
 
+    pub(crate) fn set_connection(
+        &mut self,
+        connection: Option<Connection>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.server_available = connection.is_some();
+        self.connection = connection;
+        self.workspace_root = None;
+        self.thread_id = None;
+        self.projects.clear();
+        self.issue_details.clear();
+        self.breakdowns.clear();
+        self.load_state = LoadState::Idle;
+        self.load_generation = self.load_generation.wrapping_add(1);
+        cx.notify();
+    }
+
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
         self.tokens = tokens;
         cx.notify();

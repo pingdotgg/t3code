@@ -84,6 +84,7 @@ impl SettingsPage {
 /// Connection metadata displayed on the Connections settings page.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SettingsConnectionInfo {
+    pub(crate) server_label: Option<String>,
     pub(crate) server_url: Option<String>,
     pub(crate) status: Option<ConnectionStatus>,
 }
@@ -95,6 +96,12 @@ pub(crate) enum SettingsEvent {
     ReduceTransparency(bool),
     OrbitSyncNow,
     OrbitBindProfile(i64),
+    OrbitCreateProfile(String),
+    OrbitForcePush,
+    OrbitForcePull,
+    OrbitRestoreBackup,
+    OrbitConnectTarget(String),
+    OrbitWakeInstance { instance_id: i64, server_id: String },
     OrbitToggleSyncWorkspaces(bool),
     OrbitToggleSyncAppearance(bool),
     OrbitToggleSyncDesktopSettings(bool),
@@ -158,6 +165,8 @@ pub(crate) struct SettingsModal {
     themes: Vec<ThemeOption>,
     search_input: Entity<InputState>,
     _search_sub: Subscription,
+    new_profile_input: Entity<InputState>,
+    show_stopped_instances: bool,
     operator_url_input: Entity<InputState>,
     operator_saved_notice: Option<String>,
     focus_handle: FocusHandle,
@@ -218,6 +227,8 @@ impl SettingsModal {
                 .placeholder(conn_desktop::operator::DEFAULT_OPERATOR_URL)
                 .default_value(operator_url)
         });
+        let new_profile_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("New profile name"));
 
         Self {
             tokens,
@@ -230,6 +241,8 @@ impl SettingsModal {
             themes,
             search_input,
             _search_sub: search_sub,
+            new_profile_input,
+            show_stopped_instances: false,
             operator_url_input,
             operator_saved_notice: None,
             focus_handle,
@@ -237,13 +250,15 @@ impl SettingsModal {
         }
     }
 
-    /// Updates Orbit sync status, profiles, prefs, and Orbit-synced custom themes live.
+    /// Updates Orbit sync status, Nodes/Instances fleet, profiles, prefs, and custom themes live.
     pub(crate) fn set_orbit_state(
         &mut self,
+        connection: SettingsConnectionInfo,
         orbit: OrbitSettingsInfo,
         custom_themes: &[conn_theme::ThemeDefinition],
         cx: &mut Context<'_, Self>,
     ) {
+        self.connection = connection;
         self.orbit = orbit;
         self.themes = build_theme_options(custom_themes);
         cx.notify();
@@ -886,22 +901,16 @@ impl SettingsModal {
             .child(div().size(px(8.0)).rounded(px(9999.0)).bg(status_color))
             .child(status_text);
 
+        let server_label = self
+            .connection
+            .server_label
+            .clone()
+            .unwrap_or_else(|| "Active server".to_owned());
+
         let rows = vec![
             settings_row(
-                "Server URL",
-                Some("Active conn-server endpoint configured for this session."),
-                div()
-                    .text_size(px(self.geometry.ui_font_size_px))
-                    .line_height(px(self.geometry.ui_line_height_px))
-                    .text_color(fg)
-                    .child(url_label)
-                    .into_any_element(),
-                &self.tokens,
-                &self.geometry,
-            ),
-            settings_row(
-                "Connection status",
-                Some("Live WebSocket and Effect RPC session state."),
+                &server_label,
+                Some(&url_label),
                 status_pill.into_any_element(),
                 &self.tokens,
                 &self.geometry,
@@ -920,6 +929,193 @@ impl SettingsModal {
             ),
         ];
 
+        // Orbit Nodes section (`Settings › Connections › Orbit Nodes`).
+        let mut node_rows: Vec<AnyElement> = Vec::new();
+        for node in &self.orbit.fleet.nodes {
+            let sid = node.server_id.clone();
+            let is_active = self.orbit.active_server_id.as_deref() == Some(sid.as_str());
+            let is_connecting = self.orbit.connecting_server_id.as_deref() == Some(sid.as_str());
+            let is_local = self
+                .orbit
+                .local_node_name
+                .as_deref()
+                .is_some_and(|local| node.label.eq_ignore_ascii_case(local));
+            let is_paired = self.orbit.paired_server_ids.iter().any(|p| p == &sid);
+            let title = if is_local {
+                format!("{} (This Mac)", node.display_title())
+            } else {
+                node.display_title()
+            };
+            let mut subtitle = node.display_subtitle();
+            if is_paired && !is_active {
+                subtitle.push_str(" · paired");
+            }
+            let btn_label = if is_active {
+                "Connected"
+            } else if is_connecting {
+                "Connecting…"
+            } else {
+                "Connect"
+            };
+            let btn_ax_id = SharedString::from(format!("settings.orbit.node.{sid}"));
+            let mut btn = div()
+                .id(SharedString::from(format!("conn-orbit-node-{sid}")))
+                .a11y_button(btn_ax_id, format!("{btn_label} {}", node.display_title()))
+                .px(px(10.0))
+                .py(px(5.0))
+                .rounded(px(7.0))
+                .border_1()
+                .border_color(control_border)
+                .text_size(px(12.0))
+                .font_weight(FontWeight::MEDIUM)
+                .child(btn_label);
+            if is_active {
+                btn = btn.bg(selected_bg).text_color(hsla(self.tokens.success));
+            } else if is_connecting {
+                btn = btn.bg(control_bg).text_color(hsla(self.tokens.warning));
+            } else {
+                let target_id = sid.clone();
+                btn = btn
+                    .bg(control_bg)
+                    .text_color(fg)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_click(cx.listener(move |_this, _: &ClickEvent, _window, cx| {
+                        cx.emit(SettingsEvent::OrbitConnectTarget(target_id.clone()));
+                    }));
+            }
+            node_rows.push(settings_row(
+                &title,
+                Some(&subtitle),
+                btn.into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
+
+        // Orbit Instances section (`Settings › Connections › Orbit Instances`).
+        let running_count = self.orbit.fleet.running_instance_count();
+        let stopped_count = self
+            .orbit
+            .fleet
+            .instances
+            .len()
+            .saturating_sub(running_count);
+        let mut instance_rows: Vec<AnyElement> = Vec::new();
+        for inst in &self.orbit.fleet.instances {
+            let awake = inst.is_awake();
+            if !awake && !self.show_stopped_instances {
+                continue;
+            }
+            let sid = inst.server_id.clone();
+            let inst_id = inst.instance_id();
+            let is_active = self.orbit.active_server_id.as_deref() == Some(sid.as_str());
+            let is_connecting = self.orbit.connecting_server_id.as_deref() == Some(sid.as_str());
+            let is_waking = inst_id.is_some() && self.orbit.waking_instance_id == inst_id;
+            let title = inst.display_title();
+            let subtitle = inst.display_subtitle();
+
+            let (btn_label, btn_color) = if is_active {
+                ("Connected", hsla(self.tokens.success))
+            } else if is_waking {
+                ("Waking…", hsla(self.tokens.warning))
+            } else if is_connecting {
+                ("Connecting…", hsla(self.tokens.warning))
+            } else if awake {
+                ("Connect", fg)
+            } else {
+                ("Wake", muted)
+            };
+
+            let btn_ax_id = SharedString::from(format!("settings.orbit.instance.{sid}"));
+            let mut btn = div()
+                .id(SharedString::from(format!("conn-orbit-inst-{sid}")))
+                .a11y_button(btn_ax_id, format!("{btn_label} {title}"))
+                .px(px(10.0))
+                .py(px(5.0))
+                .rounded(px(7.0))
+                .border_1()
+                .border_color(control_border)
+                .text_size(px(12.0))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(btn_color)
+                .child(btn_label);
+
+            if is_active {
+                btn = btn.bg(selected_bg);
+            } else if is_waking || is_connecting {
+                btn = btn.bg(control_bg);
+            } else if awake {
+                let target_id = sid.clone();
+                btn = btn
+                    .bg(control_bg)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_click(cx.listener(move |_this, _: &ClickEvent, _window, cx| {
+                        cx.emit(SettingsEvent::OrbitConnectTarget(target_id.clone()));
+                    }));
+            } else if let Some(instance_id) = inst_id {
+                let target_id = sid.clone();
+                btn = btn
+                    .bg(control_bg)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_click(cx.listener(move |_this, _: &ClickEvent, _window, cx| {
+                        cx.emit(SettingsEvent::OrbitWakeInstance {
+                            instance_id,
+                            server_id: target_id.clone(),
+                        });
+                    }));
+            }
+
+            instance_rows.push(settings_row(
+                &title,
+                Some(&subtitle),
+                btn.into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
+
+        if stopped_count > 0 {
+            let toggle_label = if self.show_stopped_instances {
+                format!("Hide stopped ({stopped_count})")
+            } else {
+                format!("Show stopped ({stopped_count})")
+            };
+            let toggle_btn = div()
+                .id("conn-orbit-toggle-stopped-instances")
+                .a11y_button(
+                    "settings.orbit.toggle-stopped-instances",
+                    toggle_label.clone(),
+                )
+                .px(px(10.0))
+                .py(px(5.0))
+                .rounded(px(7.0))
+                .bg(control_bg)
+                .border_1()
+                .border_color(control_border)
+                .text_size(px(12.0))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(fg)
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover_bg))
+                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                    this.show_stopped_instances = !this.show_stopped_instances;
+                    cx.notify();
+                }))
+                .child(toggle_label);
+            let summary =
+                format!("{running_count} running · {stopped_count} stopped Orbit instance(s)");
+            instance_rows.push(settings_row(
+                "Stopped instances",
+                Some(&summary),
+                toggle_btn.into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
+
         // Orbit Profile Sync section (`Settings › Connections › Orbit profile sync`).
         let (orbit_status_text, orbit_status_color, orbit_desc) = match &self.orbit.status {
             OrbitSyncStatus::Idle => (
@@ -935,20 +1131,25 @@ impl SettingsModal {
             ),
             OrbitSyncStatus::Synced {
                 node_name,
+                wireguard_ip,
                 profile_name,
+                profile_version,
                 workspace_count,
                 custom_theme_count,
             } => (
-                format!("{profile_name} ({node_name})"),
+                format!("{profile_name} · v{profile_version}"),
                 hsla(self.tokens.success),
                 format!(
-                    "{workspace_count} workspace(s) · {custom_theme_count} custom theme(s) synced"
+                    "Node {node_name} ({wireguard_ip}) · {workspace_count} workspace(s) · {custom_theme_count} custom theme(s)"
                 ),
             ),
-            OrbitSyncStatus::Unbound { node_name } => (
+            OrbitSyncStatus::Unbound {
+                node_name,
+                wireguard_ip,
+            } => (
                 format!("No profile bound ({node_name})"),
                 hsla(self.tokens.warning),
-                "Pick an Orbit profile below to bind this device.".to_owned(),
+                format!("Signed in as {wireguard_ip}. Pick or create a profile below."),
             ),
             OrbitSyncStatus::Offline(reason) => {
                 ("Gateway unreachable".to_owned(), muted, reason.clone())
@@ -957,6 +1158,10 @@ impl SettingsModal {
 
         let sync_btn = div()
             .id("conn-settings-orbit-sync-now")
+            .a11y_button(
+                "settings.orbit.sync-now",
+                "Sync Orbit profile and fleet now",
+            )
             .px(px(10.0))
             .py(px(5.0))
             .rounded(px(7.0))
@@ -1019,6 +1224,11 @@ impl SettingsModal {
                     .id(SharedString::from(format!(
                         "conn-orbit-profile-{idx}-{profile_id}"
                     )))
+                    .a11y_button(
+                        SharedString::from(format!("settings.orbit.profile.{profile_id}")),
+                        format!("Bind Orbit profile {}", profile.name),
+                    )
+                    .aria_selected(active)
                     .px(px(10.0))
                     .py(px(4.0))
                     .rounded(px(7.0))
@@ -1051,6 +1261,49 @@ impl SettingsModal {
                 &self.geometry,
             ));
         }
+
+        // Create new profile row.
+        let create_btn = div()
+            .id("conn-settings-orbit-create-profile")
+            .a11y_button("settings.orbit.create-profile", "Create Orbit profile")
+            .px(px(10.0))
+            .py(px(5.0))
+            .rounded(px(7.0))
+            .bg(control_bg)
+            .border_1()
+            .border_color(control_border)
+            .text_size(px(12.0))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(fg)
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover_bg))
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                let name = this.new_profile_input.read(cx).value().trim().to_owned();
+                if !name.is_empty() {
+                    this.new_profile_input
+                        .update(cx, |input, cx| input.set_value("", window, cx));
+                    cx.emit(SettingsEvent::OrbitCreateProfile(name));
+                }
+            }))
+            .child("Create");
+        orbit_rows.push(settings_row(
+            "New profile",
+            Some("Creates a profile on Orbit Gateway and binds this Node to it."),
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .w(px(176.0))
+                        .child(Input::new(&self.new_profile_input)),
+                )
+                .child(create_btn)
+                .into_any_element(),
+            &self.tokens,
+            &self.geometry,
+        ));
 
         let ws_enabled = self.orbit.prefs.sync_workspaces;
         let ws_entity = cx.entity();
@@ -1124,6 +1377,102 @@ impl SettingsModal {
             &self.tokens,
             &self.geometry,
         ));
+
+        // Resolve differences (Use this device / Use the profile) + attribution.
+        let resolve_desc = if !self.orbit.section_changes.is_empty() {
+            self.orbit.section_changes.join(" · ")
+        } else {
+            "Replace the profile with this device's settings, or pull the profile onto this device."
+                .to_owned()
+        };
+        let push_btn = div()
+            .id("conn-settings-orbit-use-device")
+            .a11y_button("settings.orbit.use-device", "Use this device settings")
+            .px(px(10.0))
+            .py(px(5.0))
+            .rounded(px(7.0))
+            .bg(control_bg)
+            .border_1()
+            .border_color(control_border)
+            .text_size(px(12.0))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(fg)
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover_bg))
+            .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
+                cx.emit(SettingsEvent::OrbitForcePush);
+            }))
+            .child("Use this device");
+        let pull_btn = div()
+            .id("conn-settings-orbit-use-profile")
+            .a11y_button("settings.orbit.use-profile", "Use profile settings")
+            .px(px(10.0))
+            .py(px(5.0))
+            .rounded(px(7.0))
+            .bg(control_bg)
+            .border_1()
+            .border_color(control_border)
+            .text_size(px(12.0))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(fg)
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover_bg))
+            .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
+                cx.emit(SettingsEvent::OrbitForcePull);
+            }))
+            .child("Use the profile");
+        orbit_rows.push(settings_row(
+            "Resolve differences",
+            Some(&resolve_desc),
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.0))
+                .child(push_btn)
+                .child(pull_btn)
+                .into_any_element(),
+            &self.tokens,
+            &self.geometry,
+        ));
+
+        if self.orbit.has_backup {
+            let restore_btn = div()
+                .id("conn-settings-orbit-restore-backup")
+                .a11y_button("settings.orbit.restore-backup", "Restore previous settings")
+                .px(px(10.0))
+                .py(px(5.0))
+                .rounded(px(7.0))
+                .bg(control_bg)
+                .border_1()
+                .border_color(control_border)
+                .text_size(px(12.0))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(fg)
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover_bg))
+                .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
+                    cx.emit(SettingsEvent::OrbitRestoreBackup);
+                }))
+                .child("Restore");
+            orbit_rows.push(settings_row(
+                "Restore previous settings",
+                Some("Undo the last profile pull and restore this device's saved backup."),
+                restore_btn.into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
+
+        if let Some(notice) = &self.orbit.notice {
+            orbit_rows.push(settings_row(
+                "Status notice",
+                Some(notice),
+                div().into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
 
         let operator_save_btn = div()
             .id("conn-settings-operator-save")
@@ -1210,30 +1559,48 @@ impl SettingsModal {
             ),
         ];
 
-        div()
+        let mut page = div()
             .flex()
             .flex_col()
             .w_full()
             .gap(px(20.0))
             .child(settings_section(
-                "Connections",
+                "Active server",
                 rows,
                 &self.tokens,
                 &self.geometry,
-            ))
-            .child(settings_section(
-                "Orbit profile sync",
-                orbit_rows,
+            ));
+
+        if !node_rows.is_empty() {
+            page = page.child(settings_section(
+                "Orbit Nodes",
+                node_rows,
                 &self.tokens,
                 &self.geometry,
-            ))
-            .child(settings_section(
-                "Operator dictation",
-                operator_rows,
+            ));
+        }
+        if !instance_rows.is_empty() {
+            page = page.child(settings_section(
+                "Orbit Instances",
+                instance_rows,
                 &self.tokens,
                 &self.geometry,
-            ))
-            .into_any_element()
+            ));
+        }
+
+        page.child(settings_section(
+            "Orbit profile sync",
+            orbit_rows,
+            &self.tokens,
+            &self.geometry,
+        ))
+        .child(settings_section(
+            "Operator dictation",
+            operator_rows,
+            &self.tokens,
+            &self.geometry,
+        ))
+        .into_any_element()
     }
 
     fn render_keyboard_page(&self) -> AnyElement {

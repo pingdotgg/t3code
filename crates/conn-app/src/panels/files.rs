@@ -121,6 +121,20 @@ impl FilesPanel {
         }
     }
 
+    pub(crate) fn set_connection(
+        &mut self,
+        connection: Option<Connection>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.connection = connection;
+        self.context_generation = self.context_generation.wrapping_add(1);
+        self.preview_generation = self.preview_generation.wrapping_add(1);
+        self.tree.clear();
+        self.tree_error = None;
+        self.preview = PreviewState::Empty;
+        cx.notify();
+    }
+
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
         self.tokens = tokens;
         if let PreviewState::Loaded {

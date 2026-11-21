@@ -121,6 +121,18 @@ impl DiffPanel {
         }
     }
 
+    pub(crate) fn set_connection(
+        &mut self,
+        connection: Option<Connection>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.connection = connection;
+        self.generation = self.generation.wrapping_add(1);
+        self.state = DiffLoadState::Empty;
+        self.selected_index = 0;
+        cx.notify();
+    }
+
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
         self.tokens = tokens;
         cx.notify();

@@ -24,6 +24,7 @@ pub mod board;
 pub mod client;
 pub mod detail;
 pub mod fixtures;
+pub mod fleet;
 pub mod format;
 pub mod gateway;
 pub mod insights;
@@ -34,6 +35,10 @@ pub mod realtime;
 pub mod tasks;
 
 pub use client::{OrbitTasksClient, TasksError, TasksErrorReason, TasksInvalidation, TasksResult};
+pub use fleet::{
+    CachedOrbitSession, OrbitFleet, OrbitFleetClient, OrbitPairingTicket, OrbitServerTarget,
+    OrbitSessionStore, OrbitTargetKind, OrbitTargetStatus,
+};
 pub use gateway::{GatewayError, GatewayRequest, GatewayResponse, GatewayTransport, OrbitGateway};
 pub use profile::{
     APPEARANCE_SECTION, DESKTOP_DEVICE_SECTION, OrbitNode, OrbitProfile, OrbitProfileClient,
@@ -83,6 +88,25 @@ mod live {
             node.wireguard_ip,
             profiles.len(),
             node.profile.as_ref().map(|p| (&p.name, p.id))
+        );
+        let fleet_client = match OrbitFleetClient::live() {
+            Ok(client) => client,
+            Err(error) => panic!("fleet client: {error}"),
+        };
+        let fleet = match fleet_client.list_fleet(Some(&node.name)).await {
+            Ok(fleet) => fleet,
+            Err(error) => panic!("list_fleet: {error}"),
+        };
+        println!(
+            "orbit fleet: {} nodes ({:?}), {} instances ({} running)",
+            fleet.nodes.len(),
+            fleet
+                .nodes
+                .iter()
+                .map(|n| n.label.as_str())
+                .collect::<Vec<_>>(),
+            fleet.instances.len(),
+            fleet.running_instance_count()
         );
         if let Some(profile) = node.profile {
             let settings = match client.settings(profile.id).await {

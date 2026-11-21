@@ -85,7 +85,10 @@ pub(crate) struct ConnApp {
     /// When true, replaces translucent shell fills with opaque `sidebar`/`shell_card`.
     reduce_transparency: bool,
     server_url: Option<String>,
-    /// Orbit Gateway profile, workspace, theme, and desktop settings sync state.
+    server_label: Option<String>,
+    /// Monotonic counter incremented on every live server switch so stale event pumps stop cleanly.
+    connection_gen: u64,
+    /// Orbit Gateway Nodes/Instances, profile, workspace, theme, and desktop settings sync state.
     orbit: crate::orbit_sync::OrbitSyncState,
 }
 
@@ -118,7 +121,7 @@ impl ConnApp {
             Some(config) => {
                 let (connection, events) = Connection::start(config, crate::live::RT.handle());
                 connection.subscribe_shell();
-                Self::pump_events(events, cx);
+                Self::pump_events(1, None, events, cx);
                 (ShellState::default(), Some(connection))
             }
             None => {
@@ -255,6 +258,8 @@ impl ConnApp {
             sidebar_filter_menu_open: false,
             reduce_transparency: false,
             server_url,
+            server_label: None,
+            connection_gen: 1,
             orbit,
         };
         if crate::orbit_sync::orbit_sync_enabled_by_env() {
@@ -273,11 +278,19 @@ impl ConnApp {
             return;
         }
         self.remember_focus(window, cx);
+        let active_server_id = self.orbit.active_server_id.clone().or_else(|| {
+            self.server_url
+                .as_deref()
+                .and_then(|url| self.orbit.fleet.find_by_url(url))
+                .map(|t| t.server_id.clone())
+        });
         let items = PaletteItems::from_shell(
             &self.shell,
             self.layout.selected_thread_id.as_deref(),
             &self.theme_id,
             &self.orbit.custom_themes,
+            &self.orbit.fleet,
+            active_server_id.as_deref(),
         );
         let tokens = self.tokens.clone();
         let palette = cx.new(|cx| CommandPalette::new(items, tokens, window, cx));
@@ -289,6 +302,9 @@ impl ConnApp {
                 app.restore_focus(window, cx);
                 match event {
                     PaletteEvent::SelectThread(id) => app.select_thread(id.clone(), cx),
+                    PaletteEvent::ConnectOrbitTarget(server_id) => {
+                        app.connect_orbit_target(server_id.clone(), cx);
+                    }
                     PaletteEvent::ApplyTheme(id) => {
                         app.set_theme(id, cx);
                     }
@@ -343,10 +359,11 @@ impl ConnApp {
         }
         self.remember_focus(window, cx);
         let connection = SettingsConnectionInfo {
+            server_label: self.server_label.clone(),
             server_url: self.server_url.clone(),
             status: self.status.clone(),
         };
-        let orbit_info = self.orbit.settings_info();
+        let orbit_info = self.orbit.settings_info(self.server_url.as_deref());
         let custom_themes = self.orbit.custom_themes.clone();
         let theme_id = self.theme_id.clone();
         let tokens = self.tokens.clone();
@@ -379,6 +396,27 @@ impl ConnApp {
                 }
                 SettingsEvent::OrbitBindProfile(profile_id) => {
                     app.bind_orbit_profile(*profile_id, cx);
+                }
+                SettingsEvent::OrbitCreateProfile(name) => {
+                    app.create_orbit_profile(name.clone(), cx);
+                }
+                SettingsEvent::OrbitForcePush => {
+                    app.force_push_orbit_profile(cx);
+                }
+                SettingsEvent::OrbitForcePull => {
+                    app.force_pull_orbit_profile(cx);
+                }
+                SettingsEvent::OrbitRestoreBackup => {
+                    app.restore_orbit_backup(cx);
+                }
+                SettingsEvent::OrbitConnectTarget(server_id) => {
+                    app.connect_orbit_target(server_id.clone(), cx);
+                }
+                SettingsEvent::OrbitWakeInstance {
+                    instance_id,
+                    server_id,
+                } => {
+                    app.wake_orbit_instance(*instance_id, server_id.clone(), cx);
                 }
                 SettingsEvent::OrbitToggleSyncWorkspaces(enabled) => {
                     app.orbit.snapshot.prefs.sync_workspaces = *enabled;
@@ -535,6 +573,8 @@ impl ConnApp {
 
     /// Moves connection events onto the GPUI thread, one batch per wake.
     fn pump_events(
+        generation: u64,
+        orbit_server_id: Option<String>,
         mut events: tokio::sync::mpsc::Receiver<ClientEvent>,
         cx: &mut Context<'_, Self>,
     ) {
@@ -544,14 +584,30 @@ impl ConnApp {
                 while let Ok(more) = events.try_recv() {
                     batch.push(more);
                 }
-                let alive = this.update(cx, |app, cx| {
-                    for event in batch {
-                        app.apply_event(event);
-                    }
-                    app.sync_chat(cx);
-                    cx.notify();
-                });
-                if alive.is_err() {
+                let keep_going = this
+                    .update(cx, |app, cx| {
+                        if app.connection_gen != generation {
+                            return false;
+                        }
+                        let mut status_changed = false;
+                        for event in batch {
+                            if matches!(
+                                event,
+                                ClientEvent::Status(_) | ClientEvent::BearerIssued(_)
+                            ) {
+                                status_changed = true;
+                            }
+                            app.apply_event(event, orbit_server_id.as_deref());
+                        }
+                        if status_changed {
+                            app.refresh_settings_orbit_info(cx);
+                        }
+                        app.sync_chat(cx);
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep_going {
                     break;
                 }
             }
@@ -559,10 +615,31 @@ impl ConnApp {
         .detach();
     }
 
-    fn apply_event(&mut self, event: ClientEvent) {
+    fn apply_event(&mut self, event: ClientEvent, orbit_server_id: Option<&str>) {
         match event {
-            ClientEvent::Status(status) => self.status = Some(status),
-            ClientEvent::BearerIssued(_) => {}
+            ClientEvent::Status(status) => {
+                if let ConnectionStatus::Failed(ref msg) = status
+                    && let Some(sid) = orbit_server_id
+                    && (msg.contains("401")
+                        || msg.to_ascii_lowercase().contains("auth")
+                        || msg.to_ascii_lowercase().contains("unauthorized"))
+                {
+                    self.orbit.sessions.remove_bearer(sid);
+                    self.orbit.persist_sessions();
+                }
+                if matches!(status, ConnectionStatus::Connected) {
+                    self.orbit.connecting_server_id = None;
+                }
+                self.status = Some(status);
+            }
+            ClientEvent::BearerIssued(token) => {
+                if let Some(sid) = orbit_server_id {
+                    let url = self.server_url.clone().unwrap_or_default();
+                    let label = self.server_label.clone().unwrap_or_else(|| sid.to_owned());
+                    self.orbit.sessions.record_bearer(sid, url, label, token);
+                    self.orbit.persist_sessions();
+                }
+            }
             ClientEvent::Shell(item) => {
                 let change = self.shell.apply(item);
                 if !change.threads_changed.is_empty() {
@@ -1567,8 +1644,10 @@ impl ConnApp {
                         .sections
                         .as_ref()
                         .and_then(|s| s.get(conn_desktop::orbit::APPEARANCE_SECTION))
+                        .cloned()
                     {
                         app.orbit.snapshot.appearance_version = meta.version;
+                        app.orbit.snapshot.appearance_meta = Some(meta);
                     }
                     if let Some(raw) = conn_desktop::orbit::extract_section(
                         &saved,
@@ -1613,8 +1692,10 @@ impl ConnApp {
                         .sections
                         .as_ref()
                         .and_then(|s| s.get(conn_desktop::orbit::DESKTOP_DEVICE_SECTION))
+                        .cloned()
                     {
                         app.orbit.snapshot.desktop_version = meta.version;
+                        app.orbit.snapshot.desktop_meta = Some(meta);
                     }
                     if let Some(raw) = conn_desktop::orbit::extract_section(
                         &saved,
@@ -1630,11 +1711,312 @@ impl ConnApp {
         .detach();
     }
 
+    /// Switches the active live `conn-server` connection to a new [`ServerConfig`] (e.g. an Orbit
+    /// Node or Instance), cleanly resetting shell/thread state and updating chat & right panels.
+    fn connect_to_server_config(
+        &mut self,
+        config: ServerConfig,
+        orbit_server_id: Option<String>,
+        label: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.connection_gen = self.connection_gen.wrapping_add(1);
+        let generation = self.connection_gen;
+        self.server_url = Some(config.http_base_url.to_string());
+        self.server_label = label;
+        self.status = Some(ConnectionStatus::Connecting);
+        self.orbit.active_server_id = orbit_server_id.clone();
+        self.orbit.connecting_server_id = orbit_server_id.clone();
+        self.orbit.notice = None;
+
+        self.shell = ShellState::default();
+        self.threads.clear();
+        self.ended_threads.clear();
+        self.layout.selected_thread_id = None;
+        self.layout.selected_project_id = None;
+        self.draft_project = None;
+        self.draft_runtime_mode = None;
+
+        let (connection, events) = Connection::start(config, crate::live::RT.handle());
+        connection.subscribe_shell();
+        Self::pump_events(generation, orbit_server_id, events, cx);
+
+        self.connection = Some(connection.clone());
+        self.chat.update(cx, |chat, cx| {
+            chat.set_connection(Some(connection.clone()), cx)
+        });
+        self.right_panel
+            .update(cx, |panel, cx| panel.set_connection(Some(connection), cx));
+        self.sync_chat(cx);
+        self.refresh_settings_orbit_info(cx);
+        cx.notify();
+    }
+
+    /// Connects to an Orbit Node or running Orbit Instance, reusing a cached local bearer token
+    /// when available or minting a one-time pairing URL automatically from Orbit Gateway.
+    pub(crate) fn connect_orbit_target(&mut self, server_id: String, cx: &mut Context<'_, Self>) {
+        let Some(target) = self.orbit.fleet.find_by_server_id(&server_id).cloned() else {
+            self.orbit.notice = Some(format!("Orbit target {server_id} was not found."));
+            self.refresh_settings_orbit_info(cx);
+            return;
+        };
+
+        if let Some(bearer) = self
+            .orbit
+            .sessions
+            .bearer_for(&server_id)
+            .map(str::to_owned)
+            && let Ok(http_base_url) = url::Url::parse(&target.url)
+        {
+            let config = ServerConfig {
+                http_base_url,
+                credential: conn_client::Credential::Bearer(bearer),
+            };
+            self.connect_to_server_config(
+                config,
+                Some(target.server_id.clone()),
+                Some(target.display_title()),
+                cx,
+            );
+            return;
+        }
+
+        self.orbit.connecting_server_id = Some(server_id.clone());
+        self.orbit.notice = Some(format!("Pairing with {}…", target.display_title()));
+        self.refresh_settings_orbit_info(cx);
+        cx.notify();
+
+        let target_title = target.display_title();
+        let target_url = target.url;
+        cx.spawn(async move |this, cx| {
+            let task =
+                crate::live::RT.spawn(crate::orbit_sync::mint_orbit_pairing(server_id.clone()));
+            let outcome = match task.await {
+                Ok(res) => res,
+                Err(err) => Err(conn_desktop::orbit::ProfileError::Unreachable(
+                    err.to_string(),
+                )),
+            };
+            let _ = this.update(cx, |app, cx| match outcome {
+                Ok(ticket) => {
+                    let Some(code) = ticket.pairing_code() else {
+                        app.orbit.connecting_server_id = None;
+                        app.orbit.notice = Some(format!(
+                            "Gateway returned invalid pairing URL for {target_title}."
+                        ));
+                        app.refresh_settings_orbit_info(cx);
+                        cx.notify();
+                        return;
+                    };
+                    let base = ticket
+                        .http_base_url()
+                        .or_else(|| url::Url::parse(&target_url).ok());
+                    let Some(http_base_url) = base else {
+                        app.orbit.connecting_server_id = None;
+                        app.orbit.notice = Some(format!("Invalid server URL for {target_title}."));
+                        app.refresh_settings_orbit_info(cx);
+                        cx.notify();
+                        return;
+                    };
+                    let config = ServerConfig {
+                        http_base_url,
+                        credential: conn_client::Credential::PairingCode(code),
+                    };
+                    app.connect_to_server_config(config, Some(server_id), Some(target_title), cx);
+                }
+                Err(err) => {
+                    app.orbit.connecting_server_id = None;
+                    app.orbit.notice = Some(format!("Pairing failed for {target_title}: {err}"));
+                    app.refresh_settings_orbit_info(cx);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Wakes a stopped Orbit Instance via `POST /api/v1/instances/{id}/wake` and refreshes the
+    /// Orbit fleet once accepted.
+    fn wake_orbit_instance(
+        &mut self,
+        instance_id: i64,
+        server_id: String,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.orbit.waking_instance_id = Some(instance_id);
+        self.orbit.notice = Some(format!("Waking Orbit instance #{instance_id}…"));
+        self.refresh_settings_orbit_info(cx);
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let task = crate::live::RT.spawn(crate::orbit_sync::wake_orbit_instance(instance_id));
+            let outcome = match task.await {
+                Ok(res) => res,
+                Err(err) => Err(conn_desktop::orbit::ProfileError::Unreachable(
+                    err.to_string(),
+                )),
+            };
+            let _ = this.update(cx, |app, cx| {
+                app.orbit.waking_instance_id = None;
+                match outcome {
+                    Ok(_) => {
+                        app.orbit.notice = Some(format!(
+                            "Wake requested for instance #{instance_id}; refreshing fleet…"
+                        ));
+                        app.sync_orbit_profile(false, cx);
+                        // Also kick a pairing attempt if the instance is already registered.
+                        let _ = server_id;
+                    }
+                    Err(err) => {
+                        app.orbit.notice =
+                            Some(format!("Failed to wake instance #{instance_id}: {err}"));
+                    }
+                }
+                app.refresh_settings_orbit_info(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Creates a new Orbit profile (`POST /profiles`), binds this Node to it, and syncs.
+    fn create_orbit_profile(&mut self, name: String, cx: &mut Context<'_, Self>) {
+        self.orbit.status = crate::orbit_sync::OrbitSyncStatus::Syncing;
+        self.orbit.notice = Some(format!("Creating Orbit profile \"{name}\"…"));
+        self.refresh_settings_orbit_info(cx);
+        cx.spawn(async move |this, cx| {
+            let task =
+                crate::live::RT.spawn(crate::orbit_sync::create_and_bind_orbit_profile(name));
+            let outcome = match task.await {
+                Ok(res) => res,
+                Err(err) => Err(conn_desktop::orbit::ProfileError::Unreachable(
+                    err.to_string(),
+                )),
+            };
+            let _ = this.update(cx, |app, cx| {
+                app.orbit.notice = None;
+                app.finish_orbit_fetch(outcome, false, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Replaces the bound Orbit profile's appearance and desktop settings with this Mac's values.
+    fn force_push_orbit_profile(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(profile_id) = self.orbit.active_profile_id() else {
+            return;
+        };
+        let app_doc = if self.orbit.snapshot.prefs.sync_appearance {
+            self.resolve_theme(&self.theme_id)
+                .map(|(def, _)| self.orbit.build_appearance_document(&def))
+        } else {
+            None
+        };
+        let desk_doc = if self.orbit.snapshot.prefs.sync_desktop_settings {
+            Some(
+                self.orbit
+                    .build_desktop_settings_document(self.reduce_transparency),
+            )
+        } else {
+            None
+        };
+        self.orbit.notice = Some("Sending this device's settings to Orbit profile…".to_owned());
+        self.refresh_settings_orbit_info(cx);
+        cx.spawn(async move |this, cx| {
+            let task = crate::live::RT.spawn(crate::orbit_sync::force_push_profile_sections(
+                profile_id, app_doc, desk_doc,
+            ));
+            let outcome = task.await;
+            let _ = this.update(cx, |app, cx| {
+                match outcome {
+                    Ok(Ok(saved)) => {
+                        app.orbit.snapshot.profile_version = saved.version;
+                        if let Some(meta) = saved
+                            .sections
+                            .as_ref()
+                            .and_then(|s| s.get(conn_desktop::orbit::APPEARANCE_SECTION))
+                            .cloned()
+                        {
+                            app.orbit.snapshot.appearance_version = meta.version;
+                            app.orbit.snapshot.appearance_meta = Some(meta);
+                        }
+                        if let Some(meta) = saved
+                            .sections
+                            .as_ref()
+                            .and_then(|s| s.get(conn_desktop::orbit::DESKTOP_DEVICE_SECTION))
+                            .cloned()
+                        {
+                            app.orbit.snapshot.desktop_version = meta.version;
+                            app.orbit.snapshot.desktop_meta = Some(meta);
+                        }
+                        app.orbit.persist_snapshot();
+                        app.orbit.notice =
+                            Some("Updated Orbit profile from this device.".to_owned());
+                    }
+                    Ok(Err(err)) => {
+                        app.orbit.notice = Some(format!("Push failed: {err}"));
+                    }
+                    Err(err) => {
+                        app.orbit.notice = Some(format!("Push failed: {err}"));
+                    }
+                }
+                app.refresh_settings_orbit_info(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Saves a local backup of current settings, then pulls the Orbit profile onto this device.
+    fn force_pull_orbit_profile(&mut self, cx: &mut Context<'_, Self>) {
+        let current_theme = self.resolve_theme(&self.theme_id).map(|(def, _)| def);
+        self.orbit
+            .backup_local_sections(current_theme.as_ref(), self.reduce_transparency);
+        self.orbit.notice = Some("Pulled Orbit profile (previous settings backed up).".to_owned());
+        self.sync_orbit_profile(true, cx);
+    }
+
+    /// Restores the local backup saved before the last "Use the profile" pull and pushes it.
+    fn restore_orbit_backup(&mut self, cx: &mut Context<'_, Self>) {
+        let Some((effects, app_doc, desk_doc)) =
+            self.orbit.take_backup_restore(self.tokens.appearance)
+        else {
+            return;
+        };
+        if let Some(reduce) = effects.reduce_transparency {
+            self.apply_reduce_transparency_choice(reduce, false, cx);
+        }
+        if let Some(theme_id) = effects.theme_id {
+            let _ = self.apply_theme_choice(&theme_id, false, cx);
+        }
+        self.orbit.notice = Some("Previous settings restored.".to_owned());
+        self.refresh_settings_orbit_info(cx);
+        if let Some(profile_id) = self.orbit.active_profile_id() {
+            cx.spawn(async move |this, cx| {
+                let _ = crate::live::RT
+                    .spawn(crate::orbit_sync::force_push_profile_sections(
+                        profile_id, app_doc, desk_doc,
+                    ))
+                    .await;
+                let _ = this.update(cx, |app, cx| {
+                    app.sync_orbit_profile(false, cx);
+                });
+            })
+            .detach();
+        }
+        cx.notify();
+    }
+
     fn refresh_settings_orbit_info(&self, cx: &mut Context<'_, Self>) {
         if let Some(modal) = &self.settings_modal {
-            let info = self.orbit.settings_info();
+            let connection = crate::settings::SettingsConnectionInfo {
+                server_label: self.server_label.clone(),
+                server_url: self.server_url.clone(),
+                status: self.status.clone(),
+            };
+            let info = self.orbit.settings_info(self.server_url.as_deref());
             let custom = self.orbit.custom_themes.clone();
-            modal.update(cx, |m, cx| m.set_orbit_state(info, &custom, cx));
+            modal.update(cx, |m, cx| m.set_orbit_state(connection, info, &custom, cx));
         }
     }
     /// Switches the selected thread's runtime permission mode (`thread.runtime-mode.set`).

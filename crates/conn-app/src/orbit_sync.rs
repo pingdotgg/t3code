@@ -1,16 +1,19 @@
-//! Orbit profile, workspace, theme, and desktop settings sync controller for `conn-app`.
+//! Orbit Nodes, Instances, profile, workspace, theme, and desktop settings sync controller.
 //!
-//! Bridges [`conn_desktop::orbit::OrbitProfileClient`] (running on [`crate::live::RT`]) with
-//! [`crate::app::ConnApp`]'s UI state, workspace rail, custom theme catalog, and Settings modal.
+//! Bridges [`conn_desktop::orbit::OrbitProfileClient`] and [`conn_desktop::orbit::OrbitFleetClient`]
+//! (running on [`crate::live::RT`]) with [`crate::app::ConnApp`]'s UI state, active server
+//! switching, workspace rail, custom theme catalog, Command Palette (`⌘K`), and Settings modal.
 
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use conn_desktop::orbit::{
-    APPEARANCE_SECTION, DESKTOP_DEVICE_SECTION, OrbitNode, OrbitProfile, OrbitProfileClient,
-    OrbitProfileSettings, OrbitSyncPrefs, OrbitSyncSnapshot, OrbitWorkspace,
-    PROFILE_SCHEMA_VERSION, ProfileAppearance, ProfileAppearanceMode, ProfileError,
-    ProfileThemeAppearance, ProfileThemeSlot, ThemeSlotSource, extract_section, merge_appearance,
-    merge_device_section, parse_profile_appearance, parse_profile_device_section,
+    APPEARANCE_SECTION, DESKTOP_DEVICE_SECTION, OrbitFleet, OrbitFleetClient, OrbitNode,
+    OrbitPairingTicket, OrbitProfile, OrbitProfileClient, OrbitProfileSettings, OrbitSessionStore,
+    OrbitSyncPrefs, OrbitSyncSnapshot, OrbitWorkspace, PROFILE_SCHEMA_VERSION, ProfileAppearance,
+    ProfileAppearanceMode, ProfileError, ProfileThemeAppearance, ProfileThemeSlot, SectionMeta,
+    SectionPatch, ThemeSlotSource, extract_section, merge_appearance, merge_device_section,
+    parse_profile_appearance, parse_profile_device_section, to_gateway_form,
 };
 use conn_theme::{Appearance, Rgba, ThemeDefinition, theme_from_role_colors};
 use serde_json::{Map, Value, json};
@@ -23,39 +26,65 @@ pub(crate) enum OrbitSyncStatus {
     Syncing,
     Synced {
         node_name: String,
+        wireguard_ip: String,
         profile_name: String,
+        profile_version: i64,
         workspace_count: usize,
         custom_theme_count: usize,
     },
     Unbound {
         node_name: String,
+        wireguard_ip: String,
     },
     Offline(String),
 }
 
-/// Snapshot of Orbit sync state displayed inside the Settings modal.
+/// Snapshot of Orbit Nodes, Instances, and profile sync state displayed inside Settings → Connections.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct OrbitSettingsInfo {
     pub(crate) status: OrbitSyncStatus,
+    pub(crate) local_node_name: Option<String>,
     pub(crate) active_profile_id: Option<i64>,
     pub(crate) profiles: Vec<OrbitProfile>,
     pub(crate) prefs: OrbitSyncPrefs,
+    pub(crate) fleet: OrbitFleet,
+    /// Gateway `server_id` of the currently connected Node or Instance (when connected via Orbit).
+    pub(crate) active_server_id: Option<String>,
+    /// Gateway `server_id` currently pairing/connecting.
+    pub(crate) connecting_server_id: Option<String>,
+    /// Orbit `instance_id` currently waking.
+    pub(crate) waking_instance_id: Option<i64>,
+    /// Paired `server_id`s that already have a cached local bearer token.
+    pub(crate) paired_server_ids: Vec<String>,
+    /// Section attribution lines (e.g. `"Appearance: changed by beast"`).
+    pub(crate) section_changes: Vec<String>,
+    /// True when a local backup exists before a "Use the profile" pull.
+    pub(crate) has_backup: bool,
+    /// Optional status/error banner shown in the Orbit section.
+    pub(crate) notice: Option<String>,
 }
 
-/// Full result returned by a background Orbit profile sync fetch.
+/// Full result returned by a background Orbit Gateway sync fetch.
 #[derive(Clone, Debug)]
 pub(crate) struct OrbitFetchResult {
     pub(crate) node: OrbitNode,
     pub(crate) profiles: Vec<OrbitProfile>,
     pub(crate) settings: Option<OrbitProfileSettings>,
+    pub(crate) fleet: OrbitFleet,
 }
 
-/// App-owned Orbit profile sync state.
+/// App-owned Orbit Nodes/Instances + profile sync state.
 #[derive(Clone, Debug)]
 pub(crate) struct OrbitSyncState {
     pub(crate) status: OrbitSyncStatus,
     pub(crate) node: Option<OrbitNode>,
     pub(crate) profiles: Vec<OrbitProfile>,
+    pub(crate) fleet: OrbitFleet,
+    pub(crate) sessions: OrbitSessionStore,
+    pub(crate) active_server_id: Option<String>,
+    pub(crate) connecting_server_id: Option<String>,
+    pub(crate) waking_instance_id: Option<i64>,
+    pub(crate) notice: Option<String>,
     pub(crate) workspaces: Vec<OrbitWorkspace>,
     pub(crate) custom_themes: Vec<ThemeDefinition>,
     pub(crate) snapshot: OrbitSyncSnapshot,
@@ -69,6 +98,7 @@ impl Default for OrbitSyncState {
         let snapshot = OrbitSyncSnapshot::default_path()
             .map(|p| OrbitSyncSnapshot::load_from(&p))
             .unwrap_or_default();
+        let sessions = OrbitSessionStore::load_default();
         let workspaces = snapshot.workspaces.clone();
         let mut custom_themes = Vec::new();
         let mut light_theme_id = "t3-code-light".to_owned();
@@ -84,6 +114,12 @@ impl Default for OrbitSyncState {
             status: OrbitSyncStatus::Idle,
             node: None,
             profiles: Vec::new(),
+            fleet: OrbitFleet::default(),
+            sessions,
+            active_server_id: None,
+            connecting_server_id: None,
+            waking_instance_id: None,
+            notice: None,
             workspaces,
             custom_themes,
             snapshot,
@@ -96,12 +132,40 @@ impl Default for OrbitSyncState {
 impl OrbitSyncState {
     /// Builds the summary passed into Settings → Connections.
     #[must_use]
-    pub(crate) fn settings_info(&self) -> OrbitSettingsInfo {
+    pub(crate) fn settings_info(&self, connected_server_url: Option<&str>) -> OrbitSettingsInfo {
+        let active_server_id = self.active_server_id.clone().or_else(|| {
+            connected_server_url
+                .and_then(|url| self.fleet.find_by_url(url))
+                .map(|target| target.server_id.clone())
+        });
+        let mut section_changes = Vec::new();
+        if let Some(line) =
+            format_section_change("Appearance", self.snapshot.appearance_meta.as_ref())
+        {
+            section_changes.push(line);
+        }
+        if let Some(line) =
+            format_section_change("Desktop settings", self.snapshot.desktop_meta.as_ref())
+        {
+            section_changes.push(line);
+        }
+        let has_backup =
+            self.snapshot.appearance_backup.is_some() || self.snapshot.desktop_backup.is_some();
+
         OrbitSettingsInfo {
             status: self.status.clone(),
+            local_node_name: self.node.as_ref().map(|n| n.name.clone()),
             active_profile_id: self.active_profile_id(),
             profiles: self.profiles.clone(),
             prefs: self.snapshot.prefs.clone(),
+            fleet: self.fleet.clone(),
+            active_server_id,
+            connecting_server_id: self.connecting_server_id.clone(),
+            waking_instance_id: self.waking_instance_id,
+            paired_server_ids: self.sessions.sessions.keys().cloned().collect(),
+            section_changes,
+            has_backup,
+            notice: self.notice.clone(),
         }
     }
 
@@ -114,7 +178,7 @@ impl OrbitSyncState {
             .or(self.snapshot.profile_id)
     }
 
-    /// Persists the local sync snapshot to disk if a config path is available.
+    /// Persists the local profile sync snapshot to disk if a config path is available.
     pub(crate) fn persist_snapshot(&self) {
         if let Some(path) = OrbitSyncSnapshot::default_path()
             && let Err(err) = self.snapshot.save_to(&path)
@@ -123,8 +187,72 @@ impl OrbitSyncState {
         }
     }
 
-    /// Applies a completed fetch from the Orbit Gateway and returns an optional theme id to adopt
-    /// (plus an optional `reduce_transparency` override from `devices.desktop`).
+    /// Persists the local Orbit Node/Instance bearer session cache to disk (`0600`).
+    pub(crate) fn persist_sessions(&self) {
+        if let Err(err) = self.sessions.save_default() {
+            eprintln!("orbit sync: failed to save sessions: {err}");
+        }
+    }
+
+    /// Saves a local backup of current appearance + desktop settings before a forced pull.
+    pub(crate) fn backup_local_sections(
+        &mut self,
+        current_theme: Option<&ThemeDefinition>,
+        reduce_transparency: bool,
+    ) {
+        if let Some(theme) = current_theme {
+            self.snapshot.appearance_backup = Some(self.build_appearance_document(theme));
+        }
+        self.snapshot.desktop_backup =
+            Some(self.build_desktop_settings_document(reduce_transparency));
+        self.snapshot.backup_saved_at_unix = Some(now_unix_secs());
+        self.persist_snapshot();
+    }
+
+    /// Restores the last local backup (returning theme + reduce_transparency effects and the
+    /// raw backup documents to push back to Orbit).
+    pub(crate) fn take_backup_restore(
+        &mut self,
+        current_appearance: Appearance,
+    ) -> Option<(
+        OrbitAdoptEffects,
+        Option<Map<String, Value>>,
+        Option<Map<String, Value>>,
+    )> {
+        let app_backup = self.snapshot.appearance_backup.take();
+        let desktop_backup = self.snapshot.desktop_backup.take();
+        self.snapshot.backup_saved_at_unix = None;
+        if app_backup.is_none() && desktop_backup.is_none() {
+            return None;
+        }
+        let mut effects = OrbitAdoptEffects::default();
+        if let Some(raw_app) = &app_backup
+            && let Some(parsed) = parse_profile_appearance(&Value::Object(raw_app.clone()))
+        {
+            self.custom_themes = themes_from_profile_appearance(&parsed);
+            self.light_theme_id = normalize_slot_theme_id(&parsed.themes.light, Appearance::Light);
+            self.dark_theme_id = normalize_slot_theme_id(&parsed.themes.dark, Appearance::Dark);
+            let target_app = match parsed.mode {
+                ProfileAppearanceMode::Light => Appearance::Light,
+                ProfileAppearanceMode::Dark => Appearance::Dark,
+                ProfileAppearanceMode::System => current_appearance,
+            };
+            effects.theme_id = Some(match target_app {
+                Appearance::Light => self.light_theme_id.clone(),
+                Appearance::Dark => self.dark_theme_id.clone(),
+            });
+        }
+        if let Some(raw_desktop) = &desktop_backup
+            && let Some(parsed) = parse_profile_device_section(&Value::Object(raw_desktop.clone()))
+            && let Some(glass) = parsed.values.get("glassOpacity").and_then(Value::as_f64)
+        {
+            effects.reduce_transparency = Some(glass >= 0.99);
+        }
+        self.persist_snapshot();
+        Some((effects, app_backup, desktop_backup))
+    }
+
+    /// Applies a completed fetch from the Orbit Gateway and returns optional UI adopt effects.
     pub(crate) fn apply_fetch(
         &mut self,
         result: OrbitFetchResult,
@@ -133,10 +261,12 @@ impl OrbitSyncState {
     ) -> OrbitAdoptEffects {
         self.node = Some(result.node.clone());
         self.profiles = result.profiles;
+        self.fleet = result.fleet;
 
         let Some(profile) = result.node.profile else {
             self.status = OrbitSyncStatus::Unbound {
                 node_name: result.node.name,
+                wireguard_ip: result.node.wireguard_ip,
             };
             return OrbitAdoptEffects::default();
         };
@@ -155,12 +285,13 @@ impl OrbitSyncState {
             if self.snapshot.prefs.sync_appearance
                 && let Some(raw_app) = extract_section(&settings, APPEARANCE_SECTION)
             {
-                let version = settings
+                let meta = settings
                     .sections
                     .as_ref()
                     .and_then(|s| s.get(APPEARANCE_SECTION))
-                    .map_or(0, |m| m.version);
-                self.snapshot.appearance_version = version;
+                    .cloned();
+                self.snapshot.appearance_version = meta.as_ref().map_or(0, |m| m.version);
+                self.snapshot.appearance_meta = meta;
                 self.snapshot.appearance_base = Some(raw_app.clone());
                 if let Some(parsed) = parse_profile_appearance(&Value::Object(raw_app)) {
                     self.custom_themes = themes_from_profile_appearance(&parsed);
@@ -186,12 +317,13 @@ impl OrbitSyncState {
             if self.snapshot.prefs.sync_desktop_settings
                 && let Some(raw_desktop) = extract_section(&settings, DESKTOP_DEVICE_SECTION)
             {
-                let version = settings
+                let meta = settings
                     .sections
                     .as_ref()
                     .and_then(|s| s.get(DESKTOP_DEVICE_SECTION))
-                    .map_or(0, |m| m.version);
-                self.snapshot.desktop_version = version;
+                    .cloned();
+                self.snapshot.desktop_version = meta.as_ref().map_or(0, |m| m.version);
+                self.snapshot.desktop_meta = meta;
                 self.snapshot.desktop_base = Some(raw_desktop.clone());
                 if let Some(parsed) = parse_profile_device_section(&Value::Object(raw_desktop))
                     && let Some(glass) = parsed.values.get("glassOpacity").and_then(Value::as_f64)
@@ -203,7 +335,9 @@ impl OrbitSyncState {
 
         self.status = OrbitSyncStatus::Synced {
             node_name: result.node.name,
+            wireguard_ip: result.node.wireguard_ip,
             profile_name: profile.name,
+            profile_version: self.snapshot.profile_version,
             workspace_count: self.workspaces.len(),
             custom_theme_count: self.custom_themes.len(),
         };
@@ -360,6 +494,32 @@ pub(crate) fn themes_from_profile_appearance(
     out
 }
 
+fn format_section_change(label: &str, meta: Option<&SectionMeta>) -> Option<String> {
+    let meta = meta?;
+    if meta.version <= 0 {
+        return None;
+    }
+    let by = meta
+        .updated_by
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|who| format!(" by {who}"))
+        .unwrap_or_default();
+    let when = meta
+        .updated_at
+        .as_deref()
+        .and_then(|ts| ts.get(..16))
+        .map(|ts| format!(" ({})", ts.replace('T', " ")))
+        .unwrap_or_default();
+    Some(format!("{label}: v{}{by}{when}", meta.version))
+}
+
+fn now_unix_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
 fn to_conn_appearance(app: ProfileThemeAppearance) -> Appearance {
     match app {
         ProfileThemeAppearance::Light => Appearance::Light,
@@ -483,40 +643,64 @@ pub(crate) fn workspace_monogram(name: &str) -> String {
     }
 }
 
-/// Fetches `/me`, `/profiles`, and (when bound) `/profiles/{id}/settings` from the live Gateway.
+/// Fetches `/me`, `/profiles`, `/profiles/{id}/settings`, and the Orbit Nodes & Instances fleet.
 pub(crate) async fn fetch_orbit_profile() -> Result<OrbitFetchResult, ProfileError> {
     let client =
         OrbitProfileClient::live().map_err(|err| ProfileError::Unreachable(err.to_string()))?;
+    let fleet_client =
+        OrbitFleetClient::live().map_err(|err| ProfileError::Unreachable(err.to_string()))?;
     let node = client.me().await?;
     let profiles = client.profiles().await.unwrap_or_default();
     let settings = match &node.profile {
         Some(profile) => Some(client.settings(profile.id).await?),
         None => None,
     };
+    let fleet = fleet_client
+        .list_fleet(Some(&node.name))
+        .await
+        .unwrap_or_default();
     Ok(OrbitFetchResult {
         node,
         profiles,
         settings,
+        fleet,
     })
 }
 
-/// Binds this Orbit Node to `profile_id` and immediately fetches the bound profile's settings.
+/// Binds this Orbit Node to `profile_id` and immediately fetches the bound profile + fleet.
 pub(crate) async fn bind_and_fetch_orbit_profile(
     profile_id: i64,
 ) -> Result<OrbitFetchResult, ProfileError> {
     let client =
         OrbitProfileClient::live().map_err(|err| ProfileError::Unreachable(err.to_string()))?;
+    let fleet_client =
+        OrbitFleetClient::live().map_err(|err| ProfileError::Unreachable(err.to_string()))?;
     let node = client.bind_profile(profile_id).await?;
     let profiles = client.profiles().await.unwrap_or_default();
     let settings = match &node.profile {
         Some(profile) => Some(client.settings(profile.id).await?),
         None => None,
     };
+    let fleet = fleet_client
+        .list_fleet(Some(&node.name))
+        .await
+        .unwrap_or_default();
     Ok(OrbitFetchResult {
         node,
         profiles,
         settings,
+        fleet,
     })
+}
+
+/// Creates a new Orbit profile (`POST /profiles`), binds this Node to it, and fetches state.
+pub(crate) async fn create_and_bind_orbit_profile(
+    name: String,
+) -> Result<OrbitFetchResult, ProfileError> {
+    let client =
+        OrbitProfileClient::live().map_err(|err| ProfileError::Unreachable(err.to_string()))?;
+    let created = client.create_profile(name.trim()).await?;
+    bind_and_fetch_orbit_profile(created.id).await
 }
 
 /// Pushes an updated `appearance` section to Orbit Gateway with 3-way conflict merge.
@@ -559,6 +743,67 @@ pub(crate) async fn push_desktop_section(
             merge_device_section,
         )
         .await
+}
+
+/// Force-pushes the local `appearance` and/or `devices.desktop` sections to replace the profile's
+/// values ("Use this device" / "Restore previous settings").
+pub(crate) async fn force_push_profile_sections(
+    profile_id: i64,
+    appearance: Option<Map<String, Value>>,
+    desktop: Option<Map<String, Value>>,
+) -> Result<OrbitProfileSettings, ProfileError> {
+    let client =
+        OrbitProfileClient::live().map_err(|err| ProfileError::Unreachable(err.to_string()))?;
+    let latest = client.settings(profile_id).await?;
+    let mut patches = BTreeMap::new();
+    if let Some(app_doc) = appearance {
+        let ver = latest
+            .sections
+            .as_ref()
+            .and_then(|s| s.get(APPEARANCE_SECTION))
+            .map_or(0, |m| m.version);
+        patches.insert(
+            APPEARANCE_SECTION.to_owned(),
+            SectionPatch {
+                version: ver,
+                value: Some(to_gateway_form(&app_doc)),
+            },
+        );
+    }
+    if let Some(desk_doc) = desktop {
+        let ver = latest
+            .sections
+            .as_ref()
+            .and_then(|s| s.get(DESKTOP_DEVICE_SECTION))
+            .map_or(0, |m| m.version);
+        patches.insert(
+            DESKTOP_DEVICE_SECTION.to_owned(),
+            SectionPatch {
+                version: ver,
+                value: Some(to_gateway_form(&desk_doc)),
+            },
+        );
+    }
+    if patches.is_empty() {
+        return Ok(latest);
+    }
+    client.patch_sections(profile_id, &patches).await
+}
+
+/// Mints a one-time pairing URL for an Orbit Node or Instance.
+pub(crate) async fn mint_orbit_pairing(
+    server_id: String,
+) -> Result<OrbitPairingTicket, ProfileError> {
+    let client =
+        OrbitFleetClient::live().map_err(|err| ProfileError::Unreachable(err.to_string()))?;
+    client.mint_pairing(&server_id).await
+}
+
+/// Requests Orbit to wake a stopped Instance (`POST /api/v1/instances/{id}/wake`).
+pub(crate) async fn wake_orbit_instance(instance_id: i64) -> Result<Option<i64>, ProfileError> {
+    let client =
+        OrbitFleetClient::live().map_err(|err| ProfileError::Unreachable(err.to_string()))?;
+    client.wake_instance(instance_id).await
 }
 
 #[cfg(test)]

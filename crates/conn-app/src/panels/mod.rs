@@ -206,6 +206,21 @@ impl RightPanel {
         self.browser.read(cx).title()
     }
 
+    /// Updates the live `conn-server` connection across every server-backed right-panel surface.
+    pub fn set_connection(&mut self, connection: Option<Connection>, cx: &mut Context<'_, Self>) {
+        self.files
+            .update(cx, |p, cx| p.set_connection(connection.clone(), cx));
+        self.diff
+            .update(cx, |p, cx| p.set_connection(connection.clone(), cx));
+        self.pull_request
+            .update(cx, |p, cx| p.set_connection(connection.clone(), cx));
+        self.linked_items
+            .update(cx, |p, cx| p.set_connection(connection.clone(), cx));
+        self.device
+            .update(cx, |p, cx| p.set_connection(connection, cx));
+        cx.notify();
+    }
+
     /// Updates theme tokens across the tab strip and every right-panel surface.
     pub fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
         self.tokens = tokens.clone();

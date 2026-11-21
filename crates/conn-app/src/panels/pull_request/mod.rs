@@ -374,6 +374,17 @@ impl PullRequestPanel {
         panel
     }
 
+    pub(crate) fn set_connection(
+        &mut self,
+        connection: Option<Connection>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.connection = connection;
+        self.workspace_root = None;
+        self.thread_id = None;
+        cx.notify();
+    }
+
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
         self.tokens = tokens;
         cx.notify();

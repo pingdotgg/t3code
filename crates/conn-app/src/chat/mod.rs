@@ -180,6 +180,17 @@ impl ChatView {
     }
 
     /// Replaces the active theme tokens and triggers a repaint.
+    /// Updates the live `conn-server` connection inside the composer (for Orbit Node/Instance switching).
+    pub(crate) fn set_connection(
+        &mut self,
+        connection: Option<conn_client::Connection>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.composer
+            .update(cx, |c, cx| c.set_connection(connection, cx));
+        cx.notify();
+    }
+
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
         if self.tokens == tokens {
             return;

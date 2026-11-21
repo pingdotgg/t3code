@@ -23,8 +23,8 @@ use crate::settings::controls::kbd_cap;
 use crate::theme::{hsla, hsla_alpha};
 
 pub(crate) use filter::{
-    FilteredGroup, PaletteAction, PaletteItems, PaletteProject, PaletteRow, PaletteTheme,
-    PaletteThread,
+    FilteredGroup, PaletteAction, PaletteItems, PaletteProject, PaletteRow, PaletteTarget,
+    PaletteTheme, PaletteThread,
 };
 
 actions!(conn_palette, [OpenCommandPalette]);
@@ -43,19 +43,23 @@ const LIST_MAX_HEIGHT_PX: f32 = 360.0;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PaletteEvent {
     SelectThread(String),
+    ConnectOrbitTarget(String),
     ApplyTheme(String),
     Action(PaletteAction),
     Dismiss,
 }
 
 impl PaletteItems {
-    /// Builds palette items from the live [`ShellState`], built-in themes, and Orbit custom themes.
+    /// Builds palette items from the live [`ShellState`], Orbit Nodes/Instances, built-in themes,
+    /// and Orbit custom themes.
     #[must_use]
     pub(crate) fn from_shell(
         shell: &ShellState,
         active_thread_id: Option<&str>,
         active_theme_id: &str,
         custom_themes: &[conn_theme::ThemeDefinition],
+        fleet: &conn_desktop::orbit::OrbitFleet,
+        active_server_id: Option<&str>,
     ) -> Self {
         let threads = shell
             .threads
@@ -101,9 +105,23 @@ impl PaletteItems {
             })
             .collect();
 
+        let targets = fleet
+            .nodes
+            .iter()
+            .chain(fleet.instances.iter().filter(|i| i.is_awake()))
+            .map(|target| PaletteTarget {
+                is_current: active_server_id == Some(target.server_id.as_str()),
+                is_node: target.is_node(),
+                server_id: target.server_id.clone(),
+                title: target.display_title(),
+                subtitle: target.display_subtitle(),
+            })
+            .collect();
+
         Self {
             threads,
             projects,
+            targets,
             themes,
         }
     }
@@ -143,7 +161,8 @@ impl CommandPalette {
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Search threads, projects, themes, or actions…")
+            InputState::new(window, cx)
+                .placeholder("Search threads, projects, nodes, themes, or actions…")
         });
         input.update(cx, |state, cx| state.focus(window, cx));
 
@@ -212,6 +231,9 @@ impl CommandPalette {
                 cx.emit(PaletteEvent::Action(PaletteAction::SelectProject(
                     project.id,
                 )));
+            }
+            PaletteRow::Target(target) => {
+                cx.emit(PaletteEvent::ConnectOrbitTarget(target.server_id));
             }
             PaletteRow::Theme(theme) => cx.emit(PaletteEvent::ApplyTheme(theme.id)),
             PaletteRow::Action(entry) => cx.emit(PaletteEvent::Action(entry.action)),
@@ -373,6 +395,43 @@ impl CommandPalette {
                             .text_color(muted)
                             .child(project.workspace_root.clone()),
                     );
+            }
+            PaletteRow::Target(target) => {
+                let icon = if target.is_node {
+                    IconName::Plug
+                } else {
+                    IconName::Layers
+                };
+                container = container
+                    .child(icons::chrome(icon, muted))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(fg)
+                            .child(target.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .max_w(px(220.0))
+                            .truncate()
+                            .text_color(muted)
+                            .child(target.subtitle.clone()),
+                    );
+                if target.is_current {
+                    container = container.child(
+                        div()
+                            .flex_shrink_0()
+                            .px(px(6.0))
+                            .py(px(1.0))
+                            .rounded(px(4.0))
+                            .bg(hsla(self.tokens.shell_highlight))
+                            .text_color(hsla(self.tokens.success))
+                            .child("Connected"),
+                    );
+                }
             }
             PaletteRow::Theme(theme) => {
                 let mode_label = match theme.appearance {

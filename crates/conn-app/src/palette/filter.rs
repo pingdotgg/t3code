@@ -36,6 +36,16 @@ pub(crate) struct PaletteTheme {
     pub(crate) swatch_accent: Rgba,
 }
 
+/// Orbit Node or Instance target shown in the command palette.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PaletteTarget {
+    pub(crate) server_id: String,
+    pub(crate) title: String,
+    pub(crate) subtitle: String,
+    pub(crate) is_node: bool,
+    pub(crate) is_current: bool,
+}
+
 /// Shell action triggered from the command palette.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PaletteAction {
@@ -51,6 +61,7 @@ pub(crate) enum PaletteAction {
 pub(crate) struct PaletteItems {
     pub(crate) threads: Vec<PaletteThread>,
     pub(crate) projects: Vec<PaletteProject>,
+    pub(crate) targets: Vec<PaletteTarget>,
     pub(crate) themes: Vec<PaletteTheme>,
 }
 
@@ -114,6 +125,7 @@ pub(crate) const BUILTIN_ACTIONS: &[ActionEntry] = &[
 pub(crate) enum PaletteRow {
     Thread(PaletteThread),
     Project(PaletteProject),
+    Target(PaletteTarget),
     Theme(PaletteTheme),
     Action(ActionEntry),
 }
@@ -158,6 +170,21 @@ pub(crate) fn filter_items(items: &PaletteItems, raw_query: &str) -> Vec<Filtere
             groups.push(FilteredGroup {
                 label: "Projects",
                 rows: projects.into_iter().map(PaletteRow::Project).collect(),
+            });
+        }
+
+        let targets = rank_slice(&items.targets, query, |t| {
+            let kind = if t.is_node {
+                "orbit node server"
+            } else {
+                "orbit instance server"
+            };
+            (t.title.as_str(), [t.subtitle.as_str(), kind])
+        });
+        if !targets.is_empty() {
+            groups.push(FilteredGroup {
+                label: "Nodes & Instances",
+                rows: targets.into_iter().map(PaletteRow::Target).collect(),
             });
         }
 
@@ -361,6 +388,7 @@ mod tests {
                     workspace_root: "/Users/dev/apps/conn-server".into(),
                 },
             ],
+            targets: vec![],
             themes: vec![
                 PaletteTheme {
                     id: "dark-ocean".into(),
