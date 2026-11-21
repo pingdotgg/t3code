@@ -570,7 +570,7 @@ function assert(cond: boolean): void {
   if (!cond) throw new Error("Assertion error");
 }
 
-export class QrSegment {
+class QrSegment {
   public static Mode: typeof QrSegmentMode;
 
   public static makeBytes(data: Readonly<Array<byte>>): QrSegment {

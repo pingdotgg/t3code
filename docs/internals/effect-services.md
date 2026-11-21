@@ -80,7 +80,7 @@ export const layer = Layer.effect(Foo, make);
   APIs. Tests may pass service instances directly. Configuration, immutable values, and deliberate
   callbacks are fine as parameters; they aren't services.
 - **`make`** exists when the module owns construction and stays private unless another module
-  imports it. Knip fails CI on an unused export. Don't write `make = Effect.succeed(...)` to force
+  imports it. CI fails on an unused export. Don't write `make = Effect.succeed(...)` to force
   `Layer.effect`; use the constructor that fits, like `Layer.succeed` or `Layer.sync`.
 - **Names.** A module named for its implementation uses plain `make` and `layer`
   ([`NodePtyAdapter.ts`](../../apps/server/src/terminal/NodePtyAdapter.ts)). A port module that also
@@ -158,6 +158,6 @@ optional-service layer. Don't route around the layer with an imperative runtime.
 - Does any handler you touched do more than decode, call, and map errors?
 - Could an agent (MCP) or a scheduled task use this capability? If not, is that deliberate?
 - Did you extend the domain's existing service before adding a new one?
-- Did you run knip? A new export with no importer fails it.
+- Did you run fallow? A new export with no importer fails it.
 - Does every directive you added that disables a lint, type-checker, or LSP diagnostic say why, in
   a `-- reason` suffix or a comment above it?

@@ -101,7 +101,7 @@ function cleanupContext({ text, selection }: DraftInput): DraftInput {
  * The browser has one microphone, so every editor shares one dictation per destination. The
  * recording belongs to the target that started it, not to whichever editor is mounted now.
  */
-export class VoiceInputSession {
+class VoiceInputSession {
   readonly key: SessionKey;
   private readonly controller: VoiceInputController;
   private target: VoiceInputTarget | null = null;

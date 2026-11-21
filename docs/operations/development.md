@@ -216,7 +216,7 @@ for the security model.
 ## Checks
 
 `vp run check:changed` runs CI's fast checks for your branch's changes: format and lint of the
-changed files, `knip:check` when code or a manifest changes, the generated GraphQL checks, typecheck
+changed files, `fallow:check` when code or a manifest changes, the generated GraphQL checks, typecheck
 of the affected packages and their dependents, and the test files beside the changed files. It also
 runs the checks that read other files: the agent context budget when the server is affected, and
 React Compiler coverage for only the changed web and mobile files. It maps
@@ -226,9 +226,8 @@ upstream still compares against upstream, or with a ref you pass. CI still runs 
 test suites and the jobs the summary lists, so a local pass does not promise a green CI run.
 
 The steps run side by side, as many at once as the machine allows: one per two cores and per 6 GiB
-of available memory. On a large machine a run takes about as long as its slowest step, usually
-knip's exports pass at about 10 s. Pass `--concurrency <n>` or set `CHECK_CHANGED_CONCURRENCY` to
-change the limit (`1` runs the steps one by one). A step that runs past `--timeout <seconds>` or
+of available memory. On a large machine a run takes about as long as its slowest step. Pass
+`--concurrency <n>` or set `CHECK_CHANGED_CONCURRENCY` to change the limit (`1` runs the steps one by one). A step that runs past `--timeout <seconds>` or
 `CHECK_CHANGED_TIMEOUT` (default 900) is killed with every process it started and reported as
 `TIMEOUT`, not as a failing check. When the files are exactly those of the last passing run, it prints that
 run's summary instead of running again. Any change to a file, the install, or a generated file runs
@@ -259,21 +258,27 @@ Windows investigation while that suite is not a required gate.
 
 ### Unused code
 
-`vp run knip:check` checks unused files and dependencies across the repo and, at the same time,
-unused runtime exports in `apps/server`, `apps/desktop`, `apps/web`, and every internal package under
-`packages/`. CI enforces both checks.
-Exported types and Effect schemas are allowed without consumers. The schema preprocessor
-recognizes schema types, including aliases and schema classes; functions that create or decode
-schemas remain checked. Canonical Effect service construction APIs stay exported with an explicit
-`@public` annotation, which Knip recognizes. Completely unused files remain checked too.
-Named exports in web UI component modules are kept as complete component sets. Knip ignores
-unused exports in `apps/web/src/components/ui/*.tsx`, while still reporting an entire unused file.
-Use `vp run knip --workspace apps/web` to audit one workspace, including exports,
-or `vp run knip:production --workspace apps/web` to find code kept alive only by tests.
-The full export audit still has findings and is not a repo-wide CI gate. Extend the
-export check's workspace selectors as more workspaces become clean. Review callers before
-deleting code; production mode can also report development scripts and test fixtures.
-Runtime-discovered entrypoints and dependency exceptions belong in [knip.jsonc](../../knip.jsonc).
+Two checks gate unused code, and CI, the pre-commit hook and `check:changed` run both.
+`vp run fallow:check` runs [fallow](https://fallow.tools) for unused files and dependencies across
+the repo. `vp run knip:check:exports` runs Knip for unused runtime exports in `apps/server`,
+`apps/desktop`, `apps/web`, and the internal packages listed in that script.
+
+Exports stay with Knip because its [schema preprocessor](../../scripts/knip-schemas.ts) reads types:
+exported types and Effect schemas are allowed without consumers, including schemas a helper builds,
+while functions that create or decode schemas remain checked. Fallow recognizes schemas by syntax
+only, and it counts a name that a package entry re-exports with `export *` as used. Canonical Effect
+service construction APIs stay exported with an explicit `@public` annotation. Named exports in
+`apps/web/src/components/ui/*.tsx` are kept as complete component sets, while an entire unused file
+is still reported. Extend the export check's workspace selectors as more workspaces become clean.
+
+When the check reports an export, remove the `export` keyword or the code. Review callers before
+deleting code. Runtime-discovered entrypoints and dependency exceptions belong in
+[.fallowrc.jsonc](../../.fallowrc.jsonc); export exceptions belong in [knip.jsonc](../../knip.jsonc).
+Use `vp run fallow --workspace apps/web` to audit one workspace with every fallow check, or
+`vp run fallow:production --workspace apps/web` to find code kept alive only by tests; both can
+report schemas and barrel exports the gate allows. A namespace import that escapes as a value, such
+as `Contracts as Record<string, unknown>`, makes fallow count every export of that module used; read
+namespace members by name instead.
 
 ## Desktop artifacts
 

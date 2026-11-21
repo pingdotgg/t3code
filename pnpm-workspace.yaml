@@ -309,6 +309,8 @@ permissions:
     skills: false
   expo-sqlite:
     skills: false
+  fallow:
+    skills: false
 
 # @cursor/sdk finds its platform package (sandbox helper, rg, tree-sitter) by
 # walking up from the entry script for node_modules/@cursor/sdk-<platform>-<arch>.

@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - hashes inputs with node:crypto and sizes the budget with node:os.
 // Runs CI's fast checks for this branch's changes: format and lint of the
-// changed files, knip, generated GraphQL operations, typecheck of the affected
+// changed files, fallow and knip's export pass, generated GraphQL operations, typecheck of the affected
 // packages and their dependents, the test files beside the changed files, and
 // the cross-file checks those miss (agent context budget, React Compiler
 // coverage of the changed client files).
@@ -107,16 +107,6 @@ const CacheEntry = Schema.fromJsonString(
 );
 const decodeCacheEntry = Schema.decodeEffect(CacheEntry);
 const encodeCacheEntry = Schema.encodeEffect(CacheEntry);
-const decodeRootPackageJson = Schema.decodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      scripts: Schema.Struct({
-        "knip:check:files": Schema.String,
-        "knip:check:exports": Schema.String,
-      }),
-    }),
-  ),
-);
 
 const collectBytes = (stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>) =>
   Stream.runCollect(stream).pipe(Effect.map((chunks) => Buffer.concat(chunks)));
@@ -220,7 +210,7 @@ export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function*
   return closest;
 });
 
-// CI's lint and knip also read Astro components' frontmatter.
+// CI's lint and fallow also read Astro components' frontmatter.
 const CODE = /\.(?:[cm]?[jt]sx?|astro)$/;
 const TEST = /\.test\.[cm]?[jt]sx?$/;
 // CI runs the .github/scripts tests with `node --test`; vitest passes a failing node:test file.
@@ -401,28 +391,16 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     return pattern.length > 0 ? [{ test, names, pattern }] : [];
   });
 
-  // knip:check cannot be scoped to a package. Any code change can leave a file,
+  // fallow:check cannot be scoped to a package. Any code change can leave a file,
   // export, or dependency unused (removing the last import of a helper does), so
   // it runs whenever code or a manifest changes.
-  const runKnip = files.some(
-    (file) => CODE.test(file) || path.basename(file) === "package.json" || file === "knip.jsonc",
+  const runFallow = files.some(
+    (file) =>
+      CODE.test(file) ||
+      path.basename(file) === "package.json" ||
+      file === ".fallowrc.jsonc" ||
+      file === "knip.jsonc",
   );
-  // CI runs knip:check as a task that depends on one script per pass. The passes
-  // do not depend on each other, so they run side by side here.
-  const rootPackage = yield* fs
-    .readFileString(inRoot("package.json"))
-    .pipe(Effect.flatMap(decodeRootPackageJson), Effect.orDie);
-  const knipPasses: Array<Array<string>> = [];
-  for (const command of [
-    rootPackage.scripts["knip:check:files"],
-    rootPackage.scripts["knip:check:exports"],
-  ]) {
-    const [bin, ...args] = command.trim().split(/\s+/);
-    if (bin !== "knip" || /["'$\\|;&<>]/.test(command)) {
-      return yield* Effect.fail(`check:changed cannot split knip:check: ${command}`);
-    }
-    knipPasses.push(["exec", "knip", ...args]);
-  }
 
   // A version bump can leave a patch unused, causing pnpm to reject the install
   // with ERR_PNPM_UNUSED_PATCH. Check it here as Release Smoke does in CI.
@@ -514,8 +492,11 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...(code.length > 0
       ? [command("lint", ["lint", "--no-error-on-unmatched-pattern", ...code])]
       : []),
-    ...(runKnip
-      ? knipPasses.map((args, index) => command(`knip ${index + 1}/${knipPasses.length}`, args))
+    ...(runFallow
+      ? [
+          command("fallow", ["run", "fallow:check"]),
+          command("knip exports", ["run", "knip:check:exports"]),
+        ]
       : []),
     ...graphql.map((dir) =>
       command(`graphql (${dir})`, ["run", "--filter", `./${dir}`, "generate", "--check"]),
@@ -599,7 +580,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   }).flatMap(([job, runs]) => (runs ? [job] : []));
   if (ciOnly.length > 0) summary.push(`  CI also runs: ${ciOnly.join(", ")}`);
   if (!runPatchCheck) summary.push("  unused patch check skipped: no dependency files changed");
-  if (!runKnip) summary.push("  knip skipped: no code or manifest changed");
+  if (!runFallow) summary.push("  fallow skipped: no code or manifest changed");
   yield* Console.log(`\n${summary.join("\n")}`);
 
   if (results.some((result) => result.outcome !== "pass")) return false;

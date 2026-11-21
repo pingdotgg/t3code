@@ -1780,11 +1780,10 @@ export const t3Default = (
 /** The machine the fake threads live on. */
 const EVAL_ENVIRONMENT_ID = EnvironmentId.make("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
 
-// The note T3 adds when a secret card ends unsaved, on refs that have one (looked up by name so
-// the runner still builds on refs without it).
-const unsavedSecretNote = (Contracts as Record<string, unknown>).SECRET_REQUEST_UNSAVED_NOTE as
-  | Readonly<Record<string, string>>
-  | undefined;
+// The note T3 adds when a secret card ends unsaved. A namespace read stays undefined on refs without
+// it, and casting the namespace would make fallow count every contracts export as used.
+const unsavedSecretNote: Readonly<Record<string, string>> | undefined =
+  Contracts.SECRET_REQUEST_UNSAVED_NOTE;
 
 /** Fields T3 adds to real thread and task results, applied to mocks and defaults alike. */
 const withProductFields = (name: string, value: unknown, child: boolean): unknown => {

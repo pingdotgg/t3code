@@ -1,0 +1,109 @@
+{
+  "$schema": "./node_modules/fallow/schema.json",
+  // Keep vendored reference repositories outside the project.
+  "ignorePatterns": [".repos/**"],
+  // Exported types are part of our contracts even before they have consumers.
+  // Effect schemas count as types: a schema without a consumer is not reported.
+  "rules": {
+    "unused-types": "off",
+    // Fallow warns for these by default. The gate must fail on them.
+    "unused-dev-dependencies": "error",
+    "unused-optional-dependencies": "error",
+  },
+  "effect": { "schemaExportsAsTypes": true },
+  // Files that run in production and that no import or package manifest reaches.
+  "entry": [
+    // Vite+ pack entry: the launcher used by installed background services.
+    "apps/server/src/claude-history-worker.ts",
+    // Electron and GNOME Shell load these by filename rather than importing them.
+    "apps/desktop/gnome-extension/extension.js",
+    "apps/desktop/src/preview/Annotation.css",
+    // Metro embeds the browser entries in the native WebView.
+    "apps/mobile/src/features/browser/preview-stream.browser.ts",
+  ],
+  // Scripts, fixtures and tool configs that run outside production.
+  "supportEntry": [
+    // CodeRabbit loads its configuration by filename.
+    ".coderabbit.config.ts",
+    // Worktree setup (from t3.json) runs directly, electron-builder loads the macOS
+    // signer by path, and mobile-behavior.ts spawns its runner by path.
+    "scripts/mobile-behavior/run.ts",
+    "scripts/setup-worktree.ts",
+    "scripts/sign-macos.ts",
+    // e2e loads the scenarios by path.
+    "scripts/scenarios/*.ts",
+    // Developers run these scripts directly, and tests load the fixtures by path.
+    "apps/server/scripts/probe-claude-fork-local-rollback-replay.ts",
+    "apps/server/scripts/update-test-shard-weights.ts",
+    "apps/server/scripts/verify-background-live.ts",
+    "apps/server/src/provider/testFixtures/*.mjs",
+    "packages/source-control-github/scripts/measure-pr-preview.ts",
+    // Worktree setup (scripts/setup-worktree.ts) runs this directly, and evidence
+    // fixtures run under node.
+    "apps/web/scripts/warm-dep-cache.ts",
+    "apps/web/test/fixtures/**/*.mjs",
+    // Expo loads the fingerprint config by string.
+    "apps/mobile/fingerprint.config.js",
+    "apps/mobile/scripts/generate-device-stream.mts",
+    // The bootstrap is loaded by shell configuration.
+    "infra/task-cache/scripts/install.ts",
+  ],
+  "ignoreFindings": [
+    // The `t3` npm package's files: copied into the package, never imported.
+    "scripts/npm-launcher/**",
+    "infra/task-cache/vendor/**",
+  ],
+  // UI component modules are copied and adapted as cohesive sets. Keep their
+  // named subcomponents even before they have callers; the file audit still
+  // reports an entire component module when nothing imports it.
+  "ignoreExports": [{ "file": "apps/web/src/components/ui/*.tsx", "exports": ["*"] }],
+  "overrides": [
+    {
+      // Knip's export gate skips these workspaces too; keep the audit quiet there.
+      "files": ["apps/marketing/**", "apps/mobile/**", "evals/**", "infra/**", "scripts/**"],
+      "rules": {
+        "unused-exports": "off",
+        "duplicate-export-aliases": "off",
+      },
+    },
+    {
+      // Generated GraphQL operations export every selection's class.
+      "files": [
+        "apps/server/**/*.graphql.ts",
+        "packages/issue-tracker-linear/**/*.graphql.ts",
+        "packages/source-control-github/**/*.graphql.ts",
+      ],
+      "rules": { "unused-exports": "off" },
+    },
+  ],
+  "workspaces": {
+    "settings": {
+      "scripts": {
+        // release-desktop.yml bundles a script with esbuild.
+        "ignoreDependencies": ["esbuild"],
+      },
+      "apps/server": {
+        // The Vite+ web build prerequisite.
+        // Native and disk-loaded provider packages stay external to the bundle; the
+        // CLI archive and desktop sidecar stage them from this manifest.
+        "ignoreDependencies": ["@t3tools/web", "transcribe-cpp"],
+      },
+      "apps/desktop": {
+        // The injected runtime resolves Playwright by string; release tooling runs
+        // electron-builder from this workspace, outside its package scripts.
+        "ignoreDependencies": ["playwright-core", "electron-builder"],
+      },
+      "apps/mobile": {
+        // Fonts are configured as asset paths; Expo autolinks the native packages.
+        "ignoreDependencies": [
+          "@expo-google-fonts/dm-sans",
+          "@t3tools/mobile-review-diff-native",
+          "@t3tools/mobile-terminal-native",
+        ],
+      },
+      // These workspace packages are private to this monorepo, so an export of a
+      // package entry file needs a consumer too.
+      "packages/*": { "includeEntryExports": true },
+    },
+  },
+}

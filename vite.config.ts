@@ -100,16 +100,7 @@ const taskCacheConfig = {
 export default defineConfig({
   run: {
     cache: taskCacheConfig,
-    tasks: {
-      ...cachedTestTasks(process.env.T3_CACHED_TESTS),
-      // The two knip passes read the same files and write nothing, so they run side by side.
-      // The `knip:check` script runs this task, so `vp run knip:check` and `pnpm run knip:check` both use it.
-      "knip:check:all": {
-        command: 'node -e ""',
-        dependsOn: ["knip:check:files", "knip:check:exports"],
-        cache: false,
-      },
-    },
+    tasks: cachedTestTasks(process.env.T3_CACHED_TESTS),
   },
   resolve: {
     alias: {
@@ -173,9 +164,12 @@ export default defineConfig({
   staged: {
     // In order, so lint reads the formatted file. CI lint failures cost a full round trip.
     "*": ["vp fmt --no-error-on-unmatched-pattern", "vp lint --no-error-on-unmatched-pattern"],
-    // knip checks the whole repo, so it takes no file list. Any code or manifest change can leave
+    // fallow checks the whole repo, so it takes no file list. Any code or manifest change can leave
     // a file, export, or dependency unused.
-    "{*.{js,jsx,ts,tsx,mjs,cjs,mts,cts},package.json,knip.jsonc}": () => "vp run knip:check",
+    "{*.{js,jsx,ts,tsx,mjs,cjs,mts,cts},package.json,.fallowrc.jsonc,knip.jsonc}": () => [
+      "vp run fallow:check",
+      "vp run knip:check:exports",
+    ],
   },
   fmt: {
     ignorePatterns: [

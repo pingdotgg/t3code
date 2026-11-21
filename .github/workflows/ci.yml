@@ -101,8 +101,11 @@ jobs:
         run: vp run --filter @t3tools/desktop ensure:electron
 
       # Files/dependencies are repo-wide; export checks cover clean workspaces only.
-      - name: Check unused code
-        run: vp run knip:check
+      - name: Check unused files and dependencies
+        run: vp run fallow:check
+
+      - name: Check unused exports
+        run: vp run knip:check:exports
 
       - name: Check generated GitHub GraphQL operations
         run: vp run --filter @t3tools/source-control-github generate --check

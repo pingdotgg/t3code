@@ -40,7 +40,7 @@ Review changed TypeScript for the conventions below. They apply when a pull requ
 
 - One canonical module per service in this order: imports, error and schema declarations, the `Context.Service` tag with its interface inline, `make`, then `layer`.
 - Define the interface inline in `Context.Service`. Do not add a standalone `FooShape` interface; refer to the inferred type as `Foo["Service"]`.
-- Define a real `make` when the module owns construction, and export it only when another module imports it; knip fails CI on an unused export, so do not ask for an export nothing uses. Do not write `make = Effect.succeed(...)` only to force `Layer.effect`; use `Layer.succeed`, `Layer.scoped`, or whichever constructor matches.
+- Define a real `make` when the module owns construction, and export it only when another module imports it; fallow fails CI on an unused export, so do not ask for an export nothing uses. Do not write `make = Effect.succeed(...)` only to force `Layer.effect`; use `Layer.succeed`, `Layer.scoped`, or whichever constructor matches.
 - Use plain `make` and `layer` in a module named for its implementation (`BunPtyAdapter.ts`). Keep implementation-specific names when one abstract port module holds several implementations (`makeCloudflaredRelayClient`, `layerCloudflared` in `RelayClient.ts`). `infra/relay/src/db.ts` may keep its inline `Layer.succeed(RelayDb, db)`.
 - When a service moves, delete the old files and update every consumer, including orchestration, MCP, tests, and integration harnesses. Do not leave compatibility re-export shims.
 
