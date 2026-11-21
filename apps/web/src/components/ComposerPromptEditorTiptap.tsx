@@ -112,6 +112,7 @@ import {
   COMPOSER_UNDO_GROUP_DELAY,
   type ComposerChangeKind,
   groupUndoByChangeKind,
+  isPasteTransaction,
   markAsClipboardEdit,
   markAsCompositionReplace,
 } from "~/composer-undo-grouping";
@@ -202,6 +203,8 @@ export interface ComposerPromptEditorProps {
     contextIds: string[],
     /** False when only the caret or selection moved. */
     textChanged: boolean,
+    /** Pasted or dropped text; any trigger it ends in should start dismissed. */
+    fromPaste?: boolean,
   ) => void;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (key: string, event: KeyboardEvent, isTaskItem?: boolean) => boolean;
@@ -1123,6 +1126,7 @@ function ComposerPromptEditorTiptapInner(
       suppressTrigger,
       contextIds,
       previousSnapshot.value !== nextValue,
+      isPasteTransaction(transaction),
     );
   };
 

@@ -936,3 +936,74 @@ it("/side sends the draft's attachments and context, and keeps them when it does
     ]),
   );
 });
+
+// Terminal copies end in status-line text such as Claude Code's `/rc`; a paste is not typing a command.
+it("pasted text ending in a slash word does not open the command menu", async () => {
+  using _environment = installFakeEnvironment([]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-paste-slash");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-paste-slash"),
+    });
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const editor = page.getByTestId("composer-editor");
+  await expect.element(editor).toBeVisible();
+  // The shell snapshot has arrived once the sidebar lists the project.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+  const modelItem = page.getByText("Switch response model for this thread");
+
+  const paste = (text: string) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    editor
+      .element()
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+  };
+
+  await userEvent.click(editor);
+  paste("Brewed for 1m 17s\nbypass permissions on\n/mo");
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("permissions on/mo"));
+  expect(modelItem.query()).toBeNull();
+
+  // More letters on the pasted word keep it closed, as after Escape.
+  await userEvent.keyboard("d");
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("permissions on/mod"));
+  expect(modelItem.query()).toBeNull();
+
+  // A slash word typed by hand still opens the menu.
+  await userEvent.keyboard(" /mo");
+  await expect.element(modelItem).toBeVisible();
+
+  // Pasting into a slash word typed by hand keeps its menu open.
+  await userEvent.keyboard(" /");
+  paste("mo");
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("/mo /mo"));
+  await expect.element(modelItem).toBeVisible();
+
+  // A paste while the composer is blurred arrives through insertTextAtEnd.
+  (editor.element() as HTMLElement).blur();
+  await vi.waitFor(() => expect(document.activeElement).not.toBe(editor.element()));
+  const unfocusedClipboard = new DataTransfer();
+  unfocusedClipboard.setData("text/plain", " note /mo");
+  document.body.dispatchEvent(
+    new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: unfocusedClipboard,
+    }),
+  );
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("note /mo"));
+  await expect.element(modelItem).not.toBeInTheDocument();
+});
