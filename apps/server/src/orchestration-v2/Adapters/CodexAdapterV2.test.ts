@@ -12648,6 +12648,78 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
+    it.effect("keeps the command and paths in prompts that carry a reason", () =>
+      Effect.gen(function* () {
+        const command = "curl -sS https://example.com";
+        const { harness, answerNext } = yield* startApprovalTurn("approval-reason-target", [
+          {
+            type: "emit_inbound",
+            label: "command approval",
+            frame: {
+              id: 0,
+              method: "item/commandExecution/requestApproval",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                itemId: "retry-command",
+                startedAtMs: 2,
+                command,
+                reason: "command failed; retry without sandbox?",
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "command approval",
+            frame: { id: 0, result: { decision: "accept" } },
+          },
+          fileChange("started", nativeTurnId, "patch-a", [addA]),
+          {
+            type: "emit_inbound",
+            label: "file approval",
+            frame: {
+              id: 1,
+              method: "item/fileChange/requestApproval",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                itemId: "patch-a",
+                startedAtMs: 2,
+                reason: "write outside the workspace",
+                grantRoot: null,
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "file approval",
+            frame: { id: 1, result: { decision: "accept" } },
+          },
+          turnCompleted(nativeTurnId),
+        ]);
+        const commandRequest = yield* answerNext;
+        const fileRequest = yield* answerNext;
+        yield* harness.firstTerminal;
+
+        const commandItem = approvalItem(harness.events, commandRequest);
+        const fileItem = approvalItem(harness.events, fileRequest);
+        assert.include(commandItem?.prompt ?? "", command);
+        assert.strictEqual(commandItem?.reason, "command failed; retry without sandbox?");
+        assert.include(fileItem?.prompt ?? "", "/w/a.ts");
+        assert.strictEqual(fileItem?.reason, "write outside the workspace");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
     it.effect("classifies permission requests that only list sandbox entries", () =>
       Effect.gen(function* () {
         const permissionRequest = (
