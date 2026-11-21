@@ -1421,6 +1421,65 @@ describe("extractMcpToolCallIdentity", () => {
     ).toEqual({ server: "t3-code", tool: "delegate_task", input: { task: "x" } });
   });
 
+  it("recovers T3 identity from Windows T3_ACP_MCP_CALL and acp-mcp-call.cmd fallbacks", () => {
+    for (const [command, expected] of [
+      [
+        `'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -`,
+        { server: "t3-code", tool: "orchestrator_capabilities" },
+      ],
+      [
+        `$payload = @{\n  title = "What each bot holds"\n  height = 1521\n  path = "C:\\temp\\bot-skills.html"\n} | ConvertTo-Json -Compress\n$payload | & $env:T3_ACP_MCP_CALL html_render -`,
+        { server: "t3-code", tool: "html_render" },
+      ],
+      [`'{}' | & "$env:T3_ACP_MCP_CALL" html_render -`, { server: "t3-code", tool: "html_render" }],
+      [
+        `'{}' | & \${env:T3_ACP_MCP_CALL} "html_render" -`,
+        { server: "t3-code", tool: "html_render" },
+      ],
+      [`echo {} | "%T3_ACP_MCP_CALL%" html_render -`, { server: "t3-code", tool: "html_render" }],
+      [
+        `printf '{}' | "$T3_ACP_MCP_CALL" delegate_task '{"task":"x"}'`,
+        { server: "t3-code", tool: "delegate_task", input: { task: "x" } },
+      ],
+      [
+        `& "C:\\Users\\Alice Smith\\.t3\\userdata\\acp\\acp-mcp-call.cmd" html_render -`,
+        { server: "t3-code", tool: "html_render" },
+      ],
+      [
+        `C:/Users/Alice/.t3/userdata/acp/acp-mcp-call.cmd delegate_task '{"task":"y"}'`,
+        { server: "t3-code", tool: "delegate_task", input: { task: "y" } },
+      ],
+    ] as const) {
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "win-fallback-1",
+        kind: "execute",
+        title: "Ran command",
+        status: "in_progress",
+        rawInput: { command },
+      });
+      expect(extractMcpToolCallIdentity(toolCall), command).toEqual(expected);
+    }
+
+    for (const command of [
+      `Get-Content "$env:T3_ACP_MCP_CALL" -Raw`,
+      `Write-Output "T3_ACP_MCP_CALL=$env:T3_ACP_MCP_CALL"`,
+      `Write-Host "T3_ACP_MCP_CALL html_render"`,
+      `Get-Item $env:T3_ACP_MCP_CALL | Select-Object Name`,
+      `Get-Content "C:\\Users\\Alice\\.t3\\userdata\\acp\\acp-mcp-call.cmd" -Raw`,
+    ]) {
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "win-non-call-1",
+        kind: "execute",
+        title: "Ran command",
+        status: "in_progress",
+        rawInput: { command },
+      });
+      expect(extractMcpToolCallIdentity(toolCall), command).toBeUndefined();
+    }
+  });
+
   it("recovers T3 identity from pi-acp title-only fallback execs", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
