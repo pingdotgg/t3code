@@ -2312,27 +2312,64 @@ const make = Effect.gen(function* () {
     return started;
   };
 
-  const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
-    withCaptureLock(tab, async () => {
+  /** One deadline covers the capture lock, pausing, the capture, and resuming. */
+  const withScreencastsPaused = <A>(
+    tab: ServerTab,
+    deadlineMs: number,
+    capture: (timeoutMs: number) => Promise<A>,
+  ): Promise<A> => {
+    let stage = "waiting for another capture of this tab";
+    const remaining = () => Math.floor(deadlineMs - performance.now());
+    const timedOut = () => {
+      const message = `The snapshot timed out while ${stage}. Try the snapshot again.`;
+      return new ServerBrowserPage.ServerBrowserOperationError({
+        tag: "PreviewAutomationTimeoutError",
+        message,
+        detail: { reason: message },
+      });
+    };
+    const within = <B>(work: Promise<B>, timeoutMs: number) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const expired = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(timedOut()), Math.max(1, timeoutMs));
+      });
+      return Promise.race([work, expired]).finally(() => clearTimeout(timer));
+    };
+    const captured = withCaptureLock(tab, async () => {
+      // The caller has its timeout by now; a late capture would only hold the lock.
+      if (remaining() <= 0) throw timedOut();
       tab.capturing += 1;
       const recording = tab.recording;
       try {
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.pause()),
-          recording?.session.send("Page.stopScreencast").catch(constVoid),
-        ]);
-        return await capture();
+        stage = "pausing the live view";
+        await within(
+          Promise.all([
+            ...[...tab.viewers].map((viewer) => viewer.pause()),
+            recording?.session.send("Page.stopScreencast").catch(constVoid),
+          ]),
+          remaining(),
+        );
+        stage = "capturing the page";
+        return await capture(Math.max(1, remaining()));
       } finally {
         tab.capturing -= 1;
-
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.resume()),
-          recording && tab.recording === recording
-            ? recording.session.send("Page.startScreencast", RECORDING_SCREENCAST).catch(constVoid)
-            : undefined,
-        ]);
+        stage = "resuming the live view";
+        // Every viewer is asked to resume even with no time left; only the wait for them is bounded.
+        await within(
+          Promise.all([
+            ...[...tab.viewers].map((viewer) => viewer.resume()),
+            recording && tab.recording === recording
+              ? recording.session
+                  .send("Page.startScreencast", RECORDING_SCREENCAST)
+                  .catch(constVoid)
+              : undefined,
+          ]),
+          remaining(),
+        );
       }
     });
+    return within(captured, remaining());
+  };
 
   const stopRecording = (tab: ServerTab) =>
     withCaptureLock(tab, async () => {
@@ -2601,7 +2638,6 @@ const make = Effect.gen(function* () {
           found && (request.tabIdExplicit || found.control.agentId === request.agentSessionId)
             ? found
             : undefined;
-        const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
         if (!existing) closeIdleAgentTabs();
         const tab =
@@ -2634,15 +2670,20 @@ const make = Effect.gen(function* () {
                   "A browser dialog is pending. Read preview_status and use preview_dialog first.",
                 reason: "dialogPending",
               });
+            // A stalled subresource holds back `load`; the tab is usable once its document parsed.
+            const navigationTimeout = Math.max(
+              1,
+              Math.min(Math.floor(deadlineMs - performance.now()), NAVIGATION_TIMEOUT_MS),
+            );
             if (existing) {
-              if (url) await navigate(tab, url, "load", navigationTimeout);
+              if (url) await navigate(tab, url, "domContentLoaded", navigationTimeout);
             } else {
               // A failed open returns no tabId; a leftover hidden tab would block later reuse.
               await Promise.resolve(tab.initialNavigation)
                 .then(async () => {
                   if (url) {
                     await tab.page
-                      .waitForLoadState("load", { timeout: navigationTimeout })
+                      .waitForLoadState("domcontentloaded", { timeout: navigationTimeout })
                       .catch(constVoid);
                   }
                   assertNavigationSucceeded(tab);
@@ -2794,7 +2835,13 @@ const make = Effect.gen(function* () {
     request: PreviewAutomationRequest,
     deadlineMs: number,
   ) => {
-    const input = request.input;
+    // Time spent queued behind other work on this tab counts against the broker's deadline.
+    const requested = (request.input as { readonly timeoutMs?: number } | undefined)?.timeoutMs;
+    const timeoutMs = Math.max(
+      1,
+      Math.min(requested ?? Infinity, Math.floor(deadlineMs - performance.now())),
+    );
+    const input = { ...(request.input as object), timeoutMs } as unknown;
     switch (request.operation) {
       case "navigate": {
         const navigateInput = input as PreviewAutomationNavigateInput;
@@ -2802,8 +2849,8 @@ const make = Effect.gen(function* () {
           navigate(
             tab,
             resolveNavigationUrl(navigateInput),
-            navigateInput.readiness ?? "load",
-            navigateInput.timeoutMs ?? request.timeoutMs,
+            navigateInput.readiness ?? "domContentLoaded",
+            timeoutMs,
           ),
         );
         return statusWithTitle(tab, request.agentSessionId);
@@ -2893,25 +2940,19 @@ const make = Effect.gen(function* () {
           renderScale: tab.desktop ? "display" : RENDER_SCALE,
           fullScreenshot: snapshotInput?.fullScreenshot,
         } as const;
-        const snapshot = await withScreencastsPaused(tab, () =>
+        const snapshot = await withScreencastsPaused(tab, deadlineMs, (timeoutMs) =>
           snapshotInput?.pixelsRequired === false
-            ? ServerBrowserPage.snapshotMetadata(rendering)
-            : ServerBrowserPage.snapshot(rendering),
+            ? ServerBrowserPage.snapshotMetadata({ ...rendering, timeoutMs })
+            : ServerBrowserPage.snapshot({ ...rendering, timeoutMs }),
         );
         const loadError = loadErrorOf(tab);
         return loadError ? { ...snapshot, url: loadError.url, loadError } : snapshot;
       }
-      case "click": {
-        // Time spent queued behind other work on this tab counts against the broker's deadline.
-        const clickInput = {
-          ...(input as PreviewAutomationClickInput),
-          timeoutMs: Math.max(1, Math.floor(deadlineMs - performance.now())),
-        };
+      case "click":
         await recordAction(tab, "click", () =>
-          ServerBrowserPage.click(tab.page, clickInput, pointerFor(tab)),
+          ServerBrowserPage.click(tab.page, input as PreviewAutomationClickInput, pointerFor(tab)),
         );
         return undefined;
-      }
       case "hover":
         return recordAction(tab, "hover", () =>
           ServerBrowserPage.hover(tab.page, input as PreviewAutomationHoverInput, pointerFor(tab)),
@@ -2934,17 +2975,17 @@ const make = Effect.gen(function* () {
         );
       case "press":
         return recordAction(tab, "press", () =>
-          ServerBrowserPage.press(tab.page, input as PreviewAutomationPressInput),
+          ServerBrowserPage.press(tab.page, input as PreviewAutomationPressInput, timeoutMs),
         );
       case "scroll":
         return recordAction(tab, "scroll", () =>
-          ServerBrowserPage.scroll(tab.page, input as PreviewAutomationScrollInput),
+          ServerBrowserPage.scroll(tab.page, input as PreviewAutomationScrollInput, timeoutMs),
         );
       case "evaluate":
         return ServerBrowserPage.evaluate(
           tab.cdp,
           input as PreviewAutomationEvaluateInput,
-          request.timeoutMs,
+          timeoutMs,
         );
       case "waitFor":
         return ServerBrowserPage.waitFor(tab.page, input as PreviewAutomationWaitForInput);

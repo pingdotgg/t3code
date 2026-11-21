@@ -787,6 +787,8 @@ it.effect.each([
         const status = yield* Fiber.join(result);
 
         expect(status).toMatchObject({ url: heavy, title, loading: true });
+        // The default readiness returns the parsed document without waiting for `load`.
+        expect(page.waitForLoadState.mock.calls.map(([state]) => state)).not.toContain("load");
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())), Effect.provide(layer)),
 );
@@ -4355,4 +4357,115 @@ it.live("a page's title change without navigation reaches its session", () =>
       });
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.scoped),
+);
+
+it.effect("an action queued behind another on its tab gets only what is left of its timeout", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const cdp = contexts[0]!.sessions[0]!;
+      const send = cdp.send.getMockImplementation()!;
+      let seconds = 0;
+      const stopped: Array<number> = [];
+      cdp.send.mockImplementation((method: string, input?: unknown) => {
+        if (
+          method === "Runtime.evaluate" &&
+          (input as { expression?: string }).expression === "hang"
+        )
+          return new Promise(() => {});
+        if (method === "Runtime.terminateExecution") stopped.push(seconds);
+        return send(method, input);
+      });
+      const evaluate = (timeoutMs: number) =>
+        broker
+          .invoke({ scope, tabId, operation: "evaluate", input: { expression: "hang" }, timeoutMs })
+          .pipe(Effect.exit, Effect.forkScoped);
+      yield* evaluate(7_000);
+      yield* evaluate(9_000);
+      for (; seconds < 20; seconds++) {
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1_000));
+      }
+      // Both were sent together; the second waited 7 s for the first, so 2 s of its 9 s were left.
+      expect(stopped).toEqual([stopped[0], stopped[0]! + 2]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(["Page.stopScreencast", "Page.startScreencast"])(
+  "a viewer whose %s never answers frees the tab's captures at the snapshot's deadline",
+  (stalled) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, broker, tabId } = yield* ready;
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+        yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+        yield* browser.attachViewer(viewerInput(tabId, true));
+        const viewerSession = contexts[0]!.sessions.at(-1)!;
+        const send = viewerSession.send.getMockImplementation()!;
+        const unanswered = Promise.withResolvers<Record<string, unknown>>();
+        viewerSession.send.mockImplementation((method: string, input?: unknown) =>
+          method === stalled ? unanswered.promise : send(method, input),
+        );
+        // Detaching the viewer waits for its screencast commands.
+        yield* Effect.addFinalizer(() => Effect.sync(() => unanswered.resolve({})));
+        const snapshot = () =>
+          broker
+            .invoke<PreviewAutomationSnapshot>({
+              scope,
+              tabId,
+              operation: "snapshot",
+              input: {},
+              timeoutMs: 500,
+            })
+            .pipe(Effect.flip, Effect.forkScoped);
+        const first = yield* snapshot();
+        for (let step = 0; step < 10; step++) {
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(100));
+        }
+        expect(first.pollUnsafe()).toBeDefined();
+        const second = yield* snapshot();
+        for (let step = 0; step < 10; step++) {
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(100));
+        }
+        // The second snapshot got the capture lock: it failed on the viewer, not on the first one.
+        expect(yield* Fiber.join(second)).toMatchObject({
+          reason: expect.stringContaining("pausing the live view"),
+        });
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a viewer slow to pause and resume within the request's time still gets a snapshot", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      yield* browser.attachViewer(viewerInput(tabId, true));
+      const viewerSession = contexts[0]!.sessions.at(-1)!;
+      const send = viewerSession.send.getMockImplementation()!;
+      // Screencast commands the viewer has not answered yet; null once the test is over.
+      let held: Array<() => void> | null = [];
+      viewerSession.send.mockImplementation((method: string, input?: unknown) => {
+        const waiting = held;
+        return waiting && (method === "Page.stopScreencast" || method === "Page.startScreencast")
+          ? new Promise((resolve) => waiting.push(() => resolve(send(method, input))))
+          : send(method, input);
+      });
+      // Detaching the viewer waits for its screencast commands.
+      yield* Effect.addFinalizer(() => Effect.sync(() => (held = null)));
+      const snapshotting = yield* broker
+        .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+        .pipe(Effect.exit, Effect.forkScoped);
+      // The pause, and then the two commands of the resume, each take 2.5 s to answer.
+      for (let round = 0; round < 5; round++) {
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(2_500));
+        for (const answer of held.splice(0)) answer();
+      }
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+      expect(snapshotting.pollUnsafe()).toMatchObject({ value: { _tag: "Success" } });
+    }),
+  ).pipe(Effect.provide(layer)),
 );
