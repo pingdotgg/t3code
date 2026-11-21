@@ -256,7 +256,9 @@ export const make = Effect.gen(function* () {
               expiresAtEpochMs: prepared.httpAuthorization.expiresAtEpochMs,
               ...(prepared.httpAuthorization.directConnection
                 ? { directConnection: prepared.httpAuthorization.directConnection }
-                : {}),
+                : prepared.target._tag === "RelayConnectionTarget"
+                  ? {}
+                  : { directHttpBaseUrl: prepared.httpBaseUrl }),
             })
             .pipe(
               Effect.catch((error) =>
