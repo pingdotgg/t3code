@@ -254,6 +254,23 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
   }),
 );
 
+it.effect("prefers a recognized remote over an origin no integration claims", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [
+        { name: "github", url: "git@github.com:team/project.git" },
+        { name: "origin", url: "ssh://user@code.example.test/repos/project.git" },
+        { name: "remote1", url: "ssh://user@other.example.test/repos/project.git" },
+      ],
+    });
+
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+
+    assert.strictEqual(handle.provider.kind, "github");
+    assert.strictEqual(handle.context?.remoteName, "github");
+  }),
+);
+
 it.effect(
   "routes linked subjects to the host that serves them, independently of the checkout",
   () =>
