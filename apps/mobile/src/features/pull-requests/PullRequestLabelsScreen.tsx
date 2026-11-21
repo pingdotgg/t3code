@@ -1,6 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
-import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
+import { LegendList } from "@legendapp/list/react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -14,14 +14,13 @@ import {
 import type { PullRequestLabelCandidate } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { T, useGT } from "gt-react-native";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Platform, View } from "react-native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { useContentTopInset } from "../../components/ui/useBarInset";
 import { SelectionRow } from "../../components/ui/SelectionRow";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -67,13 +66,6 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
   const result = useEnvironmentQuery(composerPullRequests.labelCandidates(target));
   const setLabels = useAtomCommand(composerPullRequests.setLabels, { reportFailure: false });
   const [query, setQuery] = useState("");
-  const contentTopInset = useContentTopInset();
-  const listRef = useRef<LegendListRef>(null);
-  // A new search shows its matches from the top, not under the header where the last list was.
-  const search = (next: string) => {
-    setQuery(next);
-    listRef.current?.scrollToOffset({ offset: -contentTopInset, animated: false });
-  };
   const [draft, setDraft] = useState(emptySelection<PullRequestLabelCandidate>);
   const needle = query.trim();
   // Past the first page the host is asked, since what was loaded cannot answer for the rest.
@@ -138,11 +130,10 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
       closeAccessibilityLabel={gt("Close labels")}
       clearAccessibilityLabel={gt("Clear label search")}
       query={query}
-      onQueryChange={search}
+      onQueryChange={setQuery}
     >
       {({ paddingBottom }) => (
         <LegendList
-          ref={listRef}
           renderScrollComponent={NativeScrollView}
           data={candidates}
           keyExtractor={(candidate) => candidate.name}
