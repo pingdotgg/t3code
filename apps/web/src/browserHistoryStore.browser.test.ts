@@ -279,21 +279,23 @@ it("keeps overlapping visits from independent documents", async () => {
   }
 });
 
-it("keeps new visits in localStorage when IndexedDB cannot open", async () => {
+it("keeps visits saved while IndexedDB could not open", async () => {
   await resetHistoryFixture();
-  localStorage.setItem(
-    storageKey,
-    JSON.stringify({ state: { byProjectKey: { a: [page] } }, version: 1 }),
-  );
   try {
     using documents = new DisposableStack();
-    const first = await openHistoryDocument(documents, { withoutIndexedDB: true });
-    await vi.waitFor(() => expect(first.getState().byProjectKey).toEqual({ a: [page] }));
-    first.getState().recordVisit("b", otherEntry.url, otherEntry.lastVisitedAt);
-
+    const db = await openHistoryFixture(documents);
+    await writeHistoryFixture(db, { byProjectKey: { a: [page] }, projectKeyByThreadKey: {} });
+    const offline = await openHistoryDocument(documents, { withoutIndexedDB: true });
+    offline.getState().recordVisit("b", otherEntry.url, otherEntry.lastVisitedAt);
     await vi.waitFor(() =>
-      expect(storedHistory()).toHaveProperty("byProjectKey", { a: [page], b: [otherEntry] }),
+      expect(storedHistory()).toHaveProperty("byProjectKey", { b: [otherEntry] }),
     );
+
+    const online = await openHistoryDocument(documents);
+    await vi.waitFor(() =>
+      expect(online.getState().byProjectKey).toEqual({ a: [page], b: [otherEntry] }),
+    );
+    expect(storedHistory()).toBeUndefined();
   } finally {
     await resetHistoryFixture();
   }

@@ -254,9 +254,9 @@ const EMPTY_PERSISTED_HISTORY: PersistedBrowserHistory = {
 let historyDatabase: Promise<IDBDatabase> | undefined;
 let historyChannel: BroadcastChannel | undefined;
 
-function readLegacyHistory(
-  missing: PersistedBrowserHistory = EMPTY_PERSISTED_HISTORY,
-): PersistedBrowserHistory {
+function readLegacyHistory<Missing = PersistedBrowserHistory>(
+  missing: Missing = EMPTY_PERSISTED_HISTORY as Missing,
+): PersistedBrowserHistory | Missing {
   try {
     const value = window.localStorage.getItem(BROWSER_HISTORY_STORAGE_KEY);
     if (value === null) return missing;
@@ -276,6 +276,20 @@ function retireLegacyHistory(): void {
   } catch {
     // The browser can deny access to localStorage independently of IndexedDB.
   }
+}
+
+// localStorage can gain visits after migration: from the fallback below, or a tab on an older build.
+function mergeLegacyHistory(
+  saved: PersistedBrowserHistory,
+  legacy: PersistedBrowserHistory,
+): PersistedBrowserHistory {
+  const byProjectKey = { ...saved.byProjectKey };
+  for (const [projectKey, entries] of Object.entries(legacy.byProjectKey))
+    byProjectKey[projectKey] = [...(byProjectKey[projectKey] ?? []), ...entries];
+  return {
+    ...migratePersistedBrowserHistoryState({ byProjectKey }),
+    projectKeyByThreadKey: { ...legacy.projectKeyByThreadKey, ...saved.projectKeyByThreadKey },
+  };
 }
 
 // Without IndexedDB, merge into the freshest localStorage snapshot so a reload keeps new visits.
@@ -341,11 +355,15 @@ async function transactIndexedHistory(update?: UpdateHistory, retry = true) {
     let changed = false;
     request.onsuccess = () => {
       const saved = request.result as PersistedBrowserHistory | undefined;
-      const previous = saved ?? (update ? readLegacyHistory() : EMPTY_PERSISTED_HISTORY);
+      const legacy = update ? readLegacyHistory(null) : null;
+      const previous =
+        saved && legacy
+          ? mergeLegacyHistory(saved, legacy)
+          : (saved ?? legacy ?? EMPTY_PERSISTED_HISTORY);
       const next = update?.(previous) ?? previous;
-      changed = next !== previous;
-      history = changed ? boundThreadMappings(previous, next) : previous;
-      if (update && (changed || !saved)) store.put(history, BROWSER_HISTORY_STORAGE_KEY);
+      history = next === previous ? previous : boundThreadMappings(previous, next);
+      changed = history !== saved;
+      if (update && changed) store.put(history, BROWSER_HISTORY_STORAGE_KEY);
     };
     transaction.oncomplete = () => {
       // Keep the migration source until the IndexedDB snapshot has committed.
