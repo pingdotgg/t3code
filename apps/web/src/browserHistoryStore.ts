@@ -529,7 +529,7 @@ function recordPreviewTitles(
   const environmentHostname = connection ? new URL(connection.httpBaseUrl).hostname : null;
   const titleKey = (url: string) => {
     const normalized = normalizeHistoryUrl(url);
-    return normalized ? titleLookupKey(normalized, environmentHostname) : undefined;
+    return normalized ? titleLookupKey(normalized, environmentHostname) : null;
   };
   const visitKeys = "urls" in only ? new Set(only.urls.map(titleKey)) : null;
   // Resizes and list reconciles replace a session without loading a new page.
