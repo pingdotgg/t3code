@@ -43,6 +43,19 @@ function withUsageLimits(
   return usageLimits ? { ...rest, usageLimits } : rest;
 }
 
+function dropsPublishedUsage(
+  previous: ServerProvider["auth"],
+  next: ServerProvider["auth"],
+): boolean {
+  const differs = (a: string | undefined, b: string | undefined) =>
+    a !== undefined && b !== undefined && a !== b;
+  return (
+    next.status === "unauthenticated" ||
+    differs(next.email?.toLowerCase(), previous.email?.toLowerCase()) ||
+    (next.workspaceId !== undefined && next.workspaceId !== previous.workspaceId)
+  );
+}
+
 const FAILED_CHECK_RECHECK_DELAY = "30 seconds";
 
 /**
@@ -106,20 +119,23 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       if (state.enrichmentGeneration !== generation) {
         return [null, state] as const;
       }
-      // Enrichment must not revert usage updates newer than its input snapshot.
+      const cleared = dropsPublishedUsage(state.snapshot.auth, nextSnapshot.auth);
+      // Enrichment must not revert usage updates newer than its input snapshot,
+      // except when it reports sign-out or a different account.
+      const usageAuthLabel = cleared ? undefined : state.usageAuthLabel;
       const merged = withUsageLimits(
-        state.usageAuthLabel === undefined
+        usageAuthLabel === undefined
           ? nextSnapshot
           : {
               ...nextSnapshot,
-              auth: { ...nextSnapshot.auth, label: state.usageAuthLabel ?? undefined },
+              auth: { ...nextSnapshot.auth, label: usageAuthLabel ?? undefined },
             },
-        state.snapshot.usageLimits,
+        cleared ? nextSnapshot.usageLimits : state.snapshot.usageLimits,
       );
       if (Equal.equals(state.snapshot, merged)) {
-        return [null, state] as const;
+        return [null, { ...state, usageAuthLabel }] as const;
       }
-      return [merged, { ...state, snapshot: merged }] as const;
+      return [merged, { ...state, snapshot: merged, usageAuthLabel }] as const;
     });
     if (snapshotToPublish === null) {
       return;
@@ -208,14 +224,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const generation = input.enrichSnapshot
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
-        // Failed reads retain limits only for the same account and original workspace.
-        const previous = state.snapshot.auth;
-        const differs = (a: string | undefined, b: string | undefined) =>
-          a !== undefined && b !== undefined && a !== b;
-        const switchedAccount =
-          differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
-          (probedSnapshot.auth.workspaceId !== undefined &&
-            probedSnapshot.auth.workspaceId !== previous.workspaceId);
+        // Failed reads retain limits only for the same signed-in account and original workspace.
+        const switchedAccount = dropsPublishedUsage(state.snapshot.auth, probedSnapshot.auth);
         const usageLimits = switchedAccount
           ? probedSnapshot.usageLimits
           : probedSnapshot.usageLimits === undefined &&
