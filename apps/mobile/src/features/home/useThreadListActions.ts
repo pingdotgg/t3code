@@ -3,7 +3,10 @@ import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
-import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  settlingStopsPullRequestWatch,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
@@ -331,6 +334,19 @@ export function useThreadListActions(): {
       },
     });
   const settleThread = async (thread: EnvironmentThreadShell) => {
+    if (settlingStopsPullRequestWatch(thread)) {
+      if (!checkThreadOperationPermission(thread, m(msg("Could not settle thread")))) return false;
+      const confirmed = await new Promise<boolean>((resolve) => {
+        Dialog.confirm({
+          title: m(msg("Settling will stop active pull request watches. Continue?")),
+          confirmText: m(msg("Settle thread")),
+          onConfirm: () => resolve(true),
+          onCancel: () => resolve(false),
+        });
+      });
+      if (!confirmed) return false;
+      thread = liveThread(thread);
+    }
     const key = scopedThreadKey(thread.environmentId, thread.id);
     const plan = ThreadUndo.planThreadUndo("settle", thread);
     let claim: ReturnType<typeof ThreadUndo.begin> | undefined;
@@ -680,9 +696,9 @@ export function useThreadListActions(): {
     if (section === "settled") {
       if (!environmentConfigLoaded(thread.environmentId)) return false;
       appAtomRegistry.set(threadDropBusyAtom, true);
-      const settled = await settleThread(thread);
-      appAtomRegistry.set(threadDropBusyAtom, false);
-      return settled;
+      return settleThread(thread).finally(() => {
+        appAtomRegistry.set(threadDropBusyAtom, false);
+      });
     }
     const configs = appAtomRegistry.get(environmentServerConfigsAtom);
     const connectedEnvironmentIds = new Set(appAtomRegistry.get(connectedEnvironmentIdsAtom));

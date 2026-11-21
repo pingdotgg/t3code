@@ -12458,5 +12458,6 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
+  "0be28c63202dfc31": "Ao concluir a conversa, o monitoramento ativo de pull requests será interrompido. Continuar?"
 }

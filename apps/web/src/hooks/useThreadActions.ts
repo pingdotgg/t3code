@@ -6,7 +6,11 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  settlingStopsPullRequestWatch,
+  threadWokeAt,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   AuthOrchestrationOperateScope,
@@ -838,7 +842,21 @@ export function useThreadActions() {
     return result;
   };
 
-  const settleThread = async (target: ScopedThreadRef) => {
+  const confirmThreadSettlement = async () => {
+    const api = readLocalApi();
+    if (!api) return AsyncResult.failure(Cause.interrupt());
+    // Interruption takes the drag rollback path without showing an error toast.
+    const result = await settlePromise(() =>
+      api.dialogs.confirm(m(msg("Settling will stop active pull request watches. Continue?"))),
+    );
+    return result._tag === "Success" && !result.value
+      ? AsyncResult.failure(Cause.interrupt())
+      : result;
+  };
+
+  const settleThread = async (target: ScopedThreadRef, watchConfirmed = false) => {
+    const permissionFailure = threadOperationFailure(target);
+    if (permissionFailure) return permissionFailure;
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
         Cause.fail(
@@ -848,6 +866,12 @@ export function useThreadActions() {
           }),
         ),
       );
+    }
+    if (!watchConfirmed && settlingStopsPullRequestWatch(readThreadShell(target))) {
+      const confirmation = await confirmThreadSettlement();
+      if (confirmation._tag === "Failure") return confirmation;
+      const revoked = threadOperationFailure(target);
+      if (revoked) return revoked;
     }
     const resolved = resolveThreadTarget(target);
     // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
@@ -1051,6 +1075,7 @@ export function useThreadActions() {
     deleteThread,
     confirmAndDeleteThread,
     settleThread,
+    confirmThreadSettlement,
     unsettleThread,
     snoozeThread,
     unsnoozeThread,

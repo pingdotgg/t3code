@@ -1,3 +1,4 @@
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -7,6 +8,12 @@ import { threadEnvironment } from "../state/threads";
 import { toastManager } from "../components/ui/toast";
 import { useThreadUndoNotice } from "./showThreadUndoNotice";
 import { announce } from "../lib/announce";
+
+const confirm = vi.hoisted(() => vi.fn<(message: string) => Promise<boolean>>());
+vi.mock("../localApi", async (original) => ({
+  ...(await original<typeof import("../localApi")>()),
+  readLocalApi: () => ({ dialogs: { confirm } }),
+}));
 
 const commands = vi.hoisted(() => ({
   pin: vi.fn(),
@@ -68,6 +75,9 @@ const threadShell = vi.hoisted(() => ({
   projectId: "project",
   environmentId: "undo-env",
   session: null,
+  archivedAt: null as string | null,
+  settledAt: null as string | null,
+  pullRequests: [] as { watch: object | null }[],
 }));
 // Archived rows have no loaded shell, so deleting one takes the unresolved path.
 const shellLoaded = vi.hoisted(() => ({ current: true }));
@@ -128,11 +138,40 @@ beforeEach(() => {
   threadShell.unsettledAt = null;
   threadShell.snoozedUntil = null;
   shellLoaded.current = true;
+  threadShell.archivedAt = null;
+  threadShell.settledAt = null;
+  threadShell.pullRequests = [];
+  confirm.mockReset().mockResolvedValue(true);
 });
 afterEach(() => {
   vi.runAllTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe("settling a thread with an active PR watch", () => {
+  it("returns an interruption on cancel so drag rolls back without settling", async () => {
+    threadShell.pullRequests = [{ watch: {} }];
+    confirm.mockResolvedValue(false);
+    const previousNotice = useThreadUndoNotice.getState().notice;
+
+    const result = await useThreadActions().settleThread(target);
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(isAtomCommandInterrupted(result)).toBe(true);
+    expect(commands.settle).not.toHaveBeenCalled();
+    expect(useThreadUndoNotice.getState().notice).toBe(previousNotice);
+  });
+
+  it("settles after confirmation", async () => {
+    threadShell.pullRequests = [{ watch: {} }];
+
+    const result = await useThreadActions().settleThread(target);
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(result._tag).toBe("Success");
+    expect(commands.settle).toHaveBeenCalledOnce();
+  });
 });
 
 describe("concurrent thread action Undo", () => {

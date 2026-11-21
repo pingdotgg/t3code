@@ -1,4 +1,5 @@
 import appCss from "../index.css?inline";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as shelfHooks from "../state/olderSettledShelf";
@@ -24,7 +25,14 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
-import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
+import {
+  readEnvironmentServerConfigLoaded,
+  readThreadShell,
+  useProjects,
+  useServerConfigs,
+  useQuietThreadShells,
+} from "../state/entities";
+import { useThreadSelectionStore } from "../threadSelectionStore";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -330,6 +338,104 @@ describe("sidebar thread rename", () => {
 });
 
 describe("sidebar thread menu", () => {
+  it("settles a captured thread that leaves the visible rows while confirmation is open", async () => {
+    using stack = new DisposableStack();
+    const selection = useThreadSelectionStore.getState();
+    stack.defer(() => useThreadSelectionStore.setState(selection));
+
+    const activeProject = project("active");
+    const watched = threadShell(activeProject.id, 0);
+    const background = threadShell(activeProject.id, 1);
+    const threadRef = { environmentId: activeProject.environmentId, threadId: watched.id };
+    const backgroundRef = { ...threadRef, threadId: background.id };
+    const startedAt = "2026-01-01T00:00:00.000Z";
+    const liveWatched: EnvironmentThreadShell = {
+      ...watched,
+      pullRequests: [
+        {
+          host: "github.scenario.invalid",
+          repository: "scenario/watch-warning",
+          number: 1,
+          url: "https://github.scenario.invalid/scenario/watch-warning/pull/1",
+          source: "manual",
+          linkedAt: startedAt,
+          snapshot: null,
+          stack: null,
+          watch: {
+            startedAt,
+            headSha: null,
+            failedChecks: [],
+            passed: false,
+            passedChecks: [],
+            remarksThrough: startedAt,
+            remarkIds: [],
+            conflicting: false,
+            wakes: 0,
+          },
+        },
+      ],
+    };
+    vi.mocked(readThreadShell).mockImplementation(({ threadId }) =>
+      threadId === watched.id ? liveWatched : threadId === background.id ? background : null,
+    );
+    vi.mocked(readEnvironmentServerConfigLoaded).mockReturnValue(true);
+    vi.mocked(readEnvironmentScope).mockReturnValue(true);
+    vi.mocked(useEnvironmentScope).mockReturnValue(true);
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([liveWatched, background]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: threadRef,
+    });
+    const settlement = vi.fn().mockResolvedValue({ _tag: "Success" });
+    vi.mocked(useOrchestrationCommand).mockReturnValue(settlement);
+    const confirmation = Promise.withResolvers<boolean>();
+    const confirm = vi.fn(() => confirmation.promise);
+    vi.mocked(readLocalApi).mockReturnValue({
+      contextMenu: { show: vi.fn().mockResolvedValue("settle") },
+      dialogs: { confirm },
+    } as unknown as LocalApi);
+    const tree = () => (
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>
+    );
+    await using screen = await render(tree());
+    await expect.element(screen.getByText(background.title).first()).toBeInTheDocument();
+    await act(() => {
+      selection.clearSelection();
+      selection.toggleThread(scopedThreadKey(threadRef));
+      selection.toggleThread(scopedThreadKey(backgroundRef));
+    });
+    await userEvent.click(screen.getByText(watched.title).first(), { button: "right" });
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+
+    // Remove the background row from the rendered input while its live shell remains available.
+    vi.mocked(useQuietThreadShells).mockReturnValue([liveWatched]);
+    await screen.rerender(tree());
+    await expect.element(screen.getByText(background.title)).not.toBeInTheDocument();
+    expect(settlement).not.toHaveBeenCalled();
+
+    await act(() => confirmation.resolve(true));
+
+    await vi.waitFor(() =>
+      expect(settlement).toHaveBeenCalledWith({
+        environmentId: backgroundRef.environmentId,
+        input: { threadId: backgroundRef.threadId },
+      }),
+    );
+    expect(confirm).toHaveBeenCalledOnce();
+  });
+
   it("tells the menu whether the keyboard opened it", async () => {
     const activeProject = project("active");
     const thread = threadShell(activeProject.id, 0);

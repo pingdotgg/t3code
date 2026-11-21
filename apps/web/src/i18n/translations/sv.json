@@ -12465,5 +12465,6 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "0be28c63202dfc31": "Om du avslutar tråden stoppas aktiv bevakning av pull requests. Vill du fortsätta?"
 }
