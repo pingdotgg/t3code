@@ -1878,69 +1878,80 @@ describe("pullCurrentBranch", () => {
   );
 });
 
-it.effect("retries an in-flight ref snapshot invalidated by a mutation", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const firstWorktreeScanStarted = yield* Deferred.make<void>();
-      const firstRefScanCompleted = yield* Deferred.make<void>();
-      const releaseFirstWorktreeScan = yield* Deferred.make<void>();
-      const delayFirstWorktreeScan = yield* Ref.make(true);
-      const refScans = yield* Ref.make(0);
-      const coordinatingSpawner = ChildProcessSpawner.make((command) =>
-        Effect.gen(function* () {
-          if (!ChildProcess.isStandardCommand(command)) {
-            return yield* Effect.die("expected a standard Git command");
-          }
-          const isWorktreeScan =
-            command.args.includes("worktree") && command.args.includes("--porcelain");
-          if (isWorktreeScan && (yield* Ref.getAndSet(delayFirstWorktreeScan, false))) {
-            yield* Deferred.succeed(firstWorktreeScanStarted, undefined);
-            yield* Deferred.await(releaseFirstWorktreeScan);
-          }
-          const handle = yield* delegate.spawn(command);
-          const isRefScan =
-            command.args.includes("for-each-ref") &&
-            command.args.includes("refs/heads") &&
-            command.args.includes("refs/remotes");
-          if (!isRefScan) return handle;
-          const scan = yield* Ref.updateAndGet(refScans, (count) => count + 1);
-          return scan === 1
-            ? ChildProcessSpawner.makeHandle({
-                ...handle,
-                exitCode: handle.exitCode.pipe(
-                  Effect.tap(() => Deferred.succeed(firstRefScanCompleted, undefined)),
+it.effect.each(["a T3 branch creation", "an external worktree addition"] as const)(
+  "refreshes an in-flight ref snapshot after %s",
+  (mutation) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const firstScanCompleted = yield* Deferred.make<void>();
+        const releaseOtherScans = yield* Deferred.make<void>();
+        const firstScan = yield* Ref.make(true);
+        const coordinatingSpawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command)) {
+              return yield* Effect.die("expected a standard Git command");
+            }
+            const isWorktreeScan =
+              command.args.includes("worktree") && command.args.includes("--porcelain");
+            const isRefScan =
+              command.args.includes("for-each-ref") &&
+              command.args.includes("refs/heads") &&
+              command.args.includes("refs/remotes");
+            if (!isRefScan && (!isWorktreeScan || mutation === "a T3 branch creation")) {
+              return yield* delegate.spawn(command);
+            }
+            if (!(yield* Ref.getAndSet(firstScan, false))) {
+              yield* Deferred.await(releaseOtherScans);
+              return yield* delegate.spawn(command);
+            }
+            const handle = yield* delegate.spawn(command);
+            return ChildProcessSpawner.makeHandle({
+              ...handle,
+              exitCode: handle.exitCode.pipe(
+                Effect.tap(() =>
+                  Deferred.succeed(firstScanCompleted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseOtherScans)),
+                  ),
                 ),
-              })
-            : handle;
-        }),
-      );
-      const driver = yield* makeGitVcsDriverCore().pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, coordinatingSpawner),
-      );
-      const cwd = yield* makeTmpDir();
-      yield* initRepoWithCommit(cwd).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+              ),
+            });
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, coordinatingSpawner),
+        );
+        const cwd = yield* makeTmpDir();
+        const worktree = (yield* Path.Path).join(cwd, "linked checkout");
+        const refName = "feature/during-refresh";
+        yield* initRepoWithCommit(cwd).pipe(
+          Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+        );
+        const list = driver.listRefs({ cwd, refresh: true, query: refName });
+        const inFlight = yield* list.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(firstScanCompleted);
 
-      const inFlight = yield* driver
-        .listRefs({ cwd, refresh: true, limit: 100 })
-        .pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.await(firstWorktreeScanStarted);
-      yield* Deferred.await(firstRefScanCompleted);
-
-      yield* driver.createRef({ cwd, refName: "feature/during-refresh" });
-      yield* Deferred.succeed(releaseFirstWorktreeScan, undefined);
-
-      const refs = yield* Fiber.join(inFlight);
-      assert.isTrue(refs.refs.some((ref) => ref.name === "feature/during-refresh"));
-      assert.equal(yield* Ref.get(refScans), 2);
-    }),
-  ).pipe(
-    Effect.provide(
-      layerServerConfig.pipe(
-        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        if (mutation === "a T3 branch creation") {
+          yield* driver.createRef({ cwd, refName });
+          yield* Deferred.succeed(releaseOtherScans, undefined);
+          assert.equal((yield* Fiber.join(inFlight)).refs[0]?.name, refName);
+        } else {
+          yield* git(cwd, ["worktree", "add", "-b", refName, worktree]).pipe(
+            Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+          );
+          const refresh = yield* list.pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.succeed(releaseOtherScans, undefined);
+          assert.equal((yield* Fiber.join(refresh)).refs[0]?.worktreePath, worktree);
+          yield* Fiber.join(inFlight);
+        }
+      }),
+    ).pipe(
+      Effect.provide(
+        layerServerConfig.pipe(
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
       ),
     ),
-  ),
 );
 
 it.effect("a refreshed ref list reads the current branch and repository paths once", () =>

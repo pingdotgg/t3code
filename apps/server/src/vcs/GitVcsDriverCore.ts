@@ -1356,13 +1356,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const readWorktreeBranchPaths = Effect.fn("GitVcsDriver.readWorktreeBranchPaths")(function* (
     gitCommonDir: string,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
   ) {
     const cwd = path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
     const result = yield* executeWorktreeList(
       "GitVcsDriver.readWorktreeBranchPaths",
       cwd,
       ["--git-dir", gitCommonDir],
-      { timeoutMs: 30_000, allowNonZeroExit: true, maxOutputBytes: 16 * 1024 * 1024 },
+      { timeoutMs, allowNonZeroExit: true, maxOutputBytes: 16 * 1024 * 1024 },
     );
     if (result.exitCode !== 0) return null;
 
@@ -1999,12 +2000,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
   });
 
-  const readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"] = Effect.fn(
-    "GitVcsDriver.readRefSnapshot",
-  )(
-    function* (cwd) {
+  const readLocalStatusRefSnapshot = Effect.fn("GitVcsDriver.readLocalStatusRefSnapshot")(
+    function* (cwd: string) {
       const result = yield* executeGit(
-        "GitVcsDriver.readRefSnapshot",
+        "GitVcsDriver.readLocalStatusRefSnapshot",
         cwd,
         ["show-ref", "--head"],
         {
@@ -2014,7 +2013,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
       if (result.exitCode !== 0) return null;
       const symbolicHead = yield* executeGit(
-        "GitVcsDriver.readRefSnapshot",
+        "GitVcsDriver.readLocalStatusRefSnapshot",
         cwd,
         ["symbolic-ref", "--quiet", "HEAD"],
         { allowNonZeroExit: true },
@@ -2027,9 +2026,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const shallow = (yield* fileSystem.exists(shallowPath))
         ? yield* fileSystem.readFileString(shallowPath)
         : "";
-      const worktrees = yield* readWorktreeBranchPaths(gitCommonDir);
-      if (worktrees === null) return null;
-      return `${result.stdout}\0${symbolicHead.stdout}\0${shallow}\0${worktrees.stamp}`;
+      return `${result.stdout}\0${symbolicHead.stdout}\0${shallow}`;
+    },
+    Effect.orElseSucceed(() => null),
+  );
+
+  const readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"] = Effect.fn(
+    "GitVcsDriver.readRefSnapshot",
+  )(
+    function* (cwd, refs) {
+      const localRefs = refs ?? (yield* readLocalStatusRefSnapshot(cwd));
+      if (localRefs === null) return null;
+      const worktrees = yield* readWorktreeBranchPaths(yield* resolveGitCommonDir(cwd), 5_000);
+      return worktrees === null ? null : `${localRefs}\0${worktrees.stamp}`;
     },
     Effect.orElseSucceed(() => null),
   );
@@ -5344,7 +5353,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const fetchCwd =
       path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
     const gitDirArgs = ["--git-dir", gitCommonDir] as const;
-    const [refsResult, defaultRefResult, worktrees, remoteNamesResult] = yield* Effect.all(
+    // Read occupancy first so a concurrent worktree addition changes the cached stamp.
+    const worktrees = yield* readWorktreeBranchPaths(gitCommonDir);
+    const [refsResult, defaultRefResult, remoteNamesResult] = yield* Effect.all(
       [
         executeGitWithStableDiagnostics(
           "GitVcsDriver.listRefs.snapshotRefs",
@@ -5378,7 +5389,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             allowNonZeroExit: true,
           },
         ),
-        readWorktreeBranchPaths(gitCommonDir),
         executeGit("GitVcsDriver.listRefs.remoteNames", fetchCwd, [...gitDirArgs, "remote"], {
           timeoutMs: 5_000,
           allowNonZeroExit: true,
@@ -7003,6 +7013,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
+    readLocalStatusRefSnapshot,
     readRefSnapshot,
     prepareCommitContext,
     commit: Effect.fnUntraced(function* (cwd, subject, body, options) {
