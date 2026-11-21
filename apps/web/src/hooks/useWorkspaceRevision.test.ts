@@ -20,18 +20,38 @@ describe("advanceWorkspaceRevision", () => {
     revision: "a1",
   };
 
-  it("keeps the revision across a thread switch and its history loading", () => {
+  it("keeps the revision across thread switches whose mutation ids have not moved", () => {
+    expect(
+      steps(
+        {
+          scope: "a",
+          seen: new Map([
+            ["a", "a1"],
+            ["b", "b1"],
+          ]),
+          revision: "a1",
+        },
+        [
+          ["b", undefined],
+          ["b", "b1"],
+          ["a", "a1"],
+        ],
+      ),
+    ).toEqual(["a1", "a1", "a1"]);
+  });
+
+  it("changes on a never-viewed thread's first mutation id, but not on one with none", () => {
     expect(
       steps(start, [
         ["b", undefined],
         ["b", "b1"],
-        ["c", null],
         ["a", "a1"],
+        ["c", null],
       ]),
-    ).toEqual(["a1", "a1", "a1", "a1"]);
+    ).toEqual(["a1", "b1", "b1", "b1"]);
   });
 
-  it("changes on a mutation after the thread has loaded, including its first one", () => {
+  it("changes on a mutation after the thread has loaded", () => {
     expect(
       steps(start, [
         ["b", undefined],
@@ -52,6 +72,6 @@ describe("advanceWorkspaceRevision", () => {
         ["a", "a2"],
         ["b", "b1"],
       ]),
-    ).toEqual(["a1", "a1", "a2", "a2"]);
+    ).toEqual(["b1", "b1", "a2", "a2"]);
   });
 });

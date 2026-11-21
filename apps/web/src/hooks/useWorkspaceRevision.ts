@@ -9,8 +9,8 @@ export interface WorkspaceRevisionState {
 
 /**
  * `mutationId` is `undefined` while the scope's history is still loading. Switching to a scope or
- * loading its history is not a workspace change, but a mutation id that moved since the scope was
- * last seen is, so only a scope's first observed id is absorbed without bumping the revision.
+ * loading its history is not a workspace change, but any mutation id not yet seen for the scope may
+ * be, even a never-viewed scope's first one. Only unchanged ids and a first `null` are absorbed.
  */
 export function advanceWorkspaceRevision(
   state: WorkspaceRevisionState,
@@ -22,7 +22,7 @@ export function advanceWorkspaceRevision(
   const known = next.seen.has(scope);
   if (known && next.seen.get(scope) === mutationId) return next;
   const seen = new Map(next.seen).set(scope, mutationId);
-  return { scope, seen, revision: known ? mutationId : next.revision };
+  return { scope, seen, revision: known || mutationId !== null ? mutationId : next.revision };
 }
 
 /** A workspace mutation revision that survives switching between threads of one workspace. */
