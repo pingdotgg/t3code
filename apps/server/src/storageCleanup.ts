@@ -30,6 +30,7 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -728,7 +729,37 @@ const make = Effect.gen(function* () {
     // Detached HEAD exits 1; full refs avoid shortening when a tag shares the branch name.
     const head = yield* read(["symbolic-ref", "--quiet", "HEAD"], 1);
     if (head === null) return true;
-    const ref = head.exitCode === 0 ? head.stdout.trim() : "";
+    // Removal keeps branches but drops a detached HEAD, so only commits held elsewhere are safe.
+    if (head.exitCode !== 0) {
+      // A paused rebase, merge or bisect would lose its progress (and any autostash) on removal.
+      const operations = yield* read([
+        "rev-parse",
+        "--git-path",
+        "rebase-merge",
+        "--git-path",
+        "rebase-apply",
+        "--git-path",
+        "MERGE_HEAD",
+        "--git-path",
+        "MERGE_AUTOSTASH",
+        "--git-path",
+        "BISECT_LOG",
+      ]);
+      if (operations === null) return true;
+      for (const state of operations.stdout.trim().split(/\r?\n/)) {
+        if (yield* fs.exists(path.resolve(cwd, state))) return true;
+      }
+      const unreachable = yield* read([
+        "rev-list",
+        "--max-count=1",
+        "HEAD",
+        "--not",
+        "--branches",
+        "--remotes",
+      ]);
+      return unreachable === null || unreachable.stdout.trim() !== "";
+    }
+    const ref = head.stdout.trim();
     const name = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length).trim() : null;
     return name !== branch;
   });
@@ -1123,7 +1154,8 @@ const make = Effect.gen(function* () {
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
     const snapshot = yield* readThreads();
     const threadsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
-    const refreshedDefaultRefs = new Map<string, Set<string>>();
+    // Failures are cached too, so one broken repository costs one fetch per sweep.
+    const refreshedDefaultRefs = new Map<string, Map<string, Exit.Exit<void, GitCommandError>>>();
     const defaultBranches = new Map<string, string | null>();
     // Threads may store one checkout through different symlinked spellings; compare real paths.
     // Keys are only compared, never opened, so they take pathKey's Windows case folding.
@@ -1511,16 +1543,22 @@ const make = Effect.gen(function* () {
             }
             if (branch === null) return keep("default branch is unavailable");
             defaultRef = `refs/remotes/${remote}/${branch}`;
-            const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
-            if (!refreshed.has(defaultRef)) {
-              yield* git.fetchRemoteTrackingBranch({
-                cwd: repositoryCwd,
-                remoteName: remote,
-                remoteBranch: branch,
-              });
-              refreshed.add(defaultRef);
+            const refreshed =
+              refreshedDefaultRefs.get(repositoryCwd) ??
+              new Map<string, Exit.Exit<void, GitCommandError>>();
+            let refresh = refreshed.get(defaultRef);
+            if (refresh === undefined) {
+              refresh = yield* Effect.exit(
+                git.fetchRemoteTrackingBranch({
+                  cwd: repositoryCwd,
+                  remoteName: remote,
+                  remoteBranch: branch,
+                }),
+              );
+              refreshed.set(defaultRef, refresh);
               refreshedDefaultRefs.set(repositoryCwd, refreshed);
             }
+            yield* refresh;
           }
           const base = yield* git.resolveCommit({
             cwd: worktreePath,

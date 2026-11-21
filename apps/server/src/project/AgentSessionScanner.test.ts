@@ -3831,6 +3831,25 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread?.title).toBe("Fix the flaky login test");
   });
 
+  it("does not split an emoji when shortening a long first message into a title", () => {
+    const prompt = `${"a".repeat(99)}🚀 then deploy`;
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: prompt },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("a".repeat(99));
+  });
+
   it.each([
     "Explain <external_codex_apps_open_page> in this transcript",
     "<external_codex_apps_open_page>Keep this incomplete example",
@@ -3870,6 +3889,44 @@ describe("parseAgentSessionTranscript", () => {
         { type: "assistant", message: { content: "Found two issues" } },
       ],
       expected: { title: "/review", texts: ["/review", "Found two issues"] },
+    },
+    {
+      name: "a prompt answered only by Claude's own sign-in error",
+      records: [
+        { type: "user", message: { role: "user", content: "plugin" } },
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            model: "<synthetic>",
+            content: [{ type: "text", text: "Invalid API key · Please run /login" }],
+          },
+        },
+      ],
+      expected: null,
+    },
+    {
+      name: "a conversation that ends in Claude's own sign-in error",
+      records: [
+        { type: "user", message: { role: "user", content: "plugin" } },
+        {
+          type: "assistant",
+          message: { role: "assistant", model: "claude-sonnet-4-5", content: "Which plugin?" },
+        },
+        { type: "user", message: { role: "user", content: "GitHub" } },
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            model: "<synthetic>",
+            content: [{ type: "text", text: "Invalid API key · Please run /login" }],
+          },
+        },
+      ],
+      expected: {
+        title: "plugin",
+        texts: ["plugin", "Which plugin?", "GitHub", "Invalid API key · Please run /login"],
+      },
     },
   ])("imports a Claude session only if it got a request: $name", ({ records, expected }) => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({

@@ -47,7 +47,7 @@ const mocks = vi.hoisted(() => ({
   statusModelId: "test-model",
   models: [] as EnvironmentSpeechModel[],
   catalogOffline: false,
-  download: vi.fn<(modelId: string) => Promise<void>>(),
+  download: vi.fn<(modelId: string) => Promise<boolean | void>>(),
   selected: [] as string[],
   selectionFails: false,
   platforms: [] as string[],
@@ -142,8 +142,8 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
     }),
   downloadEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
     Effect.promise(async () => {
-      await mocks.download(modelId);
-      return { models: mocks.models };
+      const cancelled = await mocks.download(modelId);
+      return { models: mocks.models, cancelled: cancelled ?? false };
     }),
   selectEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
     Effect.sync(() => {
@@ -644,30 +644,62 @@ it.each([true, false])(
 );
 
 it.each([
-  ["selects the offered model once its download installed it", "installed", ["german"], null],
+  [
+    "selects the offered model once its download installed it",
+    "installed",
+    ["german"],
+    null,
+    false,
+    "english",
+  ],
+  [
+    "selects the downloaded model after another client changed the selection",
+    "installed",
+    ["german"],
+    null,
+    false,
+    "german",
+  ],
   [
     "does not advance a cancelled download when another model is ready",
     "downloadable",
     [],
     "The model is not ready. Try downloading it again.",
+    true,
+    "english",
+  ],
+  [
+    "keeps setup open when an external cancellation leaves the weights installed",
+    "installed",
+    [],
+    "The model is not ready. Try downloading it again.",
+    true,
+    "english",
   ],
   [
     "reports a failed selection apart from the download",
     "installed",
     ["german"],
     "The model downloaded, but this environment could not select it. Try again.",
+    false,
+    "english",
   ],
-] as const)("%s", async (_, landedState, selected, error) => {
+] as const)("%s", async (_, landedState, selected, error, cancelled, initialModelId) => {
   setup({ destination: "env-a" });
   using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["de-DE"]);
-  mocks.selectionFails = error !== null && landedState === "installed";
+  mocks.selectionFails = error !== null && !cancelled;
   mocks.modelState = "missing-model";
-  mocks.statusModelId = "english";
+  mocks.statusModelId = initialModelId;
   mocks.models = [catalogModel("english", ["en"], true), catalogModel("german", ["de"], true)];
   mocks.download.mockImplementation(async () => {
-    mocks.models = [mocks.models[0]!, { ...mocks.models[1]!, state: landedState }];
+    mocks.models = [
+      { ...mocks.models[0]!, state: "installed", active: true },
+      { ...mocks.models[1]!, state: landedState, active: false },
+    ];
+    mocks.statusModelId = "english";
     mocks.modelState = "ready";
     mocks.statusTier = "accelerated";
+    return cancelled;
   });
   await using _screen = await render(<Probe />);
   await act(() => mocks.voice.start());
@@ -869,29 +901,26 @@ it("sends the project's vocabulary and name as hints, and the cue only with clea
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
   expect(mocks.recordingOptions.at(-1)?.speechCustomWords).toEqual([
-    { term: "Acme App", aliases: [] },
     { term: "effect", aliases: ["affect"] },
   ]);
+  expect(mocks.recordingOptions.at(-1)?.speechHints).toEqual(["Acme App"]);
   expect(mocks.cleanupCalls).toEqual([]);
 
   chooseTranscriptCleanup(true);
   await screen.rerender(<Probe projectId="proj-1" projectName="Acme App" />);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
-  expect(mocks.recordingOptions.at(-1)?.speechCustomWords.map(({ term }) => term)).toEqual([
-    "scratch that",
-    "Acme App",
-    "effect",
-  ]);
-  expect(mocks.cleanupOptions.at(-1)).toMatchObject({ speechCorrectionWord: "scratch that" });
+  expect(mocks.recordingOptions.at(-1)?.speechHints).toEqual(["scratch that", "Acme App"]);
+  expect(mocks.cleanupOptions.at(-1)).toMatchObject({
+    speechCorrectionWord: "scratch that",
+    speechCustomWords: [{ term: "effect", aliases: ["affect"] }],
+  });
   expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBe("scratch that");
   chooseTranscriptCleanup(false);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
   expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBeUndefined();
-  expect(mocks.recordingOptions.at(-1)?.speechCustomWords.map(({ term }) => term)).not.toContain(
-    "scratch that",
-  );
+  expect(mocks.recordingOptions.at(-1)?.speechHints).not.toContain("scratch that");
 });
 
 it("shares one status probe per destination across every mounted editor", async () => {
