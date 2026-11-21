@@ -57,8 +57,10 @@ import {
   registerXAiBackgroundTaskTracking,
   XAiAskUserQuestionRequest,
   XAiExitPlanModeRequest,
+  XAiMcpFormRequest,
 } from "./xaiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { parseElicitationForm } from "@t3tools/provider-acp/server/elicitationForm";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import {
   findModelConfigOption,
@@ -186,6 +188,7 @@ const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensi
 }) =>
   registerXAiBackgroundTaskTracking(runtime, applyBackgroundTaskMutation).pipe(
     Effect.andThen(registerXAiSubagentFinished(runtime, finishSubagent)),
+    Effect.andThen(registerGrokMcpElicitation({ runtime, requestUserInput })),
     Effect.andThen(registerGrokAskUserQuestionExtensions({ runtime, requestUserInput })),
     Effect.andThen(
       registerGrokExitPlanModeExtensions({
@@ -194,6 +197,56 @@ const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensi
         lastProposedPlanMarkdown,
       }),
     ),
+  );
+
+const registerGrokMcpElicitation = ({
+  runtime,
+  requestUserInput,
+}: Pick<AcpAdapterV2ExtensionContext, "runtime" | "requestUserInput">) =>
+  runtime.handleExtRequest("_x.ai/mcp/elicit", XAiMcpFormRequest, (params, requestContext) =>
+    Effect.gen(function* () {
+      const form = parseElicitationForm(params.requestedSchema, params.message);
+      if (form === undefined) return { outcome: "cancel" };
+      const confirmationOnly = form.questions.length === 0;
+      if (confirmationOnly && params.requestedSchema.required?.length) return { outcome: "cancel" };
+      const fields = confirmationOnly
+        ? [
+            {
+              id: "confirmation",
+              header: "Confirmation",
+              question: params.message,
+              allowCustomAnswer: false,
+              options: [
+                { label: "Allow", description: "Allow", value: "accept" },
+                { label: "Decline", description: "Decline", value: "decline" },
+              ],
+            },
+          ]
+        : form.questions;
+      const { answers, acknowledgeNativeResponse } = yield* requestUserInput(
+        {
+          // One MCP tool call can ask several forms, so each request gets its own card.
+          nativeItemId: `${params.sessionId}:mcp-elicit:${params.toolCallId}:${requestContext.requestId}`,
+          nativeRequestId: params.toolCallId,
+          questions: fields.map((field) => ({
+            ...field,
+            header: `${params.serverName} · ${field.header}`,
+            question:
+              field.question === params.message
+                ? params.message
+                : `${params.message}\n\n${field.question}`,
+          })),
+        },
+        requestContext,
+      );
+      yield* acknowledgeNativeResponse;
+      if (confirmationOnly) {
+        if (answers?.confirmation === "accept") return { outcome: "accept", content: {} };
+        return { outcome: answers?.confirmation === "decline" ? "decline" : "cancel" };
+      }
+      const content = answers === null ? undefined : form.content(answers);
+      return content === undefined ? { outcome: "cancel" } : { outcome: "accept", content };
+    }),
   );
 
 // Capture the reverse-requested plan, then abandon the native gate to finish the turn.

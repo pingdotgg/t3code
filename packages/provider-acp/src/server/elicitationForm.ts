@@ -46,13 +46,20 @@ function choiceOptions(
   return options.every((option) => option !== undefined) ? options : undefined;
 }
 
-function enumOptions(entries: unknown): Option[] | undefined {
+function enumOptions(entries: unknown, enumNames?: unknown): Option[] | undefined {
   if (
     !Array.isArray(entries) ||
     entries.length === 0 ||
     !entries.every((value): value is string => typeof value === "string")
   )
     return undefined;
+  // MCP's legacy enumNames array pairs display labels with enum values by index.
+  if (Array.isArray(enumNames) && enumNames.length === entries.length) {
+    const labels = enumNames.map(text);
+    if (labels.every((label) => label !== undefined) && new Set(labels).size === labels.length) {
+      return labels.map((label, index) => ({ label, description: label, value: entries[index] }));
+    }
+  }
   const counts = new Map<string, number>();
   for (const value of entries) counts.set(value.trim(), (counts.get(value.trim()) ?? 0) + 1);
   const options = entries.map((value) => {
@@ -89,7 +96,7 @@ function parseField(
       }
       const options = Array.isArray(property.oneOf)
         ? choiceOptions(property.oneOf, titledOption)
-        : enumOptions(property.enum);
+        : enumOptions(property.enum, property.enumNames);
       return options === undefined
         ? undefined
         : {

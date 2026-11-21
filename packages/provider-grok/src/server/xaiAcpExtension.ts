@@ -939,6 +939,19 @@ export const XAiAskUserQuestionRequest = Schema.Union([
 type XAiAskUserQuestionRequestParams = typeof XAiAskUserQuestionParams.Type;
 type XAiAskUserQuestionRequest = typeof XAiAskUserQuestionRequest.Type;
 
+export const XAiMcpFormRequest = Schema.Struct({
+  sessionId: Schema.String,
+  toolCallId: Schema.String,
+  serverName: Schema.String,
+  mode: Schema.Literal("form"),
+  message: Schema.String,
+  requestedSchema: Schema.Struct({
+    type: Schema.Literal("object"),
+    properties: Schema.Record(Schema.String, Schema.Unknown),
+    required: Schema.optional(Schema.Array(Schema.String)),
+  }),
+});
+
 const XAiExitPlanModeParams = Schema.Struct({
   sessionId: Schema.String,
   toolCallId: Schema.String,
