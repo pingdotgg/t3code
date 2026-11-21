@@ -208,6 +208,8 @@ describe("watchAntigravityPromptOutcome", () => {
           [PLANNER_RESPONSE, reply],
         ]),
       );
+      // An ended turn that never reached the model and wrote no error must not pass as a reply.
+      assert.isDefined(yield* turn([[USER_INPUT, input]]));
       // The agent maps the SDK's QUOTA_EXHAUSTED stop reason to `refusal`.
       assert.deepEqual(
         yield* turn([], { stopReason: "refusal" }),
