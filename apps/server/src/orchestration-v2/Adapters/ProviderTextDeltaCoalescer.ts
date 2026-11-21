@@ -31,7 +31,13 @@ interface BufferedProviderText {
   readonly itemId: string;
   readonly text: string;
   readonly dirty: boolean;
+  readonly schedule: symbol | undefined;
 }
+
+// Every flush resends the whole text, so the delay grows with it past this length; per item,
+// snapshot traffic then stays near this many characters per interval instead of growing
+// quadratically with the reply, until the one-second responsiveness ceiling.
+const FULL_RATE_TEXT_LENGTH = 1024;
 
 function providerTextBufferKey(turnId: string, itemId: string): string {
   return `${turnId}\u0000${itemId}`;
@@ -43,7 +49,6 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
     readonly emit: (update: ProviderTextDeltaUpdate) => Effect.Effect<void>;
   }): Effect.fn.Return<ProviderTextDeltaCoalescer, never, Scope.Scope> {
     const buffered = yield* Ref.make(new Map<string, BufferedProviderText>());
-    const flushScheduled = yield* Ref.make(false);
     const flushLock = yield* Semaphore.make(1);
     const coalescerScope = yield* Effect.scope;
 
@@ -51,7 +56,6 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
       readonly predicate: (message: BufferedProviderText) => boolean;
       readonly completed: boolean;
       readonly onlyDirty: boolean;
-      readonly releaseSchedule?: boolean;
     }) =>
       flushLock.withPermit(
         Effect.gen(function* () {
@@ -68,10 +72,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
               completed: options.completed,
             });
           }
-          const emitUpdates = Effect.forEach(updates, input.emit, { discard: true });
-          yield* options.releaseSchedule === true
-            ? emitUpdates.pipe(Effect.ensuring(Ref.set(flushScheduled, false)))
-            : emitUpdates;
+          yield* Effect.forEach(updates, input.emit, { discard: true });
           yield* Ref.update(buffered, (current) => {
             const next = new Map(current);
             for (const [key, message] of current) {
@@ -81,7 +82,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
               if (options.completed) {
                 next.delete(key);
               } else {
-                next.set(key, { ...message, dirty: false });
+                next.set(key, { ...message, dirty: false, schedule: undefined });
               }
             }
             return next;
@@ -89,39 +90,45 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
         }),
       );
 
-    const flushDirty = drain({
-      predicate: () => true,
-      completed: false,
-      onlyDirty: true,
-      releaseSchedule: true,
-    });
-
     return {
       append: ({ turnId, itemId, delta }) =>
         delta.length === 0
           ? Effect.void
           : Effect.uninterruptible(
               Effect.gen(function* () {
-                const shouldSchedule = yield* flushLock.withPermit(
-                  Effect.gen(function* () {
-                    yield* Ref.update(buffered, (current) => {
-                      const key = providerTextBufferKey(turnId, itemId);
-                      const existing = current.get(key);
-                      const next = new Map(current);
-                      next.set(key, {
-                        turnId,
-                        itemId,
-                        text: `${existing?.text ?? ""}${delta}`,
-                        dirty: true,
-                      });
-                      return next;
-                    });
-                    return yield* Ref.modify(flushScheduled, (scheduled) => [!scheduled, true]);
+                const { shouldSchedule, textLength, schedule } = yield* flushLock.withPermit(
+                  Ref.modify(buffered, (current) => {
+                    const key = providerTextBufferKey(turnId, itemId);
+                    const existing = current.get(key);
+                    const text = `${existing?.text ?? ""}${delta}`;
+                    const schedule = existing?.schedule ?? Symbol();
+                    const next = new Map(current);
+                    next.set(key, { turnId, itemId, text, dirty: true, schedule });
+                    return [
+                      {
+                        shouldSchedule: existing?.schedule === undefined,
+                        textLength: text.length,
+                        schedule,
+                      },
+                      next,
+                    ];
                   }),
                 );
                 if (shouldSchedule) {
-                  yield* Effect.sleep(Duration.millis(Math.max(1, input.flushIntervalMs))).pipe(
-                    Effect.andThen(flushDirty),
+                  const delayMs = Math.min(
+                    1_000,
+                    Math.max(1, input.flushIntervalMs) *
+                      Math.max(1, textLength / FULL_RATE_TEXT_LENGTH),
+                  );
+                  yield* Effect.sleep(Duration.millis(delayMs)).pipe(
+                    Effect.andThen(
+                      drain({
+                        // A completed item can reuse its key before its old timer wakes.
+                        predicate: (message) => message.schedule === schedule,
+                        completed: false,
+                        onlyDirty: true,
+                      }),
+                    ),
                     Effect.interruptible,
                     Effect.forkIn(coalescerScope),
                   );

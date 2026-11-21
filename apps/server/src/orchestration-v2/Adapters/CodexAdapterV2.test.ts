@@ -126,6 +126,68 @@ describe("CodexAdapterV2 context usage", () => {
 });
 
 describe("CodexAdapterV2 assistant message streaming", () => {
+  it.effect("bounds snapshot text bytes for a long steadily streamed item", () =>
+    Effect.gen(function* () {
+      const emitted = yield* Ref.make({ bytes: 0, finalText: "" });
+      const coalescer = yield* makeProviderTextDeltaCoalescer({
+        flushIntervalMs: 50,
+        emit: (update) =>
+          Ref.update(emitted, (current) => ({
+            bytes: current.bytes + update.text.length,
+            finalText: update.completed ? update.text : current.finalText,
+          })),
+      });
+      const delta = "a".repeat(64);
+      for (let index = 0; index < 1_000; index += 1) {
+        yield* coalescer.append({ turnId: "turn", itemId: "item", delta });
+        yield* TestClock.adjust("50 millis");
+      }
+      yield* coalescer.complete({ turnId: "turn", itemId: "item" });
+
+      const { bytes, finalText } = yield* Ref.get(emitted);
+      assert.equal(finalText, delta.repeat(1_000));
+      assert.isAtMost(bytes, 32 * finalText.length);
+    }),
+  );
+
+  it.effect("flushes a long item within one second", () =>
+    Effect.gen(function* () {
+      const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
+      const coalescer = yield* makeProviderTextDeltaCoalescer({
+        flushIntervalMs: 400,
+        emit: (update) => Ref.update(updates, (current) => [...current, update]),
+      });
+      yield* coalescer.append({ turnId: "turn", itemId: "item", delta: "a".repeat(102_400) });
+      yield* TestClock.adjust("1 second");
+      assert.deepEqual(
+        (yield* Ref.get(updates)).map((update) => update.text.length),
+        [102_400],
+      );
+    }),
+  );
+
+  it.effect("keeps per-item flush schedules independent", () =>
+    Effect.gen(function* () {
+      const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
+      const coalescer = yield* makeProviderTextDeltaCoalescer({
+        flushIntervalMs: 50,
+        emit: (update) => Ref.update(updates, (current) => [...current, update]),
+      });
+      yield* coalescer.append({ turnId: "turn", itemId: "long", delta: "a".repeat(102_400) });
+      yield* coalescer.append({ turnId: "turn", itemId: "short", delta: "hello" });
+      yield* TestClock.adjust("50 millis");
+      assert.deepEqual(
+        (yield* Ref.get(updates)).map((update) => update.itemId),
+        ["short"],
+      );
+      yield* TestClock.adjust("950 millis");
+      assert.deepEqual(
+        (yield* Ref.get(updates)).map((update) => update.itemId),
+        ["short", "long"],
+      );
+    }),
+  );
+
   it.effect("flushes buffered text synchronously before item and turn completion", () =>
     Effect.gen(function* () {
       const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
