@@ -34,6 +34,11 @@ const SUMMARY_WINDOW_MINS = new Map([
   ["weekly", 7 * 24 * 60],
 ]);
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
+// Sign-in allows 90s for a cold launch (about a minute on Windows) plus 30s once initialized.
+const CLI_RENEWAL_TIMEOUT = "2 minutes";
+const CLI_RENEWAL_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
+
+export type AntigravityCliTokenRenewalResult = "renewed" | "busy" | "failed";
 const TokenFile = Schema.Struct({
   client_id: Schema.NonEmptyString,
   client_secret: Schema.NonEmptyString,
@@ -41,7 +46,7 @@ const TokenFile = Schema.Struct({
   project_id: Schema.optional(Schema.String),
 });
 // The 1.5.x CLI never writes acp_token.json: it keeps its sign-in in the OS keyring, or in
-// antigravity-oauth-token without one or when T3 bypasses the keyring. It stores no OAuth client, so T3 cannot refresh it.
+// antigravity-oauth-token without one or when T3 bypasses the keyring. It stores no OAuth client, so T3 cannot refresh it directly.
 const CliToken = Schema.Struct({
   token: Schema.Struct({
     access_token: Schema.NonEmptyString,
@@ -321,6 +326,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
   readonly readKeyringSecret?: Effect.Effect<string | undefined, AntigravityKeyringError>;
+  readonly renewCliToken?: Effect.Effect<AntigravityCliTokenRenewalResult>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -338,8 +344,39 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   let cached:
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
     | undefined;
+  let renewalBackoff:
+    | { readonly storedHash: string; readonly failures: number; readonly retryAfter: number }
+    | undefined;
   let generation = 0;
 
+  const recordRenewalFailure = (
+    startedGeneration: number,
+    storedHash: string,
+    at: number,
+    previousStoredHash = storedHash,
+  ) => {
+    if (generation !== startedGeneration) return;
+    const failures =
+      renewalBackoff !== undefined &&
+      (renewalBackoff.storedHash === storedHash || renewalBackoff.storedHash === previousStoredHash)
+        ? renewalBackoff.failures + 1
+        : 1;
+    const delay =
+      CLI_RENEWAL_BACKOFF_MS[Math.min(failures - 1, CLI_RENEWAL_BACKOFF_MS.length - 1)]!;
+    renewalBackoff = {
+      storedHash,
+      failures,
+      retryAfter: at + delay,
+    };
+  };
+  const readStoredCliToken = Effect.gen(function* () {
+    // Google account instances bypass the keyring, whose one entry every profile shares.
+    return (yield* fs.exists(cliTokenPath))
+      ? yield* fs.readFileString(cliTokenPath)
+      : input.authMethod === "oauth-business"
+        ? yield* readKeyringSecret
+        : undefined;
+  });
   const request = (request: HttpClientRequest.HttpClientRequest) =>
     client.execute(request).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
@@ -359,12 +396,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     let projectId: string | undefined;
     if (!(yield* fs.exists(tokenPath))) {
       cached = undefined;
-      // Google account instances bypass the keyring, whose one entry every profile shares.
-      const stored = (yield* fs.exists(cliTokenPath))
-        ? yield* fs.readFileString(cliTokenPath)
-        : input.authMethod === "oauth-business"
-          ? yield* readKeyringSecret
-          : undefined;
+      const stored = yield* readStoredCliToken;
       if (stored === undefined) {
         return makeUnavailableUsageLimits({
           checkedAt,
@@ -372,14 +404,60 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
           message: "Sign in with Google to see Antigravity limits.",
         });
       }
-      const { token } = yield* decodeCliToken(stored);
+      let { token } = yield* decodeCliToken(stored);
       if (!(Date.parse(token.expiry ?? "") > now + 60_000)) {
-        return makeUnavailableUsageLimits({
+        const expired = makeUnavailableUsageLimits({
           checkedAt,
           reason: "probeFailed",
           message:
             "Antigravity's saved sign-in has expired. Start an Antigravity turn to renew it, then refresh limits.",
         });
+        const storedHash = yield* sha256(stored);
+        const blocked =
+          renewalBackoff?.storedHash === storedHash && now < renewalBackoff.retryAfter;
+        const canRenew =
+          input.authMethod === "oauth-personal" &&
+          input.renewCliToken !== undefined &&
+          Boolean(token.refresh_token?.trim()) &&
+          !blocked;
+        if (!canRenew) {
+          return expired;
+        }
+        const outcome = yield* input.renewCliToken.pipe(
+          Effect.timeoutOption(CLI_RENEWAL_TIMEOUT),
+          Effect.map((result) => Option.getOrElse(result, () => "failed" as const)),
+        );
+        if (generation !== startedGeneration) {
+          return expired;
+        }
+        if (outcome !== "renewed") {
+          if (outcome !== "busy") {
+            recordRenewalFailure(startedGeneration, storedHash, yield* Clock.currentTimeMillis);
+          }
+          return expired;
+        }
+        const refreshedStored = yield* readStoredCliToken;
+        if (generation !== startedGeneration) {
+          return expired;
+        }
+        if (refreshedStored === undefined) {
+          return makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "unsupported",
+            message: "Sign in with Google to see Antigravity limits.",
+          });
+        }
+        const refreshed = yield* decodeCliToken(refreshedStored);
+        const renewedAt = yield* Clock.currentTimeMillis;
+        if (!(Date.parse(refreshed.token.expiry ?? "") > renewedAt + 60_000)) {
+          const refreshedHash = yield* sha256(refreshedStored);
+          recordRenewalFailure(startedGeneration, refreshedHash, renewedAt, storedHash);
+          return expired;
+        }
+        if (generation === startedGeneration) renewalBackoff = undefined;
+        token = refreshed.token;
+      } else if (generation === startedGeneration) {
+        renewalBackoff = undefined;
       }
       accessToken = token.access_token;
       account = yield* request(
@@ -484,7 +562,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   });
   const probe = read.pipe(
     Effect.provideService(Digest.Digest, crypto),
-    Effect.timeout("30 seconds"),
+    Effect.timeout("160 seconds"),
     Effect.catch(() =>
       Effect.gen(function* () {
         return makeUnavailableUsageLimits({
@@ -499,6 +577,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     probe,
     clear: Effect.sync(() => {
       cached = undefined;
+      renewalBackoff = undefined;
       generation++;
     }),
   };

@@ -5,13 +5,16 @@ import * as Layer from "effect/Layer";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
 import {
+  type AntigravityCliTokenRenewalResult,
   decodeGoKeyringSecret,
   makeAntigravityUsageProbe,
   readWindowsCliCredential,
@@ -74,6 +77,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     keyringSecret?: string;
     /** Reads the OS keyring instead of `keyringSecret`. */
     nativeKeyring?: boolean;
+    renewCliToken?: Effect.Effect<AntigravityCliTokenRenewalResult>;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -141,6 +145,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
     ...(options.nativeKeyring ? {} : { readKeyringSecret: Effect.succeed(options.keyringSecret) }),
+    ...(options.renewCliToken ? { renewCliToken: options.renewCliToken } : {}),
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
   return { ...usage, requests, writeToken, tokenPath };
 });
@@ -717,13 +722,19 @@ describe("Antigravity subscription limits", () => {
       expect(limits.windows).toHaveLength(4);
       expect(signedIn.requests.some((request) => request.url.endsWith("/token"))).toBe(false);
 
+      let businessRenewals = 0;
       const expired = yield* fixture({
         authMethod: "oauth-business",
         missingToken: true,
         keyringSecret: keyringSecret("2026-10-09T12:00:30Z"),
+        renewCliToken: Effect.sync(() => {
+          businessRenewals++;
+          return "renewed" as const;
+        }),
       });
       expect((yield* expired.probe).unavailable?.reason).toBe("probeFailed");
       expect(expired.requests).toEqual([]);
+      expect(businessRenewals).toBe(0);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -781,6 +792,239 @@ describe("Antigravity subscription limits", () => {
         expect((yield* probe).unavailable?.reason).toBe("unsupported");
         expect(requests).toEqual([]);
       }
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
+    "renews an expired personal CLI token and skips renewal when unsafe or impossible",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")),
+        );
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        let renewals = 0;
+        let cliTokenPath = "";
+        const { probe, tokenPath } = yield* fixture({
+          missingToken: true,
+          userId: "google-user-1",
+          renewCliToken: Effect.gen(function* () {
+            renewals++;
+            yield* fs
+              .writeFileString(
+                cliTokenPath,
+                JSON.stringify({
+                  token: {
+                    access_token: "access-token",
+                    refresh_token: "refresh-a",
+                    expiry: "2026-10-09T13:00:00Z",
+                  },
+                }),
+              )
+              .pipe(Effect.orDie);
+            return "renewed" as const;
+          }),
+        });
+        cliTokenPath = path.join(path.dirname(tokenPath), "antigravity-oauth-token");
+        yield* fs.writeFileString(
+          cliTokenPath,
+          JSON.stringify({
+            token: {
+              access_token: "expired-token",
+              refresh_token: "refresh-a",
+              expiry: "2026-10-09T11:00:00Z",
+            },
+          }),
+        );
+        const limits = yield* probe;
+        expect(renewals).toBe(1);
+        expect(limits.unavailable).toBeUndefined();
+        expect(limits.windows).toHaveLength(4);
+
+        // Without a refresh token, do not invoke the CLI.
+        yield* fs.writeFileString(
+          cliTokenPath,
+          JSON.stringify({
+            token: {
+              access_token: "expired-token",
+              refresh_token: " ",
+              expiry: "2026-10-09T11:00:00Z",
+            },
+          }),
+        );
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect(renewals).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
+    "backs off failed and still-expired renewals exponentially, skips backoff when busy, and resets on change or clear",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")),
+        );
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        let nextOutcome: AntigravityCliTokenRenewalResult = "busy";
+        let renewals = 0;
+        const { probe, clear, tokenPath } = yield* fixture({
+          missingToken: true,
+          renewCliToken: Effect.sync(() => {
+            renewals++;
+            return nextOutcome;
+          }),
+        });
+        const cliTokenPath = path.join(path.dirname(tokenPath), "antigravity-oauth-token");
+        const writeExpired = (refreshToken: string) =>
+          fs.writeFileString(
+            cliTokenPath,
+            JSON.stringify({
+              token: {
+                access_token: "expired-token",
+                refresh_token: refreshToken,
+                expiry: "2026-10-09T11:00:00Z",
+              },
+            }),
+          );
+        yield* writeExpired("refresh-a");
+
+        // Busy (sign-in or sign-out in progress) must not back off.
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect(renewals).toBe(2);
+
+        // Failures back off 1m -> 5m -> 15m -> 60m, then retry hourly so offline drops recover.
+        nextOutcome = "failed";
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect(renewals).toBe(3);
+
+        yield* TestClock.adjust("1 minute");
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect(renewals).toBe(4);
+        yield* TestClock.adjust("4 minutes");
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect(renewals).toBe(4);
+        yield* TestClock.adjust("1 minute");
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect(renewals).toBe(5);
+        yield* TestClock.adjust("15 minutes");
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect(renewals).toBe(6);
+        yield* TestClock.adjust("59 minutes");
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect(renewals).toBe(6);
+        yield* TestClock.adjust("1 minute");
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect(renewals).toBe(7);
+
+        // A changed token file or explicit clear resets backoff immediately.
+        yield* writeExpired("refresh-b");
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect(renewals).toBe(8);
+        yield* clear;
+        expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+        expect(renewals).toBe(9);
+
+        // Rewriting a still-expired token still escalates backoff (1 minute, then 5 minutes).
+        let rewriteCount = 0;
+        let skewedTokenPath = "";
+        const skewed = yield* fixture({
+          missingToken: true,
+          renewCliToken: Effect.gen(function* () {
+            rewriteCount++;
+            yield* fs
+              .writeFileString(
+                skewedTokenPath,
+                JSON.stringify({
+                  token: {
+                    access_token: `still-expired-${rewriteCount}`,
+                    refresh_token: "refresh-skew",
+                    expiry: "2026-10-09T11:30:00Z",
+                  },
+                }),
+              )
+              .pipe(Effect.orDie);
+            return "renewed" as const;
+          }),
+        });
+        skewedTokenPath = path.join(path.dirname(skewed.tokenPath), "antigravity-oauth-token");
+        yield* fs.writeFileString(
+          skewedTokenPath,
+          JSON.stringify({
+            token: {
+              access_token: "still-expired-0",
+              refresh_token: "refresh-skew",
+              expiry: "2026-10-09T11:30:00Z",
+            },
+          }),
+        );
+        expect((yield* skewed.probe).unavailable?.reason).toBe("probeFailed");
+        expect(rewriteCount).toBe(1);
+        yield* TestClock.adjust("1 minute");
+        expect((yield* skewed.probe).unavailable?.reason).toBe("probeFailed");
+        expect(rewriteCount).toBe(2);
+        yield* TestClock.adjust("4 minutes");
+        expect((yield* skewed.probe).unavailable?.reason).toBe("probeFailed");
+        expect(rewriteCount).toBe(2);
+        yield* TestClock.adjust("1 minute");
+        expect((yield* skewed.probe).unavailable?.reason).toBe("probeFailed");
+        expect(rewriteCount).toBe(3);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("discards a renewal interrupted by clear and bounds hung renewals with a timeout", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<AntigravityCliTokenRenewalResult>();
+      const hungStarted = yield* Deferred.make<void>();
+      let renewals = 0;
+      const { probe, clear, tokenPath } = yield* fixture({
+        missingToken: true,
+        renewCliToken: Effect.gen(function* () {
+          renewals++;
+          if (renewals === 1) {
+            yield* Deferred.succeed(started, undefined);
+            return yield* Deferred.await(release);
+          }
+          yield* Deferred.succeed(hungStarted, undefined);
+          return yield* Effect.never;
+        }),
+      });
+      const cliTokenPath = path.join(path.dirname(tokenPath), "antigravity-oauth-token");
+      yield* fs.writeFileString(
+        cliTokenPath,
+        JSON.stringify({
+          token: {
+            access_token: "expired-token",
+            refresh_token: "refresh-a",
+            expiry: "2026-10-09T11:00:00Z",
+          },
+        }),
+      );
+
+      const first = yield* Effect.forkChild(probe);
+      yield* Deferred.await(started);
+      yield* clear;
+      yield* Deferred.succeed(release, "failed");
+      expect((yield* Fiber.join(first)).unavailable?.reason).toBe("probeFailed");
+
+      // Because clear ran during renewal, no backoff was recorded; the next probe attempts renewal and times out.
+      const hung = yield* Effect.forkChild(probe);
+      yield* Deferred.await(hungStarted);
+      yield* TestClock.adjust("2 minutes");
+      const timedOut = yield* Fiber.join(hung);
+      expect(timedOut.unavailable?.reason).toBe("probeFailed");
+      expect(timedOut.unavailable?.message).toContain("saved sign-in has expired");
+      expect(renewals).toBe(2);
+      // Timed-out renewal recorded backoff, so an immediate retry does not spawn again.
+      expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+      expect(renewals).toBe(2);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });

@@ -207,6 +207,7 @@ export const AntigravityDriver: ProviderDriver<
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
       baseEnv: NodeJS.ProcessEnv,
+      options?: { readonly headless?: boolean },
     ): Effect.fn.Return<
       {
         readonly executable: AntigravityInstallation.AntigravityExecutable;
@@ -278,34 +279,42 @@ export const AntigravityDriver: ProviderDriver<
               ),
             ),
       );
-      return {
-        executable,
-        spawn: buildAntigravityAcpSpawnInput({
-          installation: executable,
-          profile,
-          cwd,
-          baseEnv,
-          auth,
-          runtimeTempDirectory,
-        }),
-      };
+      const rawSpawn = buildAntigravityAcpSpawnInput({
+        installation: executable,
+        profile,
+        cwd,
+        baseEnv,
+        auth,
+        runtimeTempDirectory,
+      });
+      const spawn =
+        options?.headless && rawSpawn.env
+          ? (() => {
+              const { DISPLAY: _display, WAYLAND_DISPLAY: _wayland, ...env } = rawSpawn.env;
+              return { ...rawSpawn, env };
+            })()
+          : rawSpawn;
+      return { executable, spawn };
     });
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
-      input: AntigravityAdapterV2RuntimeInput,
+      input: AntigravityAdapterV2RuntimeInput & { readonly headless?: boolean },
     ): Effect.fn.Return<
-      AcpSessionRuntime.AcpSessionRuntime["Service"],
+      AcpSessionRuntime.AcpSessionRuntime["Service"] & {
+        readonly authenticate: (methodId: string) => Effect.Effect<void, AcpErrors.AcpError>;
+      },
       AcpErrors.AcpError | ProviderSetupError,
       Scope.Scope
     > {
       // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
       // agent's shell through `baseEnv`.
-      const { processEnvironment: threadEnvironment, ...runtimeInput } = input;
+      const { processEnvironment: threadEnvironment, headless, ...runtimeInput } = input;
       const { executable, spawn } = yield* prepareSpawn(
         runtimeInput.cwd,
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment },
+        headless ? { headless } : undefined,
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,
@@ -315,28 +324,48 @@ export const AntigravityDriver: ProviderDriver<
         spawn,
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       // A custom or PATH executable has no version until it answers initialize.
-      const startCompatible = Effect.fn("AntigravityDriver.startCompatible")(function* () {
-        const version = (yield* runtime.initialize()).agentInfo?.version;
-        const advisory = version ? yield* installation.compatibility(version) : undefined;
-        const refused =
-          version &&
-          brokenRuntimeError({
-            instanceId,
-            name: "Antigravity",
-            version,
-            advisory,
-            action:
-              executable.source === "managed"
-                ? "Update it in Antigravity setup"
-                : `Update the Antigravity executable at ${executable.executablePath}`,
-          });
-        if (refused) {
-          return yield* new AcpErrors.AcpTransportError({ detail: refused.detail, cause: refused });
-        }
-        return yield* runtime.start();
-      });
+      const initializeCompatible = Effect.fn("AntigravityDriver.initializeCompatible")(
+        function* () {
+          const initialized = yield* runtime.initialize();
+          const version = initialized.agentInfo?.version;
+          const advisory = version ? yield* installation.compatibility(version) : undefined;
+          const refused =
+            version &&
+            brokenRuntimeError({
+              instanceId,
+              name: "Antigravity",
+              version,
+              advisory,
+              action:
+                executable.source === "managed"
+                  ? "Update it in Antigravity setup"
+                  : `Update the Antigravity executable at ${executable.executablePath}`,
+            });
+          if (refused) {
+            return yield* new AcpErrors.AcpTransportError({
+              detail: refused.detail,
+              cause: refused,
+            });
+          }
+          return initialized;
+        },
+      );
       return {
         ...runtime,
+        // Evaluate authenticate lazily so ACP v1/v2 method selection runs after initialize.
+        authenticate: (methodId: string) =>
+          initializeCompatible().pipe(
+            Effect.andThen(() =>
+              runtime.authenticate
+                ? runtime.authenticate(methodId)
+                : Effect.fail(
+                    new AcpErrors.AcpTransportError({
+                      detail: "Antigravity runtime does not support authentication.",
+                      cause: undefined,
+                    }),
+                  ),
+            ),
+          ),
         setMode: (modeId: string) =>
           runtime.getModeState.pipe(
             Effect.flatMap((modeState) =>
@@ -344,7 +373,8 @@ export const AntigravityDriver: ProviderDriver<
             ),
           ),
         start: () =>
-          startCompatible().pipe(
+          initializeCompatible().pipe(
+            Effect.andThen(() => runtime.start()),
             Effect.tapError((cause): Effect.Effect<void> =>
               runtimeInput.onAuthorizationUrl === undefined &&
               isAntigravitySignInRequiredError(cause)
@@ -356,7 +386,9 @@ export const AntigravityDriver: ProviderDriver<
     });
 
     const makeDisposableRuntime = Effect.fn("AntigravityDriver.makeDisposableRuntime")(function* (
-      input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl">,
+      input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl"> & {
+        readonly headless?: boolean;
+      },
     ) {
       const cwd = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-antigravity-setup-" })
@@ -385,6 +417,7 @@ export const AntigravityDriver: ProviderDriver<
         cwd,
         mcpServers: [],
         ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
+        ...(input.headless ? { headless: true } : {}),
       });
       return {
         ...runtime,
@@ -417,16 +450,15 @@ export const AntigravityDriver: ProviderDriver<
               }),
           ),
         );
-      const { spawn } = yield* prepareSpawn(cwd, processEnvironment);
+      // Without a display it prints the link only, instead of opening a browser on this machine.
+      const { spawn } = yield* prepareSpawn(cwd, processEnvironment, { headless: true });
       const failed = (detail: string, cause?: unknown) =>
         new ProviderSetupError({ instanceId, operation: "start", detail, cause });
-      // Without a display it prints the link only, instead of opening a browser on this machine.
-      const { DISPLAY: _display, WAYLAND_DISPLAY: _wayland, ...env } = spawn.env ?? {};
       const child = yield* spawner
         .spawn(
           ChildProcess.make(spawn.command, [...spawn.args, "--login"], {
             cwd,
-            env,
+            env: spawn.env,
             extendEnv: false,
             shell: false,
           }),
@@ -556,9 +588,39 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
+    // Only Google account sign-in renews here: its spawn sets SSH_CONNECTION, so a revoked token fails fast instead of opening a browser.
+    const renewCliToken =
+      auth.authMethod !== "oauth-personal"
+        ? undefined
+        : Effect.gen(function* () {
+            const processScope = yield* Scope.make();
+            yield* Effect.addFinalizer((exit) => Scope.close(processScope, exit));
+            return yield* authFlow
+              .withProcess(
+                Scope.close(processScope, Exit.void),
+                Effect.gen(function* () {
+                  const runtime = yield* makeDisposableRuntime({ headless: true });
+                  yield* runtime.authenticate(auth.authMethod);
+                  return "renewed" as const;
+                }),
+              )
+              .pipe(Effect.provideService(Scope.Scope, processScope));
+          }).pipe(
+            Effect.scoped,
+            Effect.withSpan("AntigravityDriver.renewCliToken"),
+            Effect.catch((cause) =>
+              Effect.succeed(
+                isProviderSetupError(cause) && cause.operation === "startProcess"
+                  ? ("busy" as const)
+                  : ("failed" as const),
+              ),
+            ),
+          );
+
     const usage = yield* makeAntigravityUsageProbe({
       profileDirectory,
       authMethod: auth.authMethod,
+      ...(renewCliToken ? { renewCliToken } : {}),
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
