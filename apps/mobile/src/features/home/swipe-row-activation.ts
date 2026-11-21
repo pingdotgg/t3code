@@ -37,6 +37,26 @@ export function createSwipeRowActivation() {
   };
 }
 
+const SWIPE_ROW_BUFFER = 2;
+
+export function visibleSwipeRowKeys(
+  rows: ReadonlyArray<{ readonly key: string }>,
+  range: { readonly start?: number | null; readonly end?: number | null } | undefined,
+): ReadonlyArray<string> | null {
+  if (
+    range === undefined ||
+    typeof range.start !== "number" ||
+    typeof range.end !== "number" ||
+    range.start < 0 ||
+    range.end < 0
+  ) {
+    return null;
+  }
+  const start = Math.max(0, range.start - SWIPE_ROW_BUFFER);
+  const end = Math.min(rows.length, range.end + SWIPE_ROW_BUFFER + 1);
+  return start < end ? rows.slice(start, end).map((row) => row.key) : null;
+}
+
 export type SwipeRowActivation = ReturnType<typeof createSwipeRowActivation>;
 
 export const SwipeRowActivationContext = createContext<SwipeRowActivation | null>(null);

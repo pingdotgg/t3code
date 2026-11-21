@@ -97,7 +97,7 @@ import {
   type HomeProjectSortOrder,
   sortHomeProjectScopes,
 } from "./homeThreadList";
-import { createSwipeRowActivation } from "./swipe-row-activation";
+import { createSwipeRowActivation, visibleSwipeRowKeys } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { useFabScroll } from "./FabScrollContext";
 import { holdLaunchSplashForHomeRows, settleLaunchSplashHomeRows } from "./home-launch-splash";
@@ -285,17 +285,19 @@ export function HomeScreen(props: HomeScreenProps) {
     });
   });
   const swipeRowActivation = createSwipeRowActivation();
-  const activateVisibleRows = (rows: ReadonlyArray<ThreadListV2ListItem>) => {
+  const activateVisibleRows = (rows?: ReadonlyArray<ThreadListV2ListItem>) => {
     const state = listRef.current?.getState();
-    if (state === undefined || !(state.end >= 0)) return;
-    swipeRowActivation.activate(
-      rows.slice(Math.max(0, state.start - 2), state.end + 3).map((row) => row.key),
-    );
+    const keys = visibleSwipeRowKeys(rows ?? state?.data ?? [], state);
+    if (keys !== null) swipeRowActivation.activate(keys);
   };
   // Status-bar, accessibility and programmatic scrolls bypass the gate; activate visible rows after settling.
   const activationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the row activation timer on unmount
   useEffect(() => () => clearTimeout(activationTimerRef.current), []);
+  const scheduleVisibleRowActivation = (delayMs: number) => {
+    clearTimeout(activationTimerRef.current);
+    activationTimerRef.current = setTimeout(() => activateVisibleRows(), delayMs);
+  };
   const handleListScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     onFabScroll?.(event);
     if (workspace)
@@ -303,11 +305,7 @@ export function HomeScreen(props: HomeScreenProps) {
         "threads",
         Math.max(0, event.nativeEvent.contentOffset.y + contentTopInset),
       );
-    clearTimeout(activationTimerRef.current);
-    activationTimerRef.current = setTimeout(
-      () => activateVisibleRows(listRef.current?.getState().data ?? []),
-      200,
-    );
+    scheduleVisibleRowActivation(200);
   };
   const trackListTouches = (event: GestureResponderEvent, started: boolean) => {
     const { changedTouches, touches } = event.nativeEvent;
@@ -316,10 +314,13 @@ export function HomeScreen(props: HomeScreenProps) {
       touches.map((touch) => String(touch.identifier)),
     );
   };
-  const { swipeEnabled, scrollGateHandlers } = useSwipeableScrollGate({
+  const { swipeEnabled, resetScrollGate, scrollGateHandlers } = useSwipeableScrollGate({
     onScroll: handleListScroll,
     onScrollBeginDrag: handleScrollBeginDrag,
   });
+  const handleListLayoutChange = () => {
+    if (swipeEnabled) scheduleVisibleRowActivation(50);
+  };
 
   const { projects, selectedEnvironmentId, projectGroupingMode } = props;
   const projectScopes = useMemo(
@@ -456,10 +457,34 @@ export function HomeScreen(props: HomeScreenProps) {
     onSelectThread(thread);
   };
   useThreadJumpShortcuts(threadListV2Items, selectThread, props.onSelectPendingTask);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
+  const hasAnyThreads =
+    props.threads.some((thread) => thread.archivedAt === null) ||
+    props.pendingTasks.length > 0 ||
+    threadListV2Layout.settledCount > 0;
+  const hasMountedList =
+    hasAnyThreads && !(Platform.OS === "android" && threadListV2Items.length === 0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit and layout to enable swipe gestures on those rows
   useEffect(() => {
-    if (swipeEnabled) activateVisibleRows(threadListV2Items);
-  }, [activateVisibleRows, swipeEnabled, threadListV2Items]);
+    if (!props.visible || !hasMountedList) {
+      clearTimeout(activationTimerRef.current);
+      resetScrollGate();
+      swipeRowActivation.trackTouches([], []);
+      return;
+    }
+    if (!swipeEnabled) return;
+    activateVisibleRows(threadListV2Items);
+    // LegendList can defer visible-range recalculation after data changes to a microtask or item layout pass.
+    scheduleVisibleRowActivation(50);
+  }, [
+    activateVisibleRows,
+    hasMountedList,
+    props.visible,
+    resetScrollGate,
+    scheduleVisibleRowActivation,
+    swipeEnabled,
+    swipeRowActivation,
+    threadListV2Items,
+  ]);
 
   const renderV2Item = ({ item }: { readonly item: ThreadListV2ListItem }) => {
     if (item.type === "v2-pending") {
@@ -613,10 +638,6 @@ export function HomeScreen(props: HomeScreenProps) {
     workingShelfEnabled,
   };
 
-  const hasAnyThreads =
-    props.threads.some((thread) => thread.archivedAt === null) ||
-    props.pendingTasks.length > 0 ||
-    threadListV2Layout.settledCount > 0;
   // A hidden list gets no layout, so it never reports its rows as laid out.
   const hasRowsToLayOut = props.visible && hasAnyThreads && threadListV2Items.length > 0;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the native launch splash, which is outside React, until the rows are gone or this list unmounts; a layout effect runs before the splash hides in this commit
@@ -774,6 +795,13 @@ export function HomeScreen(props: HomeScreenProps) {
                   settleLaunchSplashHomeRows();
                   activateVisibleRows(threadListV2Items);
                 }}
+                onReady={() => {
+                  activateVisibleRows(threadListV2Items);
+                  handleListLayoutChange();
+                }}
+                onLayout={handleListLayoutChange}
+                onContentSizeChange={handleListLayoutChange}
+                onItemSizeChanged={handleListLayoutChange}
                 onTouchStart={(event) => trackListTouches(event, true)}
                 onTouchEnd={(event) => trackListTouches(event, false)}
                 onTouchCancel={(event) => trackListTouches(event, false)}
