@@ -110,11 +110,7 @@ function findStandaloneIssueUrl(trackers: ReadonlyArray<StandaloneIssueTrackerAp
   return null;
 }
 
-/**
- * Lower case, so a scope keeps its cursor whichever project's spelling of it is read. Two
- * accounts of one tracker share its host and may share a scope key, so an added account names
- * itself; the key still starts with the host, which is how clients group cursors.
- */
+/** Lower case, so a scope keeps its cursor whichever project's spelling is read. Clients group by the leading host. */
 function listCursorKey(project: ProjectTrackerBinding): string {
   const scope = project.scope.toLowerCase();
   return project.accountId === null

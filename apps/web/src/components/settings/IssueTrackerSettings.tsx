@@ -140,11 +140,7 @@ function TrackerRow({
       environmentId,
       input: addAccount
         ? { tracker: tracker.tracker, token, addAccount }
-        : {
-            tracker: tracker.tracker,
-            ...(tracker.accountId === undefined ? {} : { accountId: tracker.accountId }),
-            token,
-          },
+        : { tracker: tracker.tracker, accountId: tracker.accountId, token },
     });
     setBusy(false);
     if (result._tag === "Success") return true;

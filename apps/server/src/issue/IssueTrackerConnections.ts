@@ -94,22 +94,16 @@ const make = Effect.gen(function* () {
     scopes: [],
   });
 
-  const accountsOf = (tracker: IssueTrackerKind) =>
-    bindings.listAccounts.pipe(
-      Effect.map((accounts) =>
-        accounts
-          .filter((account) => account.tracker === tracker)
-          .map((account) => account.accountId),
-      ),
-      Effect.mapError(secretFailure(tracker, "The saved accounts could not be read.")),
-    );
-
   const requireAccount = Effect.fn("IssueTrackerConnections.requireAccount")(function* (
     tracker: IssueTrackerKind,
     accountId: IssueTrackerAccountId | undefined,
   ) {
     if (accountId === undefined) return null;
-    if ((yield* accountsOf(tracker)).includes(accountId)) return accountId;
+    const saved = yield* bindings.listAccounts.pipe(
+      Effect.mapError(secretFailure(tracker, "The saved accounts could not be read.")),
+    );
+    if (saved.some((account) => account.tracker === tracker && account.accountId === accountId))
+      return accountId;
     return yield* new IssueTrackerConnectionError({
       tracker,
       reason: "failed",

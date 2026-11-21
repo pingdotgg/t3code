@@ -159,11 +159,7 @@ export function IssueTrackerCredentialForm(props: {
       environmentId,
       input: props.addAccount
         ? { tracker: tracker.tracker, token, addAccount: true }
-        : {
-            tracker: tracker.tracker,
-            ...(tracker.accountId === undefined ? {} : { accountId: tracker.accountId }),
-            token,
-          },
+        : { tracker: tracker.tracker, accountId: tracker.accountId, token },
     });
     setBusy(false);
     if (!AsyncResult.isFailure(result)) {
