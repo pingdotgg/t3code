@@ -953,17 +953,35 @@ function legacyPullRequestLink(
 
 const DELEGATED_RESULT_INLINE_BYTES = 16_000;
 
+/** Provider output that shows a delivery run's agent acted on the wake; app-owned `subagent` rows can be other tasks'. */
+const DELIVERY_ANSWER_TURN_ITEM_TYPES: ReadonlyArray<OrchestrationV2TurnItem["type"]> = [
+  "assistant_message",
+  "subagent",
+  "reasoning",
+  "proposed_plan",
+  "todo_list",
+  "file_change",
+  "command_execution",
+  "file_search",
+  "web_search",
+  "dynamic_tool",
+  "user_input_request",
+  "approval_request",
+];
+
 function delegatedCompletionWakeDetail(
   taskIds: ReadonlyArray<string>,
   tasks: ReadonlyArray<OrchestrationV2Subagent>,
+  followedTaskIds: ReadonlyMap<string, NodeId>,
 ): string {
   let remainingBytes = DELEGATED_RESULT_INLINE_BYTES;
   return taskIds
     .map((taskId) => {
       const task = tasks.find((candidate) => candidate.id === taskId);
+      const followed = followedTaskIds.get(taskId);
       // A follow-up gets a fresh task id; the child thread links it to the task delegate_task returned.
       const thread = task?.childThreadId == null ? "" : ` in child thread ${task.childThreadId}`;
-      const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${thread}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
+      const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${thread}${followed === undefined ? "" : `, a follow-up of task ${followed} after the child ran again`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
       if (task?.result != null) {
         const detail = `${label}:\n${task.result}`;
         const bytes = Buffer.byteLength(detail);
@@ -1973,6 +1991,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const withIds = yield* Effect.forEach(events, (event) => makeSystemEvent(event));
       yield* eventSink.writeWithEffects({ events: withIds, effects, ...options });
     });
+
+  /** A task whose child was forked from another task is a follow-up of it; fork origins are immutable. */
+  const delegatedCompletionWakeText = Effect.fn("Orchestrator.delegatedCompletionWakeText")(
+    function* (taskIds: ReadonlyArray<string>, tasks: ReadonlyArray<OrchestrationV2Subagent>) {
+      const followedTaskIds = new Map<string, NodeId>();
+      for (const task of tasks) {
+        if (!taskIds.includes(task.id) || task.childThreadId === null) continue;
+        const child = yield* Effect.option(projectionStore.getThread(task.childThreadId));
+        const forkedFrom = Option.getOrUndefined(child)?.forkedFrom;
+        if (forkedFrom?.type === "node" && forkedFrom.nodeId !== task.id) {
+          followedTaskIds.set(task.id, forkedFrom.nodeId);
+        }
+      }
+      return delegatedCompletionWakeDetail(taskIds, tasks, followedTaskIds);
+    },
+  );
 
   const completionDeliveryRun = (
     projection: Pick<OrchestrationV2ThreadProjection, "messages" | "runs">,
@@ -3830,7 +3864,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: {
             ...message,
-            text: delegatedCompletionWakeDetail(remainingTaskIds, remainingTasks),
+            text: yield* delegatedCompletionWakeText(remainingTaskIds, remainingTasks),
             delegatedCompletion: {
               parentRunId: parentRun.id,
               generation: delivery.generation,
@@ -7722,7 +7756,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? ""
         : delegatedCompletion === undefined
           ? command.text
-          : delegatedCompletionWakeDetail(delegatedCompletion.taskIds, projection.subagents);
+          : yield* delegatedCompletionWakeText(delegatedCompletion.taskIds, projection.subagents);
     const sourcePlanProjection =
       command.sourcePlanRef === undefined
         ? null
@@ -14762,7 +14796,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? undefined
               : {
                   ...message,
-                  text: delegatedCompletionWakeDetail(
+                  text: yield* delegatedCompletionWakeText(
                     taskIds,
                     input.parentProjection.subagents.map((task) =>
                       task.id === input.updatedTask.id ? input.updatedTask : task,
@@ -15127,6 +15161,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const parentTurnItem = parentTask.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
       );
+      // Steers join the task's run, so its runs started on their own only if every message is a notification.
+      const followup = !cancelled && task.id !== forkedFrom.nodeId && taskRuns.length > 0;
+      const taskMessages = followup
+        ? (yield* projectionStore.getThreadRecords(childThreadId, ["messages"], {
+            messageRoles: ["user"],
+            messageRunIds: taskRuns.map((run) => run.id),
+          })).messages
+        : [];
+      // Queued follow-ups can run out of start order, so the last results are the last to complete.
+      const completedMillis = (candidate: OrchestrationV2Subagent) =>
+        candidate.completedAt === null
+          ? Number.NEGATIVE_INFINITY
+          : DateTime.toEpochMillis(candidate.completedAt);
+      const unprompted =
+        followup &&
+        taskMessages.length > 0 &&
+        taskMessages.every((message) => message.notification !== undefined);
+      const priorResults = unprompted
+        ? (yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+            subagentChildThreadIds: [childThreadId],
+          })).subagents.filter((candidate) => candidate.id !== task.id && candidate.result !== null)
+        : [];
+      const lastCompletedMillis = Math.max(...priorResults.map(completedMillis));
+      const lastResults = priorResults.filter(
+        (candidate) => completedMillis(candidate) === lastCompletedMillis,
+      );
+      // A follow-up the child started on its own that only repeats what the parent already got stays readable but silent.
+      const repeatsUnprompted =
+        unprompted &&
+        lastResults.length > 0 &&
+        lastResults.every(
+          (candidate) =>
+            candidate.status === terminalStatus &&
+            candidate.result === result.text &&
+            candidate.completionDelivery?.state !== "disposed",
+        );
       const updatedTask: OrchestrationV2Subagent = {
         ...task,
         providerThreadId: childRun.providerThreadId,
@@ -15140,7 +15210,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               cancelledRunId: childRun.id,
               completionDelivery: { state: "disposed" as const, observedByRunId: null },
             }
-          : {}),
+          : repeatsUnprompted &&
+              (task.completionDelivery === undefined ||
+                task.completionDelivery.state === "pending" ||
+                task.completionDelivery.state === "claimed")
+            ? { completionDelivery: { state: "delivered" as const, observedByRunId: null } }
+            : {}),
       };
       const completionPlan = yield* planDelegatedCompletionDelivery({
         parentProjection,
@@ -15415,6 +15490,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
 
+    // A cut run that already answered has delivered; re-offering would wake the parent twice.
+    const delivered =
+      deliveryRun.status !== "cancelled" ||
+      (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+        turnItemRunId: runId,
+        turnItemTypes: DELIVERY_ANSWER_TURN_ITEM_TYPES,
+      })).turnItems.some((item) => item.type !== "subagent" || item.origin === "provider_native");
     const now = yield* DateTime.now;
     const nextTaskStates = new Map<
       OrchestrationV2Subagent["id"],
@@ -15430,7 +15512,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         continue;
       }
       nextTaskStates.set(task.id, {
-        state: deliveryRun.status === "cancelled" ? "pending" : "delivered",
+        state: delivered ? "delivered" : "pending",
         observedByRunId: null,
       });
     }
