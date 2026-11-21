@@ -54,7 +54,7 @@ An `agent` step can launch a new thread with its own `workspace` (such as a work
 A plain code step runs once unless it asks for retries. When a step fails, the run pauses there instead of losing earlier work:
 
 - **Code step failures** retry automatically after 5, 20, and 80 minutes by default, or immediately when you resume; only that step runs again.
-- **Agent failures** — when an agent gives up or times out — pause and wait for you to resume rather than retrying automatically.
+- **Agent failures** — when an agent ran and gave up or timed out — pause and wait for you to resume rather than retrying automatically. An agent that could not be started at all, for example because its environment was offline, retries on its own like a failed step.
 
 Cancelling a run stops its active agent turns and cancels child runs it invoked. A cancelled run cannot be resumed.
 
