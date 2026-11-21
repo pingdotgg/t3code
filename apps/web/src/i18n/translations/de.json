@@ -5270,6 +5270,10 @@
   "4b4ef3f2e2ed2c56": "{name} starten",
   "08098a6fb84e8a34": "Öffnen",
   "c71a5080b2026870": "Starten",
+  "cfae7ef07c37220e": "einem anderen Thread",
+  "23d5d026ee80963b": "Von {title} übernehmen",
+  "01e8d054b2d2f232": "Wird übernommen…",
+  "746c576ea195806b": "Übernehmen",
   "a34247bae083cebf": "Gerätefehler schließen",
   "191353bd8f033118": "Die Listen {first} und {second} auf {host} sind möglicherweise unvollständig.",
   "b17bcd4cbf80442e": "Die {platform}-Liste auf {host} ist möglicherweise unvollständig.",
@@ -5287,6 +5291,33 @@
   ],
   "e902f208c4e6146f": "Keine virtuellen Android-Geräte gefunden. Erstelle eines im Geräte-Manager von Android Studio und aktualisiere dann.",
   "d9a71f3db685cb0e": "Geräte aktualisieren",
+  "ce2da8d9521a3ef4": [
+    "Belegt durch ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", läuft gerade."
+  ],
+  "5fae5a165e609f5a": [
+    "Belegt durch ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", läuft gerade nicht."
+  ],
+  "9c4958e3e914e8e8": [
+    "Belegt durch ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "4ad8ced64defdf73": "Interaktives 3D-Gerät. Ziehe auf dem Bildschirm, um es zu bedienen. Ziehe außerhalb oder wische mit zwei Fingern, um es zu drehen.",
   "84e4baf07ad8883d": "Erlaube dieser Umgebung, Simulatoren und Emulatoren zu öffnen, egal ob sie hier oder auf einem entfernten Geräte-Host laufen.",
   "771365c337509a82": "Neuen Agentensitzungen in dieser Umgebung erlauben, lokale und entfernte Geräte zu starten und zu steuern; die nötigen Tools werden automatisch eingerichtet.",

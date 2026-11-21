@@ -96,6 +96,14 @@ vi.mock("~/rightPanelStore", () => ({
   },
   selectThreadRightPanelState: () => ({ isOpen: false, activeSurfaceId: null, surfaces: [] }),
 }));
+vi.mock("~/state/entities", () => ({
+  useThreadShell: () => ({ title: "Holder", runtime: { status: "running" } }),
+}));
+vi.mock("~/components/ThreadContextChip", () => ({
+  ThreadContextChip: ({ record }: { record: { threadId: string } }) => (
+    <a href={`/${record.threadId}`}>{record.threadId}</a>
+  ),
+}));
 vi.mock("~/components/device/DeviceHostUpdates", () => ({ DeviceHostUpdates: () => null }));
 vi.mock("~/components/device/DeviceWorkspace", () => ({
   DeviceWorkspace: ({ onPowerOff }: { onPowerOff: () => void }) => (
@@ -195,6 +203,48 @@ describe("DevicePanel thread switches", () => {
     expect(mocks.openDevice.mock.calls).toEqual([
       [threadB, phoneTarget],
       [threadA, phoneTarget],
+    ]);
+  });
+});
+
+describe("DevicePanel takeover", () => {
+  const holder = ThreadId.make("thread-holder");
+  const session = {
+    hostId: "local",
+    deviceId: "phone",
+    platform: "ios",
+    openedAt: "2026-01-01T00:00:00.000Z",
+  } as const;
+  const shared: DeviceServiceState = {
+    ...deviceState,
+    sessions: [
+      ...deviceState.sessions,
+      { ...session, threadId: holder },
+      // The same serial on another host is a different device.
+      { ...session, threadId: ThreadId.make("thread-elsewhere"), hostId: "ssh" },
+    ],
+  };
+  const openPhone: Extract<RightPanelSurface, { kind: "device" }> = {
+    ...picker,
+    target: { ...phoneTarget, platform: "ios" },
+  };
+
+  it("closes the holder's session, even mid-run, so this thread's agent can claim the device", async () => {
+    setup();
+    currentState = shared;
+    mocks.close.mockResolvedValue(opened);
+    await using screen = await render(devicePanel(threadA, openPhone), { container });
+
+    await expect.element(screen.getByText("thread-elsewhere")).not.toBeInTheDocument();
+    await screen.getByRole("button", { name: "Take over from Holder" }).click();
+
+    expect(mocks.close.mock.calls).toEqual([
+      [
+        {
+          environmentId: threadA.environmentId,
+          input: { threadId: holder, hostId: "local", deviceId: "phone" },
+        },
+      ],
     ]);
   });
 });

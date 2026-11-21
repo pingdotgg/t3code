@@ -2072,6 +2072,7 @@
   "9e33004237e3c6a0": "Got it",
   "0cf35ae8d7452516": "Could not shut down device",
   "94f8e4fd2497326d": "Device tool versions",
+  "b632b6f918e8bd7b": "Could not take over device",
   "84718257bae3bc62": "Retry {host}",
   "30c35ac54f6f8a88": "Check device tool versions",
   "67ac0604fc3d0a97": "Reload stream",
@@ -2087,7 +2088,53 @@
   "9f69be831934bb6d": "Hide device controls",
   "4dfe18eea6b9c818": "Close device preview",
   "41bfb61ffe885a86": "Show device controls",
+  "cfae7ef07c37220e": "another thread",
+  "2025fc2a5f89a7fb": "Open thread {title}",
+  "746c576ea195806b": "Take over",
+  "23d5d026ee80963b": "Take over from {title}",
   "59235647923be335": "Device options",
+  "4104bad7a6a8b8b7": [
+    "Busy in",
+    " ",
+    {
+      "t": "AppText",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    ", which is running."
+  ],
+  "337acff156b4268b": [
+    "Busy in",
+    " ",
+    {
+      "t": "AppText",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    ", which isn't running."
+  ],
+  "d61c4ee92724bb14": [
+    "Busy in",
+    " ",
+    {
+      "t": "AppText",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    "."
+  ],
   "a373590cbd15c434": "Connecting to device...",
   "bf9ade51c568a251": "Device viewer could not start. Reconnect to try again.",
   "e51517909200c9ea": "Device viewer stopped. Reconnect to try again.",

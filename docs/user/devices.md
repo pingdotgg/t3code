@@ -79,6 +79,12 @@ If the thread has several devices open, choose one in the viewer. Closing the
 viewer stops streaming and leaves the device available to the agent. Device
 activity also appears in the thread timeline.
 
+Only one thread's agent can drive a device at a time. When another thread also
+has the device open, the Device panel and the mobile viewer name that thread
+and say whether it is still running; select the name to go there. Choose
+**Take over** to close the device there so this thread's agent can use it. An
+agent still working in that thread loses the device.
+
 Agents drive the device through the `agent-device` command line. T3
 Code installs and starts it only after **Agents can use devices** is on. iOS
 taps build a small test runner on first use, which takes a couple of minutes

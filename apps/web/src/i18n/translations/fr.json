@@ -5269,6 +5269,10 @@
   "4b4ef3f2e2ed2c56": "Démarrer {name}",
   "08098a6fb84e8a34": "Ouvrir",
   "c71a5080b2026870": "Démarrer",
+  "cfae7ef07c37220e": "un autre fil",
+  "23d5d026ee80963b": "Prendre le contrôle depuis {title}",
+  "01e8d054b2d2f232": "Prise de contrôle…",
+  "746c576ea195806b": "Prendre le contrôle",
   "a34247bae083cebf": "Ignorer l’erreur de l’appareil",
   "191353bd8f033118": "Les listes {first} et {second} sur {host} sont peut-être incomplètes.",
   "b17bcd4cbf80442e": "La liste {platform} sur {host} est peut-être incomplète.",
@@ -5287,6 +5291,33 @@
   ],
   "e902f208c4e6146f": "Aucun appareil virtuel Android trouvé. Créez-en un dans le Device Manager d’Android Studio, puis actualisez.",
   "d9a71f3db685cb0e": "Actualiser les appareils",
+  "ce2da8d9521a3ef4": [
+    "Occupé dans ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", qui est en cours."
+  ],
+  "5fae5a165e609f5a": [
+    "Occupé dans ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", qui n'est pas en cours."
+  ],
+  "9c4958e3e914e8e8": [
+    "Occupé dans ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "4ad8ced64defdf73": "Appareil 3D interactif. Faites glisser l’écran pour interagir. Faites glisser en dehors ou balayez avec deux doigts pour le faire tourner.",
   "84e4baf07ad8883d": "Autorisez cet environnement à ouvrir des simulateurs et des émulateurs, qu’ils tournent ici ou sur un hôte d’appareils distant.",
   "771365c337509a82": "Autorisez les nouvelles sessions d’agent de cet environnement à démarrer et contrôler des appareils locaux et distants, avec les outils nécessaires configurés automatiquement.",
