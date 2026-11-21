@@ -12460,5 +12460,9 @@
   "b7df38b7d8792d78": "Leitfaden öffnen",
   "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
   "d8aaf932f90429c4": "Diesen Befehl an den Anfang der Warteschlange verschieben ({shortcut})",
-  "425ab15036aec8a4": "Diesen Befehl an den Anfang der Warteschlange verschieben"
+  "425ab15036aec8a4": "Diesen Befehl an den Anfang der Warteschlange verschieben",
+  "c4370cc5c4ac8b97": "T3 Code legt Threads ohne Projekt in {baseDir} ab. Dieser Ordner liegt im Git-Repository unter {repositoryRoot}. Zum Schutz dieses Repositorys sind diese Threads auf diesem Rechner deaktiviert.",
+  "89ad9ed9e0c8ee31": "Thread ohne Projekt kann nicht gestartet werden",
+  "0df8611d9ab52b03": "So behebst du das",
+  "cdd62cfda13b358c": "So behebst du das"
 }

@@ -12455,5 +12455,9 @@
   "b7df38b7d8792d78": "Abrir guía",
   "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
   "d8aaf932f90429c4": "Mover este comando al principio de la cola ({shortcut})",
-  "425ab15036aec8a4": "Mover este comando al principio de la cola"
+  "425ab15036aec8a4": "Mover este comando al principio de la cola",
+  "c4370cc5c4ac8b97": "T3 Code guarda los hilos sin proyecto en {baseDir}, que está dentro del repositorio Git de {repositoryRoot}. Para proteger ese repositorio, estos hilos están desactivados en esta máquina.",
+  "89ad9ed9e0c8ee31": "No se puede iniciar un hilo sin proyecto",
+  "0df8611d9ab52b03": "Cómo solucionarlo",
+  "cdd62cfda13b358c": "Cómo solucionarlo"
 }
