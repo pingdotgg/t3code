@@ -79,6 +79,20 @@ If you have multiple `tea` accounts on one server, select one with
 `tea login default <login-name>`. Git push and clone also need Git credentials or an SSH key
 for that server.
 
+`fj` stores servers without a scheme, so T3 Code treats an `fj` login as HTTPS unless the
+project's remote is an `http://` URL on the same host. For a server that only serves plain HTTP,
+such as a local test instance, sign in with `fj --host http://your-server auth add-token` and keep
+an `http://` fetch URL. If you push over SSH, including through an SSH host alias from
+`~/.ssh/config`, set only the push URL to SSH:
+
+```sh
+git remote set-url origin http://your-server/owner/repo.git
+git remote set-url --push origin ssh://your-ssh-alias/owner/repo.git
+```
+
+T3 Code caches each project's remote, so restart the T3 Code server (or the desktop app) after
+changing the remote of a project you already added.
+
 ### GitLab
 
 Install [GitLab CLI](https://gitlab.com/gitlab-org/cli), then sign in:
@@ -336,6 +350,10 @@ and their marks follow the same rules as on web and desktop.
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
   check the credentials saved in Settings → Source control & issues, or confirm the running server received
   the environment variables.
+- **Forgejo asks you to install a CLI although `fj` is signed in:** the project's remote does not
+  match the `fj` login. On a plain-HTTP server, or with an SSH remote that uses a host alias, use an
+  `http://` fetch URL with an SSH push URL as described in [Forgejo and Gitea](#forgejo-and-gitea),
+  then restart the T3 Code server.
 - **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0, or save a token in Settings → Source control & issues.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.
