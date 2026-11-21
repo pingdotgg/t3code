@@ -25,6 +25,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import { applySpeechAliases, speechRecognitionWords } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
+import { openRouterHintOptions } from "./openRouterHints.ts";
 import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
 
 const endpoints = {
@@ -95,12 +96,22 @@ function audioBody(
   return HttpClientRequest.bodyFormData(form);
 }
 
-function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
+function openRouterBody(
+  model: string,
+  audio: ArrayBuffer,
+  language: string,
+  options: SpeechTranscriptionOptions,
+) {
+  const words = speechRecognitionWords(
+    options.speechHints,
+    options.speechCustomWords.map(({ term }) => term),
+  );
+  const hintOptions = openRouterHintOptions(words);
   return HttpClientRequest.bodyJsonUnsafe({
     model,
     input_audio: { data: Buffer.from(audio).toString("base64"), format: "wav" },
     ...(language !== "auto" ? { language } : {}),
-    provider: { zdr: true },
+    provider: { zdr: true, ...(hintOptions ? { options: hintOptions } : {}) },
   });
 }
 
@@ -214,7 +225,7 @@ export const layer = Layer.effect(
         const request = HttpClientRequest.post(endpoints[provider].url).pipe(
           HttpClientRequest.bearerToken(Redacted.make(key)),
           provider === "openrouter"
-            ? openRouterBody(model!, audio, language)
+            ? openRouterBody(model!, audio, language, options)
             : audioBody(provider, audio, language, options),
         );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });

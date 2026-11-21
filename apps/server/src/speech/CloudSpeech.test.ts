@@ -151,7 +151,7 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
     const body = JSON.parse(yield* Effect.promise(() => new Response(init.body).text())) as {
       model: string;
       models?: unknown;
-      provider: { zdr: boolean };
+      provider: { zdr: boolean; options?: unknown };
       input_audio: { format: string; data: string };
     };
     expect(body).toMatchObject({
@@ -159,10 +159,64 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
       provider: { zdr: true },
       input_audio: { format: "wav" },
     });
+    expect(body.provider).toEqual({ zdr: true });
     expect(body.models).toBeUndefined();
     const wav = Buffer.from(body.input_audio.data, "base64");
     expect(wav.toString("ascii", 0, 4)).toBe("RIFF");
     expect(wav.readInt16LE(46)).toBe(16384);
+  }),
+);
+
+it.effect("sends custom words to OpenRouter in each provider's vocabulary field", () =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async (input) =>
+      new URL(String(input)).pathname.endsWith("/models")
+        ? Response.json({ data: [{ id: "microsoft/mai-transcribe-2" }] })
+        : Response.json({ text: "hello" }),
+    );
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    yield* service.setKey("openrouter", Redacted.make("router-key"));
+    const words = ["T3 Code", "OpenRouter"];
+    expect(
+      yield* service
+        .transcribe(
+          "openrouter",
+          new Uint8Array(new Float32Array([0, 0.5]).buffer),
+          {
+            ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+            speechLanguage: "en",
+            speechCustomWords: words.map((term) => ({ term, aliases: [] })),
+            speechHints: ["Vite"],
+          },
+          "microsoft/mai-transcribe-2",
+        )
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
+    ).toBe("hello");
+    const upload = upstream.mock.calls.find(([url]) =>
+      String(url).endsWith("/audio/transcriptions"),
+    )!;
+    const body = JSON.parse(yield* Effect.promise(() => new Response(upload[1]!.body).text())) as {
+      provider: { zdr: boolean; options?: unknown };
+    };
+    expect(body.provider).toEqual({
+      zdr: true,
+      options: {
+        azure: { phraseList: { phrases: ["Vite", "T3 Code", "OpenRouter"] } },
+        "google-vertex": { custom_vocabulary: ["Vite", "T3 Code", "OpenRouter"] },
+        assemblyai: { keyterms_prompt: ["Vite", "T3 Code", "OpenRouter"] },
+        openai: { prompt: "Expected vocabulary: Vite, T3 Code, OpenRouter" },
+        groq: { prompt: "Expected vocabulary: Vite, T3 Code, OpenRouter" },
+        together: { prompt: "Expected vocabulary: Vite, T3 Code, OpenRouter" },
+      },
+    });
   }),
 );
 
