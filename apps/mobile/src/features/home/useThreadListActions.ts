@@ -823,16 +823,11 @@ export function useThreadListActions(): {
   };
 }
 
-export function useArchivedThreadListActions(
-  onCompleted: (thread: EnvironmentThreadShell) => void,
-): {
+export function useArchivedThreadListActions(): {
   readonly unarchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
 } {
-  const handleCompleted = (_action: ThreadListAction, thread: EnvironmentThreadShell) => {
-    onCompleted(thread);
-  };
-  const executeAction = useThreadActionExecutor(handleCompleted);
+  const executeAction = useThreadActionExecutor();
   const unarchiveThread = (thread: EnvironmentThreadShell) => {
     void executeAction("unarchive", thread);
   };

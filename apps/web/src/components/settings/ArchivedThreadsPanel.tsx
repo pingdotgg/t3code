@@ -56,7 +56,6 @@ export function ArchivedThreadsPanel() {
     snapshots: archivedSnapshots,
     error: archiveError,
     isLoading: isLoadingArchive,
-    refresh: refreshArchivedThreads,
   } = useArchivedThreadSnapshots(scope.environmentIds);
 
   const { groups: archivedGroups, hasMultipleEnvironments } = (() => {
@@ -176,13 +175,11 @@ export function ArchivedThreadsPanel() {
     if (pending.has(key)) return;
     pending.add(key);
     setPendingKeys(new Set(pending));
-    const result = await settlePromise(async () => {
-      const result = await (action === "unarchive"
-        ? unarchiveThread(target)
-        : confirmAndDeleteThread(target, thread.title));
-      if (result._tag === "Success") refreshArchivedThreads();
-      return result;
-    }).finally(() => {
+    const result = await settlePromise(async () =>
+      action === "unarchive"
+        ? await unarchiveThread(target)
+        : await confirmAndDeleteThread(target, thread.title),
+    ).finally(() => {
       pending.delete(key);
       setPendingKeys(new Set(pending));
     });

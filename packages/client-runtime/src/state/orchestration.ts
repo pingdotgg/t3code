@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { HttpClient } from "effect/http";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import {
   applyCommandOutputFrame,
@@ -242,11 +242,31 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:archived-shell-snapshot",
       tag: ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
       // The shell reports archiving a thread, and deleting or changing an archived one, as a removal,
-      // and replaces `removedAt` on each one.
-      refreshTrigger: ({ environmentId }) => {
+      // and replaces `removedAt` on each one. A removal the loaded or in-flight archive already
+      // reflects, such as the one this client's own action just refreshed for, is not re-read.
+      refreshTrigger: ({ environmentId }, query) => {
         if (shellState === undefined) return undefined;
         const state = shellState(environmentId);
-        return Atom.make((get) => get(state).removedAt);
+        // Held outside the node so a swept and rebuilt node does not report a change.
+        const signals = new WeakMap<AtomRegistry.AtomRegistry, unknown>();
+        return Atom.make((get) => {
+          const { removedAt } = get(state);
+          const result = get(query);
+          const previous = signals.get(get.registry);
+          let signal: unknown = removedAt;
+          if (previous !== undefined && removedAt.size > 0) {
+            let lastRemoval = -1;
+            for (const sequence of removedAt.values())
+              lastRemoval = Math.max(lastRemoval, sequence);
+            const loaded = Option.match(AsyncResult.value(result), {
+              onNone: () => -1,
+              onSome: (snapshot) => snapshot.snapshotSequence,
+            });
+            if (result.waiting || lastRemoval <= loaded) signal = previous;
+          }
+          signals.set(get.registry, signal);
+          return signal;
+        });
       },
     }),
     threadFamily: createEnvironmentRpcQueryAtomFamily(runtime, {
