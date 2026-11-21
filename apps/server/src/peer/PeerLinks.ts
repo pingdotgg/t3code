@@ -88,7 +88,7 @@ export interface ResolvedPeerLink {
 export const LINK_CLIENT_NAME_PREFIX = "T3 Code · ";
 
 export const LINKED_ENVIRONMENTS_OFF =
-  "Linked environments is off on this machine. Turn it on in Settings → Labs.";
+  'Linked environments is off on this machine. Turn it on in Settings → Labs, or without a desktop, set "linkedEnvironmentsEnabled": true in userdata/settings.json in the T3 home (~/.t3 by default). Both linked machines need it on.';
 
 /**
  * Links from this environment to others. Linking signs this environment in to
