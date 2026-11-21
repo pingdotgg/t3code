@@ -36,6 +36,10 @@ it("distinguishes unsupported tools from input items without exposing the raw re
   for (const [detail, expected] of [
     ["tool 'namespace' is not supported", "tool namespace"],
     ["input item 'additional_tools' is not supported", "input item"],
+    [
+      "User subscription sharing currently supports only text, image, and file messages, item references, additional tools, compaction summaries, reasoning items, Web Search call items, developer function and custom tool call items, and programmatic tool calling items. Remove unsupported input items or use an API key instead.",
+      "input item",
+    ],
   ]) {
     const response = { error: { code, message: `${detail}; dummy-sensitive` } };
     for (const value of [response, JSON.stringify(response)]) {
