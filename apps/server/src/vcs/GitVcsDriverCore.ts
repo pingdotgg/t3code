@@ -1968,25 +1968,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     Effect.orElseSucceed(() => null),
   );
 
+  // Returns the upstream remote name it read, or undefined when it did not read one.
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
     cwd: string,
+    knownHeadRef?: string,
   ) {
-    if (Duration.isZero(yield* automaticFetchInterval)) return;
-    const headRef = yield* runGitStdout(
-      "GitVcsDriver.refreshStatusUpstreamIfStale.headRef",
-      cwd,
-      ["symbolic-ref", "--quiet", "HEAD"],
-      true,
-    ).pipe(Effect.map((stdout) => stdout.trim()));
-    if (headRef.length === 0) return;
-    const remoteName = yield* runGitStdout(
+    if (Duration.isZero(yield* automaticFetchInterval)) return undefined;
+    const headRef =
+      knownHeadRef ??
+      (yield* runGitStdout(
+        "GitVcsDriver.refreshStatusUpstreamIfStale.headRef",
+        cwd,
+        ["symbolic-ref", "--quiet", "HEAD"],
+        true,
+      ).pipe(Effect.map((stdout) => stdout.trim())));
+    if (headRef.length === 0) return undefined;
+    const upstreamRemote = yield* executeGit(
       "GitVcsDriver.refreshStatusUpstreamIfStale.upstreamRemote",
       cwd,
       ["for-each-ref", "--format=%(upstream:remotename)", headRef],
-      true,
-    ).pipe(Effect.map((stdout) => stdout.trim()));
+      { allowNonZeroExit: true },
+    );
+    if (upstreamRemote.exitCode !== 0) return undefined;
+    const remoteName = upstreamRemote.stdout.trim();
     // Empty means no upstream; `.` means the upstream is a local branch.
-    if (remoteName.length === 0 || remoteName === ".") return;
+    if (remoteName.length === 0 || remoteName === ".") return remoteName;
     const gitCommonDir = yield* resolveGitCommonDir(cwd);
     yield* Cache.get(
       statusRemoteRefreshCache,
@@ -1996,6 +2002,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // The cache returns after five seconds while the fetch keeps running.
     const pending = statusFetches.get(`${gitCommonDir}\0${remoteName}`);
     if (pending) yield* Fiber.await(pending.fiber);
+    return remoteName;
   });
 
   const resolveDefaultBranchName = (
@@ -2515,7 +2522,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
   });
 
-  const readStatusDetailsRemote = Effect.fn("readStatusDetailsRemote")(function* (cwd: string) {
+  const readStatusDetailsRemote = Effect.fn("readStatusDetailsRemote")(function* (
+    cwd: string,
+    refreshUpstream: boolean,
+  ) {
     const branchResult = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.statusDetailsRemote.branch",
       cwd,
@@ -2532,6 +2542,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return NON_REPOSITORY_REMOTE_STATUS_DETAILS;
     }
     let branch: string | null;
+    let headRef: string;
     if (branchResult.exitCode !== 0) {
       if (isNonRepositoryGitStderr(branchResult.stderr)) {
         return NON_REPOSITORY_REMOTE_STATUS_DETAILS;
@@ -2556,10 +2567,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ["symbolic-ref", "--quiet", "HEAD"],
       );
       branch = branchNameFromHeadRef(branchValue);
+      // An unborn branch has no ref, so for-each-ref below cannot report its upstream.
+      headRef = "";
     } else {
       branch = branchNameFromHeadRef(branchResult.stdout);
+      headRef = branchResult.stdout.trim();
     }
-    const currentUpstreamRef = yield* readCurrentUpstreamRef(cwd);
+    let upstreamRemoteName: string | undefined;
+    if (refreshUpstream) {
+      // A detached HEAD prints `HEAD`, which has no upstream to refresh.
+      yield* refreshStatusUpstreamIfStale(cwd, headRef.startsWith("refs/") ? headRef : "").pipe(
+        Effect.map((remoteName) => {
+          upstreamRemoteName = remoteName;
+        }),
+        Effect.catchTags({
+          GitCommandError: (error) =>
+            isMissingGitCwdError(error) ? Effect.void : Effect.fail(error),
+        }),
+        Effect.ignoreCause({ log: true }),
+      );
+    }
+    // `%(upstream:remotename)` is empty exactly when `@{upstream}` does not resolve.
+    const currentUpstreamRef =
+      upstreamRemoteName === "" ? null : yield* readCurrentUpstreamRef(cwd);
     let upstreamRef = currentUpstreamRef;
     // Trimming a remote that starts with Unicode whitespace can leave a leading slash.
     if (currentUpstreamRef?.startsWith("/")) {
@@ -2966,16 +2996,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const statusDetailsRemote: GitVcsDriver.GitVcsDriver["Service"]["statusDetailsRemote"] =
     Effect.fn("statusDetailsRemote")(function* (cwd, options) {
-      if (options?.refreshUpstream !== false) {
-        yield* refreshStatusUpstreamIfStale(cwd).pipe(
-          Effect.catchTags({
-            GitCommandError: (error) =>
-              isMissingGitCwdError(error) ? Effect.void : Effect.fail(error),
-          }),
-          Effect.ignoreCause({ log: true }),
-        );
-      }
-      return yield* readStatusDetailsRemote(cwd);
+      return yield* readStatusDetailsRemote(cwd, options?.refreshUpstream !== false);
     });
 
   const status: GitVcsDriver.GitVcsDriver["Service"]["status"] = (input) =>
