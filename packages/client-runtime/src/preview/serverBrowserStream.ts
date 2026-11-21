@@ -107,6 +107,12 @@ export interface PreviewStreamDownload {
   readonly url: string;
 }
 
+/** Text the page copied after the user's click; write it only on a further local action. */
+export interface PreviewStreamCopyOffer {
+  readonly text: string;
+  readonly host: string;
+}
+
 export interface PreviewStreamFileChooser {
   readonly multiple: boolean;
   readonly accept: string;
@@ -197,6 +203,7 @@ export interface PreviewStreamEvents {
   readonly onPointer?: (pointer: PreviewStreamPointer) => void;
   readonly onControl?: (control: PreviewStreamControl) => void;
   readonly onClipboard?: (text: string) => void;
+  readonly onCopyOffer?: (offer: PreviewStreamCopyOffer) => void;
   readonly onDownload?: (download: PreviewStreamDownload) => void;
   readonly onPopup?: (tabId: string) => void;
   readonly onFileChooser?: (chooser: PreviewStreamFileChooser | null) => void;
@@ -286,6 +293,7 @@ export function createPreviewStreamClient(
         phase,
         sequence,
         tabId,
+        host,
       } = message as Record<string, unknown>;
       if (
         type === "fileChooser" &&
@@ -316,6 +324,8 @@ export function createPreviewStreamClient(
         events.onPopup?.(tabId);
       } else if (type === "clipboard" && typeof text === "string") {
         events.onClipboard?.(text);
+      } else if (type === "copyOffer" && typeof text === "string" && typeof host === "string") {
+        events.onCopyOffer?.({ text, host });
       } else if (
         type === "download" &&
         typeof id === "string" &&

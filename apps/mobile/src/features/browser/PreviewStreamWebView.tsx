@@ -7,6 +7,7 @@ import {
   previewStreamControlLabel,
   previewStreamHostSetupMessage,
   type PreviewStreamControl,
+  type PreviewStreamCopyOffer,
   type PreviewStreamDownload,
   type PreviewStreamFileChooser,
   type PreviewStreamInput,
@@ -92,6 +93,23 @@ async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean)
     credentials: chooser.credentials ? "include" : "omit",
   });
   if (!response.ok) throw new Error((await response.text()) || m(msg("The upload was refused.")));
+}
+
+/** Only this tap writes a page's own copy to the clipboard. */
+function offerPageCopy({ text, host }: PreviewStreamCopyOffer) {
+  const title = host
+    ? m(msg("{host} wants to copy text", { host }))
+    : m(msg("This page wants to copy text"));
+  Dialog.alert(title, undefined, [
+    { text: m(msg("Not now")), style: "cancel" },
+    {
+      text: m(msg("Copy", { $context: "verb, copies text to the clipboard" })),
+      onPress: () =>
+        void Clipboard.setStringAsync(text).catch(() =>
+          Dialog.alert(m(msg("Could not copy the text"))),
+        ),
+    },
+  ]);
 }
 
 function offerDownload(download: PreviewStreamDownload) {
@@ -418,6 +436,9 @@ function PreviewStreamDocumentView({
                 return;
               case "clipboard":
                 void Clipboard.setStringAsync(message.text).catch(() => undefined);
+                return;
+              case "copyOffer":
+                offerPageCopy(message);
                 return;
               case "download":
                 offerDownload(message);

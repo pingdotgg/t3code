@@ -5,6 +5,7 @@ import {
   previewStreamModifiers,
   type PreviewStreamClient,
   type PreviewStreamControl,
+  type PreviewStreamCopyOffer,
   type PreviewStreamDownload,
   type PreviewStreamFileChooser,
   uploadPreviewStreamFiles,
@@ -39,6 +40,7 @@ import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
@@ -126,6 +128,29 @@ async function copyPageText(text: string) {
       },
     });
   }
+}
+
+/** Only this click writes a page's own copy to the clipboard. */
+function offerPageCopy({ text, host }: PreviewStreamCopyOffer) {
+  const id = toastManager.add({
+    type: "info",
+    title: host
+      ? m(msg("{host} wants to copy text", { host }))
+      : m(msg("This page wants to copy text")),
+    actionProps: {
+      children: m(msg("Copy", { $context: "verb, copies text to the clipboard" })),
+      onClick: () => {
+        toastManager.close(id);
+        void writeTextToClipboard(text).catch((cause: unknown) =>
+          toastManager.add({
+            type: "error",
+            title: m(msg("Could not copy the text")),
+            description: thrownErrorMessage(cause, m) ?? undefined,
+          }),
+        );
+      },
+    },
+  });
 }
 
 function offerDownload(download: PreviewStreamDownload) {
@@ -417,6 +442,7 @@ export function ServerBrowserSurface(props: {
           if (placed) setAgentCursor(placed);
         },
         onClipboard: (text) => void copyPageText(text),
+        onCopyOffer: offerPageCopy,
         onDownload: offerDownload,
         onPopup: popupOpened,
         onFileChooser: setFileChooser,

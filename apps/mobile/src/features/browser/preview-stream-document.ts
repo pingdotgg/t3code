@@ -2,6 +2,7 @@ import type { DeviceHubAccess } from "@t3tools/client-runtime/device/hub-access"
 import type { PreviewStreamHostSetup } from "@t3tools/contracts";
 import type {
   PreviewStreamControl,
+  PreviewStreamCopyOffer,
   PreviewStreamDownload,
   PreviewStreamFileChooser,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
@@ -35,6 +36,7 @@ export type PreviewStreamMessage =
   /** The direction a drag scrolls the page, sent every few dozen pixels of it. */
   | { readonly type: "scroll"; readonly direction: "up" | "down" }
   | { readonly type: "clipboard"; readonly text: string }
+  | ({ readonly type: "copyOffer" } & PreviewStreamCopyOffer)
   | ({ readonly type: "download" } & PreviewStreamDownload)
   | { readonly type: "fileChooser"; readonly chooser: PreviewStreamFileChooser | null }
   | {
