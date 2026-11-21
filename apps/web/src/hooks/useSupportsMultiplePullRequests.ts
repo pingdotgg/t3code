@@ -1,7 +1,11 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useServerConfigs } from "~/state/entities";
+import { useAtomValue } from "@effect/atom-react";
+import { environmentPresentations } from "~/state/presentation";
 
 export function useSupportsMultiplePullRequests(environmentId: EnvironmentId | null): boolean {
-  const configs = useServerConfigs();
-  return environmentId !== null && configs.get(environmentId) !== undefined;
+  // Select the boolean: every server-config push replaces the map, and most callers are list rows.
+  return useAtomValue(
+    environmentPresentations.serverConfigsAtom,
+    (configs) => environmentId !== null && configs.has(environmentId),
+  );
 }
