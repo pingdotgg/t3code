@@ -16,11 +16,13 @@ pub(crate) mod controls;
 use conn_client::ConnectionStatus;
 use conn_theme::{Appearance, Rgba, ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, MouseButton,
-    ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, actions, anchored, deferred, div, point, px,
+    AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, FontWeight, InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent,
+    MouseButton, ParentElement as _, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, actions, anchored,
+    deferred, div, point, px,
 };
 
 use crate::icons;
@@ -112,6 +114,8 @@ pub(crate) struct SettingsModal {
     reduce_transparency: bool,
     connection: SettingsConnectionInfo,
     themes: Vec<ThemeOption>,
+    search_input: Entity<InputState>,
+    _search_sub: Subscription,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -164,6 +168,13 @@ impl SettingsModal {
             })
             .collect();
 
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
+        let search_sub = cx.subscribe(&search_input, |_this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
+
         Self {
             tokens,
             geometry: ShellGeometry::default(),
@@ -172,6 +183,8 @@ impl SettingsModal {
             reduce_transparency,
             connection,
             themes,
+            search_input,
+            _search_sub: search_sub,
             focus_handle,
             scroll: ScrollHandle::new(),
         }
@@ -307,6 +320,51 @@ impl SettingsModal {
             items.push(row);
         }
 
+        let query = self.search_input.read(cx).value().to_string();
+        let has_query = !query.trim().is_empty();
+        let search_to_clear = self.search_input.clone();
+
+        let mut search_bar = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .w_full()
+            .h(px(30.0))
+            .px(px(8.0))
+            .mb(px(6.0))
+            .rounded(px(7.0))
+            .bg(hsla(self.tokens.shell_control))
+            .border_1()
+            .border_color(hsla(self.tokens.shell_inner_border))
+            .child(icons::chrome(IconName::Search, muted))
+            .child(
+                div().flex_1().min_w_0().child(
+                    Input::new(&self.search_input)
+                        .appearance(false)
+                        .text_size(px(self.geometry.ui_font_size_px)),
+                ),
+            );
+        if has_query {
+            search_bar = search_bar.child(
+                div()
+                    .id("conn-settings-search-clear")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(16.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_click(move |_, window, cx| {
+                        search_to_clear.update(cx, |state, cx| {
+                            state.set_value(String::new(), window, cx);
+                        });
+                    })
+                    .child(icons::concept("superhero/close.svg", 11.0, muted)),
+            );
+        }
+
         div()
             .flex()
             .flex_col()
@@ -324,6 +382,7 @@ impl SettingsModal {
             .border_t(border)
             .border_b(border)
             .border_l(border)
+            .child(search_bar)
             .children(items)
     }
 
@@ -338,11 +397,18 @@ impl SettingsModal {
             hsla(over(self.tokens.shell_inner_fill, frame))
         };
 
-        let page_content: AnyElement = match self.active_page {
-            SettingsPage::General => self.render_general_page(),
-            SettingsPage::Appearance => self.render_appearance_page(cx),
-            SettingsPage::Connections => self.render_connections_page(),
-            SettingsPage::Keyboard => self.render_keyboard_page(),
+        let query = self.search_input.read(cx).value().to_string();
+        let needle = query.trim().to_ascii_lowercase();
+
+        let page_content: AnyElement = if !needle.is_empty() {
+            self.render_search_results(&needle, cx)
+        } else {
+            match self.active_page {
+                SettingsPage::General => self.render_general_page(),
+                SettingsPage::Appearance => self.render_appearance_page(cx),
+                SettingsPage::Connections => self.render_connections_page(),
+                SettingsPage::Keyboard => self.render_keyboard_page(),
+            }
         };
 
         div()
@@ -456,11 +522,126 @@ impl SettingsModal {
             .into_any_element()
     }
 
+    fn render_search_results(&self, needle: &str, cx: &mut Context<'_, Self>) -> AnyElement {
+        let mut sections: Vec<AnyElement> = Vec::new();
+
+        let matching_themes: Vec<AnyElement> = self
+            .themes
+            .iter()
+            .filter(|t| {
+                t.name.to_ascii_lowercase().contains(needle)
+                    || t.id.to_ascii_lowercase().contains(needle)
+                    || "theme appearance color".contains(needle)
+            })
+            .map(|theme| self.render_single_theme_row(theme, cx))
+            .collect();
+        if !matching_themes.is_empty() {
+            sections.push(
+                settings_section("Themes", matching_themes, &self.tokens, &self.geometry)
+                    .into_any_element(),
+            );
+        }
+
+        if "reduce transparency opaque frosted window appearance".contains(needle) {
+            let entity = cx.entity();
+            let reduce_switch = pill_switch(
+                "conn-settings-search-reduce-transparency",
+                self.reduce_transparency,
+                &self.tokens,
+                move |_window, cx| {
+                    entity.update(cx, |this, cx| this.toggle_reduce_transparency(cx));
+                },
+            );
+            sections.push(
+                settings_section(
+                    "Window",
+                    vec![settings_row(
+                        "Reduce transparency",
+                        Some("Use opaque card surfaces instead of translucent frosted fills."),
+                        reduce_switch.into_any_element(),
+                        &self.tokens,
+                        &self.geometry,
+                    )],
+                    &self.tokens,
+                    &self.geometry,
+                )
+                .into_any_element(),
+            );
+        }
+
+        let matching_shortcuts: Vec<AnyElement> = KEYBOARD_SHORTCUTS
+            .iter()
+            .filter(|&&(title, desc, _)| {
+                title.to_ascii_lowercase().contains(needle)
+                    || desc.to_ascii_lowercase().contains(needle)
+                    || "keyboard shortcut hotkey".contains(needle)
+            })
+            .map(|&(title, desc, keys)| {
+                let mut caps = div().flex().flex_row().items_center().gap(px(4.0));
+                for &key in keys {
+                    caps = caps.child(kbd_cap(key, &self.tokens));
+                }
+                settings_row(
+                    title,
+                    Some(desc),
+                    caps.into_any_element(),
+                    &self.tokens,
+                    &self.geometry,
+                )
+            })
+            .collect();
+        if !matching_shortcuts.is_empty() {
+            sections.push(
+                settings_section(
+                    "Keyboard shortcuts",
+                    matching_shortcuts,
+                    &self.tokens,
+                    &self.geometry,
+                )
+                .into_any_element(),
+            );
+        }
+
+        if "connection server url websocket status transport".contains(needle) {
+            sections.push(self.render_connections_page());
+        }
+
+        if sections.is_empty() {
+            return div()
+                .py(px(24.0))
+                .text_size(px(self.geometry.ui_font_size_px))
+                .line_height(px(self.geometry.ui_line_height_px))
+                .text_color(hsla(self.tokens.muted_foreground))
+                .child("No settings match your search.")
+                .into_any_element();
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .gap(px(20.0))
+            .children(sections)
+            .into_any_element()
+    }
+
     fn render_theme_rows(
         &self,
         appearance: Appearance,
         cx: &mut Context<'_, Self>,
     ) -> Vec<AnyElement> {
+        self.themes
+            .iter()
+            .filter(|t| t.appearance == appearance)
+            .map(|theme| self.render_single_theme_row(theme, cx))
+            .collect()
+    }
+
+    fn render_single_theme_row(
+        &self,
+        theme: &ThemeOption,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let fg = hsla(self.tokens.foreground);
         let muted_raised = hsla(self.tokens.muted_foreground_raised);
         let hover_bg = hsla(self.tokens.sidebar_row_hover);
@@ -468,103 +649,97 @@ impl SettingsModal {
         let ring = hsla(self.tokens.ring);
         let border = hsla(self.tokens.shell_settings_card_border);
 
-        self.themes
-            .iter()
-            .filter(|t| t.appearance == appearance)
-            .map(|theme| {
-                let is_active = theme.id == self.active_theme_id;
-                let theme_id = theme.id.clone();
+        let is_active = theme.id == self.active_theme_id;
+        let theme_id = theme.id.clone();
 
-                let swatch = div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(3.0))
-                    .p(px(4.0))
+        let swatch = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(3.0))
+            .p(px(4.0))
+            .rounded(px(9999.0))
+            .bg(hsla(theme.bg))
+            .border_1()
+            .border_color(if is_active { ring } else { border })
+            .child(
+                div()
+                    .size(px(10.0))
                     .rounded(px(9999.0))
-                    .bg(hsla(theme.bg))
-                    .border_1()
-                    .border_color(if is_active { ring } else { border })
-                    .child(
-                        div()
-                            .size(px(10.0))
-                            .rounded(px(9999.0))
-                            .bg(hsla(theme.sidebar)),
-                    )
-                    .child(
-                        div()
-                            .size(px(10.0))
-                            .rounded(px(9999.0))
-                            .bg(hsla(theme.primary)),
-                    )
-                    .child(
-                        div()
-                            .size(px(10.0))
-                            .rounded(px(9999.0))
-                            .bg(hsla(theme.accent)),
-                    );
+                    .bg(hsla(theme.sidebar)),
+            )
+            .child(
+                div()
+                    .size(px(10.0))
+                    .rounded(px(9999.0))
+                    .bg(hsla(theme.primary)),
+            )
+            .child(
+                div()
+                    .size(px(10.0))
+                    .rounded(px(9999.0))
+                    .bg(hsla(theme.accent)),
+            );
 
-                let mut row = div()
-                    .id(SharedString::from(format!("conn-theme-row-{}", theme.id)))
+        let mut row = div()
+            .id(SharedString::from(format!("conn-theme-row-{}", theme.id)))
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(12.0))
+            .w_full()
+            .px(px(14.0))
+            .py(px(10.0))
+            .cursor_pointer()
+            .text_size(px(self.geometry.ui_font_size_px))
+            .line_height(px(self.geometry.ui_line_height_px))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                this.select_theme(theme_id.clone(), cx);
+            }))
+            .child(
+                div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .justify_between()
-                    .gap(px(12.0))
-                    .w_full()
-                    .px(px(14.0))
-                    .py(px(10.0))
-                    .cursor_pointer()
-                    .text_size(px(self.geometry.ui_font_size_px))
-                    .line_height(px(self.geometry.ui_line_height_px))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        this.select_theme(theme_id.clone(), cx);
-                    }))
+                    .gap(px(10.0))
+                    .min_w_0()
+                    .child(swatch)
                     .child(
                         div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(10.0))
-                            .min_w_0()
-                            .child(swatch)
-                            .child(
-                                div()
-                                    .font_weight(if is_active {
-                                        FontWeight::MEDIUM
-                                    } else {
-                                        FontWeight::NORMAL
-                                    })
-                                    .text_color(fg)
-                                    .child(theme.name.clone()),
-                            ),
-                    )
-                    .child(if is_active {
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(6.0))
+                            .font_weight(if is_active {
+                                FontWeight::MEDIUM
+                            } else {
+                                FontWeight::NORMAL
+                            })
                             .text_color(fg)
-                            .child("Active")
-                            .child(icons::chrome(IconName::Check, fg))
-                            .into_any_element()
-                    } else {
-                        div()
-                            .text_color(muted_raised)
-                            .child(theme.id.clone())
-                            .into_any_element()
-                    });
+                            .child(theme.name.clone()),
+                    ),
+            )
+            .child(if is_active {
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.0))
+                    .text_color(fg)
+                    .child("Active")
+                    .child(icons::chrome(IconName::Check, fg))
+                    .into_any_element()
+            } else {
+                div()
+                    .text_color(muted_raised)
+                    .child(theme.id.clone())
+                    .into_any_element()
+            });
 
-                if is_active {
-                    row = row.bg(selected_bg);
-                } else {
-                    row = row.hover(move |s| s.bg(hover_bg));
-                }
+        if is_active {
+            row = row.bg(selected_bg);
+        } else {
+            row = row.hover(move |s| s.bg(hover_bg));
+        }
 
-                row.into_any_element()
-            })
-            .collect()
+        row.into_any_element()
     }
 
     fn render_connections_page(&self) -> AnyElement {
@@ -643,35 +818,7 @@ impl SettingsModal {
     }
 
     fn render_keyboard_page(&self) -> AnyElement {
-        let shortcuts: &[(&str, &str, &[&str])] = &[
-            (
-                "Command palette",
-                "Search threads, projects, themes, and shell actions.",
-                &["⌘", "K"],
-            ),
-            (
-                "Open settings",
-                "Open the Settings modal from anywhere in the window.",
-                &["⌘", ","],
-            ),
-            (
-                "Toggle sidebar",
-                "Show or hide the workspace rail and thread sidebar.",
-                &["⌘", "B"],
-            ),
-            (
-                "Toggle right panel",
-                "Show or hide the Files, Diff, Terminal, and Browser panel.",
-                &["⌘", "⌥", "B"],
-            ),
-            (
-                "Dismiss modal or palette",
-                "Close the active overlay and return focus to the shell.",
-                &["Esc"],
-            ),
-        ];
-
-        let rows = shortcuts
+        let rows = KEYBOARD_SHORTCUTS
             .iter()
             .map(|&(title, desc, keys)| {
                 let mut caps = div().flex().flex_row().items_center().gap(px(4.0));
@@ -692,6 +839,44 @@ impl SettingsModal {
             .into_any_element()
     }
 }
+
+const KEYBOARD_SHORTCUTS: &[(&str, &str, &[&str])] = &[
+    (
+        "Command palette",
+        "Search threads, projects, themes, and shell actions.",
+        &["⌘", "K"],
+    ),
+    (
+        "New thread",
+        "Start composing a new thread in the current project.",
+        &["⌘", "N"],
+    ),
+    (
+        "Open settings",
+        "Open the Settings modal from anywhere in the window.",
+        &["⌘", ","],
+    ),
+    (
+        "Toggle sidebar",
+        "Show or hide the workspace rail and thread sidebar.",
+        &["⌘", "B"],
+    ),
+    (
+        "Toggle right panel",
+        "Show or hide the Files, Diff, Terminal, and Browser panel.",
+        &["⌘", "⌥", "B"],
+    ),
+    (
+        "Terminal copy / paste / select all",
+        "Copy mouse-selected text, paste clipboard, or select all in Terminal.",
+        &["⌘", "C / V / A"],
+    ),
+    (
+        "Dismiss modal or palette",
+        "Close the active overlay and return focus to the shell.",
+        &["Esc"],
+    ),
+];
 
 impl Render for SettingsModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {

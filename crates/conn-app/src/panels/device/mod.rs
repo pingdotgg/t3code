@@ -232,7 +232,7 @@ impl DevicePanel {
             host_config_loading: false,
             host_saving: false,
             host_error: None,
-            visible: true,
+            visible: false,
             focus_handle,
             screen_viewport_bounds: Rc::new(Cell::new(None)),
             stream_session: None,
@@ -259,10 +259,6 @@ impl DevicePanel {
 
     /// Shows or hides the device panel. When hidden, the live stream tears down immediately so
     /// nothing decodes in the background; when shown again, the active device reconnects.
-    #[expect(
-        dead_code,
-        reason = "wired from RightPanel::sync_surface_visibility by the orchestrator"
-    )]
     pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<'_, Self>) {
         if self.visible == visible {
             return;

@@ -13,7 +13,8 @@ use std::sync::{Arc, OnceLock};
 use alacritty_terminal::event::{Event as TermEvent, EventListener, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg};
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::Point as GridPoint;
+use alacritty_terminal::index::{Column, Line as GridLine, Point as GridPoint, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, Term, TermMode};
@@ -26,10 +27,10 @@ use gpui_kit::{
     App, BorderStyle, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, DispatchPhase,
     Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable,
     Font, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, InteractiveElement,
-    IntoElement, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    Render, ScrollDelta, ScrollEvent, ShapedLine, StrikethroughStyle, Style, Styled, Task,
-    TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, div, fill, font, outline, point,
-    px, relative, size,
+    IntoElement, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Point, Render, ScrollDelta, ScrollEvent, ShapedLine, StrikethroughStyle,
+    Style, Styled, Task, TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, div, fill,
+    font, outline, point, px, relative, size,
 };
 use tokio::sync::mpsc;
 
@@ -160,6 +161,14 @@ impl Drop for TerminalSession {
     }
 }
 
+/// Last painted terminal viewport origin and cell geometry, for pointer-to-cell hit testing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DrawnAt {
+    origin: Point<Pixels>,
+    cell_width: Pixels,
+    cell_height: Pixels,
+}
+
 /// Interactive terminal panel backed by `alacritty_terminal`.
 pub(crate) struct TerminalPanel {
     tokens: Tokens,
@@ -169,6 +178,8 @@ pub(crate) struct TerminalPanel {
     focus: FocusHandle,
     marked: String,
     scroll_remainder: f32,
+    drawn_at: Option<DrawnAt>,
+    selecting: bool,
 }
 
 impl fmt::Debug for TerminalPanel {
@@ -191,6 +202,8 @@ impl TerminalPanel {
             focus: cx.focus_handle(),
             marked: String::new(),
             scroll_remainder: 0.0,
+            drawn_at: None,
+            selecting: false,
         }
     }
 
@@ -363,6 +376,10 @@ impl TerminalPanel {
                     }
                     cx.stop_propagation();
                 }
+                "a" => {
+                    self.select_all(cx);
+                    cx.stop_propagation();
+                }
                 _ => {}
             }
             return;
@@ -424,6 +441,105 @@ impl TerminalPanel {
                 term.scroll_display(Scroll::Bottom);
             }
         }
+    }
+
+    fn select_all(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        let mut term = session.term.lock();
+        let top = term.grid().topmost_line();
+        let bottom = term.grid().bottommost_line();
+        let last = term.grid().last_column();
+        let mut selection = Selection::new(
+            SelectionType::Simple,
+            GridPoint::new(top, Column(0)),
+            Side::Left,
+        );
+        selection.update(GridPoint::new(bottom, last), Side::Right);
+        term.selection = Some(selection);
+        drop(term);
+        cx.notify();
+    }
+
+    fn cell_at(&self, position: Point<Pixels>, clamp: bool) -> Option<(usize, usize, Side)> {
+        let at = self.drawn_at?;
+        let size = self.session.as_ref()?.size;
+        map_point_to_cell(position, at, size, clamp)
+    }
+
+    fn grid_point(&self, col: usize, row: usize) -> Option<GridPoint> {
+        let session = self.session.as_ref()?;
+        let offset = session.term.lock().grid().display_offset() as i32;
+        Some(GridPoint::new(GridLine(row as i32 - offset), Column(col)))
+    }
+
+    fn mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        window.focus(&self.focus, cx);
+        if event.button != MouseButton::Left {
+            return;
+        }
+        let Some((col, row, side)) = self.cell_at(event.position, false) else {
+            return;
+        };
+        let Some(grid_pt) = self.grid_point(col, row) else {
+            return;
+        };
+        if let Some(session) = &self.session {
+            let mut term = session.term.lock();
+            match (
+                event.click_count,
+                event.modifiers.shift,
+                term.selection.as_mut(),
+            ) {
+                (1, true, Some(selection)) => selection.update(grid_pt, side),
+                (clicks, _, _) => {
+                    let kind = match clicks {
+                        2 => SelectionType::Semantic,
+                        3.. => SelectionType::Lines,
+                        _ => SelectionType::Simple,
+                    };
+                    term.selection = Some(Selection::new(kind, grid_pt, side));
+                }
+            }
+        }
+        self.selecting = true;
+        cx.notify();
+    }
+
+    fn mouse_moved(&mut self, event: &MouseMoveEvent, cx: &mut Context<'_, Self>) {
+        if !self.selecting {
+            return;
+        }
+        if event.pressed_button != Some(MouseButton::Left) {
+            self.selecting = false;
+            return;
+        }
+        let Some((col, row, side)) = self.cell_at(event.position, true) else {
+            return;
+        };
+        let Some(grid_pt) = self.grid_point(col, row) else {
+            return;
+        };
+        if let Some(session) = &self.session
+            && let Some(selection) = session.term.lock().selection.as_mut()
+        {
+            selection.update(grid_pt, side);
+        }
+        cx.notify();
+    }
+
+    fn mouse_up(&mut self, event: &MouseUpEvent, cx: &mut Context<'_, Self>) {
+        if event.button != MouseButton::Left || !self.selecting {
+            return;
+        }
+        self.selecting = false;
+        cx.notify();
     }
 
     fn scrolled(&mut self, event: &ScrollEvent, cx: &mut Context<'_, Self>) {
@@ -866,7 +982,14 @@ impl Element for TerminalElement {
             cell_width: cw,
             cell_height: ch,
         };
-        self.panel.update(cx, |p, _| p.resize(grid));
+        self.panel.update(cx, |p, _| {
+            p.resize(grid);
+            p.drawn_at = Some(DrawnAt {
+                origin: bounds.origin,
+                cell_width: px(cw),
+                cell_height: px(ch),
+            });
+        });
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let cell_rect = |col: usize, row: usize, cells: usize| Bounds {
@@ -1100,12 +1223,107 @@ impl Element for TerminalElement {
         );
         window.set_cursor_style(CursorStyle::IBeam, &prepainted.hitbox);
 
+        let (panel, hitbox) = (self.panel.clone(), prepainted.hitbox.clone());
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                panel.update(cx, |p, cx| p.mouse_down(event, window, cx));
+                cx.stop_propagation();
+            }
+        });
         let panel = self.panel.clone();
-        let hitbox = prepainted.hitbox.clone();
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _window, cx| {
+            if phase == DispatchPhase::Bubble {
+                panel.update(cx, |p, cx| p.mouse_moved(event, cx));
+            }
+        });
+        let panel = self.panel.clone();
+        window.on_mouse_event(move |event: &MouseUpEvent, phase, _window, cx| {
+            if phase == DispatchPhase::Bubble {
+                panel.update(cx, |p, cx| p.mouse_up(event, cx));
+            }
+        });
+        let (panel, hitbox) = (self.panel.clone(), prepainted.hitbox.clone());
         window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
             if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                 panel.update(cx, |p, cx| p.scrolled(event, cx));
             }
         });
+    }
+}
+
+/// Maps a window point to a `(col, row, Side)` cell inside the terminal viewport.
+fn map_point_to_cell(
+    position: Point<Pixels>,
+    drawn_at: DrawnAt,
+    grid: GridSize,
+    clamp: bool,
+) -> Option<(usize, usize, Side)> {
+    let x = f32::from(position.x - drawn_at.origin.x);
+    let y = f32::from(position.y - drawn_at.origin.y);
+    let (w, h) = (
+        f32::from(drawn_at.cell_width),
+        f32::from(drawn_at.cell_height),
+    );
+    let (cols, rows) = (f32::from(grid.cols), f32::from(grid.rows));
+    if !clamp && (x < 0.0 || y < 0.0 || x >= w * cols || y >= h * rows) {
+        return None;
+    }
+    let col = (x / w).floor().clamp(0.0, (cols - 1.0).max(0.0));
+    let row = (y / h).floor().clamp(0.0, (rows - 1.0).max(0.0));
+    let side = if x - col * w < w / 2.0 {
+        Side::Left
+    } else {
+        Side::Right
+    };
+    Some((col as usize, row as usize, side))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_point_to_cell_resolves_cell_side_and_clamps_drags() {
+        let drawn = DrawnAt {
+            origin: point(px(16.0), px(20.0)),
+            cell_width: px(8.0),
+            cell_height: px(18.0),
+        };
+        let grid = GridSize {
+            cols: 10,
+            rows: 4,
+            cell_width: 8.0,
+            cell_height: 18.0,
+        };
+        assert_eq!(
+            map_point_to_cell(point(px(10.0), px(25.0)), drawn, grid, false),
+            None
+        );
+        assert_eq!(
+            map_point_to_cell(point(px(17.0), px(21.0)), drawn, grid, false),
+            Some((0, 0, Side::Left))
+        );
+        assert_eq!(
+            map_point_to_cell(point(px(22.0), px(21.0)), drawn, grid, false),
+            Some((0, 0, Side::Right))
+        );
+        assert_eq!(
+            map_point_to_cell(
+                point(px(16.0 + 3.0 * 8.0 + 2.0), px(20.0 + 2.0 * 18.0 + 5.0)),
+                drawn,
+                grid,
+                false
+            ),
+            Some((3, 2, Side::Left))
+        );
+        // Drag outside bounds clamps cleanly to the edges.
+        assert_eq!(
+            map_point_to_cell(point(px(500.0), px(500.0)), drawn, grid, true),
+            Some((9, 3, Side::Right))
+        );
+        assert_eq!(
+            map_point_to_cell(point(px(-50.0), px(-50.0)), drawn, grid, true),
+            Some((0, 0, Side::Left))
+        );
     }
 }

@@ -75,6 +75,8 @@ pub(crate) struct ConnApp {
     /// Live search box at the top of the thread sidebar.
     sidebar_search_input: Entity<gpui_kit::component::input::InputState>,
     _sidebar_search_sub: gpui_kit::Subscription,
+    /// Whether the sidebar project-scope filter popover is open.
+    sidebar_filter_menu_open: bool,
     /// When true, replaces translucent shell fills with opaque `sidebar`/`shell_card`.
     reduce_transparency: bool,
     server_url: Option<String>,
@@ -209,6 +211,7 @@ impl ConnApp {
             focus_before_overlay: None,
             sidebar_search_input,
             _sidebar_search_sub: sidebar_search_sub,
+            sidebar_filter_menu_open: false,
             reduce_transparency: false,
             server_url,
         }
@@ -906,7 +909,35 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.active_workspace = workspace_id;
+        self.sidebar_filter_menu_open = false;
         cx.notify();
+    }
+
+    /// Toggles the sidebar project-scope filter popover menu.
+    pub(crate) fn toggle_sidebar_filter_menu(&mut self, cx: &mut Context<'_, Self>) {
+        self.sidebar_filter_menu_open = !self.sidebar_filter_menu_open;
+        cx.notify();
+    }
+
+    /// Moves `thread_id` into (`settled = true`) or out of (`settled = false`) the Settled shelf.
+    pub(crate) fn settle_thread(
+        &mut self,
+        thread_id: String,
+        settled: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Ok(cmd) = crate::commands::settle_thread(&thread_id, settled) else {
+            return;
+        };
+        cx.spawn(async move |_, _| {
+            if let Err(e) = connection.dispatch_command(cmd).await {
+                eprintln!("settle: dispatchCommand failed: {e}");
+            }
+        })
+        .detach();
     }
 
     /// Toggles a project group's collapsed state in the thread sidebar.
@@ -1211,10 +1242,7 @@ impl ConnApp {
 
     /// Toggles the selected thread's settled state (`thread.settle` / `thread.unsettle`).
     fn toggle_selected_thread_settled(&mut self, cx: &mut Context<'_, Self>) {
-        let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
-            self.layout.selected_thread_id.clone(),
-        ) else {
+        let Some(thread_id) = self.layout.selected_thread_id.clone() else {
             return;
         };
         let is_settled = self
@@ -1226,15 +1254,7 @@ impl ConnApp {
                 .shell
                 .thread(&thread_id)
                 .is_some_and(|t| t.settled_at.is_some());
-        let Ok(cmd) = crate::commands::settle_thread(&thread_id, !is_settled) else {
-            return;
-        };
-        cx.spawn(async move |_, _| {
-            if let Err(e) = connection.dispatch_command(cmd).await {
-                eprintln!("settle: dispatchCommand failed: {e}");
-            }
-        })
-        .detach();
+        self.settle_thread(thread_id, !is_settled, cx);
     }
 
     /// Toggles Reduce Transparency across the shell, matching Conn's
@@ -1329,10 +1349,18 @@ impl Render for ConnApp {
             .on_mouse_down(
                 gpui_kit::MouseButton::Left,
                 cx.listener(|app, _, _window, cx| {
-                    // A click outside the add-surface menu closes it (the menu and its trigger
-                    // stop their own clicks).
+                    // A click outside open header popovers closes them (their triggers and items
+                    // stop propagation).
+                    let mut changed = false;
                     if app.right_panel_add_menu_open {
                         app.right_panel_add_menu_open = false;
+                        changed = true;
+                    }
+                    if app.sidebar_filter_menu_open {
+                        app.sidebar_filter_menu_open = false;
+                        changed = true;
+                    }
+                    if changed {
                         cx.notify();
                     }
                 }),
@@ -1385,6 +1413,7 @@ impl Render for ConnApp {
                     self.active_workspace.as_deref(),
                     &self.collapsed_projects,
                     &self.sidebar_search_input,
+                    self.sidebar_filter_menu_open,
                     &self.tokens,
                     &self.geometry,
                     cx,

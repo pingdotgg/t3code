@@ -25,13 +25,14 @@ use conn_theme::{Appearance, ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::{
-    Context, Entity, InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
-    Styled as _, WindowControlArea, div, px,
+    Context, Entity, InteractiveElement as _, IntoElement as _, MouseButton, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, WindowControlArea, deferred, div, px,
 };
 
 use crate::app::ConnApp;
 use crate::fixture::thread_activity;
 use crate::icons;
+use crate::panels::chrome::ConnTooltipExt as _;
 use crate::shell::{CardJoin, MACOS_TRAFFIC_LIGHTS_INSET_PX, WORKSPACE_RAIL_WIDTH_PX, inset_card};
 use crate::sidebar::{render_project_favicon, render_project_monogram};
 use crate::theme::{hsla, hsla_alpha};
@@ -101,6 +102,7 @@ pub(crate) fn render_thread_sidebar(
     active_workspace: Option<&str>,
     collapsed_projects: &HashSet<String>,
     search_input: &Entity<InputState>,
+    filter_menu_open: bool,
     tokens: &Tokens,
     geometry: &ShellGeometry,
     cx: &mut Context<'_, ConnApp>,
@@ -145,26 +147,54 @@ pub(crate) fn render_thread_sidebar(
     // Top row (`SidebarThreadHeader.tsx`): "Search" soft field + trailing icon buttons.
     let mut header_actions = div().flex().flex_row().items_center().flex_shrink_0();
     if has_projects {
-        header_actions = header_actions
-            .child(sidebar_header_icon_btn(
+        let mut filter_slot = div().relative().child(
+            sidebar_header_icon_btn(
                 "sidebar-filter-projects",
                 IconName::ListFilter,
                 tokens,
-                cx.listener(|_app, _event, _window, _cx| {}),
-            ))
-            .child(sidebar_header_icon_btn(
+                cx.listener(|app, _event, _window, cx| {
+                    cx.stop_propagation();
+                    app.toggle_sidebar_filter_menu(cx);
+                }),
+            )
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .conn_tooltip(
+                if active_workspace.is_some() {
+                    "Filter by project (active)"
+                } else {
+                    "Filter by project"
+                },
+                tokens,
+            ),
+        );
+        if filter_menu_open {
+            filter_slot = filter_slot.child(render_project_filter_menu(
+                shell,
+                active_workspace,
+                tokens,
+                geometry,
+                cx,
+            ));
+        }
+        header_actions = header_actions.child(filter_slot).child(
+            sidebar_header_icon_btn(
                 "sidebar-add-project",
                 IconName::FolderPlus,
                 tokens,
                 cx.listener(|_app, _event, _window, _cx| {}),
-            ));
+            )
+            .conn_tooltip("Add project", tokens),
+        );
     }
-    header_actions = header_actions.child(sidebar_header_icon_btn(
-        "sidebar-new-thread",
-        IconName::SquarePen,
-        tokens,
-        cx.listener(|app, _event, _window, cx| app.start_new_thread(None, cx)),
-    ));
+    header_actions = header_actions.child(
+        sidebar_header_icon_btn(
+            "sidebar-new-thread",
+            IconName::SquarePen,
+            tokens,
+            cx.listener(|app, _event, _window, cx| app.start_new_thread(None, cx)),
+        )
+        .conn_tooltip("New thread (⌘N)", tokens),
+    );
 
     let mut search_box = div()
         .id("sidebar-search")
@@ -241,7 +271,7 @@ pub(crate) fn render_thread_sidebar(
         let selected = layout.selected_thread_id.as_deref() == Some(thread.id.as_str());
         let activity = thread_activity(shell, thread);
         thread_rows.push(render_thread_card(
-            idx, thread, project, selected, activity, now_secs, tokens, cx,
+            idx, thread, project, selected, false, activity, now_secs, tokens, cx,
         ));
     }
 
@@ -331,6 +361,7 @@ pub(crate) fn render_thread_sidebar(
                     thread,
                     project,
                     selected,
+                    true,
                     ThreadActivity::Idle,
                     now_secs,
                     tokens,
@@ -385,6 +416,107 @@ fn sidebar_header_icon_btn(
         .child(icons::chrome(icon_name, icon_color))
 }
 
+/// Popover menu listing "All projects" plus every registered project for scoping the sidebar.
+fn render_project_filter_menu(
+    shell: &ShellState,
+    active_workspace: Option<&str>,
+    tokens: &Tokens,
+    geometry: &ShellGeometry,
+    cx: &mut Context<'_, ConnApp>,
+) -> gpui_kit::AnyElement {
+    let fg = hsla(tokens.popover_foreground);
+    let muted = hsla(tokens.muted_foreground);
+    let hover_bg = hsla(tokens.shell_highlight);
+
+    let mut menu = div()
+        .id("sidebar-project-filter-menu")
+        .absolute()
+        .top_full()
+        .right_0()
+        .mt(px(4.0))
+        .w(px(210.0))
+        .max_h(px(280.0))
+        .overflow_y_scroll()
+        .rounded(px(10.0))
+        .bg(hsla(tokens.popover))
+        .border_1()
+        .border_color(hsla(tokens.shell_inner_border))
+        .shadow_md()
+        .p(px(4.0))
+        .flex()
+        .flex_col()
+        .gap(px(2.0))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+    let all_active = active_workspace.is_none();
+    menu = menu.child(
+        div()
+            .id("sidebar-filter-all")
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.0))
+            .h(px(28.0))
+            .px(px(8.0))
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .text_size(px(geometry.ui_font_size_px))
+            .line_height(px(geometry.ui_line_height_px))
+            .text_color(fg)
+            .hover(move |s| s.bg(hover_bg))
+            .on_click(cx.listener(|app, _, _, cx| {
+                cx.stop_propagation();
+                app.select_workspace(None, cx);
+            }))
+            .child(div().flex_1().truncate().child("All projects"))
+            .child(if all_active {
+                icons::concept("superhero/check.svg", 14.0, fg).into_any_element()
+            } else {
+                div().size(px(14.0)).into_any_element()
+            }),
+    );
+
+    for (idx, project) in shell.projects.iter().enumerate() {
+        let project_id = project.id.clone();
+        let is_active = active_workspace == Some(project.id.as_str());
+        menu = menu.child(
+            div()
+                .id(("sidebar-filter-project", idx))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .h(px(28.0))
+                .px(px(8.0))
+                .rounded(px(6.0))
+                .cursor_pointer()
+                .text_size(px(geometry.ui_font_size_px))
+                .line_height(px(geometry.ui_line_height_px))
+                .text_color(if is_active { fg } else { muted })
+                .hover(move |s| s.bg(hover_bg).text_color(fg))
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    cx.stop_propagation();
+                    app.select_workspace(Some(project_id.clone()), cx);
+                }))
+                .child(render_project_favicon(project, 14.0, tokens))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(project.title.clone()),
+                )
+                .child(if is_active {
+                    icons::concept("superhero/check.svg", 14.0, fg).into_any_element()
+                } else {
+                    div().size(px(14.0)).into_any_element()
+                }),
+        );
+    }
+
+    deferred(menu).with_priority(3).into_any_element()
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "pure view helper taking borrowed thread, project, and theme slices"
@@ -394,6 +526,7 @@ fn render_thread_card(
     thread: &ThreadShell,
     project: Option<&ProjectShell>,
     selected: bool,
+    is_settled: bool,
     activity: ThreadActivity,
     now_secs: i64,
     tokens: &Tokens,
@@ -424,6 +557,37 @@ fn render_thread_card(
         tokens,
     );
 
+    let settle_thread_id = thread.id.clone();
+    let settle_icon = if is_settled {
+        "superhero/undo.svg"
+    } else {
+        "superhero/check.svg"
+    };
+    let settle_tooltip = if is_settled {
+        "Un-settle thread"
+    } else {
+        "Settle thread"
+    };
+    let settle_btn = div()
+        .id(("thread-settle-btn", row_key))
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(20.0))
+        .flex_shrink_0()
+        .rounded(px(5.0))
+        .opacity(0.0)
+        .group_hover("sidebar-row", |s| s.opacity(1.0))
+        .hover(move |s| s.bg(hover_bg))
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |app, _event, _window, cx| {
+            cx.stop_propagation();
+            app.settle_thread(settle_thread_id.clone(), !is_settled, cx);
+        }))
+        .child(icons::concept(settle_icon, 13.0, muted))
+        .conn_tooltip(settle_tooltip, tokens);
+
     let line1 = div()
         .flex()
         .flex_row()
@@ -443,7 +607,8 @@ fn render_thread_card(
                 .font_weight(gpui_kit::FontWeight::MEDIUM)
                 .text_color(fg)
                 .child(thread.title.clone()),
-        );
+        )
+        .child(settle_btn);
 
     // Line 2 (`cardMetaLine` in `SidebarThreadRow.tsx:1357-1392`):
     // `mt-1 flex min-w-0 items-center gap-1.5 ps-5.5 text-secondary-label text-xs`
@@ -500,6 +665,7 @@ fn render_thread_card(
 
     let mut card = div()
         .id(("thread-row", row_key))
+        .group("sidebar-row")
         .flex()
         .flex_col()
         .w_full()

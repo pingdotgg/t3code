@@ -269,16 +269,20 @@ impl RightPanel {
             .update(cx, |p, cx| p.set_turn_count(turn_count, cx));
     }
 
-    /// Whether the native browser view may show: the shell passes `true` only when the right
-    /// panel is open and no GPUI overlay covers it. The Browser tab must also be active.
+    /// Whether live surfaces (native CEF browser view, device video/input streams) may run:
+    /// the shell passes `true` only when the right panel is open and no GPUI overlay covers it.
     pub fn set_surface_visible(&mut self, visible: bool, cx: &mut Context<'_, Self>) {
         self.surface_visible = visible;
-        self.sync_browser_visibility(cx);
+        self.sync_surface_visibility(cx);
     }
 
-    fn sync_browser_visibility(&mut self, cx: &mut Context<'_, Self>) {
-        let show = self.surface_visible && self.tab == RightPanelTab::Browser;
-        self.browser.update(cx, |b, cx| b.set_visible(show, cx));
+    fn sync_surface_visibility(&mut self, cx: &mut Context<'_, Self>) {
+        let show_browser = self.surface_visible && self.tab == RightPanelTab::Browser;
+        self.browser
+            .update(cx, |b, cx| b.set_visible(show_browser, cx));
+        let show_device = self.surface_visible && self.tab == RightPanelTab::Device;
+        self.device
+            .update(cx, |d, cx| d.set_visible(show_device, cx));
     }
 
     /// Switches the active right-panel tab (opening it if not yet in `open_tabs`),
@@ -303,7 +307,7 @@ impl RightPanel {
             return;
         }
         self.tab = tab;
-        self.sync_browser_visibility(cx);
+        self.sync_surface_visibility(cx);
         if tab == RightPanelTab::Terminal {
             self.terminal.update(cx, |p, cx| p.ensure_started(cx));
         }
@@ -320,7 +324,7 @@ impl RightPanel {
         self.tab = RightPanelTab::File;
         self.file = Some(path.clone());
         self.files.update(cx, |p, cx| p.show_preview(path, cx));
-        self.sync_browser_visibility(cx);
+        self.sync_surface_visibility(cx);
         cx.notify();
     }
 

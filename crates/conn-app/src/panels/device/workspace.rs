@@ -188,7 +188,6 @@ pub(super) fn render_workspace(
         .min_h_0()
         .min_w_0()
         .w_full()
-        .bg(to_hsla(tokens.shell_card))
         .child(render_device_stream(panel, device, host_label, cx))
         .child(render_controls_rail(
             panel,
