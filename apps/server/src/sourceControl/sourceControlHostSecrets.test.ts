@@ -88,6 +88,42 @@ it.effect("replaces a per-host token reference and keeps the literal beside it",
   }),
 );
 
+it.effect(
+  "skips unrelated token references and batches them when the selected token is a reference",
+  () =>
+    Effect.gen(function* () {
+      const { reads, resolver } = countingResolver();
+      const mixed = {
+        github: {
+          tokens: {
+            ...perHostHosts.github.tokens,
+            "other.test": source("missing#token"),
+          },
+        },
+      };
+      const literal = yield* resolveSourceControlHostSecrets(
+        resolver,
+        mixed,
+        "github",
+        ({ field, key }) => field === "tokens" && key === "ghe.acme.test",
+      );
+      assert.strictEqual(literal, mixed);
+      assert.deepEqual(reads, []);
+
+      const referenced = yield* resolveSourceControlHostSecrets(
+        resolver,
+        mixed,
+        "github",
+        ({ field, key }) => field === "tokens" && key === "github.com",
+      );
+      assert.deepEqual(reads, ["github#token", "missing#token"]);
+      assert.deepEqual(referenced.github?.tokens, {
+        ...mixed.github.tokens,
+        "github.com": "ghp_from_provider",
+      });
+    }),
+);
+
 it("collects the references held in credential fields and skips literal values", () => {
   assert.deepEqual(collectSourceControlHostSecretReferences(hosts), [
     source("missing#token"),

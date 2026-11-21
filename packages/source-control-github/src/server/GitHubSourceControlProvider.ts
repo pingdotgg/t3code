@@ -25,7 +25,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
-import { GH_PROCESS_CONCURRENCY } from "./GitHubCredentials.ts";
+import { GH_PROCESS_CONCURRENCY, gitHubTokenSlot } from "./GitHubCredentials.ts";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -229,7 +229,7 @@ export const makeDiscovery = Effect.gen(function* () {
     installHint: discovery.installHint,
     probe: Effect.fn("GitHubSourceControlProvider.discovery")(function* (cwd: string) {
       const current = yield* sourceControlHost.settings
-        .getWithSecrets(GitHubClient.definition.kind)
+        .getWithSecrets(GitHubClient.definition.kind, gitHubTokenSlot("github.com"))
         .pipe(Effect.orElseSucceed(() => undefined));
       const settings = readSourceControlHostSettings(
         GitHubClient.settings,

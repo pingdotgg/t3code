@@ -2,6 +2,7 @@ import {
   isSecretReference,
   secretReferencesInSettings,
   SettingsSecretUnresolvedError,
+  type SettingsSecretSlot,
   type SettingsSecretValue,
   withSettingsSecrets,
 } from "@t3tools/contracts";
@@ -16,9 +17,17 @@ import type * as Schema from "effect/Schema";
  */
 export const resolveSettingsSecrets = Effect.fn("SettingsSecrets.resolve")(function* <
   Settings extends Readonly<Record<string, unknown>>,
->(resolver: SecretResolver.SecretResolver["Service"], schema: Schema.Top, settings: Settings) {
+>(
+  resolver: SecretResolver.SecretResolver["Service"],
+  schema: Schema.Top,
+  settings: Settings,
+  needsSecret?: (slot: SettingsSecretSlot) => boolean,
+) {
   const pending = secretReferencesInSettings(schema, settings);
-  if (pending.length === 0) return settings;
+  if (pending.length === 0 || (needsSecret !== undefined && !pending.some(needsSecret))) {
+    return settings;
+  }
+  // Keep the full batch when a requested reference is present so other hosts can reuse it.
   const values = yield* resolver.read(pending.map(({ reference }) => reference));
   return withSettingsSecrets(
     settings,
