@@ -135,7 +135,7 @@ export function ReactionBar({
                     aria-pressed={reacted}
                     aria-label={pullRequestReactionName(content, messages)}
                     className={cn(
-                      "flex size-7 items-center justify-center rounded-md text-base outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                      "flex size-7 items-center justify-center rounded-md text-base outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring hover:text-accent-foreground",
                       reacted && "bg-primary/10",
                     )}
                     onClick={() => {
