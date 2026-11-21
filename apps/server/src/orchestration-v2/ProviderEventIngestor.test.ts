@@ -2451,6 +2451,32 @@ layer("ProviderEventIngestorV2", (it) => {
         (yield* projectionStore.getThread(childThreadId)).modelSelection,
         reportedSelection,
       );
+
+      // A persistent model-sync failure must still return the committed subagent update.
+      const failingSyncSink = EventSink.EventSinkV2.of({
+        ...eventSink,
+        write: (writeInput) =>
+          writeInput.events.some((event) => event.type === "thread.model-selection-updated")
+            ? Effect.fail(constraintFailure)
+            : eventSink.write(writeInput),
+      });
+      const failingSyncIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
+        Effect.provide(Layer.fresh(ProviderEventIngestor.layer)),
+        Effect.provideService(EventSink.EventSinkV2, failingSyncSink),
+      );
+      const committedDespiteSyncFailure = yield* failingSyncIngestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+        event: {
+          ...subagentUpdated,
+          subagent: { ...subagentUpdated.subagent, model: "gpt-6.2-sol", status: "completed" },
+        },
+      });
+      assert.deepEqual(
+        committedDespiteSyncFailure.map((stored) => stored.event.type),
+        ["subagent.updated"],
+      );
     }).pipe(
       // Fresh: the shared test layer has already built the ingestor this replaces.
       Effect.provide(
@@ -2606,6 +2632,11 @@ layer("ProviderEventIngestorV2", (it) => {
             prompt: "sleep 180",
             title: "Sleep",
             model: "opencode/big-pickle",
+            modelSelection: {
+              instanceId,
+              model: "opencode/big-pickle",
+              options: [{ id: "variant", value: "high" }],
+            },
             status: "completed",
             result: "FIRST_OK",
             startedAt: now,
@@ -2841,7 +2872,10 @@ layer("ProviderEventIngestorV2", (it) => {
               nativeTaskRef: { driver, nativeId: childSessionId, strength: "strong" },
               prompt: "keep going",
               title: "Resume after restart",
-              model: null,
+              model: phase === "running" ? "opencode/redirect-hint" : null,
+              ...(phase === "running"
+                ? { modelSelection: { instanceId, model: "opencode/redirect-hint" } }
+                : {}),
               status: phase,
               result: phase === "completed" ? "SECOND_OK" : null,
               startedAt: t3,
@@ -3012,6 +3046,11 @@ layer("ProviderEventIngestorV2", (it) => {
         assert.equal(canonicalSubagent?.title, "Sleep");
         assert.equal(canonicalSubagent?.prompt, "sleep 180");
         assert.equal(canonicalSubagent?.model, "opencode/big-pickle");
+        assert.deepEqual(canonicalSubagent?.modelSelection, {
+          instanceId,
+          model: "opencode/big-pickle",
+          options: [{ id: "variant", value: "high" }],
+        });
         assert.equal(canonicalSubagent?.result, "SECOND_OK");
         assert.equal(canonicalItem?.nodeId, initialNodeId);
         assert.equal(canonicalItem?.subagentId, initialNodeId);

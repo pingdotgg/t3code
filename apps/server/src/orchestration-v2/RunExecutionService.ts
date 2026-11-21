@@ -277,7 +277,8 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
     const node = input.open.nodes.get(key);
     if (
       node !== undefined &&
-      ((node.threadId === input.run.threadId && node.runId === input.run.id) ||
+      (subagent !== undefined ||
+        (node.threadId === input.run.threadId && node.runId === input.run.id) ||
         childThreadIds.has(node.threadId)) &&
       isOpenExecutionNodeStatus(node.status)
     ) {
@@ -320,7 +321,12 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
     }
   }
   for (const turnItem of input.open.childTurnItems.values()) {
-    if (!childThreadIds.has(turnItem.threadId) || isSettledTurnItemStatus(turnItem.status)) {
+    const ownedByOpenSubagent =
+      turnItem.type === "subagent" && input.open.subagents.has(turnItem.subagentId);
+    if (
+      (!childThreadIds.has(turnItem.threadId) && !ownedByOpenSubagent) ||
+      isSettledTurnItemStatus(turnItem.status)
+    ) {
       continue;
     }
     events.push({
@@ -1373,8 +1379,8 @@ export const layer: Layer.Layer<
         );
         // Subagents and tool calls that outlived the root run die with the provider runtime. Stop
         // can settle them meanwhile, so each write holds only while its stored row is unchanged.
-        const endWorkLostAfterRootRun = Effect.fn("RunExecutionService.endWorkLostAfterRootRun")(
-          function* (completedAt: DateTime.Utc) {
+        const endLostWork = Effect.fn("RunExecutionService.endLostWork")(
+          function* (completedAt: DateTime.Utc, options: { readonly includeToolCalls: boolean }) {
             const allocateEventId = () =>
               idAllocator.allocate.event({ threadId: input.run.threadId });
             const open = yield* Ref.get(openRunOwnedSubagents);
@@ -1400,7 +1406,9 @@ export const layer: Layer.Layer<
                   childTurnItems: new Map(
                     [...stored.turnItems].filter(
                       ([id, item]) =>
-                        open.childTurnItems.has(id) && item.threadId === subagent.childThreadId,
+                        open.childTurnItems.has(id) &&
+                        (item.threadId === subagent.childThreadId ||
+                          (item.type === "subagent" && item.subagentId === subagent.id)),
                     ),
                   ),
                   nodes: new Map(
@@ -1419,20 +1427,22 @@ export const layer: Layer.Layer<
               });
               yield* eventSink.writeIfSubagentUnchanged({ expected: subagent, events });
             }
-            for (const toolCall of stored.turnItems.values()) {
-              if (!openRootToolCalls.has(toolCall.id)) continue;
-              yield* eventSink.writeIfTurnItemUnchanged({
-                expected: toolCall,
-                events: yield* interruptLostToolCalls({
-                  run: input.run,
-                  toolCalls: [toolCall],
-                  completedAt,
-                  allocateEventId,
-                }),
-              });
+            if (options.includeToolCalls) {
+              for (const toolCall of stored.turnItems.values()) {
+                if (!openRootToolCalls.has(toolCall.id)) continue;
+                yield* eventSink.writeIfTurnItemUnchanged({
+                  expected: toolCall,
+                  events: yield* interruptLostToolCalls({
+                    run: input.run,
+                    toolCalls: [toolCall],
+                    completedAt,
+                    allocateEventId,
+                  }),
+                });
+              }
+              openRootToolCalls.clear();
             }
             yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
-            openRootToolCalls.clear();
           },
           (effect) =>
             effect.pipe(
@@ -1684,10 +1694,7 @@ export const layer: Layer.Layer<
             const detached = yield* Ref.modify(openRunOwnedSubagents, (current) => {
               const subagentIds = new Set<NodeId>([moved.id]);
               for (const subagent of current.subagents.values()) {
-                if (
-                  subagent.childThreadId === moved.childThreadId ||
-                  subagent.threadId === moved.childThreadId
-                ) {
+                if (subagent.childThreadId === moved.childThreadId) {
                   subagentIds.add(subagent.id);
                 }
               }
@@ -1697,9 +1704,19 @@ export const layer: Layer.Layer<
                   if (item.nodeId !== null) subagentIds.add(item.nodeId);
                 }
               }
+              // Nested subagents launched by the moved child keep their own child threads in this
+              // run's routing, so keep their row/node/item entries for lost-work cleanup.
+              const keptNestedSubagentIds = new Set<NodeId>();
+              for (const subagent of current.subagents.values()) {
+                if (!subagentIds.has(subagent.id) && subagent.threadId === moved.childThreadId) {
+                  keptNestedSubagentIds.add(subagent.id);
+                }
+              }
               const childTurnItems = new Map(
                 [...current.childTurnItems].filter(
-                  ([, item]) => item.threadId !== moved.childThreadId,
+                  ([, item]) =>
+                    item.threadId !== moved.childThreadId ||
+                    (item.type === "subagent" && keptNestedSubagentIds.has(item.subagentId)),
                 ),
               );
               const turnItems = new Map(
@@ -1729,10 +1746,11 @@ export const layer: Layer.Layer<
                   nodes: new Map(
                     [...current.nodes].filter(
                       ([id, node]) =>
-                        !subagentIds.has(id) &&
-                        node.threadId !== moved.childThreadId &&
-                        (moved.providerThreadId === null ||
-                          node.providerThreadId !== moved.providerThreadId),
+                        keptNestedSubagentIds.has(id) ||
+                        (!subagentIds.has(id) &&
+                          node.threadId !== moved.childThreadId &&
+                          (moved.providerThreadId === null ||
+                            node.providerThreadId !== moved.providerThreadId)),
                     ),
                   ),
                   linkedChildThreadIds: new Set(
@@ -2119,7 +2137,7 @@ export const layer: Layer.Layer<
                     );
                     if (handedOff) {
                       // Its tool calls, the handoff's own among them, died with that process.
-                      yield* endWorkLostAfterRootRun(completedAt);
+                      yield* endLostWork(completedAt, { includeToolCalls: true });
                       return;
                     }
                   }
@@ -2134,7 +2152,7 @@ export const layer: Layer.Layer<
                     isProviderEventStreamError(squashed.cause) &&
                     squashed.cause.raisedByT3 !== true;
                   if (yield* Ref.get(rootRunFinalized)) {
-                    if (runtimeLost) yield* endWorkLostAfterRootRun(completedAt);
+                    if (runtimeLost) yield* endLostWork(completedAt, { includeToolCalls: true });
                     return;
                   }
                   const providerThread = yield* Ref.get(latestProviderThread);
@@ -2188,7 +2206,8 @@ export const layer: Layer.Layer<
                       )
                     : [];
                   let nextRetryWarningAt = completedAt;
-                  yield* writeFinalRunEvents({
+                  const reloadSubagents = input.loadUnsettledWork !== undefined;
+                  const finalized = yield* writeFinalRunEvents({
                     run: input.run,
                     rootNode: input.rootNode,
                     checkpointScope: input.checkpointScope,
@@ -2198,7 +2217,7 @@ export const layer: Layer.Layer<
                       activeAttemptId: input.attempt.id,
                       expectedStatus: "running",
                     },
-                    openRunOwnedSubagents: openSubagents,
+                    ...(reloadSubagents ? {} : { openRunOwnedSubagents: openSubagents }),
                     ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
                     lostToolCalls,
                     completedAt,
@@ -2249,6 +2268,9 @@ export const layer: Layer.Layer<
                     Effect.forkIn(scope),
                     Effect.flatMap(Fiber.join),
                   );
+                  if (finalized && reloadSubagents) {
+                    yield* endLostWork(completedAt, { includeToolCalls: false });
+                  }
                 }),
             ),
             Effect.ensuring(endPreviewActivity),

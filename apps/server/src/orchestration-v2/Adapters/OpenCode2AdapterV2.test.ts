@@ -1755,7 +1755,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     inboxID: string,
     text: string,
     description = "Sleep",
-    state: "completed" | "failed" | "cancelled" = "completed",
+    state: "completed" | "error" | "cancelled" = "completed",
   ) =>
     event("session.inbox.enqueued", {
       inboxID,
@@ -2300,6 +2300,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 background: true,
                 description: `Redirect #${index}`,
                 prompt: `Redirect prompt #${index}`,
+                ...(index === 1 ? { model: "opencode/other-model" } : {}),
               },
               { id: `call-steer-${index}`, writesRules: index === 1 },
             ),
@@ -2657,7 +2658,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           promptAccepted,
           event("session.execution.started", { sessionID: SESSION }),
           ...callAgain(
-            { background: true, description: "Resume after restart", prompt: "keep going" },
+            {
+              background: true,
+              description: "Resume after restart",
+              prompt: "keep going",
+              model: "opencode/redirect-hint",
+            },
             { id: "call-restart-resume" },
           ),
           event("session.execution.started", { sessionID: CHILD }),
@@ -2705,10 +2711,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               }
               if (e.type === "subagent.updated") {
                 subagentEvents.push(e);
-                if (e.subagent.status === "completed") yield* Deferred.succeed(done, undefined);
               }
               if (e.type === "turn_item.updated" && e.turnItem.type === "subagent") {
                 subagentItemEvents.push(e);
+                if (e.turnItem.status === "completed") yield* Deferred.succeed(done, undefined);
               }
               if (e.type === "provider_thread.updated" && e.providerThread.id === thread.id) {
                 for (const task of e.providerThread.pendingBackgroundTasks ?? []) {
@@ -2731,6 +2737,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* Deferred.await(done);
         assert.lengthOf(creates, 1);
         assert.isTrue(creates[0]?.createOnly);
+        assert.isNotEmpty(subagentNodeEvents);
+        assert.isNotEmpty(subagentEvents);
+        assert.isNotEmpty(subagentItemEvents);
         assert.isTrue(subagentNodeEvents.every((e) => e.preserveIdentity === true));
         assert.isTrue(subagentEvents.every((e) => e.preserveIdentity === true));
         assert.isTrue(subagentItemEvents.every((e) => e.preserveIdentity === true));
@@ -2854,98 +2863,455 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
-  it.effect("streams a child that launched and started while the parent was disconnected", () =>
-    Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.started", { sessionID: SESSION }),
-        { type: "runtime_exit", status: "success" },
-        out("event.subscribe"),
-        out("session.active"),
-        replyData("session.active", {
-          [SESSION]: { type: "running" },
-          [CHILD]: { type: "running" },
-        }),
-        out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
-        reply("message.list", {
-          data: [
-            {
-              id: "msg_parent_gap",
-              time: { created: 2, streamed: 2, completed: 2 },
-              type: "assistant",
-              agent: "build",
-              model: { id: "big-pickle", providerID: "opencode", variant: "default" },
-              content: [
-                {
-                  type: "tool",
-                  id: "call-background",
+  it.effect.each(["launched", "redirected"] as const)(
+    "streams a child that %s and started while the parent was disconnected",
+    (mode) =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          ...(mode === "redirected"
+            ? [
+                event("session.created", {
+                  session: { id: CHILD, title: "Sleep", parentID: SESSION },
+                }),
+                event("session.tool.started", {
+                  sessionID: SESSION,
+                  assistantMessageID: "msg_parent_initial",
+                  toolID: "call-initial",
                   name: "subagent",
-                  executed: true,
-                  state: {
-                    status: "completed",
-                    input: { description: "Sleep", prompt: "sleep", background: true },
-                    content: [{ type: "text", text: "The subagent is working in the background." }],
-                    metadata: { sessionID: CHILD, status: "running" },
-                  },
-                  time: { created: 2, ran: 2, completed: 2 },
-                },
-              ],
-              finish: "stop",
-            },
-            {
-              id: `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`,
-              time: { created: 1 },
-              type: "user",
-              text: "hi",
-            },
-          ],
-          cursor: {},
-        }),
-        out("session.update", { sessionID: CHILD, permissions: "<any>" }),
-        reply("session.update", null),
-        out("permission.list", { sessionID: SESSION }),
-        replyData("permission.list", []),
-        out("session.form.list", { sessionID: SESSION }),
-        replyData("session.form.list", []),
-        out("permission.list", { sessionID: CHILD }),
-        replyData("permission.list", []),
-        out("session.form.list", { sessionID: CHILD }),
-        replyData("session.form.list", []),
-        event("session.text.ended", {
-          sessionID: CHILD,
-          assistantMessageID: "msg_child_gap",
-          ordinal: 0,
-          text: "GAP_OK",
-        }),
-        event("session.execution.succeeded", { sessionID: CHILD }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        childReport("msg_report", "GAP_OK"),
-      ]);
-      const childTexts: Array<string> = [];
-      const done = yield* Deferred.make<void>();
-      yield* runtime.events.pipe(
-        Stream.tap((e) =>
-          Effect.gen(function* () {
-            if (
-              e.type === "turn_item.updated" &&
-              e.turnItem.type === "assistant_message" &&
-              e.turnItem.threadId !== threadId
-            ) {
-              childTexts.push(e.turnItem.text);
-            }
-            if (e.type === "subagent.updated" && e.subagent.status === "completed") {
-              yield* Deferred.succeed(done, undefined);
-            }
+                  input: { description: "Sleep", prompt: "first", background: true },
+                }),
+                event("session.tool.progress", {
+                  sessionID: SESSION,
+                  assistantMessageID: "msg_parent_initial",
+                  toolID: "call-initial",
+                  name: "subagent",
+                  metadata: { sessionID: CHILD, status: "running" },
+                }),
+                event("session.execution.started", { sessionID: CHILD }),
+                event("session.execution.succeeded", { sessionID: CHILD }),
+                event("session.tool.completed", {
+                  sessionID: SESSION,
+                  assistantMessageID: "msg_parent_initial",
+                  toolID: "call-initial",
+                  name: "subagent",
+                  output: "The subagent is working in the background.",
+                  metadata: { sessionID: CHILD, status: "running" },
+                }),
+                childReport("msg_report_initial", "FIRST_OK"),
+              ]
+            : []),
+          { type: "runtime_exit", status: "success" },
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", {
+            [SESSION]: { type: "running" },
+            [CHILD]: { type: "running" },
           }),
-        ),
-        Stream.runDrain,
-        Effect.forkScoped,
-      );
-      yield* runtime.startTurn(withLineage(thread));
-      yield* Deferred.await(done);
-      assert.include(childTexts, "GAP_OK");
-    }),
+          out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+          reply("message.list", {
+            data: [
+              {
+                id: "msg_parent_gap",
+                time: { created: 2, streamed: 2, completed: 2 },
+                type: "assistant",
+                agent: "build",
+                model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+                content: [
+                  {
+                    type: "tool",
+                    id: mode === "redirected" ? "call-redirect" : "call-background",
+                    name: "subagent",
+                    executed: true,
+                    state: {
+                      status: "completed",
+                      input:
+                        mode === "redirected"
+                          ? {
+                              sessionID: CHILD,
+                              description: "Redirect",
+                              prompt: "second",
+                              background: true,
+                            }
+                          : { description: "Sleep", prompt: "sleep", background: true },
+                      content: [
+                        { type: "text", text: "The subagent is working in the background." },
+                      ],
+                      metadata: { sessionID: CHILD, status: "running" },
+                    },
+                    time: { created: 2, ran: 2, completed: 2 },
+                  },
+                ],
+                finish: "stop",
+              },
+              {
+                id: `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`,
+                time: { created: 1 },
+                type: "user",
+                text: "hi",
+              },
+            ],
+            cursor: {},
+          }),
+          out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+          reply("session.update", null),
+          out("permission.list", { sessionID: SESSION }),
+          replyData("permission.list", []),
+          out("session.form.list", { sessionID: SESSION }),
+          replyData("session.form.list", []),
+          out("permission.list", { sessionID: CHILD }),
+          replyData("permission.list", []),
+          out("session.form.list", { sessionID: CHILD }),
+          replyData("session.form.list", []),
+          event("session.text.ended", {
+            sessionID: CHILD,
+            assistantMessageID: "msg_child_gap",
+            ordinal: 0,
+            text: "GAP_OK",
+          }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          childReport("msg_report", "GAP_OK"),
+        ]);
+        const childTexts: Array<string> = [];
+        const done = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.tap((e) =>
+            Effect.gen(function* () {
+              if (
+                e.type === "turn_item.updated" &&
+                e.turnItem.type === "assistant_message" &&
+                e.turnItem.threadId !== threadId
+              ) {
+                childTexts.push(e.turnItem.text);
+              }
+              if (
+                e.type === "subagent.updated" &&
+                e.subagent.status === "completed" &&
+                e.subagent.result === "GAP_OK"
+              ) {
+                yield* Deferred.succeed(done, undefined);
+              }
+            }),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(done);
+        assert.include(childTexts, "GAP_OK");
+      }),
+  );
+
+  it.effect(
+    "discards a failed redirect's prompt override before the next redirect enqueues and skips launch prompt in steer backfill",
+    () =>
+      Effect.gen(function* () {
+        const failedTool = {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant",
+          id: "call-failed-redirect",
+        };
+        const { runtime, thread } = yield* resumed([
+          ...launchedAndRunning,
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          // Child is idle while call-background still awaits its report; redirect fails before enqueueing.
+          event("session.tool.input.started", { ...failedTool, name: "subagent" }),
+          event("session.tool.called", {
+            ...failedTool,
+            name: "subagent",
+            input: {
+              description: "Bad redirect",
+              prompt: "stale failed prompt",
+              background: true,
+              sessionID: CHILD,
+            },
+            executed: false,
+          }),
+          event("session.tool.progress", {
+            ...failedTool,
+            metadata: { sessionID: CHILD, status: "running" },
+          }),
+          out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+          reply("session.update", null),
+          event("session.tool.failed", {
+            ...failedTool,
+            error: { type: "other", message: "boom" },
+            executed: true,
+          }),
+          // A synthetic report enters the idle child's inbox before the real next redirect's user prompt.
+          event("session.inbox.enqueued", {
+            inboxID: "msg_child_prior_report",
+            sessionID: CHILD,
+            item: {
+              type: "synthetic",
+              payload: { text: "prior nested note" },
+              delivery: "steer",
+            },
+          }),
+          ...callAgain(
+            { background: true, description: "Good redirect", prompt: "real next prompt" },
+            { id: "call-good-redirect", writesRules: false },
+          ),
+          event("session.inbox.enqueued", {
+            inboxID: "msg_real_launch",
+            sessionID: CHILD,
+            item: {
+              type: "user",
+              payload: { text: "You are a subagent.\nreal next prompt", files: [] },
+              delivery: "steer",
+            },
+          }),
+          event("session.execution.started", { sessionID: CHILD }),
+          event("session.inbox.delivered", { sessionID: CHILD, inboxID: "msg_real_launch" }),
+          // Disconnect and reconnect while the child is running; backfill excludes the prior report.
+          { type: "runtime_exit", status: "success" },
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", {
+            [SESSION]: { type: "running" },
+            [CHILD]: { type: "running" },
+          }),
+          out("message.list", { sessionID: CHILD, order: "desc", limit: "50" }),
+          reply("message.list", {
+            data: [
+              {
+                id: "msg_mid_steer",
+                time: { created: 4 },
+                type: "user",
+                text: "genuine mid-turn steer",
+              },
+              {
+                id: "msg_real_launch",
+                time: { created: 3 },
+                type: "user",
+                text: "You are a subagent.\nreal next prompt",
+              },
+              {
+                id: "msg_child_prior_report",
+                time: { created: 2 },
+                type: "synthetic",
+                text: "prior nested note",
+              },
+            ],
+            cursor: {},
+          }),
+          out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+          reply("message.list", {
+            data: [
+              {
+                id: `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`,
+                time: { created: 1 },
+                type: "user",
+                text: "hi",
+              },
+            ],
+            cursor: {},
+          }),
+          out("permission.list", { sessionID: SESSION }),
+          replyData("permission.list", []),
+          out("session.form.list", { sessionID: SESSION }),
+          replyData("session.form.list", []),
+          out("permission.list", { sessionID: CHILD }),
+          replyData("permission.list", []),
+          out("session.form.list", { sessionID: CHILD }),
+          replyData("session.form.list", []),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          childReport("msg_report_1", "FIRST_OK"),
+          childReport("msg_report_2", "SECOND_OK"),
+        ]);
+        const childUserPrompts: Array<{ readonly text: string; readonly inputIntent: string }> = [];
+        let childThreadId: string | undefined;
+        const done = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.tap((e) =>
+            Effect.gen(function* () {
+              if (e.type === "app_thread.created") childThreadId = e.appThread.id;
+              if (
+                e.type === "turn_item.updated" &&
+                e.turnItem.type === "user_message" &&
+                e.turnItem.threadId === childThreadId
+              ) {
+                childUserPrompts.push({
+                  text: e.turnItem.text,
+                  inputIntent: e.turnItem.inputIntent,
+                });
+              }
+              if (e.type === "subagent.updated" && e.subagent.status === "completed") {
+                yield* Deferred.succeed(done, undefined);
+              }
+            }),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(done);
+        assert.deepEqual(childUserPrompts, [
+          { text: "sleep", inputIntent: "turn_start" },
+          { text: "real next prompt", inputIntent: "turn_start" },
+          { text: "genuine mid-turn steer", inputIntent: "steer" },
+        ]);
+      }),
+  );
+
+  it.effect.each(["unread", "delivered-beyond-page"] as const)(
+    "bounds unread steer backfill and recovers a delivered steer older than 50 records (%s)",
+    (mode) =>
+      Effect.gen(function* () {
+        const steerId = "msg_steer_anchor";
+        const { runtime, thread } = yield* resumed([
+          ...launchedAndRunning,
+          event("session.inbox.enqueued", {
+            inboxID: steerId,
+            sessionID: CHILD,
+            item: {
+              type: "user",
+              payload: { text: "late steer", files: [] },
+              delivery: "steer",
+            },
+          }),
+          { type: "runtime_exit", status: "success" },
+          out("event.subscribe"),
+          out("session.active"),
+          replyData(
+            "session.active",
+            mode === "unread"
+              ? { [SESSION]: { type: "running" }, [CHILD]: { type: "running" } }
+              : { [SESSION]: { type: "running" } },
+          ),
+          out("message.list", { sessionID: CHILD, order: "desc", limit: "50" }),
+          reply("message.list", {
+            data:
+              mode === "unread"
+                ? [{ id: "msg_older_1", time: { created: 1 }, type: "user", text: "old" }]
+                : [
+                    {
+                      id: "msg_child_idle",
+                      time: { created: 60 },
+                      type: "idle",
+                      outcome: "succeeded",
+                    },
+                    {
+                      id: "msg_child_done",
+                      time: { created: 59, streamed: 59, completed: 59 },
+                      type: "assistant",
+                      agent: "general",
+                      model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+                      content: [{ type: "text", text: "RECOVERED_BEYOND_50" }],
+                      finish: "stop",
+                    },
+                  ],
+            cursor: { next: "cur_page_2" },
+          }),
+          out("session.inbox.list", { sessionID: CHILD }),
+          replyData(
+            "session.inbox.list",
+            mode === "unread"
+              ? [
+                  {
+                    id: steerId,
+                    sessionID: CHILD,
+                    time: { created: 2 },
+                    type: "user",
+                    payload: { text: "late steer" },
+                    delivery: "steer",
+                  },
+                ]
+              : [],
+          ),
+          ...(mode === "delivered-beyond-page"
+            ? [
+                out("session.message.get", { sessionID: CHILD, messageID: steerId }),
+                replyData("session.message.get", {
+                  id: steerId,
+                  time: { created: 5 },
+                  type: "user",
+                  text: "late steer",
+                }),
+                out("message.list", { sessionID: CHILD, limit: "50", cursor: "cur_page_2" }),
+                reply("message.list", {
+                  data: [{ id: steerId, time: { created: 5 }, type: "user", text: "late steer" }],
+                  cursor: {},
+                }),
+              ]
+            : []),
+          out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+          reply("message.list", {
+            data: [
+              {
+                id: `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`,
+                time: { created: 1 },
+                type: "user",
+                text: "hi",
+              },
+            ],
+            cursor: {},
+          }),
+          out("permission.list", { sessionID: SESSION }),
+          replyData("permission.list", []),
+          out("session.form.list", { sessionID: SESSION }),
+          replyData("session.form.list", []),
+          ...(mode === "unread"
+            ? [
+                out("permission.list", { sessionID: CHILD }),
+                replyData("permission.list", []),
+                out("session.form.list", { sessionID: CHILD }),
+                replyData("session.form.list", []),
+                event("session.inbox.delivered", { sessionID: CHILD, inboxID: steerId }),
+                childSaid("UNREAD_THEN_OK"),
+                event("session.execution.succeeded", { sessionID: CHILD }),
+              ]
+            : []),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          ...(mode === "unread" ? [childReport("msg_report", "UNREAD_THEN_OK")] : []),
+        ]);
+        const childTexts: Array<string> = [];
+        const childSteers: Array<string> = [];
+        let childTurnStatus: string | undefined;
+        let childThreadId: string | undefined;
+        const done = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.tap((e) =>
+            Effect.gen(function* () {
+              if (e.type === "app_thread.created") childThreadId = e.appThread.id;
+              if (
+                e.type === "provider_turn.updated" &&
+                e.threadId === childThreadId &&
+                e.providerTurn.completedAt !== null
+              ) {
+                childTurnStatus = e.providerTurn.status;
+              }
+              if (e.type === "turn_item.updated" && e.turnItem.threadId === childThreadId) {
+                if (e.turnItem.type === "assistant_message") childTexts.push(e.turnItem.text);
+                if (e.turnItem.type === "user_message" && e.turnItem.inputIntent === "steer") {
+                  childSteers.push(e.turnItem.text);
+                }
+              }
+              if (
+                mode === "unread" &&
+                e.type === "subagent.updated" &&
+                e.subagent.status === "completed"
+              ) {
+                yield* Deferred.succeed(done, undefined);
+              }
+              if (mode === "delivered-beyond-page" && e.type === "turn.terminal") {
+                yield* Deferred.succeed(done, undefined);
+              }
+            }),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(done);
+        assert.equal(childTurnStatus, "completed");
+        assert.deepEqual(childSteers, ["late steer"]);
+        assert.include(childTexts, mode === "unread" ? "UNREAD_THEN_OK" : "RECOVERED_BEYOND_50");
+      }),
   );
 
   const MIDDLE = "ses_middle0000000000000000000";

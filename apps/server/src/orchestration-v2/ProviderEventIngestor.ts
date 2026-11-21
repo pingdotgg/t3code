@@ -18,6 +18,7 @@ import {
   type RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -608,18 +609,21 @@ export const layer: Layer.Layer<
                   providerThreadId: subagent.providerThreadId,
                 });
                 if (existing !== null) {
+                  const { modelSelection: incomingSelection, ...rest } = subagent;
+                  const hasStoredModel =
+                    existing.subagent.model !== null ||
+                    existing.subagent.modelSelection !== undefined;
+                  const model = hasStoredModel ? existing.subagent.model : subagent.model;
+                  const modelSelection = hasStoredModel
+                    ? existing.subagent.modelSelection
+                    : incomingSelection;
                   subagent = {
-                    ...subagent,
+                    ...rest,
                     id: existing.subagent.id,
                     title: existing.subagent.title ?? subagent.title,
                     prompt: existing.subagent.prompt || subagent.prompt,
-                    model: subagent.model ?? existing.subagent.model,
-                    ...((subagent.modelSelection ?? existing.subagent.modelSelection) === undefined
-                      ? {}
-                      : {
-                          modelSelection:
-                            subagent.modelSelection ?? existing.subagent.modelSelection,
-                        }),
+                    model,
+                    ...(modelSelection === undefined ? {} : { modelSelection }),
                   };
                 }
               }
@@ -938,14 +942,16 @@ export const layer: Layer.Layer<
                     : input.event.subagent;
                 return syncSubagentThreadModel(input, subagent).pipe(
                   Effect.map((synced) => [...storedEvents, ...synced]),
-                  Effect.mapError(
+                  Effect.catchCauseIf(
+                    (cause) => !Cause.hasInterruptsOnly(cause),
                     (cause) =>
-                      new ProviderEventPublishError({
-                        providerSessionId: input.providerSessionId,
-                        eventCount: 1,
+                      Effect.logWarning("Native subagent thread model sync failed", {
+                        threadId: subagent.childThreadId ?? input.threadId,
+                        subagentId: subagent.id,
                         cause,
-                      }),
+                      }).pipe(Effect.as(storedEvents)),
                   ),
+                  Effect.orDie,
                 );
               }),
               Effect.tap((storedEvents) =>

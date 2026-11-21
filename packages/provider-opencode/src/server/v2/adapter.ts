@@ -259,6 +259,7 @@ interface ActiveTurn {
   readonly models: Set<string>;
   lastStep: Tokens | undefined;
   before: string | null | undefined;
+  launchPromptId: string | undefined;
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
   todoPlanId: PlanId | undefined;
@@ -391,7 +392,7 @@ interface ThreadState {
         readonly appThread: OrchestrationV2AppThread;
         readonly coldResumeKey: string | undefined;
         turns: number;
-        callPrompt: string | undefined;
+        readonly pendingPrompts: Array<{ readonly call: SubagentCall; readonly text: string }>;
         queuedPrompt: { readonly inboxId: string; readonly text: string } | undefined;
         queued: string | undefined;
         readonly steers: Map<string, string>;
@@ -1729,6 +1730,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       models: new Set(),
       lastStep: undefined,
       before: undefined,
+      launchPromptId: undefined,
       compaction: undefined,
       compactions: 0,
       todoPlanId: undefined,
@@ -1758,7 +1760,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       startedAt: call.startedAt,
       prompt: call.prompt,
       title: call.title,
-      model: call.model,
+      model: preserveIdentity ? null : call.model,
       status: call.status,
       result: null,
       resultRun: -1,
@@ -2229,7 +2231,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         call.row = row;
         call.child = child;
         existing.call = call;
-        if (child.active === undefined) existing.callPrompt ??= call.prompt;
+        if (child.active === undefined && call.prompt.length > 0) {
+          existing.pendingPrompts.push({ call, text: call.prompt });
+        }
         child.sessionScopedBackground = false;
         child.model = childModel;
         const nextProviderThread = withReportedModel(
@@ -2345,7 +2349,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         appThread,
         coldResumeKey: coldResume ? call.nativeId : previous?.subagent?.coldResumeKey,
         turns: previous?.subagent?.turns ?? 0,
-        callPrompt: call.prompt,
+        pendingPrompts: call.prompt.length > 0 ? [{ call, text: call.prompt }] : [],
         queuedPrompt: undefined,
         queued: undefined,
         steers: new Map<string, string>(),
@@ -2392,8 +2396,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       call.state.calls.delete(call.toolId);
       const child = call.child;
       const remaining = child === undefined ? [] : callsAttachedTo(child);
-      if (child?.subagent !== undefined && child.subagent.call === call && remaining.length > 0) {
-        child.subagent.call = remaining.at(-1)!;
+      if (child?.subagent !== undefined) {
+        for (let i = child.subagent.pendingPrompts.length - 1; i >= 0; i -= 1) {
+          if (child.subagent.pendingPrompts[i]?.call === call) {
+            child.subagent.pendingPrompts.splice(i, 1);
+          }
+        }
+        if (child.subagent.call === call && remaining.length > 0) {
+          child.subagent.call = remaining.at(-1)!;
+        }
       }
       const row = call.row;
       if (row !== undefined) {
@@ -2417,7 +2428,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           yield* finishTurn(child, { status: "interrupted" });
         }
         if (child.active === undefined && child.subagent !== undefined) {
-          child.subagent.callPrompt = undefined;
+          child.subagent.pendingPrompts.length = 0;
           child.subagent.queuedPrompt = undefined;
           child.subagent.queued = undefined;
           child.subagent.steers.clear();
@@ -2514,9 +2525,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         },
       });
       yield* emitProviderTurn(child, turn, providerTurn);
-      const prompt = subagent.queuedPrompt?.text ?? subagent.callPrompt;
+      turn.launchPromptId = subagent.queuedPrompt?.inboxId;
+      const prompt = subagent.queuedPrompt?.text ?? subagent.pendingPrompts[0]?.text;
       subagent.queuedPrompt = undefined;
-      subagent.callPrompt = undefined;
+      subagent.pendingPrompts.length = 0;
       if (prompt !== undefined && prompt.length > 0) {
         const nativeId = `${nativeTurnId}:prompt`;
         const artifacts = makeSubagentConversationArtifacts({
@@ -3809,11 +3821,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         const text = event.data.item.payload.text;
         if (state.subagent !== undefined) {
           if (state.active === undefined && state.subagent.queuedPrompt === undefined) {
+            const matchIndex = state.subagent.pendingPrompts.findIndex(
+              (entry) => text === entry.text || text.includes(entry.text),
+            );
+            const matched =
+              matchIndex === -1
+                ? undefined
+                : state.subagent.pendingPrompts.splice(matchIndex, 1)[0];
             state.subagent.queuedPrompt = {
               inboxId: event.data.inboxID,
-              text: state.subagent.callPrompt || text,
+              text: matched?.text ?? text,
             };
-            state.subagent.callPrompt = undefined;
           } else {
             state.subagent.steers.set(event.data.inboxID, text);
           }
@@ -3889,19 +3907,69 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const start = before !== undefined ? before : promptId;
       const oldestSteer = pendingSteers?.values().next().value;
-      const history = OpenCode2Client.paginate(
-        { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 50 },
-        client.message.list,
-      ).pipe(
-        Stream.takeUntil((message) =>
-          start !== undefined ? message.id === start : message.id === oldestSteer,
-        ),
-      );
-      // An unread steer is not in history yet, so a steer anchor reads one page at most.
-      const read = yield* (start === undefined ? history.pipe(Stream.take(50)) : history).pipe(
-        Stream.runCollect,
-        Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }),
-      );
+      const read = yield* Effect.gen(function* () {
+        const sessionID = Session.ID.make(sessionId);
+        if (start !== undefined) {
+          return yield* OpenCode2Client.paginate(
+            { sessionID, order: "desc" as const, limit: 50 },
+            client.message.list,
+          ).pipe(
+            Stream.takeUntil((message) => message.id === start),
+            Stream.runCollect,
+            Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }),
+          );
+        }
+        const firstPage = yield* client.message
+          .list({ sessionID, order: "desc", limit: 50 })
+          .pipe(Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }));
+        if (firstPage === null) return null;
+        if (
+          firstPage.cursor.next === undefined ||
+          firstPage.data.some((message) => message.id === oldestSteer)
+        ) {
+          return firstPage.data;
+        }
+        // Only scan past page 1 when a pending steer is proven to exist in message history.
+        const inbox = yield* client.session.inbox
+          .list({ sessionID })
+          .pipe(Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }));
+        if (inbox === null) return null;
+        const unread = new Set<string>(inbox.map((item) => item.id));
+        const seen = new Set<string>(firstPage.data.map((message) => message.id));
+        let deliveredAnchor: string | undefined;
+        for (const steerId of pendingSteers!) {
+          if (seen.has(steerId)) break;
+          if (unread.has(steerId)) continue;
+          const probe = yield* client.session.message
+            .get({ sessionID, messageID: SessionMessage.ID.make(steerId) })
+            .pipe(
+              Effect.as("found" as const),
+              Effect.catchTags({
+                MessageNotFoundError: () => Effect.succeed("absent" as const),
+                SessionNotFoundError: () => Effect.succeed("missing" as const),
+              }),
+            );
+          if (probe === "missing") return null;
+          if (probe === "found") {
+            deliveredAnchor = steerId;
+            break;
+          }
+        }
+        if (deliveredAnchor === undefined) return firstPage.data;
+        const rest = yield* OpenCode2Client.paginate(
+          {
+            sessionID,
+            limit: 50,
+            cursor: firstPage.cursor.next as string | undefined,
+          },
+          client.message.list,
+        ).pipe(
+          Stream.takeUntil((message) => message.id === deliveredAnchor),
+          Stream.runCollect,
+          Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }),
+        );
+        return rest === null ? null : [...firstPage.data, ...rest];
+      });
       return yield* lock.withPermit(
         Effect.gen(function* () {
           if (state.active !== turn) return undefined;
@@ -3944,6 +4012,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           for (const message of recent.toReversed()) {
             if (message.type === "user" && state.subagent !== undefined && state.active === turn) {
+              if (message.id === turn.launchPromptId) continue;
               const steer = state.subagent.steers.get(message.id) ?? message.text;
               state.subagent.steers.delete(message.id);
               yield* emitChildSteer(state, turn, message.id, steer);
@@ -4101,8 +4170,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return;
       }
       const active = { ...(yield* client.session.active()) };
-      const attachedBefore = new Set(
-        [...threads.values()].filter((state) => state.subagent !== undefined),
+      const attachedBefore = new Map(
+        [...threads.values()].flatMap((state) =>
+          state.subagent === undefined ? [] : [[state, state.subagent.call] as const],
+        ),
       );
       for (const sessionId of busy) if (!(sessionId in active)) busy.delete(sessionId);
       for (const state of threads.values()) {
@@ -4148,7 +4219,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // A child the parent's backfill found running started in the gap; its start is not replayed.
       for (const state of threads.values()) {
         if (state.subagent === undefined || state.active !== undefined) continue;
-        if (attachedBefore.has(state) || !(state.sessionId in active)) continue;
+        if (attachedBefore.get(state) === state.subagent.call || !(state.sessionId in active)) {
+          continue;
+        }
         yield* lock.withPermit(startChildTurn(state));
       }
       for (const state of threads.values()) {
