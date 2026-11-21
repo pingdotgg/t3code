@@ -72,6 +72,10 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
   "antigravity",
 ].map((driver) => ProviderDriverKind.make(driver));
 
+/** Other drivers run text generation only when the user selects them. */
+export const isAutomaticTextGenerationFallbackDriver = (driver: ProviderDriverKind): boolean =>
+  TEXT_GENERATION_FALLBACK_DRIVERS.includes(driver);
+
 /** Configured instances come after every default instance, so they only win when no default qualifies. */
 export function fallbackTextGenerationModelSelection(
   providerInstances: ServerSettings["providerInstances"],
@@ -91,9 +95,11 @@ export function fallbackTextGenerationModelSelection(
       : [driverDefault];
   };
   const candidates = [
-    ...TEXT_GENERATION_FALLBACK_DRIVERS.map(
-      (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
-    ),
+    ...TEXT_GENERATION_FALLBACK_DRIVERS.flatMap((defaultDriver) => {
+      const instanceId = defaultInstanceIdForDriver(defaultDriver);
+      const driver = providerInstances[instanceId]?.driver ?? defaultDriver;
+      return isAutomaticTextGenerationFallbackDriver(driver) ? [[instanceId, driver] as const] : [];
+    }),
     ...Object.entries(providerInstances).flatMap(([instanceId, instance]) =>
       TEXT_GENERATION_FALLBACK_DRIVERS.includes(instance.driver)
         ? [[ProviderInstanceId.make(instanceId), instance.driver] as const]
