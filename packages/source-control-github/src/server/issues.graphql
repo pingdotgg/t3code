@@ -16,6 +16,26 @@ fragment IssueRow on Issue {
   }
 }
 
+fragment IssueSearchRow on Issue {
+  ...IssueRow
+  assignees(first: 20) {
+    nodes {
+      login
+      name
+      avatarUrl
+    }
+  }
+  labels(first: 20) {
+    nodes {
+      name
+      color
+    }
+  }
+  comments {
+    totalCount
+  }
+}
+
 query IssueSearch($q: String!, $cursor: String, $rows: Int!) {
   search(query: $q, type: ISSUE, first: $rows, after: $cursor) {
     pageInfo {
@@ -24,23 +44,33 @@ query IssueSearch($q: String!, $cursor: String, $rows: Int!) {
     }
     nodes {
       ... on Issue {
-        ...IssueRow
-        assignees(first: 20) {
-          nodes {
-            login
-            name
-            avatarUrl
-          }
-        }
-        labels(first: 20) {
-          nodes {
-            name
-            color
-          }
-        }
-        comments {
-          totalCount
-        }
+        ...IssueSearchRow
+      }
+    }
+  }
+}
+
+query RepositoryIssues(
+  $owner: String!
+  $name: String!
+  $states: [IssueState!]
+  $sort: IssueOrderField!
+  $cursor: String
+  $rows: Int!
+) {
+  repository(owner: $owner, name: $name, followRenames: false) {
+    issues(
+      first: $rows
+      after: $cursor
+      states: $states
+      orderBy: { field: $sort, direction: DESC }
+    ) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        ...IssueSearchRow
       }
     }
   }
