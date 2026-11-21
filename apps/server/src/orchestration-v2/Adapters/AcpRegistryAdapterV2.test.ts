@@ -1165,6 +1165,34 @@ describe("AcpRegistryAdapterV2", () => {
       },
     );
 
+    // regression: #40416 Vibe resolves catalog aliases its model option does not list
+    it.effect("lets Mistral Vibe resolve a stored model alias it does not list", () => {
+      const vibeModels = (currentValue: string) => ({
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue,
+        options: [
+          { value: "mistral-large-4-0", name: "Mistral Large 4" },
+          { value: "mistral-medium-3.5", name: "Mistral Medium 3.5" },
+        ],
+      });
+      return openWithStoredPicks({
+        agentId: "mistral-vibe",
+        setup: { configOptions: [vibeModels("mistral-medium-3.5")] },
+        storedModel: "mistral-large-4-0-3",
+        pickFrames: [
+          outbound("session/set_config_option", {
+            sessionId: "agent-session",
+            configId: "model",
+            value: "mistral-large-4-0-3",
+          }),
+          answer("session/set_config_option", { configOptions: [vibeModels("mistral-large-4-0")] }),
+        ],
+      }).pipe(Effect.provide(layerTest));
+    });
+
     // regression: #19519 models come from session model state, not a hardcoded list
     it.effect("keeps unadvertised default and auto selections agent-controlled", () =>
       Effect.gen(function* () {
