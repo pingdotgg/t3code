@@ -86,6 +86,10 @@ vi.mock("~/state/use-atom-command", () => ({
           : () => Promise.resolve({ _tag: "Success", value: {} }),
 }));
 vi.mock("~/state/query", () => ({ formatEnvironmentQueryError: () => "Device failed" }));
+// The real closed-view store imports the right panel store back, so loading it would wait on this mock.
+vi.mock("~/closedViewStore", () => ({
+  useClosedViewStore: { getState: () => ({ remember: () => "" }) },
+}));
 vi.mock("~/rightPanelStore", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/rightPanelStore")>()),
   useRightPanelStore: {
