@@ -98,6 +98,7 @@
   "289ec1df10840137": "Association impossible : l’autre environnement a refusé",
   "21be308917bd450e": "Association impossible : {failure}",
   "acd01e781e2355cc": "Demande terminée",
+  "8855350e81d45c45": "Cette association a été supprimée ou a expiré. Associez à nouveau la machine.",
   "97e4c50a99272f63": "Impossible de répondre à la demande. Réessayez.",
   "605a491783d18b3f": "Impossible de lire ce fil via {via}",
   "50f19209548b70d9": "{via} a peut-être besoin d’une mise à jour pour lire les fils associés.",
@@ -3640,6 +3641,7 @@
     },
     " aucune adresse joignable par une autre machine. Saisissez son adresse https ou Tailscale."
   ],
+  "dc9a0b68d101e904": "Déjà associé. Associer à nouveau renouvelle l’association avec l’accès que vous choisissez.",
   "7ebb23e6bf9b19e8": "Code d’appairage",
   "e8235ebb43ad7228": "Créez un lien sur une machine : Paramètres → Partage et accès → Clients autorisés → Créer un lien, puis collez son code ici.",
   "a974e6c3c613e452": [
@@ -8930,7 +8932,6 @@
   "81c9796bf61b306a": "Impossible d’oublier l’association",
   "130e51beb6cf5aad": "Associer un environnement",
   "122c3e355699e69d": "Les agents d’ici pourront alors lancer des fils là-bas, leur envoyer des messages et les attendre. L’association apparaît sous Clients autorisés dans Partage et accès de cet environnement, où elle peut être révoquée.",
-  "dc9a0b68d101e904": "Déjà associé. Associer à nouveau renouvelle l’association avec l’accès que vous choisissez.",
   "2fbcbe2d8c56a245": "Privilégier",
   "479a7eeae96511fc": "Normal",
   "fd16014a2f23dea9": "Moins souvent",

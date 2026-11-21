@@ -98,6 +98,7 @@
   "289ec1df10840137": "No se pudo vincular: el otro entorno lo rechazó",
   "21be308917bd450e": "No se pudo vincular: {failure}",
   "acd01e781e2355cc": "Solicitud finalizada",
+  "8855350e81d45c45": "Ese vínculo se eliminó o caducó. Vuelve a vincular la máquina.",
   "97e4c50a99272f63": "No se pudo responder a la solicitud. Inténtalo de nuevo.",
   "605a491783d18b3f": "No se pudo leer este hilo a través de {via}",
   "50f19209548b70d9": "Puede que {via} necesite actualizarse para poder leer hilos vinculados.",
@@ -4178,6 +4179,7 @@
     },
     ". El agente puede usar ese vínculo tal cual; cambia su acceso en Ajustes → Entornos."
   ],
+  "dc9a0b68d101e904": "Ya está vinculado. Vincularlo de nuevo lo renueva con el acceso que elijas.",
   "e8235ebb43ad7228": "Crea un enlace en una máquina: Ajustes → Compartir y acceso → Clientes autorizados → Crear enlace, y pega aquí su código.",
   "a974e6c3c613e452": [
     "Crea un enlace en ",

@@ -17,7 +17,7 @@ const machine = (name: string, overrides: Partial<LinkableMachine> = {}): Linkab
   machine: "server",
   connected: true,
   connectOnly: false,
-  linked: false,
+  linkedAccess: null,
   urls: [`https://${name}.example.ts.net`, `http://100.64.0.1:3773`],
   ...overrides,
 });
@@ -27,7 +27,7 @@ describe("linkBatchCandidates", () => {
   it("offers only machines the client can mint a code on and has an address for", () => {
     const machines = [
       machine("ready"),
-      machine("linked", { linked: true, connected: false }),
+      machine("linked", { linkedAccess: "read-only", connected: false }),
       machine("offline", { connected: false }),
       machine("connect", { connected: false, connectOnly: true }),
       machine("viewer"),

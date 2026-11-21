@@ -271,7 +271,7 @@ export function LinkEnvironmentDialog({
         machine: "server" as const,
         connected: false,
         connectOnly: false,
-        linked: false,
+        linkedAccess: null,
         urls: route.urls,
       })),
   ];
@@ -516,7 +516,7 @@ export function LinkEnvironmentDialog({
                 }}
               />
             ) : null}
-            {machine?.linked ? (
+            {machine?.linkedAccess ? (
               <p className="text-xs text-muted-foreground">
                 <T>Already linked. Linking again renews it with the access you pick.</T>
               </p>

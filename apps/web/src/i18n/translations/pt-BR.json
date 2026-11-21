@@ -98,6 +98,7 @@
   "289ec1df10840137": "Não foi possível vincular: o outro ambiente recusou",
   "21be308917bd450e": "Não foi possível vincular: {failure}",
   "acd01e781e2355cc": "Solicitação encerrada",
+  "8855350e81d45c45": "Esse vínculo foi removido ou expirou. Vincule a máquina novamente.",
   "97e4c50a99272f63": "Não foi possível responder à solicitação. Tente novamente.",
   "605a491783d18b3f": "Não foi possível ler esta thread por {via}",
   "50f19209548b70d9": "Talvez {via} precise de uma atualização para ler threads vinculadas.",
@@ -3640,6 +3641,7 @@
     },
     " que outra máquina consiga acessar. Informe o endereço https ou do Tailscale."
   ],
+  "dc9a0b68d101e904": "Já vinculado. Vincular novamente renova o vínculo com o acesso escolhido.",
   "7ebb23e6bf9b19e8": "Código de pareamento",
   "e8235ebb43ad7228": "Crie um link em uma máquina: Configurações → Compartilhamento e acesso → Clientes autorizados → Criar link e cole o código aqui.",
   "a974e6c3c613e452": [
@@ -8929,7 +8931,6 @@
   "81c9796bf61b306a": "Não foi possível esquecer o vínculo",
   "130e51beb6cf5aad": "Vincular um ambiente",
   "122c3e355699e69d": "Os agentes daqui poderão então iniciar threads lá, enviar mensagens e aguardá-las. Ele aparece em Clientes autorizados em Compartilhamento e acesso daquele ambiente, onde pode ser revogado.",
-  "dc9a0b68d101e904": "Já vinculado. Vincular novamente renova o vínculo com o acesso escolhido.",
   "2fbcbe2d8c56a245": "Preferir",
   "479a7eeae96511fc": "Normal",
   "fd16014a2f23dea9": "Com menos frequência",

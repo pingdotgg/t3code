@@ -9,6 +9,7 @@ import {
   linkRequestFailureMessage,
   linkRequestInitialMachine,
   type LinkRequestItem,
+  linkRequestKeepsLink,
   linkRequestTarget,
   rankMachinesByHint,
 } from "@t3tools/client-runtime/link-request";
@@ -243,7 +244,7 @@ function LinkRequestSheet(props: {
     Option.isSome(connected) &&
     mayMint &&
     !mintFailed.has(targetId);
-  const useExisting = target.kind === "machine" && target.linked;
+  const useExisting = linkRequestKeepsLink(item, target);
   const ready =
     target.kind !== "none" &&
     (useExisting ||
@@ -251,7 +252,7 @@ function LinkRequestSheet(props: {
 
   const prepareAnswer = async () => {
     if (target.kind === "none") return null;
-    if (target.kind === "machine" && target.linked) {
+    if (useExisting && target.kind === "machine") {
       return linkRequestAnswerInput(item, {
         type: "use-existing",
         environmentId: target.environmentId,
@@ -407,6 +408,11 @@ function LinkRequestSheet(props: {
           </Text>
         ) : target.kind === "none" ? null : (
           <>
+            {target.kind === "machine" && target.linkedAccess !== null ? (
+              <Text className="font-sans text-sm leading-5 text-foreground-muted">
+                <T>Already linked. Linking again renews it with the access you pick.</T>
+              </Text>
+            ) : null}
             {canMint ? null : (
               <View className="gap-2">
                 <TextInput
@@ -501,13 +507,14 @@ function MachineRow(props: {
 }) {
   const gt = useGT();
   const { machine } = props;
-  const status = machine.linked
-    ? gt("Linked")
-    : machine.connected
-      ? null
-      : machine.connectOnly
-        ? "T3 Connect"
-        : gt("Not connected");
+  const status =
+    machine.linkedAccess !== null
+      ? gt("Linked")
+      : machine.connected
+        ? null
+        : machine.connectOnly
+          ? "T3 Connect"
+          : gt("Not connected");
   return (
     <Pressable
       accessibilityRole="radio"

@@ -98,6 +98,7 @@
   "289ec1df10840137": "No se pudo vincular: el otro entorno lo rechazó",
   "21be308917bd450e": "No se pudo vincular: {failure}",
   "acd01e781e2355cc": "Solicitud finalizada",
+  "8855350e81d45c45": "Ese vínculo se eliminó o caducó. Vuelve a vincular la máquina.",
   "97e4c50a99272f63": "No se pudo responder a la solicitud. Inténtalo de nuevo.",
   "605a491783d18b3f": "No se pudo leer este hilo a través de {via}",
   "50f19209548b70d9": "Puede que {via} necesite actualizarse para poder leer hilos vinculados.",
@@ -3640,6 +3641,7 @@
     },
     " a la que pueda acceder otra máquina. Introduce su dirección https o de Tailscale."
   ],
+  "dc9a0b68d101e904": "Ya está vinculado. Vincularlo de nuevo lo renueva con el acceso que elijas.",
   "7ebb23e6bf9b19e8": "Código de emparejamiento",
   "e8235ebb43ad7228": "Crea un enlace en una máquina: Ajustes → Compartir y acceso → Clientes autorizados → Crear enlace, y pega aquí su código.",
   "a974e6c3c613e452": [
@@ -8928,7 +8930,6 @@
   "81c9796bf61b306a": "No se pudo olvidar el vínculo",
   "130e51beb6cf5aad": "Vincular un entorno",
   "122c3e355699e69d": "Así los agentes de aquí podrán iniciar hilos allí, enviarles mensajes y esperarlos. Aparece en Clientes autorizados, en Compartir y acceso de ese entorno, donde se puede revocar.",
-  "dc9a0b68d101e904": "Ya está vinculado. Vincularlo de nuevo lo renueva con el acceso que elijas.",
   "2fbcbe2d8c56a245": "Preferir",
   "479a7eeae96511fc": "Normal",
   "fd16014a2f23dea9": "Con menos frecuencia",

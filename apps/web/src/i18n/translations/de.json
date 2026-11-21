@@ -98,6 +98,7 @@
   "289ec1df10840137": "Verknüpfen fehlgeschlagen: Die andere Umgebung hat abgelehnt",
   "21be308917bd450e": "Verknüpfen fehlgeschlagen: {failure}",
   "acd01e781e2355cc": "Anfrage beendet",
+  "8855350e81d45c45": "Diese Verknüpfung wurde entfernt oder ist abgelaufen. Verknüpfe den Computer erneut.",
   "97e4c50a99272f63": "Die Anfrage konnte nicht beantwortet werden. Versuche es erneut.",
   "605a491783d18b3f": "Dieser Thread konnte nicht über {via} gelesen werden",
   "50f19209548b70d9": "{via} braucht möglicherweise ein Update, bevor es verknüpfte Threads lesen kann.",
@@ -3641,6 +3642,7 @@
     },
     ", die ein anderer Rechner erreichen kann. Gib die https- oder Tailscale-Adresse ein."
   ],
+  "dc9a0b68d101e904": "Bereits verknüpft. Erneutes Verknüpfen verlängert sie mit dem gewählten Zugriff.",
   "7ebb23e6bf9b19e8": "Kopplungscode",
   "e8235ebb43ad7228": "Erstelle auf einem Rechner einen Link: Einstellungen → Freigabe & Zugriff → Autorisierte Clients → Link erstellen, und füge dann seinen Code hier ein.",
   "a974e6c3c613e452": [
@@ -8930,7 +8932,6 @@
   "81c9796bf61b306a": "Verknüpfung konnte nicht vergessen werden",
   "130e51beb6cf5aad": "Umgebung verknüpfen",
   "122c3e355699e69d": "Agenten hier können dort dann Threads starten, ihnen Nachrichten senden und auf sie warten. Sie erscheint unter „Autorisierte Clients“ in „Freigabe & Zugriff“ dieser Umgebung und kann dort widerrufen werden.",
-  "dc9a0b68d101e904": "Bereits verknüpft. Erneutes Verknüpfen verlängert sie mit dem gewählten Zugriff.",
   "2fbcbe2d8c56a245": "Bevorzugen",
   "479a7eeae96511fc": "Normal",
   "fd16014a2f23dea9": "Seltener",

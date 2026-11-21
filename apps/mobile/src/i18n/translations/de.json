@@ -98,6 +98,7 @@
   "289ec1df10840137": "Verknüpfen fehlgeschlagen: Die andere Umgebung hat abgelehnt",
   "21be308917bd450e": "Verknüpfen fehlgeschlagen: {failure}",
   "acd01e781e2355cc": "Anfrage beendet",
+  "8855350e81d45c45": "Diese Verknüpfung wurde entfernt oder ist abgelaufen. Verknüpfe den Computer erneut.",
   "97e4c50a99272f63": "Die Anfrage konnte nicht beantwortet werden. Versuche es erneut.",
   "605a491783d18b3f": "Dieser Thread konnte nicht über {via} gelesen werden",
   "50f19209548b70d9": "{via} braucht möglicherweise ein Update, bevor es verknüpfte Threads lesen kann.",
@@ -4183,6 +4184,7 @@
     },
     " verknüpft. Der Agent kann diese Verknüpfung so verwenden; ändere den Zugriff unter Einstellungen → Umgebungen."
   ],
+  "dc9a0b68d101e904": "Bereits verknüpft. Erneutes Verknüpfen verlängert sie mit dem gewählten Zugriff.",
   "e8235ebb43ad7228": "Erstelle auf einem Rechner einen Link: Einstellungen → Freigabe & Zugriff → Autorisierte Clients → Link erstellen, und füge dann seinen Code hier ein.",
   "a974e6c3c613e452": [
     "Erstelle einen Link auf ",

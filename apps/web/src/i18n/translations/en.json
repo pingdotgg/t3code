@@ -98,6 +98,7 @@
   "289ec1df10840137": "Could not link: the other environment refused",
   "21be308917bd450e": "Could not link: {failure}",
   "acd01e781e2355cc": "Request ended",
+  "8855350e81d45c45": "That link was removed or expired. Link the machine again.",
   "97e4c50a99272f63": "Could not answer the request. Try again.",
   "605a491783d18b3f": "Could not read this thread through {via}",
   "50f19209548b70d9": "{via} may need an update before it can read linked threads.",
@@ -3640,6 +3641,7 @@
     },
     " that another machine can reach. Enter its https or Tailscale address."
   ],
+  "dc9a0b68d101e904": "Already linked. Linking again renews it with the access you pick.",
   "7ebb23e6bf9b19e8": "Pairing code",
   "e8235ebb43ad7228": "Create a link on a machine: Settings → Sharing & access → Authorized clients → Create link, then paste its code here.",
   "a974e6c3c613e452": [
@@ -8938,7 +8940,6 @@
   "81c9796bf61b306a": "Could not forget the link",
   "130e51beb6cf5aad": "Link an environment",
   "122c3e355699e69d": "Agents here can then launch, message and wait on threads there. It appears under Authorized clients in that environment's Sharing & access, where it can be revoked.",
-  "dc9a0b68d101e904": "Already linked. Linking again renews it with the access you pick.",
   "2fbcbe2d8c56a245": "Prefer",
   "479a7eeae96511fc": "Normal",
   "fd16014a2f23dea9": "Less often",

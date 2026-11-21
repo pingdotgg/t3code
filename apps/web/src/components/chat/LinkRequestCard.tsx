@@ -9,6 +9,7 @@ import {
   linkRequestFailureMessage,
   linkRequestInitialMachine,
   type LinkRequestItem,
+  linkRequestKeepsLink,
   linkRequestTarget,
   linkRequestTargetName,
   rankMachinesByHint,
@@ -232,7 +233,7 @@ function LinkRequestDialog(props: {
     !mintFailed.has(targetId);
   // An address the agent gave is already filled in; only one the user must type is asked for.
   const asksAddress = needsAddress && item.url === undefined;
-  const useExisting = target.kind === "machine" && target.linked;
+  const useExisting = linkRequestKeepsLink(item, target);
   // A named machine with an address it answers at has nothing to choose before access.
   const steps: ReadonlyArray<LinkStep> =
     pickMachine || asksAddress ? ["machine", "access"] : ["access"];
@@ -259,7 +260,7 @@ function LinkRequestDialog(props: {
   // Settles to the answer to send, an error to show, or nothing to do.
   const prepareAnswer = async () => {
     if (target.kind === "none") return null;
-    if (target.kind === "machine" && target.linked) {
+    if (useExisting && target.kind === "machine") {
       return linkRequestAnswerInput(item, {
         type: "use-existing",
         environmentId: target.environmentId,
@@ -407,6 +408,11 @@ function LinkRequestDialog(props: {
                 ) : null}
                 {useExisting ? null : (
                   <>
+                    {target.kind === "machine" && target.linkedAccess !== null ? (
+                      <p className="text-xs text-muted-foreground">
+                        <T>Already linked. Linking again renews it with the access you pick.</T>
+                      </p>
+                    ) : null}
                     {needsAddress ? <LinkAddressWarning address={address} /> : null}
                     {canMint ? null : (
                       <label className="block space-y-1.5">
