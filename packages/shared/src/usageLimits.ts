@@ -556,9 +556,10 @@ export function displayLimitWindows(pool: LimitPool) {
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   session: 0,
-  weekly: 1,
-  monthly: 2,
-  other: 3,
+  daily: 1,
+  weekly: 2,
+  monthly: 3,
+  other: 4,
 };
 
 export function collectLimitPools(
@@ -608,7 +609,7 @@ const CLAUDE_SESSION_CAPACITY: Record<string, number> = { Pro: 1, Max: 5, Ultra:
 
 function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["kind"]) {
   if (!account.plan) return undefined;
-  if (account.driver === "codex" && (kind === "session" || kind === "weekly")) {
+  if (account.driver === "codex" && (kind === "session" || kind === "daily" || kind === "weekly")) {
     return CODEX_PLAN_CAPACITY[account.plan];
   }
   if (account.driver === "claudeAgent" && kind === "session") {
