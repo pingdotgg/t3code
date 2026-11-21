@@ -3,6 +3,7 @@ import {
   EnvironmentId,
   type WorkflowQuestion,
   type WorkflowRun,
+  type WorkflowRunReference,
   type WorkflowRunsSnapshot,
   type WorkflowStep,
 } from "@t3tools/contracts";
@@ -11,6 +12,7 @@ import { page as browserPage, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
+import type { WorkflowPaneTab } from "./workflowPane.logic";
 import { WorkflowRunsView } from "./WorkflowRunsView";
 
 const environmentId = EnvironmentId.make("laptop");
@@ -54,6 +56,7 @@ const state = vi.hoisted(() => ({
     questions: ReadonlyArray<unknown>;
   },
   steps: {} as Record<string, ReadonlyArray<unknown>>,
+  references: {} as Record<string, ReadonlyArray<unknown>>,
   commands: [] as Array<readonly [label: string | undefined, input: unknown]>,
   permitted: true,
   detailError: null as string | null,
@@ -64,9 +67,11 @@ const cannotOperate = Atom.make(false);
 function setup(
   given: Omit<WorkflowRunsSnapshot, "workflows"> & Partial<Pick<WorkflowRunsSnapshot, "workflows">>,
   steps: Record<string, ReadonlyArray<WorkflowStep>> = {},
+  references: Record<string, ReadonlyArray<WorkflowRunReference>> = {},
 ) {
   state.snapshot = { workflows: [], ...given };
   state.steps = steps;
+  state.references = references;
   state.commands = [];
   state.permitted = true;
   state.detailError = null;
@@ -102,7 +107,11 @@ vi.mock(import("../../state/query"), async (original) => ({
         ? state.snapshot
         : state.detailError !== null
           ? null
-          : { run: null, steps: state.steps[request.runId ?? ""] ?? [] },
+          : {
+              run: null,
+              steps: state.steps[request.runId ?? ""] ?? [],
+              references: state.references[request.runId ?? ""] ?? [],
+            },
     error: request === state.live ? null : state.detailError,
     isPending: false,
     refresh: vi.fn(),
@@ -138,6 +147,17 @@ const question: WorkflowQuestion = {
   thread: { threadId: "thread-9", environmentId: null },
 };
 
+const issue101: WorkflowRunReference = {
+  kind: "issue",
+  key: "i101",
+  address: { projectId: "p1", tracker: "github", scope: "me/app", key: "101" },
+  title: "Wrong minutes",
+  url: "https://github.com/me/app/issues/101",
+  state: "open",
+  steps: ["triage"],
+  origin: "trigger",
+};
+
 /** Wide enough for the list and the run side by side; put back when the test ends. */
 async function desktop() {
   const width = window.innerWidth;
@@ -148,15 +168,21 @@ async function desktop() {
 
 const page = (
   selectedRunId: string | null = null,
-  on: { readonly select?: (runId: string | null) => void; readonly thread?: () => void } = {},
-  openThreadId: string | null = null,
+  on: {
+    readonly select?: (runId: string | null) => void;
+    readonly thread?: () => void;
+    readonly reference?: () => void;
+  } = {},
+  shownTab: WorkflowPaneTab | null = null,
 ) => (
   <WorkflowRunsView
     environmentId={environmentId}
     selectedRunId={selectedRunId}
-    openThreadId={openThreadId}
+    paneOpen={shownTab !== null}
+    shownTab={shownTab}
     onSelect={on.select ?? vi.fn()}
     onOpenThread={on.thread ?? vi.fn()}
+    onOpenReference={on.reference ?? vi.fn()}
     onOpenDefinitions={vi.fn()}
   />
 );
@@ -187,7 +213,7 @@ describe("WorkflowRunsView", () => {
     await expect.element(screen.getByText("The diff touches the installer.")).toBeVisible();
 
     await screen.getByRole("button", { name: "Ask the agent first" }).click();
-    expect(thread).toHaveBeenCalledWith({ threadId: "thread-9", environmentId: null });
+    expect(thread).toHaveBeenCalledWith("ship", { threadId: "thread-9", environmentId: null });
 
     await screen.getByRole("button", { name: "Add a reason" }).click();
     await userEvent.fill(
@@ -348,9 +374,11 @@ describe("WorkflowRunsView", () => {
           }),
         ],
       },
+      { fix: [issue101] },
     );
     const thread = vi.fn();
-    await using screen = await render(page("fix", { thread }, "thread-1"));
+    const reference = vi.fn();
+    await using screen = await render(page("fix", { thread, reference }, { thread: "thread-1" }));
 
     // A finished run opens on how it ended; the flow has a node for each step that mattered.
     const happened = screen.getByRole("region", { name: "What happened" });
@@ -367,7 +395,15 @@ describe("WorkflowRunsView", () => {
     const transcript = triage.getByRole("button", { name: "Transcript" });
     await expect.element(transcript).toHaveAttribute("aria-pressed", "true");
     await transcript.click();
-    expect(thread).toHaveBeenCalledWith({ threadId: "thread-1", environmentId: null });
+    expect(thread).toHaveBeenCalledWith("fix", { threadId: "thread-1", environmentId: null });
+    // What the run touched is under its title, and on the step that touched it, with its title
+    // there only. Each opens beside the run.
+    const touched = screen.getByRole("list", { name: "What the run touched" });
+    await expect.element(touched).toMatchTextContent(/#101.*Wrong minutes/);
+    const onStep = flow.getByRole("button", { name: "#101 Wrong minutes" });
+    await expect.element(onStep).toMatchTextContent(/^#101$/);
+    await onStep.click();
+    expect(reference).toHaveBeenCalledWith("fix", issue101);
     // This client is not connected to the linked environment, so there is nothing to open.
     await flow.getByRole("button", { name: /implement/ }).click();
     await expect

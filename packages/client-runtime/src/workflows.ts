@@ -1,12 +1,20 @@
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
-import type {
-  WorkflowQuestion,
-  WorkflowRun,
-  WorkflowRunsSnapshot,
-  WorkflowStep,
-  WorkflowSummary,
+import {
+  type IssueRef,
+  type PullRequestRef,
+  WorkflowIssueAddress,
+  WorkflowPullRequestAddress,
+  WorkflowReferenceKind,
+  type WorkflowQuestion,
+  type WorkflowRun,
+  type WorkflowRunReference,
+  type WorkflowRunsSnapshot,
+  type WorkflowStep,
+  type WorkflowSummary,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 export interface WorkflowQuestionView {
   readonly title: string;
@@ -685,4 +693,43 @@ export function workflowSaidStart(said: string, limit: number): string | null {
   // One paragraph that runs on is cut at a word, which can still split markup but not a word.
   if (kept.length > limit * 2) kept = `${kept.slice(0, kept.lastIndexOf(" ", limit))}…`;
   return kept === said ? null : kept;
+}
+
+const decodeIssueAddress = Schema.decodeUnknownOption(WorkflowIssueAddress);
+const decodePullRequestAddress = Schema.decodeUnknownOption(WorkflowPullRequestAddress);
+
+/** A reference's issue, when it is one and its address reads as one. */
+export function workflowReferenceIssue(reference: WorkflowRunReference): IssueRef | null {
+  return reference.kind === WorkflowReferenceKind.issue
+    ? Option.getOrNull(decodeIssueAddress(reference.address))
+    : null;
+}
+
+/** A reference's pull request, when it is one and its address reads as one. */
+export function workflowReferencePullRequest(
+  reference: WorkflowRunReference,
+): PullRequestRef | null {
+  return reference.kind === WorkflowReferenceKind.pullRequest
+    ? Option.getOrNull(decodePullRequestAddress(reference.address))
+    : null;
+}
+
+/**
+ * What a reference is called in a chip: `#412` for an issue or pull request on a git host, a
+ * tracker's own key such as `ENG-12`, and the title for a kind this client does not know.
+ */
+export function workflowReferenceLabel(reference: WorkflowRunReference): string {
+  const pullRequest = workflowReferencePullRequest(reference);
+  if (pullRequest !== null) return `#${pullRequest.number}`;
+  const issue = workflowReferenceIssue(reference);
+  if (issue !== null) return /^\d+$/.test(issue.key) ? `#${issue.key}` : issue.key;
+  return reference.title === "" ? reference.kind : reference.title;
+}
+
+/** The references a step touched, in the order the run first touched them. */
+export function workflowStepReferences(
+  references: ReadonlyArray<WorkflowRunReference>,
+  step: string,
+): ReadonlyArray<WorkflowRunReference> {
+  return references.filter((reference) => reference.steps.includes(step));
 }

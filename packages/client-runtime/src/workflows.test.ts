@@ -1,4 +1,9 @@
-import type { WorkflowQuestion, WorkflowRun, WorkflowStep } from "@t3tools/contracts";
+import type {
+  WorkflowQuestion,
+  WorkflowRun,
+  WorkflowRunReference,
+  WorkflowStep,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -19,8 +24,12 @@ import {
   workflowRunLists,
   workflowRunNow,
   workflowRunRefreshKey,
+  workflowReferenceIssue,
+  workflowReferenceLabel,
+  workflowReferencePullRequest,
   workflowRunState,
   workflowSaidStart,
+  workflowStepReferences,
   workflowTriggerLine,
 } from "./workflows.ts";
 
@@ -429,5 +438,52 @@ describe("workflowAnswer", () => {
     });
     expect(workflowAnswer("done")).toBeNull();
     expect(workflowAnswer(null)).toBeNull();
+  });
+});
+
+describe("workflow references", () => {
+  const reference = (fields: Partial<WorkflowRunReference>): WorkflowRunReference => ({
+    kind: "issue",
+    key: "k",
+    address: {},
+    title: "",
+    url: null,
+    state: null,
+    steps: [],
+    origin: "step",
+    ...fields,
+  });
+  const issue = (key: string) =>
+    reference({
+      key,
+      address: { projectId: "p1", tracker: "github", scope: "me/app", key },
+      steps: ["triage"],
+    });
+  const pullRequest = reference({
+    kind: "pullRequest",
+    key: "pr",
+    address: { projectId: "p1", host: "github.com", repository: "me/app", number: 418 },
+    steps: ["fix", "checks"],
+  });
+  const machine = reference({ kind: "machine", address: { id: 1 }, title: "box-1" });
+
+  it("names each by what its kind calls it, and a kind it does not know by its title", () => {
+    expect(
+      [issue("412"), issue("ENG-12"), pullRequest, machine].map(workflowReferenceLabel),
+    ).toEqual(["#412", "ENG-12", "#418", "box-1"]);
+    expect(workflowReferenceLabel(reference({ kind: "machine" }))).toBe("machine");
+  });
+
+  it("opens an issue or pull request only when its address reads as one", () => {
+    expect(workflowReferencePullRequest(pullRequest)?.number).toBe(418);
+    expect(workflowReferenceIssue(pullRequest)).toBeNull();
+    expect(workflowReferenceIssue(reference({ address: { key: 1 } }))).toBeNull();
+    expect(workflowReferenceIssue(machine)).toBeNull();
+  });
+
+  it("gives a step the things it touched", () => {
+    const all = [issue("412"), pullRequest, machine];
+    expect(workflowStepReferences(all, "checks")).toEqual([pullRequest]);
+    expect(workflowStepReferences(all, "merge")).toEqual([]);
   });
 });

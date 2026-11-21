@@ -1,4 +1,4 @@
-import { type EnvironmentId } from "@t3tools/contracts";
+import { type EnvironmentId, type WorkflowRunReference } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { WorkflowIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -18,6 +18,7 @@ import {
   WorkflowStateWord,
   type WorkflowThreadTarget,
 } from "./WorkflowRunFeed";
+import type { WorkflowPaneTab } from "./workflowPane.logic";
 import {
   allWorkflowRunNodes,
   defaultWorkflowListTab,
@@ -73,17 +74,22 @@ export function WorkflowsEmpty({
 export function WorkflowRunsView({
   environmentId,
   selectedRunId,
-  openThreadId,
+  paneOpen,
+  shownTab,
   onSelect,
   onOpenThread,
+  onOpenReference,
   onOpenDefinitions,
 }: {
   readonly environmentId: EnvironmentId;
   readonly selectedRunId: string | null;
-  /** The agent thread shown beside the run. With one open, the list makes room below `xl`. */
-  readonly openThreadId: string | null;
+  /** Something is open beside the run, so the list makes room below `xl`. */
+  readonly paneOpen: boolean;
+  /** What shows beside the run, so what opened it can say so. */
+  readonly shownTab: WorkflowPaneTab | null;
   readonly onSelect: (runId: string | null) => void;
-  readonly onOpenThread: (thread: WorkflowThreadTarget) => void;
+  readonly onOpenThread: (runId: string, thread: WorkflowThreadTarget) => void;
+  readonly onOpenReference: (runId: string, reference: WorkflowRunReference) => void;
   readonly onOpenDefinitions: () => void;
 }) {
   const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
@@ -211,7 +217,7 @@ export function WorkflowRunsView({
           className={cn(
             "min-h-0 w-full shrink-0 flex-col md:w-72 md:border-e",
             selectedRunId === null ? "flex" : "hidden",
-            openThreadId === null ? "md:flex" : "xl:flex",
+            paneOpen ? "xl:flex" : "md:flex",
           )}
         >
           <div className="space-y-2 p-2 pb-1">
@@ -312,9 +318,10 @@ export function WorkflowRunsView({
               environmentId={environmentId}
               node={shown}
               parent={all.find((node) => node.run.runId === shown.run.parentRunId)?.run ?? null}
-              openThreadId={openThreadId}
+              shownTab={shownTab}
               onSelect={onSelect}
-              onOpenThread={onOpenThread}
+              onOpenThread={(thread) => onOpenThread(shown.run.runId, thread)}
+              onOpenReference={(reference) => onOpenReference(shown.run.runId, reference)}
             />
           )}
         </ScrollArea>
