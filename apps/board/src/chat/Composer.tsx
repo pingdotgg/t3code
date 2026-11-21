@@ -40,8 +40,9 @@ import { failureText } from "../settings/failureText";
 import { newId } from "../state/boards";
 import { ensureOrchestratorInstance } from "../state/orchestrator";
 import { engineProvidersAtom, serverEnvironment } from "../state/server";
-import { uploadAttachments } from "../state/attachmentUploads";
+import { recordDocs, uploadAttachments } from "../state/attachmentUploads";
 import { interruptTurn, startTurn } from "../state/threads";
+import type { ValidBoard } from "../store/boardFiles";
 import { attachmentInputs } from "./attachments";
 import { ModelPicker } from "./ModelPicker";
 import {
@@ -68,11 +69,13 @@ const markShown = (chip: HTMLElement | null) => {
  */
 export function Composer({
   project,
+  listed,
   threadId,
   projection,
   live,
 }: {
   project: EnvironmentProject;
+  listed: ValidBoard;
   threadId: ThreadId;
   projection: OrchestrationV2ThreadProjection | null;
   live: boolean;
@@ -235,6 +238,8 @@ export function Composer({
     if (result._tag === "Success") {
       setFresh(false);
       setFiles([]);
+      if (attachments.length > 0)
+        setError(await recordDocs(registry, project, listed, attachments));
     } else {
       setDraft(text);
       setCursor(text.length);

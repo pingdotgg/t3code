@@ -82,12 +82,7 @@ export function BoardScreen({
             <Viewport
               content={layout.content}
               onDropFiles={(files) =>
-                void addDocs(
-                  registry,
-                  project.environmentId,
-                  board.orchestratorThreadId,
-                  files,
-                ).then(setDropError)
+                void addDocs(registry, project, listed, files).then(setDropError)
               }
             >
               <OrchestratorCard

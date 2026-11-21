@@ -2,7 +2,6 @@ import {
   type AttachmentCreateUploadUrlInput,
   type ChatAttachment,
   getProviderAttachmentLimitError,
-  type OrchestrationV2ThreadProjection,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
@@ -60,11 +59,3 @@ export const sentAttachment = (
   mimeType: input.mimeType,
   sizeBytes: input.sizeBytes,
 });
-
-/** The board's docs: every file the user attached in the orchestrator's thread. */
-export const boardDocs = (
-  projection: OrchestrationV2ThreadProjection | null,
-): ReadonlyArray<ChatAttachment> =>
-  (projection?.messages ?? [])
-    .filter((message) => message.role === "user")
-    .flatMap((message) => message.attachments);

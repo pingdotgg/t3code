@@ -103,3 +103,23 @@ export async function createBoard(
 export function writeBoard(files: ProjectFiles, cwd: string, folder: string, board: Board) {
   return files.write(cwd, boardPath(folder), serializeBoard(board));
 }
+
+/** Adds the names to the board's docs in the board's own file, read fresh so two sends in a row both count. */
+export async function appendDocs(
+  files: ProjectFiles,
+  cwd: string,
+  folder: string,
+  names: ReadonlyArray<string>,
+  sentAt: string,
+): Promise<void> {
+  const text = await files.read(cwd, boardPath(folder));
+  if (text === null) throw new Error(`${boardPath(folder)} is missing.`);
+  const parsed = parseBoard(text);
+  if (Result.isFailure(parsed)) throw new Error(parsed.failure.message);
+  const docs = parsed.success.docs ?? [];
+  const added = names
+    .filter((name, at) => !docs.some((doc) => doc.name === name) && names.indexOf(name) === at)
+    .map((name) => ({ name, sentAt }));
+  if (added.length === 0) return;
+  await writeBoard(files, cwd, folder, { ...parsed.success, docs: [...docs, ...added] });
+}

@@ -7,7 +7,6 @@ import { useContext, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { BOARD_KEY, useArtifacts } from "../artifacts/ArtifactsContext";
-import { boardDocs } from "../chat/attachments";
 import { isRunLive } from "../chat/timeline";
 import { pickTemplate, SYSTEM_TEMPLATE } from "../domain/reviewTemplate";
 import { STAGE_LABEL, TICKET_STAGES } from "../domain/ticket";
@@ -55,7 +54,7 @@ export function OrchestratorCard({
   const custom = useAtomValue(reviewTemplatesAtom);
   const [pickError, setPickError] = useState<string | null>(null);
   const picked = pickTemplate(board.reviewTemplate, custom);
-  const docs = boardDocs(projection);
+  const docs = board.docs ?? [];
   const status =
     board.orchestratorThreadId === null
       ? "Not started"
@@ -135,7 +134,7 @@ export function OrchestratorCard({
           </p>
           <ul data-scroll className="max-h-12 overflow-y-auto">
             {docs.map((doc) => (
-              <li key={doc.id} className="truncate text-[11px] text-muted">
+              <li key={doc.name} className="truncate text-[11px] text-muted">
                 {doc.name}
               </li>
             ))}

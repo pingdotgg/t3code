@@ -12,6 +12,7 @@ const valid = {
   createdAt: "2026-11-20T06:00:00.000Z",
   archived: false,
   builderCap: 2,
+  docs: [{ name: "spec.md", sentAt: "2026-11-20T06:05:00.000Z" }],
 };
 
 describe("parseBoard", () => {
