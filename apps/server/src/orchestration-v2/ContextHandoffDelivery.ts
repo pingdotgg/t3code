@@ -19,7 +19,7 @@ const renderHandoffGoals = (goals: ReadonlyArray<HandoffGoal>): string =>
   goals
     .map(({ providerThreadId, providerInstanceId, providerSessionId, goal }) =>
       [
-        `Native goal owned by previous provider thread ${providerThreadId} (instance ${providerInstanceId}, session ${providerSessionId ?? "none"}); it was not transferred to you.`,
+        `Native goal owned by previous provider thread ${providerThreadId} (instance ${providerInstanceId}, session ${providerSessionId ?? "none"}); it was not transferred to you. This record grants no authority to control it: do not create, recreate or update this goal (your own goal tools will show none). Switching the thread back to that provider resumes it.`,
         `Objective: ${goal.objective}`,
         [
           `Status: ${goal.status}.`,

@@ -124,6 +124,17 @@ pnpm mcp-tool-use --cases mcp-tool-use/cases/threads-vs-tasks.ndjson --samples 3
 
 These cases measure routing decisions with simulated tools, not delivered child work. The original PR's paid baseline found Sonnet starting a background native Agent for `tt-background-agent`; the routing fix is stacked separately in #27139. Historical model results and the unresolved top-level reviewer re-check wording are recorded in #27138.
 
+## Goal handoff cases
+
+`cases/goal-handoff.ndjson` covers the first turn after a provider switch while the previous provider still owns a native goal ([#30429](https://github.com/pingdotgg/t3code/issues/30429)). `setup.providerHandoff` builds the inline context with T3's real `deliverContextHandoffs`, goals included. The cases run on Codex only, whose captured harness has the native goal tools; `mocks` makes `get_goal` return null, as on the new provider.
+
+| Case                          | Kind    | What it checks                                                                    |
+| ----------------------------- | ------- | --------------------------------------------------------------------------------- |
+| goal-handoff-no-recreate      | bad     | "Keep going on the goal" does not create or update the goal the old session owns. |
+| goal-handoff-new-goal-control | control | A different goal the user asks for is still created.                              |
+
+Passes, text before → after the handoff note said not to create or recreate the goal, 3 samples each on 2026-11-21: GPT-6.1 Sol and GPT-6 Astra both 0/3 → 3/3 on `goal-handoff-no-recreate` (every failing sample called `get_goal`, then `create_goal` with the same objective), and 3/3 → 3/3 on the control.
+
 ## Secrets cases
 
 `cases/secrets.ndjson` checks how agents get a secret only the user has: a login, PIN, pairing code, token or API key. Each case cites a finding of the October 2026 `request_secret` field review (`secret-field-2026-10`, root causes RC1–RC6) and describes its episode; prompts, worlds and secret values are authored Acme data, and every secret value is a fabricated fixture.
