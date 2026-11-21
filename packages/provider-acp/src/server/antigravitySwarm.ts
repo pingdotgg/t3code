@@ -361,7 +361,12 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
         if (!housekeeping && (nextStatus === "running" || nextStatus === "pending")) {
           runningWorkerCount += 1;
         }
+        // Rosters keep listing finished workers; re-emitting one would re-create it in a later turn.
+        const alreadyReported =
+          tracked.status === nextStatus &&
+          (nextStatus === "completed" || nextStatus === "failed" || nextStatus === "cancelled");
         tracked.status = nextStatus;
+        if (alreadyReported) continue;
 
         const brief =
           nonEmpty(member.brief) ??
@@ -386,7 +391,8 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
             title: formatSwarmMemberTitle(member, role),
             prompt: brief,
             model,
-            status: nextStatus,
+            // Housekeeping pulses never hold the turn open.
+            status: housekeeping && nextStatus === "running" ? "idle" : nextStatus,
             result,
             suppressNormalTool: true,
           },

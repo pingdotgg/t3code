@@ -115,7 +115,8 @@ describe("AntigravitySwarm", () => {
           title: "@monitor (monitor)",
           prompt: "Swarm monitor @monitor",
           model: null,
-          status: "running",
+          // Housekeeping pulses never hold the turn open, so they report idle.
+          status: "idle",
           result: null,
           suppressNormalTool: true,
         },
@@ -173,51 +174,50 @@ describe("AntigravitySwarm", () => {
     });
 
     // Periodic @monitor tick alone does NOT mark the session busy; hadActivity marks killed workers completed.
-    const settled = tracker.applyNotification(
-      decode({
-        sessionId: "root-1",
-        head: 4,
-        activeWorkers: 0,
-        workingWorkers: 0,
-        waitingWorkers: 0,
-        coordinatorWorking: false,
-        coordinatorPendingWake: false,
-        members: [
-          {
-            name: "alpha",
-            role: "worker",
-            conversationId: "worker-a",
-            state: "failed",
-            failure: "quota exhausted",
-          },
-          {
-            name: "helper",
-            role: "worker",
-            conversationId: "worker-h",
-            state: "killed",
-          },
-          {
-            name: "resumed-done",
-            role: "worker",
-            conversationId: "worker-r",
-            state: "killed",
-            hadActivity: true,
-          },
-          {
-            name: "scratch",
-            role: "narrator",
-            conversationId: "worker-n",
-            state: "killed",
-          },
-          {
-            name: "monitor",
-            role: "monitor",
-            conversationId: "worker-m",
-            state: "working",
-          },
-        ],
-      }),
-    );
+    const settledNotification = decode({
+      sessionId: "root-1",
+      head: 4,
+      activeWorkers: 0,
+      workingWorkers: 0,
+      waitingWorkers: 0,
+      coordinatorWorking: false,
+      coordinatorPendingWake: false,
+      members: [
+        {
+          name: "alpha",
+          role: "worker",
+          conversationId: "worker-a",
+          state: "failed",
+          failure: "quota exhausted",
+        },
+        {
+          name: "helper",
+          role: "worker",
+          conversationId: "worker-h",
+          state: "killed",
+        },
+        {
+          name: "resumed-done",
+          role: "worker",
+          conversationId: "worker-r",
+          state: "killed",
+          hadActivity: true,
+        },
+        {
+          name: "scratch",
+          role: "narrator",
+          conversationId: "worker-n",
+          state: "killed",
+        },
+        {
+          name: "monitor",
+          role: "monitor",
+          conversationId: "worker-m",
+          state: "working",
+        },
+      ],
+    });
+    const settled = tracker.applyNotification(settledNotification);
 
     expect(settled.activeBackgroundWork).toBe(false);
     expect(settled.subagents[0]?.subagent).toMatchObject({
@@ -238,6 +238,14 @@ describe("AntigravitySwarm", () => {
       result: null,
     });
     expect(settled.subagents[4]?.wakeContinuation).toBe(false);
+    expect(settled.subagents[4]?.subagent.status).toBe("idle");
+
+    // Finished workers are reported once; a later roster that still lists them does not re-emit them.
+    expect(
+      tracker
+        .applyNotification(settledNotification)
+        .subagents.map((entry) => entry.subagent.childSessionId),
+    ).toEqual(["worker-m"]);
 
     tracker.clearSession("root-1");
     expect(tracker.hasLiveSwarm("root-1")).toBe(false);

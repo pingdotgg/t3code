@@ -2806,12 +2806,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 // An open prompt fails with its transport. A turn held open for a running tool
                 // has no prompt, so nothing else ends it.
                 const held = yield* Ref.get(activeTurn);
+                const heldByExternalWork =
+                  held !== null && externalBackgroundWorkSessionIds.has(held.nativeThreadId);
+                // The exited process can no longer report its external work ending.
+                externalBackgroundWorkSessionIds.clear();
                 if (
-                  flavor.toolOutlivesPrompt === undefined ||
+                  (flavor.toolOutlivesPrompt === undefined && !heldByExternalWork) ||
                   held === null ||
                   !held.promptSettled ||
                   held.finalized ||
-                  !hasDeferredBackgroundWork(held)
+                  (!heldByExternalWork && !hasDeferredBackgroundWork(held))
                 )
                   return;
                 for (const tool of held.tools.values()) {
@@ -7763,6 +7767,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 const direct = yield* runRuntimeCallbackAtGeneration(
                   handlerGeneration,
                   Effect.gen(function* () {
+                    if (yield* Ref.get(stoppedRunQuarantine)) {
+                      return { outcome: { outcome: "cancelled" } } as const;
+                    }
                     const disposition = dispositionFor(latestRuntimePolicy);
                     if (disposition === "ask") return undefined;
                     const optionId =
@@ -9038,6 +9045,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(dormantSubagentsByChildSessionId, new Map());
               yield* Ref.set(pendingExtensionSubagents, []);
               externalBackgroundWorkSessionIds.clear();
+              knownExtensionChildSessions.clear();
+              pendingBetweenTurnChildNotifications.clear();
               yield* Ref.set(lastTurnRoute, null);
             }),
           );

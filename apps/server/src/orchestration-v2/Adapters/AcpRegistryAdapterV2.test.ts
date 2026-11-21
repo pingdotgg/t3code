@@ -523,6 +523,74 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("fails an agy swarm turn held by running workers when the process exits", () =>
+    Effect.gen(function* () {
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(CLAUDE_ROOT_SESSION, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "Antigravity ACP Server", version: "1.5.14" },
+                agentCapabilities: { loadSession: true, _meta: { antigravity: { swarm: true } } },
+                authMethods: [],
+              },
+            },
+          },
+          claudeFrames.open[2],
+          claudeFrames.open[3],
+          claudeFrames.prompt(1)[0],
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "notification",
+              method: "_antigravity/swarm",
+              params: {
+                sessionId: CLAUDE_ROOT_SESSION,
+                head: 1,
+                activeWorkers: 1,
+                workingWorkers: 1,
+                waitingWorkers: 0,
+                members: [
+                  { name: "alpha", role: "worker", conversationId: "worker-a", state: "working" },
+                ],
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          update({ sessionUpdate: "usage_update", used: 100, size: 1000 }),
+          claudeMarker("workers running"),
+        ],
+        undefined,
+        true,
+        { source: "local", commandPath: "/root/.local/bin/agy", commandArgs: ["acp"] },
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      yield* session.throughMarker("workers running");
+      assert.isTrue(yield* session.runtime.hasPendingBackgroundWork!);
+      yield* session.terminate();
+      const terminal = yield* session.terminal;
+      assert.equal(terminal.status, "failed");
+      assert.isFalse(yield* session.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each(["approval-required", "full-access"] as const)(
     "continues an agy permission request after the prompt settles (%s)",
     (runtimeMode) =>
