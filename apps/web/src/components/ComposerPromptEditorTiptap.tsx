@@ -114,6 +114,7 @@ import {
   groupUndoByChangeKind,
   isPasteTransaction,
   markAsClipboardEdit,
+  markAsCompositionReplace,
 } from "~/composer-undo-grouping";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
@@ -200,6 +201,8 @@ export interface ComposerPromptEditorProps {
     expandedCursor: number,
     cursorAdjacentToMention: boolean,
     contextIds: string[],
+    /** False when only the caret or selection moved. */
+    textChanged: boolean,
     /** Pasted or dropped text; any trigger it ends in should start dismissed. */
     fromPaste?: boolean,
   ) => void;
@@ -312,7 +315,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
         path={path}
         environmentId={actions.environmentId}
         cwd={actions.cwd}
-        label={basenameOfPath(path)}
+        label={basenameOfPath(path).normalize("NFC")}
         theme={resolvedThemeFromDocument()}
       />
     </ContextChip>
@@ -321,7 +324,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <Tooltip>
         <TooltipTrigger render={chip} />
-        <TooltipPopup side="top">
+        <TooltipPopup side="top" className="pointer-events-auto">
           <WorkspaceEntryTooltip
             path={path}
             environmentId={actions.environmentId}
@@ -598,9 +601,27 @@ const ComposerContextReferenceExtension = Node.create({
   },
 });
 
-function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
+function ComposerContextReferenceNodeView({ node, editor, getPos }: NodeViewProps) {
   return (
-    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+    <NodeViewWrapper
+      as="span"
+      className={CHIP_NODE_SELECTION_CLASS_NAME}
+      onKeyDown={(event: ReactKeyboardEvent<HTMLElement>) => {
+        // Paste and drop still add chips while dictation makes the editor read-only; a focused chip removes itself.
+        if (
+          editor.isEditable ||
+          (event.key !== "Backspace" && event.key !== "Delete") ||
+          !(event.target instanceof globalThis.Node) ||
+          !event.currentTarget.contains(event.target)
+        ) {
+          return;
+        }
+        const pos = typeof getPos === "function" ? getPos() : null;
+        if (typeof pos !== "number") return;
+        event.preventDefault();
+        editor.commands.deleteRange({ from: pos, to: pos + node.nodeSize });
+      }}
+    >
       <ComposerContextReferenceChip
         kind={(node.attrs.kind as string) ?? ""}
         contextId={(node.attrs.contextId as string) ?? ""}
@@ -746,6 +767,15 @@ const ComposerChipSelectionExtension = Extension.create({
         },
         props: {
           decorations: (state) => ChipSelectionPluginKey.getState(state),
+          handleDOMEvents: {
+            // Chrome's IME skips deleting a range bounded by a user-select: none chip.
+            compositionstart: (view) => {
+              if (ChipSelectionPluginKey.getState(view.state)?.find().length) {
+                view.dispatch(markAsCompositionReplace(view.state.tr.deleteSelection()));
+              }
+              return false;
+            },
+          },
         },
       }),
     ];
@@ -1095,6 +1125,7 @@ function ComposerPromptEditorTiptapInner(
       nextExpandedCursor,
       suppressTrigger,
       contextIds,
+      previousSnapshot.value !== nextValue,
       isPasteTransaction(transaction),
     );
   };
@@ -1772,6 +1803,7 @@ function ComposerPromptEditorTiptapInner(
       snapshotRef.current.expandedCursor,
       literalText,
       snapshotRef.current.contextIds,
+      false,
     );
   };
 

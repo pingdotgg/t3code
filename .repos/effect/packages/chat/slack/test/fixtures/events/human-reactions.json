@@ -1,0 +1,61 @@
+{
+  "case": "Reactions on H1: +1, +1::skin-tone-3 and the custom emoji effect, each added and then removed",
+  "provenance": {
+    "source": "Slack Events API deliveries to the janitor2 app (A0CCHBHDK7X), logged by janitor production's EFF-3709 fixture capture (Effect-TS/janitor a751115)",
+    "channel": "chat-testing-123 (C0CH1LGJ4F3), a private channel",
+    "author": "Tim Smart (U080YLYB277), typing in the Slack client",
+    "recordedAt": "2026-11-12T23:25:50Z to 2026-11-12T23:36:10Z, a session run with Jarvis on EFF-3694",
+    "body": "The delivered JSON string, verbatim apart from the envelope token member, which the capture removes, and the members listed in a delivery's scrubbed, whose URLs are replaced",
+    "headers": "The capture's allowlist. The signature is never logged"
+  },
+  "deliveries": [
+    {
+      "loggedAt": "2026-11-12T23:30:00.643Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794526200",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"reaction_added\",\"user\":\"U080YLYB277\",\"reaction\":\"+1\",\"item\":{\"type\":\"message\",\"channel\":\"C0CH1LGJ4F3\",\"ts\":\"1794525953.901839\",\"channel_type\":\"group\"},\"item_user\":\"U080YLYB277\",\"event_ts\":\"1794526200.004600\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CJ5Q7DLUQ\",\"event_time\":1794526200,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6InJlYWN0aW9uX2FkZGVkIiwidGlkIjoiVDA1NDc5WjZKQlciLCJhaWQiOiJBMENDSEJIREs3WCIsImNpZCI6IkMwQ0gxTEdKNEYzIn0\"}"
+    },
+    {
+      "loggedAt": "2026-11-12T23:30:02.690Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794526202",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"reaction_removed\",\"user\":\"U080YLYB277\",\"reaction\":\"+1\",\"item\":{\"type\":\"message\",\"channel\":\"C0CH1LGJ4F3\",\"ts\":\"1794525953.901839\",\"channel_type\":\"group\"},\"item_user\":\"U080YLYB277\",\"event_ts\":\"1794526202.004800\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CH64LTKGV\",\"event_time\":1794526202,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6InJlYWN0aW9uX3JlbW92ZWQiLCJ0aWQiOiJUMDU0NzlaNkpCVyIsImFpZCI6IkEwQ0NIQkhESzdYIiwiY2lkIjoiQzBDSDFMR0o0RjMifQ\"}"
+    },
+    {
+      "loggedAt": "2026-11-12T23:30:15.245Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794526215",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"reaction_added\",\"user\":\"U080YLYB277\",\"reaction\":\"+1::skin-tone-3\",\"item\":{\"type\":\"message\",\"channel\":\"C0CH1LGJ4F3\",\"ts\":\"1794525953.901839\",\"channel_type\":\"group\"},\"item_user\":\"U080YLYB277\",\"event_ts\":\"1794526215.005300\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CJ5QAF5JL\",\"event_time\":1794526215,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6InJlYWN0aW9uX2FkZGVkIiwidGlkIjoiVDA1NDc5WjZKQlciLCJhaWQiOiJBMENDSEJIREs3WCIsImNpZCI6IkMwQ0gxTEdKNEYzIn0\"}"
+    },
+    {
+      "loggedAt": "2026-11-12T23:30:19.605Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794526219",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"reaction_removed\",\"user\":\"U080YLYB277\",\"reaction\":\"+1::skin-tone-3\",\"item\":{\"type\":\"message\",\"channel\":\"C0CH1LGJ4F3\",\"ts\":\"1794525953.901839\",\"channel_type\":\"group\"},\"item_user\":\"U080YLYB277\",\"event_ts\":\"1794526219.005500\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CH9EARFE2\",\"event_time\":1794526219,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6InJlYWN0aW9uX3JlbW92ZWQiLCJ0aWQiOiJUMDU0NzlaNkpCVyIsImFpZCI6IkEwQ0NIQkhESzdYIiwiY2lkIjoiQzBDSDFMR0o0RjMifQ\"}"
+    },
+    {
+      "loggedAt": "2026-11-12T23:30:25.029Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794526224",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"reaction_added\",\"user\":\"U080YLYB277\",\"reaction\":\"effect\",\"item\":{\"type\":\"message\",\"channel\":\"C0CH1LGJ4F3\",\"ts\":\"1794525953.901839\",\"channel_type\":\"group\"},\"item_user\":\"U080YLYB277\",\"event_ts\":\"1794526224.005800\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CHF4KCNMA\",\"event_time\":1794526224,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6InJlYWN0aW9uX2FkZGVkIiwidGlkIjoiVDA1NDc5WjZKQlciLCJhaWQiOiJBMENDSEJIREs3WCIsImNpZCI6IkMwQ0gxTEdKNEYzIn0\"}"
+    },
+    {
+      "loggedAt": "2026-11-12T23:30:28.577Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794526228",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"reaction_removed\",\"user\":\"U080YLYB277\",\"reaction\":\"effect\",\"item\":{\"type\":\"message\",\"channel\":\"C0CH1LGJ4F3\",\"ts\":\"1794525953.901839\",\"channel_type\":\"group\"},\"item_user\":\"U080YLYB277\",\"event_ts\":\"1794526228.006000\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CH64R4FBP\",\"event_time\":1794526228,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6InJlYWN0aW9uX3JlbW92ZWQiLCJ0aWQiOiJUMDU0NzlaNkpCVyIsImFpZCI6IkEwQ0NIQkhESzdYIiwiY2lkIjoiQzBDSDFMR0o0RjMifQ\"}"
+    }
+  ]
+}
