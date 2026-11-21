@@ -352,6 +352,23 @@ pub trait Session: Send + Sync {
     ) -> BoxFuture<'_, ProviderResult<Vec<String>>> {
         unsupported("await_background_tasks")
     }
+
+    /// `uploadFeedback`: sends this provider thread and the provider's logs to the vendor
+    /// through the official binary, and answers the vendor's feedback id. Only Codex has it in
+    /// T3; `Unsupported` means "does not support feedback uploads".
+    fn upload_feedback(
+        &self,
+        _input: UploadFeedbackInput,
+    ) -> BoxFuture<'_, ProviderResult<String>> {
+        unsupported("upload_feedback")
+    }
+}
+
+/// [`Session::upload_feedback`]'s input: the provider thread and the user's optional reason.
+#[derive(Clone, Debug)]
+pub struct UploadFeedbackInput {
+    pub provider_thread: ProviderThread,
+    pub reason: Option<String>,
 }
 
 /// One MCP server a session passes to its agent (`McpServerConfig`, HTTP transport).

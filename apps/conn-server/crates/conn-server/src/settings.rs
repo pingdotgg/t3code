@@ -212,6 +212,7 @@ impl SettingsStore {
     /// `ServerSettings` for clients: the settings with secrets redacted.
     pub fn for_client(&self) -> Value {
         let mut settings = self.raw();
+        with_idle_compaction(&mut settings);
         redact(&mut settings);
         Value::Object(settings)
     }
@@ -639,10 +640,9 @@ fn translate_legacy_project_overrides(
     patch.insert("projectSettingsOverrides".into(), Value::Object(entries));
 }
 
-/// `patchedIdleCompaction`: the patch's mode, else the legacy switch it sends, else the stored
-/// mode (`globalIdleCompaction`).
-fn patched_idle_compaction(settings: &Map<String, Value>, patch: &Map<String, Value>) -> String {
-    let global = |source: &Map<String, Value>| match (
+/// `globalIdleCompaction`: the stored mode, else the legacy switch, else `onReturn`.
+fn global_idle_compaction(source: &Map<String, Value>) -> String {
+    match (
         source.get("idleCompaction"),
         source.get("compactIdleThreads"),
     ) {
@@ -650,7 +650,25 @@ fn patched_idle_compaction(settings: &Map<String, Value>, patch: &Map<String, Va
         (_, Some(Value::String(mode))) => mode.clone(),
         (_, Some(Value::Bool(true))) => "beforeCacheExpires".into(),
         _ => "onReturn".into(),
-    };
+    }
+}
+
+/// `withIdleCompaction(settings, globalIdleCompaction(settings))`, which T3 applies when it
+/// loads the settings: clients see the mode (so they know this server reads modes) and the
+/// legacy switch, even before the first write.
+fn with_idle_compaction(settings: &mut Map<String, Value>) {
+    let mode = global_idle_compaction(settings);
+    settings.insert(
+        "compactIdleThreads".into(),
+        json!(mode == "beforeCacheExpires"),
+    );
+    settings.insert("idleCompaction".into(), json!(mode));
+}
+
+/// `patchedIdleCompaction`: the patch's mode, else the legacy switch it sends, else the stored
+/// mode (`globalIdleCompaction`).
+fn patched_idle_compaction(settings: &Map<String, Value>, patch: &Map<String, Value>) -> String {
+    let global = global_idle_compaction;
     if let Some(Value::String(mode)) = patch.get("idleCompaction") {
         return mode.clone();
     }

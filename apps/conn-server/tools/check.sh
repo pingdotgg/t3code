@@ -226,6 +226,8 @@ run 3 240 "device conformance" \
 run 4 180 "idle-diff" node crates/conn-server/tools/idle-diff.mjs "$release/conn-server"
 # Local servers for previews: both servers list and stop this check's own listeners.
 run 4 120 "local-servers-diff" node crates/conn-server/tools/local-servers-diff.mjs "$release/conn-server"
+# Settings, trace diagnostics, database storage and feedback upload answers on both servers.
+run 4 180 "server-misc-diff" node crates/conn-server/tools/server-misc-diff.mjs "$release/conn-server"
 # Provider sign-in: every provider.auth.* reply and the CLI runs on both servers (stub CLIs).
 run 4 180 "provider-auth-diff" node crates/conn-server/tools/provider-auth-diff.mjs "$release/conn-server"
 run 2 120 "codex instructions --check" \

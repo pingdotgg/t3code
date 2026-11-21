@@ -703,6 +703,25 @@ const decodeEach = (client) =>
     );
     yield* call("server.getHostResources", {});
     yield* call("server.getProcessDiagnostics", {});
+    // T3's answers for a server without trace files and without an offline repair command.
+    yield* call("server.getSettings", {});
+    const traces = yield* call("server.getTraceDiagnostics", {});
+    check(
+      "server.getTraceDiagnostics answers trace-file-not-found",
+      Exit.isSuccess(traces) && Option.getOrUndefined(traces.value.error)?.kind === "trace-file-not-found",
+      String(Exit.isSuccess(traces) ? JSON.stringify(traces.value.error) : traces.cause),
+    );
+    const storage = yield* call("server.getDatabaseStorage", {});
+    check(
+      "server.getDatabaseStorage sends null",
+      // The first item, inside the stream wait's own Option.
+      Exit.isSuccess(storage) && Option.getOrUndefined(Option.flatten(storage.value)) === null &&
+        Option.isSome(Option.flatten(storage.value)),
+      String(storage),
+    );
+    yield* call("server.reclaimDatabaseSpace", {});
+    // An unknown thread: T3's typed refusal.
+    yield* call("provider.uploadFeedback", { threadId: "effect-client-none" });
     yield* call("server.upsertKeybinding", { key: "mod+shift+f12", command: "sidebar.toggle" });
     yield* call("server.removeKeybinding", { key: "mod+shift+f12", command: "sidebar.toggle" });
     // The server refuses to signal itself; nothing is signalled.

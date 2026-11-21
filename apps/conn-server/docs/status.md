@@ -21,6 +21,66 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## Unserved methods: triage (2026-11-21)
+
+Of 251 contract methods, 198 were served and 21 are skipped by decision (FORK.md, "Not
+served, by decision"). This triage covers the other 32. **Build** means the UI needs it;
+**trivial** means match T3's answer; **ask Nick** means it looks unneeded for this fork.
+Nothing here was skipped without asking. RPC **203 of 251** after this step; `/mcp` 104 tools.
+
+| Method | Verdict | Why |
+| --- | --- | --- |
+| `server.getSettings` | trivial, built | No client calls it; T3 answers the client view of the settings. |
+| `server.getTraceDiagnostics` | build, built | Settings › Diagnostics. This server writes no trace, but a home a T3 server used holds its trace files; they are read as T3 reads them. |
+| `server.getDatabaseStorage` (stream) | trivial, built | Settings › Storage. T3 sends `null` when its offline `t3 doctor` does not repair this database; this server has no such command, so `null`. |
+| `server.reclaimDatabaseSpace` | trivial, built | Only reachable from a non-null status; refuses with `DatabaseReclaimError`. |
+| `provider.uploadFeedback` | build, built | The composer's `/feedback` (Codex). Codex `feedback/upload` through the running app-server, as T3. |
+| `server.getNpmRelease` | ask Nick | The update-track dialog asks npm for the `t3` package; Orbit ships the Conn Server. |
+| `server.updateServer`, `server.updateServerWithProgress`, `server.commitDesktopUpdate` | ask Nick | Download a T3 release from GitHub and swap the server; Orbit releases the Conn Server. |
+| `server.checkOtlpEndpoint` | ask Nick | Tests a user's OTLP URL, but this server exports no OTLP, so the setting does nothing here. |
+| `server.checkSecretSource` | ask Nick | Reads a secret through a secret provider (1Password `op read`); this server keeps references but resolves none. |
+| `server.getStorageCleanupReport` (stream), `server.runStorageCleanup` | ask Nick | A large port that deletes worktrees, logs and browser artifacts (engine, VCS, terminals). Every rule is off by default, and Orbit Instances are disposable. |
+| `server.prepareTriage` | ask Nick | Clones `pingdotgg/t3code` and writes a bug-report context for T3 itself. |
+| `cloud.getRelayClientStatus`, `cloud.installRelayClient` (stream) | ask Nick | T3's cloud relay client (download and install a binary); Conn links through the Orbit Gateway. |
+| `guestShare.create` | ask Nick | Needs T3 cloud's managed endpoint (connector hostname); a beta, off by default. |
+| `provider.chatgpt.handoff.subscribe` (stream), `provider.chatgpt.import-profile`, `provider.chatgpt.reconnect-profile` | ask Nick | T3's own ChatGPT OAuth with tokens in its store; Nick's 2026-11-20 decision: no ChatGPT token here, providers sign in through Orbit's AI router. Proposal: add to FORK.md's skips. |
+| `provider.consumeResetCredit` | ask Nick | Spends an account's rate-limit reset credit. Codex goes through the app-server, Claude calls Anthropic's API with the login (forbidden here); with Orbit's AI router there is no account credit. |
+| `server.searchAcpRegistry`, `server.prepareAcpRegistryAgent`, `server.uninstallAcpRegistryManagedBinary`, `server.acceptAcpRegistryUrlAuth`, `server.listAcpRegistrySessions`, `server.importAcpRegistrySession`, `server.deleteAcpRegistrySession`, `server.listAcpRegistryProviders`, `server.setAcpRegistryProvider`, `server.disableAcpRegistryProvider`, `server.logoutAcpRegistry` | ask Nick | The ACP registry provider is not built. Nick decided on 2026-11-14: no index download and no install; Orbit installs CLIs. Search and prepare need the index; the other nine act on a registry provider instance that does not exist here. |
+
+**What changed:**
+
+- `server.getSettings`, `server.getDatabaseStorage`, `server.reclaimDatabaseSpace`
+  (`methods/server.rs`); `server.getTraceDiagnostics` (`trace_diagnostics.rs`, T3's
+  `TraceDiagnostics.read` and its aggregator: rotations oldest first, line by line on a
+  blocking thread, bounded top lists, strings trimmed as T3's schema encodes them);
+  `provider.uploadFeedback`
+  (`methods/provider.rs`, `conn-engine/src/feedback.rs`, `Session::upload_feedback`, the
+  Codex session's `feedback/upload`).
+- **Fix:** clients now get `idleCompaction` and `compactIdleThreads` before the first settings
+  write, as T3 adds them on load (`withIdleCompaction`). Before, a fresh server sent neither,
+  so clients took it for a server from before idle compaction modes and showed the old switch.
+  This also changes `server.getConfig` and `settingsUpdated`.
+- **Proof:** `server-misc-diff.mjs` (new check) starts both servers: `getSettings` equal after
+  the client's decode and equal to `getConfig`'s settings on each side; the trace answer on a
+  fixture set of trace files (rotations, a folder in a file's place, parse errors, failures,
+  interruptions, log events, more spans than the top lists hold, `\n`, `\r\n` and `\r`
+  line ends, names of JavaScript-only whitespace) equal to T3's own `readTraceDiagnostics` on the same folder; `getDatabaseStorage`
+  `null` here (T3 sends a status, its repair command targets its own database);
+  `reclaimDatabaseSpace` and `uploadFeedback` for an unknown thread refused with T3's tags.
+  `effect-client.mjs` decodes all five with the client's schemas. `cargo test -p conn-engine
+  upload_feedback`: T3's texts for no session yet, an unsupported provider and a stopped
+  session.
+- **Known differences:** a trace timestamp outside the years 0000 to 9999, or written in
+  hex, counts as unparsable (T3 accepts both); so does a span whose name's total duration
+  would overflow to infinity (T3 sends `null` there, which its own client refuses); the reclaim refusal says "This server cannot reclaim database space." (T3 names
+  its `t3 doctor` command); an unknown thread's upload cause is our own text; with no active provider thread, the
+  upload falls back to the thread's own provider threads in T3's order, but T3's set also
+  holds provider threads owned through nodes and subagents. **Not proven:**
+  Codex's `feedback/upload` frame against T3's on a stub `codex`. T3 has no replay fixture for
+  it, so the conformance tool cannot drive it yet; the parameters follow
+  `CodexAdapterV2.uploadFeedback` (`classification: "bug"`, `includeLogs: true`, `reason`,
+  `threadId`).
+
 ## T3 state import (2026-11-21)
 
 A Conn Server that starts in a T3 server's state folder has the same threads (Nick,

@@ -30,7 +30,8 @@ use conn_support::time::Mark;
 
 use conn_contract::{
     ProviderAuthCancelInput, ProviderAuthCompleteInput, ProviderAuthRespondInput,
-    ProviderAuthStartInput, ProviderSetupError, ProviderSetupInput, lit,
+    ProviderAuthStartInput, ProviderSetupError, ProviderSetupInput, ProviderUploadFeedbackError,
+    ProviderUploadFeedbackInput, ProviderUploadFeedbackResult, lit,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -78,6 +79,14 @@ macro_rules! no_sign_in_method {
 }
 
 pub fn register(table: &mut MethodTable, deps: &Deps) {
+    // The engine finds the thread's running session; the provider uploads (Codex only).
+    if let Some(engine) = &deps.engine {
+        super::orchestration::engine_unary::<
+            ProviderUploadFeedbackInput,
+            ProviderUploadFeedbackResult,
+            ProviderUploadFeedbackError,
+        >(table, engine, "provider.uploadFeedback");
+    }
     no_sign_in_method!(
         table,
         deps,

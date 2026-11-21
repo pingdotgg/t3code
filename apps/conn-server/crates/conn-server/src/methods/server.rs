@@ -108,6 +108,35 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         }
     });
 
+    // T3's `redactServerSettingsForClient`, as `server.getConfig` sends it.
+    let env = environment.clone();
+    table.unary("server.getSettings", move |_, _: Value| {
+        let settings = env.settings.for_client();
+        async move { Ok(settings) }
+    });
+    // T3 reads `<state>/logs/server.trace.ndjson` and its rotations. This server writes no
+    // trace, but its state folder may hold an earlier T3 server's: read them as T3 does.
+    let env = environment.clone();
+    table.unary("server.getTraceDiagnostics", move |_, _: Value| {
+        let state_dir = env.state_dir.clone();
+        async move {
+            let read_at = conn_support::time::now_iso();
+            blocking(move || crate::trace_diagnostics::read(&state_dir, &read_at)).await
+        }
+    });
+    // T3 publishes a status only when its offline `t3 doctor` repairs this database, and
+    // `null` otherwise. This server has no such command, so the status stays `null` and the
+    // client shows no database notice.
+    table.stream("server.getDatabaseStorage", |_, _: Value| async {
+        Ok(open_stream(vec![Value::Null]))
+    });
+    table.unary("server.reclaimDatabaseSpace", |_, _: Value| async {
+        Err::<Value, _>(Failure::fail(&json!({
+            "_tag": "DatabaseReclaimError",
+            "reason": "This server cannot reclaim database space.",
+        })))
+    });
+
     let env = environment.clone();
     table.unary("server.updateSettings", move |_, input: UpdateSettings| {
         let env = env.clone();

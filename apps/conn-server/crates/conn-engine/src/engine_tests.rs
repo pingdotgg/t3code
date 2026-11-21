@@ -5666,3 +5666,61 @@ async fn a_parent_stop_interrupts_an_open_remote_task() {
     // Its follower still owes the stop there.
     assert_eq!(engine.open_remote_tasks(10).await.unwrap().len(), 1);
 }
+
+/// `provider.uploadFeedback` (T3's `ws.ts` handler): an unknown thread, a thread before its
+/// first session, a running session whose provider has no upload (T3: only Codex), and a
+/// session that stopped, each with T3's text.
+#[tokio::test(flavor = "current_thread")]
+async fn upload_feedback_needs_a_running_session_that_supports_it() {
+    let db = TempDb::new("upload-feedback");
+    let (engine, _) = open(&db);
+    let refusal = |result: Result<Value, EngineError<Value>>| match result {
+        Err(EngineError::Rejected(error)) => {
+            assert_eq!(error["_tag"], "ProviderUploadFeedbackError");
+            error
+        }
+        other => panic!("expected a refusal: {other:?}"),
+    };
+    let missing = refusal(
+        engine
+            .call("provider.uploadFeedback", json!({"threadId": "nope"}))
+            .await,
+    );
+    assert_eq!(missing["threadId"], "nope");
+
+    dispatch(&engine, create("t1", "c1")).await;
+    let feedback = json!({"threadId": "t1", "reason": "broken"});
+    let fresh = refusal(
+        engine
+            .call("provider.uploadFeedback", feedback.clone())
+            .await,
+    );
+    assert_eq!(
+        fresh["cause"],
+        "No provider session has run in this thread yet."
+    );
+
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hello")).await;
+    until_run_ends(&mut thread).await;
+    let unsupported = refusal(
+        engine
+            .call("provider.uploadFeedback", feedback.clone())
+            .await,
+    );
+    assert_eq!(
+        unsupported["cause"],
+        "Provider 'claudeAgent' does not support feedback uploads."
+    );
+
+    engine.shutdown().await;
+    let stopped = refusal(engine.call("provider.uploadFeedback", feedback).await);
+    assert_eq!(
+        stopped["cause"],
+        "The provider session is no longer running. Send a message first."
+    );
+}

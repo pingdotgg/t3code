@@ -109,6 +109,7 @@ pub(crate) async fn call(inner: Arc<Inner>, method: String, input: Value) -> Cal
         | "mcpApps.toolInfo"
         | "mcpApps.readResource"
         | "mcpApps.updateModelContext" => inner.mcp_app_request(&method, input).await,
+        "provider.uploadFeedback" => inner.upload_feedback(input).await,
         "orchestration.getArchivedShellSnapshot" => {
             read(&inner, SHELL_ERROR, |s| s.archived_shell_snapshot()).await
         }

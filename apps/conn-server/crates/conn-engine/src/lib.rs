@@ -25,6 +25,7 @@ mod checkpoint;
 mod clock;
 mod commands;
 mod engine;
+mod feedback;
 mod guard;
 mod handoff;
 mod mcp_apps;
