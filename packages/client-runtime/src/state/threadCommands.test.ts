@@ -416,6 +416,14 @@ describe("remote thread lifecycle commands", () => {
     ["pin", { orderKey: "a" }, { pinnedAt: expect.any(Object), pinOrderKey: "a" }],
     ["unpin", {}, { pinnedAt: null, pinOrderKey: null }],
     ["setAutoSettle", { enabled: false }, { autoSettleDisabledAt: expect.any(Object) }],
+    ["setMuted", { muted: true }, { mutedAt: expect.any(Object), mutedUntil: null }],
+    [
+      "setMuted",
+      { muted: true, mutedUntil: "2099-01-01T00:00:00.000Z" },
+      { mutedUntil: DateTime.makeUnsafe("2099-01-01T00:00:00.000Z") },
+    ],
+    // Unmuting records when the mute ended, so what it silenced stays quiet.
+    ["setMuted", { muted: false }, { mutedAt: NOW, mutedUntil: expect.any(Object) }],
     ["reorderPin", { orderKey: "b" }, { pinOrderKey: "b" }],
     ["reorderActive", { orderKey: "b" }, { activeOrderKey: "b" }],
   ] as const;
@@ -440,6 +448,7 @@ describe("remote thread lifecycle commands", () => {
               ...(action === "unpin" || action === "settle"
                 ? { pinnedAt: NOW, pinOrderKey: "a" }
                 : {}),
+              ...("muted" in input && !input.muted ? { mutedAt: NOW } : {}),
             },
           ],
         };
@@ -453,6 +462,7 @@ describe("remote thread lifecycle commands", () => {
                 commandId: CommandId.make(action),
                 reason: "user",
                 enabled: false,
+                muted: true,
                 orderKey: "a",
                 snoozedUntil: "2099-01-01T00:00:00.000Z",
                 ...input,

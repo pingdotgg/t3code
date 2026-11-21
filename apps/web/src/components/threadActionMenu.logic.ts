@@ -17,6 +17,9 @@ export type ThreadActionMenuId =
   | "auto-settle"
   | "auto-settle:enabled"
   | "auto-settle:disabled"
+  | "mute"
+  | `mute:${string}`
+  | "unmute"
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -106,6 +109,7 @@ export interface ThreadActionMenuState {
   readonly isPinned: boolean;
   readonly isSettled: boolean;
   readonly autoSettleEnabled: boolean;
+  readonly isMuted: boolean;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
@@ -114,6 +118,8 @@ export interface ThreadActionMenuState {
   readonly supports: {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
+    /** Server understands thread.mute.set. */
+    readonly mute: boolean;
     readonly snooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
@@ -263,6 +269,32 @@ export function buildThreadActionMenuItems(
               },
             ],
           },
+        ]
+      : []),
+    ...(state.supports.mute
+      ? [
+          state.isMuted
+            ? { id: "unmute" as const, label: resolve(msg("Unmute notifications")), icon: "bell" }
+            : {
+                id: "mute" as const,
+                label: resolve(msg("Mute notifications")),
+                icon: "bell-off",
+                // Mute ends reuse the snooze options, so one setting shapes both menus.
+                children: [
+                  { id: "mute:forever" as const, label: resolve(msg("Until I unmute")) },
+                  ...state.snoozePresets.map((preset, index) => ({
+                    id: `mute:${preset.id}` as const,
+                    label: preset.label,
+                    detail: preset.whenLabel,
+                    separatorBefore: index === 0,
+                  })),
+                  {
+                    id: "mute:custom" as const,
+                    label: resolve(msg("Custom…")),
+                    separatorBefore: true,
+                  },
+                ],
+              },
         ]
       : []),
     {

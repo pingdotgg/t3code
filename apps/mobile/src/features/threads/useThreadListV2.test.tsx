@@ -4,7 +4,7 @@ import { RegistryContext } from "@effect/atom-react";
 import type { OlderSettledShelfEnvironment } from "@t3tools/client-runtime/state/threads";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as DateTime from "effect/DateTime";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -241,4 +241,30 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   expect(loaded.layout.items).toHaveLength(160);
   expect(loaded.olderSettledShelf.isListed(threads[150]!)).toBe(true);
   expect(loaded.items).not.toBe(loading.items);
+
+  // A timed mute ends without a thread event; the minute tick past its end brings a thread
+  // that is still running back to the Working shelf.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  using _clock = { [Symbol.dispose]: () => vi.useRealTimers() };
+  const runId = RunId.make("run-muted");
+  const mutedRunning = presentThreadShell(
+    environmentId,
+    makeRawThreadShell({
+      id: ThreadId.make("thread-muted"),
+      status: "running",
+      latestRunId: runId,
+      activeRunId: runId,
+      mutedAt: DateTime.makeUnsafe("2026-01-01T23:00:00.000Z"),
+      mutedUntil: DateTime.makeUnsafe("2026-01-02T00:00:30.000Z"),
+    }),
+  );
+  const mutedInput = { ...input, threads: [mutedRunning] };
+  vi.setSystemTime(Date.parse("2026-01-02T00:00:10.000Z"));
+  await act(async () => root.render(<Probe input={mutedInput} tab="chats" />));
+  expect(seen.at(-1)!.layout.workingCount).toBe(0);
+  vi.setSystemTime(Date.parse("2026-01-02T00:01:00.000Z"));
+  await act(async () =>
+    root.render(<Probe input={{ ...mutedInput, now: "2026-01-02T00:01:00.000Z" }} tab="chats" />),
+  );
+  expect(seen.at(-1)!.layout.workingCount).toBe(1);
 });

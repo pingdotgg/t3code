@@ -4,6 +4,7 @@ import {
   createThreadNotificationGate,
   isSnoozedForNotification,
   RELEASED_COMPLETION_GRACE_MS,
+  waitsOnUser,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
 
@@ -38,7 +39,10 @@ function harness() {
   const notify = vi.fn();
   const gate = createThreadNotificationGate<string>(notify);
   let prior: ThreadNotificationObservation | undefined;
-  const observe = (next: ThreadNotificationObservation, options = visible) => {
+  const observe = (
+    next: ThreadNotificationObservation,
+    options: Parameters<typeof gate.observe>[3] = visible,
+  ) => {
     gate.observe("thread", prior, next, options);
     prior = next;
   };
@@ -122,6 +126,44 @@ describe("createThreadNotificationGate", () => {
       ["thread", "completion"],
       ["thread", "input"],
     ]);
+  });
+
+  it("announces a request still waiting when a mute ends, but not a completion from the mute", () => {
+    const { notify, observe } = harness();
+    const muted = { ...visible, archived: true };
+    observe(working);
+    observe(completed(1), { ...muted, quiet: true });
+    const asking = { ...working, attention: "run-2:approval:a", requestId: "a" };
+    observe(asking, muted);
+    observe({ ...asking }, muted);
+    expect(notify).not.toHaveBeenCalled();
+    observe({ ...asking }, { ...visible, muteEnded: true });
+    expect(notify.mock.calls).toEqual([["thread", "input"]]);
+    observe({ ...asking });
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a run that failed while muted quiet when the mute ends", () => {
+    const { notify, observe } = harness();
+    const failed = { ...working, attention: "run-2:failed" };
+    observe(working);
+    observe(failed, { ...visible, archived: true });
+    // A failure does not wait on the user, so the coordinator ends the mute without muteEnded.
+    expect(waitsOnUser("failed")).toBe(false);
+    expect(waitsOnUser("limited")).toBe(false);
+    observe({ ...failed });
+    expect(notify).not.toHaveBeenCalled();
+    expect(waitsOnUser("approval")).toBe(true);
+    expect(waitsOnUser("input")).toBe(true);
+    expect(waitsOnUser("request")).toBe(true);
+  });
+
+  it("stays quiet when a mute ends with nothing waiting", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe(completed(1), { ...visible, archived: true, quiet: true });
+    observe({ ...completed(1) }, { ...visible, quiet: true, muteEnded: true });
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("never notifies existing, archived or stopped completions, including when unarchived", () => {

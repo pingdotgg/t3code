@@ -23,6 +23,7 @@ import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestratio
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { normalizeRelayIssuer, RELAY_ACTIVITY_PUBLISH_TYP } from "@t3tools/shared/relayJwt";
+import { finishedBeforeMuteEnd, isThreadMuted } from "@t3tools/shared/threadMute";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -101,6 +102,8 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.settled":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
+    // Muting withdraws the thread from push; unmuting restores it.
+    case "thread.mute-set":
     case "run.created":
     case "run.updated":
     case "runtime-request.updated":
@@ -318,8 +321,12 @@ interface SubagentAlert {
   readonly updatedAt: string;
 }
 
-const waitingApprovalId = (thread: AgentAwarenessThread | null) =>
-  thread !== null && thread.archivedAt === null && subagentAwaitsUser(thread)
+// A muted subagent's request stays silent through its parent too.
+const waitingApprovalId = (thread: AgentAwarenessThread | null, nowMs: number) =>
+  thread !== null &&
+  thread.archivedAt === null &&
+  subagentAwaitsUser(thread) &&
+  !isThreadMuted(thread, nowMs)
     ? thread.pendingRuntimeRequest?.id
     : undefined;
 
@@ -365,9 +372,10 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
     state?.phase !== projectThreadAwarenessV2(awarenessInput)?.phase;
   return {
     projectId: input.thread.value.projectId,
-    state: snoozedCompletion(input.thread.value, state)
-      ? null
-      : sanitizeRelayAgentActivityState(state),
+    state:
+      snoozedCompletion(input.thread.value, state) || mutedTerminalWork(input.thread.value, state)
+        ? null
+        : sanitizeRelayAgentActivityState(state),
     subagentWait: childDrivesWait ? input.pendingSubagentRequest : null,
     reason: "snapshot",
   };
@@ -386,6 +394,15 @@ function snoozedCompletion(
   return isSnoozed(thread, completedAt);
 }
 
+// Ending a mute must not replay what finished while it was in effect.
+function mutedTerminalWork(
+  thread: AgentAwarenessThread,
+  state: { readonly phase: string } | null,
+): boolean {
+  if (state?.phase !== "completed" && state?.phase !== "failed") return false;
+  return finishedBeforeMuteEnd(thread, thread.latestRunCompletedAt);
+}
+
 function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number): boolean {
   return (
     thread.latestRunCompletedAt != null &&
@@ -395,19 +412,21 @@ function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number)
 
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly environmentId: EnvironmentId;
+  /** Terminal work before this time was already announced by an earlier process. */
   readonly startedAt: number;
+  /** Mutes are read now: a catch-up can run long after startup. */
+  readonly now: number;
   readonly projects: ReadonlyArray<Pick<Project, "id" | "title">>;
   readonly threads: ReadonlyArray<AgentAwarenessThread>;
 }): ReadonlyArray<ThreadId> {
   const projectById = new Map(input.projects.map((project) => [project.id, project]));
   return input.threads
     .filter((thread) => {
+      if (isThreadMuted(thread, input.now)) return false;
       // Publishing a waiting subagent republishes its top-level thread.
       if (subagentAwaitsUser(thread)) return true;
       const project = projectById.get(thread.projectId);
-      if (!project) {
-        return false;
-      }
+      if (!project) return false;
       const state = projectThreadAwarenessV2({
         environmentId: input.environmentId,
         project,
@@ -421,6 +440,36 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
       );
     })
     .map((thread) => thread.id);
+}
+
+/** A timed mute in effect, with when it began so a newer mute's timer wins. */
+interface MuteEnd {
+  readonly endMs: number;
+  readonly mutedAtMs: number;
+}
+
+function timedMuteEnd(thread: AgentAwarenessThread, nowMs: number): MuteEnd | null {
+  if (!isThreadMuted(thread, nowMs) || thread.mutedAt == null || thread.mutedUntil == null) {
+    return null;
+  }
+  return {
+    endMs: DateTime.toEpochMillis(thread.mutedUntil),
+    mutedAtMs: DateTime.toEpochMillis(thread.mutedAt),
+  };
+}
+
+/**
+ * Timed mutes in effect at a catch-up. They are left out of publishing, so each needs its end
+ * timer set here, or a thread still waiting when its mute ends would never alert.
+ */
+export function resolveAgentAwarenessRelayMuteEnds(input: {
+  readonly now: number;
+  readonly threads: ReadonlyArray<AgentAwarenessThread>;
+}): ReadonlyArray<readonly [ThreadId, MuteEnd]> {
+  return input.threads.flatMap((thread) => {
+    const end = timedMuteEnd(thread, input.now);
+    return end === null ? [] : [[thread.id, end] as const];
+  });
 }
 
 /** @public */
@@ -494,6 +543,11 @@ export const make = Effect.gen(function* () {
     Effect.forEach([...publishRetries.keys()], cancelPublishRetry, { discard: true }),
   );
   let schedulePublishRetry: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+  // A timed mute ends without an event; republish then so a thread still
+  // waiting on the user alerts again. One timer per thread, for its latest end.
+  const muteEndTimers = new Map<ThreadId, MuteEnd & { readonly fiber: Fiber.Fiber<void> }>();
+  let scheduleMuteEnd: (threadId: ThreadId, end: MuteEnd | null) => Effect.Effect<void> = () =>
+    Effect.void;
   let enqueueTopLevelPublish: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const resetPublishedConnection = Effect.gen(function* () {
     publishedRelayConfig = undefined;
@@ -581,7 +635,16 @@ export const make = Effect.gen(function* () {
 
     // Read only this thread; full shell reads would make each activity event scale with all threads.
     const threadShell = yield* readAwarenessThread(threadId);
-    yield* trackSubagentRequest(threadId, threadShell);
+    const nowMs = (yield* DateTime.now).epochMilliseconds;
+    // A muted thread publishes like an archived one, so the relay clears it
+    // and no device is alerted. Subagents need the end timer too: their
+    // request reaches the parent again when it ends.
+    const muted = threadShell !== null && isThreadMuted(threadShell, nowMs);
+    yield* scheduleMuteEnd(
+      threadId,
+      threadShell === null ? null : timedMuteEnd(threadShell, nowMs),
+    );
+    yield* trackSubagentRequest(threadId, threadShell, nowMs);
     if (
       threadShell !== null &&
       !isListedThreadLineage(threadShell.lineage) &&
@@ -591,17 +654,17 @@ export const make = Effect.gen(function* () {
       return;
     }
     const thread =
-      threadShell === null || threadShell.archivedAt !== null
+      threadShell === null || threadShell.archivedAt !== null || muted
         ? Option.none<AgentAwarenessThread>()
         : Option.some(threadShell);
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
+    let snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       thread,
       project,
-      pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
+      pendingSubagentRequest: yield* currentSubagentRequestFor(threadId, nowMs),
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
@@ -752,8 +815,9 @@ export const make = Effect.gen(function* () {
   const trackSubagentRequest = Effect.fnUntraced(function* (
     threadId: ThreadId,
     threadShell: AgentAwarenessThread | null,
+    nowMs: number,
   ) {
-    const requestId = waitingApprovalId(threadShell);
+    const requestId = waitingApprovalId(threadShell, nowMs);
     const previous = subagentRequests.get(threadId);
     // An unchanged wait still republishes its parent: a relink catch-up reaches it only here.
     if (threadShell === null || requestId === undefined) {
@@ -771,12 +835,15 @@ export const make = Effect.gen(function* () {
 
   // The map can miss a child's update while publishing is off or the relay is
   // unlinked, so each waiting child is re-read before its parent is published.
-  const currentSubagentRequestFor = Effect.fnUntraced(function* (topLevelThreadId: ThreadId) {
+  const currentSubagentRequestFor = Effect.fnUntraced(function* (
+    topLevelThreadId: ThreadId,
+    nowMs: number,
+  ) {
     let pending: SubagentRequestAwareness | null = null;
     for (const [childId, entry] of subagentRequests) {
       if (entry.topLevelThreadId !== topLevelThreadId) continue;
       const child = yield* readAwarenessThread(childId);
-      const requestId = waitingApprovalId(child);
+      const requestId = waitingApprovalId(child, nowMs);
       if (child === null || requestId === undefined) {
         subagentRequests.delete(childId);
         continue;
@@ -885,11 +952,26 @@ export const make = Effect.gen(function* () {
       ),
       (thread) => readAwarenessThread(thread.id),
     );
+    const snapshotThreads = [
+      ...activitySnapshot.threads,
+      ...liveChildren.filter((thread) => thread !== null),
+    ];
+    const now = (yield* DateTime.now).epochMilliseconds;
+    for (const [threadId, end] of resolveAgentAwarenessRelayMuteEnds({
+      now,
+      threads: snapshotThreads,
+    })) {
+      // The snapshot was read before the child reads above; a publication since then may have
+      // set the timer for a newer mute, which must win.
+      if ((muteEndTimers.get(threadId)?.mutedAtMs ?? -Infinity) > end.mutedAtMs) continue;
+      yield* scheduleMuteEnd(threadId, end);
+    }
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
       startedAt,
+      now,
       projects: projectSnapshot.projects,
-      threads: [...activitySnapshot.threads, ...liveChildren.filter((thread) => thread !== null)],
+      threads: snapshotThreads,
     });
     if (activeThreadIds.length === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");
@@ -933,6 +1015,31 @@ export const make = Effect.gen(function* () {
         unlinkedRetryDelayMs = Math.min(unlinkedRetryDelayMs * 2, 60_000);
       }
     }
+  });
+
+  scheduleMuteEnd = Effect.fnUntraced(function* (threadId: ThreadId, end: MuteEnd | null) {
+    const current = muteEndTimers.get(threadId);
+    if (current?.endMs === end?.endMs && current?.mutedAtMs === end?.mutedAtMs) return;
+    if (current !== undefined) {
+      muteEndTimers.delete(threadId);
+      yield* Fiber.interrupt(current.fiber);
+    }
+    if (end === null) return;
+    const delayMs = Math.max(0, end.endMs - (yield* DateTime.now).epochMilliseconds) + 1;
+    const fiber = yield* Effect.sleep(delayMs).pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          const latest = muteEndTimers.get(threadId);
+          if (latest?.endMs !== end.endMs || latest.mutedAtMs !== end.mutedAtMs) {
+            return Effect.void;
+          }
+          muteEndTimers.delete(threadId);
+          return worker.enqueue(threadId);
+        }),
+      ),
+      Effect.forkIn(scope),
+    );
+    muteEndTimers.set(threadId, { ...end, fiber });
   });
 
   schedulePublishConfirm = (threadId) =>

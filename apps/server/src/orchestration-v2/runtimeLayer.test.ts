@@ -7912,6 +7912,107 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect(
+    "keeps a muted thread settled through its scheduled runs, but not a user's message",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const settledMutedThread = Effect.fnUntraced(function* (name: string) {
+          const threadId = ThreadId.make(`runtime-layer-muted-${name}`);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`runtime-layer-muted-${name}-create`),
+            threadId,
+            projectId: ProjectId.make("runtime-layer-muted-project"),
+            title: `Muted ${name}`,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: `/tmp/runtime-layer-muted-${name}`,
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make(`runtime-layer-muted-${name}-settle`),
+            threadId,
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.mute.set",
+            commandId: CommandId.make(`runtime-layer-muted-${name}-mute`),
+            threadId,
+            muted: true,
+          });
+          return threadId;
+        });
+        const send = (threadId: ThreadId, name: string, scheduled: boolean) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            ...(scheduled ? { scheduledTaskId: ScheduledTaskId.make(`task-${name}`) } : {}),
+            commandId: CommandId.make(`runtime-layer-muted-${name}-message`),
+            threadId,
+            messageId: MessageId.make(`runtime-layer-muted-${name}-message`),
+            text: "Run the nightly check.",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+
+        const scheduled = yield* settledMutedThread("scheduled");
+        yield* send(scheduled, "scheduled", true);
+        const scheduledProjection = yield* orchestrator.getThreadProjection(scheduled);
+        assert.equal(scheduledProjection.runs[0]?.status, "starting");
+        assert.equal(scheduledProjection.thread.settledOverride, "settled");
+        assert.isNotNull(scheduledProjection.thread.settledAt);
+
+        const typed = yield* settledMutedThread("typed");
+        yield* send(typed, "typed", false);
+        const typedProjection = yield* orchestrator.getThreadProjection(typed);
+        assert.isNull(typedProjection.thread.settledOverride);
+        assert.isNotNull(typedProjection.thread.unsettledAt);
+
+        // Muting records the latest run from outside a mute, so the list keeps the thread's
+        // place through runs that happen while it is muted.
+        const remute = (threadId: ThreadId, name: string) =>
+          orchestrator
+            .dispatch({
+              type: "thread.mute.set",
+              commandId: CommandId.make(`runtime-layer-muted-${name}-remute`),
+              threadId,
+              muted: true,
+            })
+            .pipe(Effect.andThen(orchestrator.getThreadShell(threadId)));
+        assert.isNull((yield* remute(scheduled, "scheduled"))?.unmutedRunAt);
+        const earlier = ThreadId.make("runtime-layer-muted-earlier");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("runtime-layer-muted-earlier-create"),
+          threadId: earlier,
+          projectId: ProjectId.make("runtime-layer-muted-project"),
+          title: "Muted earlier",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/tmp/runtime-layer-muted-earlier",
+        });
+        yield* send(earlier, "earlier", false);
+        yield* TestClock.adjust("1 minute");
+        const earlierShell = yield* remute(earlier, "earlier");
+        assert.isNotNull(earlierShell?.latestRunRequestedAt);
+        assert.deepEqual(earlierShell?.unmutedRunAt, earlierShell?.latestRunRequestedAt);
+        assert.isBelow(
+          DateTime.toEpochMillis(earlierShell!.unmutedRunAt!),
+          DateTime.toEpochMillis(earlierShell!.mutedAt!),
+        );
+      }),
+  );
+
   it.effect("keeps a linked environment's sender on started and queued messages", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useNavigate } from "@tanstack/react-router";
 import { create } from "zustand";
 import {
@@ -36,12 +36,34 @@ import {
 } from "./ui/dialog";
 
 type SnoozeChoice = { readonly snoozedUntil: string };
-type Request = { readonly resolve: (choice: SnoozeChoice | null) => void };
+/** Muting picks its end time with the same controls as snoozing. */
+type CustomTimePurpose = "snooze" | "mute";
+type Request = {
+  readonly purpose: CustomTimePurpose;
+  readonly resolve: (choice: SnoozeChoice | null) => void;
+};
 const useRequest = create<{ request: Request | null }>(() => ({ request: null }));
 
-export function requestCustomSnooze(): Promise<SnoozeChoice | null> {
+const COPY = {
+  snooze: {
+    title: msg("Custom snooze"),
+    description: msg("Choose when snoozed threads return to your inbox."),
+    amountLabel: msg("Snooze for"),
+    submit: msg("Snooze", { $context: "verb" }),
+  },
+  mute: {
+    title: msg("Mute notifications"),
+    description: msg("Choose when this thread can notify you again."),
+    amountLabel: msg("Mute for"),
+    submit: msg("Mute", { $context: "verb" }),
+  },
+} as const;
+
+export function requestCustomSnooze(
+  purpose: CustomTimePurpose = "snooze",
+): Promise<SnoozeChoice | null> {
   useRequest.getState().request?.resolve(null);
-  return new Promise((resolve) => useRequest.setState({ request: { resolve } }));
+  return new Promise((resolve) => useRequest.setState({ request: { purpose, resolve } }));
 }
 
 function finish(choice: SnoozeChoice | null) {
@@ -60,11 +82,12 @@ export function CustomSnoozeDialogHost() {
   const request = useRequest((state) => state.request);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resolves any pending snooze request promise with null when the dialog host unmounts
   useEffect(() => () => finish(null), []);
-  return request ? <CustomSnoozeDialog /> : null;
+  return request ? <CustomSnoozeDialog copy={COPY[request.purpose]} /> : null;
 }
 
-function CustomSnoozeDialog() {
+function CustomSnoozeDialog({ copy }: { readonly copy: (typeof COPY)[CustomTimePurpose] }) {
   const gt = useGT();
+  const m = useMessages();
   const id = useId();
   const navigate = useNavigate();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
@@ -105,12 +128,8 @@ function CustomSnoozeDialog() {
           }}
         >
           <DialogHeader>
-            <DialogTitle>
-              <T>Custom snooze</T>
-            </DialogTitle>
-            <DialogDescription>
-              <T>Choose when snoozed threads return to your inbox.</T>
-            </DialogDescription>
+            <DialogTitle>{m(copy.title)}</DialogTitle>
+            <DialogDescription>{m(copy.description)}</DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <div className="flex flex-col gap-4">
@@ -200,9 +219,7 @@ function CustomSnoozeDialog() {
                         setError(null);
                       }}
                     >
-                      <Label htmlFor={`${id}-amount`}>
-                        <T>Snooze for</T>
-                      </Label>
+                      <Label htmlFor={`${id}-amount`}>{m(copy.amountLabel)}</Label>
                       <NumberFieldGroup>
                         <NumberFieldDecrement aria-label={gt("Decrease duration")} />
                         <NumberFieldInput required />
@@ -265,9 +282,7 @@ function CustomSnoozeDialog() {
             <Button type="button" variant="outline" onClick={() => finish(null)}>
               <T>Cancel</T>
             </Button>
-            <Button type="submit">
-              <T context="verb">Snooze</T>
-            </Button>
+            <Button type="submit">{m(copy.submit)}</Button>
           </DialogFooter>
         </form>
       </DialogPopup>

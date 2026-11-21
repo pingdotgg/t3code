@@ -243,6 +243,31 @@ describe("resolveThreadListV2Status", () => {
       expect(threadHasUnseenCompletion(thread)).toBe(false);
     },
   );
+
+  it("does not present a run that finished while muted as an unseen completion", () => {
+    const finished = {
+      latestRunId: RunId.make("run-muted"),
+      status: "completed",
+      latestRunCompletedAt: DateTime.makeUnsafe(NOW),
+      lastVisitedAt: DateTime.makeUnsafe("2026-06-01T23:59:00.000Z"),
+      mutedAt: DateTime.makeUnsafe("2026-06-01T23:59:30.000Z"),
+    } as const;
+    const muted = (mutedUntil: string | null) =>
+      threadHasUnseenCompletion(
+        presentThreadShell(
+          environmentId,
+          makeRawThreadShell({
+            ...finished,
+            mutedUntil: mutedUntil === null ? null : DateTime.makeUnsafe(mutedUntil),
+          }),
+        ),
+      );
+
+    expect(muted(null)).toBe(false);
+    expect(muted("2026-06-02T01:00:00.000Z")).toBe(false);
+    // The run finished after the mute ended, so it counts again.
+    expect(muted("2026-06-01T23:59:45.000Z")).toBe(true);
+  });
 });
 
 describe("threadListV2RowAccessibilityLabel", () => {
@@ -1479,6 +1504,29 @@ describe("threadListV2ListItemsAreEqual", () => {
     expect(rows(earlier).snoozeWakeLabelText).toBe("2h");
     expect(rows(later).snoozeWakeLabelText).toBe("1h");
     expect(threadListV2ListItemsAreEqual(rows(earlier), rows(later))).toBe(false);
+  });
+
+  it("keeps mute menu times current on rows that cannot snooze", () => {
+    const blocked = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("blocked"), title: "blocked", hasPendingApprovals: true }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const minute = (muteEnvironmentIds?: ReadonlySet<typeof environmentId>) => {
+      const row = buildThreadListV2ListItems({
+        items: blocked.items,
+        pendingTasks: [],
+        snoozeLabelNow: NOW,
+        ...(muteEnvironmentIds ? { muteEnvironmentIds } : {}),
+      }).find((item) => item.key === `v2-thread:${environmentId}:blocked`);
+      if (row?.type !== "v2-thread") throw new Error("missing blocked row");
+      return row.snoozePresetMinute;
+    };
+    expect(minute()).toBeUndefined();
+    expect(minute(new Set([environmentId]))).toBe(NOW);
   });
 
   it("notices a trailing-divider flip caused by a neighbour change", () => {

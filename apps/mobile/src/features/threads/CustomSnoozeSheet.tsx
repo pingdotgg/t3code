@@ -1,4 +1,5 @@
 import { SheetHeader } from "../../components/ui/SheetHeader";
+import { CUSTOM_TIME_SHEET_COPY, type CustomTimeSheetPurpose } from "./customSnoozeDate";
 import {
   DatePicker,
   Host,
@@ -49,10 +50,12 @@ const units = [
 export function CustomSnoozeSheet(props: {
   readonly onClose: () => void;
   readonly onSnooze: (snoozedUntil: string) => void;
+  readonly purpose?: CustomTimeSheetPurpose;
 }) {
   const gt = useGT();
   const m = useMessages();
   const { width, height } = useWindowDimensions();
+  const copy = CUSTOM_TIME_SHEET_COPY[props.purpose ?? "snooze"];
   const [mode, setMode] = useState<CustomSnoozeInput["mode"]>("date");
   const [date, setDate] = useState(() => new Date(Date.now() + 3_600_000));
   const [amount, setAmount] = useState(2);
@@ -103,6 +106,7 @@ export function CustomSnoozeSheet(props: {
         </Popover.Trigger>
         <Popover.Content>
           <SnoozePopoverNavigation
+            copy={copy}
             width={popoverWidth}
             height={popoverHeight}
             onClose={props.onClose}
@@ -118,7 +122,7 @@ export function CustomSnoozeSheet(props: {
                 modifiers={[padding({ all: 16 }), foregroundStyle(colors["--color-foreground"])]}
               >
                 <Picker
-                  label={gt("Snooze mode")}
+                  label={m(copy.modeLabel)}
                   selection={mode}
                   onSelectionChange={(value: CustomSnoozeInput["mode"]) => {
                     setMode(value);
@@ -134,7 +138,7 @@ export function CustomSnoozeSheet(props: {
                 </Picker>
                 {mode === "date" ? (
                   <DatePicker
-                    title={gt("Snooze until")}
+                    title={m(copy.untilLabel)}
                     selection={date}
                     displayedComponents={["date", "hourAndMinute"]}
                     onDateChange={updateDate}
@@ -217,26 +221,24 @@ export function CustomSnoozeSheet(props: {
 }
 
 function SnoozePopoverNavigation(props: {
+  readonly copy: (typeof CUSTOM_TIME_SHEET_COPY)[CustomTimeSheetPurpose];
   readonly width: number;
   readonly height: number;
   readonly onClose: () => void;
   readonly onSubmit: () => void;
   readonly children: ReactNode;
 }) {
-  const gt = useGT();
+  const m = useMessages();
   return (
     <VStack modifiers={[frame({ width: props.width, height: props.height })]}>
       <RNHostView>
         <View style={{ width: props.width, height: props.height }}>
           <StandaloneStack>
             <SheetHeader
-              title={gt("Custom snooze")}
+              title={m(props.copy.title)}
               onCancel={props.onClose}
-              accessibilityLabel={gt("Cancel custom snooze")}
-              confirm={{
-                label: gt("Snooze", { $context: "verb, confirm button" }),
-                onPress: props.onSubmit,
-              }}
+              accessibilityLabel={m(props.copy.cancelLabel)}
+              confirm={{ label: m(props.copy.submit), onPress: props.onSubmit }}
             />
             <ScrollView
               contentInsetAdjustmentBehavior="automatic"

@@ -10,6 +10,7 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  lastMuteEndAtOrBefore,
   threadListInboxReturns,
   threadListV2LayoutTime,
 } from "./threadListV2";
@@ -30,12 +31,13 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
 /**
- * The React Compiler drops unread dependencies, so pass the expired-grace version through
- * this call to keep inbox updates tied to its subscription.
+ * The React Compiler drops unread dependencies, so pass the expired-grace version and the
+ * last mute end through this call to keep inbox updates tied to them.
  */
 function observeInbox(
   threads: Parameters<typeof threadListInboxReturns.observe>[0],
   _expiredGraceVersion: number,
+  _lastMuteEnd: number,
 ) {
   return threadListInboxReturns.observe(threads);
 }
@@ -54,6 +56,7 @@ export function useThreadListV2(input: {
   readonly searchMatches: ReadonlyMap<string, unknown>;
   readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly snoozeEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly muteEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly pinReorderEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly activeReorderEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly queuedThreadKeys: ReadonlySet<string>;
@@ -77,9 +80,14 @@ export function useThreadListV2(input: {
     threadListInboxReturns.subscribe,
     threadListInboxReturns.getSnapshot,
   );
+  // A thread still running when its timed mute ends returns to the Working shelf.
+  const lastMuteEnd = useMemo(
+    () => lastMuteEndAtOrBefore(threads, input.now),
+    [threads, input.now],
+  );
   const inbox = useMemo(
-    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion),
-    [threads, workingShelfEnabled, inboxVersion],
+    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion, lastMuteEnd),
+    [threads, workingShelfEnabled, inboxVersion, lastMuteEnd],
   );
   // Compute move availability per section; per-row planning is quadratic.
   const moveAvailability = useMemo(() => {
@@ -226,6 +234,7 @@ export function useThreadListV2(input: {
         settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
         snoozeLabelNow: `${input.now.slice(0, 16)}:00.000Z`,
         snoozeEnvironmentIds: input.snoozeEnvironmentIds,
+        ...(input.muteEnvironmentIds ? { muteEnvironmentIds: input.muteEnvironmentIds } : {}),
         queuedThreadKeys: input.queuedThreadKeys,
         moveAvailability,
         shelfPreferencesLoading: !input.shelfPreferencesLoaded,
@@ -239,6 +248,7 @@ export function useThreadListV2(input: {
       input.settledShelfExpanded,
       input.now,
       input.snoozeEnvironmentIds,
+      input.muteEnvironmentIds,
       input.queuedThreadKeys,
       moveAvailability,
       input.shelfPreferencesLoaded,

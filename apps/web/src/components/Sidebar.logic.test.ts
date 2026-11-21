@@ -569,6 +569,26 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Completed", pulse: false });
   });
 
+  it("never shows a run that finished while muted as completed, even after the mute ends", () => {
+    const unseen = {
+      ...baseThread,
+      interactionMode: "default" as const,
+      latestRun: makeLatestRun(),
+      lastVisitedAt: "2026-03-09T10:04:00.000Z",
+      runtime: { ...baseThread.runtime, status: "completed" as const, activeRunId: null },
+    };
+    const mutedAt = "2026-03-09T09:00:00.000Z";
+    const cases = [
+      { mutedAt, mutedUntil: "2026-03-09T10:30:00.000Z", completed: false },
+      // A mute that ended before the run finished leaves it alone.
+      { mutedAt, mutedUntil: "2026-03-09T10:01:00.000Z", completed: true },
+    ];
+    for (const { completed, ...mute } of cases) {
+      expect(hasUnseenCompletion({ ...unseen, ...mute })).toBe(completed);
+      expect(resolveThreadStatusPill({ thread: { ...unseen, ...mute } }) !== null).toBe(completed);
+    }
+  });
+
   it("shows failed, not completed, when the unseen run failed", () => {
     const failed = {
       ...baseThread,

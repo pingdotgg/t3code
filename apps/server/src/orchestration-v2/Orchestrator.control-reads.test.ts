@@ -20,6 +20,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { isThreadMuted } from "@t3tools/shared/threadMute";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -956,6 +957,71 @@ it.effect("keeps the store's read failure as the cause when a command projection
       assert.instanceOf(failure, Orchestrator.OrchestratorProjectionError);
       assert.instanceOf(failure.cause, ProjectionStore.ProjectionStoreReadError);
     }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("mutes for a while or until unmuted without marking the thread active", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:mute");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-mute"),
+      threadId,
+      projectId: ProjectId.make("project:mute"),
+      title: "Review bot",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const created = yield* projections.getThreadShell(threadId);
+    assert.ok(created);
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const inAnHour = DateTime.formatIso(DateTime.makeUnsafe(nowMs + 60 * 60_000));
+    const steps = [
+      { muted: true, events: 1, mutedNow: true, until: "none" },
+      { muted: false, events: 1, mutedNow: false, until: "ended" },
+      // Unmuting again must not move the recorded end past work that already finished.
+      { muted: false, events: 0, mutedNow: false, until: "ended" },
+      { muted: true, mutedUntil: inAnHour, events: 1, mutedNow: true, until: "hour" },
+    ] as const;
+    let endedAt: DateTime.Utc | null | undefined;
+    for (const [index, step] of steps.entries()) {
+      const result = yield* orchestrator.dispatch({
+        type: "thread.mute.set",
+        commandId: CommandId.make(`mute-${index}`),
+        threadId,
+        muted: step.muted,
+        ...("mutedUntil" in step ? { mutedUntil: step.mutedUntil } : {}),
+      });
+      assert.equal(result.storedEvents.length, step.events);
+      const shell = yield* projections.getThreadShell(threadId);
+      assert.ok(shell);
+      assert.equal(isThreadMuted(shell, nowMs + 1), step.mutedNow);
+      if (step.until === "none") assert.isNull(shell.mutedUntil);
+      if (step.until === "hour") assert.equal(DateTime.formatIso(shell.mutedUntil!), inAnHour);
+      if (step.until === "ended") {
+        assert.ok(shell.mutedUntil);
+        if (endedAt !== undefined) assert.deepEqual(shell.mutedUntil, endedAt);
+        endedAt = shell.mutedUntil;
+      }
+      assert.deepEqual(shell.updatedAt, created.updatedAt);
+    }
+    const past = yield* orchestrator
+      .dispatch({
+        type: "thread.mute.set",
+        commandId: CommandId.make("mute-past"),
+        threadId,
+        muted: true,
+        mutedUntil: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 60_000)),
+      })
+      .pipe(Effect.flip);
+    assert.instanceOf(past, Orchestrator.OrchestratorDispatchError);
   }).pipe(Effect.provide(layerTest)),
 );
 

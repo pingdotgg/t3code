@@ -11,6 +11,7 @@ import {
 
 import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
 import * as DateTime from "effect/DateTime";
+import { isThreadMuted } from "@t3tools/shared/threadMute";
 
 import {
   type AtomCommand,
@@ -50,6 +51,7 @@ import {
   reorderPinnedThread,
   reorderActiveThread,
   setThreadAutoSettle,
+  setThreadMuted,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -274,6 +276,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     setAutoSettle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-auto-settle",
       execute: setThreadAutoSettle,
+      scheduler,
+      concurrency,
+    }),
+    setMuted: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-muted",
+      execute: setThreadMuted,
       scheduler,
       concurrency,
     }),
@@ -584,6 +592,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     setAutoSettle: optimistic.wrap(commands.setAutoSettle, (thread, input, now) => ({
       ...thread,
       autoSettleDisabledAt: input.enabled ? null : (thread.autoSettleDisabledAt ?? now),
+    })),
+    setMuted: optimistic.wrap(commands.setMuted, (thread, input, now) => ({
+      ...thread,
+      ...(input.muted
+        ? {
+            mutedAt: now,
+            mutedUntil:
+              input.mutedUntil === undefined ? null : DateTime.makeUnsafe(input.mutedUntil),
+          }
+        : isThreadMuted(thread, DateTime.toEpochMillis(now))
+          ? { mutedUntil: now }
+          : {}),
     })),
     pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
       ...thread,

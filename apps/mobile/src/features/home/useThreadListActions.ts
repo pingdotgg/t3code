@@ -240,6 +240,12 @@ export function useThreadListActions(): {
     thread: EnvironmentThreadShell,
     enabled: boolean,
   ) => Promise<boolean>;
+  /** `mutedUntil` ends the mute on its own; omit it to mute until unmuted. */
+  readonly setThreadMuted: (
+    thread: EnvironmentThreadShell,
+    muted: boolean,
+    mutedUntil?: string,
+  ) => Promise<boolean>;
   readonly moveThread: (
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
@@ -255,6 +261,7 @@ export function useThreadListActions(): {
   const setAutoSettleMutation = useAtomCommand(threadEnvironment.setAutoSettle, {
     reportFailure: false,
   });
+  const setMutedMutation = useAtomCommand(threadEnvironment.setMuted, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -573,6 +580,33 @@ export function useThreadListActions(): {
     }
     return true;
   };
+  const setThreadMuted = async (
+    thread: EnvironmentThreadShell,
+    muted: boolean,
+    mutedUntil?: string,
+  ) => {
+    if (!checkThreadOperationPermission(thread, "Could not update notifications")) return false;
+    selectionHaptic();
+    const result = await setMutedMutation({
+      environmentId: thread.environmentId,
+      input: {
+        threadId: thread.id,
+        muted,
+        ...(muted && mutedUntil !== undefined ? { mutedUntil } : {}),
+      },
+    });
+    if (result._tag === "Failure") {
+      const error = Cause.squash(result.cause);
+      Dialog.alert(
+        m(msg("Could not update notifications")),
+        error instanceof Error
+          ? error.message
+          : m(msg("The notification setting could not be changed.")),
+      );
+      return false;
+    }
+    return true;
+  };
   const regenerateThreadTitle = async (thread: EnvironmentThreadShell) => {
     if (!checkThreadOperationPermission(thread, m(msg("Could not regenerate title")))) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
@@ -817,6 +851,8 @@ export function useThreadListActions(): {
     pinThread: (thread) => pinThread(liveThread(thread)),
     unpinThread: (thread) => unpinThread(liveThread(thread)),
     setThreadAutoSettle: (thread, enabled) => setThreadAutoSettle(liveThread(thread), enabled),
+    setThreadMuted: (thread, muted, mutedUntil) =>
+      setThreadMuted(liveThread(thread), muted, mutedUntil),
     moveThread,
     renameThread: (thread) => renameThread(liveThread(thread)),
     regenerateThreadTitle: (thread) => regenerateThreadTitle(liveThread(thread)),
