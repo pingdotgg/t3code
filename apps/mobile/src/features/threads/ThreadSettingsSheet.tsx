@@ -913,6 +913,10 @@ function subProviderCatalogItems(
           savedCollapsed: session.savedSectionCollapsed(expansionKey),
           isNarrowed: false,
         });
+      // The heading names the backend, so its active model drops it like the rows do.
+      const activeBackendModel = collapsed
+        ? usableDisplayedModel(session, backendModels)
+        : undefined;
       return [
         {
           kind: "subProvider" as const,
@@ -922,7 +926,7 @@ function subProviderCatalogItems(
           detail: subProvider.unavailableReason,
           collapsed,
           modelCount: backendModels.length,
-          activeModel: collapsed ? usableDisplayedModel(session, backendModels) : undefined,
+          activeModel: activeBackendModel && { ...activeBackendModel, subtitle: "" },
         },
         // The heading names the backend, so rows drop it.
         ...(collapsed
