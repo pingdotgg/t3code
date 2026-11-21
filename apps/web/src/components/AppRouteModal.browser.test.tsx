@@ -12,6 +12,20 @@ function CommitOnBlurField({ onCommit }: { onCommit: (next: string) => void }) {
   return <input aria-label="Instructions" {...useCommitOnBlur("", onCommit)} />;
 }
 
+// A desktop window's native caption strip, as the window controls overlay reports it.
+function stubCaptionStrip(): Disposable {
+  Object.defineProperty(navigator, "windowControlsOverlay", {
+    configurable: true,
+    value: {
+      visible: true,
+      getTitlebarAreaRect: () => new DOMRect(0, 0, 1100, 40),
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    },
+  });
+  return { [Symbol.dispose]: () => Reflect.deleteProperty(navigator, "windowControlsOverlay") };
+}
+
 describe("AppRouteModal", () => {
   it("commits a focused field when Esc closes it", async () => {
     const onCommit = vi.fn();
@@ -75,19 +89,7 @@ describe("AppRouteModal", () => {
     await using _viewport = {
       [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
     };
-    // A desktop window's native caption strip, as the window controls overlay reports it.
-    Object.defineProperty(navigator, "windowControlsOverlay", {
-      configurable: true,
-      value: {
-        visible: true,
-        getTitlebarAreaRect: () => new DOMRect(0, 0, 1100, 40),
-        addEventListener: () => undefined,
-        removeEventListener: () => undefined,
-      },
-    });
-    using _overlay = {
-      [Symbol.dispose]: () => Reflect.deleteProperty(navigator, "windowControlsOverlay"),
-    };
+    using _overlay = stubCaptionStrip();
     const dragWindow = vi.fn(async () => true);
     using _bridge = stubGlobal("desktopBridge", { dragWindow });
     await using _screen = await render(
@@ -112,5 +114,30 @@ describe("AppRouteModal", () => {
 
     await userEvent.click(backdrop, { position: { x: 220, y: 20 } });
     await expect.element(settings).not.toBeInTheDocument();
+  });
+
+  it("leaves the titlebar band to a drag region where the page cannot move the window", async () => {
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    await page.viewport(1100, 780);
+    await using _viewport = {
+      [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
+    };
+    using _overlay = stubCaptionStrip();
+    // The desktop shell on Wayland: a bridge without `dragWindow`.
+    using _bridge = stubGlobal("desktopBridge", {});
+    await using _screen = await render(
+      <AppRouteModal label="Settings">
+        <p>Settings</p>
+      </AppRouteModal>,
+      { router: "/settings/general" },
+    );
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    await expect.element(settings).toHaveFocus();
+
+    const band = document.elementFromPoint(220, 20);
+    assert(band instanceof HTMLElement);
+    expect(settings.element().contains(band)).toBe(false);
+    expect(getComputedStyle(band).getPropertyValue("-webkit-app-region")).toBe("drag");
+    expect(band.getBoundingClientRect()).toMatchObject({ top: 0, height: 40 });
   });
 });

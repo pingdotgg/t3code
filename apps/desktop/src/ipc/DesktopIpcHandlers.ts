@@ -63,6 +63,7 @@ import {
   setTheme,
   syncHtmlFullscreen,
   dragWindow,
+  getPageCanMoveWindow,
   showContextMenu,
 } from "./methods/window.ts";
 import {
@@ -110,6 +111,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getPreferredSystemLanguages);
   yield* ipc.handleSync(getPrimaryPasteEnabled);
+  yield* ipc.handleSync(getPageCanMoveWindow);
   yield* ipc.handleSync(getWindowFullscreenState);
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);
   yield* ipc.handleSync(getLocalEnvironmentEnabled);

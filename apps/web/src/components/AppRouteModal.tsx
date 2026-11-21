@@ -40,6 +40,8 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
   // buttons). Below sm the modal fills the window and leaves that strip empty; up to lg its
   // 1.5rem inset is shorter than the strip.
   const nativeTitlebarHeight = useNativeTitlebarHeight();
+  const nativeTitlebarDragBand =
+    window.desktopBridge !== undefined && typeof window.desktopBridge.dragWindow !== "function";
 
   return (
     <DialogPrimitive.Root
@@ -81,6 +83,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
           // Electron hit-tests drag regions under the backdrop regardless of z-index, and a drag
           // region takes the click too. So the backdrop is no-drag and moves the window itself:
           // a click above the modal dismisses it, a drag in the titlebar band moves the window.
+          // Only a drag region moves a Wayland window, so there the band below gives up the click.
           className="fixed inset-0 z-50 flex items-center justify-center [-webkit-app-region:no-drag] sm:p-6 sm:pt-(--app-modal-sm-top) lg:p-10"
           onPointerDown={(event) => {
             backdropPressRef.current = event.target === event.currentTarget;
@@ -110,7 +113,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
               press.moving = true;
               backdropPressRef.current = false;
             }
-            void window.desktopBridge?.dragWindow("move");
+            void window.desktopBridge?.dragWindow?.("move");
           }}
           onLostPointerCapture={() => {
             titlebarPressRef.current = null;
@@ -120,6 +123,13 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
             backdropPressRef.current = false;
           }}
         >
+          {/* Electron applies regions in DOM order: after the no-drag viewport, before the popup. */}
+          {nativeTitlebarDragBand ? (
+            <div
+              aria-hidden
+              className="absolute inset-x-0 top-0 h-(--app-modal-titlebar-height) [-webkit-app-region:drag]"
+            />
+          ) : null}
           <DialogPrimitive.Popup
             ref={popupRef}
             initialFocus={popupRef}

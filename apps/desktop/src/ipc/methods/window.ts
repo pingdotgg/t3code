@@ -555,10 +555,36 @@ export const syncHtmlFullscreen = DesktopIpc.makeIpcMethod({
   }),
 });
 
+// Wayland gives a client neither the cursor's screen position nor a way to place its window.
+// Chromium picks Wayland from the session unless --ozone-platform names one; a wrong "Wayland"
+// only costs the click in the band, a wrong "X11" leaves the window unmovable.
+export const pageCanMoveWindow = (
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  ozonePlatform: string,
+): boolean => {
+  if (platform !== "linux" || ozonePlatform === "x11") return true;
+  if (ozonePlatform === "wayland") return false;
+  return env.XDG_SESSION_TYPE?.toLowerCase() !== "wayland" && !env.WAYLAND_DISPLAY;
+};
+
+export const getPageCanMoveWindow = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_PAGE_CAN_MOVE_WINDOW_CHANNEL,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.getPageCanMoveWindow")(function* () {
+    return pageCanMoveWindow(
+      yield* HostProcess.Platform,
+      yield* HostProcess.Environment,
+      Electron.app.commandLine.getSwitchValue("ozone-platform"),
+    );
+  }),
+});
+
 const windowDragAnchors = new WeakMap<Electron.BrowserWindow, { x: number; y: number }>();
 
 // A drag region takes the whole press, so a surface that also needs the click moves the window
-// from the page instead: `start` records where the cursor holds the window, `move` follows it.
+// from the page instead, where it can: `start` records where the cursor holds the window, `move`
+// follows it.
 export const dragWindow = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.DRAG_WINDOW_CHANNEL,
   payload: Schema.Literals(["start", "move"]),

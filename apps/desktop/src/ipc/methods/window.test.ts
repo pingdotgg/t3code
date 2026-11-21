@@ -39,6 +39,7 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   dragWindow,
   getLocalEnvironmentBootstraps,
+  pageCanMoveWindow,
   installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
@@ -520,6 +521,21 @@ describe("syncHtmlFullscreen", () => {
     }).pipe(Effect.provide(layer));
   });
 });
+
+it.each([
+  { platform: "win32", env: {}, ozone: "", movable: true },
+  { platform: "darwin", env: {}, ozone: "", movable: true },
+  { platform: "linux", env: { XDG_SESSION_TYPE: "x11" }, ozone: "", movable: true },
+  { platform: "linux", env: { XDG_SESSION_TYPE: "wayland" }, ozone: "", movable: false },
+  { platform: "linux", env: { WAYLAND_DISPLAY: "wayland-0" }, ozone: "", movable: false },
+  { platform: "linux", env: { XDG_SESSION_TYPE: "wayland" }, ozone: "x11", movable: true },
+  { platform: "linux", env: { XDG_SESSION_TYPE: "x11" }, ozone: "wayland", movable: false },
+] as const)(
+  "a page can move its window on $platform with $env and --ozone-platform=$ozone: $movable",
+  ({ platform, env, ozone, movable }) => {
+    assert.strictEqual(pageCanMoveWindow(platform, env, ozone), movable);
+  },
+);
 
 describe("dragWindow", () => {
   const movableWindow = (state: { fullscreen?: boolean; maximized?: boolean } = {}) => {
