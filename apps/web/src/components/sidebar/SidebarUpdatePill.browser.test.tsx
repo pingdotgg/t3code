@@ -126,15 +126,17 @@ describe("SidebarUpdatePill release notes", () => {
 });
 
 describe("SidebarUpdatePill update everything", () => {
-  it("does not refocus the update button after a pointer cancel", async () => {
+  it.each([
+    ["Cancel", () => userEvent.click(page.getByRole("button", { name: "Cancel" }))],
+    ["an outside press", () => userEvent.click(document.body, { position: { x: 1, y: 1 } })],
+  ])("closes without refocusing the update button after %s", async (_closer, close) => {
     setup(null, { hasUpdates: true });
     await using screen = await render(<SidebarUpdatePill />);
     const button = screen.getByRole("button", { name: "Update everything" });
     await userEvent.click(button);
-    const cancel = page.getByRole("button", { name: "Cancel" });
-    await expect.element(cancel).toBeVisible();
+    await expect.element(page.getByRole("alertdialog")).toBeVisible();
 
-    await userEvent.click(cancel);
+    await close();
     await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
     expect(document.activeElement).not.toBe(button.element());
   });

@@ -6,17 +6,17 @@ import { msg, T, useGT, useMessages } from "gt-react";
 import { Fragment, type RefObject, useRef } from "react";
 
 import { environmentThreadShells } from "~/state/threads";
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ScrollArea } from "../ui/scroll-area";
 import type { RestartingMachine, UpdateEverythingRow } from "./updateEverything.logic";
@@ -74,16 +74,18 @@ export function UpdateEverythingDialog({
 }: UpdateEverythingDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
-      <AlertDialogPopup
+      <DialogPopup
         className="sm:max-w-xl"
+        role="alertdialog"
+        showCloseButton={false}
         initialFocus={cancelRef}
         finalFocus={(closeType) => closeType === "keyboard"}
       >
         <UpdateEverythingDialogContent {...content} cancelRef={cancelRef} />
-      </AlertDialogPopup>
-    </AlertDialog>
+      </DialogPopup>
+    </Dialog>
   );
 }
 
@@ -132,14 +134,14 @@ function UpdateEverythingDialogContent({
 
   return (
     <>
-      <AlertDialogHeader className="shrink-0">
-        <AlertDialogTitle>
+      <DialogHeader className="shrink-0">
+        <DialogTitle>
           {title ??
             gt("{count, plural, one {Update {count} machine?} other {Update {count} machines?}}", {
               count: updating.length,
             })}
-        </AlertDialogTitle>
-        <AlertDialogDescription>
+        </DialogTitle>
+        <DialogDescription>
           {version !== null ? (
             <>
               T3 Code <span className="font-mono text-xs">{version}</span>
@@ -155,8 +157,8 @@ function UpdateEverythingDialogContent({
           {checking
             ? `${version !== null || providerCount > 0 ? " · " : ""}${gt("Checking for more…")}`
             : null}
-        </AlertDialogDescription>
-      </AlertDialogHeader>
+        </DialogDescription>
+      </DialogHeader>
       <ScrollArea scrollFade>
         <div className="flex flex-col gap-3 px-6 pb-4">
           {notes.map((note) => (
@@ -245,7 +247,7 @@ function UpdateEverythingDialogContent({
           ) : null}
         </div>
       </ScrollArea>
-      <AlertDialogFooter>
+      <DialogFooter>
         {disabledReason !== null ? (
           <p className="self-center text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
             {disabledReason}
@@ -271,13 +273,13 @@ function UpdateEverythingDialogContent({
                   )}`}
           </p>
         ) : null}
-        <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
+        <DialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
           <T>Cancel</T>
-        </AlertDialogClose>
+        </DialogClose>
         <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
           {confirmLabel ?? gt("Update", { $context: "verb, confirms the update" })}
         </Button>
-      </AlertDialogFooter>
+      </DialogFooter>
     </>
   );
 }
