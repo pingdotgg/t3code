@@ -16,20 +16,25 @@ describe("resolveEffortGlyph", () => {
     ["ultrathink"],
   );
 
+  const codex = descriptor(["low", "medium", "high", "xhigh", "max", "ultra"]);
+
   it("fills bars up to the current level and leaves max and workflow levels off the scale", () => {
-    expect(resolveEffortGlyph(claude, "xhigh")).toEqual({
-      count: 4,
-      filled: 4,
-      special: null,
-      label: "Xhigh",
-    });
+    for (const model of [claude, codex]) {
+      expect(resolveEffortGlyph(model, "xhigh")).toEqual({
+        count: 4,
+        filled: 4,
+        special: null,
+        label: "Xhigh",
+      });
+    }
   });
 
-  it("names Max and Default instead of drawing them", () => {
+  it("names Max, Default, and Ultra instead of drawing them", () => {
     expect(resolveEffortGlyph(claude, "max")?.special).toBe("Max");
     const reported = descriptor(["default", "low", "medium", "high", "xhigh", "max"]);
     expect(resolveEffortGlyph(reported, "default")?.special).toBe("Default");
     expect(resolveEffortGlyph(reported, "low")).toMatchObject({ count: 4, filled: 1 });
+    expect(resolveEffortGlyph(codex, "ultra")?.special).toBe("Ultra");
   });
 
   it("names Ultracode and Ultrathink instead of drawing a level", () => {
