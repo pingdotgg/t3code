@@ -18,6 +18,7 @@ import type {
   SpeechPostProcessingOptions,
   SpeechStreamText,
   SpeechTranscriptionOptions,
+  ThreadId,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, EnvironmentInternalError } from "@t3tools/contracts";
 import { resolveSpeechVocabulary } from "@t3tools/shared/speech";
@@ -47,6 +48,7 @@ type DraftInput = {
 /** What a recording needs from its editor, read once when it starts. */
 export type VoiceRecordingContext = {
   readonly environmentId: EnvironmentId;
+  readonly threadId?: ThreadId | null | undefined;
   readonly projectName: string | null;
   readonly projectWords: SpeechCustomWords;
   readonly clientSettings: ClientSettings;
@@ -108,6 +110,11 @@ export class VoiceInputSession {
   readonly key: SessionKey;
   private readonly controller: VoiceInputController;
   private target: VoiceInputTarget | null = null;
+  private pendingSubmission: {
+    readonly ownerKey: string;
+    readonly submit: (text: string) => void;
+    text?: string;
+  } | null = null;
   private snapshot: VoiceInputSessionSnapshot = {
     state: IDLE_VOICE_STATE,
     target: null,
@@ -127,6 +134,7 @@ export class VoiceInputSession {
           readonly cleanup: SpeechPostProcessingOptions | null;
           readonly cleanupGrant: string | null;
           readonly cleanupPrepared: PreparedConnection | null;
+          readonly threadId: ThreadId | null;
         }
       | undefined;
     const platformInput = {
@@ -150,6 +158,7 @@ export class VoiceInputSession {
         recordingPreferences = {
           cleanupGrant,
           cleanupPrepared: context.cleanupPrepared,
+          threadId: context.threadId ?? null,
           cleanup: cleanupEnabled
             ? {
                 speechCustomWords,
@@ -209,6 +218,7 @@ export class VoiceInputSession {
           cleanupContext(options.draft),
           preferences.cleanup,
           () => hasAudioConsent() && preferences.cleanupGrant === readCleanupGrant(),
+          preferences.threadId,
         ),
         options,
       ).then((result) => result.text);
@@ -237,7 +247,13 @@ export class VoiceInputSession {
         const draft = target?.readDraft();
         return target && draft ? { ownerKey: target.ownerKey, ...draft } : null;
       },
-      commitDraft: (text, selection) => this.target?.commitDraft(text, selection),
+      commitDraft: (text, selection) => {
+        const ownerKey = this.target?.ownerKey ?? null;
+        this.target?.commitDraft(text, selection);
+        if (ownerKey !== null && this.pendingSubmission?.ownerKey === ownerKey) {
+          this.pendingSubmission.text = text;
+        }
+      },
       onStateChange: (state) => {
         if (this.disposed) return;
         const recordingStartedAt =
@@ -245,6 +261,15 @@ export class VoiceInputSession {
         this.publish({ ...this.snapshot, state, recordingStartedAt });
         if (state.phase !== "recording" && state.phase !== "transcribing")
           this.publishActivity(SILENT_ACTIVITY);
+        if (state.phase === "error") {
+          this.pendingSubmission = null;
+          return;
+        }
+        if (state.phase === "idle" && this.pendingSubmission !== null) {
+          const pending = this.pendingSubmission;
+          this.pendingSubmission = null;
+          if (pending.text !== undefined) pending.submit(pending.text);
+        }
       },
     });
   }
@@ -281,6 +306,7 @@ export class VoiceInputSession {
       voiceInputBlocksSubmission(this.controller.currentState) &&
       this.target?.ownerKey !== target.ownerKey;
     if (busyElsewhere) return Promise.resolve();
+    this.pendingSubmission = null;
     this.target = target;
     this.onSpeechStatus = onSpeechStatus;
     this.publishActivity(SILENT_ACTIVITY);
@@ -295,11 +321,29 @@ export class VoiceInputSession {
     this.publish({ ...this.snapshot, target });
   }
 
+  /** Queues a submission to run once the active dictation commits its transcript. */
+  queueSubmission(ownerKey: string, submit: (text: string) => void): boolean {
+    if (
+      this.disposed ||
+      this.target?.ownerKey !== ownerKey ||
+      !voiceInputBlocksSubmission(this.controller.currentState) ||
+      this.pendingSubmission !== null
+    ) {
+      return false;
+    }
+    this.pendingSubmission = { ownerKey, submit };
+    if (this.controller.currentState.phase === "recording") {
+      void this.controller.stop();
+    }
+    return true;
+  }
+
   stop(): Promise<void> {
     return this.controller.stop();
   }
 
   cancel(): void {
+    this.pendingSubmission = null;
     this.controller.cancel();
   }
 
@@ -310,11 +354,13 @@ export class VoiceInputSession {
   /** The editor for `ownerKey` now shows another draft; only a persistent target keeps going. */
   ownerChanged(ownerKey: string): void {
     if (this.target?.ownerKey !== ownerKey || this.target.persistent) return;
+    this.pendingSubmission = null;
     this.controller.ownerChanged();
   }
 
   dispose(): void {
     this.disposed = true;
+    this.pendingSubmission = null;
     this.controller.dispose();
     this.listeners.clear();
     this.activityListeners.clear();

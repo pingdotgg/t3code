@@ -15,6 +15,7 @@ import type {
   EnvironmentSpeechStatus,
   ProjectId,
   SpeechBenchmarkTier,
+  ThreadId,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { chooseSetupSpeechModel } from "@t3tools/shared/speech";
@@ -83,6 +84,8 @@ type HookInput = {
   /** The draft's project: its vocabulary on that environment and its name become recognition hints. */
   readonly projectId?: ProjectId | null | undefined;
   readonly projectName?: string | null | undefined;
+  /** The active thread: used on the server to enrich optional transcript cleanup with live context. */
+  readonly threadId?: ThreadId | null | undefined;
   readonly ownerKey: string;
   readonly disabled?: boolean | undefined;
   /**
@@ -217,11 +220,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const busyElsewhere = !owns && voiceInputBlocksSubmission(snapshot.state);
 
   const startRequestRef = useRef(0);
-  const pendingSubmissionRef = useRef<{
-    ownerKey: string;
-    submit: (text: string) => void;
-    text?: string;
-  } | null>(null);
   const latestRef = useRef({ input, clientSettings, cleanupPrepared, projectWords, session });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed props before an async completion can read them through the session
   useLayoutEffect(() => {
@@ -233,7 +231,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       session?.ownerChanged(latestRef.current.input.ownerKey);
     };
@@ -292,26 +289,15 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   }, [prepared, setup.downloading, setup.open, setupModelId]);
 
   const previousOwnerRef = useRef(input.ownerKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons any queued submission, and a recording that cannot outlive its editor, when the draft's owner changes
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons a recording that cannot outlive its editor when the draft's owner changes
   useEffect(() => {
     const previous = previousOwnerRef.current;
     if (previous === input.ownerKey && !input.disabled) return;
     previousOwnerRef.current = input.ownerKey;
-    pendingSubmissionRef.current = null;
     startRequestRef.current += 1;
     if (previous !== input.ownerKey) session?.ownerChanged(previous);
     else if (session?.ownerKey === input.ownerKey) session.cancel();
   }, [input.ownerKey, input.disabled, session]);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- delivers a queued submission only after the transcript has committed to the draft
-  useEffect(() => {
-    const pending = pendingSubmissionRef.current;
-    if (state.phase === "error") pendingSubmissionRef.current = null;
-    if (state.phase !== "idle" || !pending) return;
-    pendingSubmissionRef.current = null;
-    if (!input.disabled && pending.ownerKey === input.ownerKey && pending.text !== undefined)
-      pending.submit(pending.text);
-  }, [state, input.ownerKey, input.disabled]);
 
   const submitAfterDictation = useStableCallback((submit: (text: string) => void) => {
     if (latestRef.current.input.disabled || state.phase === "preparing") return;
@@ -319,9 +305,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       submit(latestRef.current.input.readDraft().text);
       return;
     }
-    if (pendingSubmissionRef.current) return;
-    pendingSubmissionRef.current = { ownerKey: latestRef.current.input.ownerKey, submit };
-    if (session.state.phase === "recording") void session.stop();
+    session.queueSubmission(latestRef.current.input.ownerKey, submit);
   });
 
   const createTarget = useStableCallback((): VoiceInputTarget => {
@@ -330,6 +314,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       const current = latestRef.current;
       return {
         environmentId: current.input.environmentId,
+        threadId: current.input.threadId ?? null,
         projectName: current.input.projectName ?? null,
         projectWords: current.projectWords,
         clientSettings: current.clientSettings,
@@ -359,8 +344,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         }
         if (latestRef.current.input.disabled) return;
         latestRef.current.input.commitDraft(text, selection);
-        if (pendingSubmissionRef.current?.ownerKey === owner)
-          pendingSubmissionRef.current.text = text;
       },
       readContext: () => (live() ? readContext() : startContext),
     };
@@ -585,7 +568,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     submitAfterDictation,
     stop: useStableCallback(() => (owns && session ? session.stop() : Promise.resolve())),
     cancel: useStableCallback(() => {
-      pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setSetup(INITIAL_SETUP);
       if (owns) session?.cancel();
