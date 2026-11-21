@@ -499,6 +499,29 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
+  it.effect("preserves sibling shortcuts by rejecting an edit that would evict saved rules", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const original = JSON.stringify([
+        { key: "f7", command: "terminal.new" },
+        ...Array.from({ length: MAX_KEYBINDINGS_COUNT - 2 }, (_, index) => ({
+          key: "f1",
+          command: `future.command-${index}`,
+        })),
+      ]);
+      yield* fs.writeFileString(keybindingsConfigPath, original);
+
+      const target = { key: "mod+n", command: "chat.new", when: "!terminalFocus" } as const;
+      const result = yield* toDetailResult(
+        keybindings.upsertKeybindingRule({ ...target, key: "f8", replace: target }),
+      );
+      assertFailure(result, "Not enough room to save this shortcut and its inherited shortcuts.");
+      assert.equal(yield* fs.readFileString(keybindingsConfigPath), original);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
   it.effect("preserves sibling shortcuts only if visible within the binding limit", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;

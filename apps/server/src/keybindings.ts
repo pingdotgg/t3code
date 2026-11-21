@@ -707,7 +707,16 @@ const make = Effect.gen(function* () {
               !isSameKeybindingRule(entry, rule)
             );
           });
-          const availableSlots = MAX_KEYBINDINGS_COUNT - siblingDefaults.length - 1;
+          const availableSlots = MAX_KEYBINDINGS_COUNT - 1;
+          if (
+            siblingDefaults.length > 0 &&
+            retainedConfig.length + siblingDefaults.length > availableSlots
+          ) {
+            return yield* new KeybindingsConfigError({
+              configPath: keybindingsConfigPath,
+              detail: "Not enough room to save this shortcut and its inherited shortcuts.",
+            });
+          }
           const nextConfig = [
             ...siblingDefaults,
             ...retainedConfig.slice(-availableSlots).map(({ value }) => value),
