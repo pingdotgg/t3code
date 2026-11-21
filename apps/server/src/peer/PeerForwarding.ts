@@ -104,11 +104,13 @@ export const refusesBeforePosition = (failure: {
 }) => failure.code === "invalid_request" && BEFORE_POSITION_REFUSAL.test(failure.message);
 
 /** A newest-page read, retried as the peer always served it when the peer refuses the cursor. */
-export const readNewestOrRetry = <A>(
+export const readNewestOrRetry = Effect.fn("PeerForwarding.readNewestOrRetry")(function* <A>(
   read: (args: unknown) => Effect.Effect<A, OrchestratorMcpFailure>,
   newest: unknown,
   params: unknown,
-) => read(newest).pipe(Effect.catchIf(refusesBeforePosition, () => read(params)));
+) {
+  return yield* read(newest).pipe(Effect.catchIf(refusesBeforePosition, () => read(params)));
+});
 
 const make = Effect.gen(function* () {
   const peers = yield* PeerMcpClient.PeerMcpClient;
