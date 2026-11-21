@@ -1,6 +1,14 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
+import * as Exit from "effect/Exit";
+import type {
+  PullRequestCapabilities,
+  PullRequestCheck,
+  PullRequestChecksState,
+  PullRequestViewerPermissions,
+} from "@t3tools/contracts";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -111,8 +119,21 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
     createdAt: pullRequest.createdAt,
     updatedAt: pullRequest.updatedAt,
     reviewRequestLogins: pullRequest.reviewRequestLogins,
+    reviewDecision: pullRequest.reviewDecision,
     labels: [],
   };
+}
+
+// A finished result for a head commit only changes on a re-run. A pending one is about to change,
+// and so is an empty one: CI may simply not have started yet.
+const PENDING_CHECKS_TTL = Duration.minutes(1);
+const FINISHED_CHECKS_TTL = Duration.minutes(30);
+
+function checksStateOf(checks: ReadonlyArray<PullRequestCheck>): PullRequestChecksState | null {
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+  return statuses.has("success") ? "passing" : null;
 }
 
 /** The write's reply has no `closed_on`, line counts, or conflict state, so those stay absent. */
@@ -170,6 +191,23 @@ export const make = Effect.gen(function* () {
     });
   };
 
+  // Include the head commit so a push bypasses cached statuses from the previous head.
+  const checksStates = yield* Cache.makeWith(
+    (key: string) => {
+      const [repository, number] = JSON.parse(key) as [string, number, string];
+      return api.listChecks({ repository, number }).pipe(Effect.map(checksStateOf));
+    },
+    {
+      capacity: 1000,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit)
+          ? exit.value === "pending" || exit.value === null
+            ? PENDING_CHECKS_TTL
+            : FINISHED_CHECKS_TTL
+          : Duration.zero,
+    },
+  );
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
@@ -179,28 +217,78 @@ export const make = Effect.gen(function* () {
 
     getViewer: () => api.getViewer().pipe(Effect.mapError(fail("getViewer"))),
 
-    listChangeRequests: (input) =>
-      api
-        .listPullRequests({
-          repository: input.repository,
-          state: input.state,
-          limit: input.limit,
-          query: input.query,
-          cursor: input.cursor,
-          author:
-            input.filters?.author === undefined
-              ? undefined
-              : resolvePullRequestAuthorFilter(input.filters.author, input.viewer),
-          draft: input.filters?.draft === undefined ? undefined : input.filters.draft === "only",
-        })
-        .pipe(
-          Effect.mapError(fail("listChangeRequests")),
-          Effect.map((batch) => ({
-            items: batch.items.map(toChangeRequest),
-            truncated: batch.truncated,
-            continues: true,
-          })),
-        ),
+    // One span around the listing, so the eligibility check, the cache and the concurrent reads
+    // read as a single operation next to the API's own request spans.
+    listChangeRequests: Effect.fn("BitbucketPullRequestProvider.listChangeRequests")(
+      function (input) {
+        const filters = input.filters;
+        const filterAuthor =
+          filters?.author === undefined
+            ? undefined
+            : resolvePullRequestAuthorFilter(filters.author, input.viewer).toLowerCase();
+        return api
+          .listPullRequests({
+            repository: input.repository,
+            state: input.state,
+            limit: input.limit,
+            query: input.query,
+            cursor: input.cursor,
+            author:
+              filters?.author === undefined
+                ? undefined
+                : resolvePullRequestAuthorFilter(filters.author, input.viewer),
+            draft: filters?.draft === undefined ? undefined : filters.draft === "only",
+          })
+          .pipe(
+            Effect.flatMap((batch) => {
+              // A listing carries no check results, so an open row's are read here (they feed the
+              // row's CI icon, the checks grouping and the checks filter). Closed rows are read
+              // only for the filter.
+              const readItems = Effect.forEach(
+                batch.items,
+                (pullRequest) => {
+                  const item = toChangeRequest(pullRequest);
+                  if (
+                    (pullRequest.state !== "open" && filters?.checks === undefined) ||
+                    (filters?.review !== undefined &&
+                      (filters.review === "none"
+                        ? pullRequest.reviewDecision !== null
+                        : pullRequest.reviewDecision !== filters.review)) ||
+                    (filters?.draft !== undefined &&
+                      pullRequest.isDraft !== (filters.draft === "only")) ||
+                    (filterAuthor !== undefined &&
+                      pullRequest.author?.login.toLowerCase() !== filterAuthor)
+                  ) {
+                    return Effect.succeed(item);
+                  }
+                  // Without a head revision a push cannot invalidate a cached answer, so the
+                  // row is read every time.
+                  const read =
+                    pullRequest.headSha === null
+                      ? api
+                          .listChecks({ repository: input.repository, number: pullRequest.number })
+                          .pipe(Effect.map(checksStateOf))
+                      : Cache.get(
+                          checksStates,
+                          JSON.stringify([
+                            input.repository,
+                            pullRequest.number,
+                            pullRequest.headSha,
+                          ]),
+                        );
+                  return read.pipe(Effect.map((checksState) => ({ ...item, checksState })));
+                },
+                { concurrency: 5 },
+              );
+              return readItems.pipe(
+                // Keep excluded rows so the service advances its cursor past every scanned row.
+                Effect.map((items) => ({ items, truncated: batch.truncated, continues: true })),
+              );
+            }),
+            Effect.mapError(fail("listChangeRequests")),
+          );
+      },
+    ),
 
     getChangeRequestChecks: (input) =>
       Effect.all([api.getPullRequest(input), api.listChecks(input)], { concurrency: 2 }).pipe(

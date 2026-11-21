@@ -11,6 +11,7 @@ import type {
   PullRequestCheck,
   PullRequestCheckStatus,
   PullRequestComment,
+  PullRequestReviewDecision,
   PullRequestCommit,
   PullRequestMergeability,
   PullRequestReviewThread,
@@ -142,6 +143,7 @@ const RawMemberSchema = Schema.Struct({
 });
 
 const RawViewerSchema = Schema.Struct({
+  uuid: Schema.optional(Schema.NullOr(Schema.String)),
   nickname: Schema.optional(Schema.NullOr(Schema.String)),
   display_name: Schema.optional(Schema.NullOr(Schema.String)),
 });
@@ -173,6 +175,8 @@ export interface BitbucketPullRequest {
   readonly closedAt: string | null;
   readonly body: string;
   readonly reviewRequestLogins: ReadonlyArray<string>;
+  /** Null while nobody was asked to review and nobody has voted. */
+  readonly reviewDecision: PullRequestReviewDecision | null;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly reviewerIds: ReadonlyArray<string>;
   readonly reviews: ReadonlyArray<PullRequestComment>;
@@ -240,6 +244,25 @@ function toReviews(
   });
 }
 
+function toReviewDecision(
+  raw: Schema.Schema.Type<typeof RawPullRequestSchema>,
+): PullRequestReviewDecision | null {
+  const authorId = trimmed(raw.author?.uuid);
+  const votes = (raw.participants ?? []).filter(
+    (participant) =>
+      participant.role?.trim().toUpperCase() !== "AUTHOR" &&
+      (authorId === null || trimmed(participant.user?.uuid) !== authorId),
+  );
+  const stateOf = (vote: (typeof votes)[number]) =>
+    trimmed(vote.state)?.toLowerCase() ?? (vote.approved === true ? "approved" : null);
+  if (votes.some((vote) => stateOf(vote) === "changes_requested")) return "changes-requested";
+  if (votes.some((vote) => stateOf(vote) === "approved")) return "approved";
+  return votes.some((vote) => vote.role?.trim().toUpperCase() === "REVIEWER") ||
+    (raw.reviewers ?? []).length > 0
+    ? "review-required"
+    : null;
+}
+
 function toPullRequest(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): BitbucketPullRequest {
   const reviewers = (raw.reviewers ?? []).flatMap((reviewer) => {
     const actor = toActor(reviewer);
@@ -262,6 +285,7 @@ function toPullRequest(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): Bi
     closedAt: raw.closed_on == null ? null : toIsoUtc(raw.closed_on),
     body: raw.description ?? "",
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
+    reviewDecision: toReviewDecision(raw),
     reviewers,
     reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) => trimmed(reviewer.uuid) ?? []),
     reviews: toReviews(raw),
@@ -314,10 +338,16 @@ export function decodePullRequestJson(
 }
 
 export function decodeViewerJson(raw: string): Result.Result<string | null, DecodeFailure> {
-  const decoded = decodeViewer(raw);
-  return Result.isSuccess(decoded)
-    ? Result.succeed(trimmed(decoded.success.nickname) ?? trimmed(decoded.success.display_name))
-    : Result.fail(decoded.failure);
+  return Result.map(decodeViewerIdentityJson(raw), (viewer) => viewer.login);
+}
+
+function decodeViewerIdentityJson(
+  raw: string,
+): Result.Result<{ readonly login: string | null; readonly uuid: string | null }, DecodeFailure> {
+  return Result.map(decodeViewer(raw), (viewer) => ({
+    login: trimmed(viewer.nickname) ?? trimmed(viewer.display_name),
+    uuid: trimmed(viewer.uuid),
+  }));
 }
 
 export function decodeRepositoryPermissionJson(raw: string): Result.Result<boolean, DecodeFailure> {
