@@ -1,5 +1,4 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { providerAuthRedirectShowsCode } from "@t3tools/shared/providerAuthReturnUrl";
 import { m } from "~/i18n/messages";
 import {
   isAtomCommandInterrupted,
@@ -111,8 +110,6 @@ export function ProviderAuthenticationSection({
     interaction?.type === "browser" || interaction?.type === "deviceCode"
       ? interaction.url
       : auth?.authorizationUrl;
-  const pastesCode =
-    interaction?.type === "browser" && providerAuthRedirectShowsCode(interaction.url);
 
   async function run(command: () => Promise<AtomCommandResult<unknown, unknown>>) {
     if (pendingRef.current) return false;
@@ -488,15 +485,11 @@ export function ProviderAuthenticationSection({
               }}
             >
               <label className="grid gap-1">
-                {pastesCode ? (
-                  gt("Paste a code")
-                ) : (
-                  <T>If the final localhost page does not load, paste its full URL here.</T>
-                )}
+                <T>If the final localhost page does not load, paste its full URL here.</T>
                 <Input
                   size="sm"
                   id={`provider-callback-${instanceId}`}
-                  type={pastesCode ? "text" : "url"}
+                  type="url"
                   autoComplete="off"
                   value={values.callback ?? ""}
                   disabled={disabled}

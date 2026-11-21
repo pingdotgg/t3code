@@ -38,13 +38,3 @@ export function providerAuthReturnUrl(
     return undefined;
   }
 }
-
-/** A redirect to a provider web page, not a loopback listener, lands on a page showing a code to paste. */
-export function providerAuthRedirectShowsCode(authorizationUrl: string): boolean {
-  try {
-    const redirect = new URL(new URL(authorizationUrl).searchParams.get("redirect_uri") ?? "");
-    return redirect.protocol === "https:" && !isLoopbackHost(redirect.hostname);
-  } catch {
-    return false;
-  }
-}
