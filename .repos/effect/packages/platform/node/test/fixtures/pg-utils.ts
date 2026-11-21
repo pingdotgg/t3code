@@ -104,6 +104,7 @@ export class PgContainer extends Context.Service<PgContainer>()("test/PgContaine
   // begins, so one that finishes starting after its waiter gave up is still
   // released.
   make: Effect.gen(function*() {
+    // @effect-diagnostics-next-line promiseInEffectSuccess:off the promise is awaited below, outside the acquisition
     const starting = yield* Effect.acquireRelease(
       // @effect-diagnostics-next-line lazyPromiseInEffectSync:off
       Effect.sync(() => new PostgreSqlContainer("postgres:alpine").start()),
