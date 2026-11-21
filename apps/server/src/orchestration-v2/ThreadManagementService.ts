@@ -1830,10 +1830,7 @@ const make = Effect.gen(function* () {
       direct.commandType === "thread.delete" &&
       direct.status === "accepted"
     ) {
-      const deletion = yield* orchestrator
-        .streamStoredEventsFrom({ threadId, eventType: "thread.deleted" })
-        .pipe(Stream.runHead);
-      if (Option.isSome(deletion) && deletion.value.commandId !== parentCommandId) return;
+      if (yield* orchestrator.hasRecordedThreadDeletion(commandId, threadId)) return;
     }
     return parent.threadId;
   });

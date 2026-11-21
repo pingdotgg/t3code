@@ -559,6 +559,10 @@ export interface OrchestratorV2Shape {
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
+  readonly hasRecordedThreadDeletion: (
+    commandId: CommandId,
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean, OrchestratorV2Error>;
   readonly streamStoredEvents: Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
   /** Events arrive projected for the wire and shared by every subscriber; never mutate them. */
   readonly streamStoredEventsFrom: (input?: {
@@ -1914,14 +1918,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const cascade = yield* EffectOutbox.SubagentCascade;
     if (cascade?.path.at(-1) === threadId) return [];
     if ((yield* projectionStore.getSubagentChildThreads(threadId)).length === 0) return [];
+    const cutoff = cascade?.source?.cutoff;
+    // The generated receipt would hide the side chat's newer choice from the cascade worker.
+    if (sideChat && operation === "thread.archive" && cutoff !== undefined) {
+      const latest = yield* commandReceipts.getLatestLifecycle(threadId, [
+        "thread.archive",
+        "thread.unarchive",
+      ]);
+      if (supersedesCascade(latest, cutoff, commandId)) return [];
+    }
     const limit = yield* DispatchModeLimit;
     const request = {
       type: "subagent-threads.cascade",
       operation,
       limit,
-      ...(sideChat === undefined
-        ? {}
-        : { sideChat: { ...sideChat, cutoff: cascade?.source?.cutoff } }),
+      ...(sideChat === undefined ? {} : { sideChat: { ...sideChat, cutoff } }),
     } as const;
     const id = `effect:${commandId}:subagent-threads.cascade`;
     return [{ id, commandId, threadId, request } satisfies EffectOutbox.SubagentCascadeEffect];
@@ -17269,6 +17280,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return eventSink
         .latestSequence({ threadId })
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+    }),
+    hasRecordedThreadDeletion: Effect.fn("OrchestratorV2.hasRecordedThreadDeletion")(function (
+      commandId: CommandId,
+      threadId: ThreadId,
+    ) {
+      return eventSink.readByCommandId({ commandId }).pipe(
+        Stream.filter(
+          ({ event }) => event.type === "thread.deleted" && event.threadId === threadId,
+        ),
+        Stream.runHead,
+        Effect.map(Option.isSome),
+        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+      );
     }),
     streamStoredEvents: eventSink.stream().pipe(
       Stream.mapError(

@@ -14259,6 +14259,18 @@ describe("subagent lifecycle cascade", () => {
       });
       assert.isEmpty(kept.storedEvents);
     });
+    const movedSideChat = Effect.fn("test.movedSideChat")(function* () {
+      const side = ThreadId.make("side");
+      const child = ThreadId.make("side-child");
+      const projectId = ProjectId.make("foreign");
+      yield* sideChat(parent, side);
+      yield* set(side, { projectId });
+      yield* set(child, {
+        projectId,
+        lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
+      });
+      return { side, child };
+    });
     return {
       threads,
       now,
@@ -14273,6 +14285,7 @@ describe("subagent lifecycle cascade", () => {
       drain,
       markUsed,
       renameAndKeep,
+      movedSideChat,
     };
   });
   const receipt = (id: string) =>
@@ -14471,21 +14484,28 @@ describe("subagent lifecycle cascade", () => {
         assert.equal(yield* f.archived(side, child, independent), "001");
       }).pipe(Effect.provide(layerTest)),
   );
-  it.effect("preserves a newer descendant restore through a delayed nested side-chat archive", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture;
-      const side = ThreadId.make("side");
-      const child = ThreadId.make("side-child");
-      yield* f.sideChat(app, side);
-      yield* f.set(child, {
-        lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
-      });
-      yield* f.run("archive", child, "archive:side-child:independent");
-      yield* f.commit("archive");
-      yield* f.run("unarchive", child);
-      yield* f.drain;
-      assert.equal(yield* f.archived(parent, app, side, child), "1110");
-    }).pipe(Effect.provide(layerTest)),
+  it.effect.each(["descendant", "side chat"] as const)(
+    "preserves a newer %s restore through a delayed nested side-chat archive",
+    (restored) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const side = ThreadId.make("side");
+        const child = ThreadId.make("side-child");
+        yield* f.sideChat(app, side);
+        yield* f.set(child, {
+          lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
+        });
+        if (restored === "side chat") {
+          yield* f.run("archive", side);
+          yield* f.run("unarchive", child);
+        } else {
+          yield* f.run("archive", child, "archive:side-child:independent");
+        }
+        yield* f.commit("archive");
+        yield* f.run("unarchive", restored === "side chat" ? side : child);
+        yield* f.drain;
+        assert.equal(yield* f.archived(parent, app, side, child), "1110");
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each([
@@ -14525,22 +14545,21 @@ describe("subagent lifecycle cascade", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each(["reply", "worker", "legacy worker", "legacy worker after unused close"] as const)(
+  it.effect.each([
+    "reply",
+    "worker",
+    "legacy worker",
+    "legacy worker after unused close",
+    "legacy worker after a later deletion",
+  ] as const)(
     "leaves a moved side chat's subagent alone during parent deletion through %s",
     (delivery) =>
       Effect.gen(function* () {
         const f = yield* fixture;
-        const side = ThreadId.make("side");
-        const child = ThreadId.make("side-child");
-        const projectId = ProjectId.make("foreign");
-        yield* f.sideChat(parent, side);
-        yield* f.set(side, { projectId });
-        yield* f.set(child, {
-          projectId,
-          lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
-        });
+        const { side, child } = yield* f.movedSideChat();
         const commandId = CommandId.make("delete:parent:side-chat:side");
-        if (delivery === "legacy worker after unused close") {
+        const laterDeletion = delivery === "legacy worker after a later deletion";
+        if (delivery === "legacy worker after unused close" || laterDeletion) {
           yield* f.markUsed(side);
           const kept = yield* f.threads.dispatch({
             type: "thread.delete",
@@ -14555,6 +14574,18 @@ describe("subagent lifecycle cascade", () => {
           yield* f.commit("delete");
           if (delivery === "worker") yield* f.drain;
           else {
+            if (laterDeletion) {
+              yield* f.commit("delete", side, "later:delete:side");
+              const sql = yield* SqlClient.SqlClient;
+              const pruned = yield* sql`
+                DELETE FROM orchestration_events
+                WHERE command_id = 'delete:parent'
+                  AND stream_id = ${side}
+                  AND event_type = 'thread.deleted'
+                RETURNING sequence
+              `;
+              assert.lengthOf(pruned, 1);
+            }
             yield* f.threads.cascadeSubagentLifecycle({
               threadId: side,
               commandId,
@@ -14563,7 +14594,25 @@ describe("subagent lifecycle cascade", () => {
           }
         }
         assert.equal(yield* f.state("deletedAt", parent, side, child), "110");
-      }).pipe(Effect.provide(layerTest)),
+      }).pipe(Effect.provide(Layer.merge(layerTest, SqlitePersistence.layerMemory))),
+  );
+
+  it.effect("recovers a direct side-chat deletion with a parent-derived command ID", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const { side, child } = yield* f.movedSideChat();
+      yield* f.markUsed(parent);
+      const kept = yield* f.threads.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("delete:parent"),
+        threadId: parent,
+        onlyIfUnused: true,
+      });
+      assert.isEmpty(kept.storedEvents);
+      yield* f.commit("delete", side, "delete:parent:side-chat:side");
+      yield* f.drain;
+      assert.equal(yield* f.state("deletedAt", parent, side, child), "011");
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("rolls back a nested side-chat deletion with an occupied recovery effect ID", () =>
