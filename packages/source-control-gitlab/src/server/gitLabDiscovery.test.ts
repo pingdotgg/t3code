@@ -160,3 +160,37 @@ self-hosted.example.test
     assert.strictEqual(verdict.settled, true);
   }),
 );
+
+it.effect("claims an SSH remote whose web host is the one glab is signed in to", () =>
+  Effect.gen(function* () {
+    const remoteUrl = "git@git.example.test:group/project.git";
+    const remote = parseGitRemoteHost(remoteUrl);
+    assert.ok(remote);
+    const verdict = yield* refineUnknownRemoteProvider({
+      specs: [GitLabSourceControlProvider.discovery],
+      cwd: "/repo",
+      context: {
+        provider: unknownRemoteProvider(remote),
+        remoteName: "origin",
+        remoteUrl,
+        requestedHost: "gitlab.example.test",
+      },
+      process: {
+        run: ({ args }) =>
+          Effect.succeed(
+            args.includes("git.example.test")
+              ? processOutput("", {
+                  stderr:
+                    "x git.example.test has not been authenticated with glab. Run `glab auth login --hostname git.example.test` to authenticate.\n",
+                  exitCode: ChildProcessSpawner.ExitCode(1),
+                })
+              : processOutput(`gitlab.example.test
+  ✓ Logged in to gitlab.example.test as gitlab-user
+  ✓ Token found: ******
+`),
+          ),
+      },
+    });
+    assert.strictEqual(verdict.provider?.kind, "gitlab");
+  }),
+);
