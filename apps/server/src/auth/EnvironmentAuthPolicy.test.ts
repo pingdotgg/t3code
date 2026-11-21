@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -81,6 +82,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           }),
         ),
       ),
+    );
+
+    it.effect("advertises Cloudflare Access sign-in only when fully configured", () =>
+      Effect.gen(function* () {
+        const configured = {
+          T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN: "team.cloudflareaccess.com",
+          T3CODE_CLOUDFLARE_ACCESS_AUD: "aud-tag",
+          T3CODE_CLOUDFLARE_ACCESS_EMAILS: "owner@example.com",
+        };
+        const { T3CODE_CLOUDFLARE_ACCESS_EMAILS: _emails, ...incomplete } = configured;
+        for (const [env, expected] of [
+          [configured, true],
+          [incomplete, undefined],
+        ] as const) {
+          const descriptor = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy.pipe(
+            Effect.flatMap((policy) => policy.getDescriptor()),
+            Effect.provide(
+              layerEnvironmentAuthPolicy().pipe(
+                Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+              ),
+            ),
+          );
+          expect(descriptor.cloudflareAccessLogin).toBe(expected);
+        }
+      }),
     );
   },
 );

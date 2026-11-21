@@ -94,6 +94,15 @@ export function PairingRouteSurface({
         description={describeAuthGate(auth.bootstrapMethods, messages)}
       />
 
+      {auth.cloudflareAccessLogin ? (
+        <div className="mt-6">
+          {/* A full navigation: Cloudflare Access must see the request to run its sign-in. */}
+          <Button render={<a href="/api/auth/cloudflare-access" />}>
+            <T>Sign in with Google</T>
+          </Button>
+        </div>
+      ) : null}
+
       <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
         <div className="space-y-2">
           <label className="text-sm font-medium" htmlFor="pairing-token">

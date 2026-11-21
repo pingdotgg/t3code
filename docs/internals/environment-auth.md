@@ -57,6 +57,19 @@ tokens never enter `SessionStore`, so no RPC, WebSocket, or MCP path can accept
 one. Guest routes also require T3 Connect to still serve the link's hostname;
 the request's Host header is not checked, because a LAN client can forge it.
 
+### Cloudflare Access only mints a pairing
+
+[Cloudflare Access sign-in](../../apps/server/src/auth/CloudflareAccessLogin.ts)
+turns a verified `Cf-Access-Jwt-Assertion` into the one-time pairing link
+`t3 pair` would issue, and redirects to `/pair` with it in the fragment. It never
+issues a session itself, so the browser redeems it through the same exchange,
+and Sharing & access lists and revokes it like any other pairing. The header is
+trusted only after its signature checks out against the team's key set, with
+`iss`, `aud`, `exp` and an email allowlist: the server's port also answers on the
+LAN, outside Cloudflare, where anyone can send that header. An assertion stays
+valid until its `exp`, so a captured one still mints pairings through the LAN port
+until then.
+
 ### MCP clients are a separate audience
 
 Agents T3 Code did not launch sign in to `/mcp` through a narrow OAuth

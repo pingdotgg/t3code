@@ -241,6 +241,37 @@ For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
 open it, or pair from the desktop app. On mobile, an IP address entered without a
 scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
+### Sign in with Google through Cloudflare Access
+
+If your server is published through a Cloudflare Tunnel, a browser that has never
+paired can sign in with Google instead of needing a pairing link from another
+device. The pairing page shows **Sign in with Google**; after you sign in on
+Cloudflare's page, the browser pairs like it would with a `t3 pair` link.
+
+1. In Cloudflare Zero Trust, add Google under **Settings → Authentication**.
+2. Under **Access → Applications**, add a **Self-hosted** application for your
+   hostname with the path `api/auth/cloudflare-access` only, and an **Allow**
+   policy for your email address. Protect only this path: the app, its
+   WebSocket and the mobile app use the rest of the hostname with their own
+   pairing.
+3. Copy the application's **AUD tag** and your team domain, such as
+   `yourteam.cloudflareaccess.com`.
+4. Set all three variables in the server's environment, then restart it:
+
+```bash
+T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN=yourteam.cloudflareaccess.com
+T3CODE_CLOUDFLARE_ACCESS_AUD=<AUD tag>
+T3CODE_CLOUDFLARE_ACCESS_EMAILS=you@example.com,other@example.com
+```
+
+The server checks Cloudflare's signature and accepts only the listed emails
+(case does not matter). If any variable is missing or invalid, the button stays
+hidden and the server logs a warning. A Google sign-in gets the same full access
+as a pairing link, terminal included, so the Access policy and the email list
+are what keep everyone else out. Each sign-in appears in **Settings → Sharing &
+access** as `Google: <email>`, where you can revoke it. The desktop and mobile
+apps still pair with a link or QR code.
+
 ## Desktop-managed SSH
 
 In the desktop app, open **Settings → Environments → Add environment**, choose
