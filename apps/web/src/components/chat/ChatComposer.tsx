@@ -405,9 +405,9 @@ export interface ChatComposerProps {
   } | null;
 
   activePendingApproval: PendingApproval | null;
-  pendingApprovals: PendingApproval[];
+  pendingApprovals: ReadonlyArray<PendingApproval>;
   onHeldRequestIdsChange: (requestIds: ReadonlySet<string>) => void;
-  pendingUserInputs: PendingUserInput[];
+  pendingUserInputs: ReadonlyArray<PendingUserInput>;
   activePendingIsResponding: boolean;
   respondingRequestIds: RuntimeRequestId[];
 

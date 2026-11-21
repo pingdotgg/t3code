@@ -37,10 +37,9 @@ import type {
 import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threadState.ts";
 import {
   createQuestionHistoryProjector,
-  derivePendingThreadRequests,
-  type PendingThreadRequests,
+  createPendingThreadRequestsProjector,
 } from "./threadRequests.ts";
-import { arrayElementsEqual, parseThreadKey, threadKey } from "./entities.ts";
+import { parseThreadKey, threadKey } from "./entities.ts";
 import { getProjectionArrayReplacementIndex } from "./orchestrationV2Projection.ts";
 
 const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItems"] = Object.freeze(
@@ -555,37 +554,14 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-worktree:${key}`)),
   );
   const pendingRequestsAtomFamily = Atom.family((key: string) => {
-    let previous: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems"> | null =
-      null;
-    let value: PendingThreadRequests | null = null;
+    let project = createPendingThreadRequestsProjector();
     return Atom.make((get) => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
       if (projection === null) {
-        previous = null;
-        value = null;
-        return value;
+        project = createPendingThreadRequestsProjector();
+        return null;
       }
-      const runtimeRequests = projection.runtimeRequests.filter(
-        (request) => request.status === "pending",
-      );
-      const ids = new Set(runtimeRequests.map((request) => request.id));
-      const turnItems =
-        ids.size === 0
-          ? []
-          : projection.turnItems.filter(
-              (item) =>
-                (item.type === "approval_request" || item.type === "user_input_request") &&
-                ids.has(item.requestId),
-            );
-      if (
-        previous === null ||
-        !arrayElementsEqual(previous.runtimeRequests, runtimeRequests) ||
-        !arrayElementsEqual(previous.turnItems, turnItems)
-      ) {
-        previous = { runtimeRequests, turnItems };
-        value = derivePendingThreadRequests(previous);
-      }
-      return value;
+      return project(projection);
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-pending-requests:${key}`));
   });
 

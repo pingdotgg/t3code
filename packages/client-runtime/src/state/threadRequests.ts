@@ -12,7 +12,7 @@ import type {
   RuntimeRequestId,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { parseThreadKey, threadKey } from "./entities.ts";
+import { arrayElementsEqual, parseThreadKey, threadKey } from "./entities.ts";
 import { getProjectionArrayReplacementIndex } from "./orchestrationV2Projection.ts";
 import type { EnvironmentThreadShell } from "./models.ts";
 import * as DateTime from "effect/DateTime";
@@ -299,7 +299,44 @@ export function derivePendingThreadRequests(
     });
   }
 
-  return { approvals, userInputs };
+  // Oldest first: the composer answers the first request.
+  const byCreatedAt = (left: { createdAt: string }, right: { createdAt: string }) =>
+    left.createdAt.localeCompare(right.createdAt);
+  return { approvals: approvals.sort(byCreatedAt), userInputs: userInputs.sort(byCreatedAt) };
+}
+
+/**
+ * Re-derives only when a pending request or its turn item changes, so readers keep the
+ * same arrays while the projection changes around them.
+ */
+export function createPendingThreadRequestsProjector() {
+  type Projection = Pick<ThreadStructure, "runtimeRequests" | "turnItems">;
+  let previous: Projection | null = null;
+  let value: PendingThreadRequests | null = null;
+  return (projection: Projection): PendingThreadRequests => {
+    const runtimeRequests = projection.runtimeRequests.filter(
+      (request) => request.status === "pending",
+    );
+    const ids = new Set(runtimeRequests.map((request) => request.id));
+    const turnItems =
+      ids.size === 0
+        ? []
+        : projection.turnItems.filter(
+            (item) =>
+              (item.type === "approval_request" || item.type === "user_input_request") &&
+              ids.has(item.requestId),
+          );
+    if (
+      previous === null ||
+      value === null ||
+      !arrayElementsEqual(previous.runtimeRequests, runtimeRequests) ||
+      !arrayElementsEqual(previous.turnItems, turnItems)
+    ) {
+      previous = { runtimeRequests, turnItems };
+      value = derivePendingThreadRequests(previous);
+    }
+    return value;
+  };
 }
 
 export function createQuestionHistoryProjector<

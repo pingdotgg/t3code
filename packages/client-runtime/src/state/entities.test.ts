@@ -510,6 +510,22 @@ describe("V2 client presentation", () => {
       },
     ]);
     expect(derivePendingThreadRequests(projection).userInputs).toEqual([]);
+
+    const olderId = RuntimeRequestId.make("request-older");
+    const storedOutOfOrder = {
+      ...projection,
+      runtimeRequests: [
+        ...projection.runtimeRequests,
+        {
+          ...projection.runtimeRequests[0]!,
+          id: olderId,
+          createdAt: DateTime.add(now, { minutes: -1 }),
+        },
+      ],
+    };
+    expect(
+      derivePendingThreadRequests(storedOutOfOrder).approvals.map((approval) => approval.requestId),
+    ).toEqual([olderId, requestId]);
   });
 
   it("preserves structured-question selection mode and defaults legacy payloads", () => {

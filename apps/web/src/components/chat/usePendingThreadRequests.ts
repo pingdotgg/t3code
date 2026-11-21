@@ -12,7 +12,8 @@ import {
   type UserInputAttachments,
 } from "@t3tools/contracts";
 import {
-  derivePendingThreadRequests,
+  createPendingThreadRequestsProjector,
+  type PendingThreadRequests,
   seedUserInputDraftAnswers,
   userInputDraftKey,
 } from "@t3tools/client-runtime/state/thread-requests";
@@ -54,11 +55,7 @@ import {
   usePendingUserInputQuestionIndex,
   useQuestionAttachmentPreparation,
 } from "../../questionAttachments";
-import {
-  derivePendingApprovals,
-  derivePendingUserInputs,
-  type PendingUserInput,
-} from "../../session-logic";
+import type { PendingUserInput } from "../../session-logic";
 import { readEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -68,9 +65,7 @@ import { toastManager } from "../ui/toast";
 import type { ChatComposerHandle } from "./ChatComposer";
 
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
-const NO_PENDING_REQUESTS = { approvals: [], userInputs: [] } as const;
-const NO_PENDING_APPROVALS: ReturnType<typeof derivePendingApprovals> = [];
-const NO_PENDING_USER_INPUTS: ReturnType<typeof derivePendingUserInputs> = [];
+const NO_PENDING_REQUESTS: PendingThreadRequests = { approvals: [], userInputs: [] };
 
 interface PendingUserInputDraftScope {
   readonly environmentId: EnvironmentId;
@@ -319,20 +314,14 @@ export function usePendingThreadRequests(input: {
   >([]);
   const setPendingUserInputAnswersByRequestId = usePendingUserInputAnswers.setState;
   const setPendingUserInputQuestionIndexByRequestId = usePendingUserInputQuestionIndex.setState;
+  const [projectPendingRequests] = useState(createPendingThreadRequestsProjector);
+  // The projection changes on every structural event; the projector and shared empties keep
+  // the timeline rows, composer and approval panel from re-rendering when requests did not change.
   const pendingRequests =
     serverProjection !== null && serverProjection.thread.id === activeThreadId
-      ? derivePendingThreadRequests(serverProjection)
+      ? projectPendingRequests(serverProjection)
       : NO_PENDING_REQUESTS;
-  // The projection changes on every streamed event, so shared empties keep the
-  // composer and approval panel from re-rendering while nothing is pending.
-  const pendingApprovals =
-    pendingRequests.approvals.length === 0
-      ? NO_PENDING_APPROVALS
-      : derivePendingApprovals(pendingRequests.approvals);
-  const pendingUserInputs =
-    pendingRequests.userInputs.length === 0
-      ? NO_PENDING_USER_INPUTS
-      : derivePendingUserInputs(pendingRequests.userInputs);
+  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = pendingRequests;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingRequestKey = userInputDraftKey(
     environmentId,

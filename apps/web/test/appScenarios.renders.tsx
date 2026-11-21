@@ -4,7 +4,13 @@
 // atoms the app reads. See renderScenarios.renders.tsx for the counting rules.
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { NodeId, RuntimeRequestId, TurnItemId, type ThreadId } from "@t3tools/contracts";
+import {
+  NodeId,
+  ProviderSessionId,
+  RuntimeRequestId,
+  TurnItemId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -63,6 +69,7 @@ const HISTORY_TURNS = 20;
 const STREAM_DELTAS = 30;
 const TYPED_TEXT = "fix the flaky tests!";
 const TERMINAL_UPDATES = 20;
+const APPROVAL_WAIT_UPDATES = 10;
 // The stream scenario leaves a turn on its thread, so it streams into one no other scenario opens.
 const THREADS = ["thread-warm", "thread-a", "thread-b", "thread-live"].map((name) =>
   threadWithHistory(name, HISTORY_TURNS),
@@ -139,7 +146,54 @@ const QUESTION = {
   ],
 } satisfies FakeThread;
 
-installFakeEnvironment([...THREADS, SIDE_CHAT, QUESTION]);
+// The agent waits on a command approval while its other work keeps adding items.
+const APPROVAL_THREAD = threadWithHistory("thread-approval", HISTORY_TURNS);
+const APPROVAL_REQUEST = RuntimeRequestId.make("thread-approval-request");
+const APPROVAL_RUN = APPROVAL_THREAD.runs.at(-1)!.id;
+const APPROVAL = {
+  ...APPROVAL_THREAD,
+  items: [
+    ...APPROVAL_THREAD.items,
+    {
+      id: TurnItemId.make(APPROVAL_REQUEST),
+      threadId: APPROVAL_THREAD.id,
+      runId: APPROVAL_RUN,
+      nodeId: NodeId.make(APPROVAL_REQUEST),
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: HISTORY_TURNS * 2,
+      status: "waiting",
+      title: null,
+      startedAt: QUESTION_AT,
+      completedAt: null,
+      updatedAt: QUESTION_AT,
+      type: "approval_request",
+      requestId: APPROVAL_REQUEST,
+      requestKind: "command",
+      prompt: "rm -rf build",
+    },
+  ],
+  runtimeRequests: [
+    {
+      id: APPROVAL_REQUEST,
+      nodeId: NodeId.make(APPROVAL_REQUEST),
+      providerTurnId: null,
+      nativeRequestRef: null,
+      kind: "command",
+      status: "pending",
+      responseCapability: {
+        type: "live",
+        providerSessionId: ProviderSessionId.make("approval-session"),
+      },
+      createdAt: QUESTION_AT,
+      resolvedAt: null,
+    },
+  ],
+} satisfies FakeThread;
+
+installFakeEnvironment([...THREADS, SIDE_CHAT, QUESTION, APPROVAL]);
 // Desktop-sized, so the sidebar, composer and right panel lay out as they do in the app.
 await page.viewport(1400, 900);
 // A returning user: the first-run gate would otherwise wait on onboarding evidence.
@@ -361,6 +415,33 @@ it("app-answer-question", async () => {
   expect(pick.components.ChatView).toBeUndefined();
   expect(type.components.ChatView).toBeUndefined();
   await report("app-answer-question", [pick, type]);
+});
+
+it("app-items-while-approval-pending", async () => {
+  using _clock = frozenClock();
+  await using _app = (await openThread(APPROVAL.id)).screen;
+  const counted = await measure(async () => {
+    for (let update = 0; update < APPROVAL_WAIT_UPDATES; update++) {
+      await act(() =>
+        emitThreadEvent(APPROVAL.id, {
+          type: "turn-item.updated",
+          payload: assistantItem(
+            APPROVAL.id,
+            APPROVAL_RUN,
+            `approval-note-${update}`,
+            HISTORY_TURNS * 2 + 1 + update,
+            `Note ${update} while waiting.`,
+          ),
+        }),
+      );
+    }
+    await expect
+      .element(page.getByText(`Note ${APPROVAL_WAIT_UPDATES - 1} while waiting.`))
+      .toBeVisible();
+  });
+  // New items leave the pending approval as it was, so history rows keep their render.
+  expect(counted.components.UserTimelineRow).toBeUndefined();
+  await report("app-items-while-approval-pending", [counted], { commits: false });
 });
 
 it("app-switch-thread", async () => {

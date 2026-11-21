@@ -16,7 +16,7 @@ import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
 
 interface PendingUserInputPanelProps {
-  pendingUserInputs: PendingUserInput[];
+  pendingUserInputs: ReadonlyArray<PendingUserInput>;
   cwd: string | undefined;
   threadRef: ScopedThreadRef;
   disabled?: boolean;
