@@ -1,5 +1,6 @@
 import {
   IssueTrackerKind,
+  issueTrackerBindingScopes,
   type IssueRef,
   type IssueTrackerConnectionList,
 } from "@t3tools/contracts";
@@ -93,9 +94,9 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
   const preferFirst = (candidates: typeof onTracker) =>
     candidates.find((candidate) => candidate.project.id === preferredProjectId) ?? candidates[0];
   const scope = link.scope.toLowerCase();
-  const own = preferFirst(
-    onTracker.filter((candidate) => candidate.binding.scope.toLowerCase() === scope),
-  );
+  const boundScope = (candidate: (typeof onTracker)[number]) =>
+    issueTrackerBindingScopes(candidate.binding).find((key) => key.toLowerCase() === scope);
+  const own = preferFirst(onTracker.filter((candidate) => boundScope(candidate) !== undefined));
   const lender = own ?? preferFirst(onTracker);
   if (lender === undefined) return null;
   return {
@@ -104,7 +105,7 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
       projectId: lender.project.id,
       tracker: lender.binding.tracker,
       host: link.host,
-      scope: own === undefined ? link.scope : lender.binding.scope,
+      scope: (own && boundScope(own)) ?? link.scope,
       key: link.key,
     },
   };
