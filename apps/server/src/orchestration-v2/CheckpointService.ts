@@ -578,7 +578,7 @@ export const layer: Layer.Layer<
           ),
         );
 
-    const capture = (
+    const captureSummarized = (
       input: Parameters<CheckpointServiceV2Shape["capture"]>[0] & {
         /** The commit a clean folder matches, which then needs no staging to snapshot. */
         readonly cleanHead?: string;
@@ -610,19 +610,22 @@ export const layer: Layer.Layer<
           const repository =
             input.forceMissing === true ? "missing" : yield* probeRepository(input.scope);
           if (repository !== "repository") {
-            return makeCheckpoint({
-              id: checkpointId,
-              scope: input.scope,
-              runId: input.runId,
-              nodeId: input.nodeId,
-              parentCheckpointId,
-              ordinalWithinScope: input.ordinalWithinScope,
-              appRunOrdinal: input.appRunOrdinal,
-              ref: checkpointRef,
-              status: repository,
-              files: [],
-              capturedAt: input.capturedAt,
-            });
+            return {
+              checkpoint: makeCheckpoint({
+                id: checkpointId,
+                scope: input.scope,
+                runId: input.runId,
+                nodeId: input.nodeId,
+                parentCheckpointId,
+                ordinalWithinScope: input.ordinalWithinScope,
+                appRunOrdinal: input.appRunOrdinal,
+                ref: checkpointRef,
+                status: repository,
+                files: [],
+                capturedAt: input.capturedAt,
+              }),
+              summaryFailed: false,
+            };
           }
 
           const captureStatus = yield* (
@@ -653,19 +656,22 @@ export const layer: Layer.Layer<
           );
 
           if (captureStatus !== "ready") {
-            return makeCheckpoint({
-              id: checkpointId,
-              scope: input.scope,
-              runId: input.runId,
-              nodeId: input.nodeId,
-              parentCheckpointId,
-              ordinalWithinScope: input.ordinalWithinScope,
-              appRunOrdinal: input.appRunOrdinal,
-              ref: checkpointRef,
-              status: captureStatus,
-              files: [],
-              capturedAt: input.capturedAt,
-            });
+            return {
+              checkpoint: makeCheckpoint({
+                id: checkpointId,
+                scope: input.scope,
+                runId: input.runId,
+                nodeId: input.nodeId,
+                parentCheckpointId,
+                ordinalWithinScope: input.ordinalWithinScope,
+                appRunOrdinal: input.appRunOrdinal,
+                ref: checkpointRef,
+                status: captureStatus,
+                files: [],
+                capturedAt: input.capturedAt,
+              }),
+              summaryFailed: false,
+            };
           }
 
           const previousExists = yield* checkpointStore
@@ -723,24 +729,27 @@ export const layer: Layer.Layer<
                     scopeId: input.scope.id,
                     checkpointRef,
                     cause: String(cause),
-                  }).pipe(Effect.as([])),
+                  }).pipe(Effect.as(null)),
                 ),
               )
             : [];
 
-          return makeCheckpoint({
-            id: checkpointId,
-            scope: input.scope,
-            runId: input.runId,
-            nodeId: input.nodeId,
-            parentCheckpointId,
-            ordinalWithinScope: input.ordinalWithinScope,
-            appRunOrdinal: input.appRunOrdinal,
-            ref: checkpointRef,
-            status: "ready",
-            files,
-            capturedAt: input.capturedAt,
-          });
+          return {
+            checkpoint: makeCheckpoint({
+              id: checkpointId,
+              scope: input.scope,
+              runId: input.runId,
+              nodeId: input.nodeId,
+              parentCheckpointId,
+              ordinalWithinScope: input.ordinalWithinScope,
+              appRunOrdinal: input.appRunOrdinal,
+              ref: checkpointRef,
+              status: "ready",
+              files: files ?? [],
+              capturedAt: input.capturedAt,
+            }),
+            summaryFailed: files === null,
+          };
         }),
       ).pipe(
         Effect.mapError(
@@ -751,6 +760,9 @@ export const layer: Layer.Layer<
             }),
         ),
       );
+
+    const capture = (input: Parameters<typeof captureSummarized>[0]) =>
+      captureSummarized(input).pipe(Effect.map((captured) => captured.checkpoint));
 
     const resolveNestedScopePaths: CheckpointServiceV2Shape["nestedScopePaths"] = (scopes) =>
       nestedScopePaths(scopes).pipe(
@@ -801,10 +813,17 @@ export const layer: Layer.Layer<
                 const preRewindRef = yield* scopeRef(target.scope.id, "pre-rewind").pipe(
                   Effect.provideService(Digest.Digest, crypto),
                 );
-                yield* checkpointStore.captureCheckpoint({
-                  ...folder,
+                // One an earlier failed rewind left is still the only copy of how the folder was.
+                const kept = yield* checkpointStore.hasCheckpointRef({
+                  cwd: target.scope.cwd,
                   checkpointRef: preRewindRef,
                 });
+                if (!kept) {
+                  yield* checkpointStore.captureCheckpoint({
+                    ...folder,
+                    checkpointRef: preRewindRef,
+                  });
+                }
                 snapshots.push({ ...folder, checkpointRef: preRewindRef });
                 // What this process knew of the folder no longer holds.
                 repositoryStates.delete(target.scope.id);
@@ -990,7 +1009,7 @@ export const layer: Layer.Layer<
             nodeId: input.nodeId,
             capturedAt: input.baselineCapturedAt,
           });
-      const checkpoint = yield* capture({
+      const { checkpoint, summaryFailed } = yield* captureSummarized({
         scope: input.scope,
         runId: input.runId,
         nodeId: input.nodeId,
@@ -1006,7 +1025,9 @@ export const layer: Layer.Layer<
       }
       yield* noteRepositoryState(id, settled);
       // A pull or a commit of what was already there moves the snapshot and lists no file.
-      return checkpoint.files.length === 0 && (baseline === null || baseline.status === "ready")
+      return !summaryFailed &&
+        checkpoint.files.length === 0 &&
+        (baseline === null || baseline.status === "ready")
         ? Option.none()
         : Option.some({ baseline, checkpoint });
     });

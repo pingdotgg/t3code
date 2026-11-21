@@ -260,12 +260,25 @@ const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixt
   return { baseDir, workspaceRoot, project: project! };
 });
 
+const kept = { path: "/work/cli-kept", name: "Kept" };
+
 it.effect.each([
-  { label: "keeps its title", titleArgs: [], expectedTitle: undefined },
-  { label: "applies --title", titleArgs: ["--title", " Back again "], expectedTitle: "Back again" },
+  { label: "keeps its title", args: [], expectedTitle: undefined, tracked: [kept] },
+  {
+    label: "applies --title",
+    args: ["--title", " Back again "],
+    expectedTitle: "Back again",
+    tracked: [kept],
+  },
+  {
+    label: "adds the --track folders to the ones it had",
+    args: ["--track", kept.path, "--track", "/work/cli-named"],
+    expectedTitle: undefined,
+    tracked: [kept, { path: "/work/cli-named", name: "cli-named" }],
+  },
 ])(
   "adding an archived project's folder again unarchives it and $label",
-  ({ titleArgs, expectedTitle }) =>
+  ({ args, expectedTitle, tracked }) =>
     Effect.gen(function* () {
       const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
       yield* withProjectService(baseDir, (projects) =>
@@ -273,10 +286,11 @@ it.effect.each([
           commandId: CommandId.make("project-cli-archive"),
           projectId: project.id,
           archived: true,
+          trackedFolders: [kept],
         }),
       );
 
-      yield* runCli(["project", "add", workspaceRoot, ...titleArgs, "--base-dir", baseDir]);
+      yield* runCli(["project", "add", workspaceRoot, ...args, "--base-dir", baseDir]);
 
       const projects = (yield* readProjects(baseDir)).projects;
       assert.deepEqual(
@@ -284,8 +298,16 @@ it.effect.each([
           id: entry.id,
           title: entry.title,
           archivedAt: entry.archivedAt,
+          trackedFolders: entry.trackedFolders,
         })),
-        [{ id: project.id, title: expectedTitle ?? project.title, archivedAt: null }],
+        [
+          {
+            id: project.id,
+            title: expectedTitle ?? project.title,
+            archivedAt: null,
+            trackedFolders: tracked,
+          },
+        ],
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
 );

@@ -222,6 +222,7 @@ it.effect(
       const thread = { projectId: ProjectId.make("project:repositories"), worktreePath: null };
       const repositories = Array.from({ length: 30 }, (_, index) => `/wrapper/repo-${index}`);
       const [slowRepository, changedRepository] = [repositories[7]!, repositories[3]!];
+      const unreadableRepository = repositories[5]!;
       const startHead = "a".repeat(40);
       const heads = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
       const refs = yield* Ref.make<ReadonlySet<string>>(new Set());
@@ -275,7 +276,18 @@ it.effect(
                     Ref.update(refs, (current) => new Set([...current, checkpointRef])),
                   ),
                 ),
-              diffCheckpoints: () => Effect.succeed("1\t0\tfile.ts\0"),
+              diffCheckpoints: ({ cwd }) =>
+                cwd === unreadableRepository
+                  ? Effect.fail(
+                      new VcsProcessExitError({
+                        operation: "test.diff",
+                        command: "git",
+                        cwd,
+                        exitCode: 128,
+                        detail: "fatal: unable to read tree",
+                      }),
+                    )
+                  : Effect.succeed("1\t0\tfile.ts\0"),
               listAuthoredPaths: () => Effect.succeed(null),
             }),
           ),
@@ -329,8 +341,15 @@ it.effect(
         yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 1, thread });
         assert.deepEqual(yield* Ref.get(calls), ["probe /wrapper"]);
 
-        // The turn commits in one repository: its baseline is snapshotted from where it started.
-        yield* Ref.set(heads, new Map([[changedRepository, "b".repeat(40)]]));
+        // The turn commits in two repositories: each baseline is snapshotted from where it started.
+        // One of them cannot list what changed, which is not the same as nothing having changed.
+        yield* Ref.set(
+          heads,
+          new Map([
+            [changedRepository, "b".repeat(40)],
+            [unreadableRepository, "b".repeat(40)],
+          ]),
+        );
         yield* Ref.set(calls, []);
         const recorded = (yield* captureAll(2)).flatMap(Option.toArray);
         assert.deepEqual(
@@ -340,11 +359,17 @@ it.effect(
             ordinal: checkpoint.ordinalWithinScope,
             files: checkpoint.files.map((file) => file.path),
           })),
-          [{ cwd: changedRepository, baseline: 1, ordinal: 2, files: ["file.ts"] }],
+          [
+            { cwd: changedRepository, baseline: 1, ordinal: 2, files: ["file.ts"] },
+            { cwd: unreadableRepository, baseline: 1, ordinal: 2, files: [] },
+          ],
         );
         assert.deepEqual(
           (yield* Ref.get(calls)).filter((call) => call.startsWith("snapshot")),
-          [`snapshot ${changedRepository} at a`, `snapshot ${changedRepository} at b`],
+          [changedRepository, unreadableRepository].flatMap((cwd) => [
+            `snapshot ${cwd} at a`,
+            `snapshot ${cwd} at b`,
+          ]),
         );
         assert.lengthOf(
           (yield* Ref.get(calls)).filter((call) => call.startsWith("status")),
@@ -541,6 +566,8 @@ it.effect("keeps the pre-rewind snapshot of a folder a failed rewind could not p
     timeoutMs: 30000,
   });
   const preRewindRefs = new Map<string, string>();
+  const captured: Array<string> = [];
+  const existing = new Set<string>();
   const deleted: Array<{ readonly cwd: string; readonly ref: string }> = [];
   const layerTest = CheckpointService.layer.pipe(
     Layer.provide(
@@ -548,9 +575,18 @@ it.effect("keeps the pre-rewind snapshot of a folder a failed rewind could not p
         IdAllocator.layer,
         layerNoTrackedFolders,
         Layer.mock(CheckpointStore.CheckpointStore)({
-          hasCheckpointRef: () => Effect.succeed(true),
+          hasCheckpointRef: (input) =>
+            Effect.sync(
+              () =>
+                targets.some((target) => target.checkpoint.ref === input.checkpointRef) ||
+                existing.has(input.checkpointRef),
+            ),
           captureCheckpoint: (input) =>
-            Effect.sync(() => void preRewindRefs.set(input.cwd, input.checkpointRef)),
+            Effect.sync(() => {
+              captured.push(input.cwd);
+              existing.add(input.checkpointRef);
+              preRewindRefs.set(input.cwd, input.checkpointRef);
+            }),
           // The second folder's rewind fails, and then so does putting the first one back.
           restoreCheckpoint: (input) =>
             input.checkpointRef === targets[1]!.checkpoint.ref ||
@@ -559,7 +595,10 @@ it.effect("keeps the pre-rewind snapshot of a folder a failed rewind could not p
               : Effect.succeed(true),
           deleteCheckpointRefs: (input) =>
             Effect.sync(() => {
-              for (const ref of input.checkpointRefs) deleted.push({ cwd: input.cwd, ref });
+              for (const ref of input.checkpointRefs) {
+                existing.delete(ref);
+                deleted.push({ cwd: input.cwd, ref });
+              }
             }),
         }),
       ),
@@ -573,5 +612,11 @@ it.effect("keeps the pre-rewind snapshot of a folder a failed rewind could not p
     );
     assert.strictEqual(result._tag, "Failure");
     assert.deepEqual(deleted, [{ cwd: "/repo/second", ref: preRewindRefs.get("/repo/second")! }]);
+
+    // A retry starts from a half-restored folder; the kept snapshot is not taken again.
+    yield* Effect.result(
+      checkpoints.restore({ targets, scopes: targets.map((target) => target.scope) }),
+    );
+    assert.deepEqual(captured, ["/repo/first", "/repo/second", "/repo/second"]);
   }).pipe(Effect.provide(layerTest));
 });

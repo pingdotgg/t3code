@@ -21,7 +21,9 @@ The thread details panel lists each repository the thread has changed, most rece
 branch and uncommitted changes. Expand one to commit, push, or open a pull request in that
 repository; a pull request opened there, or already open for its branch when a turn ends, is linked
 to the thread. **Other repositories...** adds any other repository of the project to the list until you
-reload. A thread in its own worktree does not list them.
+reload. In a worktree thread of a project with several repositories it adds a worktree of that
+repository to the thread instead; see [Worktree threads](multi-repo-projects.md#worktree-threads). A
+worktree thread of a single repository does not offer it.
 
 On web and desktop, open the Diff pane source picker and choose **Commits** to review one local
 commit at a time. The list shows the newest 100 commits in the branch comparison. A merge commit

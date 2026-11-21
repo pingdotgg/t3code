@@ -4023,6 +4023,57 @@ describe("settled worktree rechecks", () => {
       }),
     ),
   );
+  it.effect("keeps a task folder's checkout when settings change while it is measured", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* pausedMeasurementFixture();
+        fixture.setSettings({
+          autoResumeLimitedThreads: false,
+          storageCleanup: {
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeSettledAfterDays: 0,
+          },
+        });
+        fixture.setThreads([
+          shell({ branch: "feature", worktreePath: fixture.worktree, settledAt: at(0) }),
+        ]);
+        fixture.setTaskFolders({
+          find: () =>
+            Effect.succeed({
+              root: fixture.worktree,
+              projectId: ProjectId.make("project-1"),
+              projectRoot: fixture.repo,
+              anchor: fixture.repo,
+              projectPath: fixture.worktree,
+              projectIsWorktree: true,
+              repositories: [],
+            }),
+          remove: (input) =>
+            Effect.gen(function* () {
+              const verdict = yield* input.inspect!({
+                worktreePath: fixture.worktree,
+                repositoryPath: fixture.repo,
+              });
+              return {
+                removed: [],
+                kept:
+                  verdict.keep === null ? [] : [{ path: fixture.worktree, reason: verdict.keep }],
+              };
+            }),
+        });
+        const run = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.measuring);
+        fixture.setSettings({ autoResumeLimitedThreads: true });
+        yield* Deferred.succeed(fixture.resume, undefined);
+        const report = yield* Fiber.join(run);
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Settings changed since check",
+        });
+      }),
+    ),
+  );
   it.effect.each([{ settledAt: null }, { settledAt: at(DAY_MS) }])(
     "keeps a checkout changed during measurement (%j)",
     (change) =>

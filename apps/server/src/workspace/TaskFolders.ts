@@ -198,6 +198,25 @@ export const commonAncestor = (path: Path.Path, folders: ReadonlyArray<string>) 
   return ancestor;
 };
 
+/**
+ * The folder a task folder mirrors: the deepest one holding the project and every tracked
+ * repository that shares a root with it. The rest are `unreachable` and cannot be laid out.
+ */
+export const layoutAnchor = (
+  path: Path.Path,
+  projectRoot: string,
+  repositories: ReadonlyArray<string>,
+) => {
+  let anchor = projectRoot;
+  const unreachable: string[] = [];
+  for (const repository of repositories) {
+    const shared = commonAncestor(path, [anchor, repository]);
+    if (shared === null) unreachable.push(repository);
+    else anchor = shared;
+  }
+  return { anchor, unreachable };
+};
+
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -285,23 +304,36 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(fail(operation, "The project's worktree layout command failed"))),
     );
 
+  /** Where a folder's `.git` file points, or null when `.git` is a directory or absent. */
+  const gitDirPointer = Effect.fnUntraced(function* (folder: string) {
+    const pointer = yield* fileSystem
+      .readFileString(path.join(folder, ".git"))
+      .pipe(Effect.orElseSucceed(() => ""));
+    const gitDir = /^gitdir:\s*(.+?)\s*$/m.exec(pointer)?.[1];
+    return gitDir === undefined ? null : path.resolve(folder, gitDir);
+  });
+  // A repository that is itself a linked worktree registers worktrees under the Git dir it shares.
+  const commonGitDir = Effect.fnUntraced(function* (repositoryPath: string) {
+    const gitDir = yield* gitDirPointer(repositoryPath);
+    if (gitDir === null) return path.join(repositoryPath, ".git");
+    const common = (yield* fileSystem
+      .readFileString(path.join(gitDir, "commondir"))
+      .pipe(Effect.orElseSucceed(() => ""))).trim();
+    return common === "" ? gitDir : path.resolve(gitDir, common);
+  });
+
   // What a layout command leaves must be a checkout this service can later remove, restore and
   // rename: a worktree linked to the repository, on the thread's branch. Null when it is.
   const unadoptable = Effect.fnUntraced(function* (checkout: TaskFolderCheckout, branch: string) {
     const real = (target: string) =>
       fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => target));
-    const pointer = yield* fileSystem
-      .readFileString(path.join(checkout.worktreePath, ".git"))
-      .pipe(Effect.orElseSucceed(() => ""));
-    const gitDir = /^gitdir:\s*(.+?)\s*$/m.exec(pointer)?.[1];
-    const resolved =
-      gitDir === undefined ? null : yield* real(path.resolve(checkout.worktreePath, gitDir));
+    const resolved = yield* gitDirPointer(checkout.worktreePath);
     const linked =
       resolved !== null &&
       isWithinRoot(
         path,
-        resolved,
-        path.join(yield* real(checkout.repositoryPath), ".git", "worktrees"),
+        yield* real(resolved),
+        path.join(yield* real(yield* commonGitDir(checkout.repositoryPath)), "worktrees"),
       );
     if (!linked)
       return `${checkout.worktreePath} is not a Git worktree of ${checkout.repositoryPath}`;
@@ -356,9 +388,16 @@ const make = Effect.gen(function* () {
     );
     // A project that lays its own thread folder out gets one even with nothing else to check out.
     if (tracked.length === 0 && (yield* worktreeLayout(projectRoot)) === null) return null;
+    // A repository on another Windows drive has no place in the folder; only choosing it fails.
+    const { anchor, unreachable } = layoutAnchor(
+      path,
+      projectRoot,
+      tracked.map((folder) => folder.path),
+    );
+    const reachable = tracked.filter((folder) => !unreachable.includes(folder.path));
     let repositories: ReadonlyArray<ProjectTrackedFolder>;
     if (input.repositories === undefined) {
-      repositories = tracked.length <= TASK_FOLDER_DEFAULT_REPOSITORIES_MAX ? tracked : [];
+      repositories = reachable.length <= TASK_FOLDER_DEFAULT_REPOSITORIES_MAX ? reachable : [];
     } else {
       const selected = new Map<string, ProjectTrackedFolder>();
       for (const requested of input.repositories) {
@@ -380,20 +419,15 @@ const make = Effect.gen(function* () {
                   : `"${requested.path}" is not a Git repository, so it cannot get a worktree.`,
           });
         }
+        if (unreachable.includes(folder.path)) {
+          return yield* new TaskFolderError({
+            operation: "plan",
+            detail: `"${folder.path}" shares no common root with the project folder ${projectRoot}, so the two cannot be laid out in one worktree folder.`,
+          });
+        }
         selected.set(folder.path, folder);
       }
       repositories = [...selected.values()];
-    }
-    let anchor = projectRoot;
-    for (const folder of tracked) {
-      const shared = commonAncestor(path, [anchor, folder.path]);
-      if (shared === null) {
-        return yield* new TaskFolderError({
-          operation: "plan",
-          detail: `"${folder.path}" shares no common root with the project folder ${projectRoot}, so the two cannot be laid out in one worktree folder.`,
-        });
-      }
-      anchor = shared;
     }
     return {
       projectId: project.projectId,
@@ -401,7 +435,7 @@ const make = Effect.gen(function* () {
       projectIsRepository: yield* isRepository(projectRoot),
       anchor,
       repositories: repositories.map(({ name, path: folderPath }) => ({ name, path: folderPath })),
-      trackedRepositories: tracked.map((folder) => folder.path),
+      trackedRepositories: reachable.map((folder) => folder.path),
     };
   });
 
@@ -442,9 +476,12 @@ const make = Effect.gen(function* () {
     startFromOrigin: boolean,
     baseBranch?: string,
   ) {
+    // Clients send `HEAD` when no base was chosen; as a name it would match `origin/HEAD`.
     const wanted = baseBranch?.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
     const defaultBranch =
       wanted !== undefined &&
+      wanted !== "" &&
+      wanted !== "HEAD" &&
       ((yield* git.hasCommit({ cwd, refName: `refs/heads/${wanted}` })) ||
         (yield* git.hasCommit({ cwd, refName: `refs/remotes/origin/${wanted}` })))
         ? wanted
@@ -610,6 +647,8 @@ const make = Effect.gen(function* () {
   const removeLocked = Effect.fn("TaskFolders.remove")(function* (
     taskFolder: TaskFolder,
     input: Omit<Parameters<TaskFolders["Service"]["remove"]>[0], "root">,
+    /** Repositories whose `deleteBranch` is not this folder's to delete. */
+    keepBranchIn: ReadonlySet<string> = new Set(),
   ) {
     const removed: string[] = [];
     const kept: Array<{ path: string; reason: string }> = [];
@@ -665,7 +704,11 @@ const make = Effect.gen(function* () {
         kept.push({ path: checkout.worktreePath, reason: keep });
         return false;
       }
-      return yield* removeCheckout(checkout, force, input.deleteBranch).pipe(
+      return yield* removeCheckout(
+        checkout,
+        force,
+        keepBranchIn.has(checkout.repositoryPath) ? undefined : input.deleteBranch,
+      ).pipe(
         Effect.as(true),
         Effect.tap(() => Effect.sync(() => removed.push(checkout.worktreePath))),
         Effect.catch((cause) =>
@@ -705,9 +748,10 @@ const make = Effect.gen(function* () {
           repositoryPath: taskFolder.projectRoot,
         });
       }
-    } else {
+    } else if (!projectHoldsKept) {
+      // A folder that stays keeps its links: restoring relinks only a folder that is gone.
       projectGone = yield* removeLinks(projectPath).pipe(Effect.orElseSucceed(() => false));
-      if (!projectGone && !projectHoldsKept && input.force && input.inspect === undefined) {
+      if (!projectGone && input.force && input.inspect === undefined) {
         // Forced: what is left are files the thread wrote beside the links.
         projectGone = yield* fileSystem.remove(projectPath, { recursive: true, force: true }).pipe(
           Effect.as(true),
@@ -715,8 +759,7 @@ const make = Effect.gen(function* () {
         );
       }
       if (projectGone) removed.push(projectPath);
-      else if (!projectHoldsKept)
-        kept.push({ path: projectPath, reason: "has files that exist only in this folder" });
+      else kept.push({ path: projectPath, reason: "has files that exist only in this folder" });
     }
     if (kept.length === 0) {
       let rootGone = yield* removeLinks(taskFolder.root).pipe(Effect.orElseSucceed(() => false));
@@ -808,6 +851,12 @@ const make = Effect.gen(function* () {
       };
       const created: TaskFolderRepository[] = [];
       const current = (): TaskFolder => ({ ...empty, repositories: [...created] });
+      const checkedOutFrom = [
+        ...(taskPlan.projectIsRepository ? [taskPlan.projectRoot] : []),
+        ...taskPlan.trackedRepositories,
+      ];
+      // A layout command may check out a branch that was already there; a rollback leaves it.
+      const hadBranch = new Set<string>();
       return yield* Effect.gen(function* () {
         yield* fileSystem.makeDirectory(root, { recursive: true });
         // Recorded before any checkout, so an interrupted creation is still found and removed.
@@ -815,6 +864,10 @@ const make = Effect.gen(function* () {
         if (input.onClaimed !== undefined) yield* input.onClaimed(empty, branch);
         const layout = yield* worktreeLayout(taskPlan.projectRoot);
         if (layout !== null) {
+          const before = yield* branchNames(checkedOutFrom).pipe(Effect.mapError(listFailed));
+          for (const [index, repositoryPath] of checkedOutFrom.entries()) {
+            if (before[index]!.includes(branch)) hadBranch.add(repositoryPath);
+          }
           const ran = yield* Effect.exit(
             runLayoutCommand(
               "create",
@@ -857,7 +910,8 @@ const make = Effect.gen(function* () {
           }
           const taskFolder: TaskFolder = {
             ...current(),
-            projectIsWorktree: yield* isRepository(empty.projectPath),
+            projectIsWorktree:
+              taskPlan.projectIsRepository && (yield* isRepository(empty.projectPath)),
           };
           yield* store.put(taskFolder);
           return { taskFolder, branch };
@@ -924,13 +978,25 @@ const make = Effect.gen(function* () {
         return { taskFolder, branch };
       }).pipe(
         Effect.onError(() =>
-          removeLocked(current(), { force: true, forget: true, deleteBranch: branch }).pipe(
+          removeLocked(
+            current(),
+            { force: true, forget: true, deleteBranch: branch },
+            hadBranch,
+          ).pipe(
             Effect.tap(({ kept }) =>
               kept.length === 0
                 ? Effect.void
                 : Effect.logWarning("A failed task folder was not fully removed", { root, kept }),
             ),
             Effect.ignoreCause({ log: true }),
+            // A checkout the layout command made and this service refused was deleted as files.
+            Effect.andThen(
+              Effect.forEach(
+                checkedOutFrom,
+                (cwd) => git.pruneWorktrees({ cwd }).pipe(Effect.ignoreCause({ log: true })),
+                { concurrency: REPOSITORY_CONCURRENCY, discard: true },
+              ),
+            ),
           ),
         ),
         Effect.mapError((cause) =>
@@ -1193,9 +1259,11 @@ const make = Effect.gen(function* () {
         (yield* trackedFolders(project)).map((folder) => path.resolve(folder.path)),
         isRepository,
       );
-      yield* linkFolder(taskFolder.projectRoot, taskFolder.projectPath, tracked).pipe(
-        Effect.mapError(restoreFailed),
-      );
+      // A recorded repository the project no longer tracks still gets its worktree, never a link.
+      yield* linkFolder(taskFolder.projectRoot, taskFolder.projectPath, [
+        ...tracked,
+        ...taskFolder.repositories.map((repository) => repository.repositoryPath),
+      ]).pipe(Effect.mapError(restoreFailed));
     }
     for (const repository of taskFolder.repositories.toSorted(
       (left, right) => depth(left.worktreePath) - depth(right.worktreePath),

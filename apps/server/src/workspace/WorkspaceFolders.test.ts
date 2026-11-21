@@ -147,9 +147,18 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       const workspaceRoot = path.join(tmp, "wrapper");
       const outside = path.join(tmp, "outside");
       const repository = (name: string) => path.join(workspaceRoot, "src", name);
-      for (const folder of ["src/api/.git", "src/notes", "docs/.git", "vendor/big/.git"]) {
+      for (const folder of ["src/api/.git", "src/notes", "docs/.git", "vendor/big/.git", "tree"]) {
         yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
       }
+      // A worktree of `docs` follows that repository, even when a workspace file lists it.
+      yield* fileSystem.writeFileString(
+        path.join(workspaceRoot, "tree", ".git"),
+        `gitdir: ${path.join(workspaceRoot, "docs", ".git", "worktrees", "tree")}\n`,
+      );
+      yield* fileSystem.writeFileString(
+        path.join(workspaceRoot, "team.code-workspace"),
+        JSON.stringify({ folders: [{ path: "tree" }] }),
+      );
       yield* fileSystem.makeDirectory(path.join(outside, ".git"), { recursive: true });
       // A link to a repository elsewhere is not inside the project.
       yield* fileSystem.symlink(outside, path.join(workspaceRoot, "linked"));
@@ -237,8 +246,9 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       const worktree = path.join(tmp, "tree");
       // `lib` is checked out with a submodule of its own; `docs` was never initialized. A path
       // listed twice is one submodule.
+      // `ext` is a symlink out of the repository, so what it leads to is no submodule of it.
       const gitmodules =
-        '[submodule "lib"]\n\tpath = vendor/lib\n[submodule "docs"]\n\tpath = docs\n[submodule "again"]\n\tpath = vendor/lib\n';
+        '[submodule "lib"]\n\tpath = vendor/lib\n[submodule "docs"]\n\tpath = docs\n[submodule "again"]\n\tpath = vendor/lib\n[submodule "out"]\n\tpath = ext/x\n';
       for (const root of [workspaceRoot, worktree]) {
         yield* fileSystem.makeDirectory(path.join(root, "vendor", "lib", "deep", ".git"), {
           recursive: true,
@@ -255,6 +265,10 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         yield* fileSystem.makeDirectory(directory, { recursive: true });
       }
       yield* fileSystem.symlink(shared, linked.path);
+      yield* fileSystem.makeDirectory(path.join(tmp, "elsewhere", "x", ".git"), {
+        recursive: true,
+      });
+      yield* fileSystem.symlink(path.join(tmp, "elsewhere"), path.join(workspaceRoot, "ext"));
 
       yield* Effect.gen(function* () {
         const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;

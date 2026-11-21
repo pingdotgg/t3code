@@ -573,7 +573,10 @@ it.live("rewinds a linked project folder's repositories to how each was before t
   ),
 );
 
-it.live("names the repositories a rewind could not restore", () =>
+it.live.each([
+  { label: "whose baseline is lost", runSnapshot: "ready" },
+  { label: "whose baseline is lost and whose run snapshot failed", runSnapshot: "error" },
+] as const)("names the repositories a rewind could not restore: one $label", ({ runSnapshot }) =>
   withThread({ projectIsRepository: false }, (thread) =>
     Effect.gen(function* () {
       const { path, folders, write, read } = thread;
@@ -591,6 +594,14 @@ it.live("names the repositories a rewind could not restore", () =>
         type: "checkpoint.captured",
         nodeId: baseline.nodeId,
         payload: { ...baseline, status: "missing" },
+      });
+      const ran = checkpoints.find(
+        (checkpoint) => checkpoint.scopeId === web.id && checkpoint.runId !== null,
+      )!;
+      yield* thread.apply({
+        type: "checkpoint.captured",
+        nodeId: ran.nodeId,
+        payload: { ...ran, status: runSnapshot },
       });
       const requestId = CommandId.make("command:rewind:unrestored");
 

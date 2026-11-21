@@ -472,6 +472,7 @@ function AssistantChangedFilesSectionInner({
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
 }) {
   const ctx = use(TimelineRowCtx);
+  const gt = useGT();
   const persistedExpanded = useUiStateStore(
     (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.runId],
   );
@@ -495,7 +496,7 @@ function AssistantChangedFilesSectionInner({
     (status) => AsyncResult.getOrElse(status, () => null)?.workingTree.rootPath,
   );
   const repositories = turnSummary.repositories;
-  const rootGroupName = activeProject?.title ?? "Project folder";
+  const rootGroupName = activeProject?.title ?? gt("Project folder");
   const groups: ReadonlyArray<ChangedFilesGroup> | undefined =
     repositories === undefined
       ? undefined
@@ -518,7 +519,7 @@ function AssistantChangedFilesSectionInner({
             totals: changedFileTotals(repository),
             relativePath: repository.relativePath,
             ...(repository.baselineMissing
-              ? { note: "This turn's changes in this repository cannot be listed." }
+              ? { note: gt("This turn's changes in this repository cannot be listed.") }
               : {}),
           })),
         ];

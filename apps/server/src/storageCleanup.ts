@@ -1145,7 +1145,12 @@ const make = Effect.gen(function* () {
     });
     // The checks a single worktree passes before removal, for one checkout of a task folder.
     const inspectCheckout = Effect.fn("StorageCleanup.inspectCheckout")(
-      function* (checkoutPath: string, branch: string | null, rules: WorktreeCleanupRules) {
+      function* (
+        checkoutPath: string,
+        branch: string | null,
+        rules: WorktreeCleanupRules,
+        settingsChanged: Effect.Effect<boolean, ServerSettingsError>,
+      ) {
         const reason =
           (yield* worktreePathReason(checkoutPath)) ??
           ((yield* branchChanged(checkoutPath, branch)) ? "repository or branch changed" : null) ??
@@ -1153,6 +1158,9 @@ const make = Effect.gen(function* () {
         if (reason !== null) return { keep: reason, force: false, bytes: null };
         const { bytes, reason: measureReason } = yield* measureWorktree(checkoutPath, true);
         if (measureReason !== null) return { keep: measureReason, force: false, bytes };
+        // Measuring takes time, and what follows deletes ignored files under these rules.
+        if (yield* settingsChanged)
+          return { keep: "settings changed since check", force: false, bytes };
         if (rules.worktreeKeepWhen === "tracked-changes")
           yield* cleanupGit(checkoutPath, ["clean", "-ffdx"], "git clean");
         const submodules = yield* submoduleRemoval(checkoutPath, rules);
@@ -1526,7 +1534,12 @@ const make = Effect.gen(function* () {
                 force: false,
                 forget: deleted,
                 inspect: (checkout) =>
-                  inspectCheckout(checkout.worktreePath, thread.branch, settings).pipe(
+                  inspectCheckout(
+                    checkout.worktreePath,
+                    thread.branch,
+                    settings,
+                    settingsChangedSinceCheck,
+                  ).pipe(
                     Effect.tap(({ bytes }) =>
                       Effect.sync(() => checkoutBytes.set(checkout.worktreePath, bytes)),
                     ),

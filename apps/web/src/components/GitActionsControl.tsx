@@ -1000,6 +1000,7 @@ export const GitActionsControl = memo(function GitActionsControl(props: GitActio
   const checkoutKey = JSON.stringify([
     props.threadRef?.environmentId ?? null,
     props.target?.key ?? null,
+    props.target?.cwd ?? null,
   ]);
   return <CheckoutGitActionsControl key={checkoutKey} {...props} />;
 });

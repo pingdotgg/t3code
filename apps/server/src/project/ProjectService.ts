@@ -599,7 +599,7 @@ export const make = Effect.gen(function* () {
             root,
             input.trackedFolders ?? current.trackedFolders,
           );
-          return input.trackedFolders === undefined ? command : { ...command, trackedFolders };
+          return { ...command, trackedFolders };
         }),
       );
       if (workspaceRoot !== previousRoot || input.faviconPath !== undefined) {

@@ -547,7 +547,7 @@ export default function DiffPanel({
   const refreshPreviewQuery = branchDiffPreview.refresh;
   const refreshDiffFromUserAction = refreshPreviewQuery;
 
-  const threadFolderName = activeProject?.title ?? "Project folder";
+  const threadFolderName = activeProject?.title ?? gt("Project folder");
   const preview = branchDiffPreview.data;
   const gitDiff = selectedGitSource?.diff;
 

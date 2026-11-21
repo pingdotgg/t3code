@@ -429,6 +429,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     nativeReviewDiffData,
     parsedDiff,
     pendingReviewCommentCount,
+    sectionFiles,
     loadVisibleFile,
     isPending: areFilePatchesPending,
   } = useReviewDiffData({
@@ -472,6 +473,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     threadKey: reviewCache.threadKey,
     sectionId: selectedSection?.id ?? null,
     files: reviewFiles,
+    sectionFiles,
     cachedExpandedFileIds: selectedSection?.id
       ? reviewCache.expandedFileIdsBySection[selectedSection.id]
       : undefined,

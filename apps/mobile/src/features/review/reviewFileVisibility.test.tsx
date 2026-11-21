@@ -35,7 +35,10 @@ function files(diff: string): ReadonlyArray<ReviewRenderableFile> {
   return parsed.files;
 }
 
-function visibility(current: ReadonlyArray<ReviewRenderableFile>) {
+function visibility(
+  current: ReadonlyArray<ReviewRenderableFile>,
+  section: ReadonlyArray<ReviewRenderableFile> = current,
+) {
   let result: ReturnType<typeof useReviewFileVisibility> | undefined;
   function Probe({ report }: { report: (value: typeof result) => void }) {
     report(
@@ -43,6 +46,7 @@ function visibility(current: ReadonlyArray<ReviewRenderableFile>) {
         threadKey: "thread",
         sectionId: "turn:3",
         files: current,
+        sectionFiles: section,
         cachedExpandedFileIds: stored.expanded,
         cachedViewedFileIds: stored.viewed,
       }),
@@ -94,4 +98,12 @@ it("keeps the marks of files a repository filter hides", () => {
   expect(visibility(all).collapsedFileIds).toEqual(all.map((file) => file.id));
   visibility(apiOnly).toggleViewedFile(apiFile!.id);
   expect(visibility(all).viewedFileIds).toEqual([webFile!.id]);
+
+  stored.expanded = undefined;
+  visibility(apiOnly, all).toggleExpandedFile(apiFile!.id);
+  expect(visibility(all).collapsedFileIds).toEqual([apiFile!.id]);
+  stored.expanded = undefined;
+  stored.viewed = undefined;
+  visibility(apiOnly, all).toggleViewedFile(otherApiFile!.id);
+  expect(visibility(all).collapsedFileIds).toEqual([otherApiFile!.id]);
 });

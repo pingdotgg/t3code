@@ -27,6 +27,7 @@ import { reviewEnvironment } from "../../state/review";
 import type { MessageResolver } from "../../i18n/messages";
 
 const EMPTY_INLINE_REVIEW_COMMENTS = Object.freeze([]);
+const NO_REVIEW_FILES: ReadonlyArray<ReviewRenderableFile> = Object.freeze([]);
 type ParsedFilePatch = AsyncResult.AsyncResult<
   { source: ReviewDiffPreviewSource; parsed: ReviewParsedDiff },
   unknown
@@ -288,6 +289,13 @@ export function useReviewDiffData(input: {
 
   return {
     parsedDiff,
+    /** The section's files before the repository filter. */
+    sectionFiles:
+      sectionDiff.kind === "files"
+        ? sectionDiff.files
+        : parsedDiff.kind === "files"
+          ? parsedDiff.files
+          : NO_REVIEW_FILES,
     loadVisibleFile,
     isPending: patches.some((patch) => patch?._tag === "Initial" || patch?.waiting),
     headerDiffSummary,

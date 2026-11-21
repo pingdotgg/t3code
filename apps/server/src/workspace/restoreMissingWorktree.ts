@@ -99,6 +99,20 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       ),
       Effect.orElseSucceed(() => false),
     );
+  // `git worktree add` refuses a non-empty target but accepts an empty one. Keep the folder
+  // itself: Windows cannot remove a folder that is still a terminal's or provider's cwd.
+  const clearLeftovers = (worktreePath: string) =>
+    fileSystem
+      .readDirectory(worktreePath)
+      .pipe(
+        Effect.flatMap((entries) =>
+          Effect.forEach(
+            entries,
+            (entry) => fileSystem.remove(path.join(worktreePath, entry), { recursive: true }),
+            { discard: true },
+          ),
+        ),
+      );
   const taskFolders = yield* TaskFolders.TaskFolders;
 
   const resolveRecreateBase = Effect.fn("restoreMissingWorktree.resolveRecreateBase")(function* (
@@ -184,6 +198,10 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
               worktreePath: checkout.worktreePath,
               branch,
             }).pipe(
+              Effect.andThen(isLeftoverFolder(checkout.worktreePath)),
+              Effect.flatMap((leftover) =>
+                leftover ? clearLeftovers(checkout.worktreePath) : Effect.void,
+              ),
               Effect.andThen(
                 recreateMissingWorktree({
                   cwd: checkout.repositoryPath,
@@ -214,18 +232,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       worktreePath,
       branch,
     });
-    // `git worktree add` refuses a non-empty target but accepts an empty one. Keep the folder
-    // itself: Windows cannot remove a folder that is still a terminal's or provider's cwd.
-    const clearLeftovers = Effect.suspend(() => fileSystem.readDirectory(worktreePath)).pipe(
-      Effect.flatMap((entries) =>
-        Effect.forEach(
-          entries,
-          (entry) => fileSystem.remove(path.join(worktreePath, entry), { recursive: true }),
-          { discard: true },
-        ),
-      ),
-    );
-    yield* (leftover ? clearLeftovers : Effect.void).pipe(
+    yield* (leftover ? clearLeftovers(worktreePath) : Effect.void).pipe(
       Effect.andThen(recreateMissingWorktree({ cwd: project.workspaceRoot, worktreePath, branch })),
       Effect.mapError((cause) =>
         cause._tag === "WorktreeRecreateNoBaseError"

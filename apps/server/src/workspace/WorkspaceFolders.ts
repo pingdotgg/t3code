@@ -275,7 +275,7 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
 ): Effect.fn.Return<ReadonlyArray<ProjectTrackedFolder>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { realPath } = yield* folderProbes;
+  const { realPath, ownsHistory } = yield* folderProbes;
   // Uncapped: the folders outside the project are dropped below, and must not use up the room.
   const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
   if (Option.isNone(scan)) return [];
@@ -294,10 +294,13 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
         folder.isGitRepository &&
         !ignored.some((entry) => folder.path === entry || isWithinRoot(path, folder.path, entry)),
     ),
-    // A link to a repository elsewhere is not inside the project, whatever its name says.
+    // A link to a repository elsewhere is not inside the project, whatever its name says, and a
+    // worktree a workspace file lists follows another repository.
     (folder) =>
-      realPath(folder.path).pipe(
-        Effect.map((real) => real !== realRoot && isWithinRoot(path, real, realRoot)),
+      Effect.all([realPath(folder.path), ownsHistory(folder.path)]).pipe(
+        Effect.map(
+          ([real, owns]) => owns && real !== realRoot && isWithinRoot(path, real, realRoot),
+        ),
       ),
     { concurrency: DETECTION_CONCURRENCY },
   );
@@ -404,6 +407,8 @@ const make = Effect.gen(function* () {
             // One that was never initialized is an empty folder.
             if (budget.left <= 0 || !(yield* exists(path.join(folder, ".git")))) return [];
             const real = yield* realPath(folder);
+            // A committed symlink on the way must not lead the thread out of its repository.
+            if (!isWithinRoot(path, real, yield* realPath(root.path))) return [];
             if (budget.left <= 0 || budget.visited.has(real)) return [];
             budget.visited.add(real);
             budget.left -= 1;

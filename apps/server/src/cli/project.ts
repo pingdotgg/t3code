@@ -394,32 +394,7 @@ const projectAddCommand = Command.make("add", {
         const existingProject = snapshot.projects.find(
           (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
         );
-        // Re-adding an archived project's folder restores it, matching the clients.
-        if (existingProject?.archivedAt != null) {
-          const title = Option.isSome(flags.title)
-            ? yield* resolveProjectTitle(workspaceRoot, flags.title.value)
-            : undefined;
-          yield* dispatch({
-            type: "project.update",
-            commandId: CommandId.make(yield* projectCommandUuid),
-            projectId: existingProject.id,
-            archived: false,
-            ...(title === undefined ? {} : { title }),
-          });
-          return `Unarchived project ${existingProject.id} (${title ?? existingProject.title}) at ${workspaceRoot}.`;
-        }
-        if (existingProject) {
-          return yield* new ProjectAlreadyExistsError({
-            operation: "addProject",
-            projectId: existingProject.id,
-            workspaceRoot,
-          });
-        }
-
-        const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
         const path = yield* Path.Path;
-        // Found here, not by a running server: this command runs on the server's machine.
-        const found = yield* discoverFolders(workspaceRoot);
         const named = flags.track
           .map((folder) => {
             const resolved = path.resolve(folder);
@@ -431,6 +406,49 @@ const projectAddCommand = Command.make("add", {
           .filter(
             (folder, index, all) => all.findIndex((other) => other.path === folder.path) === index,
           );
+        // Re-adding an archived project's folder restores it, matching the clients.
+        if (existingProject?.archivedAt != null) {
+          const title = Option.isSome(flags.title)
+            ? yield* resolveProjectTitle(workspaceRoot, flags.title.value)
+            : undefined;
+          // An update replaces the whole list of added folders.
+          const kept = (existingProject.trackedFolders ?? [])
+            .filter((folder) => folder.discovered !== true)
+            .map((folder) => ({ path: folder.path, name: folder.name }));
+          const added = named.filter(
+            (folder) => !kept.some((existing) => existing.path === folder.path),
+          );
+          if (kept.length + added.length > PROJECT_TRACKED_FOLDERS_MAX) {
+            return yield* new ProjectTooManyTrackedFoldersError({
+              operation: "addProject",
+              count: kept.length + added.length,
+              max: PROJECT_TRACKED_FOLDERS_MAX,
+            });
+          }
+          yield* dispatch({
+            type: "project.update",
+            commandId: CommandId.make(yield* projectCommandUuid),
+            projectId: existingProject.id,
+            archived: false,
+            ...(title === undefined ? {} : { title }),
+            ...(added.length === 0 ? {} : { trackedFolders: [...kept, ...added] }),
+          });
+          const unarchived = `Unarchived project ${existingProject.id} (${title ?? existingProject.title}) at ${workspaceRoot}.`;
+          return added.length === 0
+            ? unarchived
+            : `${unarchived} It now also covers ${added.length} more ${added.length === 1 ? "folder" : "folders"}.`;
+        }
+        if (existingProject) {
+          return yield* new ProjectAlreadyExistsError({
+            operation: "addProject",
+            projectId: existingProject.id,
+            workspaceRoot,
+          });
+        }
+
+        const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
+        // Found here, not by a running server: this command runs on the server's machine.
+        const found = yield* discoverFolders(workspaceRoot);
         if (named.length > PROJECT_TRACKED_FOLDERS_MAX) {
           return yield* new ProjectTooManyTrackedFoldersError({
             operation: "addProject",

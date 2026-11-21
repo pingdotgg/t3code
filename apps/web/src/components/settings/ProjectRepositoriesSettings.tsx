@@ -102,7 +102,8 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   });
   const [isSaving, setIsSaving] = useState(false);
   const [isAddingFolder, setIsAddingFolder] = useState(false);
-  const disabled = !canEdit || !isConnected || isSaving;
+  // A save builds on the listed folders, so it waits for the list that follows the last one.
+  const disabled = !canEdit || !isConnected || isSaving || listQuery.isPending;
   const added = folders.filter((folder) => folder.discovered !== true);
   const gt = useGT();
   const m = useMessages();
@@ -239,7 +240,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
             environment?.serverConfig?.environment.platform.os,
           )}
           canBrowse={access.canReadFiles}
-          busy={isSaving}
+          busy={isSaving || listQuery.isPending}
           onAdd={(folder) => void addFolder(folder)}
           onClose={() => setIsAddingFolder(false)}
         />

@@ -282,6 +282,7 @@ const make = Effect.gen(function* () {
                       plan: taskPlan,
                       branch: input.branch,
                       projectStart: { refName: worktreeBaseRef, baseRefName },
+                      baseBranch: input.baseRef,
                       startFromOrigin,
                     })
                     .pipe(

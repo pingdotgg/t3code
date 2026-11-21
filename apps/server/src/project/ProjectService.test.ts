@@ -402,7 +402,17 @@ it.layer(layerTest)("ProjectService", (it) => {
         tracked,
       );
       assert.deepEqual((yield* update("clear", { trackedFolders: [] })).trackedFolders, []);
-    }),
+
+      // A moved project lists the repositories of the folder it moved to, without being told.
+      const fileSystem = yield* FileSystem.FileSystem;
+      const moved = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-moved-" }),
+      );
+      yield* fileSystem.makeDirectory(`${moved}/web/.git`, { recursive: true });
+      assert.deepEqual((yield* update("move", { workspaceRoot: moved })).trackedFolders, [
+        { path: `${moved}/web`, name: "web", discovered: true },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("records the outcome and duration of a committed project command", () =>

@@ -360,8 +360,8 @@ export const layer: Layer.Layer<
           recorded.some(
             (candidate) =>
               candidate.scopeId === repository.id &&
-              candidate.status === "ready" &&
-              candidate.ordinalWithinScope > targetOrdinal,
+              candidate.ordinalWithinScope > targetOrdinal &&
+              (candidate.status === "ready" || candidate.runId !== null),
           ),
       );
       if (unrestorable.length > 0) {

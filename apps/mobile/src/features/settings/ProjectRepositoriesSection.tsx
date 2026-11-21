@@ -68,11 +68,13 @@ export function ProjectRepositoriesSection(props: {
   );
   const suggested = suggestedTrackedFolders(folders, scanQuery.data?.folders ?? []);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
-  const [isBusy, setIsBusy] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  // A save builds on the listed folders, so it waits for the list that follows the last one.
+  const isBusy = isSaving || listQuery.isPending;
   const added = folders.filter((folder) => folder.discovered !== true);
 
   const save = async (next: ReadonlyArray<ProjectTrackedFolder>) => {
-    setIsBusy(true);
+    setIsSaving(true);
     const result = await updateProject({
       environmentId: member.environmentId,
       input: {
@@ -80,7 +82,7 @@ export function ProjectRepositoriesSection(props: {
         trackedFolders: next.map(({ path, name }) => ({ path, name })),
       },
     });
-    setIsBusy(false);
+    setIsSaving(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
