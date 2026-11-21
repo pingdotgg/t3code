@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use super::color::to_hsla;
 use super::diff_parser::{DiffFile, DiffLineKind, parse_unified_diff};
 
-const FILE_LIST_WIDTH_PX: f32 = 240.0;
+const FILE_LIST_WIDTH_PX: f32 = 200.0;
 const ROW_HEIGHT_PX: f32 = 28.0;
 const UI_TEXT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
@@ -394,18 +394,18 @@ impl DiffPanel {
                 row = row
                     .child(
                         div()
-                            .w(px(40.0))
+                            .w(px(32.0))
                             .flex_shrink_0()
-                            .pr(px(8.0))
+                            .pr(px(6.0))
                             .text_right()
                             .text_color(muted)
                             .child(old_no),
                     )
                     .child(
                         div()
-                            .w(px(40.0))
+                            .w(px(32.0))
                             .flex_shrink_0()
-                            .pr(px(8.0))
+                            .pr(px(6.0))
                             .text_right()
                             .text_color(muted)
                             .child(new_no),
@@ -421,6 +421,8 @@ impl DiffPanel {
                         div()
                             .flex_1()
                             .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
                             .text_color(fg)
                             .child(line.text.clone()),
                     );

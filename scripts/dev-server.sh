@@ -43,6 +43,7 @@ case "$cmd" in
       printf 'fn main() {\n    println!("hello from conn-gpui");\n}\n' \
         > "$DEV/projects/hello-rust/src/main.rs"
       printf '# hello-rust\n\nA tiny demo project for conn-gpui.\n' > "$DEV/projects/hello-rust/README.md"
+      printf '/target\n' > "$DEV/projects/hello-rust/.gitignore"
       git -C "$DEV/projects/hello-rust" init -q -b main
       git -C "$DEV/projects/hello-rust" add .
       git -C "$DEV/projects/hello-rust" -c user.name=demo -c user.email=demo@example.com \
