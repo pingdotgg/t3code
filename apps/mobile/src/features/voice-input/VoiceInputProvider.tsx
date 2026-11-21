@@ -131,7 +131,12 @@ const voiceInputAtom = Atom.make((get) => {
       const token = acquireAudioSession("recording");
       audioToken = token;
       try {
-        await activateAudioSession(token);
+        const preferences = registry.get(mobilePreferencesAtom);
+        const builtInMicFirst =
+          Platform.OS === "ios" &&
+          AsyncResult.isSuccess(preferences) &&
+          deviceMicrophoneOrder(preferences.value.microphones)[0]?.kind === "builtIn";
+        await activateAudioSession(token, { allowBluetoothRecording: !builtInMicFirst });
       } catch (error) {
         await releaseAudioSession(token).catch(() => {});
         throw error;
