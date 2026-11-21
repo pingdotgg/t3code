@@ -5,12 +5,16 @@
 //! short-lived media ticket passed as `wsTicket` (alongside optional `hostId`) on HTTP, SSE,
 //! and WebSocket requests under `/api/device-hub/vendor/{serve-sim,serve-emu}`.
 
+pub mod mjpeg;
+
 use std::fmt;
 use std::time::Duration;
 
 use conn_contract::DevicePlatform;
 use serde::Deserialize;
 use url::Url;
+
+pub use self::mjpeg::{MjpegParser, MjpegStreamError, mjpeg_stream_url, stream_mjpeg_frames};
 
 use crate::ClientError;
 
