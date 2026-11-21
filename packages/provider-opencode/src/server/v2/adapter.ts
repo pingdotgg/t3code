@@ -73,6 +73,7 @@ import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -446,11 +447,71 @@ const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
         { action: `${mcpServerName}_*`, resource: "*", effect: "allow" },
       ];
 
+const globMatch = (input: string, pattern: string) => {
+  let at = 0;
+  let next = 0;
+  let star = -1;
+  let resume = 0;
+  while (at < input.length) {
+    if (pattern[next] === "*") {
+      star = next++;
+      resume = at;
+    } else if (next < pattern.length && (pattern[next] === "?" || pattern[next] === input[at])) {
+      at++;
+      next++;
+    } else if (star >= 0) {
+      next = star + 1;
+      at = ++resume;
+    } else {
+      return false;
+    }
+  }
+  while (pattern[next] === "*") next++;
+  return next === pattern.length;
+};
+
+// OpenCode's Wildcard.match without a regex: `*` is any text, `?` one character, a trailing ` *` is optional.
+export const wildcardMatch = (value: string, glob: string, windows = false): boolean => {
+  const fold = (text: string) => {
+    const slashed = text.replaceAll("\\", "/");
+    return windows ? slashed.toLowerCase() : slashed;
+  };
+  const input = fold(value);
+  const pattern = fold(glob);
+  return (
+    globMatch(input, pattern) || (pattern.endsWith(" *") && globMatch(input, pattern.slice(0, -2)))
+  );
+};
+
+// OpenCode's Permission.evaluate: the last matching rule decides, and no match asks.
+const effectOf = (
+  action: string,
+  resource: string,
+  rules: ReadonlyArray<Rule>,
+  windows: boolean,
+): Rule["effect"] =>
+  rules.findLast(
+    (entry) =>
+      wildcardMatch(action, entry.action, windows) &&
+      wildcardMatch(resource, entry.resource, windows),
+  )?.effect ?? "ask";
+
+// OpenCode copies a session's rules into each subagent session it creates and applies them after
+// that subagent's own agent rules, where saved approvals can outrank an ask but never a deny.
+// So no session is written an allow or an agent's denies: allows become asks T3 answers itself.
+const inheritable = (rules: ReadonlyArray<Rule>) =>
+  rules.flatMap((entry): ReadonlyArray<Rule> =>
+    entry.effect !== "allow"
+      ? [entry]
+      : entry.action === "*" && entry.resource === "*"
+        ? []
+        : [{ ...entry, effect: "ask" }],
+  );
+
 const sessionRules = (
   policy: RulesPolicy,
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
-  mcpServerName: string | null,
 ): ReadonlyArray<Rule> => [
   ...(policy.runtimeMode === "full-access"
     ? [rule("*", "allow")]
@@ -472,7 +533,6 @@ const sessionRules = (
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
   ...paths,
-  ...mcpRules(mcpServerName),
 ];
 
 const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<Rule>) =>
@@ -899,6 +959,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
     const threads = new Map<string, ThreadState>();
     const childOwners = new Map<string, ThreadState>();
+    // Declared before the event stream starts: an early reconnect clears it.
+    const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
     const announced = new Map<string, EventOf<"session.created">["data"]>();
     const strays = new Map<string, ThreadState>();
     const busy = new Set<string>();
@@ -2770,18 +2832,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const state = ownerOf(asking);
       if (state === undefined) return;
       const target = requestTurn(asking);
-      if (target !== undefined && !target.turn.awaitingStart) {
-        if (asked.type === "permission") return yield* onPermissionAsked(asked.request);
-        return yield* onFormCreated(asked.form);
-      }
-      if (state.unsettled || state.active?.awaitingStart === true) {
-        yield* stopStaleRequest(
+      const live = target !== undefined && !target.turn.awaitingStart;
+      // A request left by an execution T3 gave up on is stopped, never answered from the rules.
+      if (!live && (state.unsettled || state.active?.awaitingStart === true)) {
+        return yield* stopStaleRequest(
           asking,
           asked.type === "permission"
             ? { type: "permission", id: asked.request.id }
             : { type: "form", id: asked.form.id },
         );
       }
+      if (asked.type === "permission" && (yield* settleAsk(asked.request))) return;
+      if (!live) return;
+      if (asked.type === "permission") return yield* onPermissionAsked(asked.request);
+      return yield* onFormCreated(asked.form);
     });
 
     const sessionOfEvent = (event: OpenCode2Client.OpenCode2StreamEvent) =>
@@ -3874,6 +3938,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const previous = currentScope;
       connection = next;
       client = next.client;
+      // A restarted server may have reloaded its agents; rules answered from a stale copy could allow a new deny.
+      agentRules.clear();
       nativeGoalSupport = supportsNativeGoals();
       session = {
         ...session,
@@ -4058,63 +4124,67 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       contextWindows.has(directoryOf(cwd)) ? Effect.void : readModels(directoryOf(cwd));
     yield* readModels(session.cwd);
 
-    const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
-    const pathsFor = Effect.fnUntraced(function* (
-      directory: string,
-      agents: ReadonlyArray<string>,
-    ) {
-      let known = agentRules.get(directory);
-      if (known === undefined) {
-        // A fresh server lists no agents for its first moments, like its models.
-        const listed = yield* client.agent.list({ location: { directory } }).pipe(
-          Effect.repeat({
-            until: (list) => list.data.length > 0,
-            schedule: Schedule.spaced("250 millis"),
-          }),
-          Effect.timeout("5 seconds"),
-          Effect.tapCause((cause) =>
-            Effect.logWarning(
-              "Could not list OpenCode agents; their path rules are skipped.",
-              cause,
-            ).pipe(Effect.annotateLogs({ errorTag: causeErrorTag(cause) })),
+    const hostWindows = (yield* HostProcess.Platform) === "win32";
+    // A server T3 did not start may run on another platform, so both of OpenCode's matchings must agree.
+    const decide = (action: string, resource: string, rules: ReadonlyArray<Rule>) => {
+      const effects = (connection.external ? [false, true] : [hostWindows]).map((windows) =>
+        effectOf(action, resource, rules, windows),
+      );
+      return effects.includes("deny") ? "deny" : effects.includes("ask") ? "ask" : "allow";
+    };
+    const agentsIn = Effect.fnUntraced(function* (directory: string, subagent?: string) {
+      const known = agentRules.get(directory);
+      // A subagent the cached list lacks was added since; its denies must not be skipped.
+      if (known !== undefined && (subagent === undefined || known.has(subagent))) return known;
+      // A fresh server lists no agents for its first moments, like its models.
+      const listed = yield* client.agent.list({ location: { directory } }).pipe(
+        Effect.repeat({
+          until: (list) => list.data.length > 0,
+          schedule: Schedule.spaced("250 millis"),
+        }),
+        Effect.timeout("5 seconds"),
+        Effect.tapCause((cause) =>
+          Effect.logWarning("Could not list OpenCode agents; their rules are skipped.", cause).pipe(
+            Effect.annotateLogs({ errorTag: causeErrorTag(cause) }),
           ),
-          Effect.option,
-        );
-        if (listed._tag === "None") return [];
-        known = new Map(
-          listed.value.data.map((agent) => [agent.id, agentPaths(agent.permissions)]),
-        );
-        agentRules.set(directory, known);
-      }
-      const paths = new Map<string, Rule>();
-      for (const agent of agents) {
-        for (const entry of known.get(agent) ?? []) {
-          paths.set(`${entry.action}\u0000${entry.resource}`, entry);
-        }
-      }
-      return [...paths.values()];
+        ),
+        Effect.option,
+      );
+      if (listed._tag === "None") return undefined;
+      const agents = new Map(listed.value.data.map((agent) => [agent.id, agent.permissions]));
+      agentRules.set(directory, agents);
+      return agents;
     });
 
     const rulesFor = Effect.fnUntraced(function* (
-      thread: Pick<ThreadState, "directory" | "agent" | "grants">,
+      thread: Pick<ThreadState, "directory" | "agent" | "grants"> & { readonly child: boolean },
       policy: RulesPolicy,
       appThreadId: string | null,
     ) {
       const plan = policy.interactionMode === "plan";
-      const paths =
-        policy.runtimeMode === "full-access" && !plan
-          ? []
-          : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
-      return sessionRules(
-        policy,
-        paths,
-        policy.runtimeMode === "full-access" ? [] : thread.grants,
-        appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
-      );
+      const full = policy.runtimeMode === "full-access";
+      const agents =
+        full && !plan
+          ? undefined
+          : yield* agentsIn(thread.directory, thread.child ? thread.agent : undefined);
+      const paths = new Map<string, Rule>();
+      for (const agent of plan ? [thread.agent, "plan"] : full ? [] : [thread.agent]) {
+        for (const entry of agentPaths(agents?.get(agent) ?? [])) {
+          paths.set(`${entry.action}\u0000${entry.resource}`, entry);
+        }
+      }
+      const rules = sessionRules(policy, [...paths.values()], full ? [] : thread.grants);
+      const mcp = mcpRules(appThreadId === null ? null : yield* mcpServerNameFor(appThreadId));
+      // T3 enforces `rules` then `mcp`; `written` is what the OpenCode session is given.
+      return { rules, mcp, written: [...inheritable(rules), ...mcp] };
     });
 
     const writeRules = Effect.fnUntraced(function* (state: ThreadState, policy: RulesPolicy) {
-      const rules = yield* rulesFor(state, policy, rootOf(state).providerThread.appThreadId);
+      const { written: rules } = yield* rulesFor(
+        { ...state, child: state.subagent !== undefined },
+        policy,
+        rootOf(state).providerThread.appThreadId,
+      );
       if (!sameRules(state.rules, rules)) {
         yield* client.session.update({
           sessionID: Session.ID.make(state.sessionId),
@@ -4123,6 +4193,60 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.rules = rules;
       }
       state.policy = policy;
+    });
+
+    /** Answers a request the thread's rules already decide; one they leave open goes to the user. */
+    const settleAsk = Effect.fnUntraced(function* (data: Permission.Request) {
+      const state = threads.get(data.sessionID);
+      const owner = ownerOf(data.sessionID);
+      if (owner === undefined) return false;
+      const root = rootOf(owner);
+      const child = state !== root;
+      const directory = state?.directory ?? owner.directory;
+      const agent = state?.agent ?? announced.get(data.sessionID)?.agent ?? "build";
+      const session = yield* rulesFor(
+        { directory, agent, grants: state?.grants ?? [], child },
+        root.policy,
+        root.providerThread.appThreadId,
+      ).pipe(Effect.option);
+      const rules = session._tag === "None" ? undefined : session.value;
+      const own = (yield* agentsIn(directory, child ? agent : undefined))?.get(agent);
+      // A subagent whose agent rules cannot be read is refused; a root's request goes to the user.
+      if (!child && (own === undefined || rules === undefined)) return false;
+      // A subagent's own denies outrank the mode here only, never in rules its own subagents would copy.
+      const effects =
+        own === undefined || rules === undefined
+          ? ["deny" as const]
+          : data.resources.map((resource) =>
+              child && decide(data.action, resource, own) === "deny"
+                ? "deny"
+                : decide(data.action, resource, [...own, ...rules.rules, ...rules.mcp]),
+            );
+      const denied = effects.includes("deny");
+      if (!denied && (effects.length === 0 || effects.includes("ask"))) return false;
+      // The rules OpenCode holds would have allowed this, so something of its own asked: the user decides.
+      const written = [...(own ?? []), ...(rules?.written ?? [])];
+      if (
+        !denied &&
+        data.resources.every((resource) => decide(data.action, resource, written) === "allow")
+      ) {
+        return false;
+      }
+      const delivered = yield* deliver(
+        client.permission
+          .reply({
+            sessionID: Session.ID.make(data.sessionID),
+            requestID: Permission.ID.make(data.id),
+            decision: denied ? "reject" : "once",
+            ...(denied
+              ? { message: `The ${agent} agent's permissions do not allow ${data.action} here.` }
+              : {}),
+          })
+          .pipe(Effect.catchTags(permissionGone)),
+      );
+      // An approval that did not arrive goes to the user; a refusal must not become approvable.
+      if (!delivered && denied) yield* abandonRequest(state ?? owner, "permission reply failed");
+      return delivered || denied;
     });
 
     const writeTitle = Effect.fnUntraced(function* (state: ThreadState, title: string) {
@@ -4800,8 +4924,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           const directory = threadInput.runtimePolicy.cwd ?? host.paths.cwd;
           const policy = threadInput.runtimePolicy;
-          const permissions = yield* rulesFor(
-            { directory, agent: "build", grants: [] },
+          const { written: permissions } = yield* rulesFor(
+            { directory, agent: "build", grants: [], child: false },
             policy,
             threadInput.threadId,
           );
