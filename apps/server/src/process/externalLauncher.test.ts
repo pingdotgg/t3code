@@ -105,36 +105,48 @@ const layerTest = (input: {
 };
 
 // macOS command lookup cannot search a Windows drive-letter PATH.
-it.effect.skipIf(windowsHost)(
-  "opens home-relative app bundles using the server home directory",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
-      yield* fs.writeFileString(path.join(bin, "open"), "#!/bin/sh\n");
-      yield* fs.chmod(path.join(bin, "open"), 0o755);
-      const spawned: ChildProcess.StandardCommand[] = [];
-      yield* Effect.gen(function* () {
-        const launcher = yield* ExternalLauncher.ExternalLauncher;
-        for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
-          yield* launcher.launchEditor({ editor: "file-manager", cwd });
-        }
-      }).pipe(
-        Effect.provide(
-          layerTest({
-            platform: "darwin",
-            env: { PATH: bin },
-            onSpawn: (command) => spawned.push(command),
-          }),
-        ),
-        Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
-      );
-      assert.deepEqual(
-        spawned.map((command) => command.args),
-        [["/Users/server/Applications/My App.app"], ["/Applications/My App.app"]],
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
+it.effect.skipIf(windowsHost)("opens home-relative targets using the server home directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
+    for (const name of ["open", "code", "idea"]) {
+      yield* fs.writeFileString(path.join(bin, name), "#!/bin/sh\n");
+      yield* fs.chmod(path.join(bin, name), 0o755);
+    }
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app", "/tmp/a:12"]) {
+        yield* launcher.launchEditor({ editor: "file-manager", cwd, position: { line: 5 } });
+      }
+      yield* launcher.launchEditor({ editor: "vscode", cwd: "~/notes/todo.md:3" });
+      yield* launcher.launchEditor({
+        editor: "idea",
+        cwd: "~/notes/todo.md:3",
+        projectRoot: "~/notes",
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { PATH: bin },
+          onSpawn: (command) => spawned.push(command),
+        }),
+      ),
+      Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
+    );
+    assert.deepEqual(
+      spawned.map((command) => command.args),
+      [
+        ["/Users/server/Applications/My App.app"],
+        ["/Applications/My App.app"],
+        ["/tmp/a:12"],
+        ["--goto", "/Users/server/notes/todo.md:3"],
+        ["/Users/server/notes", "--line", "3", "/Users/server/notes/todo.md"],
+      ],
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.skipIf(windowsHost)(
@@ -192,16 +204,48 @@ it.effect.skipIf(windowsHost)(
       const path = yield* Path.Path;
       const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
       const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-project-" });
-      const codePath = path.join(binDir, "code");
-      yield* fileSystem.writeFileString(codePath, "#!/bin/sh\n");
-      yield* fileSystem.chmod(codePath, 0o755);
+      for (const name of ["code", "zeditor", "idea"]) {
+        const executable = path.join(binDir, name);
+        yield* fileSystem.writeFileString(executable, "#!/bin/sh\n");
+        yield* fileSystem.chmod(executable, 0o755);
+      }
+      const colonProject = path.join(project, "build:2026");
+      yield* fileSystem.makeDirectory(colonProject);
       const file = `${path.join(project, "file.ts")}:3:7`;
+      const exactFile = path.join(project, "a:12");
+      yield* fileSystem.writeFileString(exactFile, "exact");
+      yield* fileSystem.makeDirectory(`${exactFile}:1:1`);
+      const positionedFile = path.join(project, "position.txt");
+      yield* fileSystem.writeFileString(positionedFile, "position");
+      yield* fileSystem.writeFileString(`${positionedFile}:7`, "collision");
 
       const spawned: ChildProcess.StandardCommand[] = [];
       yield* Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         yield* launcher.launchEditor({ editor: "vscode", cwd: project });
         yield* launcher.launchEditor({ editor: "vscode", cwd: file });
+        yield* launcher.launchEditor({ editor: "vscode", cwd: colonProject });
+        for (const position of [{}, { line: 5 }]) {
+          yield* launcher.launchEditor({ editor: "vscode", cwd: exactFile, position });
+        }
+
+        yield* launcher.launchEditor({ editor: "zed", cwd: exactFile, position: {} });
+        yield* launcher.launchEditor({
+          editor: "zed",
+          cwd: positionedFile,
+          position: { line: 5, column: 3 },
+        });
+        yield* launcher.launchEditor({ editor: "zed", cwd: positionedFile, position: { line: 7 } });
+        yield* launcher.launchEditor({
+          editor: "vscode",
+          cwd: `${project}/exponent:1e3`,
+          position: { line: 5 },
+        });
+        yield* launcher.launchEditor({
+          editor: "idea",
+          cwd: exactFile,
+          position: { line: 5, column: 3 },
+        });
       }).pipe(
         Effect.provide(
           layerTest({
@@ -218,6 +262,14 @@ it.effect.skipIf(windowsHost)(
         [
           ["--new-window", project],
           ["--goto", file],
+          ["--new-window", colonProject],
+          [exactFile],
+          [exactFile],
+          [exactFile],
+          [`${positionedFile}:5:3`],
+          [positionedFile],
+          [`${project}/exponent:1e3`],
+          ["--line", "5", "--column", "2", exactFile],
         ],
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -296,6 +348,69 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// Windows drive letters cannot resolve the POSIX xdg stubs.
+it.effect.skipIf(windowsHost)(
+  "a Linux server without a display offers and opens the file manager on the desktop session's display",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      for (const name of ["xdg-open", "xdg-mime"]) {
+        const filePath = path.join(binDir, name);
+        yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+        yield* fileSystem.chmod(filePath, 0o755);
+      }
+
+      const fileManager = (sessionEnv: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          const spawned: ChildProcess.StandardCommand[] = [];
+          const result = yield* Effect.gen(function* () {
+            const launcher = yield* ExternalLauncher.ExternalLauncher;
+            const editors = yield* launcher.resolveAvailableEditors();
+            const kind = yield* launcher.resolveFileManagerRevealKind();
+            const opened = yield* launcher
+              .launchEditor({ editor: "file-manager", cwd: "/workspace" })
+              .pipe(Effect.exit);
+            return { offered: editors.includes("file-manager"), kind, opened };
+          }).pipe(
+            Effect.provide(
+              layerTest({
+                platform: "linux",
+                env: { PATH: binDir },
+                onSpawn: (command) => spawned.push(command),
+                spawnResult: (command) =>
+                  command.command === "busctl"
+                    ? { stdout: JSON.stringify({ type: "as", data: sessionEnv }) }
+                    : command.command === "xdg-mime"
+                      ? { stdout: "org.kde.dolphin.desktop\n" }
+                      : undefined,
+              }),
+            ),
+            Effect.provideService(HostProcess.Environment, { PATH: binDir }),
+          );
+          const open = spawned.find((command) => command.command === "xdg-open");
+          return { ...result, open: open && { args: open.args, env: open.options.env } };
+        });
+
+      const session = yield* fileManager(["DISPLAY=:0", "HOME=/home/user"]);
+      assert.equal(session.offered, true);
+      assert.equal(session.kind, "files");
+      assert.equal(Exit.isSuccess(session.opened), true);
+      assert.deepEqual(session.open, {
+        args: ["/workspace"],
+        env: { PATH: binDir, DISPLAY: ":0" },
+      });
+
+      // No one is logged in to a desktop, so there is no screen to open it on.
+      const headless = yield* fileManager(["HOME=/home/user"]);
+      assert.equal(headless.offered, false);
+      assert.equal(headless.kind, undefined);
+      assert.equal(Exit.isFailure(headless.opened), true);
+      assert.equal(headless.open, undefined);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("launches an installed editor with platform-safe arguments", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -337,6 +452,39 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
     assert.equal(spawned.options.shell, true);
     assert.equal(spawned.options.detached, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const wslpathSpawner = (out: string | undefined) =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        if (!ChildProcess.isStandardCommand(command)) {
+          throw new Error("Expected a standard command");
+        }
+        assert.equal(command.command, "wslpath");
+        return makeMockDetachedHandle(
+          out === undefined ? { exitCode: 1 } : { exitCode: 0, stdout: `${out}\n` },
+        );
+      }),
+    ),
+  );
+
+it.effect.each([
+  // wslpath is mount-aware: a drive remapped in /etc/wsl.conf keeps its real letter.
+  { target: "/mnt/d/project", wslpath: "E:\\project", expected: "E:\\project" },
+  // wslpath missing or failing falls back to the hand-built UNC path.
+  {
+    target: "/home/user/repo",
+    wslpath: undefined,
+    expected: "\\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\repo",
+  },
+  { target: "/", wslpath: undefined, expected: "\\\\wsl.localhost\\Ubuntu-24.04" },
+])("resolveWslFileManagerPath resolves $target to $expected", ({ target, wslpath, expected }) =>
+  Effect.gen(function* () {
+    const result = yield* ExternalLauncher.resolveWslFileManagerPath(target, "Ubuntu-24.04");
+    assert.equal(result, expected);
+  }).pipe(Effect.provide(wslpathSpawner(wslpath))),
 );
 
 it.live.skipIf(!windowsHost)("opens Windows folders through the default shell handler", () =>
@@ -792,17 +940,32 @@ it.effect.skipIf(windowsHost)("does not offer the OpenZFS zed daemon as Zed on L
     );
     yield* fs.chmod(zfsZed, 0o755);
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
-    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: binDir }).pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(Path.Path, withSystemBin(path, systemBin)),
-    );
-    assert.deepEqual(yield* resolve, Option.none());
+    const laterBin = path.join(home, "later-bin");
+    const resolveOn = (platform: NodeJS.Platform) =>
+      resolveEditorCommand(editor, { HOME: home, PATH: `${binDir}:${laterBin}` }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(Path.Path, withSystemBin(path, systemBin)),
+      );
+    assert.deepEqual(yield* resolveOn("linux"), Option.none());
+    assert.deepEqual(yield* resolveOn("darwin"), Option.none());
 
     const zedEditor = path.join(home, ".local/bin/zed");
     yield* fs.makeDirectory(path.dirname(zedEditor), { recursive: true });
     yield* fs.writeFileString(zedEditor, "#!/bin/sh\necho 'Zed 0.200.0'\n");
     yield* fs.chmod(zedEditor, 0o755);
-    assert.deepEqual(yield* resolve, Option.some({ command: zedEditor, baseArgs: [] }));
+    assert.deepEqual(yield* resolveOn("linux"), Option.some({ command: zedEditor, baseArgs: [] }));
+
+    yield* fs.remove(zedEditor);
+    const laterZed = path.join(laterBin, "zed");
+    yield* fs.makeDirectory(laterBin, { recursive: true });
+    yield* fs.writeFileString(laterZed, "#!/bin/sh\necho 'Zed 0.200.0'\n");
+    yield* fs.chmod(laterZed, 0o755);
+    for (const platform of ["linux", "darwin"] as const) {
+      assert.deepEqual(
+        yield* resolveOn(platform),
+        Option.some({ command: laterZed, baseArgs: [] }),
+      );
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -825,7 +988,7 @@ it.effect.skipIf(windowsHost)("does not open Zed with the OpenZFS zed daemon on 
       Effect.provide(
         layerTest({
           platform: "linux",
-          env: { HOME: home, PATH: binDir },
+          env: { HOME: home, PATH: binDir, DISPLAY: ":0" },
           path: withSystemBin(path, systemBin),
           onSpawn: (command) => spawned.push(command),
           spawnResult: (command) => (command.args[0] === "--version" ? { exitCode: 1 } : undefined),
