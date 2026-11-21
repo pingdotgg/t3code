@@ -1457,10 +1457,6 @@ export function createServerEnvironmentAtoms<R, E>(
     label: "environment-data:server:workflows:live",
     tag: WS_METHODS.workflowsSubscribe,
   });
-  const workflowCounts = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-    label: "environment-data:server:workflows:counts",
-    tag: WS_METHODS.workflowsCounts,
-  });
   const liveWorkflowSnapshot = (environmentId: EnvironmentId) => {
     const live = workflowsLive({ environmentId, input: {} });
     return (get: Atom.AtomContext) => Option.getOrUndefined(AsyncResult.value(get(live)));
@@ -1474,18 +1470,6 @@ export function createServerEnvironmentAtoms<R, E>(
     return Atom.make((get) =>
       sources.map(({ environmentId, atom }) => ({ environmentId, result: get(atom) })),
     ).pipe(Atom.withLabel(`environment-data:server:workflows:live-across:${environmentIdsKey}`));
-  });
-  const workflowCountsAcross = Atom.family((environmentIdsKey: string) => {
-    const sources = (JSON.parse(environmentIdsKey) as EnvironmentId[]).map((environmentId) =>
-      workflowCounts({ environmentId, input: {} }),
-    );
-    return Atom.make((get) => {
-      const counts = sources.flatMap((atom) => Option.toArray(AsyncResult.value(get(atom))));
-      return {
-        needsYou: counts.reduce((sum, count) => sum + count.needsYou, 0),
-        total: counts.reduce((sum, count) => sum + count.total, 0),
-      };
-    }).pipe(Atom.withLabel(`environment-data:server:workflows:counts-across:${environmentIdsKey}`));
   });
   // One change of a run or file at a time per target, so a double click does not act twice.
   const workflowRunConcurrency = {
@@ -1647,8 +1631,6 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     workflowsLive,
     workflowsLiveAcross,
-    workflowCounts,
-    workflowCountsAcross,
     workflowRun: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:workflows:run",
       tag: WS_METHODS.workflowsGet,

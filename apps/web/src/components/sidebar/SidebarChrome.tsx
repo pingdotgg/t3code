@@ -1,10 +1,4 @@
-import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  ChartNoAxesColumnIcon,
-  SettingsIcon,
-  WorkflowIcon,
-} from "lucide-react";
+import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
@@ -18,13 +12,9 @@ import {
   useCanNavigateHistory,
   type HistoryDirection,
 } from "../../navigationHistory";
-import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
+import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
-import {
-  useConnectedEnvironmentIds,
-  useIssuesSupported,
-  usePullRequestsSupported,
-} from "../../state/environments";
+import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -213,40 +203,22 @@ function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
 function SidebarUtilityItem({
   icon,
   label,
-  count = 0,
   onClick,
 }: {
   icon: ReactNode;
   label: string;
-  /** How many things behind this button wait on the user. */
-  count?: number;
   onClick: () => void;
 }) {
-  const gt = useGT();
   return (
-    <SidebarMenuItem className="relative shrink-0">
+    <SidebarMenuItem className="shrink-0">
       <Tooltip>
         <TooltipTrigger
           render={
-            <SidebarMenuButton
-              aria-label={
-                count > 0 ? gt("{label}, {count} waiting on you", { label, count }) : label
-              }
-              onClick={onClick}
-              size="icon"
-            >
+            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
               {icon}
             </SidebarMenuButton>
           }
         />
-        {count > 0 ? (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute -end-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-3xs leading-none font-medium text-primary-foreground tabular-nums"
-          >
-            {count > 9 ? "9+" : count}
-          </span>
-        ) : null}
         <TooltipPopup side="top">{label}</TooltipPopup>
       </Tooltip>
     </SidebarMenuItem>
@@ -263,16 +235,6 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   });
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
-  const connectedIds = useConnectedEnvironmentIds();
-  // Counts only, from every connected server: the button is there where workflows run, and says
-  // when one waits. The command palette opens the page from anywhere.
-  const workflowCounts = useAtomValue(
-    serverEnvironment.workflowCountsAcross(JSON.stringify(connectedIds.toSorted())),
-  );
-  const handleWorkflowsClick = () => {
-    closeMobileSidebar();
-    void navigate({ to: "/workflows" });
-  };
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -336,14 +298,6 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               icon={<IssueGlyph.issue />}
               label={gt("Issues", { $context: "sidebar link to the list of issues" })}
               onClick={handleIssuesClick}
-            />
-          ) : null}
-          {workflowCounts.total > 0 ? (
-            <SidebarUtilityItem
-              icon={<WorkflowIcon />}
-              label={gt("Workflows")}
-              count={workflowCounts.needsYou}
-              onClick={handleWorkflowsClick}
             />
           ) : null}
           <SidebarUtilityItem
