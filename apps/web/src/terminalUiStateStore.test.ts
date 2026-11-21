@@ -7,6 +7,7 @@ import {
   selectThreadTerminalUiState,
   useTerminalUiStateStore,
 } from "./terminalUiStateStore";
+import { paneLayout } from "./terminalPaneLayout";
 import { DEFAULT_THREAD_TERMINAL_ID } from "./types";
 
 const THREAD_ID = ThreadId.make("thread-1");
@@ -50,6 +51,11 @@ describe("terminalUiStateStore actions", () => {
       {
         id: "group-terminal-2",
         terminalIds: ["terminal-2", "terminal-3", "terminal-4", "terminal-5"],
+        layout: {
+          kind: "split",
+          direction: "horizontal",
+          children: ["terminal-2", "terminal-3", "terminal-4", "terminal-5"].map(paneLayout),
+        },
       },
     ]);
   });
@@ -73,16 +79,18 @@ describe("terminalUiStateStore actions", () => {
     ).toEqual(["env-b-terminal"]);
   });
 
-  it("drops persisted entries whose thread keys are not valid scoped keys", () => {
+  it("drops invalid thread keys and upgrades legacy split groups when migrating", () => {
     const migrated = migratePersistedTerminalUiStateStoreState(
       {
         terminalStateByThreadKey: {
           [scopedThreadKey(THREAD_REF)]: {
             terminalOpen: true,
             terminalHeight: 320,
-            terminalIds: ["term-1"],
+            terminalIds: ["term-1", "term-2"],
             activeTerminalId: "term-1",
-            terminalGroups: [{ id: "group-term-1", terminalIds: ["term-1"] }],
+            terminalGroups: [
+              { id: "group-term-1", terminalIds: ["term-1", "term-2"], splitDirection: "vertical" },
+            ],
             activeTerminalGroupId: "group-term-1",
           },
           "legacy-thread-id": {
@@ -103,9 +111,19 @@ describe("terminalUiStateStore actions", () => {
         [scopedThreadKey(THREAD_REF)]: {
           terminalOpen: true,
           terminalHeight: 320,
-          terminalIds: ["term-1"],
+          terminalIds: ["term-1", "term-2"],
           activeTerminalId: "term-1",
-          terminalGroups: [{ id: "group-term-1", terminalIds: ["term-1"] }],
+          terminalGroups: [
+            {
+              id: "group-term-1",
+              terminalIds: ["term-1", "term-2"],
+              layout: {
+                kind: "split",
+                direction: "vertical",
+                children: [paneLayout("term-1"), paneLayout("term-2")],
+              },
+            },
+          ],
           activeTerminalGroupId: "group-term-1",
         },
       },
@@ -141,7 +159,7 @@ describe("terminalUiStateStore actions", () => {
     expect(terminalUiState.activeTerminalId).toBe("terminal-2");
     expect(terminalUiState.terminalIds).toEqual(["terminal-2"]);
     expect(terminalUiState.terminalGroups).toEqual([
-      { id: "group-terminal-2", terminalIds: ["terminal-2"] },
+      { id: "group-terminal-2", terminalIds: ["terminal-2"], layout: paneLayout("terminal-2") },
     ]);
   });
 
@@ -285,8 +303,16 @@ describe("terminalUiStateStore actions", () => {
     store.reconcileTerminalIds(THREAD_REF, ["first", "elsewhere", "pending"]);
 
     expect(layout().terminalGroups).toEqual([
-      { id: "group-first", terminalIds: ["first", "pending"], splitDirection: "vertical" },
-      { id: "group-elsewhere", terminalIds: ["elsewhere"] },
+      {
+        id: "group-first",
+        terminalIds: ["first", "pending"],
+        layout: {
+          kind: "split",
+          direction: "vertical",
+          children: [paneLayout("first"), paneLayout("pending")],
+        },
+      },
+      { id: "group-elsewhere", terminalIds: ["elsewhere"], layout: paneLayout("elsewhere") },
     ]);
     expect(layout().activeTerminalId).toBe("pending");
   });
