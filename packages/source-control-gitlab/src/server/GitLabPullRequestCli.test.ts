@@ -2495,28 +2495,63 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads who has access to the project and who is already on the merge request", () =>
-    Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ reviewers: [reviewer] }))))
-        .mockReturnValueOnce(
-          Effect.succeed(output(JSON.stringify([author, reviewer, { id: 9, username: "hubot" }]))),
-        );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+  it.effect(
+    "reads who has access, who is already on the merge request, and how many it keeps",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute
+          .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ reviewers: [reviewer] }))))
+          .mockReturnValueOnce(
+            Effect.succeed(
+              output(JSON.stringify([author, reviewer, { id: 9, username: "hubot" }])),
+            ),
+          )
+          .mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                JSON.stringify({
+                  data: { project: { mergeRequest: { allowsMultipleReviewers: false } } },
+                }),
+              ),
+            ),
+          );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const list = yield* cli.listReviewerCandidates({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-      });
+        const list = yield* cli.listReviewerCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
 
-      expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100");
-      expect(list.candidates.map((candidate) => [candidate.id, candidate.isRequested])).toEqual([
-        ["5", true],
-        ["9", false],
-      ]);
-      assert.isFalse(list.truncated);
-    }),
+        expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100");
+        expect(list.candidates.map((candidate) => [candidate.id, candidate.isRequested])).toEqual([
+          ["5", true],
+          ["9", false],
+        ]);
+        assert.isFalse(list.truncated);
+        assert.isFalse(list.multiple);
+
+        // GitLab before 16.8 rejects the field; the list still loads and keeps many reviewers.
+        mockedExecute
+          .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({}))))
+          .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))))
+          .mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                JSON.stringify({
+                  errors: [{ message: "Field 'allowsMultipleReviewers' doesn't exist" }],
+                }),
+              ),
+            ),
+          );
+        const olderHost = yield* cli.listReviewerCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
+        expect(olderHost.candidates.map((candidate) => candidate.id)).toEqual(["5"]);
+        assert.isTrue(olderHost.multiple);
+      }),
   );
 
   it.effect(
@@ -2527,7 +2562,8 @@ layer("GitLabPullRequestCli.layer", (it) => {
           .mockReturnValueOnce(
             Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 42, username: "late" }] }))),
           )
-          .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+          .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))))
+          .mockReturnValueOnce(Effect.succeed(output("{}")));
         const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
         const list = yield* cli.listReviewerCandidates({
@@ -2555,7 +2591,8 @@ layer("GitLabPullRequestCli.layer", (it) => {
         .mockReturnValueOnce(
           Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 5, username: "" }] }))),
         )
-        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))))
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
       const list = yield* cli.listReviewerCandidates({
@@ -2592,6 +2629,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         [reviewer.username, true],
       ]);
       expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100&search=octo%20cat");
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
 

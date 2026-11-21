@@ -19,6 +19,7 @@ import {
   isSelected,
   changeBatches,
   selectionChanges,
+  toggleOnlySelection,
   toggleSelection,
 } from "@t3tools/client-runtime/pull-request-selection";
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
@@ -161,6 +162,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const listCandidates = pr?.capabilities.reviewers.listCandidates === true;
   // Loaded rows first: they carry the request state mutations update.
   const latest = [...(result.data?.candidates ?? []), ...(searchResult.data?.candidates ?? [])];
+  const single = result.data?.multiple === false;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- picks are sent when the sheet leaves the navigation stack, however it is dismissed
   useEffect(
     () =>
@@ -235,7 +237,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
           ref={listRef}
           data={candidates}
           keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
-          extraData={{ allowed, draft }}
+          extraData={{ allowed, draft, single }}
           estimatedItemSize={64}
           recycleItems
           renderScrollComponent={NativeScrollView}
@@ -280,7 +282,21 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                 accessibilityState={{ disabled: !allowed }}
                 disabled={!allowed}
                 onPress={() =>
-                  setDraft((current) => toggleSelection(current, id, item, item.isRequested))
+                  setDraft((current) =>
+                    single
+                      ? toggleOnlySelection(
+                          current,
+                          id,
+                          item,
+                          item.isRequested,
+                          latest.map((entry) => ({
+                            key: `${entry.kind}:${entry.id}`,
+                            item: entry,
+                            hostSelected: entry.isRequested,
+                          })),
+                        )
+                      : toggleSelection(current, id, item, item.isRequested),
+                  )
                 }
                 className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
               >

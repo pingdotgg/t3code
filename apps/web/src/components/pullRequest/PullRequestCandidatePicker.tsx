@@ -33,6 +33,7 @@ export function PullRequestCandidatePicker<T>({
   truncatedLabel,
   candidateKey,
   onSelect,
+  disabled = false,
   children,
 }: {
   icon: ReactNode;
@@ -54,6 +55,7 @@ export function PullRequestCandidatePicker<T>({
   truncatedLabel: string;
   candidateKey: (candidate: T) => string;
   onSelect: (candidate: T) => void;
+  disabled?: boolean;
   children: (candidate: T) => ReactNode;
 }) {
   if (!allowed) {
@@ -121,7 +123,13 @@ export function PullRequestCandidatePicker<T>({
             </p>
           ) : (
             candidates.map((candidate, index) => (
-              <ComboboxItem key={keys[index]} hideIndicator index={index} value={keys[index]}>
+              <ComboboxItem
+                key={keys[index]}
+                hideIndicator
+                index={index}
+                value={keys[index]}
+                disabled={disabled}
+              >
                 {children(candidate)}
               </ComboboxItem>
             ))
