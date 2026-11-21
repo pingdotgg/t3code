@@ -1947,6 +1947,11 @@ it.effect("a wait on a pull request ends when its checks have, and says how", ()
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it("hooks of different workflows never share an id", () => {
+  assert.notEqual(Workflows.hookId("a.b", "c"), Workflows.hookId("a", "b.c"));
+  assert.equal(Workflows.hookId("inbound", "push"), "wf-inbound.push");
+});
+
 it.effect("a request to a hook starts a run, its retry is the same run, and a bad token none", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();

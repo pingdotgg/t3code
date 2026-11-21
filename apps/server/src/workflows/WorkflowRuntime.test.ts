@@ -138,6 +138,11 @@ it.effect(
           'T3.workflow("late", { version: 1, payload: T3.Tick, triggers: [T3.daily("9am")] }, () => Effect.void);\n',
         );
         assert.include(late.problems[0]?.message ?? "", "24-hour time");
+        const twoHooks = yield* definitions.save(
+          "hooks.ts",
+          'T3.workflow("hooks", { version: 1, payload: T3.WebhookRequest, triggers: [T3.webhook("in"), T3.webhook("in")] }, () => Effect.void);\n',
+        );
+        assert.include(twoHooks.problems[0]?.message ?? "", 'two hooks named "in"');
         assert.include((yield* definitions.remove("hold.ts")).problems[0]?.message ?? "", "hold@1");
         assert.deepStrictEqual(
           (yield* definitions.read).files.map((file) => file.name),

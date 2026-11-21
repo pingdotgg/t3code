@@ -46,7 +46,7 @@ import {
   WorkflowForge,
 } from "./WorkflowForge.ts";
 import {
-  HOOK_PREFIX,
+  hookId as hookIdOf,
   WorkflowInputError,
   WorkflowNotRegisteredError,
   WorkflowRunNotFoundError,
@@ -443,7 +443,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       ),
     ),
     Effect.fnUntraced(function* ({ definition, trigger }) {
-      const hookId = `${HOOK_PREFIX}${definition.name}.${trigger.name}`;
+      const hookId = hookIdOf(definition.name, trigger.name);
       const token = yield* store.hookToken(hookId, yield* random.uuidV4());
       return {
         hookId,
