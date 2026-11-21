@@ -12,7 +12,7 @@
 │  │ conn-app (GPUI UI thread — Metal 120fps, no Tokio on main thread)   │  │
 │  │  • Window chrome + AppKit 44px traffic lights + native vibrancy     │  │
 │  │  • Workspace rail + Thread sidebar + 44px transparent header        │  │
-│  │  • Chat timeline (Markdown, Phosphor icons, work log, approvals)    │  │
+│  │  • Chat timeline (Markdown, superheroicons, work log, approvals)    │  │
 │  │  • Composer + BranchToolbar + Cmd+K palette + Settings modal        │  │
 │  │  • Right panel: Files, Diff, Terminal (alacritty_terminal), Browser │  │
 │  └───────────────▲────────────────────────────────────┬────────────────┘  │

@@ -13,6 +13,7 @@ mod palette;
 mod settings;
 mod shell;
 mod sidebar;
+mod superhero;
 mod theme;
 
 use app::ConnApp;
@@ -41,24 +42,6 @@ const MACOS_TRAFFIC_LIGHT_Y_PX: f32 = 15.0;
 
 mod chat;
 
-/// Phosphor (timeline icons, `phosphor/...`) layered over gpui-kit's Lucide set (`icons/...`).
-struct AppAssets;
-
-impl gpui_kit::AssetSource for AppAssets {
-    fn load(&self, path: &str) -> gpui_kit::Result<Option<std::borrow::Cow<'static, [u8]>>> {
-        if let Some(bytes) = chat::phosphor_assets().load(path)? {
-            return Ok(Some(bytes));
-        }
-        gpui_kit::assets::AllAssets.load(path)
-    }
-
-    fn list(&self, path: &str) -> gpui_kit::Result<Vec<gpui_kit::SharedString>> {
-        let mut out = chat::phosphor_assets().list(path)?;
-        out.extend(gpui_kit::assets::AllAssets.list(path)?);
-        Ok(out)
-    }
-}
-
 mod panels;
 
 fn main() {
@@ -67,7 +50,7 @@ fn main() {
         std::process::exit(code);
     }
 
-    let application = gpui_kit::application().with_assets(AppAssets);
+    let application = gpui_kit::application().with_assets(superhero::AppAssets);
     application.run(|cx| {
         gpui_kit::init(cx);
         colour_space::install(cx);

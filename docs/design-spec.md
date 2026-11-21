@@ -75,8 +75,7 @@ Every shell surface and divider is computed in sRGB via `color-mix(in srgb, A p%
 - **Fonts:** System/Inter sans everywhere except code & terminal output (JetBrains Mono / monospace). Versions, timestamps, and metadata stay sans with `tabular-nums`.
 - **Headings:** Normal sentence case, foreground color. **No uppercase section headers.**
 - **Icons:**
-  - **Chrome, sidebar, headers, panels, settings:** Lucide icons.
-  - **Inside thread chat timeline & work log:** Phosphor icons (solid weight by default; bold for carets and line glyphs whose solid form adds a box). See `../conn/apps/web/src/icons/lucide-react.ts` for the exact pairing table.
+  - **Everywhere (chrome, sidebar, headers, panels, settings, timeline, work log):** superheroicons 16/solid (`~/apps/superheroicons/consumers/conn/final/16/solid`). The library's `manifest.json` maps each Lucide name Conn used to its concept; `crates/conn-app/src/superhero.rs` applies it. This replaces the earlier Lucide (chrome) + Phosphor (timeline) split.
 
 ---
 
@@ -101,7 +100,7 @@ Every shell surface and divider is computed in sRGB via `color-mix(in srgb, A p%
 ├─[Rail]─┬──[Thread Sidebar]──────────┼──[Chat Card]────────┬──[Right Panel]─┤
 │  [W1]  │  + New thread              │                     │ [Files|Diff|   │
 │  [W2]  │  Projects / Threads        │  Messages timeline  │  Term|Browser] │
-│  [W3]  │   • project-a              │  (Phosphor icons,   ├────────────────┤
+│  [W3]  │   • project-a              │  (superheroicons,   ├────────────────┤
 │        │     - Active thread        │   Markdown, tools,  │ ToolbarGroup   │
 │        │     - Completed thread     │   status rows)      ├────────┬───────┤
 │        │   • project-b              │                     │ Tree / │ View /│

@@ -25,12 +25,6 @@ use self::color::{hsla, hsla_alpha};
 use self::composer::{COMPOSER_MAX_LINES, COMPOSER_MIN_LINES, COMPOSER_PLACEHOLDER};
 use self::spinner::TurningArc;
 
-#[expect(
-    unused_imports,
-    reason = "re-exported for the orchestrator to register Phosphor assets"
-)]
-pub(crate) use self::icons::{PhosphorAssets, phosphor_assets};
-
 /// Centered chat content lane width matching Conn's `--chat-content-max-width` (`46rem`).
 const CHAT_CONTENT_MAX_WIDTH_PX: f32 = 736.0;
 /// Horizontal lane padding matching `.chat-composer-lane` / `.messages-timeline-scroll` (`3rem`).

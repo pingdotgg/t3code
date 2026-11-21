@@ -21,6 +21,8 @@ Keep this file accurate. Update it whenever a milestone lands, a proof passes, o
 
 ## Known decisions & open notes
 
+- **Icons:** superheroicons 16/solid everywhere (Nick, 2026-11-21), copied with provenance in `crates/conn-app/assets/icons/superhero/`; Lucide/Phosphor removed. A test checks every icon the app uses resolves to a drawing. Captures: `.shots/icons/`.
+
 - **Build host:** Approved to build, test, and run locally on this Mac for overnight/dedicated runs (keep all worktrees, build output, and disposable `--state-dir` isolated).
 - **Contract sharing:** `conn-wire` and `conn-contract` are path dependencies on `../conn-server/crates/`.
 - **GPUI version:** Pinned to `gpui-kit = "=0.9.0"` (matching `.refs/threadbear`). If macOS polish requires vendoring `gpui-component`, `gpui-base`, or `gpui-pre`, follow `.refs/threadbear/desktop/Cargo.toml`'s `[patch.crates-io]` pattern and record each patch here.
