@@ -320,6 +320,96 @@ describe("SchemaBinary", () => {
     })
   })
 
+  describe("large byte payloads", () => {
+    const payload = (length: number, seed = 1) => new Uint8Array(length).map((_, i) => (i * 31 + seed) & 0xFF)
+    const sized = (...chunks: ReadonlyArray<Uint8Array>) => {
+      const body = concat(...chunks)
+      return concat(Uint8Array.from(uvarint(body.length)), body)
+    }
+    const field = (tag: number, ...chunks: ReadonlyArray<Uint8Array>) => concat(Uint8Array.of(tag), sized(...chunks))
+    const Envelope = Schema.Struct({
+      head: Schema.Uint8Array.pipe(SchemaBinary.fieldId(1)),
+      body: Schema.Struct({
+        data: Schema.Uint8Array.pipe(SchemaBinary.fieldId(1)),
+        name: Schema.String.pipe(SchemaBinary.fieldId(2))
+      }).pipe(SchemaBinary.fieldId(2))
+    })
+    // The name outgrows the output buffer by itself.
+    const envelope = { head: payload(20_000), body: { data: payload(300_000, 7), name: "n".repeat(70_000) } }
+    const Message = Schema.Struct({
+      data: Schema.Uint8Array.pipe(SchemaBinary.fieldId(1)),
+      n: Schema.Number.pipe(SchemaBinary.fieldId(2))
+    })
+
+    it("writes large nested payloads with minimal length prefixes", () => {
+      assert.deepStrictEqual(
+        encode(Envelope, envelope),
+        sized(
+          Uint8Array.of(0x20),
+          field(8, envelope.head),
+          field(16, field(8, envelope.body.data), field(16, new TextEncoder().encode(envelope.body.name)))
+        )
+      )
+    })
+
+    it("batches row runs that end in large payloads", () => {
+      const Rows = Schema.Array(Schema.Struct({ id: Schema.Number, data: Schema.Uint8Array }))
+      const values = [
+        [{ id: 1, data: payload(10) }, { id: 2, data: payload(300_000) }],
+        [{ id: 3, data: payload(40_000, 3) }, { id: 4, data: payload(10, 5) }]
+      ]
+      const parser = SchemaBinary.parser(Rows)
+      assert.deepStrictEqual(parser.feedSync(SchemaBinary.encodeManyUnknownSync(Rows)(values)), values)
+      parser.endSync()
+    })
+
+    it("leaves later and earlier frames intact after a failure behind a large payload", () => {
+      const encodeEnvelope = Schema.encodeUnknownSync(SchemaBinary.toCodec(Envelope))
+      const earlier = encode(Schema.String, "earlier")
+      const earlierBytes = earlier.slice()
+      const expected = encodeEnvelope(envelope).slice()
+      assert.throws(() => encodeEnvelope({ ...envelope, body: { ...envelope.body, name: 1 } }))
+      assert.deepStrictEqual(encodeEnvelope(envelope), expected)
+      assert.deepStrictEqual(earlier, earlierBytes)
+    })
+
+    it("reads large payloads when the encode call returns", () => {
+      const data = new Uint8Array(20_000).fill(3)
+      // The getter runs after `data` has been visited.
+      const mutating = (payload: Uint8Array, value: number) => ({
+        data: payload,
+        get n() {
+          data[0] = value
+          return 1
+        }
+      })
+      const codec = SchemaBinary.toCodec(Message)
+      const bytes = Schema.encodeUnknownSync(codec)(mutating(data, 9))
+      assert.strictEqual(Schema.decodeUnknownSync(codec)(bytes).data[0], 9)
+
+      // A later frame of the same call still reaches an earlier frame's payload.
+      const batch = SchemaBinary.encoder(Message).encodeMany([{ data, n: 1 }, mutating(new Uint8Array(4), 5)])
+      assert.strictEqual(SchemaBinary.parser(Message).feedSync(batch)[0].data[0], 5)
+    })
+
+    it("fails with a schema error when a large payload's buffer shrinks or detaches during the encode", () => {
+      const encodeMessage = Schema.encodeUnknownSync(SchemaBinary.toCodec(Message))
+      // The getter runs after `data` has been visited.
+      const encodeChanging = (change: (buffer: ArrayBuffer) => void) => {
+        const buffer = new ArrayBuffer(20_000, { maxByteLength: 20_000 })
+        return encodeMessage({
+          data: new Uint8Array(buffer),
+          get n() {
+            change(buffer)
+            return 1
+          }
+        })
+      }
+      schemaError(() => encodeChanging((buffer) => buffer.resize(17_000)))
+      schemaError(() => encodeChanging((buffer) => structuredClone(buffer, { transfer: [buffer] })))
+    })
+  })
+
   describe("numbers", () => {
     it("encodes integral values as sign-magnitude varints", () => {
       assert.deepStrictEqual(Array.from(encode(Schema.Number, 0)), [2, 0x20, 0])
@@ -437,9 +527,12 @@ describe("SchemaBinary", () => {
     it("rejects non-number elements in uniform number arrays", () => {
       const codec = SchemaBinary.toCodec(Schema.Array(Schema.Number))
       for (const value of ["x", undefined, null, 1n]) {
-        const error = schemaError(() => Schema.encodeUnknownSync(codec)([1, value, 3] as any))
-        assert.include(error.message, "Expected a number")
-        assert.include(error.message, "at [1]")
+        // a leading Math.PI settles the run on f64 before value is reached
+        for (const first of [1, Math.PI]) {
+          const error = schemaError(() => Schema.encodeUnknownSync(codec)([first, value, 3] as any))
+          assert.include(error.message, "Expected a number")
+          assert.include(error.message, "at [1]")
+        }
       }
     })
 
@@ -1903,11 +1996,12 @@ describe("SchemaBinary", () => {
       )
     })
 
-    it("uses SchemaIssue for binary failures", () => {
-      const codec = SchemaBinary.toCodec(Schema.Boolean)
-      const error = schemaError(() => Schema.decodeUnknownSync(codec)(Uint8Array.of(2, 0x20, 2)))
-      assert.isTrue(SchemaIssue.isIssue(error.issue))
-      assert.match(error.message, /bool/)
+    it("reports the issue and path for binary failures", () => {
+      const codec = SchemaBinary.toCodec(Schema.Tuple([Schema.Boolean]))
+      const bytes = Schema.encodeSync(codec)([true]).slice()
+      bytes[bytes.length - 1] = 2
+      const error = schemaError(() => Schema.decodeUnknownSync(codec)(bytes))
+      assert.strictEqual(error.message, "Expected bool\n  at [0]")
     })
 
     it.effect("preserves the SchemaParser Issue and Schema SchemaError surfaces", () =>
