@@ -51,6 +51,7 @@ import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresen
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "./transportFailure.ts";
+import { loadMcpConfigCommand } from "./mcpConfigCommand.ts";
 import { cursorContextWindowTokens, cursorSdkModelSelection } from "./sdkModel.ts";
 import {
   appendCursorInvokedSkills,
@@ -215,11 +216,14 @@ export function cursorRuntimeAgentPolicy(
 
 export function cursorMcpServers(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
+  additional: Record<string, McpServerConfig> = {},
 ): Record<string, McpServerConfig> | undefined {
   if (session === undefined) {
-    return undefined;
+    const { "t3-code": _reserved, ...servers } = additional;
+    return Object.keys(servers).length === 0 ? undefined : servers;
   }
   return {
+    ...additional,
     "t3-code": {
       type: "http",
       url: session.endpoint,
@@ -318,9 +322,10 @@ export function makeCursorAgentOptions(input: {
   readonly threadId: ThreadId;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly platform: NodeJS.Platform;
+  readonly additionalMcpServers?: Record<string, McpServerConfig>;
 }): AgentOptions {
   const policy = cursorRuntimeAgentPolicy(input.runtimePolicy, input.platform);
-  const mcpServers = cursorMcpServers(input.mcpSession);
+  const mcpServers = cursorMcpServers(input.mcpSession, input.additionalMcpServers);
   return {
     model: cursorSdkModelSelection(input.modelSelection, input.models, input.sdkModels),
     name: `T3 Code ${input.threadId}`,
@@ -1041,6 +1046,7 @@ interface CursorLiveAgent {
   readonly nativeThreadId: string;
   readonly storeCwd: string;
   readonly session: CursorAgentSdk.CursorAgentSdkSession;
+  commandMcpServersWereActive: boolean;
 }
 
 export interface CursorAdapterV2Options {
@@ -2698,6 +2704,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
         };
 
+        const loadAdditionalMcpServers = (threadId: ThreadId, cwd: string | null) =>
+          loadMcpConfigCommand({ environment: adapterOptions.environment, cwd, threadId }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.mapError(
+              () =>
+                new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  detail: "Cursor MCP configuration command failed.",
+                }),
+            ),
+          );
         const resolveWorkspaceMcpServers = (cwd: string | null) =>
           cwd === null
             ? Effect.succeed({})
@@ -2721,6 +2738,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
           readonly agentId?: string;
           readonly storeCwd?: string | undefined;
+          readonly additionalMcpServers?: Record<string, McpServerConfig>;
         }) {
           const existing = yield* Ref.get(liveAgent);
           const cwd = openInput.runtimePolicy.cwd ?? process.cwd();
@@ -2744,7 +2762,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* existing.session.close.pipe(Effect.ignore);
             yield* Ref.set(liveAgent, null);
           }
+          const additionalMcpServers =
+            openInput.additionalMcpServers ??
+            (yield* loadAdditionalMcpServers(openInput.threadId, openInput.runtimePolicy.cwd));
           const options = makeCursorAgentOptions({
+            additionalMcpServers,
             ...(apiKey === undefined ? {} : { apiKey }),
             modelSelection: openInput.modelSelection,
             models: adapterOptions.getModels?.() ?? [],
@@ -2779,6 +2801,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             nativeThreadId: sdkSession.agentId,
             storeCwd,
             session: sdkSession,
+            commandMcpServersWereActive: Object.keys(additionalMcpServers).length > 0,
           } satisfies CursorLiveAgent;
           yield* Ref.set(liveAgent, next);
           return next;
@@ -2918,6 +2941,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               });
             }
             const agentId = nativeThreadId(turnInput.providerThread);
+            const additionalMcpServers = yield* loadAdditionalMcpServers(
+              turnInput.threadId,
+              turnInput.runtimePolicy.cwd,
+            );
             const agent = yield* openAgent({
               operation: "resume",
               agentId,
@@ -2925,9 +2952,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               threadId: turnInput.threadId,
               modelSelection: turnInput.modelSelection,
               runtimePolicy: turnInput.runtimePolicy,
+              additionalMcpServers,
             });
+            if (Object.keys(additionalMcpServers).length > 0)
+              agent.commandMcpServersWereActive = true;
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
-            const mcpServers = cursorMcpServers(mcpSession);
+            const mcpServers = cursorMcpServers(mcpSession, additionalMcpServers);
             const hasDeviceTools =
               mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
             const known = yield* Ref.get(told);
@@ -2985,7 +3015,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     }
                   : yield* resolveUserMessage(
                       turnInput,
-                      mcpServers,
+                      cursorMcpServers(mcpSession),
                       hasDeviceTools,
                       delivered,
                       dropped?.text,
@@ -3011,7 +3041,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     adapterOptions.getSdkModels?.() ?? [],
                   ),
                   mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-                  ...(Object.keys(turnMcpServers).length === 0
+                  ...(Object.keys(turnMcpServers).length === 0 && !agent.commandMcpServersWereActive
                     ? {}
                     : { mcpServers: turnMcpServers }),
                 },
@@ -3030,7 +3060,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             if (resume === undefined) {
               yield* Ref.set(told, {
                 agent: agent.nativeThreadId,
-                orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
+                orchestration: !compacted && (delivered.orchestration || mcpSession !== undefined),
                 device: !compacted && hasDeviceTools,
                 backgroundWait:
                   !compacted && (delivered.backgroundWait || mcpServers !== undefined),
@@ -3660,8 +3690,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
 });
 
 export type CursorAdapterV2DriverEnv =
-  | CursorAgentSdk.CursorAgentSdkRunner
   | ChildProcessSpawner.ChildProcessSpawner
+  | CursorAgentSdk.CursorAgentSdkRunner
   | FileSystem.FileSystem
   | Path.Path
   | IdAllocator.IdAllocatorV2
