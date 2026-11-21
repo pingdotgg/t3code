@@ -658,7 +658,7 @@ export function resolveChangesTotals(
   status: VcsStatusResult | null | undefined,
   branchPreview?: ReviewDiffPreviewSource | null,
 ): ChangesLineTotals | null {
-  if (branchPreview?.files) {
+  if (branchPreview?.files && !(branchPreview.patchesDeferred && branchPreview.truncated)) {
     let insertions = 0;
     let deletions = 0;
     for (const file of branchPreview.files) {

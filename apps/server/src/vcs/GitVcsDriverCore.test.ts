@@ -3744,14 +3744,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             ignoreWhitespace: false,
             metadataOnly: true,
           });
-          const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
-
           const source = preview.sources.find((source) => source.kind === "working-tree")!;
-          assert.isUndefined(source.patchesDeferred);
-          assert.isUndefined(source.files);
+          assert.isTrue(source.patchesDeferred);
+          assert.deepStrictEqual(
+            source.files?.map((file) => file.path),
+            ["README.md"],
+          );
           assert.isTrue(source.truncated);
-          assert.include(diff, "-# test");
-          assert.include(diff, "+# tracked change");
+          assert.isEmpty(source.diff);
         }),
     );
 
@@ -5279,12 +5279,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const preview = yield* driver.getReviewDiffPreview({ cwd, metadataOnly: true });
 
         const source = preview.sources.find((source) => source.kind === "working-tree")!;
-        assert.isUndefined(source.files);
-        assert.isUndefined(source.patchesDeferred);
+        assert.deepStrictEqual(
+          source.files?.map((file) => file.path),
+          ["README.md", "ordinary.txt"],
+        );
+        assert.isTrue(source.patchesDeferred);
         assert.isTrue(source.truncated);
-        assert.include(source.diff, "+# tracked change");
-        assert.include(source.diff, "b/ordinary.txt");
-        assert.notInclude(source.diff, "large.data");
+        assert.isEmpty(source.diff);
+
+        const perFile = yield* driver.getReviewDiffPreview({
+          cwd,
+          file: { path: "ordinary.txt", previousPath: null, sourceKind: "working-tree" },
+        });
+        assert.isFalse(perFile.sources[0]!.truncated);
+        assert.include(perFile.sources[0]!.diff, "+new");
+        assert.notInclude(perFile.sources[0]!.diff, "README.md");
+
+        const full = yield* driver.getReviewDiffPreview({ cwd, sourceKind: "working-tree" });
+        assert.isUndefined(full.sources[0]!.files);
+        assert.isTrue(full.sources[0]!.truncated);
+        assert.include(full.sources[0]!.diff, "+# tracked change");
+        assert.include(full.sources[0]!.diff, "b/ordinary.txt");
+        assert.notInclude(full.sources[0]!.diff, "large.data");
       }),
     );
 
