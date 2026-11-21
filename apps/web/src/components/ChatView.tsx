@@ -168,6 +168,7 @@ import {
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
+import { useWorkspaceRevision } from "../hooks/useWorkspaceRevision";
 import { DEFAULT_INTERACTION_MODE, type ChatMessage } from "../types";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useTheme } from "../hooks/useTheme";
@@ -1708,11 +1709,16 @@ export default function ChatView(props: ChatViewProps) {
     data: useAtomValue(gitStatusAtom ? chatGitStatusAtom(gitStatusAtom) : NO_CHAT_GIT_STATUS_ATOM),
     refresh: useEnvironmentQueryRefresh(gitStatusAtom).refresh,
   };
+  const workspaceRevision = useWorkspaceRevision(
+    routeThreadKey,
+    serverProjection === null ? undefined : workspaceMutationId,
+  );
+  // Not keyed by cwd: a newly read cwd is already fresh, only a later mutation needs a refresh.
   useWorkspaceMutationRefresh({
     enabled: gitStatusCwd !== null,
-    mutationId: workspaceMutationId,
+    mutationId: workspaceRevision,
     refresh: gitStatusQuery.refresh,
-    resourceKey: `git-status:${activeThreadKey ?? ""}:${gitStatusCwd ?? ""}`,
+    resourceKey: "git-status",
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const backgroundThread = use(BackgroundThreadContext);
@@ -4001,7 +4007,7 @@ export default function ChatView(props: ChatViewProps) {
                     )
                   }
                   gitCwd={gitCwd}
-                  workspaceMutationId={workspaceMutationId}
+                  workspaceMutationId={workspaceRevision}
                   isGitRepo={isGitRepo}
                   envLocked={envLocked}
                   availableEnvironments={logicalProjectEnvironments}
