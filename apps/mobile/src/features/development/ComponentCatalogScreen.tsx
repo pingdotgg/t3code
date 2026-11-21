@@ -24,6 +24,7 @@ import { NumberField } from "../../components/ui/NumberField";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { Tabs } from "../../components/ui/Tabs";
 import { SliderRow } from "../../components/ui/SliderRow";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -89,7 +90,7 @@ export function ComponentCatalogScreen() {
             size="compact"
           />
         </View>
-        <SegmentedControl
+        <Tabs
           options={[
             { value: "controls", label: "Controls" },
             { value: "forms", label: "Forms" },
@@ -97,7 +98,6 @@ export function ComponentCatalogScreen() {
           ]}
           selected={page}
           onSelect={setPage}
-          size="compact"
         />
         {page === "controls" ? (
           <>

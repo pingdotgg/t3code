@@ -28,10 +28,11 @@ export function segmentedControlColors(
           colors["--color-grouped-card"],
         )
     : flattenThemeColor(themeColorWithAlpha(accent, dark ? 0.1 : 0.07), colors["--color-screen"]);
-  let selectedColor = colors["--color-secondary"];
+  // The thumb must lift off the track: --color-secondary nearly matches it in light themes.
+  let selectedColor = dark && card ? colors["--color-secondary"] : colors["--color-card"];
   if (card && !dark) selectedColor = colors["--color-screen"];
   if (dark && (!card || themeId === "t3-code")) {
-    selectedColor = flattenThemeColor(themeColorWithAlpha(accent, 0.32), colors["--color-screen"]);
+    selectedColor = flattenThemeColor(themeColorWithAlpha(accent, 0.2), colors["--color-screen"]);
   }
   let selectedTextColor =
     colors[!card && dark ? "--color-foreground" : "--color-secondary-foreground"];
