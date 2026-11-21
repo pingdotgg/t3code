@@ -82,7 +82,9 @@ function keepLastGoodReadings(
             candidate.email === account.email &&
             candidate.workspaceId === account.workspaceId,
         );
-        return last && !last.usageLimits.unavailable ? last : account;
+        if (!last || last.usageLimits.unavailable) return account;
+        // Only the reading is lent; a fresh model list still decides routing.
+        return account.models ? { ...last, models: account.models } : last;
       }),
     };
   });

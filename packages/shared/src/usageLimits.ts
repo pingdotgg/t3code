@@ -853,7 +853,9 @@ export function antigravityWindowLimitsModel(
   window: Pick<ServerProviderUsageWindow, "id">,
   model: string | null,
 ): boolean {
-  return model === null || window.id.startsWith("gemini") === model.startsWith("gemini");
+  // A hub can prefix model ids, such as "ag/gemini-3.1-pro".
+  const base = model?.slice(model.lastIndexOf("/") + 1);
+  return base === undefined || window.id.startsWith("gemini") === base.startsWith("gemini");
 }
 
 /** The hub accounts that serve a model: those that list it, else every account of the driver. */
@@ -863,7 +865,12 @@ export function hubRoutes(
   model: string | null,
 ): (account: UsageLimitSourceAccount) => boolean {
   // Claude Code's 1M-context suffix is not part of the model id a hub routes.
-  const slug = model?.replace(/\[1m\]$/i, "");
+  const full = model?.replace(/\[1m\]$/i, "");
+  // The hub routes a thinking suffix such as "gpt-5.2(high)" by its base model when one lists it.
+  const base = full?.replace(/\([^)]*\)$/, "");
+  const lists = (id: string | undefined) =>
+    sources.some((source) => source.accounts.some((account) => account.models?.includes(id ?? "")));
+  const slug = lists(base) ? base : full;
   const listed = (account: UsageLimitSourceAccount) =>
     slug !== undefined && account.models?.includes(slug) === true;
   const serving = new Set(

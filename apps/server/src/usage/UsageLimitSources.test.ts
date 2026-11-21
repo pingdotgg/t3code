@@ -384,6 +384,27 @@ it.each([
     model: "claude-opus-4-6-thinking",
     expected: at(1),
   },
+  {
+    name: "a hub thinking suffix routes by its base model",
+    accounts: [
+      { driver: "codex", models: ["gpt-5.2"], windows: [spent("five_hour", 3)] },
+      { windows: [] },
+    ],
+    model: "gpt-5.2(high)",
+    expected: at(3),
+  },
+  {
+    name: "a prefixed Gemini model is held back by the Gemini quota",
+    accounts: [
+      {
+        driver: "antigravity",
+        models: ["ag/gemini-3.1-pro-high"],
+        windows: [spent("3p-5h", 1), spent("gemini-5h", 24)],
+      },
+    ],
+    model: "ag/gemini-3.1-pro-high",
+    expected: at(24),
+  },
 ])("hub pool reset: $name", ({ accounts, model, expected }) => {
   expect(
     UsageLimitSources.hubPoolResetAt(
