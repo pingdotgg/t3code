@@ -891,6 +891,13 @@ describe("PiAdapterV2", () => {
         }
         const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
         assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "failed");
+        if (
+          failure === "model error" &&
+          terminal.type === "turn.terminal" &&
+          terminal.status === "failed"
+        ) {
+          assert.strictEqual(terminal.failure.class, "provider_error");
+        }
         assert.deepInclude(runtime.providerSession, {
           status: "error",
           extensionStatuses: [{ key: "watch", text: "Watching 3 files" }],
@@ -6302,6 +6309,104 @@ describe("PiAdapterV2", () => {
         status: "completed",
         text: "",
       });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      name: "a streamed usage limit",
+      errorMessage: "Codex error: The usage limit has been reached",
+      resetsInMinutes: null,
+    },
+    {
+      name: "a ChatGPT plan limit with a reset time",
+      errorMessage: "You have hit your ChatGPT usage limit (plus plan). Try again in ~137 min.",
+      resetsInMinutes: 137,
+    },
+    {
+      name: "a ChatGPT plan limit whose reset rounds to ~0 min",
+      errorMessage: "You have hit your ChatGPT usage limit (plus plan). Try again in ~0 min.",
+      resetsInMinutes: null,
+    },
+  ])("fails the turn as a usage limit on $name", ({ errorMessage, resetsInMinutes }) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-09T12:00:00.000Z"));
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      const receivedAt = yield* DateTime.now;
+      yield* fake.emit({
+        type: "message_end",
+        message: { role: "assistant", stopReason: "error", errorMessage },
+      });
+      yield* fake.emit({ type: "agent_settled" });
+
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "failed");
+      if (terminal.type !== "turn.terminal" || terminal.status !== "failed") return;
+      assert.strictEqual(terminal.failure.class, "usage_limit");
+      if (resetsInMinutes === null) {
+        assert.isUndefined(terminal.failure.resetAt);
+        return;
+      }
+      assert.strictEqual(
+        terminal.failure.resetAt,
+        DateTime.formatIso(
+          DateTime.add(receivedAt, { milliseconds: resetsInMinutes * 60_000 + 30_000 }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("fails the turn as a usage limit when Pi's retry hits the limit", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "stream disconnected before completion",
+        },
+      });
+      yield* fake.emit({
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 2_000,
+        errorMessage: "stream disconnected before completion",
+      });
+      const errorMessage = "Codex error: The usage limit has been reached";
+      yield* fake.emit({
+        type: "message_end",
+        message: { role: "assistant", stopReason: "error", errorMessage },
+      });
+      yield* fake.emit({
+        type: "auto_retry_end",
+        success: false,
+        attempt: 1,
+        finalError: errorMessage,
+      });
+      yield* fake.emit({ type: "agent_settled" });
+
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "failed");
+      if (terminal.type !== "turn.terminal" || terminal.status !== "failed") return;
+      assert.strictEqual(terminal.failure.class, "usage_limit");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
