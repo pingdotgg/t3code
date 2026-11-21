@@ -223,6 +223,10 @@ describe("GitHubGraphQlAuth", () => {
     const answers = [
       json({ message: "You have exceeded a secondary rate limit." }, { status: 403 }),
       json({ message: "Bad credentials" }, { status: 401 }),
+      json(
+        { data: null, errors: [{ message: "You have exceeded a secondary rate limit." }] },
+        { status: 403, headers: { "retry-after": "60" } },
+      ),
     ];
     const { layer, invalidations } = harness(() => answers.shift()!);
     return Effect.gen(function* () {
@@ -231,6 +235,10 @@ describe("GitHubGraphQlAuth", () => {
       expect((yield* Effect.flip(readStats("github.example")))._tag).toBe(
         "GitHubApiAuthenticationError",
       );
+      expect(yield* Effect.flip(readStats("github.acme.test"))).toMatchObject({
+        _tag: "GitHubApiRateLimitError",
+        retryAt: NOW + 60_000,
+      });
       expect(invalidations()).toBe(1);
     }).pipe(Effect.provide(layer));
   });
@@ -280,7 +288,9 @@ describe("call", () => {
     const { layer } = harness(() =>
       json({
         data: { repository: null },
-        errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository" }],
+        errors: [
+          { type: "NOT_FOUND", path: ["repository"], message: "Could not resolve to a Repository" },
+        ],
       }),
     );
     return Effect.gen(function* () {
@@ -289,9 +299,38 @@ describe("call", () => {
         _tag: "GitHubApiNotFoundError",
         host: "github.com",
         operation: "stats",
+        githubErrors: ["Could not resolve to a Repository (at repository)"],
       });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "fails a NOT_FOUND below the pull request as GitHub's reason, not a missing one",
+    () => {
+      const { layer } = harness(() =>
+        json({
+          data: { repository: { pullRequest: stats } },
+          errors: [
+            {
+              type: "NOT_FOUND",
+              path: ["repository", "pullRequest", "baseRef", "compare"],
+              message: "Could not resolve head ref 'refs/pull/7/head'.",
+            },
+          ],
+        }),
+      );
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(callStats());
+        expect(error).toMatchObject({
+          _tag: "GitHubApiResponseError",
+          status: 200,
+          githubErrors: [
+            "Could not resolve head ref 'refs/pull/7/head'. (at repository.pullRequest.baseRef.compare)",
+          ],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect(
     "fails NOT_FOUND alongside another error as a failure carrying GitHub's reasons",

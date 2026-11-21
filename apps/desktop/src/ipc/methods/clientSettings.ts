@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEditionIcon from "../../app/DesktopEditionIcon.ts";
+import { applyLanguage } from "../../i18n/messages.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 import * as IpcChannels from "../channels.ts";
@@ -30,5 +31,6 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
     yield* clientSettings.set(settings);
     yield* snapShot.configure(settings);
     yield* editionIcon.apply(settings);
+    yield* applyLanguage(settings.language);
   }),
 });

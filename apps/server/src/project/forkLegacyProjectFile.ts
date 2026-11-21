@@ -11,6 +11,9 @@ import * as Path from "effect/Path";
 
 const LEGACY_PROJECT_FILE_NAME = "t3.json";
 
+/** The names a project file may have in a commit, the one to read first. */
+export const PROJECT_FILE_NAMES = [LATHE_PROJECT_FILE_NAME, LEGACY_PROJECT_FILE_NAME] as const;
+
 /** The project file to read in `workspaceRoot`: lathe.json, else an existing t3.json. */
 export const projectFilePath = Effect.fn("projectFilePath")(function* (
   fileSystem: FileSystem.FileSystem,

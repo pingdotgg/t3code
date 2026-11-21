@@ -39,11 +39,11 @@ To sync, from a worktree of `main`:
 
 1. `git fetch upstream` and choose the upstream commit, usually `upstream/main`.
 2. Add a detached worktree at that commit and copy `scripts/lib/forkRename*.ts`,
-   `scripts/lib/forkI18nRekey.ts`, `scripts/fork-rename-codemod.ts` and
-   `scripts/fork-i18n-rekey.ts` from `main` into it.
+   `scripts/lib/forkI18n*.ts`, `scripts/fork-rename-codemod.ts` and
+   `scripts/fork-i18n-catalogs.ts` from `main` into it.
 3. Run `node scripts/fork-rename-codemod.ts`. If it reports unclassified occurrences, add rules on
    `main` first, then copy them again.
-4. Run it with `--write`, then `node scripts/fork-i18n-rekey.ts`. GT catalogs key each message by
+4. Run it with `--write`, then `node scripts/fork-i18n-catalogs.ts rekey`. GT catalogs key each message by
    a hash of its English text, so every renamed message gets a new key; the script regenerates each
    app's `en.json` and moves locale entries to the new keys, and refuses when a rule renamed the
    source and its catalog text differently. Delete the copied fork scripts, then run `vp fmt` on the
@@ -51,7 +51,10 @@ To sync, from a worktree of `main`:
 5. Commit the whole tree on top of `upstream-lathe` with the `Upstream: <sha>` trailer, using
    `git commit-tree` so the parent is the previous mirror commit.
 6. Merge `upstream-lathe` into a sync branch of `main`, resolve conflicts, and confirm the codemod
-   dry run still reports zero.
+   dry run still reports zero. Lathe's own copy is English only: take `upstream-lathe`'s side of a
+   catalog conflict, then run `node scripts/fork-i18n-catalogs.ts fill`, which drops stale messages
+   and adds the fork's in English. Fork-only client files are exempt from `no-untranslated-copy`
+   through `scripts/lib/forkEnglishOnlyFiles.ts`; fork strings in upstream files are wrapped.
 
 Never merge `upstream/main` into `main` directly. Its unrenamed lines conflict with every renamed
 line in the fork.

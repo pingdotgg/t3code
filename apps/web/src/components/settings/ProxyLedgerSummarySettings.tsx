@@ -23,7 +23,7 @@ export function ProxyLedgerSummarySettings() {
       resetAction={
         style !== DEFAULT_UNIFIED_SETTINGS.proxyLedgerSummaryStyle ? (
           <SettingResetButton
-            label="gateway account summary"
+            ariaLabel="Reset gateway account summary to default"
             onClick={() =>
               updateSettings({
                 proxyLedgerSummaryStyle: DEFAULT_UNIFIED_SETTINGS.proxyLedgerSummaryStyle,

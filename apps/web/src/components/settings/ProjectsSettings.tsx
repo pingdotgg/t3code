@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@lathe/contracts";
+import { T, useGT } from "gt-react";
 import { LayersIcon } from "lucide-react";
 
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
@@ -18,6 +19,7 @@ import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAx
  * a wider selection asks for a destination instead.
  */
 function ProjectSyncSection() {
+  const gt = useGT();
   const { scope, selectScope } = useSettingsScope();
   const { environments } = useEnvironments();
   const syncEnvironmentId = scope.environmentIds.length === 1 ? scope.environmentIds[0] : undefined;
@@ -25,18 +27,22 @@ function ProjectSyncSection() {
     return <ProjectSyncSettings key={syncEnvironmentId} environmentId={syncEnvironmentId} />;
   return (
     <section
-      aria-label="Sync from another T3 install"
+      aria-label={gt("Sync from another T3 install")}
       className="space-y-3 rounded-lg border border-border/60 p-4"
     >
       <div>
-        <h3 className="text-sm font-medium">Sync from another T3 install</h3>
+        <h3 className="text-sm font-medium">
+          <T>Sync from another T3 install</T>
+        </h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Choose the machine running your fork. Projects and conversation history are imported from
-          another T3 install on that machine.
+          <T>
+            Choose the machine running your fork. Projects and conversation history are imported
+            from another T3 install on that machine.
+          </T>
         </p>
       </div>
       <label className="flex flex-col items-start gap-1 text-xs text-muted-foreground">
-        Destination machine
+        <T>Destination machine</T>
         <select
           value=""
           disabled={environments.length === 0}
@@ -46,7 +52,9 @@ function ProjectSyncSection() {
           }}
         >
           <option value="" disabled>
-            {environments.length === 0 ? "Connect a machine to set up sync" : "Choose a machine"}
+            {environments.length === 0
+              ? gt("Connect a machine to set up sync")
+              : gt("Choose a machine")}
           </option>
           {environments.map((environment) => (
             <option key={environment.environmentId} value={environment.environmentId}>
@@ -60,6 +68,7 @@ function ProjectSyncSection() {
 }
 
 export function ProjectsSettings() {
+  const gt = useGT();
   const { search: value, scope, selectScope } = useSettingsScope();
   const unavailable =
     scope.kind === "unavailable" ? (
@@ -73,7 +82,7 @@ export function ProjectsSettings() {
               onClick={() => selectScope(selectEnvironmentAxis(value, ALL_ENVIRONMENTS_VALUE))}
             >
               <LayersIcon />
-              Show all environments
+              <T>Show all environments</T>
             </Button>
           ) : null}
         </div>
@@ -102,7 +111,7 @@ export function ProjectsSettings() {
               is inert inside a block wrapper, so sync owns the page scroll. */}
           <div className="shrink-0">
             <SettingsScopeNotice target="project">
-              Choose a project to manage its name, icon, checkouts and actions.
+              {gt("Choose a project to manage its name, icon, checkouts and actions.")}
             </SettingsScopeNotice>
           </div>
           <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">

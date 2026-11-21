@@ -182,7 +182,10 @@ export const startMenuBarFeed = Effect.fn("desktop.menuBar.startFeed")(function*
         let snapshot: OrchestrationV2ShellSnapshot | null = null;
         yield* subscribeSessionShell(session, input).pipe(
           Stream.runForEach((item) => {
-            if (item.kind === "synchronized") return Effect.void;
+            // Only a subscriber that asked for the HTTP snapshot fallback gets snapshot-required.
+            if (item.kind === "synchronized" || item.kind === "snapshot-required") {
+              return Effect.void;
+            }
             if (item.kind === "snapshot") {
               snapshot = item.snapshot;
               onLive(prepared.environmentId);

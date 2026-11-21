@@ -31,6 +31,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private val onToggleViewedFile by EventDispatcher()
   private val onPressLine by EventDispatcher()
   private val onToggleComment by EventDispatcher()
+  private val onPressNotice by EventDispatcher()
   private var rows: List<DiffRow> = emptyList()
   private var visibleRows: List<DiffRow> = emptyList()
   private var visibleRowIndices = IntArray(0)
@@ -47,7 +48,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private var contentResetKey = ""
 
   @Volatile private var rowsDecodeGeneration = 0
-  private var tokensDecodeGeneration = 0
+
+  @Volatile private var tokensDecodeGeneration = 0
   private val payloadDecodeExecutor = Executors.newSingleThreadExecutor()
   private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
   private val minimumFlingVelocity = ViewConfiguration.get(context).scaledMinimumFlingVelocity
@@ -203,6 +205,11 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     tokensDecodeGeneration += 1
     val generation = tokensDecodeGeneration
     payloadDecodeExecutor.execute {
+      if (generation != tokensDecodeGeneration ||
+        Thread.currentThread().isInterrupted
+      ) {
+        return@execute
+      }
       val decodedTokens = parseTokensObject(value)
       post {
         if (generation != tokensDecodeGeneration) return@post
@@ -426,6 +433,9 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
         }
       }
       "comment" -> onToggleComment(mapOf("commentId" to row.id))
+      "notice" -> if (gesture == "tap" && row.actionable) {
+        onPressNotice(mapOf("rowId" to row.id, "fileId" to row.resolvedFileId))
+      }
       "line" -> {
         val payload = mutableMapOf<String, Any>(
           "rowId" to row.id,
@@ -528,7 +538,13 @@ internal data class DiffRow(
   val wordDiffRanges: List<DiffWordDiffRange>,
   val commentText: String,
   val commentRangeLabel: String,
-  val commentSectionTitle: String
+  val commentSectionTitle: String,
+  /** A notice drawn in the warning colors. */
+  val tone: String = "",
+  /** A notice that reports taps through `onPressNotice`. */
+  val actionable: Boolean = false,
+  /** Where a cut line's note starts in `content`. */
+  val noteStart: Int? = null
 ) {
   val resolvedFileId: String get() = fileId.ifEmpty { id }
   val isPlainAscii: Boolean = content.all { it in ' '..'~' }
@@ -558,7 +574,9 @@ internal data class DiffTheme(
   val addBar: Int,
   val deleteBar: Int,
   val addText: Int,
-  val deleteText: Int
+  val deleteText: Int,
+  val warningText: Int,
+  val warningBackground: Int
 ) {
   companion object {
     fun fallback(scheme: String): DiffTheme = if (scheme == "dark") {
@@ -576,6 +594,8 @@ internal data class DiffTheme(
         deleteBar = Color.rgb(255, 46, 63),
         addText = Color.rgb(94, 204, 113),
         deleteText = Color.rgb(255, 103, 98),
+        warningText = Color.rgb(250, 204, 102),
+        warningBackground = Color.rgb(51, 38, 13),
       )
     } else {
       DiffTheme(
@@ -592,6 +612,8 @@ internal data class DiffTheme(
         deleteBar = Color.rgb(213, 44, 54),
         addText = Color.rgb(25, 130, 67),
         deleteText = Color.rgb(190, 38, 48),
+        warningText = Color.rgb(140, 92, 0),
+        warningBackground = Color.rgb(255, 245, 214),
       )
     }
 
@@ -611,6 +633,8 @@ internal data class DiffTheme(
         deleteBar = color(json, "deleteBar", fallback.deleteBar),
         addText = color(json, "addText", fallback.addText),
         deleteText = color(json, "deleteText", fallback.deleteText),
+        warningText = color(json, "warningText", fallback.warningText),
+        warningBackground = color(json, "warningBackground", fallback.warningBackground),
       )
     } catch (_: Exception) {
       fallback
@@ -1123,7 +1147,8 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun maxHeaderPathOffset(fileId: String): Int {
-    val row = rows.firstOrNull { it.kind == "file" && it.resolvedFileId == fileId } ?: return 0
+    val rowIndex = fileHeaderIndices.firstOrNull { rows[it].resolvedFileId == fileId } ?: return 0
+    val row = rows[rowIndex]
     val top = 0
     val bottom = rowHeight(row)
     val iconRect = drawing.fileHeaderIconRect(top, bottom, style)
@@ -1182,7 +1207,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun drawNoticeRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
-    fill(canvas, theme.background, 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
+    fill(canvas, drawing.noticeFill(row), 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
     val iconSize = 16f * density
     val iconRect = RectF(
       style.fileHeaderHorizontalPaddingPx + 2f * density,
@@ -1190,10 +1215,10 @@ private class DiffCanvasView(context: Context) : View(context) {
       style.fileHeaderHorizontalPaddingPx + 2f * density + iconSize,
       (top + bottom + iconSize) / 2f,
     )
-    drawing.drawNoticeIcon(canvas, iconRect, theme.mutedText)
+    drawing.drawNoticeIcon(canvas, iconRect, drawing.noticeColor(row))
     drawing.configureUiPaint(
       paint = textPaint,
-      color = theme.mutedText,
+      color = drawing.noticeColor(row),
       size = style.fileHeaderSubtextFontSizePx,
       weight = style.fileHeaderSubtextFontWeight,
     )
@@ -1304,9 +1329,10 @@ private class DiffCanvasView(context: Context) : View(context) {
     val firstLineBottom = top + lines.firstHeight(style.rowHeightPx.toInt())
     drawScrollableCode(canvas, top, bottom) { codeX ->
       drawing.configureCodePaint(theme.text, 0, style)
-      drawing.drawWordDiffRanges(canvas, row, codeX, top, firstLineBottom, lines)
       val baseline = lines.baseline(top, firstLineBottom, textPaint)
-      drawing.drawCode(canvas, row.content, tokensByRowId[row.id], codeX, baseline, style, lines)
+      val tokens = tokensByRowId[row.id]
+      drawing.drawWordDiffRanges(canvas, row, tokens, codeX, top, firstLineBottom, lines, style)
+      drawing.drawCode(canvas, row, tokens, codeX, baseline, style, lines)
     }
 
     drawLineNumber(canvas, row, top, firstLineBottom)
@@ -1481,6 +1507,9 @@ private fun parseRows(value: String, isCancelled: () -> Boolean): List<DiffRow> 
         commentText = row.optString("commentText"),
         commentRangeLabel = row.optString("commentRangeLabel"),
         commentSectionTitle = row.optString("commentSectionTitle"),
+        tone = row.optString("tone"),
+        actionable = row.optBoolean("actionable"),
+        noteStart = row.optNullableInt("noteStart"),
       )
     }
   } catch (_: Exception) {

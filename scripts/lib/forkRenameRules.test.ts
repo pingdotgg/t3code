@@ -535,6 +535,11 @@ describe("FORK_RENAME_RULES", () => {
       "upstream-reference",
     ],
     [
+      "apps/web/src/i18n/translations/de.json",
+      '  "991c30f5c20dfc22": "Sync from another T3 install",',
+      "upstream-reference",
+    ],
+    [
       ".github/SECURITY.md",
       "affecting T3 Code or T3 Tools-operated infrastructure",
       "upstream-reference",

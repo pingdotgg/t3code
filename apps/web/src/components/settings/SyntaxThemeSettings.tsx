@@ -42,7 +42,7 @@ export function SyntaxThemeRow() {
       resetAction={
         settings.syntaxTheme !== DEFAULT_UNIFIED_SETTINGS.syntaxTheme ? (
           <SettingResetButton
-            label="syntax theme"
+            ariaLabel="Reset syntax theme to default"
             onClick={() => updateSettings({ syntaxTheme: DEFAULT_UNIFIED_SETTINGS.syntaxTheme })}
           />
         ) : null

@@ -3,7 +3,7 @@ import type { ServerProviderSkill } from "@lathe/contracts";
 export type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
 
 export function formatProviderSkillDisplayName(
-  skill: Pick<ServerProviderSkill, "name" | "displayName">,
+  skill: Pick<ServerProviderSkill, "name"> & { readonly displayName?: string | null | undefined },
 ): string {
   return skill.displayName?.trim() || skill.name;
 }

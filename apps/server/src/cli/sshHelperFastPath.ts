@@ -54,32 +54,37 @@ export const pickPort = async (portFile: string, defaultPort: number, scanWindow
 };
 
 const probe = (port: number, probeTimeoutMs: number) =>
-  new Promise<boolean>((resolve) => {
+  new Promise<"ready" | "refused" | "not-ready">((resolve) => {
     const request = NodeHttp.get(
       { hostname: "127.0.0.1", port, path: "/", timeout: probeTimeoutMs },
       (response) => {
         response.resume();
         response.once("end", () => {
           const status = response.statusCode ?? 0;
-          resolve(status >= 200 && status < 300);
+          resolve(status >= 200 && status < 300 ? "ready" : "not-ready");
         });
       },
     );
     request.once("timeout", () => {
       request.destroy();
-      resolve(false);
+      resolve("not-ready");
     });
-    request.once("error", () => resolve(false));
+    request.once("error", (error: NodeJS.ErrnoException) =>
+      resolve(error.code === "ECONNREFUSED" ? "refused" : "not-ready"),
+    );
   });
 
-/** Whether the loopback server answers 2xx before the deadline passes. */
+/** Whether the loopback server answered 2xx before the deadline, or only ever refused. */
 export const waitReady = async (port: number, timeoutMs: number, probeTimeoutMs: number) => {
   const deadline = Date.now() + timeoutMs;
+  let refusedOnly = true;
   while (Date.now() < deadline) {
-    if (await probe(port, probeTimeoutMs)) return true;
+    const result = await probe(port, probeTimeoutMs);
+    if (result === "ready") return "ready";
+    refusedOnly &&= result === "refused";
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return false;
+  return refusedOnly ? "refused" : "not-ready";
 };
 
 /** `<pid> <port>` for a live default-home server, or undefined. */
@@ -111,9 +116,11 @@ export const runPickPort = async (portFile: string, defaultPort: number, scanWin
   else process.stdout.write(String(port));
 };
 
-/** Exits 0 once the loopback server answers, 1 when the deadline passes first. */
+/** Exits 0 once the loopback server answers; 2 when every probe was refused, else 1. */
 export const runWaitReady = async (port: number, timeoutMs: number, probeTimeoutMs: number) => {
-  if (!(await waitReady(port, timeoutMs, probeTimeoutMs))) process.exitCode = 1;
+  const result = await waitReady(port, timeoutMs, probeTimeoutMs);
+  // The launcher reads 2 as "nothing listens on this port".
+  if (result !== "ready") process.exitCode = result === "refused" ? 2 : 1;
 };
 
 /** Prints `<pid> <port>` for a live default-home server, or exits 1 with no output. */

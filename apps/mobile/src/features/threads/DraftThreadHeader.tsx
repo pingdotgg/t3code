@@ -1,12 +1,12 @@
 import { uuidv4 } from "../../lib/uuid";
 import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation } from "@react-navigation/native";
+import { vcsActionLabelText } from "@lathe/client-runtime/state/vcs";
+import { useGT, useMessages } from "gt-react-native";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import { AuthFilesystemReadScope, AuthSourceControlWriteScope } from "@lathe/contracts";
 import type { EnvironmentProject, EnvironmentThreadShell } from "@lathe/client-runtime/state/shell";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -19,8 +19,9 @@ export function DraftThreadHeader(props: {
   readonly project: EnvironmentProject;
   readonly cwd: string | null;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigation = useNavigation();
-  const { themeVariables } = useAppearancePreferences();
   const environmentId = props.thread.environmentId;
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canWriteGit = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
@@ -42,28 +43,22 @@ export function DraftThreadHeader(props: {
     });
   };
   const requiresThread = () =>
-    Dialog.alert("Available after the first message", "This action needs a saved thread.");
+    Dialog.alert(gt("Available after the first message"), gt("This action needs a saved thread."));
   return (
     <ThreadHeader
       draft
-      title="New thread"
+      title={gt("New thread")}
       subtitle=""
-      headerColor={themeVariables["--color-header"]}
-      usesNativeHeaderGlass={NATIVE_LIQUID_GLASS_SUPPORTED}
       hasThreadCwd={props.cwd !== null}
-      hasWorkspaceRoot={Boolean(props.project.workspaceRoot)}
-      fileInspectorSupported={false}
       inspectorMode={null}
-      onToggleInspector={openFiles}
       onOpenFilesInspector={openFiles}
-      onOpenGitInspector={requiresThread}
       gitControls={{
         environmentId,
         threadId: props.thread.id,
         hasThread: false,
         currentBranch: props.thread.branch,
         gitStatus: status.data,
-        gitOperationLabel: progress.currentLabel,
+        gitOperationLabel: vcsActionLabelText(progress, messages),
         canOpenTerminal: false,
         canOperateTerminal: false,
         canOpenFiles: canReadFiles && props.cwd !== null,
@@ -80,7 +75,7 @@ export function DraftThreadHeader(props: {
           if (!canWriteGit || !props.cwd) return;
           const result = await pull({ environmentId, input: { cwd: props.cwd } });
           if (AsyncResult.isFailure(result))
-            Dialog.alert("Could not pull", String(Cause.squash(result.cause)));
+            Dialog.alert(gt("Could not pull"), String(Cause.squash(result.cause)));
         },
         onRunAction: async (input) => {
           if (!canWriteGit || !props.cwd) return null;
@@ -90,7 +85,7 @@ export function DraftThreadHeader(props: {
             actionId: uuidv4(),
           });
           if (AsyncResult.isFailure(result)) {
-            Dialog.alert("Git action failed", String(Cause.squash(result.cause)));
+            Dialog.alert(gt("Git action failed"), String(Cause.squash(result.cause)));
             return null;
           }
           return result.value;

@@ -15,10 +15,16 @@ export const ProviderSetupInput = Schema.Struct({
 export type ProviderSetupInput = typeof ProviderSetupInput.Type;
 
 const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+// Environments supply these and clients open them, so a `javascript:` URL would run as the client.
+const SignInUrl = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(16_384),
+  Schema.isPattern(/^https?:\/\//i),
+);
 
 export const ProviderAuthMethod = Schema.Struct({
   id: SetupOperationId,
   accountEmail: Schema.optional(TrimmedNonEmptyString),
+  canRemove: Schema.optionalKey(Schema.Boolean),
   name: TrimmedNonEmptyString,
   description: Schema.NullOr(Schema.String),
   type: Schema.Literals(["agent", "terminal", "credentials"]),
@@ -29,14 +35,14 @@ export const ProviderAuthInteraction = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("browser"),
     id: SetupOperationId,
-    url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+    url: SignInUrl,
     requiresConsent: Schema.Boolean,
     acceptsCallback: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("deviceCode"),
     id: SetupOperationId,
-    url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+    url: SignInUrl,
     userCode: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   }),
   Schema.Struct({
@@ -67,6 +73,8 @@ export const ProviderAuthResponse = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("terminal"),
     data: Schema.String.check(Schema.isMaxLength(4_096)),
+    // `data` holds one byte per UTF-16 code unit, as in `TerminalWriteInput`.
+    binary: Schema.optionalKey(Schema.Boolean),
     size: Schema.optionalKey(
       Schema.Struct({
         cols: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 })),
@@ -91,6 +99,11 @@ export const ProviderAuthStartInput = Schema.Struct({
 });
 export type ProviderAuthStartInput = typeof ProviderAuthStartInput.Type;
 
+export const ProviderAuthRemoveMethodInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  methodId: SetupOperationId,
+});
+
 export const ProviderAuthRespondInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   flowId: SetupOperationId,
@@ -112,7 +125,7 @@ export const ProviderAuthState = Schema.Struct({
   ]),
   flowId: Schema.NullOr(SetupOperationId),
   /** The page the owner must open. For device-code flows this is the verification page. */
-  authorizationUrl: Schema.NullOr(Schema.String),
+  authorizationUrl: Schema.NullOr(SignInUrl),
   /**
    * Device-code flows: the code the user enters on `authorizationUrl`. Such a
    * flow has no loopback callback, so clients hide the return URL field while

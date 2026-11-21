@@ -113,6 +113,9 @@ export function decideGuestShareCommand(input: {
   switch (command.type) {
     case "thread.guest-share.open": {
       if (thread.archivedAt !== null) return Result.fail("Archived threads cannot be shared.");
+      if (share?.messages.some((message) => message.status === "pending")) {
+        return Result.fail("Answer or dismiss waiting guest messages before replacing this link.");
+      }
       return withShare({
         id: command.shareId,
         host: command.host,

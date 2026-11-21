@@ -80,7 +80,7 @@ export function RoadmapStewardModelRow() {
       serverScoped
       settingKeys={["roadmap"]}
       {...searchableSetting("roadmap-steward-model")}
-      description="Model this environment's steward runs on. Each environment keeps its own, since provider logins differ per machine. It reads a few turns at a time, so a small model is enough. Off uses the text generation model."
+      description="Model this environment's steward runs on. Each environment keeps its own, since logins differ per machine. It reads a few turns at a time, so a small model works. Off uses the text generation model."
       control={
         connectedEnvironments.length === 0 ? (
           <span className="text-sm text-muted-foreground">
@@ -114,7 +114,7 @@ export function RoadmapStewardModelRow() {
                 model={selection.model}
                 modelOptions={selection.options ?? []}
                 allowPromptInjectedEffort={false}
-                planModeEnabled={settings.planModeEnabled || selectsPlanAgent(selection.options)}
+                includePlanAgent={selectsPlanAgent(selection.options)}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 onModelOptionsChange={(options) =>
                   save(createModelSelection(selection.instanceId, selection.model, options))

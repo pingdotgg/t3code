@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { useState } from "react";
+import { msg, useGT, useMessages } from "gt-react";
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_THREAD_HIGHLIGHT_PALETTE,
@@ -32,7 +33,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
@@ -45,23 +46,24 @@ import { isDefaultThreadHighlightPalette } from "./threadHighlightPaletteSetting
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
-  artwork: "Artwork",
-  pill: "Version pill",
-  none: "None",
+  artwork: msg("Artwork"),
+  pill: msg("Version pill"),
+  none: msg("None"),
 };
 
 const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
-  comfortable: "Comfortable",
-  wide: "Wide",
-  full: "Full",
+  comfortable: msg("Comfortable"),
+  wide: msg("Wide"),
+  full: msg("Full", { $context: "chat width" }),
 };
 
 const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
-  label: "Word",
-  bars: "Bars",
+  label: msg("Word", { $context: "show effort as a word" }),
+  bars: msg("Bars", { $context: "show effort as bars" }),
 };
 
 export function AppearanceSettingsPanel() {
+  const searchableSetting = useSearchableSetting();
   const {
     appearanceMode,
     refreshTheme,
@@ -72,6 +74,8 @@ export function AppearanceSettingsPanel() {
     theme,
     themeHalves,
   } = useTheme();
+  const gt = useGT();
+  const m = useMessages();
   const customThemes = useCustomThemes();
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = useScopedSettings();
@@ -85,11 +89,11 @@ export function AppearanceSettingsPanel() {
     settings.environmentIdentificationMode === "artwork";
   const environmentIdentificationDescription = themeHidesEnvironmentArtwork
     ? pillAvailable
-      ? "Only built-in themes show artwork, so this theme shows the version pill."
-      : "Only built-in themes show artwork."
+      ? gt("Only built-in themes show artwork, so this theme shows the version pill.")
+      : gt("Only built-in themes show artwork.")
     : pillAvailable
-      ? "Show the edition artwork in the sidebar header, a version pill, or nothing."
-      : "Show the edition artwork in the sidebar header, or nothing.";
+      ? gt("Show the edition artwork in the sidebar header, a version pill, or nothing.")
+      : gt("Show the edition artwork in the sidebar header, or nothing.");
   const glassOpacityRatio =
     (settings.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
   const glassOpacitySliderStyle = {
@@ -113,7 +117,7 @@ export function AppearanceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="appearance" title="Colors & themes" variant="plain" hideTitle>
+      <SettingsSection id="appearance" title={gt("Colors & themes")} variant="plain" hideTitle>
         <div id={searchableSetting("theme").id}>
           <ThemeLibrary
             appearanceMode={appearanceMode}
@@ -133,19 +137,21 @@ export function AppearanceSettingsPanel() {
 
       <EditionSettingsSection />
 
-      <SettingsSection id="appearance-custom-colors" title="Custom colors">
+      <SettingsSection id="appearance-custom-colors" title={gt("Custom colors")}>
         <ColorSettingsRow
           {...searchableSetting("chat-text-color")}
-          title="Chat text"
-          description="Message text in the conversation. Leave unset to use the theme's color."
+          title={gt("Chat text")}
+          description={gt(
+            "Message text in the conversation. Leave unset to use the theme's color.",
+          )}
           value={settings.chatTextColor}
           onValueChange={(chatTextColor) => updateSettings({ chatTextColor })}
           onReset={() => updateSettings({ chatTextColor: DEFAULT_UNIFIED_SETTINGS.chatTextColor })}
         />
         <ColorSettingsRow
           {...searchableSetting("markdown-preview-text-color")}
-          title="Markdown preview text"
-          description="Text in rendered markdown files. Leave unset to use the theme's color."
+          title={gt("Markdown preview text")}
+          description={gt("Text in rendered markdown files. Leave unset to use the theme's color.")}
           value={settings.markdownPreviewTextColor}
           onValueChange={(markdownPreviewTextColor) => updateSettings({ markdownPreviewTextColor })}
           onReset={() =>
@@ -156,8 +162,10 @@ export function AppearanceSettingsPanel() {
         />
         <ColorSettingsRow
           {...searchableSetting("terminal-text-color")}
-          title="Terminal text"
-          description="Default terminal text. Programs that print white or bright white get this color too."
+          title={gt("Terminal text")}
+          description={gt(
+            "Default terminal text. Programs that print white or bright white get this color too.",
+          )}
           value={settings.terminalTextColor}
           onValueChange={(terminalTextColor) => updateSettings({ terminalTextColor })}
           onReset={() =>
@@ -166,8 +174,8 @@ export function AppearanceSettingsPanel() {
         />
         <ColorSettingsRow
           {...searchableSetting("composer-caret-color")}
-          title="Prompt cursor"
-          description="The text cursor in the box you write prompts in."
+          title={gt("Prompt cursor")}
+          description={gt("The text cursor in the box you write prompts in.")}
           value={settings.composerCaretColor}
           onValueChange={(composerCaretColor) => updateSettings({ composerCaretColor })}
           onReset={() =>
@@ -176,8 +184,10 @@ export function AppearanceSettingsPanel() {
         />
         <ColorSettingsRow
           {...searchableSetting("thread-card-color")}
-          title="Thread cards"
-          description="Resting background of thread cards in the sidebar. Hover and active tints are layered on top."
+          title={gt("Thread cards")}
+          description={gt(
+            "Resting background of thread cards in the sidebar. Hover and active tints are layered on top.",
+          )}
           value={settings.threadCardColor}
           onValueChange={(threadCardColor) => updateSettings({ threadCardColor })}
           onReset={() =>
@@ -187,14 +197,14 @@ export function AppearanceSettingsPanel() {
         <ThreadHighlightPaletteRow />
       </SettingsSection>
 
-      <SettingsSection id="appearance-interface" title="Interface">
+      <SettingsSection id="appearance-interface" title={gt("Interface")}>
         <SettingsRow
           {...searchableSetting("setting-appearance-contrast")}
-          description="Adjust the contrast of colors and borders across the interface."
+          description={gt("Adjust the contrast of colors and borders across the interface.")}
           resetAction={
             settings.appearanceContrast !== DEFAULT_UNIFIED_SETTINGS.appearanceContrast ? (
               <SettingResetButton
-                label="contrast"
+                ariaLabel={gt("Reset contrast to default")}
                 onClick={() =>
                   updateSettings({
                     appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
@@ -212,7 +222,7 @@ export function AppearanceSettingsPanel() {
                 {settings.appearanceContrast}%
               </output>
               <input
-                aria-label="Contrast"
+                aria-label={gt("Contrast")}
                 className="settings-slider min-w-0 flex-1"
                 id="appearance-contrast"
                 max={MAX_APPEARANCE_CONTRAST}
@@ -238,11 +248,11 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("setting-glass-opacity")}
-          description="Higher values make menus, dialogs, and the composer more solid."
+          description={gt("Higher values make menus, dialogs, and the composer more solid.")}
           resetAction={
             settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
               <SettingResetButton
-                label="glass opacity"
+                ariaLabel={gt("Reset glass opacity to default")}
                 onClick={() =>
                   updateSettings({ glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity })
                 }
@@ -258,7 +268,7 @@ export function AppearanceSettingsPanel() {
                 {settings.glassOpacity}%
               </output>
               <input
-                aria-label="Glass opacity"
+                aria-label={gt("Glass opacity")}
                 className="settings-slider min-w-0 flex-1"
                 id="glass-opacity"
                 max={MAX_GLASS_OPACITY}
@@ -284,11 +294,11 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("chat-width")}
-          description="Set how wide messages and the composer can grow on large screens."
+          description={gt("Set how wide messages and the composer can grow on large screens.")}
           resetAction={
             settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? (
               <SettingResetButton
-                label="chat width"
+                ariaLabel={gt("Reset chat width to default")}
                 onClick={() => updateSettings({ chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth })}
               />
             ) : null
@@ -302,13 +312,13 @@ export function AppearanceSettingsPanel() {
                     updateSettings({ chatWidth: value });
                 }}
               >
-                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Chat width">
-                  <SelectValue>{CHAT_WIDTH_LABELS[settings.chatWidth]}</SelectValue>
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label={gt("Chat width")}>
+                  <SelectValue>{m(CHAT_WIDTH_LABELS[settings.chatWidth])}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="comfortable">Comfortable (default)</SelectItem>
-                  <SelectItem value="wide">Wide</SelectItem>
-                  <SelectItem value="full">Full</SelectItem>
+                  <SelectItem value="comfortable">{gt("Comfortable (default)")}</SelectItem>
+                  <SelectItem value="wide">{m(CHAT_WIDTH_LABELS.wide)}</SelectItem>
+                  <SelectItem value="full">{m(CHAT_WIDTH_LABELS.full)}</SelectItem>
                 </SelectPopup>
               </Select>
             </div>
@@ -317,11 +327,13 @@ export function AppearanceSettingsPanel() {
         <ThreadDetailsItemsRow />
         <SettingsRow
           {...searchableSetting("effort-display")}
-          description="Show reasoning effort in the composer as its name, such as High, or as bars."
+          description={gt(
+            "Show reasoning effort in the composer as its name, such as High, or as bars.",
+          )}
           resetAction={
             settings.effortDisplay !== DEFAULT_UNIFIED_SETTINGS.effortDisplay ? (
               <SettingResetButton
-                label="effort display"
+                ariaLabel={gt("Reset effort display to default")}
                 onClick={() =>
                   updateSettings({ effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay })
                 }
@@ -337,12 +349,16 @@ export function AppearanceSettingsPanel() {
                     updateSettings({ effortDisplay: value });
                 }}
               >
-                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Effort display">
-                  <SelectValue>{EFFORT_DISPLAY_LABELS[settings.effortDisplay]}</SelectValue>
+                <SelectTrigger
+                  size="sm"
+                  className="w-full min-w-0"
+                  aria-label={gt("Effort display")}
+                >
+                  <SelectValue>{m(EFFORT_DISPLAY_LABELS[settings.effortDisplay])}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="label">Word (default)</SelectItem>
-                  <SelectItem value="bars">Bars</SelectItem>
+                  <SelectItem value="label">{gt("Word (default)")}</SelectItem>
+                  <SelectItem value="bars">{m(EFFORT_DISPLAY_LABELS.bars)}</SelectItem>
                 </SelectPopup>
               </Select>
             </div>
@@ -350,11 +366,13 @@ export function AppearanceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("math-rendering")}
-          description="Typeset LaTeX math, such as $x^2$ or \[x^2\], in messages and Markdown previews. The composer keeps TeX source editable."
+          description={gt(
+            "Typeset LaTeX math, such as $x^2$ or \\[x^2\\], in messages and Markdown previews. The composer keeps TeX source editable.",
+          )}
           resetAction={
             settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled ? (
               <SettingResetButton
-                label="math rendering"
+                ariaLabel={gt("Reset math rendering to default")}
                 onClick={() =>
                   updateSettings({
                     mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
@@ -369,7 +387,7 @@ export function AppearanceSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ mathRenderingEnabled: Boolean(checked) })
               }
-              aria-label="Render math"
+              aria-label={gt("Render math")}
             />
           }
         />
@@ -385,7 +403,7 @@ export function AppearanceSettingsPanel() {
         >
           <SettingsRow
             {...searchableSetting("panel-animations")}
-            description="Set how fast panels open and close."
+            description={gt("Set how fast panels open and close.")}
             control={
               <div className="grid w-full grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 sm:w-auto sm:grid-cols-[7rem_13rem] sm:gap-4">
                 <PanelAnimationsPreview durationMs={settings.panelAnimationDurationMs} />
@@ -397,7 +415,7 @@ export function AppearanceSettingsPanel() {
                     {settings.panelAnimationDurationMs} ms
                   </output>
                   <input
-                    aria-label="Panel animation duration"
+                    aria-label={gt("Panel animation duration")}
                     className="settings-slider min-w-0 flex-1"
                     id="panel-animation-duration"
                     max={MAX_PANEL_ANIMATION_DURATION_MS}
@@ -424,7 +442,7 @@ export function AppearanceSettingsPanel() {
               settings.panelAnimationDurationMs !==
               DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs ? (
                 <SettingResetButton
-                  label="panel animations"
+                  ariaLabel={gt("Reset panel animations to default")}
                   onClick={() =>
                     updateSettings({
                       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
@@ -440,7 +458,7 @@ export function AppearanceSettingsPanel() {
             resetAction={
               settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
                 <SettingResetButton
-                  label="environment identification"
+                  ariaLabel={gt("Reset environment identification to default")}
                   onClick={() =>
                     updateSettings({
                       environmentIdentificationMode: DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
@@ -461,10 +479,10 @@ export function AppearanceSettingsPanel() {
                 <SelectTrigger
                   size="sm"
                   className="w-full sm:w-40"
-                  aria-label="Environment identification"
+                  aria-label={gt("Environment identification")}
                 >
                   <SelectValue>
-                    {ENVIRONMENT_IDENTIFICATION_LABELS[settings.environmentIdentificationMode]}
+                    {m(ENVIRONMENT_IDENTIFICATION_LABELS[settings.environmentIdentificationMode])}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -472,7 +490,7 @@ export function AppearanceSettingsPanel() {
                     .filter(([value]) => pillAvailable || value !== "pill")
                     .map(([value, label]) => (
                       <SelectItem hideIndicator key={value} value={value}>
-                        {label}
+                        {m(label)}
                       </SelectItem>
                     ))}
                 </SelectPopup>
@@ -481,12 +499,14 @@ export function AppearanceSettingsPanel() {
           />
           <SettingsRow
             {...searchableSetting("composer-context")}
-            description="Keep branch and worktree controls below the composer after a thread starts."
+            description={gt(
+              "Keep branch and worktree controls below the composer after a thread starts.",
+            )}
             resetAction={
               settings.persistComposerContextStrip !==
               DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip ? (
                 <SettingResetButton
-                  label="composer context"
+                  ariaLabel={gt("Reset composer context to default")}
                   onClick={() =>
                     updateSettings({
                       persistComposerContextStrip:
@@ -502,7 +522,7 @@ export function AppearanceSettingsPanel() {
                 onCheckedChange={(checked) =>
                   updateSettings({ persistComposerContextStrip: Boolean(checked) })
                 }
-                aria-label="Keep composer context visible in active threads"
+                aria-label={gt("Keep composer context visible in active threads")}
               />
             }
           />
@@ -519,6 +539,8 @@ export function AppearanceSettingsPanel() {
  * label is what the menu shows, so it is editable beside the swatch.
  */
 function ThreadHighlightPaletteRow() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const palette = settings.threadHighlightPalette;
@@ -532,12 +554,14 @@ function ThreadHighlightPaletteRow() {
   return (
     <SettingsRow
       {...searchableSetting("thread-highlight-palette")}
-      title="Highlight palette"
-      description="Colors offered when you right-click a thread and choose Highlight. Each slot has a menu label and a color."
+      title={gt("Highlight palette")}
+      description={gt(
+        "Colors offered when you right-click a thread and choose Highlight. Each slot has a menu label and a color.",
+      )}
       resetAction={
         isDefaultThreadHighlightPalette(palette) ? null : (
           <SettingResetButton
-            label="highlight palette"
+            ariaLabel={gt("Reset highlight palette to default")}
             onClick={() =>
               updateSettings({ threadHighlightPalette: DEFAULT_THREAD_HIGHLIGHT_PALETTE })
             }
@@ -555,21 +579,21 @@ function ThreadHighlightPaletteRow() {
               className="flex min-w-0 items-center gap-2 rounded-lg border border-border/60 px-2 py-1.5"
             >
               <ThemeColorPicker
-                label={entry.label || `Color ${index + 1}`}
+                label={entry.label || gt("Color {number}", { number: index + 1 })}
                 onChange={(color) => updateEntry(index, { color })}
                 value={resolved ?? "#808080"}
               />
               <Input
-                aria-label={`Highlight ${index + 1} label`}
+                aria-label={gt("Highlight {number} label", { number: index + 1 })}
                 className="min-w-0 flex-1"
                 nativeInput
                 onChange={(event) => updateEntry(index, { label: event.currentTarget.value })}
-                placeholder={`Color ${index + 1}`}
+                placeholder={gt("Color {number}", { number: index + 1 })}
                 value={entry.label}
               />
               <Input
                 aria-invalid={resolved === null}
-                aria-label={`Highlight ${index + 1} hex value`}
+                aria-label={gt("Highlight {number} hex value", { number: index + 1 })}
                 className="w-24 shrink-0 [&_[data-slot=input]]:text-right"
                 font="mono"
                 nativeInput
@@ -604,6 +628,7 @@ function ColorSettingsRow({
   onValueChange: (value: string) => void;
   onReset: () => void;
 }) {
+  const gt = useGT();
   const resolved = resolveColorPreference(value);
   const isUnset = value.trim().length === 0;
   return (
@@ -612,19 +637,24 @@ function ColorSettingsRow({
       title={title}
       description={description}
       resetAction={
-        isUnset ? null : <SettingResetButton label={title.toLowerCase()} onClick={onReset} />
+        isUnset ? null : (
+          <SettingResetButton
+            ariaLabel={gt("Reset {setting} to default", { setting: title.toLowerCase() })}
+            onClick={onReset}
+          />
+        )
       }
       control={
         <div className="flex items-center gap-2">
           <ThemeColorPicker label={title} onChange={onValueChange} value={resolved ?? "#808080"} />
           <Input
             aria-invalid={!isUnset && resolved === null}
-            aria-label={`${title} hex value`}
+            aria-label={gt("{setting} hex value", { setting: title })}
             className="w-28 shrink-0 [&_[data-slot=input]]:text-right"
             font="mono"
             nativeInput
             onChange={(event) => onValueChange(event.currentTarget.value)}
-            placeholder="Theme"
+            placeholder={gt("Theme")}
             spellCheck={false}
             value={value}
           />

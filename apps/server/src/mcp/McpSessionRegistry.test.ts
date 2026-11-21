@@ -6,6 +6,7 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@lathe/contracts";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -22,10 +23,11 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
+// Without `now`, the registry reads the Effect Clock (TestClock in these tests).
+const makeRegistry = (now: (() => number) | undefined, httpServer = fakeHttpServer) =>
   McpSessionRegistry.__testing
     .make({
-      now,
+      ...(now ? { now } : {}),
       livenessWindowMs: 100,
     })
     .pipe(
@@ -56,6 +58,7 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
         "orchestration",
         "worktree",
         "pull-requests",
+        "issues",
         "document-comments",
         "roadmap",
       ]),
@@ -93,6 +96,7 @@ it.effect("always grants pull-requests and gates browser and device access indep
 
     expect(yield* capabilitiesOf(withPreview)).toEqual([
       "document-comments",
+      "issues",
       "orchestration",
       "preview",
       "pull-requests",
@@ -101,6 +105,7 @@ it.effect("always grants pull-requests and gates browser and device access indep
     ]);
     expect(yield* capabilitiesOf(withoutPreview)).toEqual([
       "document-comments",
+      "issues",
       "orchestration",
       "pull-requests",
       "roadmap",
@@ -109,6 +114,7 @@ it.effect("always grants pull-requests and gates browser and device access indep
     expect(yield* capabilitiesOf(withDevice)).toEqual([
       "device",
       "document-comments",
+      "issues",
       "orchestration",
       "pull-requests",
       "roadmap",
@@ -152,6 +158,40 @@ it.effect("expires credentials once their session stops showing signs of life", 
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     timestamp += 101;
     expect(yield* registry.resolve(token)).toBeUndefined();
+    // Once a request found it expired, clocks moving back don't bring it back; a provider turn does.
+    timestamp = 1_000;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+    yield* registry.touch(ThreadId.make("thread-2"));
+    expect((yield* registry.resolve(token))?.thread.threadId).toBe("thread-2");
+  }),
+);
+
+it.effect("a backward wall clock step neither extends nor revives credentials", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(undefined);
+    const issueToken = (threadId: string) =>
+      registry
+        .issue({
+          threadId: ThreadId.make(threadId),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: new Set(["preview"]),
+        })
+        .pipe(Effect.map((issued) => issued.config.authorizationHeader.replace(/^Bearer\s+/, "")));
+
+    yield* TestClock.setTime(10_000);
+    const extended = yield* issueToken("thread-extended");
+    // setTime backwards moves wall time only; adjust moves both clocks.
+    yield* TestClock.setTime(1_000);
+    yield* TestClock.adjust(101);
+    expect(yield* registry.resolve(extended)).toBeUndefined();
+
+    const revived = yield* issueToken("thread-revived");
+    yield* TestClock.adjust(101);
+    expect(yield* registry.resolve(revived)).toBeUndefined();
+    const active = yield* issueToken("thread-active");
+    yield* TestClock.setTime(0);
+    expect(yield* registry.resolve(revived)).toBeUndefined();
+    expect((yield* registry.resolve(active))?.thread.threadId).toBe("thread-active");
   }),
 );
 

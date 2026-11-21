@@ -11,7 +11,7 @@ import type {
   UsageLimitSourceAccountLogin,
   UsageLimitSourceSnapshot,
 } from "@lathe/contracts";
-import { formatDuration } from "@lathe/shared/usageLimits";
+import { formatDuration } from "@lathe/shared/usageLimitsCopy";
 
 import type { ResetCreditRedeemState } from "../usage/UsageLimits";
 
@@ -233,22 +233,36 @@ function expiry(at: string | undefined, now: number): string {
   return left === "now" ? ", next expires now" : `, next expires in ${left}`;
 }
 
+/** The gateway's Fable option as a bucket of its own, redeemed by credit id "fable". */
+function gatewayFableBucket(
+  credits: ServerProviderResetCredits,
+): ServerProviderResetCredits | undefined {
+  const option = credits.options?.find((entry) => entry.creditId === "fable");
+  if (!option) return undefined;
+  return {
+    availableCount: option.availableCount,
+    nextCreditId: option.creditId,
+    ...(option.expiresAt ? { nextExpiresAt: option.expiresAt } : {}),
+  };
+}
+
 export function resetCreditsView(
   credits: ServerProviderResetCredits | undefined,
   now: number,
   fableBlocked: string | null = null,
 ): ProxyResetCreditsView | null {
   if (!credits) return null;
-  const { fable: _fable, ...weeklyBucket } = credits;
+  const { options: _options, ...weeklyBucket } = credits;
+  const fableBucket = gatewayFableBucket(credits);
   const weekly = credits.availableCount;
-  const fable = credits.fable?.availableCount ?? 0;
+  const fable = fableBucket?.availableCount ?? 0;
   if (weekly === 0 && fable === 0) return null;
   const muted = weekly > 0 && credits.usableNowCount === 0;
   const lines: string[] = [];
   if (weekly > 0)
     lines.push(`${plural(weekly, "weekly reset")}${expiry(credits.nextExpiresAt, now)}`);
   if (fable > 0) {
-    lines.push(`${plural(fable, "Fable reset")}${expiry(credits.fable?.nextExpiresAt, now)}`);
+    lines.push(`${plural(fable, "Fable reset")}${expiry(fableBucket?.nextExpiresAt, now)}`);
     if (fableBlocked) lines.push(fableBlocked);
   }
   if (muted) lines.push("None usable until a limit is reached");
@@ -257,7 +271,7 @@ export function resetCreditsView(
     muted,
     tooltip: lines.join("\n"),
     weekly: weekly > 0 ? weeklyBucket : null,
-    fable: credits.fable && fable > 0 ? { ...credits.fable } : null,
+    fable: fableBucket && fable > 0 ? fableBucket : null,
     fableBlocked: fable > 0 ? fableBlocked : null,
   };
 }

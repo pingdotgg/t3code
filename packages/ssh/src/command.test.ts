@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@lathe/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -8,6 +9,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -26,6 +28,7 @@ import { SshCommandError } from "./errors.ts";
 import { SshOutputObserver, type SshOutputChunk } from "./output.ts";
 
 const encoder = new TextEncoder();
+const isSshCommandError = Schema.is(SshCommandError);
 
 const makeFailedProcess = (input: { readonly stdout: string; readonly stderr?: string }) => {
   const stdoutStream = Stream.make(encoder.encode(input.stdout));
@@ -269,6 +272,29 @@ describe("ssh command", () => {
     );
   });
 
+  it.effect("overrides an alias's RemoteCommand and RequestTTY", () =>
+    Effect.sync(() => {
+      assert.deepEqual(
+        baseSshArgs(
+          { alias: "devbox", hostname: "devbox", username: null, port: 2222 },
+          { batchMode: "yes" },
+        ),
+        [
+          "-o",
+          "BatchMode=yes",
+          "-o",
+          "ConnectTimeout=10",
+          "-o",
+          "RemoteCommand=none",
+          "-o",
+          "RequestTTY=no",
+          "-p",
+          "2222",
+        ],
+      );
+    }),
+  );
+
   // Remote servers store state under this key, so it must not change across releases.
   it.effect("derives a stable remote state key", () =>
     Effect.gen(function* () {
@@ -339,6 +365,45 @@ describe("ssh command", () => {
           : `${redacted.slice(0, 4_000)}\n[truncated]`,
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "a timed-out command leaves no helper running that ignored SIGTERM",
+    () =>
+      Effect.gen(function* () {
+        const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Stands in for ssh and a ProxyCommand: ssh exits on SIGTERM, the proxy ignores it.
+        const spawner = ChildProcessSpawner.make((command) =>
+          nativeSpawner.spawn(
+            ChildProcess.make(
+              process.execPath,
+              [
+                "-e",
+                `const proxy = require("node:child_process").spawn("sh", ["-c", "trap '' TERM; exec sleep 60"], { stdio: "ignore" });
+              process.stdout.write(proxy.pid + "\\n");
+              setInterval(() => {}, 1000);`,
+              ],
+              command._tag === "StandardCommand" ? command.options : {},
+            ),
+          ),
+        );
+        const failure = yield* runSshCommand(
+          { alias: "synthetic-fixture", hostname: "synthetic-fixture", username: null, port: null },
+          { timeoutMs: 1_000, keepErrorOutputTail: true },
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.flip,
+        );
+        assert.instanceOf(failure, SshCommandError);
+        assert.equal(failure.message, "SSH command timed out after 1000ms.");
+        const proxyPid = Number(failure.stdout?.trim());
+        assert.isTrue(Number.isSafeInteger(proxyPid) && proxyPid > 1);
+        const state = (yield* nativeSpawner.string(
+          ChildProcess.make("ps", ["-p", String(proxyPid), "-o", "stat="]),
+        )).trim();
+        if (state !== "" && !state.startsWith("Z")) process.kill(proxyPid, "SIGKILL");
+        assert.isTrue(state === "" || state.startsWith("Z"), `proxy still running (${state})`);
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.live("enables server-alive checks for long remote commands", () =>
@@ -475,6 +540,104 @@ describe("ssh command", () => {
         '{"pairingToken":"abc123"} pairingUrl: http://localhost:5733/pair#token=E5YZ6LG6 and https://h/x?a=1&access_token=Q9&b=2',
       ),
       '{"pairingToken":"[redacted]"} pairingUrl: http://localhost:5733/pair#token=[redacted] and https://h/x?a=1&access_token=[redacted]&b=2',
+    );
+  });
+
+  it.effect("keeps redacted output the command emitted before timing out", () => {
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(123),
+          stdout: Stream.concat(
+            Stream.make(encoder.encode('PROGRESS: extracting\n{"credential":"pairing-secret"}\n')),
+            Stream.never,
+          ),
+          stderr: Stream.concat(
+            Stream.make(encoder.encode("REMOTE: waiting for archive extraction\n")),
+            Stream.never,
+          ),
+          all: Stream.empty,
+          exitCode: Effect.never,
+          isRunning: Effect.succeed(true),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        }),
+      ),
+    );
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+
+    return Effect.gen(function* () {
+      const fiber = yield* runSshCommand(
+        { alias: "devbox", hostname: "devbox", username: null, port: null },
+        { remoteCommandArgs: ["sh", "-s"], timeoutMs: 1_000, keepErrorOutputTail: true },
+      ).pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      const failure = yield* Fiber.join(fiber);
+
+      assert.instanceOf(failure, SshCommandError);
+      assert.equal(failure.exitCode, null);
+      assert.equal(failure.stdout, 'PROGRESS: extracting\n{"credential":"[redacted]"}\n');
+      assert.equal(failure.stderr, "REMOTE: waiting for archive extraction\n");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerSpawner)));
+  });
+
+  const changedKeyStderr =
+    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n" +
+    "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\r\n" +
+    "  ssh-keygen -f '/home/me/.ssh/known_hosts' -R 'devbox'\r\n" +
+    "Host key verification failed.\r\n";
+
+  it.effect.each([
+    {
+      name: "quotes the terminal command for a POSIX shell",
+      target: { alias: "my host", username: "o'brien" },
+      platform: "linux",
+      stderr: "Host key verification failed.\r\n",
+      expected: ["`ssh 'o'\\''brien@my host'`"],
+    },
+    {
+      name: "quotes the terminal command for a Windows shell",
+      target: { alias: "my host", username: "me" },
+      platform: "win32",
+      stderr: "Host key verification failed.\r\n",
+      expected: ['`ssh "me@my host"`'],
+    },
+    {
+      name: "keeps an option-shaped alias out of the option list",
+      target: { alias: "-oProxyCommand=false", username: null },
+      platform: "linux",
+      stderr: "Host key verification failed.\r\n",
+      expected: ["`ssh -- -oProxyCommand=false`"],
+    },
+    {
+      name: "tells the user to remove a changed host key first",
+      target: { alias: "devbox", username: null },
+      platform: "linux",
+      stderr: changedKeyStderr,
+      expected: ["has changed", "`ssh-keygen -R`", "`ssh devbox`", "-R 'devbox'"],
+    },
+  ] as const)("$name", ({ target, platform, stderr, expected }) => {
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(makeFailedProcess({ stdout: "", stderr })),
+    );
+    return runSshCommand({ ...target, hostname: "devbox", port: null }).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        assert.isTrue(isSshCommandError(error));
+        for (const text of expected) assert.include(error.message, text);
+        if (isSshCommandError(error)) assert.equal(error.stderr, stderr);
+      }),
+      Effect.provideService(HostProcess.Platform, platform),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
     );
   });
 });

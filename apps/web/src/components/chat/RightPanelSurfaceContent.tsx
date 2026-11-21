@@ -1,7 +1,9 @@
+import { useGT } from "gt-react";
 import type {
   Citation,
   EditorId,
   EnvironmentId,
+  IssueTrackerKind,
   PreviewAnnotationPayload,
   ProjectId,
   ResolvedKeybindingsConfig,
@@ -11,7 +13,8 @@ import type {
 } from "@lathe/contracts";
 import { scopedThreadKey } from "@lathe/client-runtime/environment";
 import { lazy, Suspense } from "react";
-import SideChatPane from "./SideChatPane";
+import { LinkedThreadPane } from "./LinkedThreadPane";
+import SideThreadPane from "./SideThreadPane";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { AssistantCitationSourceAnchor } from "../../lib/assistantTextSelection";
 import type { ShortcutMatchContext } from "../../keybindings";
@@ -21,6 +24,7 @@ import {
   PersistentThreadTerminalPanel,
   type PersistentThreadTerminalPanelProps,
 } from "../PersistentThreadTerminals";
+import { IssueDetailPanel } from "../issue/IssueDetailPanel";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
@@ -52,6 +56,7 @@ interface RightPanelPullRequestProps {
 }
 
 interface RightPanelFileProps {
+  readonly projectId?: ProjectId | undefined;
   readonly projectName: string | null;
   readonly workspaceRoot: string | undefined;
   readonly availableEditors: ReadonlyArray<EditorId>;
@@ -79,10 +84,12 @@ export function RightPanelSurfaceContent(props: {
   readonly onCloseSurface: (surface: RightPanelSurface) => void;
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
+  readonly issuesSupported: boolean;
   readonly files: RightPanelFileProps;
   readonly sideChatParentPanel: SideChatParentPanel;
 }) {
   const { surface, threadRef, visible, onCloseSurface } = props;
+  const gt = useGT();
   if (surface === null) return null;
   switch (surface.kind) {
     case "preview":
@@ -125,8 +132,8 @@ export function RightPanelSurfaceContent(props: {
       if (!pullRequest.supported) {
         return (
           <PullRequestsUnavailableState
-            title="Pull requests unavailable"
-            error="Update this environment's Lathe server to browse pull requests."
+            title={gt("Pull requests unavailable")}
+            error={gt("Update this environment's Lathe server to browse pull requests.")}
           />
         );
       }
@@ -152,6 +159,10 @@ export function RightPanelSurfaceContent(props: {
             number: surface.number,
           }}
           initialTab={surface.detailTab ?? "summary"}
+          revealUrl={surface.revealUrl}
+          onRevealSettled={(revealUrl) => {
+            useRightPanelStore.getState().settlePullRequestReveal(threadRef, surface.id, revealUrl);
+          }}
           onTabChange={(tab) => {
             useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab);
           }}
@@ -169,17 +180,60 @@ export function RightPanelSurfaceContent(props: {
         />
       );
     }
+    case "issue":
+      if (!props.pullRequest.capabilityKnown) return <PullRequestDetailGhost />;
+      if (!props.issuesSupported) {
+        return (
+          <PullRequestsUnavailableState
+            title={gt("Issues unavailable")}
+            error={gt("Update this environment's Lathe server to browse issues.")}
+          />
+        );
+      }
+      return (
+        <IssueDetailPanel
+          key={`${surface.environmentId ?? props.environmentId}:${surface.id}`}
+          environmentId={
+            (surface.environmentId as EnvironmentId | undefined) ?? props.environmentId
+          }
+          reference={{
+            projectId: surface.projectId as ProjectId,
+            tracker: surface.tracker as IssueTrackerKind,
+            ...(surface.host ? { host: surface.host } : {}),
+            scope: surface.scope,
+            key: surface.key,
+          }}
+          threadRef={threadRef}
+          onSelectPullRequest={(reference) => {
+            useRightPanelStore.getState().openPullRequest(threadRef, {
+              projectId: reference.projectId,
+              repository: reference.repository,
+              number: reference.number,
+              ...(reference.host ? { host: reference.host } : {}),
+            });
+          }}
+        />
+      );
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
-    case "side-chat":
+    case "thread":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (
-        <SideChatPane
+        <SideThreadPane
           key={surface.id}
           parentRef={threadRef}
-          threadId={surface.threadId}
+          surface={surface}
           parentPanel={props.sideChatParentPanel}
           onClose={() => onCloseSurface(surface)}
+        />
+      );
+    case "linked-thread":
+      return (
+        <LinkedThreadPane
+          key={surface.id}
+          panelRef={threadRef}
+          surface={surface}
+          visible={visible && props.activeSurfaceId === surface.id}
         />
       );
     case "device":
@@ -212,6 +266,7 @@ export function RightPanelSurfaceContent(props: {
             environmentId={props.environmentId}
             cwd={files.workspaceRoot ?? ""}
             projectName={files.projectName ?? ""}
+            projectId={files.projectId}
             threadRef={threadRef}
             composerDraftTarget={props.composerDraftTarget}
             onCiteText={props.onCiteText}

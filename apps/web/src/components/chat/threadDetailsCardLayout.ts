@@ -22,6 +22,7 @@ export function resolveThreadDetailsCardDensity(
 
 export function resolveThreadDetailsCardLayout({
   container,
+  narrowestWidth = container.width,
   lane,
   frame,
   overlapsDetailsCard = false,
@@ -29,6 +30,8 @@ export function resolveThreadDetailsCardLayout({
   width: preferredWidth = THREAD_DETAILS_CARD_WIDTH.default,
 }: {
   container: { width: number; height: number };
+  // While a panel animates the container, the card fits only if it fits at both ends.
+  narrowestWidth?: number;
   lane: { padding: number; minChatWidth: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
@@ -46,6 +49,11 @@ export function resolveThreadDetailsCardLayout({
   if (maxWidth < THREAD_DETAILS_CARD_WIDTH.min) return null;
   const width = Math.max(THREAD_DETAILS_CARD_WIDTH.min, Math.min(preferredWidth, maxWidth));
   const x = container.width - width - gap;
+  // The transition ends are sampled once, so a resize mid-animation can leave them
+  // wider than the container is now.
+  const fitWidth = Math.min(narrowestWidth, container.width);
+  if (fitWidth - width - gap - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth)
+    return null;
   const y = gap + topInset;
   const height =
     overlapsDetailsCard && frame && frame.x + frame.width > x - gap && frame.x < x + width + gap

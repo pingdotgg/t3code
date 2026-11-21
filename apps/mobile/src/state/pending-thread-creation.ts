@@ -1,6 +1,8 @@
 import { presentThreadShell, type EnvironmentThreadShell } from "@lathe/client-runtime/state/shell";
 import type { LocalThreadMessage } from "../lib/threadActivity";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@lathe/contracts";
+import { threadKey } from "@lathe/client-runtime/state/entities";
+import { asLaunchingThread } from "@lathe/client-runtime/state/thread-inbox";
 import { Atom } from "effect/reactivity";
 import * as DateTime from "effect/DateTime";
 
@@ -128,6 +130,33 @@ export function pendingThreadCreationMessage(message: QueuedThreadMessage): Loca
     createdAt: message.createdAt,
     updatedAt: message.createdAt,
   };
+}
+
+/** Launches show as preparing from Send, before the server's shell exists, until their first run. */
+export function withLaunchingThreads(input: {
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly launches: ReadonlyArray<QueuedThreadMessage>;
+  readonly hiddenThreadKeys: ReadonlySet<string>;
+}): ReadonlyArray<EnvironmentThreadShell> {
+  if (input.launches.length === 0) return input.threads;
+  const launchByKey = new Map<string, QueuedThreadMessage>();
+  for (const message of input.launches) {
+    if (!message.creation || input.hiddenThreadKeys.has(threadKey(message))) continue;
+    launchByKey.set(scopedThreadKey(message.environmentId, message.threadId), message);
+  }
+  if (launchByKey.size === 0) return input.threads;
+  const threads = input.threads.map((thread) => {
+    const key = scopedThreadKey(thread.environmentId, thread.id);
+    const launch = launchByKey.get(key);
+    if (!launch) return thread;
+    launchByKey.delete(key);
+    return asLaunchingThread(thread);
+  });
+  for (const launch of launchByKey.values()) {
+    const shell = pendingThreadCreationShell(launch);
+    if (shell) threads.push(asLaunchingThread(shell));
+  }
+  return threads;
 }
 
 export function pendingThreadCreationShell(

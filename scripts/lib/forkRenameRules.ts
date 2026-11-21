@@ -1011,6 +1011,8 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
       /^T3(?:\s|'s|$)/.test(o.line.slice(o.column)) &&
       (/projectSync\/|ProjectSync|ProjectsSettings\.|SyncedConversation\./.test(o.path) ||
         /synced from T3 Code/.test(o.line) ||
+        (/\/i18n\/translations\/[A-Za-z-]+\.json$/.test(o.path) &&
+          /another T3 install/.test(o.line)) ||
         (/\/Sidebar(?:ThreadRow)?\.tsx$/.test(o.path) && /^\s*T3\s*$/.test(o.line))),
   },
 

@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess } from "effect/process";
 
+import { defaultDevMemoryLimitBytes, enforceDevMemoryLimit } from "./lib/dev-memory-limit.ts";
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { adoptLegacyProcessEnv } from "@lathe/shared/forkLegacyEnv";
 import { loadRepoEnv } from "./lib/public-config.ts";
@@ -62,6 +63,13 @@ export function isProxiableBindHost(host: string): boolean {
     normalized === "::" ||
     normalized === "[::]"
   );
+}
+
+function sharedBackendTargetHost(host: string | undefined): string {
+  const normalized = host?.trim() ?? "";
+  if (normalized === "::1" || normalized === "[::1]") return "[::1]";
+  if (normalized === "localhost") return "localhost";
+  return "127.0.0.1";
 }
 
 export const DEFAULT_LATHE_HOME = Effect.map(Effect.service(Path.Path), (path) =>
@@ -210,11 +218,6 @@ const optionalBooleanConfig = (name: string): Config.Config<boolean | undefined>
     Config.option,
     Config.map((value) => Option.getOrUndefined(value)),
   );
-const optionalPortConfig = (name: string): Config.Config<number | undefined> =>
-  Config.Port(name).pipe(
-    Config.option,
-    Config.map((value) => Option.getOrUndefined(value)),
-  );
 const optionalIntegerConfig = (name: string): Config.Config<number | undefined> =>
   Config.Int(name).pipe(
     Config.option,
@@ -331,7 +334,11 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
       `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
   };
 
-  if (configuredBaseDir !== undefined) {
+  const path = yield* Path.Path;
+  // The server stores an explicit home's state in userdata, which for ~/.lathe is the live
+  // install. Left implicit, dev state goes to ~/.lathe/dev.
+  const isLiveHome = resolvedBaseDir === path.join(yield* HostProcess.HomeDirectory, ".lathe");
+  if (configuredBaseDir !== undefined && !isLiveHome) {
     output.LATHE_HOME = resolvedBaseDir;
   } else {
     delete output.LATHE_HOME;
@@ -376,12 +383,15 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
     delete output.LATHE_SINGLE_ORIGIN_DEV;
     delete output.LATHE_MODE;
     delete output.LATHE_NO_BROWSER;
-    delete output.LATHE_HOST;
     delete output.LATHE_DEV_AUTH_TOKEN;
   }
 
+  // Agent shells inherit the parent Lathe server's bind settings; only --host widens the dev server.
+  delete output.LATHE_LAN;
   if (!isDesktopMode && host !== undefined) {
     output.LATHE_HOST = host;
+  } else {
+    delete output.LATHE_HOST;
   }
 
   if (!isDesktopMode) {
@@ -613,9 +623,9 @@ const runRepoScript = Effect.fn("dev-runner.runRepoScript")(function* (
 });
 
 /**
- * The first start in a worktree seeds its empty database from a small live database
- * and warms the web dependency cache. Each step checks for its own output, so
- * later starts skip it.
+ * The first start in a worktree seeds its empty database from a small live database,
+ * builds the native resource monitor, and warms the web dependency cache. Each step
+ * checks for its own output, so later starts skip it.
  */
 const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (input: {
   readonly mode: DevMode;
@@ -672,6 +682,43 @@ const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (i
   }
 
   const repoRoot = path.dirname(import.meta.dirname);
+  // Dev backends load the monitor from its Cargo output, which a fresh
+  // checkout or worktree does not have yet.
+  if (input.mode !== "dev:web") {
+    const crate = path.join(repoRoot, "native/resource-monitor");
+    const binary =
+      (yield* HostProcess.Platform) === "win32"
+        ? "lathe-resource-monitor.exe"
+        : "lathe-resource-monitor";
+    if (
+      !(yield* exists(path.join(crate, "target/release", binary))) &&
+      !(yield* exists(path.join(crate, "target/debug", binary)))
+    ) {
+      yield* Effect.logInfo("[dev-runner] building the resource monitor (first start only).");
+      const exitCode = yield* ChildProcess.make(
+        "cargo",
+        ["build", "--locked", "--release", "--manifest-path", path.join(crate, "Cargo.toml")],
+        {
+          cwd: repoRoot,
+          stdin: "ignore",
+          stdout: "inherit",
+          stderr: "inherit",
+          env: input.env,
+          extendEnv: false,
+        },
+      ).pipe(
+        Effect.flatMap((child) => child.exitCode),
+        Effect.scoped,
+        Effect.orElseSucceed(() => -1),
+      );
+      if (exitCode !== 0) {
+        yield* Effect.logWarning(
+          "[dev-runner] could not build the resource monitor; starting without process telemetry. Install Rust and run `vp run build:resource-monitor`.",
+        );
+      }
+    }
+  }
+
   if (
     input.mode !== "dev:server" &&
     !(yield* exists(path.join(repoRoot, "apps/web/node_modules/.vite/deps/_metadata.json")))
@@ -693,6 +740,7 @@ interface DevRunnerCliInput {
   readonly share: boolean;
   readonly seed?: boolean | undefined;
   readonly built: boolean;
+  readonly memoryLimitGb?: number | undefined;
   readonly runArgs: ReadonlyArray<string>;
 }
 
@@ -798,12 +846,13 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
         shareDevServer({
           webPort: sharedWebPort,
           // The backend binds 127.0.0.1 unless --host changes it. A wildcard
-          // still answers there; `--host ::1` binds only the IPv6 loopback.
+          // still answers there; `--host ::1` binds only the IPv6 loopback, and
+          // `localhost` binds whichever loopback Node resolves first.
           ...(input.built
             ? {
                 localTarget: {
                   port: Number(env.LATHE_PORT),
-                  host: ["::1", "[::1]"].includes(input.host?.trim() ?? "") ? "[::1]" : "127.0.0.1",
+                  host: sharedBackendTargetHost(input.host),
                 },
               }
             : {}),
@@ -884,10 +933,9 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     env,
     extendEnv: false,
     shell: spawnCommand.shell,
-    // Keep Vite+ in the same process group so terminal signals (Ctrl+C)
-    // reach it directly. Effect defaults to detached: true on non-Windows,
-    // which would put the runner in a new group and require manual forwarding.
-    detached: false,
+    // Its own process group: teardown signals the whole group, because vp
+    // does not pass SIGTERM on to Vite and the server.
+    detached: true,
     forceKillAfter: "1500 millis",
   }).pipe(
     Effect.mapError(
@@ -900,6 +948,10 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     ),
   );
 
+  const memoryLimitBytes =
+    input.memoryLimitGb === undefined
+      ? defaultDevMemoryLimitBytes()
+      : input.memoryLimitGb * 1024 ** 3;
   const exitCode = yield* child.exitCode.pipe(
     Effect.mapError(
       (cause) =>
@@ -909,6 +961,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
           cause,
         }),
     ),
+    Effect.raceFirst(enforceDevMemoryLimit(memoryLimitBytes)),
   );
   if (exitCode !== 0) {
     return yield* new DevRunnerProcessExitError({
@@ -917,6 +970,8 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     });
   }
 });
+
+const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 const devRunnerCli = Command.make("dev-runner", {
   mode: Argument.Literals("mode", DEV_RUNNER_MODES).pipe(
@@ -945,13 +1000,19 @@ const devRunnerCli = Command.make("dev-runner", {
     Flag.withFallbackConfig(optionalBooleanConfig("LATHE_LOG_WS_EVENTS")),
   ),
   host: Flag.String("host").pipe(
-    Flag.withDescription("Server host/interface override (forwards to LATHE_HOST)."),
-    Flag.withFallbackConfig(optionalStringConfig("LATHE_HOST")),
+    Flag.withDescription(
+      "Server host/interface override (forwards to LATHE_HOST). Ambient LATHE_HOST is ignored: agent shells inherit it from the Lathe server that spawned them.",
+    ),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
   ),
   port: Flag.Int("port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Server port override (forwards to LATHE_PORT)."),
-    Flag.withFallbackConfig(optionalPortConfig("LATHE_PORT")),
+    Flag.withDescription(
+      "Server port override (forwards to LATHE_PORT). Ambient LATHE_PORT is ignored: agent shells inherit it from the Lathe server that spawned them.",
+    ),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
   ),
   devUrl: Flag.String("dev-url").pipe(
     Flag.withSchema(Schema.URLFromString),
@@ -983,6 +1044,18 @@ const devRunnerCli = Command.make("dev-runner", {
     ),
     Flag.withDefault(false),
   ),
+  memoryLimitGb: Flag.Int("memory-limit-gb").pipe(
+    Flag.withSchema(NonNegativeInt),
+    Flag.withDescription(
+      "Stop the dev server when it and its child processes use more than this many GiB of RAM plus swap (equivalent to LATHE_DEV_MEMORY_LIMIT_GB). Defaults to half of RAM, at most 16. 0 turns it off. Linux only.",
+    ),
+    Flag.withFallbackConfig(
+      Config.schema(NonNegativeInt, "LATHE_DEV_MEMORY_LIMIT_GB").pipe(
+        Config.option,
+        Config.map(Option.getOrUndefined),
+      ),
+    ),
+  ),
   runArgs: Argument.String("run-arg").pipe(
     Argument.withDescription("Additional Vite+ run args (pass after `--`)."),
     Argument.variadic(),
@@ -999,6 +1072,9 @@ const cliRuntimeLayer = Layer.mergeAll(
 );
 
 if (import.meta.main) {
+  // runMain interrupts (running finalizers such as the --share unmapping) only
+  // on SIGINT/SIGTERM; a closed terminal or dropped SSH session sends SIGHUP.
+  process.on("SIGHUP", () => process.kill(process.pid, "SIGTERM"));
   Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
     Effect.scoped,
     Effect.provide(cliRuntimeLayer),

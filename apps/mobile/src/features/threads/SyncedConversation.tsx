@@ -7,7 +7,7 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { runtime } from "../../lib/runtime";
 import { usePreparedConnection } from "../../state/session";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
 export function SyncedConversation({
   environmentId,

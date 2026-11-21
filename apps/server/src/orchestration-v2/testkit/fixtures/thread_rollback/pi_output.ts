@@ -63,9 +63,10 @@ export function assertPiThreadRollbackOutput(
   const [providerThread] = projection.providerThreads;
   assert.lengthOf(projection.providerThreads, 1);
   assert.equal(providerThread?.nativeThreadRef?.nativeId, "/pi-sessions/session-2.jsonl");
-  assert.deepEqual(
-    outboundOfType(transcript, "switch_session").map((frame) => field(frame, "sessionPath")),
-    ["/pi-sessions/session-2.jsonl"],
+  assert.lengthOf(
+    outboundOfType(transcript, "switch_session"),
+    0,
+    "the fork already selected the rollback session file",
   );
 
   const finalAnswer = projection.turnItems.findLast((item) => item.type === "assistant_message");

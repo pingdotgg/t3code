@@ -39,5 +39,5 @@ export function antigravityReportedModel(
       ? config.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options))
       : [];
   const name = entries.find((entry) => entry.value === model)?.name ?? "";
-  return antigravityUsageModelName(name, 0) || model;
+  return antigravityUsageModelName(name) || model;
 }

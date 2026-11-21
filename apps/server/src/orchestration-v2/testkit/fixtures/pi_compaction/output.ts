@@ -48,7 +48,7 @@ export function assertPiCompactionOutput(
     result,
     transcript,
     runCount: 6,
-    runStatuses: ["completed", "completed", "completed", "completed", "completed", "completed"],
+    runStatuses: ["completed", "failed", "completed", "completed", "completed", "completed"],
   });
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);

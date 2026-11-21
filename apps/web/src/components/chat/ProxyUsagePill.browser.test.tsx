@@ -41,6 +41,13 @@ const environmentId = EnvironmentId.make("desk");
 const checkedAt = "2026-11-18T12:00:00.000Z";
 const NOW = Date.parse(checkedAt);
 const weeklyResetsAt = "2026-11-21T12:00:00.000Z";
+const fableOption = (availableCount: number, expiresAt?: string) => ({
+  creditId: "fable" as never,
+  label: "Fable reset" as never,
+  description: "Refills your Fable allowance." as never,
+  availableCount,
+  ...(expiresAt ? { expiresAt: expiresAt as never } : {}),
+});
 
 /** Pins the ledger's clock at `NOW`; timers stay real so locators can poll. */
 function frozenClock(): Disposable {
@@ -168,7 +175,7 @@ describe("Ledger reset credits", () => {
   const fableOnly: ServerProviderResetCredits = {
     availableCount: 0,
     usableNowCount: 0,
-    fable: { availableCount: 1, nextCreditId: "fable" as never },
+    options: [fableOption(1)],
   };
 
   it("holds back a Fable reset while the weekly limit is full, and says why", async () => {

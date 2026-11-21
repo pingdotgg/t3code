@@ -11,6 +11,7 @@ import type {
 import { DEFAULT_MAX_TERMINAL_BUFFER_BYTES } from "@lathe/contracts";
 import {
   appendOutput,
+  clearOutput,
   EMPTY_TERMINAL_OUTPUT_STATE,
   resetOutput,
   type TerminalOutputState,
@@ -19,6 +20,7 @@ import {
 export {
   INITIAL_TERMINAL_OUTPUT_CURSOR,
   readTerminalOutputUpdate,
+  terminalOutputReplay,
   terminalOutputText,
   type TerminalOutputCursor,
   type TerminalOutputState,
@@ -133,7 +135,7 @@ function terminalBufferStateFromSnapshot(
     output: resetOutput(current.output, snapshot.history, maxBufferBytes),
     grid: nextGrid(current.grid, snapshot),
     status: snapshot.status,
-    error: null,
+    error: snapshot.error ?? null,
     // The server replays still-pending captures right after the snapshot.
     browserLaunches: NO_BROWSER_LAUNCHES,
     updatedAt: snapshot.updatedAt,
@@ -213,7 +215,7 @@ export function applyTerminalAttachStreamEvent(
     case "cleared":
       return {
         ...current,
-        output: resetOutput(current.output, "", maxBufferBytes),
+        output: clearOutput(current.output, maxBufferBytes),
         error: null,
         version: current.version + 1,
       };

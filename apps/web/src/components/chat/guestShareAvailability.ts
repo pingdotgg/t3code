@@ -1,4 +1,5 @@
-import { type EnvironmentId, managedCapabilityDenial } from "@lathe/contracts";
+import { managedCapabilityDenial } from "@lathe/client-runtime/contract-labels";
+import type { EnvironmentId } from "@lathe/contracts";
 import { Atom } from "effect/reactivity";
 
 import { environmentPresentations } from "~/state/presentation";

@@ -12,6 +12,7 @@
         // CodeRabbit loads its configuration by filename.
         ".coderabbit.config.ts",
         ".github/scripts/thread-transfer-report.cjs",
+        ".github/scripts/pr-limits.cjs",
       ],
       "vite": { "entry": [".github/**/*.test.cjs"] },
       "vitest": { "entry": [".github/**/*.test.cjs"] },
@@ -31,16 +32,20 @@
         "linux-after-pack.ts",
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",
+        // e2e loads its config and the scenarios by path, and starts the app script.
+        "e2e.config.ts",
+        "prove-scenario.ts",
+        "scenarios/*.ts",
         "setup-worktree.ts",
         "sign-macos.ts",
         "prepare-server-compile-cache.cjs",
         "smoke-desktop-app.ts",
         "verify-windows-desktop-artifact.ts",
-        "fork-i18n-rekey.ts",
+        "fork-i18n-catalogs.ts",
         "fork-rename-codemod.ts",
         "fork-rename-report.ts",
       ],
-      "ignoreDependencies": ["agent-device", "esbuild"],
+      "ignoreDependencies": ["esbuild"],
       // The `lathe` npm package's files: copied into the package, never imported.
       // knip-schemas.test.ts writes a throwaway project to .knip-test-*, which a
       // knip run beside it in check:changed must not report.
@@ -71,6 +76,7 @@
         "@lathe/web",
         "@napi-rs/keyring",
         "ffi-rs",
+        "transcribe-cpp",
       ],
     },
     "apps/desktop": {
@@ -128,10 +134,13 @@
       // Fonts are configured as asset paths; Expo autolinks the native packages.
       "ignoreDependencies": [
         "@expo-google-fonts/dm-sans",
-        "@lathe/mobile-highlights-native",
         "@lathe/mobile-review-diff-native",
         "@lathe/mobile-terminal-native",
       ],
+    },
+    "apps/mobile/modules/t3-highlights": {
+      // Nitrogen discovers HybridObject specifications by filename.
+      "entry": ["src/*.nitro.ts!"],
     },
     "apps/mobile/modules/t3-source-text": {
       // React Native codegen discovers component specifications by filename.
@@ -168,6 +177,11 @@
       "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],
       "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
+    },
+    "packages/issue-tracker-linear": {
+      // graphqlgen reads its config; the generated operations export every selection's class.
+      "entry": ["graphql.config.ts"],
+      "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
     },
     "packages/source-control-github": {
       // graphqlgen reads its config; the generated operations export every selection's class.

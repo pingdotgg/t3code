@@ -23,7 +23,7 @@ export function CommandDisplaySettings() {
       resetAction={
         mode !== DEFAULT_UNIFIED_SETTINGS.commandDisplayMode ? (
           <SettingResetButton
-            label="command display"
+            ariaLabel="Reset command display to default"
             onClick={() =>
               updateSettings({ commandDisplayMode: DEFAULT_UNIFIED_SETTINGS.commandDisplayMode })
             }

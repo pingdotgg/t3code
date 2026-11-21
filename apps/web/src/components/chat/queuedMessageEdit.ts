@@ -7,24 +7,46 @@ import {
   type ComposerImageAttachment,
   type ComposerThreadTarget,
 } from "../../composerDraftStore";
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
+import { releaseDraftAttachments } from "../../lib/attachmentUploadQueue";
+
+/** Staged attachments upload as soon as they are added, so a dropped edit must release them. */
+export function discardQueuedEditDraft(target: ComposerThreadTarget): void {
+  const store = useComposerDraftStore.getState();
+  const draft = store.getComposerDraft(target);
+  if (draft) {
+    releaseDraftAttachments([...draft.images, ...draft.files]);
+    for (const image of draft.images) {
+      if (image.previewUrl.startsWith("blob:")) URL.revokeObjectURL(image.previewUrl);
+    }
+  }
+  store.clearComposerContent(target);
+}
 
 export function recoverQueuedMessageEdit(input: {
   readonly editTarget: ComposerThreadTarget;
   readonly threadTarget: ComposerThreadTarget;
   readonly originalText: string;
+  readonly removedExistingAttachment?: boolean;
 }): "kept" | "discarded" | "clean" {
   const store = useComposerDraftStore.getState();
   const draft = store.getComposerDraft(input.editTarget);
   const recovery = resolveQueuedEditExit({
     editChanged:
-      draft !== null &&
-      (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0),
-    threadDraftEmpty: !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
+      input.removedExistingAttachment === true ||
+      (draft !== null &&
+        (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0)),
+    // A cleared edit has nothing to put back, so it can only be discarded.
+    threadDraftEmpty:
+      composerDraftHasUserContent(draft) &&
+      !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
   });
   if (recovery === "kept") {
-    store.moveComposerPromptAndImages(input.editTarget, input.threadTarget);
-  } else {
+    store.moveComposerContent(input.editTarget, input.threadTarget);
     store.clearComposerContent(input.editTarget);
+  } else {
+    discardQueuedEditDraft(input.editTarget);
   }
   return recovery;
 }
@@ -40,7 +62,7 @@ export async function prepareQueuedEditAttachments(input: {
 }) {
   const files = input.files.length === 0 ? [] : await input.uploadFiles(input.files);
   if (files.length !== input.files.length)
-    throw new Error("Retry or remove failed uploads before saving.");
+    throw new Error(m(msg("Retry or remove failed uploads before saving.")));
   const images = await Promise.all(
     input.images.map(async (image) => ({
       type: "image" as const,

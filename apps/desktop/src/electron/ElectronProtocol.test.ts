@@ -63,7 +63,7 @@ describe("ElectronProtocol", () => {
       assert.equal((yield* request("/%invalid")).status, 400);
       assert.equal((yield* request("/", { method: "POST" })).status, 405);
       assert.equal(netFetchMock.mock.calls.length, 0);
-    }).pipe(Effect.provide(Layer.merge(layerProtocol, NodeServices.layer)), Effect.scoped),
+    }).pipe(Effect.provide(Layer.merge(layerProtocol, NodeServices.layer))),
   );
 
   it.effect("proxies the stable renderer origin to the current app server", () =>

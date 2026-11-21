@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 
@@ -17,10 +18,46 @@ export type SettingsSecretValue = typeof SettingsSecretValue.Type;
 
 export const isSecretReference = Schema.is(SecretReference);
 
+/** Whether a reference appears anywhere in `value`, such as a settings patch or an RPC payload. */
+export function containsSecretReference(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  if (isSecretReference(value)) return true;
+  return Object.values(value).some(containsSecretReference);
+}
+
 /** The literal a credential setting holds, or `""` when it names a secret instead. */
 export function settingsSecretLiteral(value: SettingsSecretValue | undefined): string {
   return typeof value === "string" ? value : "";
 }
+
+export class SettingsSecretUnresolvedError extends Schema.TaggedError<SettingsSecretUnresolvedError>()(
+  "SettingsSecretUnresolvedError",
+  { provider: Schema.String },
+) {
+  override get message(): string {
+    return `Could not read the credential from the secret provider "${this.provider}". Unlock or fix it in Settings, then try again.`;
+  }
+}
+
+/**
+ * The literal a credential setting holds once its secret is resolved. A reference still in place
+ * could not be read, and fails instead of passing for a missing token, so callers that would fall
+ * back to another credential cannot silently switch accounts.
+ */
+export const requireSettingsSecretLiteral = (
+  value: SettingsSecretValue | undefined,
+  secretProviders: Readonly<Record<string, { readonly label: string } | undefined>>,
+): Effect.Effect<string, SettingsSecretUnresolvedError> =>
+  isSecretReference(value)
+    ? Effect.fail(
+        new SettingsSecretUnresolvedError({
+          provider:
+            (Object.hasOwn(secretProviders, value.provider)
+              ? secretProviders[value.provider]?.label.trim()
+              : undefined) || value.provider,
+        }),
+      )
+    : Effect.succeed(value ?? "");
 
 export function acceptsSecretReference(schema: Schema.Top): boolean {
   return Schema.resolveAnnotationsKey(schema)?.settingsSecretReference === true;
@@ -91,3 +128,9 @@ export function withSettingsSecrets<Settings extends Readonly<Record<string, unk
   }
   return next as Settings;
 }
+
+export const SecretSourceCheckResult = Schema.Union([
+  Schema.TaggedStruct("Resolved", {}),
+  Schema.TaggedStruct("Failed", { detail: Schema.String }),
+]);
+export type SecretSourceCheckResult = typeof SecretSourceCheckResult.Type;

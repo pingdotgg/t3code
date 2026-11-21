@@ -245,7 +245,7 @@ export function GitHubAccountRulesSettings({
         title="Owner rules"
         description={
           bulk
-            ? `The first rule whose owner pattern matches a repository decides which gh account its commands use. * matches any characters; no match uses the active gh account. Rules apply to every connected machine; choose one machine in the breadcrumb to give it its own. Accounts are listed from ${environment?.label ?? "the selected machine"}.`
+            ? `The first rule whose owner pattern matches a repository picks its gh account; * matches anything, no match uses the active account. Rules cover every machine unless you pick one. Accounts from ${environment?.label ?? "the selected machine"}.`
             : "The first rule whose owner pattern matches a repository decides which gh account its commands use. * matches any characters. Repositories with no match use the active gh account."
         }
       />

@@ -195,32 +195,54 @@ function windows(account: ModelproxyAccount, nowMs: number): ServerProviderUsage
 const count = (value: number | undefined) => Math.max(0, Math.round(value ?? 0));
 
 /** A timestamp the contract accepts, or nothing. */
-function isoOrNone(value: string | undefined): { nextExpiresAt?: string } {
+function isoOrNone(value: string | undefined): string | undefined {
   const at = value ? DateTime.make(value) : Option.none();
-  return Option.isSome(at) ? { nextExpiresAt: DateTime.formatIso(at.value) } : {};
+  return Option.isSome(at) ? DateTime.formatIso(at.value) : undefined;
 }
+
+const GATEWAY_RESET_KINDS = {
+  weekly: { label: "Weekly reset", description: "Refills your weekly limit." },
+  fable: {
+    label: "Fable reset",
+    description:
+      "Refills your Fable allowance and gives back what Fable used on your weekly limit. It doesn't reset your whole week.",
+  },
+} as const;
 
 /**
  * The gateway resolves the real grant, so the credit id Lathe holds names
- * only the kind: "weekly" or "fable".
+ * only the kind: "weekly" or "fable". The top-level count is the weekly
+ * bucket; Fable resets appear only among the options.
  */
 function resetCredits(account: ModelproxyAccount): ServerProviderResetCredits | undefined {
   const credits = account.resetCredits;
   if (!credits) return undefined;
   const weekly = count(credits.weekly);
   const fable = count(credits.fable);
+  const weeklyExpiresAt = isoOrNone(credits.nextWeekly?.expiresAt);
+  const fableExpiresAt = isoOrNone(credits.nextFable?.expiresAt);
+  const option = (kind: keyof typeof GATEWAY_RESET_KINDS, available: number, at?: string) =>
+    available > 0
+      ? [
+          {
+            creditId: kind,
+            ...GATEWAY_RESET_KINDS[kind],
+            availableCount: available,
+            ...(at ? { expiresAt: at } : {}),
+          },
+        ]
+      : [];
   return {
     availableCount: weekly,
     usableNowCount: Math.min(weekly, count(credits.usableNow)),
     ...(weekly > 0 ? { nextCreditId: "weekly" } : {}),
-    ...(weekly > 0 ? isoOrNone(credits.nextWeekly?.expiresAt) : {}),
+    ...(weekly > 0 && weeklyExpiresAt ? { nextExpiresAt: weeklyExpiresAt } : {}),
     ...(fable > 0
       ? {
-          fable: {
-            availableCount: fable,
-            nextCreditId: "fable",
-            ...isoOrNone(credits.nextFable?.expiresAt),
-          },
+          options: [
+            ...option("weekly", weekly, weeklyExpiresAt),
+            ...option("fable", fable, fableExpiresAt),
+          ],
         }
       : {}),
   };

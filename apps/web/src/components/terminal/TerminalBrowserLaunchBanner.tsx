@@ -15,7 +15,7 @@ import { useHostedAuthRelay } from "~/browser/useHostedAuthRelay";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { terminalEnvironment } from "~/state/terminal";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -122,7 +122,7 @@ export function TerminalBrowserLaunchBanner({
           size="xs"
           variant="ghost"
           onClick={() => {
-            void writeTextToClipboard(launch.url, "Sign-in link")
+            void writeTextToClipboard(launch.url, namedClipboardTarget("sign-in link"))
               .then(() => setCopied(true))
               .catch(() => setError("Could not copy the link."));
           }}

@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import {
   useLayoutEffect,
@@ -42,7 +43,8 @@ export function ThreadDetailsCard({
   onContextMenu?: MouseEventHandler<HTMLDivElement>;
   children: (density: "full" | "compact" | "essential") => ReactNode;
 }) {
-  const detailsArea = workspaceAreaProps("details", 3, "Thread details");
+  const gt = useGT();
+  const detailsArea = workspaceAreaProps("details", 3, gt("Thread details"));
   const canvas = useChatCanvas();
   const preferredPlacement = canvas?.preferredDetailsCard ?? null;
   const placement = canvas?.detailsCardPlacement ?? null;
@@ -153,7 +155,7 @@ export function ThreadDetailsCard({
               onClick={() => setMinimized(!minimized)}
             >
               {minimized ? <ChevronsUpDownIcon /> : <ChevronsDownUpIcon />}
-              {minimized ? "Show all details" : "Show essentials only"}
+              {minimized ? gt("Show all details") : gt("Show essentials only")}
             </Button>
           </div>
         </div>

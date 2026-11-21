@@ -125,10 +125,12 @@ export function summarizeMenuBar(
       ) {
         continue;
       }
+      const request = subagentRequests.get(raw.id) ?? null;
+      // Clients show a user-only card as an ordinary question.
       const thread = presentThreadShell(
         environment.environmentId,
         raw,
-        subagentRequests.get(raw.id) ?? null,
+        request === "user_only_input" ? "user_input" : request,
       );
       if (effectiveSnoozed(thread, { now })) continue;
       const kind = classify(thread);

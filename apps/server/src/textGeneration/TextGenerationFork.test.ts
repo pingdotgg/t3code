@@ -10,10 +10,12 @@ import { ProviderInstanceId } from "@lathe/contracts";
 import { createModelSelection } from "@lathe/shared/model";
 
 import type { ProviderInstance } from "@lathe/provider-core/server/driver";
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import * as TextGenerators from "./TextGenerators.ts";
 
 const makeStubTextGeneration = (
   overrides: Partial<TextGeneration.TextGeneration["Service"]>,
@@ -26,6 +28,8 @@ const makeStubTextGeneration = (
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
     generateReviewGuide: () => Effect.die("generateReviewGuide stub not configured for this test"),
     generateStructured: () => Effect.die("generateStructured stub not configured for this test"),
+    generateTranscriptionPostProcessing: () =>
+      Effect.die("generateTranscriptionPostProcessing stub not configured for this test"),
     ...overrides,
   });
 
@@ -90,6 +94,8 @@ describe("TextGeneration.make structured generation", () => {
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => Effect.die("No link lookup expected"),
             }),
+            ProviderInstallationGate.layer,
+            Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
           ),
         ),
       );

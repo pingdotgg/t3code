@@ -15,6 +15,7 @@ import {
   type ModelproxyUsageLimitSourceConfig,
   type ProviderConsumeResetCreditOutcome,
   type ProviderConsumeResetCreditResult,
+  type ProviderDriverKind,
   type ServerSettings,
   type UsageLimitSourceConfig,
   settingsSecretLiteral,
@@ -41,6 +42,7 @@ import * as SecretResolver from "@lathe/secret-provider-core/server/SecretResolv
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
 import * as Settings from "../serverSettings.ts";
+import { windowLimitsModel } from "../provider/claudeUsageLimits.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 import { makeModelproxyAccountLogin } from "./modelproxyAccountLogin.ts";
 import { makeModelproxyApi, mapModelproxyStatus, type ModelproxyStatus } from "./modelproxyApi.ts";
@@ -137,6 +139,41 @@ function settleRead(
     return last;
   }
   return keepGatewayRoutes(read.snapshot, previous);
+}
+
+/**
+ * A refused read of one account keeps its last good reading, as provider probes keep their bars
+ * (see ServerProviderUsageLimits); a reading with none to keep stays listed as unreadable.
+ */
+function keepLastGoodReadings(
+  previous: ReadonlyArray<UsageLimitSourceSnapshot>,
+  next: ReadonlyArray<UsageLimitSourceSnapshot>,
+): ReadonlyArray<UsageLimitSourceSnapshot> {
+  return next.map((source) => {
+    // Auth file names can be reused, so only the same hub and login may lend a reading.
+    const before = previous.find(
+      (candidate) => candidate.id === source.id && candidate.endpoint === source.endpoint,
+    );
+    if (!before) return source;
+    return {
+      ...source,
+      accounts: source.accounts.map((account) => {
+        if (account.usageLimits.unavailable?.reason !== "probeFailed") return account;
+        // Without a listed login, a reused auth file name cannot be told apart from the old one.
+        if (account.email === undefined && account.workspaceId === undefined) return account;
+        const last = before.accounts.find(
+          (candidate) =>
+            candidate.id === account.id &&
+            candidate.driver === account.driver &&
+            // Fingerprinted Antigravity readings omit the listed identity, so they are never lent.
+            candidate.usageLimits.credentialFingerprint === undefined &&
+            candidate.email === account.email &&
+            candidate.workspaceId === account.workspaceId,
+        );
+        return last && !last.usageLimits.unavailable ? last : account;
+      }),
+    };
+  });
 }
 
 function missingManagementKey(config: CliproxyUsageLimitSourceConfig): string {
@@ -260,8 +297,23 @@ export const make = Effect.gen(function* () {
     config: UsageLimitSourceConfig,
   ): Effect.fn.Return<SourceRead> {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const base = { id, kind: config.kind, label: sourceLabel(id, config), checkedAt } as const;
-    if (config.kind === "modelproxy") return yield* readModelproxy(id, config, base);
+    const label = sourceLabel(id, config);
+    if (config.kind === "modelproxy") {
+      return yield* readModelproxy(id, config, { id, kind: config.kind, label, checkedAt });
+    }
+    const url = URL.parse(config.url);
+    const base = {
+      id,
+      kind: config.kind,
+      label,
+      ...(url && /^https?:$/.test(url.protocol)
+        ? {
+            origin: url.origin,
+            endpoint: `${url.origin}${url.pathname.replace(/(\/management\.html)?\/*$/i, "")}`,
+          }
+        : {}),
+      checkedAt,
+    } as const;
     const managementKey = yield* readManagementKey(config);
     if (managementKey.length === 0) {
       return { snapshot: { ...base, accounts: [], error: missingManagementKey(config) } };
@@ -349,7 +401,12 @@ export const make = Effect.gen(function* () {
       nowMs: DateTime.toEpochMillis(yield* DateTime.now),
       intervalMs: yield* intervalMs,
     };
-    yield* publish(reads.map((read) => settleRead(read, previous, settle)));
+    yield* publish(
+      keepLastGoodReadings(
+        previous,
+        reads.map((read) => settleRead(read, previous, settle)),
+      ),
+    );
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
   const auth = Effect.fn("UsageLimitSources.auth")(function* (input: UsageLimitSourceAuthInput) {
@@ -744,4 +801,65 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(UsageLimitSources, make).pipe(
   Layer.provide(SecretResolverLayer.layer),
+);
+
+/** A hub answers with a usage limit only when every account it routes the driver to is spent. */
+export function hubPoolResetAt(
+  sources: ReadonlyArray<UsageLimitSourceSnapshot>,
+  driver: ProviderDriverKind,
+  model: string | null,
+  now: number,
+): string | null {
+  let earliest: number | null = null;
+  for (const source of sources) {
+    for (const account of source.accounts) {
+      if (account.driver !== driver) continue;
+      // An unread account may be the one still blocked, so its refill is unknown.
+      if (account.usageLimits.unavailable) return null;
+      const spent = account.usageLimits.windows.filter(
+        (window) => window.usedPercent >= 100 && windowLimitsModel(window, model),
+      );
+      if (spent.length === 0) return null;
+      const resets = spent.map((window) => Date.parse(window.resetsAt ?? ""));
+      if (resets.some((reset) => !Number.isFinite(reset))) return null;
+      const recoversAt = Math.max(...resets);
+      if (recoversAt <= now) return null;
+      earliest = earliest === null ? recoversAt : Math.min(earliest, recoversAt);
+    }
+  }
+  return earliest === null ? null : DateTime.formatIso(DateTime.makeUnsafe(earliest));
+}
+
+export class UsageLimitResetFallback extends Context.Reference<{
+  readonly resetAt: (
+    driver: ProviderDriverKind,
+    endpoint: string,
+    model: string | null,
+  ) => Effect.Effect<string | null>;
+}>("lathe/usage/UsageLimitResetFallback", {
+  defaultValue: () => ({ resetAt: () => Effect.succeed(null) }),
+}) {}
+
+export const layerResetFallback = Layer.effect(
+  UsageLimitResetFallback,
+  Effect.gen(function* () {
+    const sources = yield* UsageLimitSources;
+    return {
+      resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (driver, endpoint, model) {
+        // Only the hub at the instance's endpoint serves its turns.
+        const atEndpoint = Effect.map(sources.current, (current) =>
+          current.filter((source) => source.origin === endpoint),
+        );
+        if ((yield* atEndpoint).length === 0) return null;
+        // The pool usually ran out after the last poll, so the cached accounts still show room.
+        yield* sources.refresh.pipe(Effect.timeout("5 seconds"), Effect.ignore);
+        return hubPoolResetAt(
+          yield* atEndpoint,
+          driver,
+          model,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+      }),
+    };
+  }),
 );

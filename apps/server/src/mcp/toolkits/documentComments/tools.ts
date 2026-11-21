@@ -7,6 +7,7 @@ import {
   TrimmedNonEmptyString,
 } from "@lathe/contracts";
 import * as Schema from "effect/Schema";
+import * as McpSchema from "effect/ai/McpSchema";
 import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
 
@@ -135,7 +136,9 @@ const ListDocumentCommentsTool = Tool.make("list_document_comments", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  // Acts on the calling thread, which an outside client does not have.
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ResolveDocumentCommentTool = Tool.make("resolve_document_comment", {
   description:
@@ -149,7 +152,9 @@ const ResolveDocumentCommentTool = Tool.make("resolve_document_comment", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  // Acts on the calling thread, which an outside client does not have.
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const DocumentCommentsToolkit = Toolkit.make(
   ListDocumentCommentsTool,

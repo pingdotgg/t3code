@@ -1,10 +1,10 @@
-import type { EnvironmentShellSummary } from "@lathe/client-runtime/state/shell";
+import { EMPTY_SHELL_STATE, type EnvironmentShellSummary } from "@lathe/client-runtime/state/shell";
 import { BearerConnectionProfile, BearerConnectionTarget } from "@lathe/client-runtime/connection";
 import { EnvironmentId } from "@lathe/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
-import { projectWorkspaceState } from "./workspaceModel";
+import { isEnvironmentShellPending, projectWorkspaceState } from "./workspaceModel";
 import { projectEnvironmentConnectionSummary as projectWorkspaceEnvironment } from "@lathe/client-runtime/state/presentation";
 import type { EnvironmentPresentation } from "./environments";
 
@@ -42,6 +42,7 @@ function environment(
       traceId: phase === "error" ? "trace-1" : null,
     },
     serverConfig: null,
+    refusedRouteIds: [],
   };
 }
 
@@ -71,6 +72,15 @@ describe("mobile workspace projection", () => {
     expect(state.connectionState).toBe("offline");
     expect(state.networkStatus).toBe("offline");
     expect(state.hasReadyEnvironment).toBe(false);
+  });
+
+  it("waits for shell cache initialization and synchronization, but not completed reads", () => {
+    expect(isEnvironmentShellPending(EMPTY_SHELL_STATE)).toBe(true);
+    expect(isEnvironmentShellPending({ ...EMPTY_SHELL_STATE, status: "synchronizing" })).toBe(true);
+    expect(isEnvironmentShellPending({ ...EMPTY_SHELL_STATE, status: "cached" })).toBe(false);
+    expect(
+      isEnvironmentShellPending({ ...EMPTY_SHELL_STATE, error: Option.some("Cache failed.") }),
+    ).toBe(false);
   });
 
   it("keeps retained snapshots visible while reconnecting without claiming readiness", () => {

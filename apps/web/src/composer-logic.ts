@@ -2,16 +2,24 @@ import type { ClientSettings } from "@lathe/contracts/settings";
 import type { Citation, EnvironmentId, ResolvedKeybindingsConfig } from "@lathe/contracts";
 import type { ComposerPathSearchTarget } from "@lathe/client-runtime/state/threads";
 import { serializeCitation, withCitationComment } from "@lathe/shared/assistantCitations";
-import { isCurrencyAmountQuery, isPathWord } from "@lathe/shared/composerTrigger";
+import {
+  detectComposerPullRequestTrigger,
+  isCurrencyAmountQuery,
+  isPathWord,
+} from "@lathe/shared/composerTrigger";
 import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
 } from "./composer-editor-mentions";
 
-import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
+import {
+  resolveShortcutCommand,
+  type ShortcutEventLike,
+  type ShortcutMatchContext,
+} from "./keybindings";
 
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default" | "side" | "btw";
+export type ComposerSlashCommand = "model" | "side" | "btw" | "clear";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
 export interface ComposerTrigger {
@@ -52,6 +60,8 @@ export function composerRequiresModifier(
 export function composerSubmissionIntentForKey(input: {
   event: ShortcutEventLike & { isComposing?: boolean; keyCode?: number; repeat?: boolean };
   keybindings: ResolvedKeybindingsConfig;
+  /** The when-clause context ChatView's shortcut listeners see, so both resolve Enter alike. */
+  context: Partial<ShortcutMatchContext>;
   platform?: string;
   isSoftwareKeyboardOpen: boolean;
   isDraftThread: boolean;
@@ -66,6 +76,7 @@ export function composerSubmissionIntentForKey(input: {
   const resolved = resolveShortcutCommand(event, input.keybindings, {
     ...(input.platform === undefined ? {} : { platform: input.platform }),
     context: {
+      ...input.context,
       composerFocus: true,
       draftThreadRoute: input.isDraftThread,
       turnRunning: input.isRunning === true,
@@ -134,7 +145,7 @@ export function expandCollapsedComposerCursor(
       expandedCursor += expandedLength;
       continue;
     }
-    if (segment.type === "skill") {
+    if (segment.type === "skill" || segment.type === "model") {
       const expandedLength = segment.source.length;
       if (remaining <= 1) {
         return expandedCursor + (remaining === 0 ? 0 : expandedLength);
@@ -220,7 +231,7 @@ export function collapseExpandedComposerCursor(
       collapsedCursor += 1;
       continue;
     }
-    if (segment.type === "skill") {
+    if (segment.type === "skill" || segment.type === "model") {
       const expandedLength = segment.source.length;
       if (remaining === 0) {
         return collapsedCursor;
@@ -257,15 +268,8 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
-  if (pullRequestMatch) {
-    return {
-      kind: "pull-request",
-      query: pullRequestMatch[1] ?? "",
-      rangeStart: tokenStart,
-      rangeEnd: cursor,
-    };
-  }
+  const pullRequestTrigger = detectComposerPullRequestTrigger(token, cursor);
+  if (pullRequestTrigger) return pullRequestTrigger;
   const skillPrefix = /^\p{Sc}/u.exec(token);
   if (skillPrefix) {
     if (isCurrencyAmountQuery(token.slice(skillPrefix[0].length))) return null;
@@ -312,24 +316,6 @@ export function composerStateAtPromptEnd(
       ? null
       : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
   };
-}
-
-/** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message. */
-export function parseSideChatCommand(text: string): { prompt: string } | null {
-  const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());
-  return match ? { prompt: match[1]?.trim() ?? "" } : null;
-}
-
-export function parseStandaloneComposerSlashCommand(
-  text: string,
-): Exclude<ComposerSlashCommand, "model" | "side" | "btw"> | null {
-  const match = /^\/(plan|default)\s*$/i.exec(text.trim());
-  if (!match) {
-    return null;
-  }
-  const command = match[1]?.toLowerCase();
-  if (command === "plan") return "plan";
-  return "default";
 }
 
 /**

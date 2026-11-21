@@ -21,6 +21,7 @@ import {
   TrimmedNonEmptyString,
 } from "@lathe/contracts";
 import * as Schema from "effect/Schema";
+import * as McpSchema from "effect/ai/McpSchema";
 import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
 
@@ -337,6 +338,7 @@ export const RoadmapAddNoteResult = Schema.Union([
 ]);
 export type RoadmapAddNoteResult = typeof RoadmapAddNoteResult.Type;
 
+// Tools that act as the calling thread are hidden from outside clients, which have none.
 const ListTool = Tool.make("lathe_roadmap_list", {
   description:
     "List the Lathe roadmap's work items as compact rows with their forecast status, in tree order. Filter by area, type, state, or a subtree.",
@@ -349,7 +351,8 @@ const ListTool = Tool.make("lathe_roadmap_list", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReadTool = Tool.make("lathe_roadmap_read", {
   description:
@@ -363,7 +366,8 @@ const ReadTool = Tool.make("lathe_roadmap_read", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 // Every change tool is idempotent: a repeated clientRequestId replays the first outcome.
 const CreateTool = Tool.make("lathe_roadmap_create", {
@@ -378,7 +382,8 @@ const CreateTool = Tool.make("lathe_roadmap_create", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const UpdateTool = Tool.make("lathe_roadmap_update", {
   description:
@@ -392,7 +397,8 @@ const UpdateTool = Tool.make("lathe_roadmap_update", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const CriterionTickTool = Tool.make("lathe_roadmap_criterion_tick", {
   description:
@@ -406,7 +412,8 @@ const CriterionTickTool = Tool.make("lathe_roadmap_criterion_tick", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const AttachTool = Tool.make("lathe_roadmap_attach", {
   description:
@@ -448,7 +455,8 @@ const LinkBlockerTool = Tool.make("lathe_roadmap_link_blocker", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const LogHoursTool = Tool.make("lathe_roadmap_log_hours", {
   description:
@@ -462,7 +470,8 @@ const LogHoursTool = Tool.make("lathe_roadmap_log_hours", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const AddNoteTool = Tool.make("lathe_roadmap_add_note", {
   description:
@@ -476,7 +485,8 @@ const AddNoteTool = Tool.make("lathe_roadmap_add_note", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ImportIssueTool = Tool.make("lathe_roadmap_import_issue", {
   description:
@@ -490,7 +500,8 @@ const ImportIssueTool = Tool.make("lathe_roadmap_import_issue", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const LinkPullRequestTool = Tool.make("lathe_roadmap_link_pull_request", {
   description:
@@ -504,7 +515,8 @@ const LinkPullRequestTool = Tool.make("lathe_roadmap_link_pull_request", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const RoadmapToolkit = Toolkit.make(
   ListTool,

@@ -2,7 +2,7 @@ import type { ProviderInstanceEnvironment } from "@lathe/contracts";
 import * as HostProcess from "@lathe/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
-import { expandHomePath } from "./pathExpansion.ts";
+import { expandHomeVariable } from "./pathExpansion.ts";
 
 /**
  * A view of `base` with `overrides` on top; an `undefined` override hides the inherited name.
@@ -64,10 +64,7 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
         if (inherited.toUpperCase() === name) overrides[inherited] = undefined;
       }
     }
-    overrides[name] =
-      name === "CODEX_HOME" || name === "CLAUDE_CONFIG_DIR"
-        ? expandHomePath(variable.value, home)
-        : variable.value;
+    overrides[name] = expandHomeVariable(name, variable.value, home);
   }
   return overlayEnvironment(baseEnv, overrides);
 });

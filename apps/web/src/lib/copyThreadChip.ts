@@ -23,7 +23,7 @@ export async function copyThreadChip(input: {
     const encoded = encodeComposerContextFragment(fragment);
     const didCopy = await writeTextToClipboard(
       text,
-      "text",
+      undefined,
       encoded === null ? undefined : { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: encoded },
     );
     if (!didCopy) return;

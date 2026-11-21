@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@lathe/contracts";
 import { TERMINAL_PALETTES, terminalOutputSpans } from "@lathe/shared/terminalOutput";
 import type React from "react";
@@ -67,6 +68,7 @@ export function ThreadCommandOutput(props: {
   readonly itemId: TurnItemId;
   readonly themeAppearance: "light" | "dark";
 }) {
+  const gt = useGT();
   const { data, error } = useEnvironmentQuery(
     orchestrationEnvironment.v2.commandOutput({
       environmentId: props.environmentId,
@@ -82,12 +84,12 @@ export function ThreadCommandOutput(props: {
   );
   if (text.length === 0) {
     const message = error
-      ? `Couldn't load output: ${error}`
+      ? gt("Couldn't load output: {error}", { error })
       : data === null
-        ? "Loading output…"
+        ? gt("Loading output…")
         : data.running
           ? null
-          : "No output.";
+          : gt("No output.");
     return message === null ? null : (
       <Text className="pt-1.5 font-mono text-2xs leading-normal text-foreground-muted">
         {message}
@@ -96,9 +98,6 @@ export function ThreadCommandOutput(props: {
   }
   return (
     <View className="pt-1.5">
-      {data?.output.truncated ? (
-        <Text className="pb-0.5 text-3xs text-foreground-subtle">Earlier output not shown</Text>
-      ) : null}
       <ScrollView
         ref={scrollRef}
         nestedScrollEnabled
@@ -116,6 +115,11 @@ export function ThreadCommandOutput(props: {
           if (followRef.current) scrollRef.current?.scrollToEnd({ animated: false });
         }}
       >
+        {data?.output.truncated ? (
+          <Text className="pb-0.5 text-3xs text-foreground-subtle">
+            <T>Earlier output not shown</T>
+          </Text>
+        ) : null}
         <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
           {spans.map((span, index) =>
             span.style === null ? (

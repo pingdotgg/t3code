@@ -36,6 +36,8 @@ Terms whose meaning matters across Lathe. Architecture and lifecycle constraints
 | Provider            | The agent runtime Lathe controls, such as Codex or Claude Code.                                              |
 | Driver              | The integration for a provider kind.                                                                         |
 | Provider instance   | One configured provider, with its own settings and lifecycle. Multiple instances can use the same driver.    |
+| Text generation     | App-owned one-shot writing, such as thread titles, commit messages, and transcript cleanup.                  |
+| Text generator      | A model API used only for text generation. Its id fills a model selection; agent surfaces never list it.     |
 | Adapter             | The boundary translating a provider's native protocol into Lathe operations and events.                      |
 | Session             | The provider runtime attached to a thread. A session can be stopped and resumed without deleting the thread. |
 | Runtime mode        | The thread's permission policy. See [permission modes](../user/permission-modes.md).                         |

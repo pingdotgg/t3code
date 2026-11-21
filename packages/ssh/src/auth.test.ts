@@ -89,7 +89,6 @@ describe("ssh auth", () => {
       );
     }).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
-      Effect.scoped,
     ),
   );
 
@@ -307,7 +306,6 @@ describe("ssh auth", () => {
       assert.include(yield* fs.readFileString(first), 'printf "%s\\n" "$LATHE_SSH_AUTH_SECRET"');
     }).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
-      Effect.scoped,
     ),
   );
 });

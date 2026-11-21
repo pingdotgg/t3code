@@ -1,5 +1,6 @@
 import {
   OrchestrationV2AppThread,
+  OrchestrationV2ConversationMessage,
   OrchestrationV2TurnItem,
   type OrchestrationV2ThreadProjection,
   type ScopedThreadRef,
@@ -14,7 +15,13 @@ import {
   type ThreadQueueWorkflowState,
 } from "./threadWorkflows.ts";
 import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
-import { presentRunStop, type RunStopPresentation } from "./threadExecution.ts";
+import {
+  deriveUsageLimitNoticeRows,
+  presentRunStop,
+  withoutUsageLimitNoticeRows,
+  type RunStopPresentation,
+  type UsageLimitNoticeRows,
+} from "./threadExecution.ts";
 import {
   deriveThreadCheckpointSummaries,
   type ThreadCheckpointSummary,
@@ -85,6 +92,26 @@ type AppThread = OrchestrationV2ThreadProjection["thread"];
 const structureTurnItems = new WeakMap<TurnItem, ThreadStructureTurnItem>();
 const structureVisibleTurnItems = new WeakMap<VisibleTurnItem, ThreadStructureVisibleTurnItem>();
 
+// Queued text, attachments and attribution all come from the message, so its identity covers them.
+function queueWorkflowStatesEqual(
+  left: ThreadQueueWorkflowState,
+  right: ThreadQueueWorkflowState,
+): boolean {
+  return (
+    left.activeRun === right.activeRun &&
+    left.isHeld === right.isHeld &&
+    left.canSendNow === right.canSendNow &&
+    left.canPromoteToSteer === right.canPromoteToSteer &&
+    left.promoteSkipsCompaction === right.promoteSkipsCompaction &&
+    left.queuedRuns.length === right.queuedRuns.length &&
+    left.queuedRuns.every(
+      (queued, index) =>
+        queued.run === right.queuedRuns[index]!.run &&
+        queued.message === right.queuedRuns[index]!.message,
+    )
+  );
+}
+
 function toThreadStructureTurnItem(item: TurnItem): ThreadStructureTurnItem {
   if (item.type !== "assistant_message" && item.type !== "reasoning") return item;
   let structure = structureTurnItems.get(item);
@@ -134,6 +161,7 @@ function toThreadStructure(projection: OrchestrationV2ThreadProjection): ThreadS
 
 const sameTurnItem = Schema.toEquivalence(OrchestrationV2TurnItem);
 const sameAppThread = Schema.toEquivalence(OrchestrationV2AppThread);
+const sameMessage = Schema.toEquivalence(OrchestrationV2ConversationMessage);
 
 // Overlays previous's structure on next, so the fields the strip functions
 // remove are exactly the ones ignored here.
@@ -156,6 +184,17 @@ function sameTurnItemStructure(previous: TurnItem, next: TurnItem): boolean {
     return false;
   }
   return sameApartFromStripped(sameTurnItem, previous, structure, next);
+}
+
+// A streaming reply's text also lands on its message; readers of that text read the live thread.
+function sameMessageStructure(
+  previous: OrchestrationV2ConversationMessage,
+  next: OrchestrationV2ConversationMessage,
+): boolean {
+  if (previous === next) return true;
+  if (!previous.streaming || !next.streaming || previous.id !== next.id) return false;
+  const { text: _text, updatedAt: _updatedAt, ...structure } = previous;
+  return sameApartFromStripped(sameMessage, previous, structure, next);
 }
 
 function sameProjectionArray<T>(
@@ -215,6 +254,7 @@ export function sameThreadStructure(
   for (const key of Object.keys(next) as Array<keyof OrchestrationV2ThreadProjection>) {
     if (
       key === "thread" ||
+      key === "messages" ||
       key === "turnItems" ||
       key === "visibleTurnItems" ||
       key === "updatedAt"
@@ -235,6 +275,7 @@ export function sameThreadStructure(
     return false;
   }
   return (
+    sameProjectionArray(previous.messages, next.messages, sameMessageStructure) &&
     sameProjectionArray(previous.turnItems, next.turnItems, sameTurnItemStructure) &&
     sameProjectionArray(
       previous.visibleTurnItems,
@@ -299,11 +340,37 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-quiet-thread:${key}`));
   });
 
+  // Read from the structure so streamed text does not rescan runs and turn items.
+  const usageLimitNoticeRowsAtomFamily = Atom.family((key: string) => {
+    let previous: EnvironmentThreadStructure | null = null;
+    let value: UsageLimitNoticeRows | null = null;
+    return Atom.make((get) => {
+      const thread = get(quietThreadAtomFamily(key));
+      if (thread !== previous) {
+        previous = thread;
+        value = thread === null ? null : deriveUsageLimitNoticeRows(thread.projection);
+      }
+      return value;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-usage-limit-notice:${key}`));
+  });
+
+  // Presentation only: the projection keeps every row for other readers.
   const visibleTurnItemsAtomFamily = Atom.family((key: string) => {
     const projectQuestionHistory = createQuestionHistoryProjector();
+    let previousRows: OrchestrationV2ThreadProjection["visibleTurnItems"] | null = null;
+    let previousNotice: UsageLimitNoticeRows | null = null;
+    let previous = EMPTY_VISIBLE_TURN_ITEMS;
     return Atom.make((get): OrchestrationV2ThreadProjection["visibleTurnItems"] => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
-      return projection === null ? EMPTY_VISIBLE_TURN_ITEMS : projectQuestionHistory(projection);
+      if (projection === null) return EMPTY_VISIBLE_TURN_ITEMS;
+      const rows = projectQuestionHistory(projection);
+      const notice = get(usageLimitNoticeRowsAtomFamily(key));
+      if (rows !== previousRows || notice !== previousNotice) {
+        previousRows = rows;
+        previousNotice = notice;
+        previous = withoutUsageLimitNoticeRows(rows, notice);
+      }
+      return previous;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-visible-turn-items:${key}`));
   });
 
@@ -366,7 +433,8 @@ export function createEnvironmentThreadDetailAtoms<E>(
         projection.providerSessions !== previous.providerSessions ||
         projection.providerTurns !== previous.providerTurns
       ) {
-        value = deriveThreadQueueWorkflowState(projection);
+        const next = deriveThreadQueueWorkflowState(projection);
+        if (value === null || !queueWorkflowStatesEqual(value, next)) value = next;
         const { thread, runs, messages, providerThreads, providerSessions, providerTurns } =
           projection;
         previous = { thread, runs, messages, providerThreads, providerSessions, providerTurns };
@@ -450,8 +518,16 @@ export function createEnvironmentThreadDetailAtoms<E>(
         projection.messages !== previous?.messages
       ) {
         const { checkpoints, messages } = projection;
+        const next = deriveThreadCheckpointSummaries({ checkpoints, messages });
+        // The same checkpoints give the same summaries; messages only pick each assistant message.
+        if (
+          checkpoints !== previous?.checkpoints ||
+          next.some(
+            (summary, index) => summary.assistantMessageId !== value[index]?.assistantMessageId,
+          )
+        )
+          value = next;
         previous = { checkpoints, messages };
-        value = deriveThreadCheckpointSummaries(previous);
       }
       return value;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-checkpoint-summaries:${key}`));

@@ -18,7 +18,7 @@ import {
 } from "../../lib/mobileTheme";
 import { rootNavigationRef } from "../../lib/rootNavigation";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { environmentProjects } from "../../state/projects";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { environmentThreadShells } from "../../state/threads";
@@ -55,7 +55,7 @@ import {
 import { retryShowcaseOperation } from "./showcaseRetry";
 import { stageShowcaseAgentActivity } from "./stageShowcaseAgentActivity";
 import { settingsNavigationState } from "../settings/settings-navigation";
-import { selectWorkspaceDetail } from "../workspace/workspace-detail-selection";
+import { selectWorkspaceDetail } from "../layout/workspace/workspace-detail-selection";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 // Native launch requests (pairing links, scene switches) have no change event.
@@ -288,7 +288,11 @@ export function installShowcaseCapture(
     // already sees the theme applied. A failed save rolls the patch back, and
     // the next step writes again.
     if (requestedTheme !== null && !themeApplied && storedPreferences) {
-      appAtomRegistry.set(updateMobilePreferencesAtom, createMobileThemePairPatch(requestedTheme));
+      void runAtomCommand(
+        appAtomRegistry,
+        saveMobilePreferences,
+        createMobileThemePairPatch(requestedTheme),
+      );
     }
     const themeId = themeIds[resolveThemeAppearance(storedPreferences)];
 

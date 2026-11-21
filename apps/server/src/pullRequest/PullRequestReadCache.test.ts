@@ -1,5 +1,4 @@
 import * as NodeV8 from "node:v8";
-import * as NodeVM from "node:vm";
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -15,9 +14,6 @@ import * as Path from "effect/Path";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as TestClock from "effect/testing/TestClock";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
-
-NodeV8.setFlagsFromString("--expose-gc");
-const collectGarbage = NodeVM.runInNewContext("gc") as () => void;
 
 const cacheLayer = (directory: string) =>
   PullRequestReadCache.make.pipe(Effect.provide(KeyValueStore.layerFileSystem(directory)));
@@ -44,6 +40,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PR filesystem ca
       const invalidate = yield* cache
         .invalidate("pr")
         .pipe(Effect.forkChild({ startImmediately: true }));
+      // Another PR's invalidation does not wait on this read; this one's does.
+      yield* cache.invalidate("other-pr");
+      assert.isUndefined(invalidate.pollUnsafe());
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(read);
       yield* Fiber.join(invalidate);
@@ -200,13 +199,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PR filesystem ca
   it.effect("does not keep a caller's data alive after its reads and invalidations", () =>
     Effect.gen(function* () {
       const cache = yield* PullRequestReadCache.make;
-      const sweeps: Array<WeakRef<object>> = [];
+      class SweepData extends Map<string, number> {}
       // Like a sync sweep: an Effect.fn made per run that closes over that run's data.
       const sweep = Effect.fn("sweep")(function* (index: number) {
-        const groups = new Map<string, number>(
-          Array.from({ length: 1_000 }, (_, id) => [`group-${id}`, id]),
-        );
-        sweeps.push(new WeakRef(groups));
+        const groups = new SweepData(Array.from({ length: 1_000 }, (_, id) => [`group-${id}`, id]));
         const read = Effect.fn("read")(function* (pr: string) {
           const size = groups.size;
           yield* cache.invalidate(pr);
@@ -216,10 +212,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PR filesystem ca
         yield* Effect.forEach(["pr-1", "pr-2"], read, { discard: true });
       });
       for (let index = 0; index < 5; index++) yield* sweep(index);
-      // WeakRef targets stay alive until the current job ends, so yield before collecting.
-      yield* Effect.yieldNow;
-      collectGarbage();
-      assert.strictEqual(sweeps.filter((sweepData) => sweepData.deref() !== undefined).length, 0);
+      // Counts after a full GC. A WeakRef would keep its target alive until the job ends.
+      assert.strictEqual(NodeV8.queryObjects(SweepData, { format: "count" }), 0);
     }).pipe(Effect.provide(KeyValueStore.layerMemory)),
   );
 
