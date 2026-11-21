@@ -133,6 +133,28 @@ describe("new thread model fallback", () => {
     ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false, undefined, undefined],
     ["antigravity", ["3p-weekly"], "claude-opus-5-5", true, undefined, undefined],
     ["antigravity", ["gemini-weekly"], "antigravity-default", true, undefined, undefined],
+    ["antigravity", ["gemini-weekly"], "gemini-4-neon", true, undefined, undefined],
+    ["antigravity", ["gemini-argon-wtu-weekly"], "gemini-4-neon", false, undefined, undefined],
+    ["antigravity", ["gemini-argon-wtu-weekly"], "gemini-3.8-flash", false, undefined, undefined],
+    [
+      "antigravity",
+      ["gemini-argon-wtu-weekly"],
+      "antigravity-default",
+      false,
+      undefined,
+      undefined,
+    ],
+    ["antigravity", ["gemini-argon-wtu-weekly"], "gemini-4-argon", true, undefined, undefined],
+    [
+      "antigravity",
+      ["gemini-argon-wtu-weekly"],
+      "gemini-pro-orchestrator-argon",
+      true,
+      undefined,
+      undefined,
+    ],
+    ["antigravity", ["gemini-neon-weekly"], "gemini-4-neon", true, undefined, undefined],
+    ["antigravity", ["gemini-neon-weekly"], "gemini-3.8-flash", false, undefined, undefined],
     ["codex", ["individual"], "gpt-5.5", true, undefined, undefined],
     ["opencode", ["go_weekly"], "opencode/big-pickle", false, undefined, undefined],
     ["opencode", ["go_weekly"], "opencode-go/big-pickle", true, undefined, undefined],
@@ -209,6 +231,21 @@ describe("new thread model fallback", () => {
       ).toEqual(usesFallback ? fallback : defaultSelection);
     },
   );
+
+  it("keeps a Gemini model on its own active dedicated bucket when default Gemini is exhausted", () => {
+    const antigravity = provider({
+      driver: ProviderDriverKind.make("antigravity"),
+      usageLimits: {
+        checkedAt: limited.checkedAt,
+        windows: [
+          { ...window, id: "gemini-weekly", usedPercent: 100 },
+          { ...window, id: "gemini-argon-wtu-weekly", usedPercent: 20 },
+        ],
+      },
+    });
+    expect(exhaustedUsageWindow(antigravity, now, "gemini-4-argon")).toBeUndefined();
+    expect(exhaustedUsageWindow(antigravity, now, "gemini-4-neon")?.id).toBe("gemini-weekly");
+  });
 });
 
 describe("pace", () => {

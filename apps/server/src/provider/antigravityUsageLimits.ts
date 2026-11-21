@@ -250,6 +250,22 @@ export const antigravityAccountFingerprint = (userInfo: unknown) =>
 export const antigravitySummaryWindows = (response: unknown, requestedAt: number) =>
   decodeSummary(response).pipe(Effect.map((summary) => summaryWindows(summary, requestedAt)));
 
+const DEFAULT_GEMINI_BUCKET_IDS = new Set(["gemini-5h", "gemini-weekly", "gemini-quota"]);
+
+function summaryBucketFamily(bucketId: string, groupDisplayName: string | undefined): string {
+  if (DEFAULT_GEMINI_BUCKET_IDS.has(bucketId)) return "Gemini";
+  if (bucketId.startsWith("gemini-")) {
+    const named = groupDisplayName?.trim();
+    if (named) return named;
+    const subfamily = /^gemini-([a-z0-9]+)-/i.exec(bucketId)?.[1];
+    return subfamily
+      ? `Gemini ${subfamily.charAt(0).toUpperCase()}${subfamily.slice(1).toLowerCase()}`
+      : "Gemini";
+  }
+  if (bucketId.startsWith("3p-")) return "Claude & GPT (shared)";
+  return groupDisplayName?.trim() || bucketId;
+}
+
 function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   const groups = summary.groups?.some((group) => group.buckets?.length)
@@ -258,16 +274,8 @@ function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
   for (const group of groups ?? []) {
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
-      // Argon and Carbon are metered separately from the default Gemini buckets.
-      const family = bucket.bucketId.startsWith("gemini-argon-")
-        ? group.displayName?.trim() || "Gemini Argon"
-        : bucket.bucketId.startsWith("gemini-carbon-")
-          ? group.displayName?.trim() || "Gemini Carbon"
-          : bucket.bucketId.startsWith("gemini-")
-            ? "Gemini"
-            : bucket.bucketId.startsWith("3p-")
-              ? "Claude & GPT (shared)"
-              : group.displayName?.trim() || bucket.bucketId;
+      // Dedicated Gemini model families (Argon, Carbon, Neon, ...) are metered separately from default Gemini buckets.
+      const family = summaryBucketFamily(bucket.bucketId, group.displayName);
       const weekly = bucket.window === "weekly";
       const session = bucket.window === "5h";
       const windowDurationMins = SUMMARY_WINDOW_MINS.get(bucket.window ?? "");

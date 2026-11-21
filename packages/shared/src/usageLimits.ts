@@ -24,6 +24,13 @@ import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
 
 const MINUTE = 60_000;
 
+const ANTIGRAVITY_DEFAULT_GEMINI_WINDOWS = new Set(["gemini-5h", "gemini-weekly", "gemini-quota"]);
+
+function antigravityGeminiPoolSubfamily(windowId: string): string | undefined {
+  if (ANTIGRAVITY_DEFAULT_GEMINI_WINDOWS.has(windowId)) return undefined;
+  return /^gemini-([a-z0-9]+)-/i.exec(windowId)?.[1]?.toLowerCase();
+}
+
 export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
   now: number,
@@ -50,10 +57,24 @@ export function exhaustedUsageWindow(
     }
     case "antigravity": {
       const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
+      const modelTokens = family === "gemini" ? new Set(model.toLowerCase().split("-")) : null;
+      const hasDedicatedGeminiPool =
+        modelTokens !== null &&
+        windows.some((window) => {
+          const subfamily = antigravityGeminiPoolSubfamily(window.id);
+          return subfamily !== undefined && modelTokens.has(subfamily);
+        });
       return exhausted.find((window) => {
         const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
+        if (pool === undefined) return true;
+        if (pool === "gemini") {
+          const subfamily = antigravityGeminiPoolSubfamily(window.id);
+          if (subfamily !== undefined) {
+            return modelTokens !== null && modelTokens.has(subfamily);
+          }
+          return family === undefined || (family === "gemini" && !hasDedicatedGeminiPool);
+        }
         return (
-          pool === undefined ||
           family === undefined ||
           pool === family ||
           (pool === "3p" && (family === "claude" || family === "gpt"))
