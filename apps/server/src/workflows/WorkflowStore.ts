@@ -185,7 +185,9 @@ export class WorkflowStore extends Context.Service<
     /** Runs that were not ended while the run that invoked them was cancelled. */
     readonly orphans: Effect.Effect<ReadonlyArray<RunRow>>;
     /** Every run in this state, however many: the sweep must not miss old ones past a page. */
-    readonly everyRun: (status: "running" | "paused") => Effect.Effect<ReadonlyArray<RunRow>>;
+    readonly everyRun: (
+      status: "running" | "waiting" | "paused",
+    ) => Effect.Effect<ReadonlyArray<RunRow>>;
     /** What each run that has not ended is a run of, with no limit. */
     readonly unfinished: Effect.Effect<
       ReadonlyArray<{ readonly workflow: string; readonly version: number }>
@@ -197,9 +199,23 @@ export class WorkflowStore extends Context.Service<
     /** The runs this one invoked that have not ended. */
     readonly children: (runId: string) => Effect.Effect<ReadonlyArray<RunRow>>;
     /** The steps a cancelled run left in flight are over: nothing will end them. */
-    readonly stepsCancelled: (runId: string) => Effect.Effect<void>;
-    /** Cancelled runs whose `onEnd` has not completed and may still be tried. */
-    readonly runsToEnd: (step: string, tries: number) => Effect.Effect<ReadonlyArray<RunRow>>;
+    readonly stepsCancelled: (runId: string, except: string) => Effect.Effect<void>;
+    /** Cancelled runs whose `onEnd` has not completed and may still be tried, with its tries. */
+    readonly runsToEnd: (
+      step: string,
+      tries: number,
+    ) => Effect.Effect<
+      ReadonlyArray<
+        RunRow & {
+          readonly end_attempts: number | bigint | null;
+          readonly end_ended_at: string | null;
+        }
+      >
+    >;
+    /** Cancelled runs with a step other than `except` still going: their cancel was cut short. */
+    readonly cancelsCutShort: (except: string) => Effect.Effect<ReadonlyArray<RunRow>>;
+    /** Ended runs whose parent still waits to hear of it. */
+    readonly untold: Effect.Effect<ReadonlyArray<RunRow>>;
     readonly stepThread: (
       runId: string,
       name: string,
@@ -564,26 +580,41 @@ export const make = Effect.gen(function* () {
         SELECT * FROM workflow_runs WHERE parent_run_id = ${runId} AND ended_at IS NULL
       `.pipe(Effect.orDie);
     }),
-    stepsCancelled: Effect.fn("WorkflowStore.stepsCancelled")(function* (runId) {
+    stepsCancelled: Effect.fn("WorkflowStore.stepsCancelled")(function* (runId, except) {
       const at = yield* now;
       yield* write(
         runId,
         sql`
           UPDATE workflow_steps SET status = 'failed', detail = 'cancelled', ended_at = ${at}
-          WHERE run_id = ${runId} AND status = 'running'
+          WHERE run_id = ${runId} AND status = 'running' AND name != ${except}
         `,
       );
     }),
     runsToEnd: Effect.fn("WorkflowStore.runsToEnd")(function* (step, tries) {
-      // A day bounds the list: a cleanup that has not worked by then needs a person.
-      const since = DateTime.formatIso(DateTime.subtractDuration(yield* DateTime.now, "1 day"));
-      return yield* sql<RunRow>`
-        SELECT r.* FROM workflow_runs r
+      return yield* sql<
+        RunRow & { end_attempts: number | bigint | null; end_ended_at: string | null }
+      >`
+        SELECT r.*, s.attempts AS end_attempts, s.ended_at AS end_ended_at
+        FROM workflow_runs r
         LEFT JOIN workflow_steps s ON s.run_id = r.run_id AND s.name = ${step}
-        WHERE r.status = 'cancelled' AND r.ended_at > ${since}
+        WHERE r.status = 'cancelled'
           AND (s.status IS NULL OR (s.status != 'completed' AND s.attempts < ${tries}))
       `.pipe(Effect.orDie);
     }),
+    cancelsCutShort: Effect.fn("WorkflowStore.cancelsCutShort")(function* (except) {
+      return yield* sql<RunRow>`
+        SELECT r.* FROM workflow_runs r
+        WHERE r.status = 'cancelled' AND EXISTS (
+          SELECT 1 FROM workflow_steps s
+          WHERE s.run_id = r.run_id AND s.status = 'running' AND s.name != ${except}
+        )
+      `.pipe(Effect.orDie);
+    }),
+    untold: sql<RunRow>`
+      SELECT c.* FROM workflow_waits w
+      JOIN workflow_runs c ON c.parent_run_id = w.run_id AND c.parent_wait = w.name
+      WHERE w.signalled_at IS NULL AND c.ended_at IS NOT NULL
+    `.pipe(Effect.orDie),
     stepThread: Effect.fn("WorkflowStore.stepThread")(
       function* (runId, name, threadId, environment, turnId) {
         yield* write(

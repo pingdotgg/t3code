@@ -122,7 +122,8 @@ therefore ends the run's row first, so nothing the step still does is recorded a
 stops the step's own turn, which is what makes a long agent step return. Only that turn: someone
 else's turn on the same thread is left alone. The cancelled run's `onEnd` waits for the steps still
 running in this process, or a cleanup would take away what a step is still making. A version stays
-required while a cancelled run's cleanup has not worked, since only that version can run it.
+required while a cancelled run's cleanup still has tries left, since only that version can run it;
+one that has used them up stays failed on the run for a person to see.
 
 **A key is one run whatever the version.** The engine's own run id hashes `name@version` with the
 key, so after a version bump the same key would be a new run: a trigger that sees its newest issue

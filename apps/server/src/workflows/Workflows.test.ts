@@ -66,21 +66,19 @@ const definitions = (
         payload: Schema.Struct({ mode: Schema.Literals(["finish", "stop", "hold", "busy"]) }),
         // Counted by how the run ended, and failing for as long as `failures` says.
         onEnd: (payload, end) =>
-          payload.mode === "busy"
-            ? // Says whether the step it cleans up after had finished.
-              Effect.flatMap(Ref.get(counts), (all) =>
-                Effect.andThen(
-                  count(`end:busy:${all["work"] === 1 ? "after" : "before"} work`),
-                  Deferred.succeed(latch.cleaned, undefined),
-                ),
-              )
-            : Effect.flatMap(
-                Ref.getAndUpdate(failures, (left) => Math.max(0, left - 1)),
-                (left) =>
-                  left > 0
-                    ? Effect.fail("the machine would not go")
-                    : count(`end:${payload.mode}:${end.outcome}:${end.reason ?? ""}`),
-              ),
+          Effect.gen(function* () {
+            // The engine's setting for reading integers must not reach a cleanup either.
+            if (yield* SqlClient.SafeIntegers) return yield* Effect.fail("SafeIntegers leaked");
+            if (payload.mode === "busy") {
+              // Says whether the step it cleans up after had finished.
+              const all = yield* Ref.get(counts);
+              yield* count(`end:busy:${all["work"] === 1 ? "after" : "before"} work`);
+              return yield* Deferred.succeed(latch.cleaned, undefined);
+            }
+            const left = yield* Ref.getAndUpdate(failures, (rest) => Math.max(0, rest - 1));
+            if (left > 0) return yield* Effect.fail("the machine would not go");
+            yield* count(`end:${payload.mode}:${end.outcome}:${end.reason ?? ""}`);
+          }),
       },
       (payload) =>
         Effect.gen(function* () {
@@ -472,19 +470,18 @@ const fakeAgents = () => {
       },
       // Counted per try, so a retry of the same stop uses up a refusal too.
       interrupt: (thread) =>
-        Effect.suspend(() =>
-          refusals-- > 0
-            ? Effect.fail(new WorkflowAgentError({ reason: "the link is down" }))
-            : Effect.flatMap(
-                Effect.sync(() => void interrupted.push(thread)),
-                () =>
-                  thread.turnId !== undefined && turns.has(thread.turnId)
-                    ? Effect.map(Deferred.isDone(turns.get(thread.turnId)!.ended), (done) =>
-                        done ? ("ended" as const) : ("stopped" as const),
-                      )
-                    : Effect.succeed("stopped" as const),
-              ),
-        ),
+        Effect.gen(function* () {
+          if (yield* SqlClient.SafeIntegers) {
+            return yield* new WorkflowAgentError({ reason: "SafeIntegers leaked into a stop" });
+          }
+          if (refusals-- > 0) return yield* new WorkflowAgentError({ reason: "the link is down" });
+          interrupted.push(thread);
+          const ended =
+            thread.turnId !== undefined && turns.has(thread.turnId)
+              ? yield* Deferred.isDone(turns.get(thread.turnId)!.ended)
+              : false;
+          return ended ? ("ended" as const) : ("stopped" as const);
+        }),
     }),
     interrupted,
     /** The next read of a turn with this key fails. */
@@ -1253,8 +1250,9 @@ it.effect(
   "onEnd runs once however the run ends, and a cancelled run's is tried until it works",
   () =>
     Effect.gen(function* () {
-      const { boot, counts, failures, latch } = yield* harness();
-      yield* boot(
+      const { boot, counts, failures, latch, clock } = yield* harness();
+      const ended = (step: { readonly name: string }) => step.name === "onEnd";
+      const heldId = yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
           const finished = yield* workflows.start(
@@ -1273,16 +1271,39 @@ it.effect(
           const held = yield* workflows.start("owned", { mode: "hold" }, { idempotencyKey: "h" });
           yield* workflows.waitFor(held.runId, status("waiting"));
           yield* Ref.set(failures, 1);
+          // Time stands still from here, so no sweep tries again before the first try is read.
+          yield* clock.close;
           yield* workflows.cancel(held.runId, "not needed");
-          const ended = (step: { readonly name: string }) => step.name === "onEnd";
           // The first try failed, which is on the run for a person to see.
           const firstTry = (yield* workflows.get(held.runId)).steps.find(ended);
           assert.deepStrictEqual(
             [firstTry?.status, firstTry?.detail],
             ["failed", "the machine would not go"],
           );
+          // The next try rests a while however often the sweep looks, and needs its version.
           yield* workflows.sweep;
-          const { steps } = yield* workflows.get(held.runId);
+          const rested = (yield* workflows.get(held.runId)).steps.find(ended);
+          assert.deepStrictEqual([rested?.status, rested?.attempts], ["failed", 1]);
+          assert.deepInclude(yield* workflows.unfinished, { workflow: "owned", version: 1 });
+          yield* clock.open;
+          return held.runId;
+        }),
+      );
+      // Days with the server down do not end the tries.
+      yield* TestClock.adjust("2 days");
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          // The server's own sweep makes the next try.
+          const { steps } = Option.getOrThrow(
+            yield* workflows.watch.pipe(
+              Stream.mapEffect(() => workflows.get(heldId)),
+              Stream.filter((run) =>
+                run.steps.some((step) => ended(step) && step.status === "completed"),
+              ),
+              Stream.runHead,
+            ),
+          );
           assert.deepStrictEqual(
             steps.map((step) => [step.name, step.status, step.attempts]),
             [
@@ -1291,6 +1312,7 @@ it.effect(
               ["onEnd", "completed", 2],
             ],
           );
+          assert.notDeepInclude(yield* workflows.unfinished, { workflow: "owned", version: 1 });
           // Nothing is left to do, so another look changes nothing.
           yield* workflows.sweep;
           // A cleanup that works the first time is told why the run was cancelled, too.
@@ -1433,6 +1455,44 @@ it.effect("an invoked run reports how it ended, and cancelling the parent cancel
         for (const runId of spawned) {
           assert.equal((yield* workflows.waitFor(runId, status("completed"))).result, "grown");
         }
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a cancel cut off midway still tells the run that invoked it", () =>
+  Effect.gen(function* () {
+    // The cancel is cut off where it stops the run's steps, as a client that went away would.
+    const reached = yield* Deferred.make<void>();
+    let first = true;
+    const store = Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.map(WorkflowStore.make, (real) =>
+        WorkflowStore.WorkflowStore.of({
+          ...real,
+          stepsCancelled: (runId, except) => {
+            if (!first) return real.stepsCancelled(runId, except);
+            first = false;
+            return Effect.andThen(Deferred.succeed(reached, undefined), Effect.never);
+          },
+        }),
+      ),
+    );
+    const { boot } = yield* harness(store);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const parent = yield* workflows.start("parent", { mode: "hold" }, { idempotencyKey: "h" });
+        yield* workflows.waitFor(parent.runId, (run) => run.detail === "kid");
+        const kid = (yield* workflows.list({})).find((run) => run.workflow === "kid");
+        yield* workflows.waitFor(kid!.runId, status("waiting"));
+        const cancelling = yield* Effect.forkChild(workflows.cancel(kid!.runId, "changed my mind"));
+        yield* Deferred.await(reached);
+        yield* Fiber.interrupt(cancelling);
+        assert.equal(
+          (yield* workflows.waitFor(parent.runId, status("completed"))).result,
+          "cancelled: changed my mind",
+        );
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
