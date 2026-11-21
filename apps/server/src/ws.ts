@@ -1913,8 +1913,9 @@ export const layerWsRpc = (
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
-      const prepareTerminalLaunch = yield* makePrepareTerminalLaunch(
-        threadManagement.getThreadShell,
+      // Members of a disabled builtin throw on access, so per-connection setup reads them per call.
+      const prepareTerminalLaunch = yield* makePrepareTerminalLaunch((threadId) =>
+        threadManagement.getThreadShell(threadId),
       );
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
@@ -1970,7 +1971,8 @@ export const layerWsRpc = (
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const sourceControlSignIn = yield* SourceControlSignIn.SourceControlSignIn;
-      const withPullRequestViewer = pullRequests.withRoutingCredential;
+      const withPullRequestViewer: typeof pullRequests.withRoutingCredential = (input, operation) =>
+        pullRequests.withRoutingCredential(input, operation);
       // The panel's reads for a pull request the user opened go out during a rate-limit pause.
       const openedPullRequestRead = Effect.provideService(SourceControlRateLimit.Interactive, true);
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -4337,7 +4339,13 @@ export const layer = Layer.unwrap(
         }
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* analytics.recordOwners(readClientOwners(request), "client");
-        const reportProfiles = yield* serverBrowser.profileReporter;
+        // A disabled t3.preview must not fail the upgrade; the socket is how a client re-enables it.
+        const reportProfiles = yield* Effect.suspend(() => serverBrowser.profileReporter).pipe(
+          Effect.catchCauseIf(
+            (cause) => isBuiltinDisabledCause(cause, "t3.preview"),
+            () => Effect.succeed<ServerBrowser.ProfileReporter>(() => Effect.void),
+          ),
+        );
         return yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
