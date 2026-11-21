@@ -14,6 +14,7 @@ const REFERENCE_B = "op://Scenario/GitHub/second";
 
 declare global {
   interface Window {
+    IS_REACT_ACT_ENVIRONMENT?: boolean | undefined;
     secretCheckGate?: {
       readonly captured: ReadonlyArray<Promise<() => void>>;
       finishFirst?: () => Promise<void>;
@@ -118,10 +119,16 @@ test(
       const gate = window.secretCheckGate!;
       gate.finishFirst = async () => {
         const release = await gate.captured[0]!;
-        await react.act(async () => {
-          release();
-          await settled.promise;
-        });
+        const wasActEnvironment = window.IS_REACT_ACT_ENVIRONMENT;
+        window.IS_REACT_ACT_ENVIRONMENT = true;
+        try {
+          await react.act(async () => {
+            release();
+            await settled.promise;
+          });
+        } finally {
+          window.IS_REACT_ACT_ENVIRONMENT = wasActEnvironment;
+        }
       };
       return null;
     });
