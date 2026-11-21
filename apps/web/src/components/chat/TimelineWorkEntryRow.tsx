@@ -647,14 +647,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       }
       trailing={
         <>
-          {/* First, so revealing it takes label space instead of moving the controls. Notices
-              skip it, so hovering never changes what fits or moves Sign in. */}
-          {noticeMessage === null ? (
-            <TimelineRowTimestamp
-              createdAt={workEntry.createdAt}
-              timestampFormat={timestampFormat}
-            />
-          ) : null}
           {createdThread ? (
             <button
               type="button"
