@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
+  issueProperties,
   type IssueInvolvementFilter,
   type IssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
@@ -330,11 +331,12 @@ export const make = Effect.gen(function* () {
         },
       });
       if (detail === null) return yield* notFound("getIssue");
-      return {
+      const complete = {
         ...detail,
         labels: [...detail.labels, ...moreLabels],
         assignees: [...detail.assignees, ...moreAssignees],
       };
+      return { ...complete, properties: issueProperties(complete) };
     }),
 
     getComments: (input) =>

@@ -13,12 +13,16 @@ import type {
   IssueComment,
   IssueEvent,
   IssueLabel,
+  IssueProperty,
   IssueReaction,
   IssueReactionContent,
   IssueState,
 } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import type { TrackerIssueSummary } from "@t3tools/source-control-core/server/IssueTracker";
+import {
+  issueProperties,
+  type TrackerIssueSummary,
+} from "@t3tools/source-control-core/server/IssueTracker";
 
 /** Lowercased names of the states a project treats as finished, read by `closedStateNames`. */
 export type ClosedStates = ReadonlySet<string>;
@@ -98,14 +102,22 @@ const WorkItem = Schema.Struct({
   relations: Schema.optional(Schema.NullOr(Schema.Array(Relation))),
 });
 
+/** A work item read on its own, which carries every field it has, custom ones included. */
+const WorkItemDetail = Schema.Struct({
+  ...WorkItem.fields,
+  fields: Schema.optional(
+    Schema.NullOr(Schema.StructWithRest(Fields, [Schema.Record(Schema.String, Schema.Json)])),
+  ),
+});
+
 const decodeWorkItemEntry = Schema.decodeUnknownExit(WorkItem);
 const decodeWorkItemList = decodeJsonResult(
   Schema.Struct({ value: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))) }),
 );
-const decodeWorkItem = decodeJsonResult(WorkItem);
+const decodeWorkItemDetail = decodeJsonResult(WorkItemDetail);
 
 type DecodeFailure =
-  ReturnType<typeof decodeWorkItem> extends Result.Result<unknown, infer E> ? E : never;
+  ReturnType<typeof decodeWorkItemDetail> extends Result.Result<unknown, infer E> ? E : never;
 
 function trimmed(value: string | null | undefined): string | null {
   const text = value?.trim() ?? "";
@@ -166,6 +178,8 @@ export type BodyField = "System.Description" | "Microsoft.VSTS.TCM.ReproSteps";
 
 export interface AzureDevOpsWorkItem extends TrackerIssueSummary {
   readonly body: string;
+  /** Only on a work item read on its own. */
+  readonly properties?: ReadonlyArray<IssueProperty>;
   readonly bodyField: BodyField;
   readonly project: string | null;
   readonly workItemType: string | null;
@@ -249,12 +263,106 @@ export function decodeWorkItemsJson(
   );
 }
 
+/** The summary's own fields, the body, and Azure's bookkeeping, which no reader looks for. */
+const OMITTED_FIELDS: ReadonlySet<string> = new Set([
+  "System.Id",
+  "System.Rev",
+  "System.Watermark",
+  "System.AreaId",
+  "System.IterationId",
+  "System.NodeName",
+  "System.TeamProject",
+  "System.AuthorizedAs",
+  "System.AuthorizedDate",
+  "System.RevisedDate",
+  "System.PersonId",
+  "System.BoardColumnDone",
+  "System.CommentCount",
+  "System.History",
+  "System.Title",
+  "System.State",
+  "System.AssignedTo",
+  "System.Tags",
+  "System.CreatedBy",
+  "System.CreatedDate",
+  "System.ChangedDate",
+  "Microsoft.VSTS.Common.ClosedDate",
+  "System.Description",
+  "Microsoft.VSTS.TCM.ReproSteps",
+]);
+
+/** `Microsoft.VSTS.Scheduling.StoryPoints` reads "Story Points", as Azure's own form names it. */
+function fieldLabel(referenceName: string): string {
+  const name = referenceName.slice(referenceName.lastIndexOf(".") + 1).replaceAll("_", " ");
+  return (
+    name
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+      .trim() || referenceName
+  );
+}
+
+/**
+ * Azure keeps rich text as HTML; a property shows the text a reader would see. The read carries
+ * no field types, so HTML needs a closing or void tag too: plain "<TBD>" stays as written.
+ */
+function htmlText(value: string): string {
+  if (!/^\s*<[a-z]/i.test(value) || !/<\/[a-z]|<(?:br|hr|img)\b/i.test(value)) return value;
+  return value
+    .replace(/<br\s*\/?>|<\/(?:p|div|li|h[1-6]|tr)>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&amp;", "&")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** `Array.isArray` does not narrow a readonly array out of a union. */
+function isJsonObject(value: Schema.Json): value is Schema.JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function fieldValue(value: Schema.Json): Schema.Json {
+  if (typeof value === "string") return htmlText(value);
+  // An identity is its name; the rest of it is links and descriptors.
+  if (isJsonObject(value)) {
+    const name = value.displayName ?? value.uniqueName;
+    if (typeof name === "string") return name;
+  }
+  return value;
+}
+
+/** Every field the work item has, in the order Azure sent them, standard and custom alike. */
+function workItemProperties(
+  item: AzureDevOpsWorkItem,
+  fields: Readonly<Record<string, Schema.Json>>,
+): ReadonlyArray<IssueProperty> {
+  return issueProperties(
+    item,
+    Object.entries(fields).flatMap(([id, value]) =>
+      // `WEF_` fields are a board's Kanban bookkeeping, named by a GUID.
+      OMITTED_FIELDS.has(id) || id.startsWith("WEF_")
+        ? []
+        : [{ id, label: fieldLabel(id), value: fieldValue(value) }],
+    ),
+  );
+}
+
 /** Null where az answered with a work item this cannot place, which the caller reports as such. */
 export function decodeWorkItemJson(
   raw: string,
   closed: ClosedStates,
 ): Result.Result<AzureDevOpsWorkItem | null, DecodeFailure> {
-  return Result.map(decodeWorkItem(raw), (item) => toWorkItem(item, closed));
+  return Result.map(decodeWorkItemDetail(raw), (detail) => {
+    const item = toWorkItem(detail, closed);
+    return item === null
+      ? null
+      : { ...item, properties: workItemProperties(item, detail.fields ?? {}) };
+  });
 }
 
 /** Azure names comment reactions after its own icons; the six it has map onto the contract's. */

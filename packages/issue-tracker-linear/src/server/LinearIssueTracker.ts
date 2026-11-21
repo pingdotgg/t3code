@@ -21,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
+  issueProperties,
   type IssueInvolvementFilter,
   type StandaloneIssueTrackerApi,
   type TrackerIssueSummary,
@@ -507,9 +508,22 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           { concurrency: 2 },
         );
         const viewer = me?.id ?? null;
+        const summary = toSummary(issue, issue.comments.nodes.length);
         return {
-          ...toSummary(issue, issue.comments.nodes.length),
+          ...summary,
           body: issue.description ?? "",
+          properties: issueProperties(summary, [
+            { id: "priority", label: "Priority", value: issue.priorityLabel },
+            { id: "team", label: "Team", value: issue.team.key },
+            { id: "project", label: "Project", value: issue.project?.name ?? null },
+            {
+              id: "cycle",
+              label: "Cycle",
+              value: issue.cycle ? issue.cycle.name || String(issue.cycle.number) : null,
+            },
+            { id: "estimate", label: "Estimate", value: issue.estimate },
+            { id: "dueDate", label: "Due date", value: issue.dueDate },
+          ]),
           viewer: me === null ? null : toActor(me).login,
           viewerPermissions: VIEWER_PERMISSIONS,
           states: inWorkflowOrder(issue.team.states.nodes).map(toState),

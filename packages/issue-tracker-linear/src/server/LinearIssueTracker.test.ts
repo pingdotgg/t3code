@@ -62,9 +62,19 @@ const issue = (
   ...overrides,
 });
 
+/** The fields only the detail query asks for. */
+const DETAIL_FIELDS = {
+  priorityLabel: "High",
+  estimate: 0,
+  dueDate: null,
+  cycle: null,
+  project: { name: "Core" },
+};
+
 /** An issue as the detail query answers it, with nothing hanging off it. */
 const bareDetail = (identifier: string) =>
   issue(identifier, {
+    ...DETAIL_FIELDS,
     comments: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
     reactions: [],
     attachments: { nodes: [] },
@@ -419,6 +429,7 @@ describe("LinearIssueTracker", () => {
         }),
         T3Issue: () => ({
           issue: issue("ENG-7", {
+            ...DETAIL_FIELDS,
             comments: {
               nodes: [
                 {
@@ -475,6 +486,15 @@ describe("LinearIssueTracker", () => {
       const detail = yield* api.getIssue({ ...target, key: "eng-7" });
       expect(detail.viewer).toBe("julius");
       expect(detail.body).toBe("body");
+      // An estimate of zero is a value; a field the issue leaves unset reads as null.
+      expect(detail.properties).toEqual(
+        expect.arrayContaining([
+          { id: "priority", label: "Priority", value: "High" },
+          { id: "project", label: "Project", value: "Core" },
+          { id: "estimate", label: "Estimate", value: 0 },
+          { id: "dueDate", label: "Due date", value: null },
+        ]),
+      );
       expect((yield* api.probeCredential("token")).workspace).toBe("acme");
       // The team's own workflow, in Linear's order, with the category each state falls in.
       expect(detail.states.map((entry) => [entry.name, entry.category])).toEqual([

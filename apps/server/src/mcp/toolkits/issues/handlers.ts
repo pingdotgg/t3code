@@ -213,6 +213,14 @@ const make = Effect.gen(function* () {
           updatedAt: detail.updatedAt,
           closedAt: detail.closedAt,
           body: detail.body,
+          ...(detail.properties === undefined
+            ? {}
+            : {
+                properties: detail.properties.filter(
+                  ({ value }) =>
+                    value !== null && value !== "" && !(Array.isArray(value) && value.length === 0),
+                ),
+              }),
           comments: detail.comments.map((comment) => ({
             id: comment.id,
             author: comment.author?.login ?? null,

@@ -16,6 +16,7 @@ import type {
   IssueListSort,
   IssueLinkedPullRequest,
   IssueListState,
+  IssueProperty,
   IssueReaction,
   IssueReactionContent,
   IssueSummary,
@@ -82,6 +83,8 @@ export interface TrackerIssuePage {
 
 export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly body: string;
+  /** Every field the tracker reports, in its own order; `issueProperties` builds the common ones. */
+  readonly properties?: ReadonlyArray<IssueProperty>;
   readonly viewer: string | null;
   readonly viewerPermissions: IssueViewerPermissions;
   /** Every state the issue can be in, in workflow order; `setState` is asked for one by name. */
@@ -92,6 +95,26 @@ export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly commentsCursor: string | null;
   readonly events: ReadonlyArray<IssueEvent>;
   readonly linkedPullRequests: ReadonlyArray<IssueLinkedPullRequest>;
+}
+
+/**
+ * The fields every tracker's summary carries, with a tracker's own fields between the people and
+ * the dates. Ids are shared across trackers so a pinned field means the same thing everywhere.
+ */
+export function issueProperties(
+  issue: TrackerIssueSummary,
+  own: ReadonlyArray<IssueProperty> = [],
+): ReadonlyArray<IssueProperty> {
+  return [
+    { id: "state", label: "Status", value: issue.state.name },
+    { id: "assignees", label: "Assignees", value: issue.assignees.map((actor) => actor.login) },
+    { id: "labels", label: "Labels", value: issue.labels.map((label) => label.name) },
+    ...own,
+    { id: "author", label: "Author", value: issue.author?.login ?? null },
+    { id: "createdAt", label: "Created", value: issue.createdAt },
+    { id: "updatedAt", label: "Updated", value: issue.updatedAt },
+    { id: "closedAt", label: "Closed", value: issue.closedAt },
+  ];
 }
 
 /**

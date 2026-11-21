@@ -289,6 +289,22 @@ export const IssueTeamTeam = Schema.Struct({
 })
 export interface IssueTeamTeam extends Schema.Struct.Type<typeof IssueTeamTeam.fields> {}
 
+/** A time-boxed iteration (similar to a sprint) used for planning and tracking work. Cycles belong to a team and have defined start and end dates. Issues are assigned to cycles for time-based planning, and progress is tracked via completed, in-progress, and total scope. Cycles are automatically completed when their end date passes, and uncompleted issues can be carried over to the next cycle. */
+export const Cycle = Schema.Struct({
+  /** The auto-incrementing number of the cycle, unique within its team. This value is assigned automatically by the database and cannot be set on creation. */
+  number: Shared.Float,
+  /** The custom name of the cycle. If not set, the cycle is displayed using its number (e.g., "Cycle 5"). */
+  name: Schema.NullOr(Schema.String)
+})
+export interface Cycle extends Schema.Struct.Type<typeof Cycle.fields> {}
+
+/** A project is a collection of issues working toward a shared goal. Projects have start and target dates, milestones, status tracking, and progress metrics. They can span multiple teams and be grouped under initiatives. */
+export const Project = Schema.Struct({
+  /** The name of the project. */
+  name: Schema.String
+})
+export interface Project extends Schema.Struct.Type<typeof Project.fields> {}
+
 export const CommentConnection = Schema.Struct({
   nodes: Schema.Array(LinearComment),
   pageInfo: LinearPageInfo
@@ -384,6 +400,16 @@ export const T3IssueIssueIssue = Schema.Struct({
   labels: LinearIssueLabelsIssueLabelConnection,
   /** The issue's description in markdown format. */
   description: Schema.NullOr(Schema.String),
+  /** Label for the priority. */
+  priorityLabel: Schema.String,
+  /** The estimate of the complexity of the issue. The specific scale used depends on the team's estimation configuration (e.g., points, T-shirt sizes). Null if no estimate has been set. */
+  estimate: Schema.NullOr(Shared.Float),
+  /** The date at which the issue is due. */
+  dueDate: Schema.NullOr(Shared.TimelessDate),
+  /** The cycle that the issue is associated with. Null if the issue is not part of any cycle. */
+  cycle: Schema.NullOr(Cycle),
+  /** The project that the issue is associated with. Null if the issue is not part of any project. */
+  project: Schema.NullOr(Project),
   /** Comments associated with the issue, including inline comments on the issue's description. */
   comments: CommentConnection,
   /** Reactions associated with the issue. */
@@ -403,7 +429,7 @@ export const T3Issue = GraphQL.query("T3Issue", {
       { name: "comments", body: "Int!" }
     ],
     selections: [
-      { name: "issue", body: ["(id:$", "id", "){...LinearIssue description team{states(first:100){nodes{...LinearWorkflowState}}}comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}botActor{...LinearBot}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
+      { name: "issue", body: ["(id:$", "id", "){...LinearIssue description priorityLabel estimate dueDate cycle{number name}project{name}team{states(first:100){nodes{...LinearWorkflowState}}}comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}botActor{...LinearBot}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
     ],
     fragments: [
       { name: "LinearIssue", body: ["on Issue{id identifier number title url createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },

@@ -643,6 +643,10 @@
       "types": "./src/issueSelection.ts",
       "default": "./src/issueSelection.ts"
     },
+    "./issue-properties": {
+      "types": "./src/issueProperties.ts",
+      "default": "./src/issueProperties.ts"
+    },
     "./pull-request-selection": {
       "types": "./src/pullRequestSelection.ts",
       "default": "./src/pullRequestSelection.ts"

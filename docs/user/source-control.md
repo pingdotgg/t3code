@@ -420,6 +420,11 @@ comment, edit the title and description, change labels and assignees, react, and
 reopen (with a close reason where the tracker records one) when the tracker and your account
 allow it. An issue read through a project that does not own its repository is shown read-only.
 
+**Properties** lists every field the tracker reports for the issue, such as a Linear estimate or
+an Azure DevOps area path and custom fields. Search it by field name or ID; empty fields stay
+hidden until you show them. Pin a field to keep its current value in the issue's **Summary**
+(**Overview** on mobile). Pins are kept per issue on that device and do not change the issue.
+
 An issue can be kept with a thread the way a pull request can: open it beside the thread (issue
 links in the conversation open there) and use **Link to this thread** in its header; **Unlink**
 undoes it. Click the issue badge in the thread sidebar to see its issues and pull requests in

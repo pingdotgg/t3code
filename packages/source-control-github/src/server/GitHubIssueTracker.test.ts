@@ -599,6 +599,11 @@ Redact secrets before uploading.`);
         },
         commentsCursor: "Y3Vyc29y",
       });
+      // Read after the later pages, so a label past the first page is a property too.
+      expect(issue.properties?.find((property) => property.id === "labels")?.value).toEqual([
+        "bug",
+        "needs repro",
+      ]);
       // The viewer is left out of `actors` and shown as "You"; an empty group is dropped.
       expect(issue.comments[0]?.reactions).toEqual([
         { content: "thumbs-up", count: 2, actors: ["theo"], viewerHasReacted: true },

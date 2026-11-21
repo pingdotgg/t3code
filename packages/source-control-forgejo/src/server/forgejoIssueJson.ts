@@ -7,7 +7,13 @@
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { IssueComment, IssueEvent, IssueState, IssueTemplate } from "@t3tools/contracts";
+import type {
+  IssueComment,
+  IssueEvent,
+  IssueProperty,
+  IssueState,
+  IssueTemplate,
+} from "@t3tools/contracts";
 import type { TrackerIssueSummary } from "@t3tools/source-control-core/server/IssueTracker";
 
 import {
@@ -32,6 +38,12 @@ export const ForgejoIssue = Schema.Struct({
   labels: Schema.optional(Schema.NullOr(Schema.Array(ForgejoLabel))),
   comments: Schema.optional(Schema.Int),
   is_locked: Schema.optional(Schema.Boolean),
+  milestone: Schema.optional(
+    Schema.NullOr(Schema.Struct({ title: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
+  due_date: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The branch or tag the issue is filed against; empty when none is set. */
+  ref: Schema.optional(Schema.NullOr(Schema.String)),
   /** Present on a row that is really a pull request, which the issue listing also returns. */
   pull_request: Schema.optional(Schema.NullOr(Schema.Struct({ merged: Schema.Boolean }))),
 });
@@ -105,6 +117,16 @@ export function forgejoIssue(issue: typeof ForgejoIssue.Type): TrackerIssueSumma
     labels: (issue.labels ?? []).map((label) => ({ name: label.name, color: label.color ?? null })),
     commentCount: Math.max(0, issue.comments ?? 0),
   };
+}
+
+/** The fields a detail shows beyond its row, for `issueProperties` to place among the common ones. */
+export function forgejoIssueFields(issue: typeof ForgejoIssue.Type): ReadonlyArray<IssueProperty> {
+  return [
+    { id: "milestone", label: "Milestone", value: issue.milestone?.title || null },
+    { id: "due_date", label: "Due date", value: issue.due_date ? toIsoUtc(issue.due_date) : null },
+    { id: "ref", label: "Branch", value: issue.ref || null },
+    { id: "is_locked", label: "Locked", value: issue.is_locked ?? null },
+  ];
 }
 
 export function forgejoIssueComment(comment: typeof ForgejoComment.Type): IssueComment {

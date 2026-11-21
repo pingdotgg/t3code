@@ -211,6 +211,18 @@ export const IssueViewerPermissions = Schema.Struct({
 });
 export type IssueViewerPermissions = typeof IssueViewerPermissions.Type;
 
+/**
+ * One field of an issue as its tracker names it: a system field, a custom one, or one the
+ * summary already carries. `id` is the tracker's own key for it and stays the same across issues;
+ * `value` is the tracker's value, where `null`, `""` and `[]` mean unset but `false` and `0` do not.
+ */
+export const IssueProperty = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  value: Schema.Json,
+});
+export type IssueProperty = typeof IssueProperty.Type;
+
 export const IssueDetail = Schema.Struct({
   ...IssueSummary.fields,
   projectId: ProjectId,
@@ -227,6 +239,8 @@ export const IssueDetail = Schema.Struct({
   /** The signed-in account, so a comment edit is offered only on the viewer's own remarks. */
   viewer: Schema.NullOr(TrimmedNonEmptyString),
   body: Schema.String,
+  /** Every field the tracker reports, in the order it shows them. Absent from older servers. */
+  properties: Schema.optional(Schema.Array(IssueProperty)),
   reactions: Schema.optional(Schema.Array(IssueReaction)),
   comments: Schema.Array(IssueComment),
   /** Where older comments carry on; null once the conversation is whole. */

@@ -2,6 +2,7 @@ import {
   IssueCapabilities,
   IssueListState,
   IssueOperationError,
+  IssueProperty,
   IssueState,
   IssueTrackerKind,
   IssueUnavailableError,
@@ -179,6 +180,12 @@ export const ReadIssueResult = Schema.Struct({
   updatedAt: Schema.String,
   closedAt: Schema.NullOr(Schema.String),
   body: Schema.String,
+  properties: Schema.optional(
+    Schema.Array(IssueProperty).annotate({
+      description:
+        "Every field of the issue that has a value, custom ones included. False and 0 are values.",
+    }),
+  ),
   comments: Schema.Array(
     Schema.Struct({
       id: Schema.String,
