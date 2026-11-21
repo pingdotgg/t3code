@@ -20,7 +20,7 @@ import type {
 import type { CloudSpeechModelId, CloudSpeechProvider } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { readAppleSpeechLocales } from "./appleSpeech";
+import { readAppleSpeechLocales, resolveAppleSpeechLocale } from "./appleSpeech";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { msg } from "gt-react";
@@ -172,12 +172,13 @@ export function createAppleSpeechVoiceInputPlatform(input: {
     const appleSpeech = window.desktopBridge?.appleSpeech;
     const { speechLanguage } = input.getTranscriptionOptions();
     // The packaged app pins `navigator.language` to en-US, so "auto" asks the OS.
-    const system = window.desktopBridge?.getPreferredSystemLanguages?.()[0] ?? navigator.language;
+    const system = window.desktopBridge?.getPreferredSystemLanguages?.() ?? [];
     if (!appleSpeech) throw new Error("Apple Speech is not available.");
     signal.throwIfAborted();
     const prepared = await waitForAppleSpeech(
       appleSpeech.prepare(
-        readAppleSpeechLocales().includes(speechLanguage) ? speechLanguage : system,
+        resolveAppleSpeechLocale(readAppleSpeechLocales(), speechLanguage, system) ??
+          navigator.language,
       ),
       signal,
     );

@@ -9,6 +9,7 @@ import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import { expect, it, vi } from "vite-plus/test";
 
 import { stubGlobal } from "../../test/render";
+import { resolveAppleSpeechLocale } from "./appleSpeech";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
 import {
   createAppleSpeechVoiceInputPlatform,
@@ -196,6 +197,16 @@ it("retains all PCM until stop, retries batch audio, and captures preferences be
   expect(requests).toHaveLength(2);
   expect(platform.recorder.uri).toBeNull();
 });
+
+it.each([
+  ["fr", ["en-US"], "fr"],
+  ["auto", ["nl-NL", "en-US"], "en-US"],
+] as const)(
+  "resolves Apple Speech language %s with Mac preferences %j",
+  (preference, system, expected) => {
+    expect(resolveAppleSpeechLocale(["en-US", "fr-FR"], preference, system)).toBe(expected);
+  },
+);
 
 it.each(["prepare", "transcribe"] as const)(
   "cancels Apple Speech while native %s is pending",

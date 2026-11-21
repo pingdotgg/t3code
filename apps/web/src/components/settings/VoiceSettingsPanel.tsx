@@ -60,7 +60,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { useAppleSpeechLocales } from "../../speech/appleSpeech";
+import { supportsAppleSpeechLocale, useAppleSpeechLocales } from "../../speech/appleSpeech";
 import { cn } from "~/lib/utils";
 import {
   listAudioInputs,
@@ -1326,6 +1326,11 @@ export function VoiceSettingsPanel() {
   const settingsScope = useOptionalSettingsScope();
   const destination = useVoiceTranscriptionDestination();
   const appleSpeechLocales = useAppleSpeechLocales();
+  const appleSpeechLanguages =
+    !appleSpeechLocales.includes(settings.speechLanguage) &&
+    supportsAppleSpeechLocale(appleSpeechLocales, settings.speechLanguage)
+      ? [...appleSpeechLocales, settings.speechLanguage]
+      : appleSpeechLocales;
   const appleSpeechAvailable = appleSpeechLocales.length > 0;
   const appleSpeechLabel = appleSpeechAvailable
     ? APPLE_SPEECH_LABEL
@@ -1693,9 +1698,14 @@ export function VoiceSettingsPanel() {
             }
             control={
               <SpeechLanguageSelect
+                automaticLabel={
+                  destination.device
+                    ? gt("Auto", { $context: "automatic language detection" })
+                    : undefined
+                }
                 model={
                   destination.device
-                    ? { languages: appleSpeechLocales, supportsLanguageDetection: true }
+                    ? { languages: appleSpeechLanguages, supportsLanguageDetection: true }
                     : destination.cloudProvider
                       ? cloudSpeechLanguages
                       : model

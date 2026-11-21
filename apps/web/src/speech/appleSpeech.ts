@@ -2,12 +2,26 @@ import { useSyncExternalStore } from "react";
 
 const emptyLocales: readonly string[] = [];
 let locales = emptyLocales;
+let probe: Promise<void> | undefined;
+const listeners = new Set<() => void>();
 
 export function readAppleSpeechLocales() {
   return locales;
 }
-let probe: Promise<void> | undefined;
-const listeners = new Set<() => void>();
+
+export function supportsAppleSpeechLocale(available: readonly string[], locale: string) {
+  const language = locale.toLowerCase().split("-")[0];
+  return available.some((candidate) => candidate.toLowerCase().split("-")[0] === language);
+}
+
+export function resolveAppleSpeechLocale(
+  available: readonly string[],
+  preference: string,
+  system: readonly string[],
+) {
+  if (supportsAppleSpeechLocale(available, preference)) return preference;
+  return system.find((locale) => supportsAppleSpeechLocale(available, locale)) ?? system[0];
+}
 
 function probeLocales() {
   if (locales.length === 0 && !probe && window.desktopBridge?.appleSpeech) {
