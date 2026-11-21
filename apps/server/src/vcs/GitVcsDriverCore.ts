@@ -48,6 +48,11 @@ import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 import {
+  gitConfigGetOutput,
+  makeGitConfigSnapshots,
+  runWithGitConfigSnapshot,
+} from "./gitConfigSnapshot.ts";
+import {
   explicitBareRepositoryEnv,
   gitConfigEnv,
   unsetInheritedRepositoryEnv,
@@ -1262,6 +1267,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     execute,
   });
 
+  const requireGitExit =
+    (operation: string, cwd: string, args: readonly string[], options: ExecuteGitOptions) =>
+    (
+      result: GitVcsDriver.ExecuteGitResult,
+    ): Effect.Effect<GitVcsDriver.ExecuteGitResult, GitCommandError> => {
+      if (options.allowNonZeroExit || result.exitCode === 0) {
+        return Effect.succeed(result);
+      }
+      const reason = classifyGitFailure(result.stderr);
+      return Effect.fail(
+        new GitCommandError({
+          ...gitCommandContext({ operation, cwd, args }),
+          ...(reason === null ? {} : { reason }),
+          detail: options.fallbackErrorDetail ?? gitFailureDetail(reason),
+          ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+          stdoutLength: result.stdout.length,
+          stderrLength: result.stderr.length,
+        }),
+      );
+    };
+
   const executeGit = (
     operation: string,
     cwd: string,
@@ -1285,24 +1311,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : {}),
       ...(options.progress ? { progress: options.progress } : {}),
       ...(options.writesSharedConfig ? { writesSharedConfig: true } : {}),
-    }).pipe(
-      Effect.flatMap((result) => {
-        if (options.allowNonZeroExit || result.exitCode === 0) {
-          return Effect.succeed(result);
-        }
-        const reason = classifyGitFailure(result.stderr);
-        return Effect.fail(
-          new GitCommandError({
-            ...gitCommandContext({ operation, cwd, args }),
-            ...(reason === null ? {} : { reason }),
-            detail: options.fallbackErrorDetail ?? gitFailureDetail(reason),
-            ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-          }),
-        );
-      }),
-    );
+    }).pipe(Effect.flatMap(requireGitExit(operation, cwd, args, options)));
 
   const executeGitWithStableDiagnostics = (
     operation: string,
@@ -1335,6 +1344,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   ): Effect.Effect<string, GitCommandError> =>
     executeGit(operation, cwd, args, { allowNonZeroExit }).pipe(
       Effect.map((result) => result.stdout),
+    );
+
+  const configSnapshots = yield* makeGitConfigSnapshots((operation, cwd, args) =>
+    executeGit(operation, cwd, args, { allowNonZeroExit: true }),
+  );
+
+  // Commands that read only config reuse their result while the config is unchanged. A reused result
+  // is shared by every caller, so it takes no options that would change how Git runs.
+  const executeConfigGit = (
+    operation: string,
+    cwd: string,
+    args: readonly string[],
+    options: Pick<ExecuteGitOptions, "allowNonZeroExit" | "fallbackErrorDetail"> = {},
+  ): Effect.Effect<GitVcsDriver.ExecuteGitResult, GitCommandError> =>
+    configSnapshots.read(cwd).pipe(
+      Effect.flatMap((snapshot) =>
+        runWithGitConfigSnapshot(
+          snapshot,
+          args,
+          executeGit(operation, cwd, args, { allowNonZeroExit: true }),
+        ),
+      ),
+      Effect.flatMap(requireGitExit(operation, cwd, args, options)),
     );
 
   // Pre-2.36 Git rejects worktree list -z; normalize its line fallback to NUL records.
@@ -1449,8 +1481,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return null;
     }
 
-    const remoteNames = yield* runGitStdout("GitVcsDriver.listRemoteNames", cwd, ["remote"]).pipe(
-      Effect.map(parseRemoteNames),
+    const remoteNames = yield* executeConfigGit("GitVcsDriver.listRemoteNames", cwd, [
+      "remote",
+    ]).pipe(
+      Effect.map((result) => parseRemoteNames(result.stdout)),
       Effect.orElseSucceed((): ReadonlyArray<string> => []),
     );
     return (
@@ -2045,7 +2079,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.map((result) => result.exitCode === 0));
 
   const remoteExists: GitVcsDriver.GitVcsDriver["Service"]["remoteExists"] = (input) =>
-    executeGit(
+    executeConfigGit(
       "GitVcsDriver.remoteExists",
       input.cwd,
       ["remote", "get-url", "--", input.remoteName],
@@ -2061,9 +2095,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     gitDirArgs: ReadonlyArray<string> = [],
   ): Effect.Effect<ReadonlyArray<string>, GitCommandError> =>
-    runGitStdout("GitVcsDriver.listRemoteNames", cwd, [...gitDirArgs, "remote"]).pipe(
-      Effect.map(parseRemoteNamesInGitOrder),
-    );
+    // A snapshot answers for the repository found from cwd, not one named by --git-dir.
+    (gitDirArgs.length === 0
+      ? executeConfigGit("GitVcsDriver.listRemoteNames", cwd, ["remote"])
+      : executeGit("GitVcsDriver.listRemoteNames", cwd, [...gitDirArgs, "remote"])
+    ).pipe(Effect.map((result) => parseRemoteNamesInGitOrder(result.stdout)));
 
   const resolvePublishBranchName = Effect.fn("resolvePublishBranchName")(function* (
     cwd: string,
@@ -5151,7 +5187,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   const readConfigValue: GitVcsDriver.GitVcsDriver["Service"]["readConfigValue"] = (cwd, key) =>
-    runGitStdout("GitVcsDriver.readConfigValue", cwd, ["config", "--get", key], true).pipe(
+    configSnapshots.read(cwd).pipe(
+      Effect.flatMap((snapshot) =>
+        snapshot === null
+          ? runGitStdout("GitVcsDriver.readConfigValue", cwd, ["config", "--get", key], true)
+          : Effect.succeed(gitConfigGetOutput(snapshot.values, key)),
+      ),
       Effect.map((stdout) => stdout.trim()),
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
