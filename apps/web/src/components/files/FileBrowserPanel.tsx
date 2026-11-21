@@ -179,6 +179,7 @@ export default function FileBrowserPanel({
     load,
     refresh,
     ready,
+    rootMissing,
     error,
     isPending,
     loadingDirectories,
@@ -612,7 +613,18 @@ export default function FileBrowserPanel({
           </Tooltip>
         ) : null}
       </div>
-      {error || pathSearch.error ? (
+      {rootMissing ? (
+        <div role="status" className="p-4 text-xs leading-relaxed text-muted-foreground">
+          {hostFolder ? (
+            <T>This folder no longer exists.</T>
+          ) : (
+            <T>
+              This checkout no longer exists. If cleanup removed this thread's worktree, sending a
+              message recreates it.
+            </T>
+          )}
+        </div>
+      ) : error || pathSearch.error ? (
         <button
           type="button"
           onClick={handleRefresh}
@@ -626,7 +638,7 @@ export default function FileBrowserPanel({
           <T>More matches available. Refine your search.</T>
         </div>
       ) : null}
-      {(!ready || pathSearch.isPending) && (
+      {((!ready && !error) || pathSearch.isPending) && (
         <div
           role="status"
           className={

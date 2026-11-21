@@ -5556,6 +5556,8 @@
   "69858f722a57708c": "Dateien von {projectName} durchsuchen",
   "e1e1094e43a5f3d7": "{error} Klicke zum Wiederholen.",
   "ddb58ada5516a46d": "Dateien von {projectName}",
+  "06d4ba1d1e5e757f": "Dieser Ordner existiert nicht mehr.",
+  "79ca8758fe2015ff": "Dieser Checkout existiert nicht mehr. Falls die Bereinigung den Worktree dieses Threads entfernt hat, wird er beim Senden einer Nachricht neu erstellt.",
   "bb60a3700a8053c6": "Weitere Treffer verfügbar. Verfeinere deine Suche.",
   "ffe1f2305d0a274d": "Dateien werden geladen…",
   "723d88a5fa7e2fdd": "Keine passenden Dateien.",

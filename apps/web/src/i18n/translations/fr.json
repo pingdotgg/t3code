@@ -5556,6 +5556,8 @@
   "69858f722a57708c": "Rechercher dans les fichiers de {projectName}",
   "e1e1094e43a5f3d7": "{error} Cliquez pour réessayer.",
   "ddb58ada5516a46d": "Fichiers de {projectName}",
+  "06d4ba1d1e5e757f": "Ce dossier n’existe plus.",
+  "79ca8758fe2015ff": "Ce checkout n’existe plus. Si le nettoyage a supprimé le worktree de ce fil, l’envoi d’un message le recrée.",
   "bb60a3700a8053c6": "D’autres résultats sont disponibles. Affinez votre recherche.",
   "ffe1f2305d0a274d": "Chargement des fichiers…",
   "723d88a5fa7e2fdd": "Aucun fichier correspondant.",

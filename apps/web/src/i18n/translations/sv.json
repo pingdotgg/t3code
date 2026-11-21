@@ -5556,6 +5556,8 @@
   "69858f722a57708c": "Sök filer i {projectName}",
   "e1e1094e43a5f3d7": "{error} Klicka för att försöka igen.",
   "ddb58ada5516a46d": "Filer i {projectName}",
+  "06d4ba1d1e5e757f": "Den här mappen finns inte längre.",
+  "79ca8758fe2015ff": "Den här utcheckningen finns inte längre. Om rensningen tog bort trådens worktree återskapas den när du skickar ett meddelande.",
   "bb60a3700a8053c6": "Fler träffar finns. Förfina sökningen.",
   "ffe1f2305d0a274d": "Läser in filer…",
   "723d88a5fa7e2fdd": "Inga matchande filer.",

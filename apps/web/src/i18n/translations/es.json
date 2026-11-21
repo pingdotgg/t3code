@@ -5555,6 +5555,8 @@
   "69858f722a57708c": "Buscar archivos de {projectName}",
   "e1e1094e43a5f3d7": "{error} Haz clic para reintentarlo.",
   "ddb58ada5516a46d": "Archivos de {projectName}",
+  "06d4ba1d1e5e757f": "Esta carpeta ya no existe.",
+  "79ca8758fe2015ff": "Este checkout ya no existe. Si la limpieza quitó el worktree de este hilo, enviar un mensaje lo vuelve a crear.",
   "bb60a3700a8053c6": "Hay más coincidencias. Afina la búsqueda.",
   "ffe1f2305d0a274d": "Cargando archivos…",
   "723d88a5fa7e2fdd": "No hay archivos que coincidan.",
