@@ -113,6 +113,17 @@ import Migration0102 from "./Migrations/102_ThreadItemCounts.ts";
 import Migration0103 from "./Migrations/103_IssueTrackerAdditionalScopes.ts";
 import Migration0104 from "./Migrations/104_ProjectionProjectsTrackedFolders.ts";
 import Migration0105 from "./Migrations/105_TaskFolders.ts";
+import Migration0106 from "./Migrations/106_Workflows.ts";
+import Migration0107 from "./Migrations/107_WorkflowTriggers.ts";
+import Migration0108 from "./Migrations/108_WorkflowStepEnvironment.ts";
+import Migration0109 from "./Migrations/109_WorkflowRunInput.ts";
+import Migration0110 from "./Migrations/110_WorkflowStore.ts";
+import Migration0111 from "./Migrations/111_WorkflowRunParent.ts";
+import Migration0112 from "./Migrations/112_WorkflowStepResult.ts";
+import Migration0113 from "./Migrations/113_WorkflowWaitWatch.ts";
+import Migration0114 from "./Migrations/114_WorkflowStepTurn.ts";
+import Migration0115 from "./Migrations/115_WorkflowRunKey.ts";
+import Migration0116 from "./Migrations/116_WorkflowRunReferences.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -221,6 +232,17 @@ const migrationEntries = [
   [103, "IssueTrackerAdditionalScopes", Migration0103],
   [104, "ProjectionProjectsTrackedFolders", Migration0104],
   [105, "TaskFolders", Migration0105],
+  [106, "Workflows", Migration0106],
+  [107, "WorkflowTriggers", Migration0107],
+  [108, "WorkflowStepEnvironment", Migration0108],
+  [109, "WorkflowRunInput", Migration0109],
+  [110, "WorkflowStore", Migration0110],
+  [111, "WorkflowRunParent", Migration0111],
+  [112, "WorkflowStepResult", Migration0112],
+  [113, "WorkflowWaitWatch", Migration0113],
+  [114, "WorkflowStepTurn", Migration0114],
+  [115, "WorkflowRunKey", Migration0115],
+  [116, "WorkflowRunReferences", Migration0116],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -143,7 +143,7 @@ const isThreadCliError = Schema.is(ThreadCliError);
  * These errors are expected outcomes for a script, so they print as one line
  * on stderr instead of the runtime's logged stack trace.
  */
-const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+export const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.tapError((error) =>
       isThreadCliError(error) ? Console.error(error.message) : Effect.void,
@@ -152,7 +152,7 @@ const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const decodeFailureText = Schema.decodeUnknownOption(Schema.fromJsonString(OrchestratorMcpFailure));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-const printJson = (value: unknown) => Console.log(encodeJson(value));
+export const printJson = (value: unknown) => Console.log(encodeJson(value));
 
 const ToolResult = Schema.Struct({
   isError: Schema.optional(Schema.Boolean),
@@ -185,6 +185,15 @@ const toolFailureDetail = (result: typeof ToolResult.Type) => {
   });
 };
 
+/** JSON-RPC's invalid params: the arguments failed the tool's schema. */
+const INVALID_PARAMS = -32602;
+const rpcErrorDetail = (error: { readonly code: number; readonly message: string }) => {
+  const message = error.message.replaceAll(/\s*\n\s*/g, " ");
+  return error.code === INVALID_PARAMS
+    ? `The server refused the arguments: ${message}`
+    : `The server refused the request: ${message}`;
+};
+
 const makeThreadTools = (session: McpToolSession, origin: string) => {
   const unexpected = (tool: string) =>
     new ThreadToolFailedError({
@@ -199,7 +208,13 @@ const makeThreadTools = (session: McpToolSession, origin: string) => {
     ): Effect.fn.Return<S["Type"], ThreadServerUnreachableError | ThreadToolFailedError> {
       const raw = yield* session
         .call(tool, args)
-        .pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
+        .pipe(
+          Effect.mapError((cause) =>
+            cause.rpcError === undefined
+              ? new ThreadServerUnreachableError({ origin, cause })
+              : new ThreadToolFailedError({ tool, detail: rpcErrorDetail(cause.rpcError) }),
+          ),
+        );
       const result = yield* decodeToolResult(raw).pipe(Effect.mapError(() => unexpected(tool)));
       if (result.isError === true) {
         return yield* new ThreadToolFailedError({ tool, detail: toolFailureDetail(result) });
@@ -216,7 +231,7 @@ export type ThreadTools = ReturnType<typeof makeThreadTools>;
  * Signs in as a short-lived MCP client of the running server, the same way an
  * outside agent does, and revokes that session when the command ends.
  */
-const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
+export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
   flags: { readonly baseDir: Option.Option<string>; readonly json: boolean },
   run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
 ) {
@@ -788,7 +803,7 @@ export const launchModelSelection = Effect.fn("cli.thread.launchModelSelection")
   };
 });
 
-const jsonFlag = Flag.Boolean("json").pipe(
+export const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON instead of text."),
   Flag.withDefault(false),
 );

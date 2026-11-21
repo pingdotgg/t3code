@@ -36,6 +36,7 @@ import {
   AuthProvidersManageScope,
   type AuthEnvironmentScope,
   type ScheduledTaskListResult,
+  WorkflowRequestError,
   AuthSessionId,
   ClientConnectionMethod,
   ClientDeviceType,
@@ -130,6 +131,8 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as Workflows from "./workflows/Workflows.ts";
+import * as WorkflowRuntime from "./workflows/WorkflowRuntime.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
@@ -1490,6 +1493,11 @@ export const layerWsRpc = (
       const threadViewers = yield* ThreadViewers.ThreadViewers;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const workflows = yield* Workflows.Workflows;
+      const workflowDefinitions = yield* WorkflowRuntime.WorkflowDefinitions;
+      // The service's messages are built from its own attributes, so they are safe to send.
+      const toWorkflowRequestError = (error: Workflows.WorkflowError) =>
+        new WorkflowRequestError({ message: error.message });
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -2353,6 +2361,25 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
           providerSessionManager.subscribePromptSuggestion(input.threadId),
+        [WS_METHODS.workflowsSubscribe]: (_input) => workflows.watch,
+        [WS_METHODS.workflowsCounts]: (_input) => workflows.counts,
+        [WS_METHODS.workflowsGet]: (input) =>
+          workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsAnswer]: (input) =>
+          workflows
+            .answer(input.runId, input.name, {
+              choice: input.choice,
+              ...(input.reason === undefined ? {} : { reason: input.reason }),
+            })
+            .pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsResume]: (input) =>
+          workflows.resume(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsCancel]: (input) =>
+          workflows.cancel(input.runId, input.reason).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsGetDefinition]: (_input) => workflowDefinitions.read,
+        [WS_METHODS.workflowsSaveDefinition]: (input) =>
+          workflowDefinitions.save(input.name, input.source),
+        [WS_METHODS.workflowsDeleteDefinition]: (input) => workflowDefinitions.remove(input.name),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
