@@ -588,7 +588,7 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
-    // Only Google account sign-in sets SSH_CONNECTION so a revoked token fails fast instead of opening a browser.
+    // Only Google account sign-in renews here: its spawn sets SSH_CONNECTION, so a revoked token fails fast instead of opening a browser.
     const renewCliToken =
       auth.authMethod !== "oauth-personal"
         ? undefined

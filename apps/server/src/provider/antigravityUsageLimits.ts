@@ -36,8 +36,6 @@ const SUMMARY_WINDOW_MINS = new Map([
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
 const CLI_RENEWAL_TIMEOUT = "30 seconds";
 const CLI_RENEWAL_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
-const CLI_EXPIRED_MESSAGE =
-  "Antigravity's saved sign-in has expired. Start an Antigravity turn to renew it, then refresh limits.";
 
 export type AntigravityCliTokenRenewalResult = "renewed" | "busy" | "failed";
 const TokenFile = Schema.Struct({
@@ -407,6 +405,12 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       }
       let { token } = yield* decodeCliToken(stored);
       if (!(Date.parse(token.expiry ?? "") > now + 60_000)) {
+        const expired = makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message:
+            "Antigravity's saved sign-in has expired. Start an Antigravity turn to renew it, then refresh limits.",
+        });
         const storedHash = yield* sha256(stored);
         const blocked =
           renewalBackoff?.storedHash === storedHash && now < renewalBackoff.retryAfter;
@@ -416,40 +420,24 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
           Boolean(token.refresh_token?.trim()) &&
           !blocked;
         if (!canRenew) {
-          return makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "probeFailed",
-            message: CLI_EXPIRED_MESSAGE,
-          });
+          return expired;
         }
         const outcome = yield* input.renewCliToken.pipe(
           Effect.timeoutOption(CLI_RENEWAL_TIMEOUT),
           Effect.map((result) => Option.getOrElse(result, () => "failed" as const)),
         );
         if (generation !== startedGeneration) {
-          return makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "probeFailed",
-            message: CLI_EXPIRED_MESSAGE,
-          });
+          return expired;
         }
         if (outcome !== "renewed") {
           if (outcome !== "busy") {
             recordRenewalFailure(startedGeneration, storedHash, yield* Clock.currentTimeMillis);
           }
-          return makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "probeFailed",
-            message: CLI_EXPIRED_MESSAGE,
-          });
+          return expired;
         }
         const refreshedStored = yield* readStoredCliToken;
         if (generation !== startedGeneration) {
-          return makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "probeFailed",
-            message: CLI_EXPIRED_MESSAGE,
-          });
+          return expired;
         }
         if (refreshedStored === undefined) {
           return makeUnavailableUsageLimits({
@@ -463,11 +451,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         if (!(Date.parse(refreshed.token.expiry ?? "") > renewedAt + 60_000)) {
           const refreshedHash = yield* sha256(refreshedStored);
           recordRenewalFailure(startedGeneration, refreshedHash, renewedAt, storedHash);
-          return makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "probeFailed",
-            message: CLI_EXPIRED_MESSAGE,
-          });
+          return expired;
         }
         if (generation === startedGeneration) renewalBackoff = undefined;
         token = refreshed.token;
