@@ -24,10 +24,14 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout the tested commit
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          persist-credentials: false
+        env:
+          CHECKOUT_REF: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
+          git checkout --detach FETCH_HEAD
 
       - name: Install Nix
         uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
