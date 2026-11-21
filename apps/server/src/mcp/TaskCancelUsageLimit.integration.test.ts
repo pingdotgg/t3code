@@ -23,6 +23,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -198,17 +199,23 @@ it.effect.each([
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const eventSink = yield* EventSink.EventSinkV2;
         const sweep = Effect.andThen(
           Effect.suspend(() => sweeps.get("usage-limit-recovery")!),
           worker.drain(),
         );
         const parentThreadId = ThreadId.make("thread:task-cancel-limit-parent");
         const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
-          orchestrator.streamDomainEvents.pipe(
-            Stream.filter(predicate),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
+          eventSink.latestSequence().pipe(
+            Effect.flatMap((afterSequence) =>
+              eventSink.stream({ afterSequence }).pipe(
+                Stream.map((stored) => stored.event),
+                Stream.filter(predicate),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              ),
+            ),
           );
         const turnRunning = () =>
           watch(
