@@ -897,6 +897,33 @@ it.live.each(["repository", "uppercase", "bare"] as const)(
     ),
 );
 
+it.live("removes a worktree whose ignored folder holds a gitfile pointing nowhere", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree } = yield* cleanupFixture();
+      // Packages such as conda-forge's `referencing` ship a test suite's dangling gitlink.
+      yield* fs.makeDirectory(`${worktree}/dist/suite`, { recursive: true });
+      yield* fs.writeFileString(`${worktree}/dist/suite/.git`, "gitdir: ../.git/modules/x\n");
+      const [entry] = (yield* service.runNow).entries;
+      expect(entry?.reason).not.toBe("Contains a nested Git repository");
+      expect(entry).toMatchObject({ outcome: "removed" });
+      expect(yield* fs.exists(worktree)).toBe(false);
+    }),
+  ),
+);
+
+it.live("keeps a worktree whose gitfile target exists only with its trailing space", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree } = yield* cleanupFixture();
+      yield* fs.makeDirectory(`${worktree}/dist/suite/git `, { recursive: true });
+      yield* fs.writeFileString(`${worktree}/dist/suite/.git`, "gitdir: git \n");
+      const [entry] = (yield* service.runNow).entries;
+      expect(entry).toMatchObject({ outcome: "kept", reason: "Contains a nested Git repository" });
+    }),
+  ),
+);
+
 const submoduleCleanupFixture = () =>
   Effect.gen(function* () {
     const fixture = yield* cleanupFixture();
