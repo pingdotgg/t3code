@@ -2,6 +2,7 @@ import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import * as DateTime from "effect/DateTime";
+import { decodeMsg } from "gt-react";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { describe, expect, it } from "vite-plus/test";
 import * as Cause from "effect/Cause";
@@ -516,6 +517,31 @@ describe("resolveThreadStatusPill", () => {
       dotClass: "bg-sidebar-muted-foreground",
       pulse: false,
     });
+  });
+
+  it("shows background, not idle, for an idle thread with an unawaited command", () => {
+    const idle = {
+      ...baseThread,
+      interactionMode: "default" as const,
+      runtime: { ...baseThread.runtime, status: "idle" as const, activeRunId: null },
+    };
+    const command = { taskId: "bg-1", description: "Run eval", kind: "command" as const };
+    const pill = resolveThreadStatusPill({
+      thread: { ...idle, pendingBackgroundTasks: [command] },
+    });
+    expect(pill?.pulse).toBe(false);
+    expect(decodeMsg(pill!.label)).toBe("Background");
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...idle,
+          pendingBackgroundTasks: [
+            { taskId: "pull-request-watch:7", description: "Watching #7", kind: "monitor" },
+          ],
+        },
+      }),
+    ).toBeNull();
+    expect(resolveThreadStatusPill({ thread: { ...idle, pendingBackgroundTasks: [] } })).toBeNull();
   });
 
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
