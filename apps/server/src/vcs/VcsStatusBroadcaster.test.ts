@@ -1434,6 +1434,23 @@ describe("VcsStatusBroadcaster", () => {
         true,
         false,
       ]);
+
+      // A repository row asks for totals without retaining the remote refresh loop.
+      const remoteCalls = state.remoteStatusCalls;
+      const rowEvents = yield* Queue.unbounded<VcsStatusStreamEvent>();
+      yield* broadcaster
+        .streamStatus({ cwd: "/repo", includeRemote: false, includeBranchChanges: true })
+        .pipe(
+          Stream.runForEach((event) => Queue.offer(rowEvents, event)),
+          Effect.forkScoped,
+        );
+      const rowSnapshot = yield* Queue.take(rowEvents);
+      assert.strictEqual(rowSnapshot._tag, "snapshot");
+      if (rowSnapshot._tag === "snapshot") {
+        assert.deepStrictEqual(rowSnapshot.local.branchChanges, branchChanges);
+      }
+      yield* TestClock.adjust("30 seconds");
+      assert.equal(state.remoteStatusCalls, remoteCalls);
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
