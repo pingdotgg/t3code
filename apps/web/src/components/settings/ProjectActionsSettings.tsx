@@ -10,7 +10,7 @@ import {
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { ChevronDownIcon, PlusIcon } from "lucide-react";
 import { T, useGT } from "gt-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { useEnvironments } from "../../state/environments";
 import {
@@ -36,7 +36,7 @@ import { useProjectScriptSettings } from "./useProjectScriptSettings";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 
-export function ProjectActionsSettings() {
+export function ProjectActionsSettings({ headerAction }: { headerAction?: ReactNode } = {}) {
   const gt = useGT();
   const { scope, targets, target } = useSettingsScope();
   const { environments } = useEnvironments();
@@ -115,7 +115,7 @@ export function ProjectActionsSettings() {
   };
 
   return (
-    <SettingsSection id="project-actions" title={gt("Actions")}>
+    <SettingsSection id="project-actions" title={gt("Actions")} headerAction={headerAction}>
       <SettingsRow
         serverScoped
         settingKeys={["defaultProjectScripts"]}

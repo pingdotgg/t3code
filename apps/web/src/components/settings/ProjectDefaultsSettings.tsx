@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -49,7 +50,13 @@ function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules
   return value !== null && (WORKTREE_SUBMODULES_OPTIONS as readonly string[]).includes(value);
 }
 
-export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
+export function ProjectDefaultsSettings({
+  category,
+  headerAction,
+}: {
+  category: ProjectSettingsCategory;
+  headerAction?: ReactNode;
+}) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
@@ -354,6 +361,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     <SettingsSection
       id={category === "source-control" ? "source-control-defaults" : "project-defaults"}
       title={category === "source-control" ? gt("Repositories") : gt("New threads")}
+      headerAction={headerAction}
     >
       {category === "project" ? (
         <>

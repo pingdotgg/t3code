@@ -11,6 +11,7 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ITEM_ROW_CLASSNAME } from "./itemRows";
+import { ProjectRowMenu } from "./ProjectRowMenu";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -28,6 +29,8 @@ interface ScopeChoice {
   secondary?: string;
   icon: ReactNode;
   search: SettingsScopeSearch;
+  /** Project rows offer their quick actions beside the row. */
+  project?: SidebarProjectSnapshot;
 }
 
 export function SettingsScopeNotice({
@@ -100,6 +103,7 @@ export function SettingsScopeNotice({
             ].join(" · "),
             icon: <ProjectFavicon project={group} className="size-4 shrink-0" />,
             search: selectProjectAxis(search, group.projectKey),
+            ...(targetId ? {} : { project: group }),
           }))
         : target === "environment"
           ? environments
@@ -124,12 +128,13 @@ export function SettingsScopeNotice({
                 search: {},
               },
             ];
-    return choices.map((choice) => (
+    const rows = choices.map((choice) => (
       <button
         key={JSON.stringify(choice.search)}
         type="button"
         className={cn(
-          ITEM_ROW_CLASSNAME,
+          // The wrapper owns the outer corners when a menu overlays the row.
+          choice.project ? "rounded-[inherit] px-3 py-3 sm:px-4" : ITEM_ROW_CLASSNAME,
           "flex w-full min-w-0 cursor-pointer items-center gap-3 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         )}
         onClick={() => {
@@ -148,7 +153,7 @@ export function SettingsScopeNotice({
         }}
       >
         {choice.icon}
-        <span className="min-w-0 flex-1">
+        <span className={cn("min-w-0 flex-1", choice.project && "pe-8")}>
           <span className="block truncate text-sm font-medium">{choice.label}</span>
           {choice.secondary ? (
             <Tooltip>
@@ -164,6 +169,22 @@ export function SettingsScopeNotice({
         <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       </button>
     ));
+    // A menu can't nest inside the row's button, so it overlays the row beside the chevron.
+    return rows.map((row, index) => {
+      const project = choices[index]!.project;
+      return project ? (
+        <div key={row.key} className="relative first:rounded-t-xl last:rounded-b-xl">
+          {row}
+          <ProjectRowMenu
+            group={project}
+            machine={search.machine}
+            className="absolute end-9 top-1/2 -translate-y-1/2 sm:end-10"
+          />
+        </div>
+      ) : (
+        row
+      );
+    });
   };
   const notice = (
     <div className="space-y-3">

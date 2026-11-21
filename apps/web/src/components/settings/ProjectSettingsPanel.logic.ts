@@ -35,6 +35,11 @@ export function projectGroupTitleNeedsUpdate(
   );
 }
 
+/** "No project" is recreated on demand, so removing or archiving it only loses its threads. */
+export function isScratchProjectGroup(group: Pick<SidebarProjectSnapshot, "memberProjects">) {
+  return group.memberProjects.every((member) => member.isScratch);
+}
+
 export function defaultProjectIcon(project: Pick<Project, "isScratch">) {
   return { faviconPath: null, projectIcon: project.isScratch ? SCRATCH_PROJECT_ICON : null };
 }

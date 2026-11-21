@@ -1,28 +1,16 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { m as resolveMessage } from "../../i18n/messages";
-import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
-import { mapAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { planProjectRemoval } from "@t3tools/client-runtime/state/projects";
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
-import {
-  checkProjectAccess,
-  reportProjectFailure,
-  useProjectGroupUpdate,
-  type ProjectGroupUpdate,
-} from "../../hooks/useProjectGroupUpdate";
-import { Navigate, useLocation, useNavigate } from "@tanstack/react-router";
+import { useProjectGroupUpdate, type ProjectGroupUpdate } from "../../hooks/useProjectGroupUpdate";
+import { Navigate, useLocation } from "@tanstack/react-router";
 import { InfoIcon, Trash2Icon } from "lucide-react";
-import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
+import { Fragment, lazy, Suspense, useRef, useState, type ReactNode } from "react";
 import { T, useGT, useMessages } from "gt-react";
 
-import { useComposerDraftStore } from "../../composerDraftStore";
-import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { persistClientSettingsUpdate, useClientSettings } from "../../hooks/useSettings";
-import { readLocalApi } from "../../localApi";
 import { derivePhysicalProjectKey } from "@t3tools/client-runtime/state/project-grouping";
 import {
   PROJECT_GROUPING_MODE_LABELS,
@@ -31,9 +19,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { useThreadShells, waitForProjectRemoval } from "../../state/entities";
 import { refreshProjectFaviconUrl } from "../../state/assets";
-import { projectEnvironment } from "../../state/projects";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -54,15 +40,16 @@ import {
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { ProjectCheckoutScope } from "./SettingsScopeSentence";
 import {
   defaultProjectIcon,
   hasDefaultProjectIcon,
+  isScratchProjectGroup,
   projectGroupTitleNeedsUpdate,
   SCRATCH_PROJECT_TITLE,
-  scopeProjectSettingsGroup,
 } from "./ProjectSettingsPanel.logic";
+import { useRemoveProjectMembers } from "./useRemoveProjectMembers";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
-import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 
 const ProjectIconPickerDialog = lazy(() =>
@@ -247,29 +234,22 @@ export function ProjectSettingsPanel({
         <T>This checkout is no longer available in the selected project and environment.</T>
       </p>
     );
-  const scopedGroup = scopeProjectSettingsGroup(selected, members);
   return (
     <ProjectDetail
-      key={`${selected.projectKey}:${environmentId ?? "all"}:${checkoutKey ?? "all"}`}
-      group={scopedGroup}
-      allMembers={selected.memberProjects}
-      hasOtherMembers={members.length < selected.memberProjects.length}
+      key={selected.projectKey}
+      group={selected}
+      scopeKey={`${environmentId ?? "all"}:${checkoutKey ?? "all"}`}
     />
   );
 }
 
-function ProjectDetail({
-  group,
-  allMembers,
-  hasOtherMembers,
-}: {
-  group: SidebarProjectSnapshot;
-  /** Pin and archive belong to the whole project, even when one machine is picked. */
-  allMembers: ReadonlyArray<SidebarProjectGroupMember>;
-  hasOtherMembers: boolean;
-}) {
+/**
+ * Identity, checkouts and removal cover every checkout. Only the sections after
+ * the checkout scope picker follow the environment and checkout selection.
+ */
+function ProjectDetail({ group, scopeKey }: { group: SidebarProjectSnapshot; scopeKey: string }) {
+  const allMembers = group.memberProjects;
   const gt = useGT();
-  const navigate = useNavigate({ from: "/settings" });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const environmentById = new Map(
@@ -283,10 +263,6 @@ function ProjectDetail({
     group.memberProjects.find(
       (member) => environmentById.get(member.environmentId)?.serverConfig != null,
     ) ?? group.memberProjects[0]!;
-  const threads = useThreadShells();
-  const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
-    reportFailure: false,
-  });
   const projectNameEditedRef = useRef(false);
 
   const faviconPath = group.faviconPath ?? null;
@@ -348,87 +324,12 @@ function ProjectDetail({
     setIsSavingFavicon(false);
   };
 
+  const isScratch = isScratchProjectGroup(group);
   const hasMultipleCheckouts = group.memberProjects.length > 1;
   const canResetScratchTitle =
-    group.memberProjects.every((member) => member.isScratch) &&
-    group.memberProjects.some((member) => member.title !== SCRATCH_PROJECT_TITLE);
+    isScratch && group.memberProjects.some((member) => member.title !== SCRATCH_PROJECT_TITLE);
 
-  const removeMembers = async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
-    if (checkProjectAccess(members, gt("Failed to remove project"))) return;
-    const api = readLocalApi();
-    if (!api) return;
-
-    const { projectThreads, isWholeGroup, confirmationMessage } = planProjectRemoval(
-      {
-        members,
-        groupMemberCount: group.memberProjects.length,
-        hasOtherMembers,
-        displayName: group.displayName,
-        threads,
-        unloadedThreadCount: readUnloadedThreadCount(members, threads),
-      },
-      resolveMessage,
-    );
-    const confirmed = await settlePromise(() =>
-      api.dialogs.confirm(confirmationMessage, { variant: "destructive" }),
-    );
-    if (confirmed._tag === "Failure" || !confirmed.value) return;
-    if (checkProjectAccess(members, gt("Failed to remove project"))) return;
-
-    const draftStore = useComposerDraftStore.getState();
-    const remainingMember = allMembers.find(
-      (candidate) =>
-        !members.some(
-          (member) =>
-            member.environmentId === candidate.environmentId && member.id === candidate.id,
-        ),
-    );
-    for (const member of members) {
-      if (checkProjectAccess([member], gt("Failed to remove project"))) return;
-      const memberThreads = projectThreads.filter(
-        (thread) => thread.environmentId === member.environmentId && thread.projectId === member.id,
-      );
-      const result = mapAtomCommandResult(
-        await deleteProject({
-          environmentId: member.environmentId,
-          input: {
-            projectId: member.id,
-            force: true,
-          },
-        }),
-        () => undefined,
-      );
-      if (result._tag === "Failure") {
-        reportProjectFailure(gt('Failed to remove "{title}"', { title: member.title }), result);
-        return;
-      }
-      const projectRef = scopeProjectRef(member.environmentId, member.id);
-      await waitForProjectRemoval(projectRef);
-      releaseProjectDraftUploads(
-        projectRef,
-        memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
-      );
-      const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
-      if (projectDraftThread && remainingMember) {
-        draftStore.setDraftThreadContext(projectDraftThread.draftId, {
-          projectRef: scopeProjectRef(remainingMember.environmentId, remainingMember.id),
-          environmentSelection: "manual",
-          loadBalancedEnvironmentId: null,
-        });
-      } else if (projectDraftThread) {
-        draftStore.clearDraftThread(projectDraftThread.draftId);
-      }
-      draftStore.clearProjectDraftThreadId(projectRef);
-    }
-
-    if (isWholeGroup && !hasOtherMembers) {
-      void navigate({
-        to: "/settings/projects",
-        search: ({ machine }) => ({ project: undefined, machine, checkout: undefined }),
-        replace: true,
-      });
-    }
-  };
+  const removeMembers = useRemoveProjectMembers({ group, allMembers, hasOtherMembers: false });
 
   const checkoutsByEnvironment = new Map<EnvironmentId, SidebarProjectGroupMember[]>();
   for (const member of group.memberProjects) {
@@ -443,7 +344,7 @@ function ProjectDetail({
       <div className="min-w-0 flex-1 @min-[32rem]/settings-row:w-72 @min-[32rem]/settings-row:flex-none">
         <CheckoutGroupingSelect member={member} />
       </div>
-      {hasMultipleCheckouts ? (
+      {hasMultipleCheckouts && !isScratch ? (
         <Button
           size="sm"
           variant="outline"
@@ -539,10 +440,7 @@ function ProjectDetail({
         <Alert variant="info">
           <InfoIcon aria-hidden />
           <AlertDescription>
-            <T>
-              Can't find a setting? Keep this project picked above and hop to any other settings
-              page.
-            </T>
+            <T>Can't find a setting? Other settings pages keep this project selected.</T>
           </AlertDescription>
         </Alert>
         <SettingsSection id="project-overview" title={gt("Project")} hideTitle>
@@ -660,77 +558,75 @@ function ProjectDetail({
                   />
                 }
               />
-              <SettingsRow
-                title={gt("Archive")}
-                description={
-                  group.archived
-                    ? gt("Hidden from project pickers. Threads and files are kept.")
-                    : gt("Hides the project from project pickers. Threads and files are kept.")
-                }
-                control={
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={isOrganizing}
-                    onClick={() =>
-                      void organize(
-                        { archived: !group.archived },
-                        group.archived
-                          ? gt("Failed to unarchive project")
-                          : gt("Failed to archive project"),
-                      )
-                    }
-                  >
-                    {group.archived
-                      ? gt("Unarchive")
-                      : gt("Archive", { $context: "verb, archives a project" })}
-                  </Button>
-                }
-              />
+              {isScratch && !group.archived ? null : (
+                <SettingsRow
+                  title={gt("Archive")}
+                  description={
+                    group.archived
+                      ? gt("Hidden from project pickers. Threads and files are kept.")
+                      : gt("Hides the project from project pickers. Threads and files are kept.")
+                  }
+                  control={
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={isOrganizing}
+                      onClick={() =>
+                        void organize(
+                          { archived: !group.archived },
+                          group.archived
+                            ? gt("Failed to unarchive project")
+                            : gt("Failed to archive project"),
+                        )
+                      }
+                    >
+                      {group.archived
+                        ? gt("Unarchive")
+                        : gt("Archive", { $context: "verb, archives a project" })}
+                    </Button>
+                  }
+                />
+              )}
             </>
           ) : null}
         </SettingsSection>
-        <ProjectDefaultsSettings category="project" />
-        <ProjectActionsSettings />
         {checkoutChoices}
-        <SettingsSection title={gt("Danger")}>
-          <SettingsRow
-            title={
-              hasOtherMembers
-                ? gt("Remove checkout")
-                : group.memberProjects.length > 1
+        <Fragment key={scopeKey}>
+          <ProjectDefaultsSettings category="project" headerAction={<ProjectCheckoutScope />} />
+          <ProjectActionsSettings headerAction={<ProjectCheckoutScope />} />
+        </Fragment>
+        {isScratch ? null : (
+          <SettingsSection title={gt("Danger")}>
+            <SettingsRow
+              title={
+                group.memberProjects.length > 1
                   ? gt("Remove this project everywhere")
                   : gt("Remove project")
-            }
-            description={
-              hasOtherMembers
-                ? gt(
-                    "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched.",
-                  )
-                : group.memberProjects.length > 1
+              }
+              description={
+                group.memberProjects.length > 1
                   ? gt(
                       "{count, plural, other {Deletes all {count} checkout entries and their threads on every machine. Files on disk are not touched.}}",
                       { count: group.memberProjects.length },
                     )
                   : gt("Deletes the project entry and its threads. Files on disk are not touched.")
-            }
-            control={
-              <Button
-                size="sm"
-                variant="destructive-outline"
-                disabled={!canEditGroup}
-                onClick={() => void removeMembers(group.memberProjects)}
-              >
-                <Trash2Icon />
-                {hasOtherMembers
-                  ? gt("Remove checkout")
-                  : group.memberProjects.length > 1
+              }
+              control={
+                <Button
+                  size="sm"
+                  variant="destructive-outline"
+                  disabled={!canEditGroup}
+                  onClick={() => void removeMembers(group.memberProjects)}
+                >
+                  <Trash2Icon />
+                  {group.memberProjects.length > 1
                     ? gt("Remove all entries")
                     : gt("Remove project")}
-              </Button>
-            }
-          />
-        </SettingsSection>
+                </Button>
+              }
+            />
+          </SettingsSection>
+        )}
       </SettingsPageContainer>
 
       <ProjectFaviconPickerDialog
