@@ -414,7 +414,25 @@ const make = Effect.gen(function* () {
       }
       // Git status omits ignored repositories, and worktree remove deletes them.
       // Registered submodules have their own recursive safety checks.
-      const isNestedRepository = (target: string, names: ReadonlyArray<string>) => {
+      // Git opens no repository through a .git file without a `gitdir: ` line or whose target is missing.
+      const isRepositoryMarker = Effect.fnUntraced(
+        function* (marker: string) {
+          const stat = yield* fs.lstat(marker);
+          if (stat.type !== "File") return true;
+          if (stat.size > 64n * 1024n) return false;
+          const content = yield* fs.readFileString(marker);
+          if (!content.startsWith("gitdir: ")) return false;
+          const gitDir = content.slice(8).trimEnd();
+          if (gitDir === "") return false;
+          if (isNetworkPath(gitDir)) return true;
+          return yield* fs.exists(path.resolve(path.dirname(marker), gitDir));
+        },
+        Effect.orElseSucceed(() => true),
+      );
+      const isNestedRepository = Effect.fnUntraced(function* (
+        target: string,
+        names: ReadonlyArray<string>,
+      ) {
         const key = pathKey(target);
         if (
           repositories.has(key) ||
@@ -422,11 +440,13 @@ const make = Effect.gen(function* () {
         )
           return false;
         const markers = new Set(names.map((name) => name.toLowerCase()));
-        return (
-          markers.has(".git") ||
-          (markers.has("head") && markers.has("objects") && markers.has("refs"))
-        );
-      };
+        if (markers.has("head") && markers.has("objects") && markers.has("refs")) return true;
+        for (const name of names) {
+          if (name.toLowerCase() !== ".git") continue;
+          if (yield* isRepositoryMarker(path.join(target, name))) return true;
+        }
+        return false;
+      });
       const pending = [root];
       let entries = 1;
       let bytes = 0;
@@ -470,7 +490,7 @@ const make = Effect.gen(function* () {
         );
         for (const result of inspected) {
           if (result === null) return incomplete;
-          if (inspectRepositories && isNestedRepository(result.target, result.names))
+          if (inspectRepositories && (yield* isNestedRepository(result.target, result.names)))
             return { bytes: null, reason: "contains a nested Git repository" };
           bytes += result.bytes;
           entries += result.names.length;
