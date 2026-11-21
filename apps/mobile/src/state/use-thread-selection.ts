@@ -57,7 +57,7 @@ function latestUserMessageAt(
   return null;
 }
 
-function threadDetailToShell(
+export function threadDetailToShell(
   environmentId: EnvironmentId,
   projection: OrchestrationV2ThreadProjection,
 ): EnvironmentThreadShell {
@@ -82,6 +82,7 @@ function threadDetailToShell(
     activeProviderThreadId: thread.activeProviderThreadId,
     lineage: thread.lineage,
     forkedFrom: thread.forkedFrom,
+    delegatedFrom: thread.delegatedFrom,
     createdBy: thread.createdBy,
     creationSource: thread.creationSource,
     latestRunId: latestRun?.runId ?? null,

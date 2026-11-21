@@ -8,6 +8,7 @@ import {
   type ScheduledTask,
   ThreadId,
 } from "@t3tools/contracts";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type {
@@ -23,6 +24,7 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduleLabel,
+  scheduledTaskDestinationThreads,
   taskToDraft,
   unbindDraftFromThread,
 } from "./scheduledTasksSettings.logic";
@@ -199,6 +201,33 @@ describe("fixed-time scheduled tasks", () => {
 });
 
 describe("scheduled task destination", () => {
+  it("leaves out threads the lists show under a parent", () => {
+    const thread = (id: string, lineage: { relationshipToParent: "subagent" | null }) => ({
+      environmentId: laptopId,
+      projectId: ProjectId.make("project"),
+      id: ThreadId.make(id),
+      archivedAt: null,
+      title: id,
+      updatedAt: "2026-10-01T00:00:00.000Z",
+      lineage: {
+        rootThreadId: ThreadId.make("listed"),
+        parentThreadId: lineage.relationshipToParent === null ? null : ThreadId.make("listed"),
+        ...lineage,
+      },
+    });
+    const threads = [
+      thread("listed", { relationshipToParent: null }),
+      thread("subagent", { relationshipToParent: "subagent" }),
+      thread("delegated", { relationshipToParent: null }),
+    ];
+    const destinations = scheduledTaskDestinationThreads(
+      threads,
+      { environmentId: laptopId, projectId: "project", currentThreadId: null, query: "" },
+      new Set([threadKey({ environmentId: laptopId, threadId: ThreadId.make("delegated") })]),
+    );
+    expect(destinations.map((row) => row.id)).toEqual(["listed"]);
+  });
+
   it("unbinding leaves the shared checkout for a new worktree from the remote", () => {
     const rootBound = taskToDraft({
       ...legacyTask,

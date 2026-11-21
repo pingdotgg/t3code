@@ -3,7 +3,7 @@ import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { LegendList } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
-import { isListedThreadLineage } from "@t3tools/contracts";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
 import { Platform } from "react-native";
@@ -15,6 +15,7 @@ import { useSearchToolbarInset } from "../../components/ui/useBarInset";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import {
+  useDelegatedUnderParent,
   useEnvironmentServerConfig,
   useProjects,
   useVisibleThreadShells,
@@ -205,6 +206,7 @@ export function ScheduledTaskThreadPickerRouteScreen() {
   const threadId = editor?.draft.threadId ?? null;
   const currentLabel = useScheduledTaskDestinationLabel(environmentId, threadId);
   const shells = useVisibleThreadShells();
+  const delegatedUnderParent = useDelegatedUnderParent();
   const [query, setQuery] = useState("");
   const search = {
     value: query,
@@ -240,7 +242,11 @@ export function ScheduledTaskThreadPickerRouteScreen() {
           thread.projectId === projectId &&
           thread.id !== threadId &&
           thread.archivedAt === null &&
-          isListedThreadLineage(thread.lineage) &&
+          !isShownUnderParent(
+            { environmentId: thread.environmentId, threadId: thread.id },
+            thread.lineage,
+            delegatedUnderParent,
+          ) &&
           thread.title.toLocaleLowerCase().includes(needle),
       )
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))

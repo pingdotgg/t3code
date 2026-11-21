@@ -1,6 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import { isListedThreadLineage } from "@t3tools/contracts";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -40,11 +40,21 @@ export function startBackgroundThreadAnnouncements(
   const update = () => {
     const threads = registry.get(environmentThreadShells.quietThreadShellsAtom);
     const liveEnvironmentIds = registry.get(liveShellEnvironmentIdsAtom);
+    const delegatedUnderParent = registry.get(environmentThreadShells.delegatedUnderParentAtom);
     const now = new Date().toISOString();
     const snapshots: BackgroundThreadSnapshot[] = [];
     for (const thread of threads) {
-      // Subagents and side chats have no row of their own; their requests surface on the parent.
-      if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) continue;
+      // Threads shown under a parent have no row of their own; their requests surface on the parent.
+      if (
+        thread.archivedAt !== null ||
+        isShownUnderParent(
+          scopeThreadRef(thread.environmentId, thread.id),
+          thread.lineage,
+          delegatedUnderParent,
+        )
+      ) {
+        continue;
+      }
       if (!liveEnvironmentIds.has(thread.environmentId)) continue;
       snapshots.push({
         key: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
@@ -72,6 +82,7 @@ export function startBackgroundThreadAnnouncements(
   const unsubscribes = [
     registry.subscribe(environmentThreadShells.quietThreadShellsAtom, update),
     registry.subscribe(liveShellEnvironmentIdsAtom, update),
+    registry.subscribe(environmentThreadShells.delegatedUnderParentAtom, update),
     router.subscribe("onResolved", updateOpenThread),
     useComposerDraftStore.subscribe(updateOpenThread),
   ];

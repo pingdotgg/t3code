@@ -17,6 +17,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
 const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
+const NO_DELEGATED_UNDER_PARENT: ReadonlySet<string> = new Set();
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
 import {
   formatComposerContextReference,
@@ -253,6 +254,7 @@ export function useComposerCommandMenu({
   ownerKey,
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
+  delegatedUnderParent = NO_DELEGATED_UNDER_PARENT,
   environments = EMPTY_ENVIRONMENTS,
   linkedEnvironments = NO_LINKED_ENVIRONMENTS,
   currentThreadId = null,
@@ -277,6 +279,8 @@ export function useComposerCommandMenu({
   readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
+  /** Delegated tasks the lists show under their parent, by thread key; the picker leaves them out. */
+  readonly delegatedUnderParent?: ReadonlySet<string>;
   readonly environments?: ReadonlyArray<ComposerEnvironmentCandidate>;
   /** The machines `environmentId` links to, by name, whose threads the picker also offers. */
   readonly linkedEnvironments?: ReadonlyMap<EnvironmentId, string>;
@@ -524,6 +528,7 @@ export function useComposerCommandMenu({
               shells: threadShells,
               environmentId,
               linkedEnvironments,
+              delegatedUnderParent,
               excludeThreadId: currentThreadId,
               query: trigger.query,
               now,

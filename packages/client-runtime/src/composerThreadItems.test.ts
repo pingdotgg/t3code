@@ -6,6 +6,7 @@ import {
   matchComposerThreadItems,
   type ComposerThreadCandidate,
 } from "./composerThreadItems.ts";
+import { threadKey } from "./state/entities.ts";
 
 const environmentId = EnvironmentId.make("env-composer");
 
@@ -29,7 +30,7 @@ function shell(
   };
 }
 
-it("ranks thread mentions like the palette and leaves out subagent threads", () => {
+it("ranks thread mentions like the palette and leaves out threads shown under a parent", () => {
   const items = matchComposerThreadItems({
     shells: [
       shell("newer-mid-word", "Remodel the settings page", {
@@ -44,9 +45,13 @@ it("ranks thread mentions like the palette and leaves out subagent threads", () 
         },
       }),
       shell("other-environment", "Model docs", { environmentId: EnvironmentId.make("env-other") }),
+      shell("delegated", "Model task"),
     ],
     environmentId,
     linkedEnvironments: new Map(),
+    delegatedUnderParent: new Set([
+      threadKey({ environmentId, threadId: ThreadId.make("delegated") }),
+    ]),
     excludeThreadId: null,
     query: "model",
     now: Date.parse("2026-10-23T00:00:00.000Z"),
@@ -73,6 +78,7 @@ it("offers the composer thread's own used side chats, but not other threads' sid
     ],
     environmentId,
     linkedEnvironments: new Map(),
+    delegatedUnderParent: new Set(),
     excludeThreadId: ThreadId.make("main"),
     query: "slow",
     now: Date.parse("2026-10-23T00:00:00.000Z"),
@@ -92,6 +98,7 @@ it("also offers threads on linked machines, naming the machine, but no other mac
     ],
     environmentId,
     linkedEnvironments: new Map([[vps, "Hetzner VPS"]]),
+    delegatedUnderParent: new Set(),
     excludeThreadId: null,
     query: "deploy",
     now: Date.parse("2026-10-23T00:00:00.000Z"),

@@ -947,12 +947,15 @@ export function useThreadComposerState(input: {
     return messageId;
   };
 
-  // Side chats do not nest or start from subagents, and need a server that forks them.
+  // Side chats do not nest or start from subagents or delegated tasks, and need a server that forks them.
   const sideChatUnavailableReason = (() => {
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
     if (selectedThreadShell?.lineage.sideChat === true)
       return resolve(msg("Side chats cannot start side chats."));
-    if (selectedThreadShell?.lineage.relationshipToParent === "subagent") {
+    if (
+      selectedThreadShell?.lineage.relationshipToParent === "subagent" ||
+      selectedThreadShell?.delegatedFrom != null
+    ) {
       return resolve(msg("Subagent threads cannot start side chats."));
     }
     if (!selectedThreadShell || !serverConfig) {

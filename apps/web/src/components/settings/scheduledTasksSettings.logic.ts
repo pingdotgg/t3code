@@ -1,4 +1,4 @@
-import { isListedThreadLineage, isWebhookDedupeTemplate } from "@t3tools/contracts";
+import { isWebhookDedupeTemplate } from "@t3tools/contracts";
 import {
   EnvironmentId,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
@@ -16,6 +16,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import {
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
@@ -402,15 +403,21 @@ export function changeDraftProject(draft: DraftState, projectId: string): DraftS
 }
 
 /** Threads a task can move to. The current one is left out; the picker always shows it. */
-export function scheduledTaskDestinationThreads(
-  threads: ReadonlyArray<EnvironmentThreadShell>,
+export function scheduledTaskDestinationThreads<
+  T extends Pick<
+    EnvironmentThreadShell,
+    "environmentId" | "projectId" | "id" | "archivedAt" | "lineage" | "title" | "updatedAt"
+  >,
+>(
+  threads: ReadonlyArray<T>,
   target: {
     readonly environmentId: EnvironmentId;
     readonly projectId: string;
     readonly currentThreadId: ThreadId | null;
     readonly query: string;
   },
-): ReadonlyArray<EnvironmentThreadShell> {
+  delegatedUnderParent: ReadonlySet<string>,
+): ReadonlyArray<T> {
   const search = target.query.trim().toLocaleLowerCase();
   return threads
     .filter(
@@ -419,7 +426,11 @@ export function scheduledTaskDestinationThreads(
         thread.projectId === target.projectId &&
         thread.id !== target.currentThreadId &&
         thread.archivedAt === null &&
-        isListedThreadLineage(thread.lineage) &&
+        !isShownUnderParent(
+          { environmentId: thread.environmentId, threadId: thread.id },
+          thread.lineage,
+          delegatedUnderParent,
+        ) &&
         thread.title.toLocaleLowerCase().includes(search),
     )
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));

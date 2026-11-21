@@ -72,6 +72,7 @@ import {
   useProjects,
   useQuietThreadShell,
   useThreadShell,
+  useDelegatedUnderParent,
   useVisibleThreadShells,
 } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -1331,12 +1332,12 @@ function ScheduledTaskDestination({
     titlesOnly: true,
     projectIds: [projectId as ProjectId],
   });
-  const threads = scheduledTaskDestinationThreads(shells, {
-    environmentId,
-    projectId,
-    currentThreadId: threadId,
-    query,
-  });
+  const delegatedUnderParent = useDelegatedUnderParent();
+  const threads = scheduledTaskDestinationThreads(
+    shells,
+    { environmentId, projectId, currentThreadId: threadId, query },
+    delegatedUnderParent,
+  );
   const search = query.trim().toLocaleLowerCase();
   const items: ReadonlyArray<string> = [
     ...(search ? [] : [NEW_THREAD_DESTINATION]),

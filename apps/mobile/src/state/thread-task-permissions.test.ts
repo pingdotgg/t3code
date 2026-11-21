@@ -77,6 +77,7 @@ const state = vi.hoisted(() => ({
     interactionMode: "default",
     runtime: null,
     latestRun: null as unknown,
+    delegatedFrom: null as unknown,
   },
 }));
 
@@ -154,6 +155,7 @@ vi.mock("./session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope && state.grantedEnvironments.has(environmentId),
 }));
+vi.mock("@react-navigation/native", () => ({ useRoute: () => ({ params: {} }) }));
 vi.mock("./use-thread-selection", () => ({
   useThreadSelection: () => ({
     selectedThread: state.thread,
@@ -267,6 +269,7 @@ beforeEach(() => {
   state.compactModel = null;
   state.compactDueAt = "";
   state.thread.latestRun = null;
+  state.thread.delegatedFrom = null;
   state.projection = null;
   state.serverConfig = {
     providers: [{ instanceId: "codex", driver: "codex", enabled: true }],
@@ -440,6 +443,32 @@ describe("mobile task permissions", () => {
     expect(await composer.onSendMessage(undefined, beforeDispatch)).toBeNull();
     expect(beforeDispatch).toHaveBeenCalledWith("/clear", false);
     expect(state.setFreshPending).not.toHaveBeenCalled();
+  });
+
+  it("offers no side chat from a task delegated from another environment", async () => {
+    const delegatedFrom = {
+      environmentId: EnvironmentId.make("primary"),
+      threadId: ThreadId.make("parent"),
+      title: "Parent",
+    };
+    // A thread read from its detail, before or without its shell, keeps where it came from.
+    const { threadDetailToShell } =
+      await vi.importActual<typeof import("./use-thread-selection")>("./use-thread-selection");
+    expect(
+      threadDetailToShell(EnvironmentId.make("secondary"), {
+        ...v2Projection,
+        thread: { ...v2Projection.thread, delegatedFrom },
+      }).delegatedFrom,
+    ).toEqual(delegatedFrom);
+
+    state.grantedEnvironments.add("secondary");
+    state.serverConfig = {
+      ...state.serverConfig,
+      environment: { capabilities: { sideChats: true } },
+    } as ServerConfig;
+    state.thread.delegatedFrom = delegatedFrom;
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(composer.sideChatUnavailableReason).toBe("Subagent threads cannot start side chats.");
   });
 
   it("starts a side chat for /side instead of sending to the thread", async () => {

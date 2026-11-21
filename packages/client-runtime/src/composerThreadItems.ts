@@ -1,5 +1,4 @@
 import {
-  isListedThreadLineage,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
@@ -8,6 +7,7 @@ import {
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 
 import type { EnvironmentThreadShell } from "./state/models.ts";
+import { isShownUnderParent } from "./state/threadShell.ts";
 import { threadSearchSubject, type ThreadSearchShell } from "./state/threadSearch.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -26,10 +26,9 @@ export interface ComposerThreadItem {
 }
 
 /**
- * Threads to reference from the composer, matched and ranked like the command
- * palette, without subagent threads or other threads' side chats. The agent reads threads
- * on its own server and on the machines it links to, so candidates stay within those, and a
- * linked machine's threads say which machine they are on.
+ * Threads to reference from the composer, ranked like the command palette: only listed threads
+ * and the composer thread's own side chats. The agent reads threads on its own server and the
+ * machines it links to, so candidates stay within those, naming a linked machine's.
  */
 export function matchComposerThreadItems(
   input: {
@@ -37,6 +36,7 @@ export function matchComposerThreadItems(
     environmentId: EnvironmentId;
     /** The machines the composer's environment links to, by name. */
     linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
+    delegatedUnderParent: ReadonlySet<string>;
     excludeThreadId: ThreadId | null;
     query: string;
     /** Recency is measured against this time. */
@@ -58,7 +58,12 @@ export function matchComposerThreadItems(
         input.linkedEnvironments.has(shell.environmentId)) &&
       shell.id !== input.excludeThreadId &&
       shell.archivedAt === null &&
-      (isListedThreadLineage(shell.lineage) || isOwnSideChat(shell)),
+      (!isShownUnderParent(
+        { environmentId: shell.environmentId, threadId: shell.id },
+        shell.lineage,
+        input.delegatedUnderParent,
+      ) ||
+        isOwnSideChat(shell)),
   );
   return rankSearchItems(candidates, (shell, options) =>
     scoreThreadSearch(query, threadSearchSubject(shell, null), input.now, {
