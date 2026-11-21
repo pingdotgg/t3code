@@ -31,6 +31,7 @@ import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryOpenInput,
   layerQueryRunner,
+  makeClaudeDescendantTracker,
   spawnClaudeProcessGroup,
 } from "./ClaudeAdapterV2.ts";
 
@@ -230,6 +231,35 @@ const resumedMcpQueryInput = {
     },
   },
 } satisfies ClaudeAgentSdkQueryOpenInput;
+
+it.effect("resumes a session whose history exceeds the status-probe output limit", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const configDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-claude-large-history-",
+    });
+    yield* writeClaudeSession(configDir, [
+      sessionEntry("aaaaaaaa-0000-4000-8000-000000000001", null, {
+        role: "user",
+        content: "x".repeat(9 * 1024 * 1024),
+      }),
+    ]);
+    const querySpy = vi
+      .spyOn(ClaudeSdk, "query")
+      .mockImplementation(() => ({ close: vi.fn() }) as unknown as ClaudeSdk.Query);
+    yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+    const runner = yield* ClaudeAgentSdkQueryRunner;
+    const { mcpServers: _mcpServers, ...options } = resumedMcpQueryInput.options;
+    const session = yield* runner.open({
+      ...resumedMcpQueryInput,
+      resume: true,
+      options: { ...options, cwd: "/repo", env: { ...process.env, CLAUDE_CONFIG_DIR: configDir } },
+    });
+    yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+    assert.equal(querySpy.mock.calls.length, 1);
+    assert.equal(querySpy.mock.calls[0]?.[0].options?.resume, FORK_SESSION_ID);
+  }).pipe(Effect.provide(Layer.merge(realQueryRunner, NodeServices.layer))),
+);
 
 it.effect("reopens a stalled MCP registration before delivering the resumed prompt", () =>
   Effect.gen(function* () {
@@ -464,21 +494,24 @@ it.effect("cancels a stalled registration without retrying or retaining its prom
   }).pipe(Effect.provide(realQueryRunner)),
 );
 
-it.effect("does not reuse a fresh session ID after MCP registration times out", () =>
+it.effect("retries a fresh session once after MCP registration times out", () =>
   Effect.gen(function* () {
     const registrationStarted = Promise.withResolvers<void>();
     const disposed = vi.fn(async () => {});
-    const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
-      () =>
-        ({
-          initializationResult: async () => ({}),
-          setMcpServers: () => {
-            registrationStarted.resolve();
-            return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
-          },
-          [Symbol.asyncDispose]: disposed,
-        }) as unknown as ClaudeSdk.Query,
-    );
+    const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
+      const first = querySpy.mock.calls.length === 1;
+      return {
+        initializationResult: async () => ({}),
+        setMcpServers: () => {
+          registrationStarted.resolve();
+          return first
+            ? new Promise<ClaudeSdk.McpSetServersResult>(() => {})
+            : Promise.resolve({ added: ["t3-code"], removed: [], errors: {} });
+        },
+        close: vi.fn(),
+        [Symbol.asyncDispose]: disposed,
+      } as unknown as ClaudeSdk.Query;
+    });
     yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
     const runner = yield* ClaudeAgentSdkQueryRunner;
     const { resume, ...options } = resumedMcpQueryInput.options;
@@ -492,9 +525,13 @@ it.effect("does not reuse a fresh session ID after MCP registration times out", 
     yield* TestClock.adjust("90 seconds");
     const result = yield* Fiber.join(opening);
 
-    assert.equal(result._tag, "Failure");
-    assert.equal(querySpy.mock.calls.length, 1);
+    assert.equal(result._tag, "Success");
+    if (result._tag === "Success") yield* result.success.close;
+    assert.equal(querySpy.mock.calls.length, 2);
     assert.equal(disposed.mock.calls.length, 1);
+    // A fresh ID may already have a transcript, so the retry must not open it as fresh again.
+    const retry = querySpy.mock.calls[1]![0].options;
+    assert.isFalse(retry?.sessionId === resume && retry?.resume === undefined);
   }).pipe(Effect.provide(realQueryRunner)),
 );
 
@@ -503,37 +540,42 @@ it.effect.each([
   ["times out a CLI that never boots", "5 minutes", false],
 ] as const)("%s", ([, bootWait, boots]) =>
   Effect.gen(function* () {
-    const waiting = Promise.withResolvers<void>();
+    const attempts = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
     const booted = Promise.withResolvers<void>();
-    const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
-      () =>
-        ({
-          initializationResult: () => {
-            waiting.resolve();
-            return booted.promise;
-          },
-          // The CLI answers control requests only after it has booted.
-          setMcpServers: async () => {
-            waiting.resolve();
-            await booted.promise;
-            return { added: ["t3-code"], removed: [], errors: {} };
-          },
-          close: vi.fn(),
-          [Symbol.asyncDispose]: async () => {},
-        }) as unknown as ClaudeSdk.Query,
-    );
+    const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
+      const waiting = attempts[querySpy.mock.calls.length - 1]!;
+      return {
+        initializationResult: () => {
+          waiting.resolve();
+          return booted.promise;
+        },
+        // The CLI answers control requests only after it has booted.
+        setMcpServers: async () => {
+          waiting.resolve();
+          await booted.promise;
+          return { added: ["t3-code"], removed: [], errors: {} };
+        },
+        close: vi.fn(),
+        [Symbol.asyncDispose]: async () => {},
+      } as unknown as ClaudeSdk.Query;
+    });
     yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
     const runner = yield* ClaudeAgentSdkQueryRunner;
     const { resume, ...options } = resumedMcpQueryInput.options;
     const opening = yield* runner
       .open({ ...resumedMcpQueryInput, options: { ...options, sessionId: resume } })
       .pipe(Effect.result, Effect.forkChild);
-    yield* Effect.promise(() => waiting.promise);
+    yield* Effect.promise(() => attempts[0]!.promise);
     yield* TestClock.adjust(bootWait);
     if (boots) booted.resolve();
+    else {
+      yield* Effect.promise(() => attempts[1]!.promise);
+      yield* TestClock.adjust(bootWait);
+    }
     const result = yield* Fiber.join(opening);
 
     assert.equal(result._tag, boots ? "Success" : "Failure");
+    assert.equal(querySpy.mock.calls.length, boots ? 1 : 2);
     if (result._tag === "Success") yield* result.success.close;
     else
       assert.equal(
@@ -680,6 +722,124 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }),
   );
 
+  const processRow = (pid: number, ppid: number, startedSecond: number) => ({
+    pid,
+    ppid,
+    pgid: pid,
+    started: `Sun Nov 15 10:00:0${startedSecond} 2026`,
+  });
+  const byNumber = (left: number, right: number) => left - right;
+
+  it.effect(
+    "keeps only the descendants the CLI still has running, however many jobs it ran",
+    () => {
+      let table: ReadonlyArray<ReturnType<typeof processRow>> = [];
+      const tracker = makeClaudeDescendantTracker(
+        1000,
+        Effect.sync(() => table),
+      );
+      const jobs = (poll: number) => [0, 1, 2, 3].map((job) => 1100 + poll * 4 + job);
+      return Effect.gen(function* () {
+        for (let poll = 0; poll < 50; poll++) {
+          table = [
+            processRow(1000, 10, 0),
+            processRow(1001, 1000, 0),
+            // A job that outlives the shell that started it is re-parented.
+            ...(poll === 0 ? [processRow(1003, 1000, 0)] : []),
+            processRow(1002, poll === 0 ? 1003 : 1, 0),
+            ...jobs(poll).map((pid) => processRow(pid, 1001, 1)),
+          ];
+          yield* tracker.refresh;
+          // A failed `ps` reads as no rows.
+          table = [];
+          yield* tracker.refresh;
+        }
+        assert.strictEqual(tracker.tracked.size, 6);
+        assert.deepStrictEqual(
+          [...tracker.tracked.values()].map((row) => row.pid).toSorted(byNumber),
+          [1001, 1002, ...jobs(49)],
+        );
+      });
+    },
+  );
+
+  it.effect(
+    "stops at exit only what the CLI left running, never a process that took a job's pid",
+    () => {
+      const orphan = processRow(1300, 1, 1);
+      // Unrelated processes take both finished jobs' pids, one in the second its job started.
+      const unrelated = [processRow(1100, 1, 2), processRow(1200, 1, 1)];
+      const tables = [
+        [
+          processRow(1000, 10, 0),
+          processRow(1001, 1000, 0),
+          processRow(1100, 1001, 1),
+          processRow(1200, 1001, 1),
+          processRow(1300, 1001, 1),
+        ],
+        [processRow(1000, 10, 0), orphan],
+        [processRow(1000, 10, 0), ...unrelated, orphan],
+        [...unrelated, orphan],
+      ];
+      const tracker = makeClaudeDescendantTracker(
+        1000,
+        Effect.sync(() => tables.shift() ?? []),
+      );
+      return Effect.gen(function* () {
+        yield* tracker.refresh;
+        yield* tracker.refresh;
+        yield* tracker.refresh;
+        assert.deepStrictEqual(
+          (yield* tracker.leftovers).map((row) => row.pid),
+          [1300],
+        );
+      });
+    },
+  );
+
+  // The poll and a session close read the table independently. The older table still lists a
+  // re-parented job and the child it just started; the newer one lists a job started since.
+  it.effect(
+    "stops at exit what the poll and a session close found, reading at the same time",
+    () => {
+      type Table = ReadonlyArray<ReturnType<typeof processRow>>;
+      const cli = processRow(1000, 10, 0);
+      const olderReadStarted = Deferred.makeUnsafe<void>();
+      const olderRead = Deferred.makeUnsafe<Table>();
+      let read: Effect.Effect<Table> = Effect.succeed([
+        cli,
+        processRow(1001, 1000, 0),
+        processRow(1100, 1001, 1),
+      ]);
+      const tracker = makeClaudeDescendantTracker(
+        1000,
+        Effect.suspend(() => read),
+      );
+      return Effect.gen(function* () {
+        yield* tracker.refresh;
+        read = Deferred.succeed(olderReadStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(olderRead)),
+        );
+        const older = yield* tracker.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(olderReadStarted);
+        read = Effect.succeed([cli, processRow(1200, 1, 1), processRow(1300, 1000, 2)]);
+        const newer = yield* tracker.refresh.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(olderRead, [
+          cli,
+          processRow(1100, 1, 1),
+          processRow(1200, 1100, 1),
+        ]);
+        yield* Fiber.join(older);
+        yield* Fiber.join(newer);
+        read = Effect.succeed([processRow(1200, 1, 1), processRow(1300, 1, 2)]);
+        assert.deepStrictEqual(
+          (yield* tracker.leftovers).map((row) => row.pid).toSorted(byNumber),
+          [1200, 1300],
+        );
+      });
+    },
+  );
+
   const rootRefusal =
     "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
 
@@ -710,6 +870,51 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
 
       const unknown = yield* startupFailureMessage("token=sk-private-123");
       assert.notInclude(unknown, "sk-private-123");
+      // The exit status carries no private text and tells the user the CLI itself died.
+      assert.include(unknown, "Claude Code process exited with code 1");
+
+      const missingConversation = yield* startupFailureMessage(
+        "No conversation found with session ID: sk-private-123",
+      );
+      assert.include(missingConversation, "could not find this conversation");
+      assert.notInclude(missingConversation, "sk-private-123");
+    }).pipe(Effect.provide(realQueryRunner)),
+  );
+
+  // What Claude Code writes when the session store behind --resume is gone.
+  it.effect("names a resumed conversation Claude Code cannot find", () =>
+    Effect.gen(function* () {
+      const missing = "No conversation found with session ID: native-session-fake-cli";
+      const result = JSON.stringify({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        num_turns: 0,
+        duration_ms: 0,
+        duration_api_ms: 0,
+        total_cost_usd: 0,
+        usage: {},
+        modelUsage: {},
+        permission_denials: [],
+        errors: [missing],
+        session_id: "native-session-fake-cli",
+        uuid: "00000000-0000-4000-8000-000000000000",
+      });
+      const cli = fakeClaudeCli(
+        `printf '%s\\n' '${result}'\nprintf '%s\\n' '${missing}' >&2\nexit 1`,
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(NodePath.dirname(cli), { recursive: true, force: true })),
+      );
+      const session = yield* openFakeCli(cli);
+      const exit = yield* Stream.runDrain(session.messages).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        assert.include(
+          makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message,
+          "could not find this conversation",
+        );
+      }
     }).pipe(Effect.provide(realQueryRunner)),
   );
 
