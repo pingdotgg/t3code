@@ -14,7 +14,11 @@ const steps = (
 };
 
 describe("advanceWorkspaceRevision", () => {
-  const start: WorkspaceRevisionState = { scope: "a", baseline: "a1", revision: "a1" };
+  const start: WorkspaceRevisionState = {
+    scope: "a",
+    seen: new Map([["a", "a1"]]),
+    revision: "a1",
+  };
 
   it("keeps the revision across a thread switch and its history loading", () => {
     expect(
@@ -38,5 +42,16 @@ describe("advanceWorkspaceRevision", () => {
         ["a", "a2"],
       ]),
     ).toEqual(["a1", "a1", "b1", "b2", "b2", "a2"]);
+  });
+
+  it("changes on returning to a thread whose mutation id moved while it was not viewed", () => {
+    expect(
+      steps(start, [
+        ["b", "b1"],
+        ["a", undefined],
+        ["a", "a2"],
+        ["b", "b1"],
+      ]),
+    ).toEqual(["a1", "a1", "a2", "a2"]);
   });
 });
