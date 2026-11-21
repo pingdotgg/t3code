@@ -388,6 +388,15 @@ export const layer: Layer.Layer<
       capacity: 128,
       lookup: () => Effect.succeed(0),
     });
+    // The timeout streak seen before queueing for the lock, so a capture knows whether another
+    // capture of its folder timed out while it waited.
+    const withCaptureLock = <A, E, R>(
+      cwd: string,
+      effect: (timeoutsBeforeLock: number) => Effect.Effect<A, E, R>,
+    ) =>
+      Effect.flatMap(Cache.get(captureTimeouts, cwd), (timeouts) =>
+        withWorkspaceLock(cwd, effect(timeouts)),
+      );
     // Both callers hold the workspace lock; post-turn captures always probe for recovery.
     const captureWorkspaceCheckpoint = Effect.fn("CheckpointService.captureWorkspaceCheckpoint")(
       function* (input: CheckpointStore.CaptureCheckpointInput, baseline = false) {
@@ -590,8 +599,7 @@ export const layer: Layer.Layer<
         readonly cleanHead?: string;
       },
     ) =>
-      withWorkspaceLock(
-        input.scope.cwd,
+      withCaptureLock(input.scope.cwd, (timeoutsBeforeLock) =>
         Effect.gen(function* () {
           const checkpointId = yield* checkpointIdForScopeOrdinal(idAllocator, {
             scopeId: input.scope.id,
@@ -634,32 +642,44 @@ export const layer: Layer.Layer<
             };
           }
 
-          const captureStatus = yield* (
-            input.cleanHead === undefined
-              ? captureWorkspaceCheckpoint({
-                  cwd: input.scope.cwd,
-                  checkpointRef,
-                  ...(input.ordinalWithinScope > 0 ? { previousCheckpointRef } : {}),
-                  ...(input.excludePaths === undefined ? {} : { excludePaths: input.excludePaths }),
-                })
-              : checkpointStore.captureHeadCheckpoint({
-                  cwd: input.scope.cwd,
-                  checkpointRef,
-                  head: input.cleanHead,
-                })
-          ).pipe(
-            Effect.as("ready" as const),
-            Effect.catchTags({
-              VcsUnsupportedOperationError: () => Effect.succeed("missing" as const),
-            }),
-            Effect.catch((cause) =>
-              Effect.logWarning("orchestration V2 checkpoint capture failed", {
-                scopeId: input.scope.id,
-                checkpointRef,
-                cause: String(cause),
-              }).pipe(Effect.as("error" as const)),
-            ),
-          );
+          // Threads sharing a folder queue on its lock. One that waited out another's timeout
+          // would only time out again while its own queued messages wait behind it.
+          const timedOutWhileWaiting =
+            input.cleanHead === undefined &&
+            (yield* Cache.get(captureTimeouts, input.scope.cwd)) > timeoutsBeforeLock;
+          const captureStatus = timedOutWhileWaiting
+            ? yield* Effect.logWarning(
+                "orchestration V2 checkpoint capture skipped after a capture timed out in its folder",
+                { scopeId: input.scope.id, checkpointRef },
+              ).pipe(Effect.as("error" as const))
+            : yield* (
+                input.cleanHead === undefined
+                  ? captureWorkspaceCheckpoint({
+                      cwd: input.scope.cwd,
+                      checkpointRef,
+                      ...(input.ordinalWithinScope > 0 ? { previousCheckpointRef } : {}),
+                      ...(input.excludePaths === undefined
+                        ? {}
+                        : { excludePaths: input.excludePaths }),
+                    })
+                  : checkpointStore.captureHeadCheckpoint({
+                      cwd: input.scope.cwd,
+                      checkpointRef,
+                      head: input.cleanHead,
+                    })
+              ).pipe(
+                Effect.as("ready" as const),
+                Effect.catchTags({
+                  VcsUnsupportedOperationError: () => Effect.succeed("missing" as const),
+                }),
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration V2 checkpoint capture failed", {
+                    scopeId: input.scope.id,
+                    checkpointRef,
+                    cause: String(cause),
+                  }).pipe(Effect.as("error" as const)),
+                ),
+              );
 
           if (captureStatus !== "ready") {
             return {
