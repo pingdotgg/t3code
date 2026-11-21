@@ -1558,9 +1558,14 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           AND stream_id = ${threadId}
         ORDER BY sequence ASC
       `;
+      // The newest user message stays as the thread's issue automation revision.
       assert.deepEqual(
         remaining.map((row) => row.event_id),
-        ["event:foundation-compact:create", "event:foundation-compact:tags-2"],
+        [
+          "event:foundation-compact:create",
+          "event:foundation-compact:message-2",
+          "event:foundation-compact:tags-2",
+        ],
       );
 
       const remainingV1 = yield* sql<{ readonly stream_id: string }>`

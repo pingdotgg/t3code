@@ -428,6 +428,26 @@ work on with the `link_issue` tool.
 
 Writing to a tracker over a remote connection requires the `source-control:write` scope.
 
+### Organize threads by issue status
+
+Threads can follow the status of the issues linked to them. Open the connected tracker under
+**Settings → Source control & issues**, choose **Add team**, and use the **+** buttons to put the
+team's statuses in **Wake**, **Snooze**, or **Settle**. The rule applies to every thread linked
+to one of the team's issues, in any project. It changes threads, never issues. Linear is the
+supported tracker.
+
+The server checks linked issues about once a minute while it runs, with or without a client
+open. Only a status change counts: saving a rule records the current statuses first, and a thread
+you organize by hand stays that way until one of its issues moves again. A thread with several
+linked issues wakes when any of them maps to **Wake**, settles only when all of them map to
+**Settle**, and otherwise snoozes. A status in no bucket, or one that could not be read, leaves
+the thread as it is. A snooze from a rule has no wake time; the thread shows **∞** in the
+Snoozed list until a status change, **Wake thread**, or a message wakes it. A thread with work
+still running waits until it is idle before it snoozes or settles. A rule never settles a pinned
+thread. Rules leave a thread whose **Auto-settle behavior** is **Never** alone: they do not wake,
+snooze, or settle it, and an action still waiting for the thread to go idle is dropped. After you
+switch it back to **Follow settings**, only later status changes count.
+
 ## GitHub stacks
 
 The Pull requests page shows each PR's position in its GitHub stack. Open the stack badge in a

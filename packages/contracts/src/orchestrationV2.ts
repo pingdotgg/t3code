@@ -515,6 +515,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   ),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Set with no `snoozedUntil`, the thread is snoozed until it is woken. */
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
@@ -3336,7 +3337,8 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.snooze"),
     commandId: CommandId,
     threadId: ThreadId,
-    snoozedUntil: IsoDateTime,
+    /** Null snoozes until someone or something wakes the thread. */
+    snoozedUntil: Schema.NullOr(IsoDateTime),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
@@ -3758,6 +3760,18 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  /**
+   * A linked issue's status change, applied only if nothing organized the thread and no rule
+   * changed since the decision: `expectedRevision` and `rulesFingerprint` are what it saw.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.issue-automation.apply"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    action: Schema.Literals(["wake", "snooze", "settle"]),
+    expectedRevision: NonNegativeInt,
+    rulesFingerprint: Schema.String,
+  }),
   // The server issues this after checking the value against the run's declared schema.
   Schema.Struct({
     type: Schema.Literal("run.output.submit"),

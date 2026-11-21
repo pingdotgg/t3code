@@ -48,6 +48,11 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  automationFingerprint,
+  ISSUE_AUTOMATION_STALE,
+  ISSUE_AUTOMATION_WAITS_FOR_IDLE,
+} from "../issue/issueAutomation.ts";
 
 declare module "node:sqlite" {
   interface StatementSync {
@@ -75,6 +80,206 @@ const layerTest = Layer.mergeAll(
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
+);
+
+const createThread = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`create:${threadId}`),
+      threadId,
+      projectId: ProjectId.make("project:issue-automation"),
+      title: "Issue automation",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+  });
+
+const queueUserMessage = (threadId: ThreadId, id: string) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(id),
+      threadId,
+      messageId: MessageId.make(id),
+      text: "New work",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+  });
+
+it.effect("issue automation settles, snoozes until woken, and wakes like a timer", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventSink.EventSinkV2;
+    const threadId = ThreadId.make("thread:issue-automation");
+    yield* createThread(threadId);
+    let snoozedAt: DateTime.Utc | null = null;
+    for (const action of ["settle", "snooze", "wake"] as const) {
+      yield* TestClock.adjust("1 second");
+      const now = yield* DateTime.now;
+      const command = {
+        type: "thread.issue-automation.apply" as const,
+        commandId: CommandId.make(`issue-automation:${action}`),
+        threadId,
+        action,
+        expectedRevision: yield* projections.getIssueAutomationRevision(threadId),
+        rulesFingerprint: automationFingerprint([]),
+      };
+      const result = yield* orchestrator.dispatch(command);
+      const committed = yield* events
+        .readByCommandId({ commandId: command.commandId })
+        .pipe(Stream.runCollect);
+      assert.lengthOf(committed, 1);
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.lengthOf(projection.runs, 0);
+      assert.lengthOf(projection.messages, 0);
+      if (action === "snooze") snoozedAt = now;
+      assert.deepInclude(projection.thread, {
+        settledOverride: action === "settle" ? "settled" : "active",
+        // A wake ends the snooze at its time, as a timer would, so clients show it woke.
+        snoozedUntil: action === "wake" ? now : null,
+        snoozedAt: action === "settle" ? null : snoozedAt,
+      });
+      if (action === "wake") {
+        assert.deepInclude(yield* projections.getThreadShell(threadId), {
+          snoozedUntil: now,
+          snoozedAt,
+        });
+      }
+      const replayed = yield* orchestrator.dispatch(command);
+      assert.isTrue(replayed.replayed);
+      assert.equal(replayed.sequence, result.sequence);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each(["settle of a pinned thread", "wake of an awake thread"] as const)(
+  "issue automation accepts a %s and changes nothing",
+  (change) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const events = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make(`thread:automation-noop:${change}`);
+      yield* createThread(threadId);
+      if (change === "settle of a pinned thread") {
+        yield* orchestrator.dispatch({
+          type: "thread.pin",
+          commandId: CommandId.make(`pin:${change}`),
+          threadId,
+        });
+      }
+      const before = yield* projections.getThread(threadId);
+      const command = {
+        type: "thread.issue-automation.apply" as const,
+        commandId: CommandId.make(`automation-noop:${change}`),
+        threadId,
+        action: change === "wake of an awake thread" ? ("wake" as const) : ("settle" as const),
+        expectedRevision: yield* projections.getIssueAutomationRevision(threadId),
+        rulesFingerprint: automationFingerprint([]),
+      };
+      yield* orchestrator.dispatch(command);
+      const committed = yield* events
+        .readByCommandId({ commandId: command.commandId })
+        .pipe(Stream.runCollect);
+      assert.lengthOf(committed, 0);
+      assert.deepEqual(yield* projections.getThread(threadId), before);
+      assert.isTrue((yield* orchestrator.dispatch(command)).replayed);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  "same-value manual wake",
+  "user message",
+  "switch to auto-settle Never",
+  "changed rules",
+] as const)("issue automation refuses a decision made before a %s", (change) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make(`thread:automation-guard:${change}`);
+    yield* createThread(threadId);
+    const expectedRevision = yield* projections.getIssueAutomationRevision(threadId);
+    if (change === "same-value manual wake") {
+      yield* orchestrator.dispatch({
+        type: "thread.unsnooze",
+        commandId: CommandId.make(`manual-wake:${change}`),
+        threadId,
+        reason: "user",
+      });
+    } else if (change === "user message") {
+      yield* queueUserMessage(threadId, `manual-work:${change}`);
+    } else if (change === "switch to auto-settle Never") {
+      yield* orchestrator.dispatch({
+        type: "thread.auto-settle.set",
+        commandId: CommandId.make(`auto-settle-off:${change}`),
+        threadId,
+        enabled: false,
+      });
+    }
+    const error = yield* orchestrator
+      .dispatch({
+        type: "thread.issue-automation.apply",
+        commandId: CommandId.make(`stale:${change}`),
+        threadId,
+        action: "settle",
+        expectedRevision,
+        rulesFingerprint: change === "changed rules" ? "stale rules" : automationFingerprint([]),
+      })
+      .pipe(Effect.flip);
+    assert.equal(error._tag, "OrchestratorDispatchError");
+    assert.equal(error._tag === "OrchestratorDispatchError" && error.cause, ISSUE_AUTOMATION_STALE);
+    assert.isNull((yield* projections.getThread(threadId)).settledAt);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("issue automation waits for queued work, then applies under a new command id", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:automation-busy");
+    yield* createThread(threadId);
+    yield* queueUserMessage(threadId, "automation:queued");
+    const command = {
+      type: "thread.issue-automation.apply" as const,
+      commandId: CommandId.make("automation:while-busy"),
+      threadId,
+      action: "snooze" as const,
+      expectedRevision: yield* projections.getIssueAutomationRevision(threadId),
+      rulesFingerprint: automationFingerprint([]),
+    };
+    const error = yield* orchestrator.dispatch(command).pipe(Effect.flip);
+    assert.equal(
+      error._tag === "OrchestratorDispatchError" && error.cause,
+      ISSUE_AUTOMATION_WAITS_FOR_IDLE,
+    );
+    const run = (yield* projections.getThreadProjection(threadId)).runs[0];
+    assert.isDefined(run);
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("automation:interrupt"),
+      threadId,
+      runId: run!.id,
+    });
+    assert.equal(
+      (yield* orchestrator.dispatch(command).pipe(Effect.flip))._tag,
+      "OrchestratorCommandPreviouslyRejectedError",
+    );
+    yield* orchestrator.dispatch({ ...command, commandId: CommandId.make("automation:idle") });
+    assert.deepInclude(yield* projections.getThread(threadId), { snoozedUntil: null });
+    assert.isNotNull((yield* projections.getThread(threadId)).snoozedAt);
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each(
