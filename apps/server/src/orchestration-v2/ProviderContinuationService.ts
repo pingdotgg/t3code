@@ -131,18 +131,52 @@ export const layer = Layer.effectDiscard(
       },
     );
 
+    const readDelegatedCompletionRecords = Effect.fn(
+      "ProviderContinuationService.readDelegatedCompletionRecords",
+    )(function* (
+      threadId: ThreadId,
+      completion: NonNullable<
+        ProviderContinuationRequests.ProviderContinuationRequest["delegatedCompletion"]
+      >,
+    ) {
+      const base = yield* threads.getThreadRecords(threadId, ["messages", "runs"], {
+        messageIds: [completion.messageId],
+        runIds: [completion.parentRunId],
+      });
+      const message = base.messages.find((candidate) => candidate.id === completion.messageId);
+      if (message?.runId == null) {
+        return { ...base, providerTurns: [] as OrchestrationV2ThreadProjection["providerTurns"] };
+      }
+      const messageRun =
+        base.runs.find((candidate) => candidate.id === message.runId) ??
+        (yield* threads.getThreadRecords(threadId, ["runs"], { runIds: [message.runId] })).runs[0];
+      const providerTurns =
+        messageRun?.activeAttemptId == null
+          ? ([] as OrchestrationV2ThreadProjection["providerTurns"])
+          : (yield* threads.getThreadRecords(threadId, ["providerTurns"], {
+              providerTurnAttemptIds: [messageRun.activeAttemptId],
+            })).providerTurns;
+      return {
+        ...base,
+        runs:
+          messageRun === undefined || base.runs.some((candidate) => candidate.id === messageRun.id)
+            ? base.runs
+            : [...base.runs, messageRun],
+        providerTurns,
+      };
+    });
+
     const dispatchContinuation = Effect.fn("ProviderContinuationService.dispatchContinuation")(
       function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
-        const projection = yield* threads.getThreadRecords(
-          request.threadId,
-          ["messages", "runs", "providerTurns"],
-          {
-            messageIds:
-              request.delegatedCompletion === undefined
-                ? []
-                : [request.delegatedCompletion.messageId],
-          },
-        );
+        const projection =
+          request.delegatedCompletion === undefined
+            ? {
+                ...(yield* threads.getThreadRecords(request.threadId, [])),
+                messages: [] as OrchestrationV2ThreadProjection["messages"],
+                runs: [] as OrchestrationV2ThreadProjection["runs"],
+                providerTurns: [] as OrchestrationV2ThreadProjection["providerTurns"],
+              }
+            : yield* readDelegatedCompletionRecords(request.threadId, request.delegatedCompletion);
         if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
           yield* Effect.logInfo("orchestration-v2.provider-continuation.thread-archived", {
             threadId: request.threadId,
@@ -309,15 +343,9 @@ export const layer = Layer.effectDiscard(
                 const retryDelay = yield* nextRetryDelay(retryKey);
                 yield* Effect.gen(function* () {
                   yield* Effect.sleep(`${retryDelay} millis`);
-                  const projection = yield* threads.getThreadRecords(
+                  const projection = yield* readDelegatedCompletionRecords(
                     request.threadId,
-                    ["messages", "runs", "providerTurns"],
-                    {
-                      messageIds:
-                        request.delegatedCompletion === undefined
-                          ? []
-                          : [request.delegatedCompletion.messageId],
-                    },
+                    completion,
                   );
                   if (currentDelegatedCompletionDelivery(projection, completion) !== undefined) {
                     yield* requests.offer(request);

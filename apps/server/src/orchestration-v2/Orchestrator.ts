@@ -15468,15 +15468,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { type: "notification.delivery.accept" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
-    const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    const { thread, messages } = yield* projectionStore
+      .getThreadRecords(command.threadId, ["messages"], {
+        messageIds: [command.messageId],
+      })
+      .pipe(mapDispatchError(command));
+    const ownership = messages.find((row) => row.id === command.messageId)?.delegatedCompletion;
     const now = yield* DateTime.now;
-    const parentRunId = yield* acceptDelegatedCompletionDelivery({
-      command,
-      events,
-      projection,
-      messageId: command.messageId,
-      now,
-    });
+    const parentRunId =
+      ownership === undefined
+        ? undefined
+        : yield* acceptDelegatedCompletionDelivery({
+            command,
+            events,
+            projection: {
+              ...(yield* projectionStore
+                .getThreadRecords(command.threadId, ["runs", "subagents"], {
+                  runIds: [ownership.parentRunId],
+                  subagentRunIds: [ownership.parentRunId],
+                })
+                .pipe(mapDispatchError(command))),
+              messages,
+            },
+            messageId: command.messageId,
+            now,
+          });
     if (parentRunId === undefined) {
       yield* emit(
         events,
@@ -15485,7 +15501,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "thread.metadata-updated",
         threadId: command.threadId,
         occurredAt: now,
-        payload: projection.thread,
+        payload: thread,
       });
     }
     return parentRunId;

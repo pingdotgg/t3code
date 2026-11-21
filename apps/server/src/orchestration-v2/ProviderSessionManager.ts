@@ -636,9 +636,34 @@ export const layerWithOptions = (
                 yield* mcpSessions.set({
                   ...credential.config,
                   hasPendingWake: projectionStore
-                    .getThreadRecords(threadId, ["runs", "subagents"])
+                    .getThreadRecords(threadId, ["subagents"], { omitSettledSubagents: true })
                     .pipe(
-                      Effect.map(delegatedTaskWillWake),
+                      Effect.flatMap(({ thread, subagents }) => {
+                        if (thread.archivedAt !== null || thread.deletedAt !== null) {
+                          return Effect.succeed(false);
+                        }
+                        const runIds = [
+                          ...new Set(
+                            subagents.flatMap((task) =>
+                              task.origin === "app_owned" &&
+                              isOrchestrationV2WorkActive(task.status) &&
+                              task.runId !== null
+                                ? [task.runId]
+                                : [],
+                            ),
+                          ),
+                        ];
+                        if (runIds.length === 0) {
+                          return Effect.succeed(false);
+                        }
+                        return projectionStore
+                          .getThreadRecords(threadId, ["runs"], { runIds })
+                          .pipe(
+                            Effect.map(({ runs }) =>
+                              delegatedTaskWillWake({ thread, runs, subagents }),
+                            ),
+                          );
+                      }),
                       Effect.orElseSucceed(() => false),
                     ),
                 });
