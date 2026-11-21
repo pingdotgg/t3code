@@ -717,7 +717,10 @@ export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenA
       if (profileRoot === undefined || childIds === undefined) return [];
       const reported = new Set([
         ...(await readInbox(profileRoot, input.rootSessionId)).map((message) => message.sender),
-        ...(await readSwarmBoardPosters(profileRoot, input.rootSessionId)),
+        // An unreadable board proves no report, so it holds swarm workers and touches no others.
+        ...(await readSwarmBoardPosters(profileRoot, input.rootSessionId).catch(
+          () => new Set<string>(),
+        )),
       ]);
       const atWork: Array<string> = [];
       for (const childId of childIds) {
