@@ -68,3 +68,10 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
   },
 );
 export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;
+
+/** Z.ai GLM is the one registry agent qualified for app-owned text generation. */
+export function supportsGlmTextGeneration(
+  settings: Pick<AcpRegistrySettings, "source" | "agentId">,
+): boolean {
+  return settings.source !== "local" && settings.agentId === "glm-acp-agent";
+}
