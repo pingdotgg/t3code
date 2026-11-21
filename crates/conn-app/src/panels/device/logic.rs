@@ -682,6 +682,13 @@ pub(super) fn fit_device_frame(
 
 /// Default portrait screen aspect ratio (`screenAspect` in `DeviceStreamView.tsx`).
 #[must_use]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "used by screen_aspect for pointer mapping in Step 3"
+    )
+)]
 pub(super) fn default_screen_aspect(platform: DevicePlatform) -> f32 {
     match platform {
         DevicePlatform::Ios => 9.0 / 19.5,

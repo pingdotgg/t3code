@@ -1,17 +1,21 @@
 //! The Device surface (Conn `apps/web/src/components/device/`): live device state
 //! subscription, 3-step onboarding wizard, iOS/Android device picker, host & account
 //! configuration (local, SSH, Expo/EAS, Simlock), active device workspace with controls rail
-//! and tools drawer, and screen stream placeholder.
+//! and tools drawer, and live screen streaming.
 
 mod hosts;
 mod logic;
 mod setup;
+mod stream;
 mod ui;
 mod workspace;
 
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::Arc;
 
-use conn_client::{Connection, StreamId};
+use conn_client::{Connection, DEFAULT_DEVICE_HUB_BASE_PATH, StreamId};
 use conn_contract::rpc::device::{
     action, close, configure, detail, eas_account, list, open, shutdown, simlock_identity,
     test_host,
@@ -28,8 +32,8 @@ use conn_theme::Tokens;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, FontWeight, IntoElement, MouseButton, ParentElement, Render, SharedString,
-    Styled, Window, div, px,
+    AnyElement, Bounds, Context, FocusHandle, FontWeight, IntoElement, MouseButton, ParentElement,
+    Pixels, Render, RenderImage, SharedString, Styled, Window, div, px,
 };
 
 use self::hosts::{
@@ -42,6 +46,10 @@ use self::logic::{
     show_missing_android_avd_hint,
 };
 use self::setup::{SetupPending, SetupStep, render_setup_wizard};
+use self::stream::{
+    ScreenInfo, StreamSessionHandle, StreamStatus, StreamTargetKey, StreamUiEvent,
+    start_stream_session,
+};
 use self::ui::{
     LoadingStage, SM_LINE_HEIGHT_PX, SM_TEXT_PX, booting_banner, compact_outline_button,
     device_discovery_warning, device_host_updates, device_loading_view, device_notice,
@@ -116,6 +124,17 @@ pub(crate) struct DevicePanel {
     host_config_loading: bool,
     host_saving: bool,
     host_error: Option<String>,
+
+    // Live device screen stream (`DeviceStreamView.tsx`).
+    visible: bool,
+    focus_handle: FocusHandle,
+    screen_viewport_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    stream_session: Option<StreamSessionHandle>,
+    stream_session_gen: u64,
+    stream_status: StreamStatus,
+    stream_frame: Option<Arc<RenderImage>>,
+    stream_frame_size: Option<(u32, u32)>,
+    stream_screen: Option<ScreenInfo>,
 }
 
 impl std::fmt::Debug for DevicePanel {
@@ -125,12 +144,17 @@ impl std::fmt::Debug for DevicePanel {
             .field("thread_id", &self.thread_id)
             .field("loaded", &self.loaded)
             .field("active_target", &self.active_target)
+            .field("visible", &self.visible)
+            .field("stream_status", &self.stream_status)
             .finish_non_exhaustive()
     }
 }
 
 impl Drop for DevicePanel {
     fn drop(&mut self) {
+        if let Some(mut session) = self.stream_session.take() {
+            session.stop();
+        }
         if let (Some(conn), Some(stream_id)) = (&self.connection, self.stream_id.take()) {
             conn.cancel_stream(stream_id);
         }
@@ -145,6 +169,7 @@ impl DevicePanel {
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let tools_inputs = ToolsInputs::new(window, cx);
+        let focus_handle = cx.focus_handle();
         let mut panel = Self {
             tokens,
             connection,
@@ -185,9 +210,161 @@ impl DevicePanel {
             host_config_loading: false,
             host_saving: false,
             host_error: None,
+            visible: true,
+            focus_handle,
+            screen_viewport_bounds: Rc::new(Cell::new(None)),
+            stream_session: None,
+            stream_session_gen: 0,
+            stream_status: StreamStatus::Connecting(None),
+            stream_frame: None,
+            stream_frame_size: None,
+            stream_screen: None,
         };
         panel.start_state_subscription(cx);
         panel
+    }
+
+    /// Shows or hides the device panel. When hidden, the live stream tears down immediately so
+    /// nothing decodes in the background; when shown again, the active device reconnects.
+    #[expect(
+        dead_code,
+        reason = "wired from RightPanel::sync_surface_visibility by the orchestrator"
+    )]
+    pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<'_, Self>) {
+        if self.visible == visible {
+            return;
+        }
+        self.visible = visible;
+        self.sync_stream_session(cx);
+        cx.notify();
+    }
+
+    fn is_showing_setup(&self) -> bool {
+        let host_disabled = self.state.host_status == DeviceHostStatus::Disabled;
+        self.force_setup_open
+            || (self.loaded
+                && !self.setup_dismissed
+                && (!self.state.onboarding_completed || host_disabled))
+    }
+
+    fn desired_stream_target(&self) -> Option<StreamTargetKey> {
+        if !self.visible || self.is_showing_setup() || self.host_config.is_some() {
+            return None;
+        }
+        let device = self.active_device()?;
+        let host_kind = find_host(&self.state, &device.host_id).map(|h| h.kind);
+        let hub_base_path = if self.state.hub_base_path.trim().is_empty() {
+            DEFAULT_DEVICE_HUB_BASE_PATH.to_owned()
+        } else {
+            self.state.hub_base_path.clone()
+        };
+        Some(StreamTargetKey {
+            device: DeviceKey::from_summary(device),
+            platform: device.platform,
+            host_kind,
+            hub_base_path,
+        })
+    }
+
+    fn stop_stream_session(&mut self, cx: &mut Context<'_, Self>) {
+        self.stream_session_gen = self.stream_session_gen.wrapping_add(1);
+        if let Some(mut session) = self.stream_session.take() {
+            session.stop();
+        }
+        if let Some(old_image) = self.stream_frame.take() {
+            cx.defer(move |cx| cx.drop_image(old_image, None));
+        }
+        self.stream_frame_size = None;
+        self.stream_screen = None;
+        self.stream_status = StreamStatus::Connecting(None);
+    }
+
+    fn sync_stream_session(&mut self, cx: &mut Context<'_, Self>) {
+        let desired = self.desired_stream_target();
+        if self.stream_session.as_ref().map(|s| &s.key) == desired.as_ref() {
+            return;
+        }
+        self.stop_stream_session(cx);
+
+        let Some(target) = desired else {
+            return;
+        };
+        let Some(conn) = self.connection.clone() else {
+            self.stream_status = StreamStatus::Error("Not connected to server.".to_owned());
+            return;
+        };
+
+        self.stream_session_gen = self.stream_session_gen.wrapping_add(1);
+        let generation = self.stream_session_gen;
+        self.stream_status = StreamStatus::Connecting(None);
+
+        let (handle, receivers) = start_stream_session(conn, target);
+        self.stream_session = Some(handle);
+
+        let decoded_slot = receivers.decoded_slot;
+        let mut frame_wake_rx = receivers.frame_wake_rx;
+        cx.spawn(async move |this, cx| {
+            while frame_wake_rx.recv().await.is_some() {
+                let Some(frame) = decoded_slot.take() else {
+                    continue;
+                };
+                let Some(rgba) = image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra)
+                else {
+                    continue;
+                };
+                let new_image = Arc::new(RenderImage::new(vec![image::Frame::new(rgba)]));
+                let dims = (frame.width, frame.height);
+                let keep_going = this
+                    .update(cx, |panel, cx| {
+                        if panel.stream_session_gen != generation {
+                            cx.defer(move |cx| cx.drop_image(new_image, None));
+                            return false;
+                        }
+                        if let Some(old) = panel.stream_frame.replace(new_image) {
+                            cx.defer(move |cx| cx.drop_image(old, None));
+                        }
+                        panel.stream_frame_size = Some(dims);
+                        panel.stream_status = StreamStatus::Streaming;
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep_going {
+                    break;
+                }
+            }
+        })
+        .detach();
+
+        let mut events_rx = receivers.events_rx;
+        cx.spawn(async move |this, cx| {
+            while let Some(event) = events_rx.recv().await {
+                let keep_going = this
+                    .update(cx, |panel, cx| {
+                        if panel.stream_session_gen != generation {
+                            return false;
+                        }
+                        match event {
+                            StreamUiEvent::Status(status) => {
+                                panel.stream_status = status;
+                            }
+                        }
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep_going {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    pub(super) fn reconnect_stream(&mut self, cx: &mut Context<'_, Self>) {
+        self.stop_stream_session(cx);
+        self.sync_stream_session(cx);
+        cx.notify();
     }
 
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
@@ -289,6 +466,7 @@ impl DevicePanel {
         let Some(thread_id) = self.thread_id.clone() else {
             self.active_target = None;
             self.clear_detail();
+            self.sync_stream_session(cx);
             return;
         };
 
@@ -320,6 +498,7 @@ impl DevicePanel {
         }
 
         self.ensure_active_detail(cx);
+        self.sync_stream_session(cx);
     }
 
     fn active_device(&self) -> Option<&DeviceSummary> {
@@ -659,6 +838,7 @@ impl DevicePanel {
                             panel.active_target = Some(key);
                             panel.clear_detail();
                             panel.ensure_active_detail(cx);
+                            panel.sync_stream_session(cx);
                         }
                         panel.settle_operation(nonce, None);
                     }
@@ -716,6 +896,7 @@ impl DevicePanel {
         self.workspace_menu = None;
         self.tools_open = false;
         self.clear_detail();
+        self.sync_stream_session(cx);
         cx.notify();
     }
 
@@ -777,6 +958,7 @@ impl DevicePanel {
     fn open_host_config(&mut self, cx: &mut Context<'_, Self>) {
         self.host_error = None;
         self.host_config = Some(HostConfigScreen::Overview);
+        self.sync_stream_session(cx);
         self.load_saved_hosts(cx);
         cx.notify();
     }
@@ -1332,6 +1514,7 @@ impl DevicePanel {
 
 impl Render for DevicePanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        self.sync_stream_session(cx);
         // Keep tools placeholders synced with active device & foreground app.
         if let Some(device) = self.active_device().cloned() {
             let fg_id = self
@@ -1347,12 +1530,7 @@ impl Render for DevicePanel {
             }
         }
 
-        let host_disabled = self.state.host_status == DeviceHostStatus::Disabled;
-        if self.force_setup_open
-            || (self.loaded
-                && !self.setup_dismissed
-                && (!self.state.onboarding_completed || host_disabled))
-        {
+        if self.is_showing_setup() {
             return render_setup_wizard(self, cx);
         }
 

@@ -18,8 +18,9 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, Div, Entity, FontWeight, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, SharedString, Styled, Subscription, Window, div, px,
+    AnyElement, Context, Div, Entity, FontWeight, ImageSource, InteractiveElement, IntoElement,
+    MouseButton, ObjectFit, ParentElement, SharedString, Styled, Subscription, Window, canvas, div,
+    img, px,
 };
 
 use super::super::chrome::{
@@ -31,13 +32,14 @@ use super::DevicePanel;
 use super::logic::{
     ANDROID_PERMISSIONS, COLOR_FILTERS, CONTROLS_RAIL_WIDTH_PX, HostKind, HostView,
     IOS_PERMISSIONS, LOCATION_PRESETS, ORIENTATIONS, TEXT_SIZES, color_filter_label,
-    default_screen_aspect, fit_device_frame, parse_coordinates, permission_label, text_size_label,
+    parse_coordinates, permission_label, text_size_label,
 };
+use super::stream::StreamStatus;
 use super::ui::{
-    DeviceMenuEntry, DeviceMenuRow, MenuAnchor, PILL_RADIUS_PX, SM_LINE_HEIGHT_PX, SM_TEXT_PX,
-    SwitchSize, XS_BUTTON_HEIGHT_PX, compact_input, conn_switch, device_dropdown_menu,
-    ghost_xs_button, outline_sm_button, outline_xs_button, rail_icon_button, select_trigger_xs,
-    simple_select_menu,
+    DeviceMenuEntry, DeviceMenuRow, LoadingStage, MenuAnchor, PILL_RADIUS_PX, SM_LINE_HEIGHT_PX,
+    SM_TEXT_PX, SwitchSize, XS_BUTTON_HEIGHT_PX, compact_input, conn_switch, device_dropdown_menu,
+    device_loading_view, ghost_xs_button, outline_sm_button, outline_xs_button, rail_icon_button,
+    select_trigger_xs, simple_select_menu,
 };
 use crate::theme::MONO_FONT;
 
@@ -172,14 +174,7 @@ pub(super) fn render_workspace(
         .min_w_0()
         .w_full()
         .bg(to_hsla(tokens.shell_card))
-        .child(render_screen_placeholder(
-            panel,
-            device,
-            host_label,
-            detail,
-            runs_host_commands,
-            cx,
-        ))
+        .child(render_device_stream(panel, device, host_label, cx))
         .child(render_controls_rail(
             panel,
             device,
@@ -206,190 +201,102 @@ pub(super) fn render_workspace(
     workspace.into_any_element()
 }
 
-/// Screen area placeholder matching `DeviceStreamView`'s phone frame + rail inset geometry.
-fn render_screen_placeholder(
+/// Live device screen viewport (`DeviceStreamView.tsx`): aspect-fitted GPUI image (`RenderImage`)
+/// with right-rail inset, viewport bounds tracking, and Conn's `DeviceLoadingView` overlay when
+/// connecting or on stream error.
+fn render_device_stream(
     panel: &DevicePanel,
     device: &DeviceSummary,
     host_label: &str,
-    detail: Option<&DeviceDetail>,
-    runs_host_commands: bool,
     cx: &mut Context<'_, DevicePanel>,
-) -> Div {
+) -> AnyElement {
     let tokens = &panel.tokens;
     let entity = cx.entity();
-    let fg = to_hsla(tokens.foreground);
-    let muted = to_hsla(tokens.muted_foreground);
-    let aspect = default_screen_aspect(device.platform);
-    // Clean representative device frame respecting the portrait aspect ratio and rail inset.
-    let fitted = fit_device_frame(aspect, 360.0, 520.0, CONTROLS_RAIL_WIDTH_PX);
-    let frame_w = fitted.width.max(240.0);
-    let frame_h = fitted.height.max(480.0);
+    let viewport_bounds = panel.screen_viewport_bounds.clone();
 
-    let settings = detail.map(|d| &d.settings);
-    let mut meta_pills = h_flex().flex_wrap().justify_center().gap(px(6.0));
-    meta_pills = meta_pills.child(status_pill(
-        tokens,
-        if device.booted { "Running" } else { "Opened" },
-        true,
-    ));
-    if let Some(app) = detail.and_then(|d| d.foreground_app.as_ref()) {
-        meta_pills = meta_pills.child(status_pill(tokens, app.id.clone(), false));
-    }
-    if let Some(appearance) = settings.and_then(|s| s.appearance) {
-        meta_pills = meta_pills.child(status_pill(
-            tokens,
-            match appearance {
-                DeviceAppearance::Light => "Light",
-                DeviceAppearance::Dark => "Dark",
-            },
-            false,
-        ));
-    }
-    if let Some(size) = settings.and_then(|s| s.text_size) {
-        meta_pills = meta_pills.child(status_pill(tokens, text_size_label(size), false));
-    }
-
-    let mut frame_actions = h_flex().items_center().justify_center().gap(px(8.0));
-    if runs_host_commands {
-        let entity_refresh = entity.clone();
-        frame_actions = frame_actions.child(outline_sm_button(
-            "device-screen-refresh-detail",
-            Some("superhero/refresh.svg"),
-            "Refresh state",
-            tokens,
-            panel.detail_loading,
-            move |_, _, cx| {
-                entity_refresh.update(cx, |p, cx| p.fetch_active_detail(cx));
-            },
-        ));
-    }
-    let entity_back = entity;
-    frame_actions = frame_actions.child(outline_sm_button(
-        "device-screen-back-to-list",
-        None,
-        "Devices",
-        tokens,
-        false,
-        move |_, _, cx| {
-            entity_back.update(cx, |p, cx| p.return_to_picker(cx));
+    // Captures the exact viewport bounds (excluding the right controls rail inset) at prepaint
+    // without triggering any repaint.
+    let bounds_tracker = canvas(
+        move |bounds, _window, _cx| {
+            viewport_bounds.set(Some(bounds));
         },
-    ));
+        |_bounds, (), _window, _cx| {},
+    )
+    .absolute()
+    .inset_0()
+    .size_full();
 
-    let bezel = v_flex()
-        .w(px(frame_w))
-        .h(px(frame_h))
-        .max_h_full()
-        .rounded(px(28.0))
-        .bg(to_hsla(tokens.terminal_background))
-        .border_1()
-        .border_color(to_hsla(tokens.shell_divider_header))
-        .p(px(20.0))
-        .items_center()
-        .justify_between()
-        .child(
-            // Subtle top speaker / dynamic-island pill.
-            div()
-                .w(px(64.0))
-                .h(px(6.0))
-                .rounded(px(PILL_RADIUS_PX))
-                .bg(chrome::alpha(tokens.foreground, 0.14)),
-        )
-        .child(
-            v_flex()
-                .w_full()
-                .items_center()
-                .gap(px(10.0))
-                .child(
-                    div()
-                        .flex()
-                        .size(px(44.0))
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(12.0))
-                        .bg(to_hsla(tokens.shell_tile))
-                        .border_1()
-                        .border_color(to_hsla(tokens.shell_tile_border))
-                        .child(superhero_icon("superhero/phone.svg", 22.0, muted)),
-                )
-                .child(
-                    v_flex()
-                        .items_center()
-                        .gap(px(2.0))
-                        .child(
-                            div()
-                                .text_size(px(SM_TEXT_PX))
-                                .line_height(px(SM_LINE_HEIGHT_PX))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(fg)
-                                .child(device.name.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(XS_TEXT_PX))
-                                .line_height(px(XS_LINE_HEIGHT_PX))
-                                .text_color(muted)
-                                .child(format!("{host_label} · {}", device.version)),
-                        ),
-                )
-                .child(meta_pills)
-                .child(
-                    div()
-                        .w_full()
-                        .rounded(px(8.0))
-                        .bg(chrome::alpha(tokens.foreground, 0.04))
-                        .border_1()
-                        .border_color(to_hsla(tokens.shell_divider))
-                        .px(px(10.0))
-                        .py(px(8.0))
-                        .text_size(px(XS_TEXT_PX))
-                        .line_height(px(XS_LINE_HEIGHT_PX))
-                        .text_color(muted)
-                        .child("Live video stream placeholder: Conn streams simulator video via serve-sim/serve-emu (WebRTC / AVCC H.264 WebCodecs / MJPEG) and binary touch WebSockets, which GPUI does not yet decode. Device controls and tools on the right are live."),
-                )
-                .child(frame_actions),
-        )
-        .child(
-            // Home indicator bar.
-            div()
-                .w(px(88.0))
-                .h(px(4.0))
-                .rounded(px(PILL_RADIUS_PX))
-                .bg(chrome::alpha(tokens.foreground, 0.22)),
-        );
-
-    div()
+    let mut viewport = div()
+        .id("device-screen-viewport")
+        .relative()
         .flex()
         .flex_1()
         .min_h_0()
         .min_w_0()
         .items_center()
         .justify_center()
+        .overflow_hidden()
         .pr(px(CONTROLS_RAIL_WIDTH_PX))
-        .px(px(16.0))
-        .py(px(16.0))
-        .child(bezel)
-}
+        .track_focus(&panel.focus_handle);
 
-fn status_pill(tokens: &Tokens, text: impl Into<SharedString>, success: bool) -> Div {
-    let (fg, bg) = if success {
-        (to_hsla(tokens.success), chrome::alpha(tokens.success, 0.12))
-    } else {
-        (
-            to_hsla(tokens.muted_foreground),
-            chrome::alpha(tokens.foreground, 0.06),
-        )
-    };
-    div()
-        .max_w(px(196.0))
-        .truncate()
-        .rounded(px(PILL_RADIUS_PX))
-        .bg(bg)
-        .px(px(8.0))
-        .py(px(2.0))
-        .text_size(px(11.0))
-        .line_height(px(14.0))
-        .text_color(fg)
-        .child(text.into())
+    let mut media_host = div()
+        .relative()
+        .flex()
+        .size_full()
+        .min_h_0()
+        .min_w_0()
+        .items_center()
+        .justify_center()
+        .child(bounds_tracker);
+
+    if let Some(frame) = panel.stream_frame.as_ref() {
+        media_host = media_host.child(
+            img(ImageSource::Render(frame.clone()))
+                .size_full()
+                .object_fit(ObjectFit::Contain),
+        );
+    }
+
+    viewport = viewport.child(media_host);
+
+    // Loading / error overlay matching `DeviceStreamView.tsx:556-582`.
+    let show_overlay =
+        panel.stream_status != StreamStatus::Streaming || panel.stream_frame.is_none();
+    if show_overlay {
+        let (message, is_error) = match &panel.stream_status {
+            StreamStatus::Connecting(Some(detail)) => (detail.clone(), false),
+            StreamStatus::Connecting(None) | StreamStatus::Streaming => {
+                ("Connecting video…".to_owned(), false)
+            }
+            StreamStatus::Error(detail) => (detail.clone(), true),
+        };
+        let reconnect_action = is_error.then(|| {
+            let entity = entity.clone();
+            outline_sm_button(
+                "device-stream-reconnect",
+                None,
+                "Reconnect",
+                tokens,
+                false,
+                move |_, _, cx| {
+                    entity.update(cx, |p, cx| p.reconnect_stream(cx));
+                },
+            )
+            .into_any_element()
+        });
+        let description = SharedString::from(format!("{host_label} · {}", device.version));
+        viewport = viewport.child(div().absolute().inset_0().child(device_loading_view(
+            tokens,
+            device.name.clone(),
+            Some(description),
+            LoadingStage::Stream,
+            message,
+            is_error,
+            reconnect_action,
+        )));
+    }
+
+    viewport.into_any_element()
 }
 
 /// Right-hand floating pill rail (`DeviceControlsRail.tsx`).
