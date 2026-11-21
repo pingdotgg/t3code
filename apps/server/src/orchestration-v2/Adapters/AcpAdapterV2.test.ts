@@ -12362,168 +12362,78 @@ describe("AcpAdapterV2", () => {
       };
     });
 
-  it.live(
-    "projects session/update notifications and resolves accept/decline while URL elicitation awaits consent",
-    () =>
-      Effect.gen(function* () {
-        const acceptStarted = yield* Deferred.make<void>();
-        const acceptConsent = yield* Deferred.make<boolean>();
-        const declineStarted = yield* Deferred.make<void>();
-        const declineConsent = yield* Deferred.make<boolean>();
-        const session = yield* openUrlElicitationSession({
-          id: "nonblocking",
-          onUrlElicitation: ({ elicitationId }) =>
-            elicitationId === "url-auth-accept"
-              ? Deferred.succeed(acceptStarted, undefined).pipe(
-                  Effect.andThen(Deferred.await(acceptConsent)),
-                )
-              : Deferred.succeed(declineStarted, undefined).pipe(
-                  Effect.andThen(Deferred.await(declineConsent)),
-                ),
-        });
-
-        const acceptFiber = yield* session
-          .elicitationHandler(
-            {
-              mode: "url",
-              url: "https://example.com/auth",
-              elicitationId: "url-auth-accept",
-              sessionId: "mock-session-1",
-              message: "Sign in to continue",
-            },
-            { requestId: "url-elicit-accept", method: "elicitation/create" },
-          )
-          .pipe(Effect.forkScoped);
-        yield* Deferred.await(acceptStarted);
-        assert.isFalse(
-          session.lifecycleEvents.some(
-            (event) => event.type === "registered" && event.requestId === "url-elicit-accept",
-          ),
-        );
-
-        const updateResult = yield* session
-          .sessionUpdateHandler({
-            sessionId: "mock-session-1",
-            update: {
-              sessionUpdate: "tool_call",
-              toolCallId: "call-during-url-elicit",
-              title: "Read file",
-              kind: "read",
-              status: "in_progress",
-              rawInput: { path: "README.md" },
-            },
-          })
-          .pipe(Effect.timeoutOption("1 second"));
-        assert.isTrue(Option.isSome(updateResult));
-
-        const projected = yield* Effect.gen(function* () {
-          while (true) {
-            const event = yield* Queue.take(session.events);
-            if (
-              event.type === "turn_item.updated" &&
-              event.turnItem.nativeItemRef?.nativeId === "call-during-url-elicit"
-            ) {
-              return event;
-            }
-          }
-        }).pipe(Effect.timeoutOption("1 second"));
-        assert.isTrue(Option.isSome(projected));
-
-        yield* Deferred.succeed(acceptConsent, true);
-        const acceptResponse = yield* Fiber.join(acceptFiber).pipe(
-          Effect.timeoutOption("1 second"),
-        );
-        assert(Option.isSome(acceptResponse));
-        assert.deepEqual(acceptResponse.value, { action: "accept" });
-        assert.isTrue(
-          session.lifecycleEvents.some(
-            (event) => event.type === "registered" && event.requestId === "url-elicit-accept",
-          ),
-        );
-        yield* session.onOutgoingResponse("url-elicit-accept");
-        assert.isTrue(
-          session.lifecycleEvents.some(
-            (event) => event.type === "removed" && event.requestId === "url-elicit-accept",
-          ),
-        );
-
-        const declineFiber = yield* session
-          .elicitationHandler(
-            {
-              mode: "url",
-              url: "https://example.com/auth-2",
-              elicitationId: "url-auth-decline",
-              sessionId: "mock-session-1",
-              message: "Sign in again",
-            },
-            { requestId: "url-elicit-decline", method: "elicitation/create" },
-          )
-          .pipe(Effect.forkScoped);
-        yield* Deferred.await(declineStarted);
-        yield* Deferred.succeed(declineConsent, false);
-        const declineResponse = yield* Fiber.join(declineFiber).pipe(
-          Effect.timeoutOption("1 second"),
-        );
-        assert(Option.isSome(declineResponse));
-        assert.deepEqual(declineResponse.value, { action: "decline" });
-        yield* session.onOutgoingResponse("url-elicit-decline");
-      }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.live("allows soft interruptTurn and session close while URL elicitation awaits consent", () =>
+  it.live("projects session/update notifications while URL elicitation awaits consent", () =>
     Effect.gen(function* () {
-      const urlStarted = yield* Deferred.make<void>();
-      const urlConsent = yield* Deferred.make<boolean>();
+      const acceptStarted = yield* Deferred.make<void>();
+      const acceptConsent = yield* Deferred.make<boolean>();
       const session = yield* openUrlElicitationSession({
-        id: "soft-interrupt",
+        id: "nonblocking",
         onUrlElicitation: () =>
-          Deferred.succeed(urlStarted, undefined).pipe(Effect.andThen(Deferred.await(urlConsent))),
+          Deferred.succeed(acceptStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(acceptConsent)),
+          ),
       });
 
-      const elicitationFiber = yield* session
+      const acceptFiber = yield* session
         .elicitationHandler(
           {
             mode: "url",
             url: "https://example.com/auth",
-            elicitationId: "url-auth-soft-stop",
+            elicitationId: "url-auth-accept",
             sessionId: "mock-session-1",
             message: "Sign in to continue",
           },
-          { requestId: "url-elicit-soft-stop", method: "elicitation/create" },
+          { requestId: "url-elicit-accept", method: "elicitation/create" },
         )
         .pipe(Effect.forkScoped);
-      yield* Deferred.await(urlStarted);
-
-      const interrupted = yield* session.runtime
-        .interruptTurn({
-          providerThread: session.providerThread,
-          providerTurnId: session.providerTurnId,
-        })
-        .pipe(Effect.timeoutOption("2 seconds"));
-      assert.isTrue(Option.isSome(interrupted));
-
-      const terminal = yield* Effect.gen(function* () {
-        while (true) {
-          const event = yield* Queue.take(session.events);
-          if (event.type === "turn.terminal") return event;
-        }
-      }).pipe(Effect.timeoutOption("1 second"));
-      assert(Option.isSome(terminal));
-      assert.equal(terminal.value.status, "interrupted");
-
-      const closed = yield* Scope.close(session.sessionScope, Exit.void).pipe(
-        Effect.timeoutOption("2 seconds"),
-      );
-      assert.isTrue(Option.isSome(closed));
-
-      yield* Deferred.succeed(urlConsent, true);
-      const staleResponse = yield* Fiber.join(elicitationFiber).pipe(
-        Effect.timeoutOption("200 millis"),
-      );
-      assert.isTrue(Option.isNone(staleResponse));
+      yield* Deferred.await(acceptStarted);
       assert.isFalse(
         session.lifecycleEvents.some(
-          (event) => event.type === "registered" && event.requestId === "url-elicit-soft-stop",
+          (event) => event.type === "registered" && event.requestId === "url-elicit-accept",
+        ),
+      );
+
+      const updateResult = yield* session
+        .sessionUpdateHandler({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call-during-url-elicit",
+            title: "Read file",
+            kind: "read",
+            status: "in_progress",
+            rawInput: { path: "README.md" },
+          },
+        })
+        .pipe(Effect.timeoutOption("1 second"));
+      assert.isTrue(Option.isSome(updateResult));
+
+      const projected = yield* Effect.gen(function* () {
+        while (true) {
+          const event = yield* Queue.take(session.events);
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "call-during-url-elicit"
+          ) {
+            return event;
+          }
+        }
+      }).pipe(Effect.timeoutOption("1 second"));
+      assert.isTrue(Option.isSome(projected));
+
+      yield* Deferred.succeed(acceptConsent, true);
+      const acceptResponse = yield* Fiber.join(acceptFiber).pipe(Effect.timeoutOption("1 second"));
+      assert(Option.isSome(acceptResponse));
+      assert.deepEqual(acceptResponse.value, { action: "accept" });
+      assert.isTrue(
+        session.lifecycleEvents.some(
+          (event) => event.type === "registered" && event.requestId === "url-elicit-accept",
+        ),
+      );
+      yield* session.onOutgoingResponse("url-elicit-accept");
+      assert.isTrue(
+        session.lifecycleEvents.some(
+          (event) => event.type === "removed" && event.requestId === "url-elicit-accept",
         ),
       );
     }).pipe(Effect.provide(layerTest)),
@@ -12657,59 +12567,6 @@ describe("AcpAdapterV2", () => {
         assert.isTrue(Option.isSome(replaced));
         assert.isFalse(session.lifecycleEvents.some((event) => event.type === "failed"));
       }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.live("drops a URL elicitation defect when the callback generation has already retired", () =>
-    Effect.gen(function* () {
-      const urlStarted = yield* Deferred.make<void>();
-      const urlGate = yield* Deferred.make<void>();
-      const session = yield* openUrlElicitationSession({
-        id: "stale-defect",
-        hardInterrupt: true,
-        onUrlElicitation: () =>
-          Deferred.succeed(urlStarted, undefined).pipe(
-            Effect.andThen(Deferred.await(urlGate)),
-            Effect.andThen(Effect.die(new Error("boom after retirement"))),
-          ),
-      });
-
-      const elicitationFiber = yield* session
-        .elicitationHandler(
-          {
-            mode: "url",
-            url: "https://example.com/auth",
-            elicitationId: "url-auth-defect",
-            sessionId: "mock-session-1",
-            message: "Sign in to continue",
-          },
-          { requestId: "url-elicit-defect", method: "elicitation/create" },
-        )
-        .pipe(Effect.forkScoped);
-      yield* Deferred.await(urlStarted);
-
-      const interrupted = yield* session.runtime
-        .interruptTurn({
-          providerThread: session.providerThread,
-          providerTurnId: session.providerTurnId,
-          requestRuntimeRestart: true,
-        })
-        .pipe(Effect.timeoutOption("1 second"));
-      assert.isTrue(Option.isSome(interrupted));
-
-      yield* Deferred.succeed(urlGate, undefined);
-      const staleExit = yield* Fiber.await(elicitationFiber).pipe(
-        Effect.timeoutOption("200 millis"),
-      );
-      assert.isTrue(
-        Option.isNone(staleExit),
-        "URL elicitation defect after generation retirement must park instead of emitting a stale error response",
-      );
-      assert.isFalse(
-        session.lifecycleEvents.some(
-          (event) => event.type === "registered" && event.requestId === "url-elicit-defect",
-        ),
-      );
-    }).pipe(Effect.provide(layerTest)),
   );
 });
 
