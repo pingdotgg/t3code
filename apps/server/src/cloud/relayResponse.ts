@@ -14,6 +14,8 @@ export class RelayRequestError extends Schema.TaggedError<RelayRequestError>()(
     description: Schema.String,
     /** How long the relay asked callers to wait (`Retry-After`) before retrying. */
     retryAfterMillis: Schema.optionalKey(Schema.Number),
+    /** The relay's clock (`Date`) on a 401, so a proof signed with a skewed host clock can be re-signed. */
+    relayTimeMillis: Schema.optionalKey(Schema.Number),
   },
 ) {
   override get message(): string {
@@ -21,7 +23,7 @@ export class RelayRequestError extends Schema.TaggedError<RelayRequestError>()(
   }
 }
 
-const isRelayRequestError = Schema.is(RelayRequestError);
+export const isRelayRequestError = Schema.is(RelayRequestError);
 
 export function relayRequestError(cause: unknown): RelayRequestError {
   return isRelayRequestError(cause)
@@ -99,7 +101,12 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
     return yield* new RelayRequestError({ rejection: "unavailable", description });
   }
   if (response.status === 401) {
-    return yield* new RelayRequestError({ rejection: "unauthorized", description });
+    const relayTimeMillis = Date.parse(response.headers["date"] ?? "");
+    return yield* new RelayRequestError({
+      rejection: "unauthorized",
+      description,
+      ...(Number.isFinite(relayTimeMillis) ? { relayTimeMillis } : {}),
+    });
   }
   if (response.status === 403) {
     return yield* new RelayRequestError({ rejection: "forbidden", description });

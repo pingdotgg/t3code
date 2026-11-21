@@ -667,6 +667,59 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
+  it.effect("re-signs a recovery proof at the relay's clock when this host's clock is off", () => {
+    const { store, values } = makeMemorySecretStore([
+      [
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}',
+      ],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+    ]);
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    // The test clock starts at the epoch; the relay's clock is three minutes ahead.
+    const relayDate = "Thu, 01 Jan 1970 00:03:00 GMT";
+    const proofIssuedAt = (request: HttpClientRequest.HttpClientRequest | undefined) =>
+      Effect.gen(function* () {
+        const body = request?.body;
+        if (body?._tag !== "Uint8Array") throw new Error("Expected a JSON recovery request");
+        const { proof } = yield* decodeManagedTunnelRecoveryRegistration(
+          new TextDecoder().decode(body.body),
+        );
+        return JSON.parse(Buffer.from(proof.split(".")[1]!, "base64url").toString()).iat;
+      });
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      expect(yield* link.registerManagedTunnelRecovery("http://127.0.0.1:3773")).toMatchObject({
+        status: "ready",
+      });
+      expect(requests).toHaveLength(2);
+      expect(yield* proofIssuedAt(requests[0])).toBe(0);
+      expect(yield* proofIssuedAt(requests[1])).toBe(180);
+      expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests,
+        respond: () =>
+          requests.length === 1
+            ? Response.json(
+                {
+                  _tag: "RelayAuthInvalidError",
+                  code: "auth_invalid",
+                  reason: "not_authorized",
+                  traceId: "trace-skewed",
+                },
+                { status: 401, headers: { date: relayDate } },
+              )
+            : Response.json({ status: "ready" }),
+      }),
+    );
+  });
+
   it.effect("does not mark a link that was replaced while its rejection was in flight", () => {
     const { store, values } = makeMemorySecretStore([
       [

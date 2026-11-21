@@ -223,7 +223,7 @@ function formatCloudStatus(
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
     ...formatRelayClientStatus(status.relayClient),
-    ...(!status.desired
+    ...(!status.desired || status.revoked
       ? []
       : publishOnly
         ? [
