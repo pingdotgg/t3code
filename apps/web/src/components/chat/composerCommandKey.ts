@@ -232,9 +232,6 @@ export function composerCommandKeyHandler(input: {
       sendShortcut,
       prompt: promptRef.current,
     });
-    if (key === "Tab" && event.shiftKey && submissionIntent === null) {
-      return applyListEdit(event, listOutdentForTab);
-    }
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive = !isLiteralPendingAnswer && trigger !== null;
     if (key === "Escape") {
@@ -274,11 +271,15 @@ export function composerCommandKeyHandler(input: {
       isAcceptPromptSuggestionKey({
         event,
         keybindings,
-        context: getShortcutContext(event.target),
+        context: { ...getShortcutContext(event.target), draftThreadRoute: routeKind === "draft" },
       })
     ) {
       // The typing guard must see this draft, so an approval that lands next is not answered with it.
       return applyPromptReplacement(0, 0, acceptedSuggestion);
+    }
+    // After suggestion acceptance, so Shift+Tab can be bound to accept on an empty draft.
+    if (key === "Tab" && event.shiftKey && submissionIntent === null) {
+      return applyListEdit(event, listOutdentForTab);
     }
     if ((key === "ArrowUp" || key === "ArrowDown") && submissionIntent === null) {
       return navigatePromptHistory(key === "ArrowUp" ? "backward" : "forward", event);

@@ -2388,7 +2388,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     offeredPromptSuggestion === null
       ? null
       : shortcutLabelForCommand(keybindings, "composer.acceptPromptSuggestion", {
-          context: { composerFocus: true, terminalFocus: false },
+          context: {
+            composerFocus: true,
+            terminalFocus: false,
+            draftThreadRoute: routeKind === "draft",
+          },
         });
 
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
