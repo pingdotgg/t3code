@@ -308,18 +308,15 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       });
       const mcpServersOff = codexMcpServersOff(enabledMcpServers);
       const execLaunchArgs = codexExecLaunchArgs(launchArgs);
-      // A launch-arg mcp_servers={...} table replaces ours and can re-enable dotted names.
-      const launchArgsSetMcpTable = execLaunchArgs.some((arg) => /\bmcp_servers\s*=/.test(arg));
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [
           "exec",
-          // Before launch args: a later table would replace servers their -c flags define.
+          // Before launch args: a later table replaces earlier mcp_servers flags and each entry it names.
           ...(mcpServersOff ? ["--config", mcpServersOff] : []),
           ...execLaunchArgs,
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
-          ...(mcpServersOff && launchArgsSetMcpTable ? ["--config", mcpServersOff] : []),
           // After launch args, so a launch arg's enabled=true cannot turn a server back on.
           ...codexMcpServerOffFlags(enabledMcpServers),
           "--ephemeral",

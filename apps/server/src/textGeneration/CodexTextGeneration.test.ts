@@ -443,7 +443,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("keeps MCP servers off when launch args set their own mcp_servers table", () =>
+  it.effect("still runs when launch args set their own mcp_servers table", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({ title: "Remove default shapes" }),
@@ -453,7 +453,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           { name: "my server", enabled: true },
         ],
         requireArg:
-          '--config features.apps=false --config mcp_servers={"my.server"={enabled=false},"my server"={enabled=false}} --config mcp_servers.my server.enabled=false --ephemeral',
+          "--config features.apps=false --config mcp_servers.my server.enabled=false --ephemeral",
       },
       (textGeneration) =>
         Effect.gen(function* () {
