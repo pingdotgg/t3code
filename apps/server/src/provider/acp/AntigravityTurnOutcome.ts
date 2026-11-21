@@ -21,17 +21,25 @@ const PLANNER_RESPONSE_STEP_TYPE = 15;
 const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
 const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
-// Antigravity 1.5 with a Google account writes "STATUS (code NNN): message".
-const STATUS_ERROR = /(?<![A-Z_])([A-Z_]+) \(code (\d{3})\): (\P{Cc}+)/u;
-const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
+// Antigravity 1.5 with a Google account writes "STATUS (code NNN): message" in a protobuf string
+// whose length varint (65-90, 95) can be an uppercase ASCII byte immediately before STATUS.
+const STATUS_ERROR =
+  /(CANCELLED|UNKNOWN|INVALID_ARGUMENT|DEADLINE_EXCEEDED|NOT_FOUND|ALREADY_EXISTS|PERMISSION_DENIED|RESOURCE_EXHAUSTED|FAILED_PRECONDITION|ABORTED|OUT_OF_RANGE|UNIMPLEMENTED|INTERNAL|UNAVAILABLE|DATA_LOSS|UNAUTHENTICATED) \(code (\d{3})\): (\P{Cc}+)/u;
+const QUOTA_EXHAUSTED = /(?:"reason"\s*:\s*"QUOTA_EXHAUSTED"|\breason:QUOTA_EXHAUSTED\b)/;
 // Claude rejects a saved thinking block without a valid signature. It sits in the native
 // history, so every later prompt to that session fails the same way.
 const INVALID_THINKING_SIGNATURE =
   /\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)/;
-const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
-const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
+const GO_DURATION = "(?:\\d+(?:\\.\\d+)?(?:ns|us|µs|μs|ms|h|m|s))+";
+const delayPattern = (field: string) =>
+  new RegExp(
+    `(?:"${field}"\\s*:\\s*"(${GO_DURATION})"|\\b${field}:(${GO_DURATION})(?=[\\s\\],}]|$))`,
+  );
+const RESET_TIMESTAMP =
+  /(?:"quotaResetTimeStamp"\s*:\s*"([^"\s]+)"|\bquotaResetTimeStamp:([^\s\],}]+))/;
+const RESET_DELAY = delayPattern("quotaResetDelay");
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
-const RETRY_DELAY = /\bretryDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
+const RETRY_DELAY = delayPattern("retryDelay");
 const GO_DURATION_PART = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|h|m|s)/g;
 const GO_DURATION_UNIT_MS: Record<string, number> = {
   ns: 1e-6,
@@ -106,17 +114,34 @@ const lastStepAfter =
     };
   };
 
-function resetAtFrom(text: string, now: DateTime.Utc): string | undefined {
-  // makeProviderFailure drops a timestamp that does not parse, so fall back to the delay.
-  const timestamp = RESET_TIMESTAMP.exec(text)?.[1];
-  if (timestamp !== undefined && Option.isSome(DateTime.make(timestamp))) return timestamp;
-  const delay = RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1];
+function matchedValue(match: RegExpExecArray | null): string | undefined {
+  return match?.[1] ?? match?.[2];
+}
+
+function parsePositiveDelayMs(delay: string | undefined): number | undefined {
   if (delay === undefined) return undefined;
   let delayMs = 0;
   for (const [, amount, unit] of delay.matchAll(GO_DURATION_PART)) {
     delayMs += Number(amount) * (GO_DURATION_UNIT_MS[unit!] ?? 0);
   }
-  return delayMs > 0 ? DateTime.formatIso(DateTime.add(now, { milliseconds: delayMs })) : undefined;
+  return delayMs > 0 ? Math.ceil(delayMs) : undefined;
+}
+
+function resetAtFrom(text: string, now: DateTime.Utc): string | undefined {
+  // makeProviderFailure drops an unparsable timestamp, and recovery ignores one at or before now.
+  const timestamp = matchedValue(RESET_TIMESTAMP.exec(text));
+  const parsedTimestamp = timestamp === undefined ? Option.none() : DateTime.make(timestamp);
+  if (Option.isSome(parsedTimestamp) && DateTime.isGreaterThan(parsedTimestamp.value, now)) {
+    return timestamp;
+  }
+  const delayMs =
+    parsePositiveDelayMs(matchedValue(RESET_DELAY.exec(text))) ??
+    parsePositiveDelayMs(matchedValue(RETRY_DELAY.exec(text)));
+  return delayMs !== undefined
+    ? DateTime.formatIso(DateTime.add(now, { milliseconds: delayMs }))
+    : Option.isSome(parsedTimestamp)
+      ? timestamp
+      : undefined;
 }
 
 // Reorders STATUS_ERROR's groups to API_ERROR's: HTTP status, message, status name.

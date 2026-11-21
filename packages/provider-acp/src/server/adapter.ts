@@ -1721,6 +1721,10 @@ interface ActiveAcpTurn {
   promptSequence: number;
   /** The turn already resent a prompt after a resumable outcome failure. */
   outcomeResumed: boolean;
+  /** Outcome check armed for the turn's latest prompt or wake, reused if finalization defers. */
+  checkPromptOutcome:
+    | Effect.Success<ReturnType<NonNullable<AcpAdapterV2Flavor["watchPromptOutcome"]>>>
+    | undefined;
   /** Clock millis just before `session/prompt` was handed to the runtime. */
   promptSentAt: number | null;
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
@@ -2340,6 +2344,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           flavor.compactSession !== undefined ||
           flavor.compactViaAdvertisedCommand === true;
         const runtimeRestartRequired = yield* Ref.make(false);
+        const pendingContinuationOutcome = yield* Ref.make<{
+          readonly sessionId: string;
+          readonly check: Effect.Success<
+            ReturnType<NonNullable<AcpAdapterV2Flavor["watchPromptOutcome"]>>
+          >;
+        } | null>(null);
         const runtimeTeardownState = yield* Ref.make<AcpRuntimeTeardownState>({ _tag: "Idle" });
         const runtimeCallbackGeneration = yield* Ref.make(0);
         const runtimeCallbackGenerationCounter = yield* Ref.make(0);
@@ -7933,6 +7943,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ) {
             rememberTerminalEnvironment(candidate.sessionId, yield* readMcpContext(threadId));
             yield* Ref.set(runtimeRestartRequired, false);
+            yield* Ref.set(pendingContinuationOutcome, null);
             yield* Ref.set(activeSessionId, candidate.sessionId);
             yield* setActiveSessionSetup(candidate);
             yield* Ref.set(activeSelection, null);
@@ -7985,6 +7996,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
               itemIdentityVersion = 2;
               yield* Ref.set(runtimeRestartRequired, false);
+              yield* Ref.set(pendingContinuationOutcome, null);
               prepareClaimableTerminalEnvironment(yield* readMcpContext(input.threadId));
               return yield* startAcpRuntime(input.threadId);
             });
@@ -8706,6 +8718,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (settledStatus === "completed" && !directStopQuarantine) {
             yield* detachBackgroundCommands(context);
           }
+          yield* Ref.set(
+            pendingContinuationOutcome,
+            postSettleContinuationEnabled &&
+              settledStatus === "completed" &&
+              !directStopQuarantine &&
+              context.checkPromptOutcome !== undefined
+              ? {
+                  sessionId: context.nativeThreadId,
+                  check: context.checkPromptOutcome,
+                }
+              : null,
+          );
           steerInjections.clear();
           if (
             postSettleContinuationEnabled &&
@@ -8733,6 +8757,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (hasDeferredBackgroundWork(context)) return;
           context.backgroundFinalizeGeneration += 1;
           const generation = context.backgroundFinalizeGeneration;
+          const callbackGeneration = yield* Ref.get(runtimeCallbackGeneration);
           const replyOpen = context.replyOpen;
           const debounce = replyOpen ? ACP_OPEN_REPLY_QUIET_LIMIT : ACP_DEFERRED_FINALIZE_DEBOUNCE;
           yield* Effect.gen(function* () {
@@ -8753,7 +8778,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* scheduleDeferredFinalize(context);
               return;
             }
+            const isCurrent = Effect.gen(function* () {
+              if (!stillCurrent()) return false;
+              if ((yield* Ref.get(runtimeTeardownState))._tag !== "Idle") return false;
+              return (yield* Ref.get(runtimeCallbackGeneration)) === callbackGeneration;
+            });
+            if (!(yield* isCurrent)) return;
             const status = context.promptSettledStatus ?? "completed";
+            const hiddenFailure =
+              status === "completed" && context.checkPromptOutcome !== undefined
+                ? yield* context.checkPromptOutcome({ stopReason: "end_turn" })
+                : undefined;
+            if (!(yield* isCurrent)) return;
+            if (hiddenFailure !== undefined) {
+              yield* terminalizeOpenForegroundTools(context, "failed");
+              if (!(yield* isCurrent)) return;
+              yield* Ref.set(runtimeRestartRequired, true);
+              yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
+                childTurnsContinue: hasSurvivingBackgroundWork(context),
+                threadDisposition: hiddenFailure.threadDisposition,
+              });
+              return;
+            }
             yield* finalizeTurn(context, status);
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           yield* options.testHooks?.onDeferredFinalizeScheduled?.(debounce) ?? Effect.void;
@@ -9005,6 +9051,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (!restartRequired) return false;
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
+          yield* Ref.set(pendingContinuationOutcome, null);
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
@@ -9442,6 +9489,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               foregroundIdle: yield* Deferred.make<void>(),
               promptSequence: 0,
               outcomeResumed: false,
+              checkPromptOutcome: undefined,
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,
@@ -9525,7 +9573,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // start before that continuation and must leave its buffer intact.
             yield* projectDeferredCarryoverTerminals(rehydratedCarryoverSubagents);
             // Retain projected terminals during wake drain so monotonic guards reject replayed spawns.
+            const continuationOutcome = yield* Ref.getAndSet(pendingContinuationOutcome, null);
             if (isContinuationTurn) {
+              context.checkPromptOutcome =
+                continuationOutcome?.sessionId === requestedSessionId
+                  ? continuationOutcome.check
+                  : flavor.watchPromptOutcome === undefined
+                    ? undefined
+                    : yield* flavor.watchPromptOutcome(requestedSessionId);
               yield* Ref.set(continuationRequested, false);
               yield* Ref.update(wakeReports, ({ reports, offered }) => ({
                 reports: new Map([...reports].filter(([key]) => !offered.has(key))),
@@ -9601,6 +9656,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               flavor.watchPromptOutcome === undefined
                 ? undefined
                 : yield* flavor.watchPromptOutcome(requestedSessionId);
+            context.checkPromptOutcome = checkPromptOutcome;
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
             const promptOptions = {
               dispatched: context.promptDispatched,
@@ -9701,6 +9757,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                   context.promptSettled = false;
                   context.promptSettledStatus = null;
+                  context.checkPromptOutcome = checkPromptOutcome;
                   context.backgroundFinalizeGeneration += 1;
                   context.promptSentAt = yield* Clock.currentTimeMillis;
                   context.lastProgressAt = context.promptSentAt;

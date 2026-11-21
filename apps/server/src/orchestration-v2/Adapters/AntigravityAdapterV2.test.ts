@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -2008,6 +2010,138 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         const terminal = (yield* opened.throughTerminal).at(-1);
         assert.equal(terminal?.type === "turn.terminal" && terminal.status, status);
         assert.equal(opened.cancels(), cancels);
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("fails a deferred-finalize run with resetAt when a wake reply hits quota", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+      yield* fs.makeDirectory(conversations, { recursive: true });
+      const dbPath = path.join(conversations, "mock-session-1.db");
+      const appendStep = (idx: number, type: number, payload: Uint8Array) => {
+        const database = new NodeSqlite.DatabaseSync(dbPath);
+        try {
+          database.exec(
+            "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)",
+          );
+          database.prepare("INSERT INTO steps VALUES (?, ?, ?)").run(idx, type, payload);
+        } finally {
+          database.close();
+        }
+      };
+      appendStep(0, 14, Buffer.from("chart the throughput"));
+      appendStep(1, 15, Buffer.from("running command"));
+
+      const opened = yield* openSessionWithRunningCommand(
+        { WaitMsBeforeAsync: 10000 },
+        undefined,
+        undefined,
+        { profileDirectory },
+      );
+      yield* opened.startTurn(1, false);
+      yield* opened.throughPromptSettled;
+
+      yield* opened.send({
+        sessionUpdate: "tool_call_update",
+        ...opened.command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      appendStep(
+        2,
+        17,
+        Buffer.from(
+          'RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 123h9m53s.\n{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"QUOTA_EXHAUSTED","metadata":{"quotaResetDelay":"123h9m53s","quotaResetTimeStamp":"2026-11-26T11:05:00Z"}}],"status":"RESOURCE_EXHAUSTED"}}',
+        ),
+      );
+      const debounce = yield* Queue.take(opened.scheduledFinalizes);
+      yield* TestClock.adjust(debounce);
+      const terminal = (yield* opened.throughTerminal).at(-1);
+      if (terminal?.type !== "turn.terminal" || terminal.status !== "failed") {
+        return assert.fail(`expected failed terminal, got ${JSON.stringify(terminal)}`);
+      }
+      assert.deepEqual(terminal.failure, {
+        class: "usage_limit",
+        message: "You have reached your Antigravity quota for this period.",
+        code: "RESOURCE_EXHAUSTED",
+        retryable: true,
+        resetAt: "2026-11-26T11:05:00.000Z",
+      });
+      assert.equal(terminal.threadDisposition, "reusable");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "fails a continuation run with resetAt when a daemon wake hits quota before the run starts",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profileDirectory = yield* fs.makeTempDirectoryScoped();
+        const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+        yield* fs.makeDirectory(conversations, { recursive: true });
+        const dbPath = path.join(conversations, "mock-session-1.db");
+        const appendStep = (idx: number, type: number, payload: Uint8Array) => {
+          const database = new NodeSqlite.DatabaseSync(dbPath);
+          try {
+            database.exec(
+              "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)",
+            );
+            database.prepare("INSERT INTO steps VALUES (?, ?, ?)").run(idx, type, payload);
+          } finally {
+            database.close();
+          }
+        };
+        appendStep(0, 14, Buffer.from("start daemon"));
+        appendStep(1, 15, Buffer.from("daemon started"));
+
+        const opened = yield* openSessionWithRunningCommand(
+          { IsDaemon: true, WaitMsBeforeAsync: 500 },
+          undefined,
+          undefined,
+          { profileDirectory },
+        );
+        yield* opened.startTurn(1, false);
+        const promptTerminal = (yield* opened.throughTerminal).at(-1);
+        assert.equal(
+          promptTerminal?.type === "turn.terminal" && promptTerminal.status,
+          "completed",
+        );
+
+        // Daemon exits and the agent's wake reply hits quota before OrchestrationV2 starts turn 2.
+        yield* opened.send({
+          sessionUpdate: "tool_call_update",
+          ...opened.command,
+          status: "completed",
+          rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+        });
+        appendStep(
+          2,
+          17,
+          Buffer.from(
+            'RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 11m36s.\n{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"QUOTA_EXHAUSTED","metadata":{"quotaResetDelay":"11m36.055910958s","quotaResetTimeStamp":"2026-11-26T11:05:00Z"}}],"status":"RESOURCE_EXHAUSTED"}}',
+          ),
+        );
+        assert.lengthOf(opened.offers, 1);
+        yield* opened.offers[0]!.dispatchIfCurrent!(Effect.void);
+        yield* opened.startTurn(2, true);
+        const debounce = yield* Queue.take(opened.scheduledFinalizes);
+        yield* TestClock.adjust(debounce);
+        const terminal = (yield* opened.throughTerminal).at(-1);
+        if (terminal?.type !== "turn.terminal" || terminal.status !== "failed") {
+          return assert.fail(`expected failed terminal, got ${JSON.stringify(terminal)}`);
+        }
+        assert.deepEqual(terminal.failure, {
+          class: "usage_limit",
+          message: "You have reached your Antigravity quota for this period.",
+          code: "RESOURCE_EXHAUSTED",
+          retryable: true,
+          resetAt: "2026-11-26T11:05:00.000Z",
+        });
+        assert.equal(terminal.threadDisposition, "reusable");
       }).pipe(Effect.provide(layerSession)),
   );
 });
