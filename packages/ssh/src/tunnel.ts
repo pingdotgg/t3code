@@ -7,6 +7,7 @@ import type {
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
+import { BOOT_SERVICE_PLIST_FILE, BOOT_SERVICE_UNIT_FILE } from "@t3tools/shared/bootService";
 import { cliInstallCommand, cliReleaseDownloadBaseUrl } from "@t3tools/shared/cliRelease";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NetService from "@t3tools/shared/Net";
@@ -608,12 +609,47 @@ const REMOTE_ENSURE_T3_HOME_SCRIPT = `if [ -L "$HOME/.t3" ] && [ ! -e "$HOME/.t3
   (cd "$HOME" && mkdir -p "$(readlink .t3)")
 fi`;
 
+// An account's boot service already serves its T3 home, so launches and pairing use
+// that home instead of starting a second server beside it. systemctl includes
+// drop-ins; a session without a user bus falls back to the unit file itself.
+const REMOTE_RESOLVE_SERVER_HOME_SCRIPT = applyScriptPlaceholders(
+  `BOOT_SERVICE_HOME=""
+case "\${XDG_CONFIG_HOME:-}" in
+  /*) BOOT_SERVICE_UNIT="$XDG_CONFIG_HOME/systemd/user/@@T3_BOOT_SERVICE_UNIT_FILE@@" ;;
+  *) BOOT_SERVICE_UNIT="$HOME/.config/systemd/user/@@T3_BOOT_SERVICE_UNIT_FILE@@" ;;
+esac
+BOOT_SERVICE_PLIST="$HOME/Library/LaunchAgents/@@T3_BOOT_SERVICE_PLIST_FILE@@"
+if [ -f "$BOOT_SERVICE_UNIT" ]; then
+  BOOT_SERVICE_HOME="$( (systemctl --user show @@T3_BOOT_SERVICE_UNIT_FILE@@ -p Environment --value 2>/dev/null || true) |
+    sed -n -e 's/^\\(.* \\)\\{0,1\\}"T3CODE_HOME=\\([^"]*\\)".*$/\\2/p' -e t -e 's/^\\(.* \\)\\{0,1\\}T3CODE_HOME=\\([^ ]*\\).*$/\\2/p')"
+  if [ -z "$BOOT_SERVICE_HOME" ]; then
+    BOOT_SERVICE_HOME="$(sed -n 's/^Environment=T3CODE_HOME=//p' "$BOOT_SERVICE_UNIT" | tail -n 1 |
+      sed -e 's/^"\\(.*\\)"$/\\1/' -e 's/\\\\"/"/g' -e 's/\\\\\\\\/\\\\/g' -e 's/%%/%/g')"
+  fi
+elif [ -f "$BOOT_SERVICE_PLIST" ]; then
+  BOOT_SERVICE_HOME="$(sed -n '/<key>T3CODE_HOME<\\/key>/{n;s/.*<string>\\([^<]*\\)<\\/string>.*/\\1/p;}' "$BOOT_SERVICE_PLIST" |
+    sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\\&/g')"
+fi
+case "$BOOT_SERVICE_HOME" in
+  /*) ;;
+  *) BOOT_SERVICE_HOME="" ;;
+esac
+DEFAULT_SERVER_HOME="\${BOOT_SERVICE_HOME:-$HOME/.t3}"`,
+  {
+    T3_BOOT_SERVICE_UNIT_FILE: BOOT_SERVICE_UNIT_FILE,
+    T3_BOOT_SERVICE_PLIST_FILE: BOOT_SERVICE_PLIST_FILE,
+  },
+);
+
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
 LAUNCHER_ID="\${2:-}"
-STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+# Launch records stay in ~/.t3 whichever home serves, so a record from before a
+# boot service was installed still names the server this desktop must stop.
+LAUNCH_ROOT="$HOME/.t3/ssh-launch"
+STATE_DIR="$LAUNCH_ROOT/$STATE_KEY"
+@@T3_RESOLVE_SERVER_HOME_SCRIPT@@
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
@@ -621,7 +657,7 @@ MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
-LAUNCH_LOCK="$DEFAULT_SERVER_HOME/ssh-launch/.launch.lock"
+LAUNCH_LOCK="$LAUNCH_ROOT/.launch.lock"
 LAUNCH_BREAK_LOCK="$LAUNCH_LOCK.break"
 @@T3_ENSURE_T3_HOME_SCRIPT@@
 mkdir -p "$STATE_DIR"
@@ -885,7 +921,7 @@ return 1
 # Another desktop's server stays external. Only this first adoption runs
 # before the replace decision, which the previous key's runner settles.
 if adopt_default_server && [ -n "$ADOPTED_PID" ] && [ -n "$LAUNCHER_ID" ]; then
-  for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
+  for SIBLING_DIR in "$LAUNCH_ROOT"/*; do
     [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
     [ "$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)" = "$ADOPTED_PID" ] && managed_server_running "$ADOPTED_PID" || continue
     [ "$(cat "$SIBLING_DIR/launcher" 2>/dev/null || true)" = "$LAUNCHER_ID" ] || break
@@ -941,9 +977,10 @@ else
 fi
 # The server may answer long before it publishes its runtime record, or never
 # publish one; another alias's launch record still names it. Only one server
-# owns the home, so the first live one decides.
-if [ -z "$REMOTE_PORT" ] && [ -z "$DEFAULT_RUNTIME_INFO" ]; then
-  for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
+# owns the home, so the first live one decides. Launches never start a server
+# on a boot service's home, so no record names one there.
+if [ -z "$REMOTE_PORT" ] && [ -z "$DEFAULT_RUNTIME_INFO" ] && [ -z "$BOOT_SERVICE_HOME" ]; then
+  for SIBLING_DIR in "$LAUNCH_ROOT"/*; do
     [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
     managed_server_running "$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)" || continue
     REMOTE_PORT="$(cat "$SIBLING_DIR/port" 2>/dev/null || true)"
@@ -1001,6 +1038,10 @@ while [ -z "$REMOTE_PORT" ] && ! managed_server_running "$(cat "$PID_FILE" 2>/de
   sleep 1
   OWNER_WAITED=$((OWNER_WAITED + 1))
 done
+if [ -z "$REMOTE_PORT" ] && [ -n "$BOOT_SERVICE_HOME" ]; then
+  printf 'The T3 boot service for this account serves %s but is not running, so no second server was started. Start the service and retry.\\n' "$BOOT_SERVICE_HOME" >&2
+  exit 1
+fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
   if [ -z "$REMOTE_PORT" ]; then
@@ -1062,7 +1103,7 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+@@T3_RESOLVE_SERVER_HOME_SCRIPT@@
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 @@T3_ENSURE_T3_HOME_SCRIPT@@
 mkdir -p "$STATE_DIR"
@@ -1177,6 +1218,7 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_WAIT_READY_SCRIPT: stripTrailingNewlines(REMOTE_WAIT_READY_SCRIPT),
     T3_MANAGED_SERVER_RUNNING_SCRIPT: REMOTE_MANAGED_SERVER_RUNNING_SCRIPT,
     T3_ENSURE_T3_HOME_SCRIPT: REMOTE_ENSURE_T3_HOME_SCRIPT,
+    T3_RESOLVE_SERVER_HOME_SCRIPT: REMOTE_RESOLVE_SERVER_HOME_SCRIPT,
     T3_DEFAULT_REMOTE_PORT: String(DEFAULT_REMOTE_PORT),
     T3_REMOTE_PORT_SCAN_WINDOW: String(REMOTE_PORT_SCAN_WINDOW),
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
@@ -1193,6 +1235,7 @@ function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOption
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
     T3_STATE_KEY: stateKey,
     T3_ENSURE_T3_HOME_SCRIPT: REMOTE_ENSURE_T3_HOME_SCRIPT,
+    T3_RESOLVE_SERVER_HOME_SCRIPT: REMOTE_RESOLVE_SERVER_HOME_SCRIPT,
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
   });
 }
