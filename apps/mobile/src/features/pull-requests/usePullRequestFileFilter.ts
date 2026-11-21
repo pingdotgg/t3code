@@ -11,6 +11,22 @@ import {
 } from "./pullRequestFileFilters";
 import type { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 
+export function useHideTestFilesPreference() {
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
+  const hideTestFiles =
+    AsyncResult.isSuccess(preferences) && preferences.value.pullRequestHideTestFiles === true;
+  return {
+    hideTestFiles,
+    toggle: () => {
+      void savePreferences({ pullRequestHideTestFiles: !hideTestFiles });
+    },
+    showAll: () => {
+      void savePreferences({ pullRequestHideTestFiles: false });
+    },
+  };
+}
+
 const PATH_SEPARATOR = "\0";
 
 export function usePullRequestFileFilter(
@@ -19,11 +35,14 @@ export function usePullRequestFileFilter(
   includePath?: string,
   keptPaths: readonly string[] = [],
 ) {
+  const testFilesPreference = useHideTestFilesPreference();
+  const { hideTestFiles } = testFilesPreference;
   const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomCommand(saveMobilePreferences);
-  const saved = AsyncResult.isSuccess(preferences) ? preferences.value : null;
-  const hideTestFiles = saved?.pullRequestHideTestFiles === true;
-  const hideViewedFiles = viewed.supported && saved?.pullRequestHideViewedFiles === true;
+  const hideViewedFiles =
+    viewed.supported &&
+    AsyncResult.isSuccess(preferences) &&
+    preferences.value.pullRequestHideViewedFiles === true;
   const withoutTests = useMemo(
     () => filterPullRequestTestFiles(parsed, hideTestFiles, includePath),
     [parsed, hideTestFiles, includePath],
@@ -49,15 +68,9 @@ export function usePullRequestFileFilter(
       ? parsed.fileCount - withoutTests.fileCount
       : 0;
   return {
+    ...testFilesPreference,
     parsed: visible,
-    hideTestFiles,
     hiddenCount,
-    toggle: () => {
-      void savePreferences({ pullRequestHideTestFiles: !hideTestFiles });
-    },
-    showAll: () => {
-      void savePreferences({ pullRequestHideTestFiles: false });
-    },
     hideViewedFiles,
     viewedCount: viewedPaths.length,
     hiddenViewedCount: hiddenViewedPaths.length,

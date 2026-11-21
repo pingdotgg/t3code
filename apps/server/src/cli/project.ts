@@ -2,6 +2,7 @@ import {
   AuthStandardClientScopes,
   CommandId,
   EnvironmentHttpCommonError,
+  PROJECT_TRACKED_FOLDERS_MAX,
   type ProjectMutation,
   type ProjectSnapshot,
   ProjectId,
@@ -32,6 +33,7 @@ import { projectMutationOperation } from "../project/ProjectMutation.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { discoverFolders, mergeProjectFolders } from "../workspace/WorkspaceFolders.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as RunningServer from "./runningServer.ts";
@@ -137,6 +139,19 @@ export class ProjectAlreadyExistsError extends Schema.TaggedError<ProjectAlready
   }
 }
 
+export class ProjectTooManyTrackedFoldersError extends Schema.TaggedError<ProjectTooManyTrackedFoldersError>()(
+  "ProjectTooManyTrackedFoldersError",
+  {
+    operation: Schema.Literal("addProject"),
+    count: Schema.Number,
+    max: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `--track names ${this.count} folders, but a project tracks at most ${this.max}.`;
+  }
+}
+
 export const ProjectCommandError = Schema.Union([
   ProjectCommandIdGenerationError,
   ProjectLiveServerDeclaredResponseError,
@@ -145,6 +160,7 @@ export const ProjectCommandError = Schema.Union([
   ProjectIdentifierEmptyError,
   ProjectNotFoundError,
   ProjectAlreadyExistsError,
+  ProjectTooManyTrackedFoldersError,
 ]);
 export type ProjectCommandError = typeof ProjectCommandError.Type;
 
@@ -354,6 +370,12 @@ const projectAddCommand = Command.make("add", {
     Argument.withDescription("Workspace root to add as a project."),
   ),
   title: Flag.String("title").pipe(Flag.withDescription("Optional project title."), Flag.optional),
+  track: Flag.String("track").pipe(
+    Flag.withDescription(
+      "A folder outside the path that the project also works in. Repositories inside the path are found on their own. Repeat for more.",
+    ),
+    Flag.atLeast(0),
+  ),
 }).pipe(
   Command.withDescription("Add a project."),
   Command.withHandler((flags) =>
@@ -372,19 +394,49 @@ const projectAddCommand = Command.make("add", {
         const existingProject = snapshot.projects.find(
           (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
         );
+        const path = yield* Path.Path;
+        const named = flags.track
+          .map((folder) => {
+            const resolved = path.resolve(folder);
+            return {
+              path: resolved,
+              name: (path.basename(resolved) || resolved).slice(0, 128).trim(),
+            };
+          })
+          .filter(
+            (folder, index, all) => all.findIndex((other) => other.path === folder.path) === index,
+          );
         // Re-adding an archived project's folder restores it, matching the clients.
         if (existingProject?.archivedAt != null) {
           const title = Option.isSome(flags.title)
             ? yield* resolveProjectTitle(workspaceRoot, flags.title.value)
             : undefined;
+          // An update replaces the whole list of added folders.
+          const kept = (existingProject.trackedFolders ?? [])
+            .filter((folder) => folder.discovered !== true)
+            .map((folder) => ({ path: folder.path, name: folder.name }));
+          const added = named.filter(
+            (folder) => !kept.some((existing) => existing.path === folder.path),
+          );
+          if (kept.length + added.length > PROJECT_TRACKED_FOLDERS_MAX) {
+            return yield* new ProjectTooManyTrackedFoldersError({
+              operation: "addProject",
+              count: kept.length + added.length,
+              max: PROJECT_TRACKED_FOLDERS_MAX,
+            });
+          }
           yield* dispatch({
             type: "project.update",
             commandId: CommandId.make(yield* projectCommandUuid),
             projectId: existingProject.id,
             archived: false,
             ...(title === undefined ? {} : { title }),
+            ...(added.length === 0 ? {} : { trackedFolders: [...kept, ...added] }),
           });
-          return `Unarchived project ${existingProject.id} (${title ?? existingProject.title}) at ${workspaceRoot}.`;
+          const unarchived = `Unarchived project ${existingProject.id} (${title ?? existingProject.title}) at ${workspaceRoot}.`;
+          return added.length === 0
+            ? unarchived
+            : `${unarchived} It now also covers ${added.length} more ${added.length === 1 ? "folder" : "folders"}.`;
         }
         if (existingProject) {
           return yield* new ProjectAlreadyExistsError({
@@ -395,6 +447,16 @@ const projectAddCommand = Command.make("add", {
         }
 
         const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
+        // Found here, not by a running server: this command runs on the server's machine.
+        const found = yield* discoverFolders(workspaceRoot);
+        if (named.length > PROJECT_TRACKED_FOLDERS_MAX) {
+          return yield* new ProjectTooManyTrackedFoldersError({
+            operation: "addProject",
+            count: named.length,
+            max: PROJECT_TRACKED_FOLDERS_MAX,
+          });
+        }
+        const trackedFolders = mergeProjectFolders(found, named);
         const projectId = ProjectId.make(yield* projectCommandUuid);
         yield* dispatch({
           type: "project.create",
@@ -402,8 +464,13 @@ const projectAddCommand = Command.make("add", {
           projectId,
           title,
           workspaceRoot,
+          ...(trackedFolders.length === 0 ? {} : { trackedFolders }),
         });
-        return `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
+        const added = `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
+        if (trackedFolders.length > 0) {
+          return `${added} It also covers ${trackedFolders.length} other ${trackedFolders.length === 1 ? "folder" : "folders"}.`;
+        }
+        return added;
       }),
     ),
   ),

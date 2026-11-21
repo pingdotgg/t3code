@@ -4,6 +4,7 @@ import { buildReviewParsedDiff } from "../review/reviewModel";
 import {
   filterPullRequestTestFiles,
   filterPullRequestViewedFiles,
+  shownPatchIndices,
   viewedFilePaths,
 } from "./pullRequestFileFilters";
 
@@ -98,5 +99,14 @@ describe("mobile PR test file filter", () => {
     expect(filterPullRequestTestFiles(raw, true)).toBe(raw);
     const empty = { kind: "empty" as const };
     expect(filterPullRequestTestFiles(empty, true)).toBe(empty);
+  });
+
+  it("loads patches for the files the review will show, skipping hidden tests", () => {
+    const files = ["a.test.ts", "b.test.ts", "c.test.ts", "d.ts", "e.test.ts", "f.ts", "g.ts"].map(
+      (path) => ({ path }),
+    );
+    expect(shownPatchIndices(files, true, null)).toEqual([3, 5, 6]);
+    expect(shownPatchIndices(files, true, 5)).toEqual([5, 6]);
+    expect(shownPatchIndices(files, false, null)).toEqual([0, 1, 2]);
   });
 });

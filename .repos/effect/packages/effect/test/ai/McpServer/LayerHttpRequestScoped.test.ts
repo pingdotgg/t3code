@@ -2,12 +2,15 @@ import { assert, describe, it } from "@effect/vitest"
 import * as McpProtocol from "effect/ai/McpProtocol"
 import * as McpSchema from "effect/ai/McpSchema"
 import * as McpServer from "effect/ai/McpServer"
+import * as Tool from "effect/ai/Tool"
+import * as Toolkit from "effect/ai/Toolkit"
 import * as Context from "effect/Context"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as HttpRouter from "effect/http/HttpRouter"
 import * as Layer from "effect/Layer"
 import * as Predicate from "effect/Predicate"
+import * as Scheduler from "effect/Scheduler"
 import * as Schema from "effect/Schema"
 import * as BaseProtocolTest from "./McpConformance/BaseProtocolTest.ts"
 import * as CompletionTest from "./McpConformance/CompletionTest.ts"
@@ -97,6 +100,36 @@ const reportProgress = (server: McpServer.McpServer["Service"]) =>
   )
 
 describe("McpServer.layerHttpRequestScoped", () => {
+  it.live("answers an asynchronous tools/call before a scheduler round runs", () =>
+    Effect.gen(function*() {
+      let rounds = 0
+      const scheduler = new Scheduler.MixedScheduler("async", (task) => {
+        const handle = setImmediate(() => {
+          rounds++
+          task()
+        })
+        return () => clearImmediate(handle)
+      })
+      const tools = Toolkit.make(Tool.make("Echo", { success: Schema.String }))
+      const harness = yield* makeHttpHarness(
+        McpServer.toolkit(tools).pipe(
+          Layer.provide(tools.toLayer({ Echo: () => Effect.promise(() => Promise.resolve("hi")) })),
+          Layer.provideMerge(makeServerLayer({ name: "Echo", protocols: [protocol], mode: "request" })),
+          Layer.provideMerge(Layer.succeed(Scheduler.Scheduler)(scheduler))
+        )
+      )
+      const call = (id: number) => {
+        const { body, headers } = callTool("Echo", id)
+        return harness.post(body, headers)
+      }
+      // Build the server before measuring the request.
+      yield* readMcpHttpResponse(yield* call(0))
+      const before = rounds
+      const response = yield* call(1)
+      assert.strictEqual(rounds, before)
+      assert.nestedPropertyVal(yield* readMcpHttpResponse(response), "result.content[0].text", JSON.stringify("hi"))
+    }))
+
   it.live("should expose tools registered after the first POST in later lists and discovery", () =>
     Effect.gen(function*() {
       const serverReady = yield* Deferred.make<McpServer.McpServer["Service"]>()

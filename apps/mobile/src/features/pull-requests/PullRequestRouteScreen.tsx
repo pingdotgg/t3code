@@ -1538,7 +1538,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
               <Button
                 label={gt("Retry loading remaining files")}
                 tone="text"
-                onPress={result.refresh}
+                onPress={result.retry}
               />
             </View>
           ) : null}
