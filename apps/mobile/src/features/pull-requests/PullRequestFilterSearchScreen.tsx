@@ -1,3 +1,5 @@
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { LegendList } from "@legendapp/list/react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
@@ -8,8 +10,9 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useGT } from "gt-react-native";
 import { useState } from "react";
-import { FlatList, Platform } from "react-native";
+import { Platform } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -52,6 +55,7 @@ export function PullRequestFilterSearchScreen({
   route,
 }: StaticScreenProps<PullRequestFilterSearchParams>) {
   const navigation = useNavigation();
+  const gt = useGT();
   const { kind, environmentId, environmentIds, suggestions, labelColors } = route.params;
   const listControls = usePullRequestListControls();
   const controls = listControls.controlsFor(environmentId);
@@ -110,20 +114,28 @@ export function PullRequestFilterSearchScreen({
       },
     });
   };
-  const placeholder = kind === "labels" ? "Search labels" : "Search authors";
+  const placeholder = kind === "labels" ? gt("Search labels") : gt("Search authors");
   return (
     <PullRequestSearchSheet
-      title={kind === "labels" ? "Filter by label" : "Filter by author"}
+      title={kind === "labels" ? gt("Filter by label") : gt("Filter by author")}
       placeholder={placeholder}
-      closeAccessibilityLabel={kind === "labels" ? "Close label filter" : "Close author filter"}
-      clearAccessibilityLabel={kind === "labels" ? "Clear label search" : "Clear author search"}
+      closeAccessibilityLabel={
+        kind === "labels" ? gt("Close label filter") : gt("Close author filter")
+      }
+      clearAccessibilityLabel={
+        kind === "labels" ? gt("Clear label search") : gt("Clear author search")
+      }
       query={query}
       onQueryChange={setQuery}
     >
       {({ paddingBottom }) => (
-        <FlatList
+        <LegendList
+          renderScrollComponent={NativeScrollView}
           data={rows}
           keyExtractor={(value) => value.toLowerCase()}
+          extraData={{ selected, colors, count: rows.length }}
+          estimatedItemSize={56}
+          recycleItems
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
           automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
@@ -153,17 +165,17 @@ export function PullRequestFilterSearchScreen({
               <EmptyState
                 title={
                   hosted.failed
-                    ? "Couldn't search the host"
+                    ? gt("Couldn't search the host")
                     : kind === "labels"
-                      ? "No matching labels"
-                      : "No matching authors"
+                      ? gt("No matching labels")
+                      : gt("No matching authors")
                 }
                 detail={
                   hosted.failed
-                    ? "The host didn't answer. Try again in a moment."
+                    ? gt("The host didn't answer. Try again in a moment.")
                     : kind === "labels"
-                      ? "Search the labels of the repositories this list covers."
-                      : "Search people by name or handle on the repositories' hosts."
+                      ? gt("Search the labels of the repositories this list covers.")
+                      : gt("Search people by name or handle on the repositories' hosts.")
                 }
                 variant="plain"
               />
