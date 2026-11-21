@@ -261,6 +261,8 @@ export function threadManagementFailure(error: unknown): OrchestratorMcpFailure 
         "thread_not_sendable",
         `${error.message} Send with mode: "auto" or "queue" to start a new turn there.`,
       );
+    case "ThreadManagementRunOutputRejectedError":
+      return failure("invalid_request", error.message);
     case "ThreadManagementThreadNotInterruptibleError":
       return failure("thread_not_interruptible", error.message);
     case "ThreadManagementProjectionLoadError":
@@ -2545,6 +2547,16 @@ const make = Effect.gen(function* () {
           "Asking for a secret requires an active run owned by this MCP provider session.",
         );
       }
+      if (
+        input.fields !== undefined &&
+        (input.value !== undefined || input.delivery === "secretRef")
+      ) {
+        return yield* failure(
+          "invalid_request",
+          '`fields` values are saved as files. Leave out `value` and `delivery: "secretRef"`.',
+        );
+      }
+      const delivery = input.fields === undefined ? input.delivery : "file";
       // A secret the user already pasted needs no card: it goes straight to a file.
       if (input.value !== undefined) {
         if (input.delivery === "secretRef") {
@@ -2588,7 +2600,8 @@ const make = Effect.gen(function* () {
             reason: input.reason,
             ...(input.url === undefined ? {} : { url: input.url }),
             ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
-            ...(input.delivery === "file" ? { delivery: "file" as const } : {}),
+            ...(delivery === "file" ? { delivery: "file" as const } : {}),
+            ...(input.fields === undefined ? {} : { fields: input.fields }),
             secretStatus,
           })
           .pipe(
@@ -2677,11 +2690,11 @@ const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({ "secret_request.status": status });
       yield* Metrics.increment(Metrics.secretRequestsTotal, { status });
       if (status !== "saved") return { status, note: SECRET_REQUEST_UNSAVED_NOTE[status] };
-      if (input.delivery === "file") {
-        const file = yield* secretRequests
+      if (delivery === "file") {
+        const saved = yield* secretRequests
           .saveToFile({ threadId, turnItemId })
           .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
-        return { status, file };
+        return { status, ...saved };
       }
       const secretRef = yield* secretRequests.savedRef({ threadId: threadId, turnItemId });
       if (Option.isNone(secretRef)) {
@@ -3645,6 +3658,7 @@ const make = Effect.gen(function* () {
           attachments: [],
           mode,
           ...(input.freshContext ? { freshContext: true } : {}),
+          ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
           createdBy: "agent",
           creationSource: "mcp",
         })
@@ -3680,6 +3694,7 @@ const make = Effect.gen(function* () {
             Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
           ),
           ...(input.untilDelegatedWorkSettled === true ? { untilDelegatedWorkSettled: true } : {}),
+          ...(input.untilOutput === true ? { untilOutput: true } : {}),
         })
         .pipe(Effect.mapError(threadManagementFailure));
       const status = result.run === null ? "idle" : runOutcome(result.run);
@@ -3716,6 +3731,7 @@ const make = Effect.gen(function* () {
           : {
               resultRun: { runId: result.resultRun.id, status: runOutcome(result.resultRun) },
             }),
+        ...(result.run?.output === undefined ? {} : { output: result.run.output.value }),
       } satisfies OrchestratorMcpThreadWaitResult;
     }),
     interruptThread: Effect.fn("OrchestratorMcpService.interruptThread")(function* (scope, input) {

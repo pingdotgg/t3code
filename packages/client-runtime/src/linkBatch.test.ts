@@ -2,7 +2,13 @@ import { EnvironmentId, PeerLinkError } from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
-import { linkBatchCandidates, linkBatchSummary, linkListState, runLinkBatch } from "./linkBatch.ts";
+import {
+  linkBackOffer,
+  linkBatchCandidates,
+  linkBatchSummary,
+  linkListState,
+  runLinkBatch,
+} from "./linkBatch.ts";
 import type { LinkableMachine } from "./linkRequest.ts";
 
 const machine = (name: string, overrides: Partial<LinkableMachine> = {}): LinkableMachine => ({
@@ -178,5 +184,123 @@ describe("runLinkBatch", () => {
     await run(names.slice(0, 3), false);
     await run(names.slice(0, 3), true);
     expect(events.filter((event) => event === "refresh").length).toBe(2);
+  });
+});
+
+describe("linkBackOffer", () => {
+  const source = {
+    environmentId: id("source"),
+    connected: true,
+    writable: true,
+    urls: ["https://source.example.ts.net"],
+  };
+  const target = { connected: true, offersLinks: true, writable: true, links: [] };
+  const offer = (overrides: {
+    readonly source?: Partial<typeof source>;
+    readonly target?: Partial<Parameters<typeof linkBackOffer>[0]["target"]> | null;
+  }) =>
+    linkBackOffer({
+      source: { ...source, ...overrides.source },
+      target: overrides.target === null ? null : { ...target, ...overrides.target },
+    });
+
+  it("is offered only when the client can make the reverse link with no pasted code", () => {
+    expect(offer({})).toEqual({ kind: "offered" });
+    // An expired reverse link no longer counts: linking back renews it.
+    expect(
+      offer({ target: { links: [{ environmentId: id("source"), status: "expired" }] } }),
+    ).toEqual({ kind: "offered" });
+    expect(
+      offer({ target: { links: [{ environmentId: id("other"), status: "reachable" }] } }),
+    ).toEqual({ kind: "offered" });
+  });
+
+  it("says nothing where the user would not expect it", () => {
+    for (const hidden of [
+      offer({ target: null }),
+      offer({ target: { connected: false } }),
+      offer({ source: { connected: false } }),
+      // Not known yet, or already linked back: offering could replace a working token.
+      offer({ target: { links: null } }),
+      offer({ target: { links: [{ environmentId: id("source"), status: "reachable" }] } }),
+      offer({ target: { links: [{ environmentId: id("source"), status: "unreachable" }] } }),
+    ]) {
+      expect(hidden).toEqual({ kind: "hidden" });
+    }
+  });
+
+  it("names what is in the way between two connected environments", () => {
+    expect(offer({ target: { offersLinks: false } })).toEqual({
+      kind: "blocked",
+      reason: "target_links_off",
+    });
+    expect(offer({ target: { writable: false } })).toEqual({
+      kind: "blocked",
+      reason: "target_no_access",
+    });
+    expect(offer({ source: { writable: false } })).toEqual({
+      kind: "blocked",
+      reason: "source_no_access",
+    });
+    expect(offer({ source: { urls: [] } })).toEqual({
+      kind: "blocked",
+      reason: "source_no_address",
+    });
+  });
+});
+
+describe("runLinkBatch link back", () => {
+  it("links back from each eligible machine, and a reverse failure keeps the forward link", async () => {
+    const source = machine("source");
+    const reverse: Array<unknown> = [];
+    const minted: Array<string> = [];
+    const outcomes = await runLinkBatch({
+      machines: [machine("a"), machine("b"), machine("c"), machine("d")],
+      access: "full-access",
+      mint: async (environmentId) => {
+        minted.push(environmentId);
+        return Result.succeed(`code-for-${environmentId}`);
+      },
+      link: async (input) =>
+        input.expectedLabel === "d" ? Result.fail(new Error("refused")) : Result.succeed(null),
+      back: {
+        source,
+        targets: new Set([id("a"), id("b"), id("d")]),
+        link: async (environmentId, input) => {
+          reverse.push([environmentId, input]);
+          return environmentId === id("b")
+            ? Result.fail(
+                new PeerLinkError({ reason: "unreachable", message: "source did not answer." }),
+              )
+            : Result.succeed(null);
+        },
+      },
+      refreshLinks: () => {},
+    });
+    expect(Object.fromEntries(outcomes)).toEqual({
+      [id("a")]: { kind: "linked", back: { kind: "linked" } },
+      [id("b")]: {
+        kind: "linked",
+        back: { kind: "failed", failure: "unreachable", detail: "source did not answer." },
+      },
+      // Not eligible, so not attempted.
+      [id("c")]: { kind: "linked" },
+      // Its own link failed, so nothing links back.
+      [id("d")]: { kind: "failed", failure: "other", detail: null },
+    });
+    // The reverse link is made on the machine, with a code minted on the source for it.
+    expect(reverse[0]).toEqual([
+      id("a"),
+      {
+        url: "https://source.example.ts.net",
+        alternateUrls: ["http://100.64.0.1:3773"],
+        expectedEnvironmentId: id("source"),
+        expectedLabel: "source",
+        pairingCode: `code-for-${id("source")}`,
+        access: "full-access",
+      },
+    ]);
+    expect(minted.filter((environmentId) => environmentId === id("source")).length).toBe(2);
+    expect(linkBatchSummary(outcomes)).toEqual({ linked: 3, failed: [id("d")] });
   });
 });
