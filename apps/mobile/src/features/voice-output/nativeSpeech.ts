@@ -1,7 +1,7 @@
 import { m } from "../../i18n/messages";
 import { msg } from "gt-react-native";
 import * as Speech from "expo-speech";
-import { AppState } from "react-native";
+import { AppState, Platform } from "react-native";
 import type { NativeSpeechRequest } from "@t3tools/client-runtime/voice-output";
 import {
   acquireAudioSession,
@@ -37,11 +37,15 @@ export async function playNativeSpeech(
     signal.throwIfAborted();
     if (AppState.currentState !== "active")
       throw new Error(m(msg("Open the app before playing a response.")));
-    if (request.voice && !(await nativeSpeechVoices()).some((voice) => voice.id === request.voice))
+    // Android queues speech during initialization, and stop() cannot clear that queue.
+    const voices = request.voice || Platform.OS === "android" ? await nativeSpeechVoices() : [];
+    if (request.voice && !voices.some((voice) => voice.id === request.voice))
       throw new Error(m(msg("This system voice is unavailable on this device.")));
     signal.throwIfAborted();
     await pendingStop;
     signal.throwIfAborted();
+    if (AppState.currentState !== "active")
+      throw new Error(m(msg("Open the app before playing a response.")));
     if (!isAudioSessionOwner(token)) throw new Error(m(msg("Response playback was interrupted.")));
     await new Promise<void>((resolve, reject) => {
       let finished = false;
