@@ -732,6 +732,11 @@ const usePullRequestStatsQuery = createMergedEnvironmentQuery(
   pullRequestEnvironment.listStats,
 );
 
+const usePullRequestDetailsQuery = createMergedEnvironmentQuery(
+  "web-pull-requests:details",
+  pullRequestEnvironment.detail,
+);
+
 const usePullRequestFilterOptionsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:filter-options",
   pullRequestEnvironment.filterOptions,
@@ -814,6 +819,14 @@ export function usePullRequestListStats(
           result.stats.map((stat) => ({ ...stat, environmentId })),
         );
   return { stats, isPending: query.isPending, refresh: query.refresh };
+}
+
+/** The pull requests these refs name; a ref its repository does not have is left out. */
+export function usePullRequestDetails(
+  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestRef>>,
+) {
+  const query = usePullRequestDetailsQuery(targets);
+  return { details: query.values.map(([, detail]) => detail), isPending: query.isPending };
 }
 
 export function usePullRequestFilterOptions(

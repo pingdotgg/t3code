@@ -2627,6 +2627,62 @@ it.effect("prefers a matching checkout over a non-repository project's directory
   }),
 );
 
+it.effect("looks pull requests up in the repositories a plain project folder tracks", () =>
+  Effect.gen(function* () {
+    const tracked = project({
+      id: "api",
+      title: "api",
+      workspaceRoot: "/work/api",
+      repository: "acme/api",
+    });
+    const listed: string[] = [];
+    const read: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        {
+          ...project({ id: "work", title: "work", workspaceRoot: "/work" }),
+          trackedFolders: [
+            { path: "/work/api", name: "api", discovered: true },
+            { path: "/work/notes", name: "notes", discovered: true },
+          ],
+        },
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: (input) =>
+            Effect.sync(() => {
+              listed.push(`${input.cwd} ${input.repository}`);
+              return {
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: true,
+              };
+            }),
+          getChangeRequestSummary: (input) =>
+            Effect.sync(() => {
+              read.push(input.cwd);
+              return changeRequest(7, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+      resolveRepositoryIdentity: (cwd) =>
+        Effect.succeed(cwd === "/work/api" ? (tracked.repositoryIdentity ?? null) : null),
+    });
+
+    const result = yield* service.list({ state: "all", projectId: "work" as ProjectId });
+    assert.deepStrictEqual(listed, ["/work/api acme/api"]);
+    assert.deepStrictEqual(
+      result.entries.map((entry) => [entry.projectId, entry.repository, entry.number]),
+      [["work", "acme/api", 1]],
+    );
+    yield* service.summary(
+      { projectId: "work" as ProjectId, repository: "acme/api", number: 7 },
+      { recoverTransientFailure: false },
+    );
+    assert.deepStrictEqual(read, ["/work/api"]);
+  }),
+);
+
 // regression: #17167 refresh linked PRs without a checkout
 it.effect("requires an explicit host for a non-repository project's linked PR", () =>
   Effect.gen(function* () {

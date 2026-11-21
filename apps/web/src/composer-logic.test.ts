@@ -388,7 +388,7 @@ describe("filterComposerPullRequestMatches", () => {
         keyOf: threadPullRequestKeyOf,
         entries,
         projectId: "project-1",
-        repository: "t3tools/t3code",
+        repositories: ["t3tools/t3code"],
         query: "7",
         limit: 10,
       }).map((entry) => entry.number),
@@ -414,7 +414,7 @@ describe("filterComposerPullRequestMatches", () => {
       keyOf: threadPullRequestKeyOf,
       entries: [...newerSubstringMatches, exact],
       projectId: "project-1",
-      repository: "t3tools/t3code",
+      repositories: ["t3tools/t3code"],
       query: "7",
       limit: 10,
     });

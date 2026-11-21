@@ -3874,7 +3874,11 @@ export default function ChatView(props: ChatViewProps) {
                                 terminalOpen={Boolean(terminalUiState.terminalOpen)}
                                 gitCwd={gitCwd}
                                 pullRequestProjectId={
-                                  supportsPullRequests ? (activeProject?.id ?? null) : null
+                                  supportsPullRequests &&
+                                  (activeProjectRepository !== null ||
+                                    (activeProject?.trackedFolders?.length ?? 0) > 0)
+                                    ? (activeProject?.id ?? null)
+                                    : null
                                 }
                                 pullRequestRepository={
                                   supportsPullRequests ? activeProjectRepository : null

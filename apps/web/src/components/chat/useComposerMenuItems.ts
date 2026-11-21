@@ -20,6 +20,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import {
+  composerPullRequestRepositories,
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
   withLinkedComposerPullRequestsFirst,
@@ -38,11 +39,10 @@ import { useVisibleThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
 import {
-  pullRequestEnvironment,
+  usePullRequestDetails,
   usePullRequestList,
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
-import { useEnvironmentQuery } from "~/state/query";
 import { useComposerPathSearch, useDebouncedValue, useThreadSearch } from "~/state/queries";
 import {
   matchesPullRequestQuery,
@@ -89,7 +89,9 @@ export function useComposerMenuItems({
   readonly linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
   readonly gitCwd: string | null;
   readonly activeThreadId: ThreadId | null;
+  /** Null when the project has no repository to look pull requests up in. */
   readonly pullRequestProjectId: ProjectId | null;
+  /** The project folder's own repository; tracked repositories come from the listing. */
   readonly pullRequestRepository: string | null;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly sideChatAvailable: boolean;
@@ -179,28 +181,36 @@ export function useComposerMenuItems({
   const debouncedPullRequestNumber = useDebouncedValue(pullRequestTriggerNumber, 180);
   const settledPullRequestNumber =
     pullRequestTriggerNumber === debouncedPullRequestNumber ? pullRequestTriggerNumber : null;
-  const recentHasExactPullRequest =
-    settledPullRequestNumber !== null &&
-    pullRequestLookup.data?.entries.some(
-      (entry) =>
-        entry.projectId === pullRequestProjectId &&
-        entry.repository.trim().toLowerCase() === pullRequestRepository?.trim().toLowerCase() &&
-        entry.number === settledPullRequestNumber,
-    ) === true;
-  const exactPullRequestLookup = useEnvironmentQuery(
-    settledPullRequestNumber === null ||
-      pullRequestProjectId === null ||
-      pullRequestRepository === null ||
-      recentHasExactPullRequest
-      ? null
-      : pullRequestEnvironment.detail({
-          environmentId,
-          input: {
-            projectId: pullRequestProjectId,
-            repository: pullRequestRepository,
-            number: settledPullRequestNumber,
-          },
-        }),
+  const pullRequestRepositories =
+    pullRequestProjectId === null
+      ? []
+      : composerPullRequestRepositories({
+          projectId: pullRequestProjectId,
+          repository: pullRequestRepository,
+          entries: pullRequestLookup.data?.entries ?? [],
+        });
+  const exactPullRequestLookup = usePullRequestDetails(
+    settledPullRequestNumber === null || pullRequestProjectId === null
+      ? []
+      : pullRequestRepositories.flatMap((repository) =>
+          pullRequestLookup.data?.entries.some(
+            (entry) =>
+              entry.projectId === pullRequestProjectId &&
+              entry.repository.trim().toLowerCase() === repository.toLowerCase() &&
+              entry.number === settledPullRequestNumber,
+          ) === true
+            ? []
+            : [
+                {
+                  environmentId,
+                  input: {
+                    projectId: pullRequestProjectId,
+                    repository,
+                    number: settledPullRequestNumber,
+                  },
+                },
+              ],
+        ),
   );
 
   const linkedPullRequests =
@@ -347,25 +357,26 @@ export function useComposerMenuItems({
     if (
       composerTrigger.kind === "pull-request" &&
       pullRequestProjectId !== null &&
-      pullRequestRepository !== null
+      pullRequestRepositories.length > 0
     ) {
-      const exactPullRequest =
-        exactPullRequestLookup.data?.number === pullRequestTriggerNumber
+      const exactPullRequest = exactPullRequestLookup.details.flatMap((detail) =>
+        detail.number === pullRequestTriggerNumber
           ? [
               {
-                ...exactPullRequestLookup.data,
+                ...detail,
                 // Only the host: the URL's full repository path would not match the project's selector.
-                host: legacyThreadPullRequestKey(exactPullRequestLookup.data).host,
+                host: legacyThreadPullRequestKey(detail).host,
               },
             ]
-          : [];
+          : [],
+      );
       const matches = /^\d*$/u.test(composerTrigger.query)
         ? filterComposerPullRequestMatches({
             keyOf: threadPullRequestKeyOf,
             entries: [...exactPullRequest, ...(pullRequestLookup.data?.entries ?? [])],
             linked: linkedPullRequests,
             projectId: pullRequestProjectId,
-            repository: pullRequestRepository,
+            repositories: pullRequestRepositories,
             query: composerTrigger.query,
             limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
           })
@@ -373,13 +384,7 @@ export function useComposerMenuItems({
             keyOf: threadPullRequestKeyOf,
             matches: rankPullRequestMatches(
               (pullRequestLookup.data?.entries ?? []).filter((entry) => {
-                if (
-                  entry.projectId !== pullRequestProjectId ||
-                  entry.repository.trim().toLowerCase() !==
-                    pullRequestRepository.trim().toLowerCase()
-                ) {
-                  return false;
-                }
+                if (entry.projectId !== pullRequestProjectId) return false;
                 const provider = pullRequestLookup.data?.providers.find(
                   (candidate) => candidate.host === entry.host,
                 );
@@ -408,7 +413,8 @@ export function useComposerMenuItems({
         },
         label: `#${pullRequest.number}`,
         description:
-          pullRequest.repository.trim().toLowerCase() === pullRequestRepository.trim().toLowerCase()
+          pullRequest.repository.trim().toLowerCase() ===
+          pullRequestRepository?.trim().toLowerCase()
             ? pullRequest.title
             : `${pullRequest.repository} · ${pullRequest.title}`,
       }));
@@ -421,7 +427,6 @@ export function useComposerMenuItems({
       workspaceSkillsScanning) ||
     (composerTriggerKind === "pull-request" &&
       pullRequestProjectId !== null &&
-      pullRequestRepository !== null &&
       (pullRequestLookup.isPending ||
         pullRequestTextQuery !== debouncedPullRequestTextQuery ||
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
@@ -431,7 +436,7 @@ export function useComposerMenuItems({
       return gt("No skills found. Try / to browse provider commands.");
     }
     if (composerTriggerKind === "pull-request") {
-      if (pullRequestProjectId === null || pullRequestRepository === null) {
+      if (pullRequestProjectId === null) {
         return gt("Pull requests are not available for this project.");
       }
       if (
@@ -439,6 +444,9 @@ export function useComposerMenuItems({
         pullRequestLookup.data?.errors.some((error) => error.projectId === pullRequestProjectId)
       ) {
         return gt("Pull requests could not be read for this project.");
+      }
+      if (pullRequestRepositories.length === 0) {
+        return gt("Pull requests are not available for this project.");
       }
       return composerTrigger?.query
         ? gt("No pull request matches {query}.", { query: composerTrigger.query })

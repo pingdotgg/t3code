@@ -966,6 +966,26 @@ export const make = Effect.gen(function* () {
           { concurrency: REPOSITORY_CONCURRENCY },
         ),
       ),
+      // Each tracked repository is one more checkout of its project. They follow every root, so a
+      // repository that is also some project's own folder stays listed under that project.
+      Effect.flatMap((projects) =>
+        Effect.forEach(
+          projects.flatMap((project) =>
+            (project.trackedFolders ?? []).map((folder) => ({ project, folder })),
+          ),
+          ({ project, folder }) =>
+            repositoryIdentities
+              .resolve(folder.path)
+              .pipe(
+                Effect.map((repositoryIdentity) =>
+                  repositoryIdentity === null
+                    ? []
+                    : [{ ...project, workspaceRoot: folder.path, repositoryIdentity }],
+                ),
+              ),
+          { concurrency: REPOSITORY_CONCURRENCY },
+        ).pipe(Effect.map((tracked) => [...projects, ...tracked.flat()])),
+      ),
       Effect.flatMap((projects) =>
         resolveRemoteHosts(projects, filter).pipe(
           Effect.map((remoteHosts) => ({ remoteHosts, projects })),
@@ -1002,7 +1022,7 @@ export const make = Effect.gen(function* () {
           if (host !== sourceControlDefinitions.changeRequestHost(identity, identity.provider)) {
             const projectIds = refinedProjectIdsByHost.get(host);
             if (projectIds === undefined) refinedProjectIdsByHost.set(host, [project.id]);
-            else projectIds.push(project.id);
+            else if (!projectIds.includes(project.id)) projectIds.push(project.id);
           }
           const registered = registry.get(kind);
           const api = registered?.servesHost?.(host) === false ? null : registered;
@@ -1045,14 +1065,16 @@ export const make = Effect.gen(function* () {
   const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
-        const own = supported[0];
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
-        if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
-          if (host === undefined || host === own.host) return Effect.succeed(own);
-        }
+        const own = supported.find(
+          (candidate) =>
+            candidate.repository.toLowerCase() === repository.toLowerCase() &&
+            (host === undefined || host === candidate.host),
+        );
+        if (own !== undefined) return Effect.succeed(own);
         if (host === undefined) {
-          if (own === undefined) {
+          if (supported.length === 0) {
             return Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }));
           }
           return Effect.fail(
@@ -2881,21 +2903,24 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     if (input.refs.length === 0) return { stats: [] };
     const { supported } = yield* listWorkspaceProjects({});
-    const byProject = new Map(supported.map((project) => [project.project.id, project]));
+    // A project with tracked repositories has a checkout for each.
+    const byCheckout = new Map(
+      supported.map((project) => [
+        `${project.project.id} ${project.repository.toLowerCase()}`,
+        project,
+      ]),
+    );
     const wanted = new Map<
       string,
       { readonly project: SupportedProject; readonly number: number }
     >();
     for (const ref of input.refs) {
-      const project = byProject.get(ref.projectId);
-      if (
-        project === undefined ||
-        project.api.listChangeRequestStats === undefined ||
-        project.repository.toLowerCase() !== ref.repository.trim().toLowerCase()
-      ) {
+      const checkoutKey = `${ref.projectId} ${ref.repository.trim().toLowerCase()}`;
+      const project = byCheckout.get(checkoutKey);
+      if (project === undefined || project.api.listChangeRequestStats === undefined) {
         continue;
       }
-      wanted.set(`${project.project.id} ${ref.number}`, { project, number: ref.number });
+      wanted.set(`${checkoutKey} ${ref.number}`, { project, number: ref.number });
     }
     const byHost = new Map<string, Array<{ project: SupportedProject; number: number }>>();
     for (const entry of wanted.values()) {

@@ -700,7 +700,7 @@ export function useComposerCommandMenu({
       trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
     error:
       trigger?.kind === "pull-request"
-        ? pullRequestProjectId === null || pullRequestRepository === null
+        ? pullRequestProjectId === null || pullRequestSearch.unavailable
           ? gt("Pull requests are unavailable for this project.")
           : pullRequestSearch.error
         : null,

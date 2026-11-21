@@ -432,7 +432,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     linkedEnvironments: useLinkedEnvironments(props.environmentId),
     currentThreadId: props.selectedThread.id,
     projectCwd: props.projectCwd,
-    pullRequestProjectId: props.serverConfig ? (project?.id ?? null) : null,
+    pullRequestProjectId:
+      props.serverConfig &&
+      (project?.repositoryIdentity || (project?.trackedFolders?.length ?? 0) > 0)
+        ? (project?.id ?? null)
+        : null,
     pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
     threadPullRequests: props.selectedThread.pullRequests,
     selectedProviderStatus,

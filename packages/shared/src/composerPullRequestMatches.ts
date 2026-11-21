@@ -32,6 +32,30 @@ export function composerPullRequestsFromLinks(
   );
 }
 
+/**
+ * The repositories a project's `#` lookup covers: its own folder's, then each one its listing
+ * returned. Clients hold no selector for a project's tracked repositories, only the server does.
+ */
+export function composerPullRequestRepositories(input: {
+  readonly projectId: string;
+  readonly repository: string | null;
+  readonly entries: ReadonlyArray<{ readonly projectId: string; readonly repository: string }>;
+}): ReadonlyArray<string> {
+  const repositories = new Map<string, string>();
+  for (const repository of [
+    input.repository,
+    ...input.entries.flatMap((entry) =>
+      entry.projectId === input.projectId ? [entry.repository] : [],
+    ),
+  ]) {
+    const trimmed = repository?.trim();
+    if (trimmed && !repositories.has(trimmed.toLowerCase())) {
+      repositories.set(trimmed.toLowerCase(), trimmed);
+    }
+  }
+  return [...repositories.values()];
+}
+
 export function filterComposerPullRequestMatches<
   Entry extends ComposerPullRequestMatch,
   Linked extends ComposerPullRequestMatch = never,
@@ -39,19 +63,21 @@ export function filterComposerPullRequestMatches<
   readonly entries: ReadonlyArray<Entry>;
   readonly linked?: ReadonlyArray<Linked>;
   readonly projectId: string;
-  readonly repository: string;
+  readonly repositories: ReadonlyArray<string>;
   readonly query: string;
   readonly limit: number;
   readonly keyOf: (entry: Entry | Linked) => string;
 }): ReadonlyArray<Entry | Linked> {
-  const repository = input.repository.trim().toLowerCase();
+  const repositories = new Set(
+    input.repositories.map((repository) => repository.trim().toLowerCase()),
+  );
   const { keyOf } = input;
   const linked = (input.linked ?? []).filter((entry) => String(entry.number).includes(input.query));
   const linkedKeys = new Set(linked.map(keyOf));
   const matchingEntries = input.entries.filter(
     (entry) =>
       entry.projectId === input.projectId &&
-      entry.repository.trim().toLowerCase() === repository &&
+      repositories.has(entry.repository.trim().toLowerCase()) &&
       String(entry.number).includes(input.query),
   );
   const uniqueEntries = new Map<string, Entry | Linked>();

@@ -3,6 +3,7 @@ import {
   threadPullRequestKeyOf,
 } from "@t3tools/client-runtime/thread-pull-requests";
 import {
+  composerPullRequestRepositories,
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
   withLinkedComposerPullRequestsFirst,
@@ -41,7 +42,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { orchestrationEnvironment } from "./orchestration";
 import { olderSettledThreads, threadFamilies } from "./threads";
 import { projectEnvironment } from "./projects";
-import { useEnvironmentQuery } from "./query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
 import { msg, useMessages } from "gt-react-native";
 import { vcsEnvironment } from "./vcs";
 import { composerPullRequests } from "./pull-requests";
@@ -109,6 +110,28 @@ export function useDebouncedValue<A>(value: A, delayMs: number): A {
   return debounced;
 }
 
+type ComposerPullRequestDetailTarget = Parameters<typeof composerPullRequests.detail>[0];
+
+// One number typed after `#` is looked up in each of the project's repositories.
+const composerPullRequestDetails = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const results = (JSON.parse(key) as ReadonlyArray<ComposerPullRequestDetailTarget>).map(
+      (target) => get(composerPullRequests.detail(target)),
+    );
+    const failures = results.filter(AsyncResult.isFailure);
+    return {
+      details: results.flatMap((result) => {
+        const detail = AsyncResult.getOrElse(result, () => null);
+        return detail === null ? [] : [detail];
+      }),
+      isPending: results.some((result) => result.waiting),
+      // A number only some repositories have is no failure.
+      failure:
+        failures.length > 0 && failures.length === results.length ? failures[0]!.cause : null,
+    };
+  }).pipe(Atom.withLabel(`mobile-composer-pull-request-details:${key}`)),
+);
+
 export function useComposerPullRequestSearch(input: {
   environmentId: EnvironmentId | null;
   projectId: ProjectId | null;
@@ -125,8 +148,7 @@ export function useComposerPullRequestSearch(input: {
     query === input.query &&
     query !== null &&
     input.environmentId !== null &&
-    input.projectId !== null &&
-    input.repository !== null;
+    input.projectId !== null;
   const numeric = query !== null && /^\d*$/.test(query);
   const list = useEnvironmentQuery(
     ready
@@ -142,31 +164,47 @@ export function useComposerPullRequestSearch(input: {
       : null,
   );
   const number = numeric && query ? Number(query) : null;
-  const hasExact = list.data?.entries.some(
-    (entry) =>
-      entry.number === number && entry.repository.toLowerCase() === input.repository?.toLowerCase(),
-  );
-  const exact = useEnvironmentQuery(
-    ready && number !== null && Number.isSafeInteger(number) && number > 0 && !hasExact
-      ? composerPullRequests.detail({
-          environmentId: input.environmentId!,
-          input: { projectId: input.projectId!, repository: input.repository!, number },
-        })
-      : null,
-  );
+  const repositories =
+    input.projectId === null
+      ? []
+      : composerPullRequestRepositories({
+          projectId: input.projectId,
+          repository: input.repository,
+          entries: list.data?.entries ?? [],
+        });
+  const exactTargets =
+    ready && number !== null && Number.isSafeInteger(number) && number > 0
+      ? repositories.flatMap((repository) =>
+          list.data?.entries.some(
+            (entry) =>
+              entry.number === number &&
+              entry.repository.toLowerCase() === repository.toLowerCase(),
+          )
+            ? []
+            : [
+                {
+                  environmentId: input.environmentId!,
+                  input: { projectId: input.projectId!, repository, number },
+                },
+              ],
+        )
+      : [];
+  const exact = useAtomValue(composerPullRequestDetails(JSON.stringify(exactTargets)));
+  const resolve = useMessages();
   // Only the host: the URL's full repository path would not match the project's selector.
-  const exactEntry = exact.data
-    ? { ...exact.data, host: legacyThreadPullRequestKey(exact.data).host }
-    : null;
+  const exactEntries = exact.details.map((detail) => ({
+    ...detail,
+    host: legacyThreadPullRequestKey(detail).host,
+  }));
   const entries = (() => {
-    if (input.query === null || input.projectId === null || input.repository === null) return [];
+    if (input.query === null || input.projectId === null) return [];
     if (/^\d*$/.test(input.query)) {
       return filterComposerPullRequestMatches({
         keyOf: threadPullRequestKeyOf,
-        entries: ready ? [...(exactEntry ? [exactEntry] : []), ...(list.data?.entries ?? [])] : [],
+        entries: ready ? [...exactEntries, ...(list.data?.entries ?? [])] : [],
         linked,
         projectId: input.projectId,
-        repository: input.repository,
+        repositories,
         query: input.query,
         limit: 20,
       });
@@ -181,10 +219,9 @@ export function useComposerPullRequestSearch(input: {
       });
     }
     const words = (query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-    const found = [...(exactEntry ? [exactEntry] : []), ...(list.data?.entries ?? [])].filter(
+    const found = [...exactEntries, ...(list.data?.entries ?? [])].filter(
       (entry) =>
         entry.projectId === input.projectId &&
-        entry.repository.toLowerCase() === input.repository?.toLowerCase() &&
         words.every((word) =>
           `${entry.title} ${entry.headBranch} ${entry.baseBranch}`.toLowerCase().includes(word),
         ),
@@ -207,7 +244,12 @@ export function useComposerPullRequestSearch(input: {
   return {
     entries,
     isPending: input.query !== null && (query !== input.query || list.isPending || exact.isPending),
-    error: list.error ?? list.data?.errors[0]?.message ?? exact.error,
+    error:
+      list.error ??
+      list.data?.errors[0]?.message ??
+      (exact.failure === null ? null : formatEnvironmentQueryError(exact.failure, resolve)),
+    /** The project's listing settled without a repository to look pull requests up in. */
+    unavailable: ready && list.data !== null && repositories.length === 0,
   };
 }
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ThreadPullRequestKey, ThreadPullRequestLink } from "@t3tools/contracts";
 
 import {
+  composerPullRequestRepositories,
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
   withLinkedComposerPullRequestsFirst,
@@ -25,7 +26,7 @@ describe("filterComposerPullRequestMatches", () => {
       keyOf,
       entries: [entry(1234, "2026-01-03"), entry(123, "2026-01-01"), entry(1230, "2026-01-02")],
       projectId: "p1",
-      repository: "owner/repo",
+      repositories: ["owner/repo"],
       query: "123",
       limit: 10,
     });
@@ -37,11 +38,28 @@ describe("filterComposerPullRequestMatches", () => {
       keyOf,
       entries: [entry(401, "2026-10-25T02:50:00+02:00"), entry(499, "2026-10-25T02:10:00+01:00")],
       projectId: "p1",
-      repository: "owner/repo",
+      repositories: ["owner/repo"],
       query: "4",
       limit: 1,
     });
     expect(result.map((match) => match.number)).toEqual([499]);
+  });
+});
+
+describe("composerPullRequestRepositories", () => {
+  it("covers the project's own repository, then each one its listing returned", () => {
+    expect(
+      composerPullRequestRepositories({
+        projectId: "p1",
+        repository: null,
+        entries: [
+          entry(1, "2026-01-01"),
+          { ...entry(2, "2026-01-02"), repository: "Owner/Repo" },
+          { ...entry(3, "2026-01-03"), repository: "owner/tracked" },
+          { ...entry(4, "2026-01-04"), projectId: "p2", repository: "owner/elsewhere" },
+        ],
+      }),
+    ).toEqual(["owner/repo", "owner/tracked"]);
   });
 });
 
@@ -76,7 +94,7 @@ describe("linked pull requests", () => {
       entries: [entry(4, "2026-01-03"), { ...entry(4, "2026-01-04"), repository: "owner/other" }],
       linked: composerPullRequestsFromLinks([link("owner/repo-b", 4)], "p1"),
       projectId: "p1",
-      repository: "owner/repo",
+      repositories: ["owner/repo"],
       query: "4",
       limit: 10,
     });
@@ -97,7 +115,7 @@ describe("linked pull requests", () => {
       entries: [],
       linked: composerPullRequestsFromLinks([github, gitlab], "p1"),
       projectId: "p1",
-      repository: "wireshark/wireshark",
+      repositories: ["wireshark/wireshark"],
       query: "1",
       limit: 10,
     });
@@ -110,7 +128,7 @@ describe("linked pull requests", () => {
       entries: [entry(4, "2026-01-03")],
       linked: composerPullRequestsFromLinks([link("Owner/Repo", 4)], "p1"),
       projectId: "p1",
-      repository: "owner/repo",
+      repositories: ["owner/repo"],
       query: "",
       limit: 10,
     });
