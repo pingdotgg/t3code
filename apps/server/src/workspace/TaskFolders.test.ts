@@ -781,11 +781,12 @@ it.live("adds a repository to an existing task folder on the thread's branch", (
       yield* taskFolders.addRepository({ threadId, repositoryPath: unborn }).pipe(Effect.flip);
       assert.equal(yield* fileSystem.readLink(path.join(root, "unborn")), unborn);
 
-      // Another checkout where a worktree belongs is not restored over, nor resumed in.
+      // A copy of a checkout Git registered elsewhere is not the thread's worktree: it is not
+      // restored over, nor resumed in.
       const webWorktree = path.join(root, "web");
-      yield* run(web, "worktree", "remove", "--force", webWorktree);
-      yield* fileSystem.makeDirectory(webWorktree);
-      yield* run(webWorktree, "init", "-b", "main");
+      const moved = path.join(tmp, "web-moved");
+      yield* run(web, "worktree", "move", webWorktree, moved);
+      yield* fileSystem.copy(moved, webWorktree);
       const refused = yield* taskFolders
         .restore({
           taskFolder: (yield* taskFolders.find(root))!,

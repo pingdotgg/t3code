@@ -1199,6 +1199,15 @@ const make = Effect.gen(function* () {
                 .length > 0));
         if (occupied)
           return yield* refuse(`${worktreePath} already holds files, so no worktree can go there.`);
+        // The link the worktree took the place of comes back when the worktree does not stay.
+        const relink = wasLinked
+          ? // Git may or may not have left an empty folder where the link was.
+            removeEmptyDirectory(worktreePath).pipe(
+              Effect.ignore,
+              Effect.andThen(fileSystem.symlink(repositoryPath, worktreePath)),
+              Effect.ignoreCause({ log: true }),
+            )
+          : Effect.void;
         const existing = (yield* git
           .listLocalBranchNames(repositoryPath)
           .pipe(Effect.mapError(fail("add-repository", "Could not list branches")))).includes(
@@ -1224,16 +1233,7 @@ const make = Effect.gen(function* () {
             });
           }
         }).pipe(
-          Effect.onError(() =>
-            wasLinked
-              ? // Git may or may not have left an empty folder where the link was.
-                removeEmptyDirectory(worktreePath).pipe(
-                  Effect.ignore,
-                  Effect.andThen(fileSystem.symlink(repositoryPath, worktreePath)),
-                  Effect.ignoreCause({ log: true }),
-                )
-              : Effect.void,
-          ),
+          Effect.onError(() => relink),
           Effect.mapError(fail("add-repository", `Could not create the ${folder.name} worktree`)),
         );
         const updated: TaskFolder = {
@@ -1251,7 +1251,7 @@ const make = Effect.gen(function* () {
                 { repositoryPath, worktreePath },
                 true,
                 existing ? undefined : branch,
-              ).pipe(Effect.ignoreCause({ log: true })),
+              ).pipe(Effect.ignoreCause({ log: true }), Effect.andThen(relink)),
             ),
           );
         return updated;
