@@ -433,7 +433,9 @@ describe("RelayClient", () => {
         const installed = yield* manager.installWithProgress((event) =>
           Effect.sync(() => {
             if (event.type === "progress") {
-              progress.push(event.stage);
+              if (progress.at(-1) !== event.stage) {
+                progress.push(event.stage);
+              }
             }
           }),
         );
@@ -470,6 +472,78 @@ describe("RelayClient", () => {
         ),
       ),
   );
+
+  it.effect("reports byte progress while downloading the relay client", () => {
+    const bytes = new Uint8Array(2 * 1024 * 1024 + 17);
+    const chunkSize = 512 * 1024;
+    let offset = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset >= bytes.length) {
+          controller.close();
+          return;
+        }
+        const nextOffset = Math.min(offset + chunkSize, bytes.length);
+        controller.enqueue(bytes.subarray(offset, nextOffset));
+        offset = nextOffset;
+      },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-cloudflared-test-",
+      });
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
+        baseDir,
+        releaseAsset: {
+          url: "https://example.test/cloudflared",
+          sha256: Hex.encode(sha256(bytes)),
+          archive: "binary",
+        },
+      });
+      const byteProgress: Array<[number, number | undefined]> = [];
+      yield* manager.installWithProgress((event) =>
+        Effect.sync(() => {
+          if (
+            event.type === "progress" &&
+            event.stage === "downloading" &&
+            event.downloadedBytes !== undefined
+          ) {
+            byteProgress.push([event.downloadedBytes, event.totalBytes]);
+          }
+        }),
+      );
+
+      expect(byteProgress.length).toBeGreaterThan(1);
+      expect(byteProgress.at(-1)).toEqual([bytes.length, bytes.length]);
+      const downloadedValues = byteProgress.map(([downloaded]) => downloaded);
+      expect(downloadedValues).toEqual(downloadedValues.toSorted((a, b) => a - b));
+      expect(downloadedValues.some((downloaded) => downloaded < bytes.length)).toBe(true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(body, {
+                    headers: { "content-length": String(2 * 1024 * 1024 + 17) },
+                  }),
+                ),
+              ),
+            ),
+          ),
+          layerSpawner([]),
+          layerHostRuntime({ PATH: "" }),
+        ),
+      ),
+    );
+  });
 
   it.effect.skipIf(windowsHost)(
     "installs when the downloaded binary's first launch is held by an antivirus scan",
