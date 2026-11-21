@@ -530,6 +530,32 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         }),
       );
       expect((yield* harness.provider.snapshot.refresh).version).toBe("1.5.13");
+      // Custom-launcher handshakes can still report a downgraded executable version.
+      yield* harness.provider.onSessionStarted({
+        ...started,
+        initializeResult: {
+          ...initializeResult,
+          agentInfo: { ...initializeResult.agentInfo, version: "1.5.12" },
+        },
+      });
+      expect((yield* harness.provider.snapshot.getSnapshot).version).toBe("1.5.12");
+      // An authoritative health-check version is protected from older session handshakes.
+      yield* Ref.set(
+        harness.probe,
+        Effect.succeed({
+          ...initializeResult,
+          agentInfo: { ...initializeResult.agentInfo, version: "1.5.15" },
+        }),
+      );
+      expect((yield* harness.provider.snapshot.refresh).version).toBe("1.5.15");
+      yield* harness.provider.onSessionStarted({
+        ...started,
+        initializeResult: {
+          ...initializeResult,
+          agentInfo: { ...initializeResult.agentInfo, version: "1.5.14" },
+        },
+      });
+      expect((yield* harness.provider.snapshot.getSnapshot).version).toBe("1.5.15");
     }),
   );
 
