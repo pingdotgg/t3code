@@ -20,6 +20,9 @@ import {
   captureComposerDraftInsertion,
   countComposerDraftAttachmentsAfterSelection,
   getComposerDraftSnapshot,
+  addComposerPendingMedia,
+  keepPendingComposerMedia,
+  removeComposerPendingMedia,
   type ComposerDraftInsertion,
 } from "./use-composer-drafts";
 import { startComposerDraftOperation } from "./composerDraftOperations";
@@ -72,15 +75,24 @@ export function useComposerAttachmentActions(props: {
     if (!key || props.locked) return;
     const insertion = captureComposerDraftInsertion(key);
     await withDraftOperation(key, async (signal) => {
-      const result = await pickComposerMedia({
+      let placeholderIds: ReadonlyArray<string> = [];
+      await pickComposerMedia({
         existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
         maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
-      });
-      report(
-        m(msg("Could not attach photo or video")),
-        result.error,
-        await append(key, signal, result.attachments, insertion),
-      );
+        onPicked: (placeholders) => {
+          placeholderIds = placeholders.map(({ id }) => id);
+          addComposerPendingMedia(key, placeholders);
+        },
+      })
+        .then(async (result) => {
+          // append writes the draft before its first await, so no removal lands in between.
+          report(
+            m(msg("Could not attach photo or video")),
+            result.error,
+            await append(key, signal, keepPendingComposerMedia(key, result.attachments), insertion),
+          );
+        })
+        .finally(() => removeComposerPendingMedia(key, placeholderIds));
     });
   };
   const onPickDraftFiles = async () => {
