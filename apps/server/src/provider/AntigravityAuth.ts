@@ -46,6 +46,8 @@ const NO_RESPONSE_MESSAGE =
 const UNREACHABLE_MESSAGE =
   "Antigravity could not reach Google. Check this machine's network connection, then start sign-in again.";
 const FORWARDING_FAILED_MESSAGE = "Could not deliver the sign-in response. Start sign-in again.";
+const NO_SESSION_MESSAGE =
+  "Antigravity accepted the sign-in, but did not finish opening its session. Start sign-in again.";
 const LOGIN_CODE_FIELD = "code";
 const isSetupError = Schema.is(ProviderSetupError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
@@ -64,6 +66,7 @@ interface AuthFlow {
   state: ProviderAuthState;
   pending: AntigravityAuthorizationUrl | undefined;
   initialized: boolean;
+  authenticated: boolean;
   callbackSent: boolean;
   codeLogin: boolean;
   submitCode: ((response: string) => Effect.Effect<void>) | undefined;
@@ -104,6 +107,9 @@ export interface AntigravityAuthOptions<
   readonly instanceId: ProviderInstanceId;
   readonly makeRuntime: (input: {
     readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
+    readonly requestLogger?: (
+      event: AcpSessionRuntime.AcpSessionRequestLogEvent,
+    ) => Effect.Effect<void>;
   }) => Effect.Effect<Runtime, AcpErrors.AcpError | ProviderSetupError, Scope.Scope>;
   readonly onAuthenticated: (
     result: AcpSessionRuntime.AcpSessionRuntimeStartResult,
@@ -315,6 +321,19 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       ),
     );
 
+  const publishVerifying = (flow: AuthFlow) =>
+    lock.withPermits(1)(
+      Effect.gen(function* () {
+        if (activeFlow !== flow) return;
+        yield* publishFlow(flow, {
+          ...flow.state,
+          phase: "verifying",
+          authorizationUrl: null,
+          message: "Checking Antigravity access and models.",
+        });
+      }),
+    );
+
   const publishStartingHint = (flow: AuthFlow, delayMs: number, message: string) =>
     Effect.sleep(delayMs).pipe(
       Effect.andThen(
@@ -344,10 +363,26 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
           return true;
         }),
       );
+      // `start` also runs session/new, which can hang after `authenticate` has succeeded.
+      const requestLogger = (event: AcpSessionRuntime.AcpSessionRequestLogEvent) =>
+        event.method !== "authenticate"
+          ? Effect.void
+          : event.status === "started"
+            ? Effect.sync(() => {
+                flow.authenticated = false;
+              })
+            : event.status === "succeeded"
+              ? Effect.sync(() => {
+                  flow.authenticated = true;
+                }).pipe(Effect.andThen(publishVerifying(flow)))
+              : Effect.void;
       const runtime = yield* options.makeRuntime(
         signedIn
-          ? {}
-          : { onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url, "loopback") },
+          ? { requestLogger }
+          : {
+              onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url, "loopback"),
+              requestLogger,
+            },
       );
       const startupHint = yield* publishStartingHint(flow, STARTUP_HINT_MS, NOT_STARTED_MESSAGE);
       // `start` reuses this memoized handshake.
@@ -357,17 +392,11 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       yield* publishStartingHint(flow, NO_RESPONSE_HINT_MS, NO_RESPONSE_MESSAGE);
       const started = yield* runtime.start();
       yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          if (activeFlow !== flow) return;
+        Effect.sync(() => {
           flow.pending = undefined;
-          yield* publishFlow(flow, {
-            ...flow.state,
-            phase: "verifying",
-            authorizationUrl: null,
-            message: "Checking Antigravity access and models.",
-          });
         }),
       );
+      yield* publishVerifying(flow);
       yield* options.onAuthenticated(started, runtime);
     },
     (effect, flow, _stopSessions) =>
@@ -379,11 +408,13 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             Effect.fail(
               setupError(
                 "start",
-                flow.state.phase !== "starting"
-                  ? "Google sign-in expired. Start sign-in again."
-                  : flow.initialized
-                    ? UNREACHABLE_MESSAGE
-                    : NOT_RESPONDING_MESSAGE,
+                flow.authenticated
+                  ? NO_SESSION_MESSAGE
+                  : flow.state.phase !== "starting"
+                    ? "Google sign-in expired. Start sign-in again."
+                    : flow.initialized
+                      ? UNREACHABLE_MESSAGE
+                      : NOT_RESPONDING_MESSAGE,
               ),
             ),
         }),
@@ -471,6 +502,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               state,
               pending: undefined,
               initialized: false,
+              authenticated: false,
               callbackSent: false,
               codeLogin: false,
               submitCode: undefined,
