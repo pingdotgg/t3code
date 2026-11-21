@@ -613,8 +613,9 @@ function indexDirectoryNames(entries: ReadonlyArray<string>): PathDirectoryNames
   return names;
 }
 
-// File names to stat in one PATH directory, in candidate order. A listing gives the real
-// spelling, so only names that exist are probed; without one every case variant is tried.
+// File names to stat in one PATH directory, in candidate order; only names the listing holds in
+// some case. Windows probes the listed spellings; elsewhere the requested spelling, which a
+// case-insensitive volume (macOS default) still resolves.
 function pathDirectoryProbeNames(
   candidates: ReadonlyArray<string>,
   names: PathDirectoryNames | undefined,
@@ -623,8 +624,10 @@ function pathDirectoryProbeNames(
   if (names === undefined) return candidates;
   const probe: string[] = [];
   for (const candidate of candidates) {
-    for (const name of names.get(candidate.toLowerCase()) ?? []) {
-      if ((platform === "win32" || name === candidate) && !probe.includes(name)) probe.push(name);
+    const listed = names.get(candidate.toLowerCase());
+    if (listed === undefined) continue;
+    for (const name of platform === "win32" ? listed : [candidate]) {
+      if (!probe.includes(name)) probe.push(name);
     }
   }
   return probe;
