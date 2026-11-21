@@ -11533,7 +11533,10 @@ describe("AcpAdapterV2", () => {
   );
 
   // A dev server started as a background shell never exits, so it must not hold the root turn.
-  const startGrokBackgroundShellTurn = Effect.fnUntraced(function* (name: string) {
+  const startGrokBackgroundShellTurn = Effect.fnUntraced(function* (
+    name: string,
+    requiresRuntimeRestartForPolicy?: AcpAdapterV2Flavor["requiresRuntimeRestartForPolicy"],
+  ) {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const path = yield* Path.Path;
     const selfInvocation = yield* resolveSelfInvocation();
@@ -11578,6 +11581,9 @@ describe("AcpAdapterV2", () => {
         extractBackgroundTaskId: grokFlavor.extractBackgroundTaskId!,
         isBackgroundCommandTool: grokFlavor.isBackgroundCommandTool!,
         isPersistentBackgroundTool: grokFlavor.isPersistentBackgroundTool!,
+        ...(requiresRuntimeRestartForPolicy === undefined
+          ? {}
+          : { requiresRuntimeRestartForPolicy }),
         registerExtensions: ({ runtime, applyBackgroundTaskMutation }) =>
           registerXAiBackgroundTaskTracking(runtime, applyBackgroundTaskMutation),
         makeRuntime: makeMockRuntime({
@@ -11602,6 +11608,7 @@ describe("AcpAdapterV2", () => {
           }),
         }),
       },
+      continuationRequests: { offer: () => Effect.void },
     });
     const threadId = ThreadId.make(`thread-acp-${name}`);
     const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -11706,7 +11713,17 @@ describe("AcpAdapterV2", () => {
           rows.push(event.turnItem);
       }
     });
-    return { update, complete, startDevServer, settle, takeRows, runId: turnInput.runId };
+    return {
+      update,
+      complete,
+      startDevServer,
+      settle,
+      takeRows,
+      runId: turnInput.runId,
+      runtime,
+      providerThread,
+      modelSelection,
+    };
   });
 
   it.effect("completes a settled Grok turn while a background shell keeps running", () =>
@@ -11718,6 +11735,28 @@ describe("AcpAdapterV2", () => {
         content: { type: "text", text: "The dev server is running." },
       });
       assert.equal((yield* harness.settle).status, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("a policy restart drops background tasks the old process was running", () =>
+    Effect.gen(function* () {
+      const harness = yield* startGrokBackgroundShellTurn(
+        "grok-dev-server-policy-restart",
+        (launched, next) => launched.runtimeMode !== next.runtimeMode,
+      );
+      yield* harness.startDevServer;
+      yield* harness.settle;
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        modelSelection: harness.modelSelection,
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      });
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

@@ -1,6 +1,7 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type AntigravityAuthMethod,
+  isRuntimeModeAbove,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ProviderSendTurnInput,
@@ -164,10 +165,36 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
+export interface AntigravityLaunchPermissionPolicy {
+  readonly runtimeMode: RuntimeMode;
+  readonly approvalPolicy?: unknown;
+  readonly sandboxPolicy?: unknown;
+  readonly maxRuntimeMode?: RuntimeMode | undefined;
+}
+
+/**
+ * Unrestricted Full access passes `--dangerously-skip-permissions` so `agy acp` detached
+ * subagents (`invoke_subagent`) do not time out waiting on unforwarded permission prompts.
+ * Any explicit approval policy, sandbox policy, or narrower runtime-mode ceiling disables it.
+ */
+export function antigravitySkipsPermissions(
+  policy: AntigravityLaunchPermissionPolicy | undefined,
+): boolean {
+  return (
+    policy !== undefined &&
+    policy.runtimeMode === "full-access" &&
+    policy.approvalPolicy === undefined &&
+    policy.sandboxPolicy === undefined &&
+    (policy.maxRuntimeMode === undefined ||
+      !isRuntimeModeAbove("full-access", policy.maxRuntimeMode))
+  );
+}
+
 /**
  * The agy CLI rejects `yolo` and `auto_edit`, and sessions without native Auto reject `auto`.
- * Those stay in `default`, where it asks before acting and T3 answers from the live runtime
- * policy, so permission changes apply on the next turn without a restart.
+ * Those stay in `default`: unrestricted Full access passes `--dangerously-skip-permissions` at
+ * launch, while restricted Full access and Auto-accept edits let T3 answer requests from the
+ * live runtime policy.
  */
 export function antigravitySessionMode(
   modeId: string,

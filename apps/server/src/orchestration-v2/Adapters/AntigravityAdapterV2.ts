@@ -24,10 +24,12 @@ import {
   antigravityPermissionDisposition,
   antigravityPermissionMode,
   antigravityRuntimeModeForSessionMode,
+  antigravitySkipsPermissions,
   antigravitySteersWithPrompt,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
+  type AntigravityLaunchPermissionPolicy,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
@@ -63,7 +65,9 @@ const AntigravityProviderCapabilitiesV2 = {
   sessions: {
     ...AcpProviderCapabilitiesV2.sessions,
     supportsModelSwitchInSession: true,
-    supportsRuntimeModeSwitchInSession: true,
+    // Unrestricted Full access passes `--dangerously-skip-permissions` at launch, so switching
+    // across permission modes respawns `agy acp` and resumes the session via `session/resume`.
+    supportsRuntimeModeSwitchInSession: false,
   },
   tools: {
     ...AcpProviderCapabilitiesV2.tools,
@@ -75,11 +79,14 @@ const AntigravityProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
-/** Thread variables reach the driver here; `makeAntigravityAcpRuntime` never reads them. */
+/** Thread variables and launch-time permission policy reach the driver here; `makeAntigravityAcpRuntime` never reads them. */
 export type AntigravityAdapterV2RuntimeInput = Omit<
   AntigravityAcpRuntimeInput,
   "spawn" | "childProcessSpawner"
-> & { readonly processEnvironment?: NodeJS.ProcessEnv };
+> & {
+  readonly processEnvironment?: NodeJS.ProcessEnv;
+  readonly runtimePolicy?: AntigravityLaunchPermissionPolicy;
+};
 
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
@@ -265,6 +272,8 @@ export function makeAntigravityAcpAdapterFlavor(
     }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
+    requiresRuntimeRestartForPolicy: (launchedPolicy, nextPolicy) =>
+      antigravitySkipsPermissions(launchedPolicy) !== antigravitySkipsPermissions(nextPolicy),
     clientFileSystem: {
       readTextFile: (request, cwd) =>
         readAntigravityClientTextFile({
