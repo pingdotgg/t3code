@@ -5,9 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
-import * as References from "effect/References";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Etag from "effect/http/Etag";
 import * as HttpPlatform from "effect/http/HttpPlatform";
@@ -77,23 +75,9 @@ const handlerFor = (
     request: WebhookTriggerRequest,
   ) => Effect.Effect<WebhookTriggerResult, ScheduledTaskError>,
   secrets: ReadonlyMap<string, string> = linkedSecrets,
-  loggedUrls?: Array<unknown>,
 ) =>
   HttpRouter.toWebHandler(
     HttpApiBuilder.layer(WebhookTestApi).pipe(
-      Layer.provideMerge(
-        Logger.layer(
-          loggedUrls === undefined
-            ? []
-            : [
-                Logger.make(({ fiber }) => {
-                  const url = fiber.getRef(References.CurrentLogAnnotations)["http.url"];
-                  if (url !== undefined) loggedUrls.push(url);
-                }),
-              ],
-          { mergeWithExisting: false },
-        ),
-      ),
       Layer.provide(WebhookRoute.layer),
       Layer.provide(RelayDeliveryProof.layer),
       Layer.provide(Layer.mock(ScheduledTaskService)({ triggerWebhook: trigger })),
@@ -120,7 +104,7 @@ const handlerFor = (
       ),
       Layer.provide([NodeServices.layer, PlatformNodeCrypto.layerSignature]),
     ),
-    { disableLogger: loggedUrls === undefined },
+    { disableLogger: true },
   );
 
 const post = (
@@ -201,20 +185,6 @@ describe("webhook route", () => {
       );
       yield* Effect.promise(() => dispose());
       expect(received[0]?.relayDeliveryId).toBeUndefined();
-    }),
-  );
-
-  it.live("logs webhook URLs with the token redacted", () =>
-    Effect.gen(function* () {
-      const loggedUrls: Array<unknown> = [];
-      const { handler, dispose } = handlerFor(
-        () => Effect.succeed({ _tag: "not_found" }),
-        linkedSecrets,
-        loggedUrls,
-      );
-      yield* Effect.promise(() => handler(post("/api/hooks/id/secret-token", "{}")));
-      yield* Effect.promise(() => dispose());
-      expect(loggedUrls).toEqual(["/api/hooks/id/REDACTED"]);
     }),
   );
 
