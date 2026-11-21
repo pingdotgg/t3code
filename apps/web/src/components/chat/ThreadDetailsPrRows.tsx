@@ -68,6 +68,7 @@ function ThreadDetailsPrLinkRow({
       environmentId={environmentId}
       pr={pr}
       number={link.number}
+      url={link.url}
       reference={link}
       status={prStatusIndicator(pr, linked?.sourceControlProvider, m)}
       project={project}
@@ -192,6 +193,7 @@ export function ThreadDetailsThreadPrRows({
       environmentId={threadRef.environmentId}
       pr={pr}
       number={number}
+      url={url}
       reference={currentLink}
       status={displayed.status}
       project={rowProject}
