@@ -2,12 +2,13 @@ import { T, useGT, useLocale, useMessages } from "gt-react";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
-  type ProviderInstanceId,
+  ProviderInstanceId,
   type EnvironmentId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -61,6 +62,7 @@ import {
   useEnvironmentModelPreferences,
   useToggleEnvironmentModelFavorite,
 } from "~/hooks/useSettings";
+import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { announce } from "~/lib/announce";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
@@ -70,8 +72,10 @@ import { Badge } from "../ui/badge";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
+  type ModelPickerTab,
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
+  resolveModelPickerTab,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 import { hasRuntimeModelCatalog } from "../../providerModels";
@@ -170,6 +174,26 @@ function adjacentModelPickerProvider(input: {
         : providers.length - 1
       : (index + input.direction + providers.length) % providers.length
   ]!;
+}
+
+const LAST_PICKED_TAB_STORAGE_KEY = "t3code:model-picker-last-tab:v1";
+const ModelPickerTabSchema = Schema.Union([Schema.Literal("favorites"), ProviderInstanceId]);
+
+function readLastPickedTab(): ModelPickerTab | null {
+  try {
+    return getLocalStorageItem(LAST_PICKED_TAB_STORAGE_KEY, ModelPickerTabSchema);
+  } catch (error) {
+    console.error("Could not read the last model picker tab.", error);
+    return null;
+  }
+}
+
+function writeLastPickedTab(tab: ModelPickerTab): void {
+  try {
+    setLocalStorageItem(LAST_PICKED_TAB_STORAGE_KEY, tab, ModelPickerTabSchema);
+  } catch (error) {
+    console.error("Could not persist the last model picker tab.", error);
+  }
 }
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
@@ -435,34 +459,54 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       activeEntry,
       modelOptionsByInstance.get(props.activeInstanceId) ?? [],
     );
-  const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
-    () => {
-      if (
-        props.lockedProvider !== null ||
-        activeInstanceHasSelectableUnavailableModel ||
-        activeInstanceNeedsSetup
-      ) {
-        return props.activeInstanceId;
+  const selectableUnavailableInstanceIds = (() => {
+    const instanceIds = new Set<ProviderInstanceId>();
+    if (activeInstanceHasSelectableUnavailableModel) {
+      instanceIds.add(props.activeInstanceId);
+    }
+    if (onOpenProviderSetup !== undefined) {
+      for (const entry of instanceEntries) {
+        if (
+          shouldOfferModelPickerSetup(entry, modelOptionsByInstance.get(entry.instanceId) ?? [])
+        ) {
+          instanceIds.add(entry.instanceId);
+        }
       }
-      const hasPickableFavorite = favorites.some((favorite) => {
-        const entry = instanceEntries.find((entry) => entry.instanceId === favorite.provider);
-        return (
-          entry !== undefined &&
-          (modelOptionsByInstance.get(favorite.provider) ?? []).some(
-            (option) =>
-              option.slug === favorite.model &&
-              shouldIncludeModelPickerOption({
-                entry,
-                option,
-                activeInstanceId: props.activeInstanceId,
-                activeModel: activeModelSlug,
-              }),
-          )
-        );
-      });
-      return hasPickableFavorite ? "favorites" : props.activeInstanceId;
-    },
-  );
+    }
+    return instanceIds.size > 0 ? instanceIds : undefined;
+  })();
+  const hasPickableFavorite = favorites.some((favorite) => {
+    const entry = instanceEntries.find((entry) => entry.instanceId === favorite.provider);
+    return (
+      entry !== undefined &&
+      (modelOptionsByInstance.get(favorite.provider) ?? []).some(
+        (option) =>
+          option.slug === favorite.model &&
+          shouldIncludeModelPickerOption({
+            entry,
+            option,
+            activeInstanceId: props.activeInstanceId,
+            activeModel: activeModelSlug,
+          }),
+      )
+    );
+  });
+
+  const [lastPickedTab] = useState(readLastPickedTab);
+  const [chosenTab, setChosenTab] = useState<ModelPickerTab | null>(null);
+  const keepActiveInstance =
+    props.lockedProvider !== null ||
+    activeInstanceHasSelectableUnavailableModel ||
+    activeInstanceNeedsSetup;
+  const selectedInstanceId = resolveModelPickerTab({
+    activeInstanceId: props.activeInstanceId,
+    chosenTab,
+    lastPickedTab,
+    hasFavorites: hasPickableFavorite,
+    keepActiveInstance,
+    instanceEntries,
+    selectableUnavailableInstanceIds,
+  });
   const { scanning: workspaceModelsScanning } = useProviderWorkspaceSnapshotRefresh({
     environmentId: props.environmentId,
     gitCwd: props.workspaceCwd ?? null,
@@ -490,14 +534,21 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
-  const toggleFavorite = useToggleEnvironmentModelFavorite(props.environmentId);
+  const toggleEnvironmentModelFavorite = useToggleEnvironmentModelFavorite(props.environmentId);
+  // Pins the open tab so the first or last favorite does not move the default tab under the cursor.
+  const toggleFavorite = (instanceId: ProviderInstanceId, slug: string) => {
+    if (chosenTab === null && !keepActiveInstance) {
+      setChosenTab(selectedInstanceId);
+    }
+    return toggleEnvironmentModelFavorite(instanceId, slug);
+  };
 
   const focusSearchInput = () => {
     searchInputRef.current?.focus({ preventScroll: true });
   };
 
   const handleSelectInstance = (instanceId: ProviderInstanceId | "favorites") => {
-    setSelectedInstanceId(instanceId);
+    setChosenTab(instanceId);
     // Focusing the search on touch raises the on-screen keyboard on every provider tap.
     if (window.matchMedia("(pointer: coarse)").matches) return;
     window.requestAnimationFrame(() => {
@@ -543,6 +594,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     const resolvedModel = resolveSelectableModel(entry.driverKind, modelSlug, options);
     if (!resolvedModel) return null;
+    // Search results span every tab, and a forced locked or setup tab is not a habit, so
+    // neither replaces the remembered tab.
+    if (!isSearching && (chosenTab !== null || !keepActiveInstance)) {
+      writeLastPickedTab(selectedInstanceId);
+    }
     if (additive && onToggleModel) {
       onToggleModel(instanceId, resolvedModel);
     } else {
@@ -569,23 +625,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (!lockedContinuationGroupKey) return true;
     return entry.continuationGroupKey === lockedContinuationGroupKey;
   };
-
-  const selectableUnavailableInstanceIds = (() => {
-    const instanceIds = new Set<ProviderInstanceId>();
-    if (activeInstanceHasSelectableUnavailableModel) {
-      instanceIds.add(props.activeInstanceId);
-    }
-    if (canOpenProviderSetup) {
-      for (const entry of instanceEntries) {
-        if (
-          shouldOfferModelPickerSetup(entry, modelOptionsByInstance.get(entry.instanceId) ?? [])
-        ) {
-          instanceIds.add(entry.instanceId);
-        }
-      }
-    }
-    return instanceIds.size > 0 ? instanceIds : undefined;
-  })();
 
   const flatModels = (() => {
     const out: ModelPickerItem[] = [];

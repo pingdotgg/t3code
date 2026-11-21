@@ -85,6 +85,41 @@ export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): b
   return entry.enabled;
 }
 
+export type ModelPickerTab = ProviderInstanceId | "favorites";
+
+// Favorites can load after the picker opens, so the default follows them until the user picks a tab.
+export function resolveModelPickerTab(input: {
+  activeInstanceId: ProviderInstanceId;
+  chosenTab: ModelPickerTab | null;
+  lastPickedTab: ModelPickerTab | null;
+  hasFavorites: boolean;
+  keepActiveInstance: boolean;
+  instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  selectableUnavailableInstanceIds: ReadonlySet<ProviderInstanceId> | undefined;
+}): ModelPickerTab {
+  if (input.chosenTab !== null) {
+    return input.chosenTab;
+  }
+  if (input.keepActiveInstance) {
+    return input.activeInstanceId;
+  }
+  const lastPickedTab = input.lastPickedTab;
+  // Only a tab the sidebar leaves enabled, so the picker never opens on an empty, unpickable list.
+  const lastPickedEntry =
+    lastPickedTab === null || lastPickedTab === "favorites"
+      ? undefined
+      : input.instanceEntries.find((entry) => entry.instanceId === lastPickedTab);
+  if (
+    lastPickedEntry !== undefined &&
+    isProviderInstancePickerVisible(lastPickedEntry) &&
+    (isProviderInstancePickerReady(lastPickedEntry) ||
+      input.selectableUnavailableInstanceIds?.has(lastPickedEntry.instanceId))
+  ) {
+    return lastPickedEntry.instanceId;
+  }
+  return input.hasFavorites ? "favorites" : input.activeInstanceId;
+}
+
 export function deriveProviderInstanceEntries(
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<ProviderInstanceEntry> {
