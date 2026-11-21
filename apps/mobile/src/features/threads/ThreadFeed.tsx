@@ -4400,6 +4400,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             {...(usesNativeAutomaticInsets ? { contentInset: { top: anchorTopInset } } : {})}
             freeze={props.freeze}
             maintainScrollAtEnd={jumpReady ? false : THREAD_FEED_MAINTAIN_SCROLL_AT_END}
+            // A short drag away from the end must not re-arm following and snap the reader back.
+            maintainScrollAtEndThreshold={0}
             maintainVisibleContentPosition
             data={groupedFeed}
             extraData={listAppearanceData}

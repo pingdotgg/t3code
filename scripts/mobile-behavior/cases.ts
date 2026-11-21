@@ -33,6 +33,19 @@ const smooth: ReadonlyArray<Check> = [
 
 export const CASES: ReadonlyArray<MobileBehaviorCase> = [
   {
+    id: "short-drag-from-end-stays-put",
+    area: "scroll",
+    kind: "guard",
+    source: "#39673",
+    experience: "A small drag away from the bottom snaps back to the latest message.",
+    scenario: "shortDragFromEnd",
+    key: "finalFromEndPx",
+    checks: [
+      { metric: "finalFromEndPx", min: 12 },
+      { metric: "backwardPx", max: 4 },
+    ],
+  },
+  {
     id: "scroll-up-never-moves-backward",
     area: "scroll",
     kind: "guard",
