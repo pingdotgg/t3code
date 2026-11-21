@@ -35,6 +35,7 @@ import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSym
 import type { MessageResolver } from "../../i18n/messages";
 import { peerLinkEnvironment, useLinkableMachines } from "../../state/peerLinks";
 import { mintPairingCodeOn } from "../../state/peerPairingCode";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
@@ -229,6 +230,11 @@ function LinkRequestSheet(props: {
       : item.url === undefined
         ? null
         : linkDestination(item.url);
+  const source = useEnvironmentPresentation(props.environmentId).presentation;
+  const hosts =
+    source === null || targetName === null
+      ? null
+      : { source: source.entry.target.label, target: targetName };
   const targetId = target.kind === "machine" ? target.environmentId : null;
   const connected = usePreparedConnection(targetId);
   const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
@@ -315,10 +321,17 @@ function LinkRequestSheet(props: {
       >
         <View className="gap-1">
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
-            <T>
-              Agents here can then launch, message and wait on threads there. It appears under
-              Authorized clients in that machine's Sharing & access, where it can be revoked.
-            </T>
+            {hosts === null ? (
+              <T>
+                Agents here can then launch, message and wait on threads there. It appears under
+                Authorized clients in that machine's Sharing & access, where it can be revoked.
+              </T>
+            ) : (
+              gt(
+                "Agents on {source} can then launch, message and wait on threads on {target}. It appears under Authorized clients in that machine's Sharing & access, where it can be revoked.",
+                hosts,
+              )
+            )}
           </Text>
           {item.url !== undefined && target.kind === "machine" ? (
             <Text className="font-sans text-xs text-foreground-muted" numberOfLines={1}>
@@ -436,7 +449,13 @@ function LinkRequestSheet(props: {
                 </Text>
               </View>
             )}
-            <SettingsSection title={gt("What agents here may do there")}>
+            <SettingsSection
+              title={
+                hosts === null
+                  ? gt("What agents here may do there")
+                  : gt("What agents on {source} may do on {target}", hosts)
+              }
+            >
               {LINK_ACCESS_CHOICES.map((choice, index) => (
                 <SettingsChoiceRow
                   key={choice.access}
@@ -450,10 +469,17 @@ function LinkRequestSheet(props: {
               ))}
             </SettingsSection>
             <Text className="font-sans text-xs text-foreground-muted">
-              <T>
-                An agent here never gets more there than its own mode here either. Threads it starts
-                there cannot change that environment's own threads, projects or settings.
-              </T>
+              {hosts === null ? (
+                <T>
+                  An agent here never gets more there than its own mode here either. Threads it
+                  starts there cannot change that environment's own threads, projects or settings.
+                </T>
+              ) : (
+                gt(
+                  "An agent never gets more access on {target} than its own mode on {source}. Threads it starts there cannot change that environment's own threads, projects or settings.",
+                  hosts,
+                )
+              )}
             </Text>
           </>
         )}

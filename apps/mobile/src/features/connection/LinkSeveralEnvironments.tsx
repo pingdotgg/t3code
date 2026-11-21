@@ -61,7 +61,11 @@ export function LinkSeveralEnvironmentsAction(props: {
         fullWidth
       />
       {open ? (
-        <LinkSeveralSheet environmentId={props.environmentId} onClose={() => setOpen(false)} />
+        <LinkSeveralSheet
+          environmentId={props.environmentId}
+          environmentLabel={props.environmentLabel}
+          onClose={() => setOpen(false)}
+        />
       ) : null}
     </View>
   );
@@ -73,6 +77,7 @@ export function LinkSeveralEnvironmentsAction(props: {
  */
 function LinkSeveralSheet(props: {
   readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
   readonly onClose: () => void;
 }) {
   const gt = useGT();
@@ -166,11 +171,10 @@ function LinkSeveralSheet(props: {
         contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
       >
         <Text className="font-sans text-sm leading-5 text-foreground-muted">
-          <T>
-            Agents here can then launch, message and wait on threads on each machine you pick. Each
-            appears under Authorized clients in that machine's Sharing & access, where it can be
-            revoked.
-          </T>
+          {gt(
+            "Agents on {source} can then launch, message and wait on threads on each machine you pick. Each appears under Authorized clients in that machine's Sharing & access, where it can be revoked.",
+            { source: props.environmentLabel },
+          )}
         </Text>
         {candidates.length === 0 ? (
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
