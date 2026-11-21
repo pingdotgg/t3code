@@ -101,9 +101,14 @@ const lines = (stream: NodeJS.ReadableStream) => {
 };
 
 describe("renderCliShim", () => {
-  it.skipIf(!hasSetsid).each(["SIGTERM", "SIGHUP"] as const)(
-    "keeps the AppImage mounted until the server exits after %s to the process group",
-    async (signal) => {
+  it.skipIf(!hasSetsid).each([
+    ["SIGTERM", "the process group"],
+    ["SIGHUP", "the process group"],
+    // systemd's KillMode=mixed signals only the main PID, then waits for the unit to empty.
+    ["SIGTERM", "the launcher alone"],
+  ] as const)(
+    "keeps the AppImage mounted until the server exits after %s to %s",
+    async (signal, target) => {
       const { root, shim } = fakeAppImage(true, SLOW_SERVER);
       const child = NodeChildProcess.spawn(shim, [], {
         detached: true,
@@ -119,7 +124,7 @@ describe("renderCliShim", () => {
         mounter = Number(NodeFS.readFileSync(NodePath.join(root, "mounter.pid"), "utf8"));
 
         // Ctrl-C in a terminal, a closed SSH session, or a service manager signals the whole group.
-        process.kill(-child.pid!, signal);
+        process.kill(target === "the process group" ? -child.pid! : child.pid!, signal);
         // The shell runs pending traps in ascending signal number, and WINCH outnumbers TERM and
         // HUP, so a mounter that also got the group signal unmounts before it answers this probe.
         process.kill(mounter, "SIGWINCH");
