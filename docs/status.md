@@ -1,6 +1,6 @@
 # Status
 
-**State:** Phases 1, 3, 4 and most of 5 integrated and verified live against a disposable `conn-server`. Open: sidebar/header parity (Phase 2 polish) and the CEF browser inside the Browser panel. `scripts/check.sh` green (41 tests).
+**State:** Phases 1, 3, 4 and most of 5 integrated and verified live against a disposable `conn-server`. Open: the CEF browser inside the Browser panel. `scripts/check.sh` green (41 tests).
 
 Keep this file accurate. Update it whenever a milestone lands, a proof passes, or a blocker is found.
 
@@ -12,7 +12,7 @@ Keep this file accurate. Update it whenever a milestone lands, a proof passes, o
 | 1 | `conn-client` WebSocket + `conn-wire`/`conn-contract` handshake (`subscribeShell`) | Done | `CONN_SERVER_BIN=target-conn-server/release/conn-server cargo test -p conn-client` (live test); app dump shows `status: Connected` |
 | 1 | `conn-theme` palettes + `color-mix` shell token math | Done | 13 built-in themes incl. Dark Ocean; golden tests in `cargo test -p conn-theme` |
 | 1 | `conn-app` native macOS window + 44px traffic lights + frosted shell | Done | Traffic lights at (16, 15) → centered on 44px; blurred window; `.shots/p1-dark.png`, `.shots/p1-light.png` |
-| 2 | Workspace rail, thread sidebar, 44px header, Lucide/Phosphor icons | In progress | Rail, grouped sidebar, header, toolbar group render; drift listed below |
+| 2 | Workspace rail, thread sidebar, 44px header, Lucide/Phosphor icons | Done | Flat card rows (badge, age, title, branch, provider), Search row, Settled footer, muted rail monograms, toggle right of traffic lights; `.shots/p2b-dark.png`, `p2b-light.png` |
 | 3 | Chat timeline (Markdown, code blocks, tool rows, user bubbles) + composer | Done | Live `subscribeThread`; `message.dispatch` sends a prompt and the Haiku reply streams in (automation `send`); `.shots/p3-dark.png`, `p3-light.png` |
 | 4 | Right panel: Files tree/preview, Diff viewer, Terminal (`alacritty_terminal`) | Done | `projects.listEntries`/`readFile`, `getFullThreadDiff`, local zsh PTY; `.shots/p4-*.png` |
 | 5 | `Cmd+K` palette, Settings route modal, live theme switching | Done | `.shots/p5-palette-*.png`, `p5-settings-*.png`; theme switch updates the open modal |
@@ -54,8 +54,6 @@ scripts/run-app.sh stop; scripts/dev-server.sh stop
 - Inline code uses the body font; GPUI `HighlightStyle` cannot switch font family inside a run.
 - The thread diff for the seeded "Add greet function" thread includes `target/` files: its checkpoint predates the demo `.gitignore`.
 
-## Visual drift to fix (Phase 2 audit, 1st pass)
+## Phase 2 drift (fixed)
 
-- Conn's sidebar is a flat thread list (project label + age, title, branch, provider icon) with a Search row and icon buttons; ours groups by project folder with a "New thread" row.
-- Sidebar toggle should sit right of the traffic lights, not at the sidebar's right edge.
-- Rail tiles use saturated blue/green; Conn uses muted project monograms.
+All three items from the first audit are fixed (flat thread list, toggle placement, muted rail tiles); see `.shots/p2b-*.png` against `.shots/ref/`.
