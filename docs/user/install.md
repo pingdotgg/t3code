@@ -238,6 +238,13 @@ The managed runtimes for Antigravity and for Codex connected through ChatGPT
 first install the release T3 Code tested. When T3 Code finds a newer compatible
 release, their setup in **Settings → Providers** offers an update.
 
+If Codex or Claude uses a launcher as its **Binary path**, set **Maintenance binary path**
+to the underlying CLI installation in web or desktop Settings. Sessions keep using the
+launcher; Update now uses the maintenance installation and still verifies the session
+binary's version afterward. Clear the maintenance path to update the session binary again.
+When T3 can determine the installer, the copyable command also targets that installation.
+Run it in a terminal on the environment where the provider is installed.
+
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, T3 Code does not display

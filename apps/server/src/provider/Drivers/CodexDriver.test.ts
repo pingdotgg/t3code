@@ -491,7 +491,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
 
         for (const update of updates) {
           expect(update).toMatchObject({
-            command: `${binaryPath} update`,
+            command: `env CODEX_HOME='${installHome}' ${binaryPath} update`,
             args: ["update"],
             lockKey: "codex-native",
             env: { CODEX_HOME: installHome },

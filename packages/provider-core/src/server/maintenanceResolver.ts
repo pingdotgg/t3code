@@ -95,6 +95,9 @@ export interface PackageManagedProviderMaintenanceDefinition {
     readonly env?:
       | NodeJS.ProcessEnv
       | ((context: ProviderMaintenanceResolutionContext) => NodeJS.ProcessEnv);
+    readonly installationEnv?: (
+      context: ProviderMaintenanceResolutionContext,
+    ) => Readonly<Record<string, string>>;
   } | null;
   /** The mise registry tool that installs this provider; unset keeps mise installs manual-only. */
   readonly mise?: MiseProviderTool;
@@ -114,18 +117,45 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function quotePowerShellLiteral(value: string): string {
+  return `'${value.replace(/['\u2018\u2019]/g, "$&$&")}'`;
+}
+
 function quoteShellWord(word: string, platform: NodeJS.Platform): string {
   const safeWord = platform === "win32" ? /^[\w./:\\@=-]+$/ : /^[\w./:@=-]+$/;
   if (safeWord.test(word)) return word;
-  return platform === "win32"
-    ? `'${word.replace(/['\u2018\u2019]/g, "$&$&")}'`
-    : `'${word.replaceAll("'", "'\\''")}'`;
+  return platform === "win32" ? quotePowerShellLiteral(word) : `'${word.replaceAll("'", "'\\''")}'`;
 }
 
 function quoteUpdateExecutable(executable: string, platform: NodeJS.Platform): string {
   const quoted = quoteShellWord(executable, platform);
   // Windows terminals default to PowerShell, where a quoted executable needs &.
   return platform === "win32" && quoted !== executable ? `& ${quoted}` : quoted;
+}
+
+function formatUpdateCommand(
+  executable: string,
+  args: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+  installationEnv: Readonly<Record<string, string>> | undefined,
+): string {
+  const command = [
+    quoteUpdateExecutable(executable, platform),
+    ...args.map((arg) => quoteShellWord(arg, platform)),
+  ].join(" ");
+  const entries = Object.entries(installationEnv ?? {});
+  if (entries.length === 0) return command;
+  if (platform !== "win32") {
+    return [
+      "env",
+      ...entries.map(([key, value]) => `${key}=${quoteShellWord(value, platform)}`),
+      command,
+    ].join(" ");
+  }
+  const save = entries.map(([key], i) => `$previous${i} = $env:${key}`);
+  const set = entries.map(([key, value]) => `$env:${key} = ${quotePowerShellLiteral(value)}`);
+  const restore = entries.map(([key], i) => `$env:${key} = $previous${i}`);
+  return `& { ${save.join("; ")}; try { ${[...set, command].join("; ")} } finally { ${restore.join("; ")} } }`;
 }
 
 export function makeProviderMaintenanceCapabilities(input: {
@@ -137,6 +167,8 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly updateCommand?: string;
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
+  /** Public paths required to target the installation; also shown in the copied command. */
+  readonly installationEnv?: Readonly<Record<string, string>>;
   readonly latestVersion?: string | null;
   readonly lookupLatestVersion?: Effect.Effect<string | null>;
 }): ProviderMaintenanceCapabilities {
@@ -147,14 +179,20 @@ export function makeProviderMaintenanceCapabilities(input: {
       : {
           command:
             input.updateCommand ??
-            [
-              quoteUpdateExecutable(input.updateExecutable, platform),
-              ...input.updateArgs.map((arg) => quoteShellWord(arg, platform)),
-            ].join(" "),
+            formatUpdateCommand(
+              input.updateExecutable,
+              input.updateArgs,
+              platform,
+              input.installationEnv,
+            ),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
-          ...(input.env ? { env: input.env } : {}),
+          ...(input.installationEnv
+            ? { env: { ...input.env, ...input.installationEnv } }
+            : input.env
+              ? { env: input.env }
+              : {}),
         };
   return {
     provider: input.provider,
@@ -174,7 +212,7 @@ export function makeTargetedProviderUpdateAction(
   const packageName = capabilities.packageName;
   if (!update || !packageName) return null;
   if (
-    !/^(?:npm-global:|bun-global$|pnpm-global$|vite-plus-global$|yarn-global$|volta$)/.test(
+    !/^(?:npm-global:|bun-global:|pnpm-global$|vite-plus-global$|yarn-global$|volta$)/.test(
       update.lockKey,
     )
   )
@@ -948,6 +986,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
 
   const nativeUpdate = definition.nativeUpdate;
   const nativeEnv = nativeUpdate?.env;
+  const nativeInstallationEnv = nativeUpdate?.installationEnv?.(context);
   const native = nativeUpdate
     ? makeProviderMaintenanceCapabilities({
         provider: definition.provider,
@@ -959,6 +998,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         ...(nativeEnv
           ? { env: typeof nativeEnv === "function" ? nativeEnv(context) : nativeEnv }
           : {}),
+        ...(nativeInstallationEnv ? { installationEnv: nativeInstallationEnv } : {}),
       })
     : manual;
   // A native-looking launcher can still delegate to an npm-owned install.
@@ -1001,17 +1041,38 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     };
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {
+    const path = yield* Path.Path;
+    const binDir = path.dirname(context.resolvedCommandPath);
+    if (!normalizeCommandPath(binDir).endsWith("/.bun/bin")) return manual;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const globalDir = yield* fileSystem
+      .realPath(path.join(binDir, "..", "install", "global"))
+      .pipe(Effect.orElseSucceed(() => null));
+    // A bin entry alone may be a wrapper or a link into a local project.
+    if (
+      !globalDir ||
+      !path
+        .relative(globalDir, context.realCommandPath)
+        .replaceAll("\\", "/")
+        .startsWith(`node_modules/${packageName}/`)
+    ) {
+      return manual;
+    }
+    const installationEnv = { BUN_INSTALL_GLOBAL_DIR: globalDir, BUN_INSTALL_BIN: binDir };
     const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "bun",
       updateArgs: ["i", "-g", `${packageName}@latest`],
-      updateLockKey: "bun-global",
+      updateLockKey: `bun-global:${normalizeCommandPath(globalDir)}`,
+      platform: context.platform,
       env: context.env,
-      lookupLatestVersion: resolveBunGlobalLatestVersion(packageName, context.env).pipe(
-        Effect.provideContext(services),
-      ),
+      installationEnv,
+      lookupLatestVersion: resolveBunGlobalLatestVersion(packageName, {
+        ...context.env,
+        ...installationEnv,
+      }).pipe(Effect.provideContext(services)),
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {
@@ -1342,18 +1403,29 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   resolver: ProviderMaintenanceCapabilitiesResolver,
   options?: {
     readonly binaryPath?: string | null;
+    readonly maintenanceBinaryPath?: string | null;
     readonly env?: NodeJS.ProcessEnv;
   },
 ) {
-  const binaryPath = nonEmptyString(options?.binaryPath);
+  const maintenanceBinaryPath = nonEmptyString(options?.maintenanceBinaryPath);
+  const binaryPath = maintenanceBinaryPath ?? nonEmptyString(options?.binaryPath);
+  const unresolved = resolver
+    .resolve(null)
+    .pipe(
+      Effect.map((capabilities) =>
+        maintenanceBinaryPath
+          ? { ...capabilities, lookupMaintenanceVersion: Effect.succeed(null) }
+          : capabilities,
+      ),
+    );
   if (!binaryPath) {
-    return yield* resolver.resolve(null);
+    return yield* unresolved;
   }
 
   const env = options?.env ?? (yield* readCommandLookupEnv);
   const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
   if (!resolvedCommandPath) {
-    return yield* resolver.resolve(null);
+    return yield* unresolved;
   }
 
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1361,15 +1433,24 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     .realPath(resolvedCommandPath)
     .pipe(Effect.orElseSucceed(() => null));
   if (!realCommandPath) {
-    return yield* resolver.resolve(null);
+    return yield* unresolved;
   }
-  return yield* resolver.resolve({
+  const capabilities = yield* resolver.resolve({
     binaryPath,
     resolvedCommandPath,
     realCommandPath,
     env,
     platform: yield* HostProcess.Platform,
   });
+  if (!maintenanceBinaryPath) return capabilities;
+  const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
+  return {
+    ...capabilities,
+    lookupMaintenanceVersion: runProbe(resolvedCommandPath, ["--version"], env).pipe(
+      Effect.map((output) => output?.match(/\bv?(\d+\.\d+\.\d+)\b/)?.[1] ?? null),
+      Effect.provideContext(services),
+    ),
+  };
 }, Effect.flatMap(withConfiguredNpmVersionLookup));
 
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
@@ -1387,7 +1468,7 @@ export const makeCachedProviderMaintenanceResolution = Effect.fn(
 
 function manualUpdateMessage(latestVersion: string, installPath: string | undefined): string {
   return installPath
-    ? `Version ${latestVersion} is out. T3 Code runs ${installPath}; update it with the app or tool that installed it.`
+    ? `Version ${latestVersion} is out. Update ${installPath} with the app or tool that installed it.`
     : `Version ${latestVersion} is out. Update it with the app or tool that installed it.`;
 }
 
@@ -1528,17 +1609,20 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
   maintenanceCapabilities?: ProviderMaintenanceCapabilities,
   options?: {
     readonly enableProviderUpdateChecks: boolean | undefined;
+    readonly useMaintenanceVersion?: boolean;
   },
 ) {
   const capabilities =
     maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(snapshot.driver);
+  const shouldCheck =
+    options?.enableProviderUpdateChecks !== false && snapshot.enabled && snapshot.installed;
   const currentVersion =
-    snapshot.installedVersion !== undefined ? snapshot.installedVersion : snapshot.version;
-  const shouldResolveLatestVersion =
-    options?.enableProviderUpdateChecks !== false &&
-    snapshot.enabled &&
-    snapshot.installed &&
-    Boolean(currentVersion);
+    shouldCheck && options?.useMaintenanceVersion && capabilities.lookupMaintenanceVersion
+      ? yield* capabilities.lookupMaintenanceVersion
+      : snapshot.installedVersion !== undefined
+        ? snapshot.installedVersion
+        : snapshot.version;
+  const shouldResolveLatestVersion = shouldCheck && Boolean(currentVersion);
   if (!shouldResolveLatestVersion) {
     return {
       ...snapshot,

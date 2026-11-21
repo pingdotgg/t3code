@@ -119,13 +119,18 @@ const noSpawn = ChildProcessSpawner.make(() =>
 );
 
 function stdoutSpawner(
-  onSpawn: (command: string, args: ReadonlyArray<string>) => string,
+  onSpawn: (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) => string,
   exitCodeOf: (args: ReadonlyArray<string>) => number = () => 0,
 ) {
   return ChildProcessSpawner.make((command) => {
-    const { command: executable, args } = command as unknown as {
+    const {
+      command: executable,
+      args,
+      options,
+    } = command as unknown as {
       readonly command: string;
       readonly args: ReadonlyArray<string>;
+      readonly options: { readonly env?: NodeJS.ProcessEnv };
     };
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
@@ -135,7 +140,7 @@ function stdoutSpawner(
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
         stdin: Sink.drain,
-        stdout: Stream.encodeText(Stream.make(onSpawn(executable, args))),
+        stdout: Stream.encodeText(Stream.make(onSpawn(executable, args, options.env))),
         stderr: Stream.empty,
         all: Stream.empty,
         getInputFd: () => Sink.drain,
@@ -330,6 +335,74 @@ it.layer(
       expect(lookup.pollUnsafe()).toBeDefined();
       expect(yield* Fiber.join(lookup)).toBeNull();
     }),
+  );
+
+  it.effect.each([
+    { output: "codex-cli 2.0.0", exitCode: 0, expected: "2.0.0" },
+    { output: "2.0.0 (Claude Code)", exitCode: 0, expected: "2.0.0" },
+    { output: "unavailable", exitCode: 0, expected: null },
+    { output: "codex-cli 2.0.0", exitCode: 1, expected: null },
+    { output: "missing executable", exitCode: 0, expected: null, missing: true },
+  ])(
+    "uses the selected CLI version only for advisories ($output, exit $exitCode)",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-maintenance-advisory");
+        const maintenancePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        if (!fixture.missing) writeExecutable(maintenancePath);
+        let probes = 0;
+        const capabilities = {
+          ...(yield* resolveProviderMaintenanceCapabilitiesEffect(nativePackageToolUpdate, {
+            binaryPath: NodePath.join(tempDir, "runtime-launcher"),
+            maintenanceBinaryPath: maintenancePath,
+            env: { PATH: "", SELECTED_INSTALL: "fixture" },
+          }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              stdoutSpawner(
+                (command, args) => {
+                  expect(command).toBe(maintenancePath);
+                  expect(args).toEqual(["--version"]);
+                  probes++;
+                  return fixture.output;
+                },
+                () => fixture.exitCode,
+              ),
+            ),
+          )),
+          latestVersion: "3.0.0",
+        };
+        const snapshot = {
+          ...installedPackageToolProvider,
+          version: "3.0.0",
+          installedVersion: "3.0.0",
+        };
+        const enrich = (useMaintenanceVersion: boolean, enableProviderUpdateChecks = true) =>
+          enrichProviderSnapshotWithVersionAdvisory(snapshot, capabilities, {
+            enableProviderUpdateChecks,
+            useMaintenanceVersion,
+          });
+        yield* enrich(true, false);
+        expect(probes).toBe(0);
+        const verification = yield* enrich(false);
+        expect(verification.versionAdvisory?.currentVersion).toBe("3.0.0");
+        expect(probes).toBe(0);
+        const advisory = yield* enrich(true);
+        expect(advisory.version).toBe("3.0.0");
+        expect(advisory.installedVersion).toBe("3.0.0");
+        expect(advisory.versionAdvisory).toMatchObject({
+          currentVersion: fixture.expected,
+          status: fixture.expected ? "behind_latest" : "unknown",
+        });
+        expect(probes).toBe(fixture.missing ? 0 : 1);
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("fixture latest version must not make an HTTP request")),
+        ),
+      ),
+    { skip: windowsHost },
   );
 
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>
@@ -618,7 +691,27 @@ it.layer(
       updateCommand: null,
       canUpdate: false,
       message:
-        "Version 2.1.117 is out. T3 Code runs /Applications/Tool.app/Contents/Resources/bin/package-tool; update it with the app or tool that installed it.",
+        "Version 2.1.117 is out. Update /Applications/Tool.app/Contents/Resources/bin/package-tool with the app or tool that installed it.",
+    });
+  });
+
+  it("copies a PowerShell update with a quoted install path and restores the terminal environment", () => {
+    const capabilities = makeProviderMaintenanceCapabilities({
+      provider: driver("codex"),
+      packageName: "@openai/codex",
+      platform: "win32",
+      updateExecutable: String.raw`C:\Karl's Tools\codex.exe`,
+      updateArgs: ["update"],
+      updateLockKey: "codex-native",
+      env: { CODEX_HOME: String.raw`C:\Default`, PROVIDER_TOKEN: "fixture-secret" },
+      installationEnv: { CODEX_HOME: String.raw`C:\Karl's Tools\$codex` },
+    });
+    expect(capabilities.update).toMatchObject({
+      command:
+        "& { $previous0 = $env:CODEX_HOME; try { " +
+        String.raw`$env:CODEX_HOME = 'C:\Karl''s Tools\$codex'; & 'C:\Karl''s Tools\codex.exe' update` +
+        " } finally { $env:CODEX_HOME = $previous0 } }",
+      env: { CODEX_HOME: String.raw`C:\Karl's Tools\$codex`, PROVIDER_TOKEN: "fixture-secret" },
     });
   });
 
@@ -1609,8 +1702,13 @@ it.layer(
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-bun-latest");
         const bunBinDir = NodePath.join(tempDir, ".bun", "bin");
-        writeExecutable(NodePath.join(bunBinDir, "bun"));
-        writeExecutable(NodePath.join(bunBinDir, "package-tool"));
+        const bunPath = NodePath.join(bunBinDir, "bun");
+        const globalDir = NodePath.join(tempDir, ".bun", "install", "global");
+        const packagePath = NodePath.join(globalDir, "node_modules/@example/package-tool/bin/cli");
+        const maintenanceBinaryPath = NodePath.join(bunBinDir, "package-tool");
+        writeExecutable(bunPath);
+        writeExecutable(packagePath);
+        NodeFS.symlinkSync(packagePath, maintenanceBinaryPath);
         const outdated = [
           "bun outdated v1.3.3 (274e01c7)",
           ...(fixture.row === null ? [] : bunOutdatedTable(fixture.row)),
@@ -1619,17 +1717,25 @@ it.layer(
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           packageToolUpdate,
-          { binaryPath: "package-tool", env: { PATH: bunBinDir } },
+          {
+            binaryPath: "session-launcher",
+            maintenanceBinaryPath,
+            env: { PATH: bunBinDir, BUN_INSTALL_GLOBAL_DIR: NodePath.join(tempDir, "other") },
+          },
         ).pipe(
           Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.provideService(HostProcess.Environment, { PATH: "" }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            stdoutSpawner((_command, args) =>
-              args[0] === "outdated"
-                ? outdated
-                : `${tempDir} node_modules (1)\n└── @example/package-tool@1.0.0\n`,
-            ),
+            stdoutSpawner((command, args, env) => {
+              expect(command).toBe(bunPath);
+              expect(args).toEqual(["outdated", "-g", "@example/package-tool"]);
+              expect(env).toMatchObject({
+                BUN_INSTALL_GLOBAL_DIR: globalDir,
+                BUN_INSTALL_BIN: bunBinDir,
+              });
+              return outdated;
+            }),
           ),
         );
 
@@ -1652,32 +1758,108 @@ it.layer(
           latestVersion: fixture.expected,
         });
       }),
-    { skip: windowsHost },
+    { skip: !symlinksSupported || windowsHost },
   );
 
-  it.effect.skipIf(windowsHost)(
-    "switches to bun updates when the resolved binary lives in bun's global bin",
+  it.effect.skipIf(windowsHost || !symlinksSupported)(
+    "binds bun updates to the selected global installation and rejects unproven ownership",
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-bun-capabilities");
-        const bunBinDir = NodePath.join(tempDir, ".bun", "bin");
-        writeExecutable(NodePath.join(bunBinDir, "package-tool"));
-
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
-            binaryPath: "package-tool",
-            env: { PATH: bunBinDir },
-          },
-        ).pipe(
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        const selected = "selected's install";
+        const bunBinDir = NodePath.join(tempDir, selected, ".bun", "bin");
+        const globalDir = NodePath.join(tempDir, selected, ".bun", "install", "global");
+        const packagePath = NodePath.join(
+          globalDir,
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+          "package-tool.js",
         );
+        writeExecutable(packagePath);
+        const maintenancePath = NodePath.join(bunBinDir, "package-tool");
+        NodeFS.mkdirSync(bunBinDir, { recursive: true });
+        NodeFS.symlinkSync(packagePath, maintenancePath);
+        const runtimePath = NodePath.join(tempDir, "default", ".bun", "bin", "package-tool");
+        writeExecutable(runtimePath);
+        const env = {
+          PATH: NodePath.dirname(runtimePath),
+          BUN_INSTALL_GLOBAL_DIR: NodePath.join(tempDir, "default", ".bun", "install", "global"),
+          BUN_INSTALL_BIN: NodePath.dirname(runtimePath),
+          PROVIDER_TOKEN: "fixture-secret",
+        };
 
+        const resolve = () =>
+          resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+            binaryPath: runtimePath,
+            maintenanceBinaryPath: maintenancePath,
+            env,
+          }).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(HostProcess.Environment, env),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+          );
+
+        const capabilities = yield* resolve();
+        const commandPrefix = `env BUN_INSTALL_GLOBAL_DIR='${tempDir}/selected'\\''s install/.bun/install/global' BUN_INSTALL_BIN='${tempDir}/selected'\\''s install/.bun/bin' bun i -g`;
         expect(capabilities.update).toMatchObject({
-          command: "bun i -g @example/package-tool@latest",
-          lockKey: "bun-global",
+          command: `${commandPrefix} @example/package-tool@latest`,
+          lockKey: `bun-global:${normalizeCommandPath(globalDir)}`,
+          env: { ...env, BUN_INSTALL_GLOBAL_DIR: globalDir, BUN_INSTALL_BIN: bunBinDir },
         });
+        expect(makeTargetedProviderUpdateAction(capabilities, "2.0.0")).toMatchObject({
+          command: `${commandPrefix} @example/package-tool@2.0.0`,
+          args: ["i", "-g", "@example/package-tool@2.0.0"],
+          env: capabilities.update?.env,
+        });
+
+        for (const target of [
+          NodePath.join(globalDir, "node_modules", "@example", "other-package", "bin", "tool"),
+          NodePath.join(
+            tempDir,
+            "project",
+            "node_modules",
+            "@example",
+            "package-tool",
+            "bin",
+            "tool",
+          ),
+          maintenancePath,
+        ]) {
+          NodeFS.unlinkSync(maintenancePath);
+          writeExecutable(target);
+          if (target !== maintenancePath) NodeFS.symlinkSync(target, maintenancePath);
+          expect(yield* resolve()).toMatchObject({ update: null, installPath: target });
+        }
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "updates the explicit maintenance installation while keeping the runtime wrapper separate",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-wrapper-maintenance");
+        const wrapper = NodePath.join(tempDir, "agentfleet-launcher");
+        const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        writeExecutable(wrapper);
+        writeExecutable(nativePath);
+        const resolve = (maintenanceBinaryPath: string) =>
+          resolveProviderMaintenanceCapabilitiesEffect(nativePackageToolUpdate, {
+            binaryPath: wrapper,
+            maintenanceBinaryPath,
+            env: { PATH: "" },
+          }).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+          );
+        expect((yield* resolve(nativePath)).update).toMatchObject({
+          command: `${nativePath} update`,
+          executable: nativePath,
+          args: ["update"],
+        });
+        expect((yield* resolve(NodePath.join(tempDir, "missing"))).update).toBeNull();
+        expect((yield* resolve(" ")).update?.executable).toBe(wrapper);
       }),
   );
 
