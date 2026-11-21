@@ -2,8 +2,6 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  ANTIGRAVITY_SWARM_CAPABILITIES_META,
-  ANTIGRAVITY_SWARM_NOTIFICATION_METHOD,
   AntigravitySwarmNotification,
   agentAdvertisesAntigravitySwarm,
   makeAntigravitySwarmTracker,
@@ -11,8 +9,6 @@ import {
 
 describe("AntigravitySwarm", () => {
   it("detects advertised swarm capability on initialize responses", () => {
-    expect(ANTIGRAVITY_SWARM_NOTIFICATION_METHOD).toBe("_antigravity/swarm");
-    expect(ANTIGRAVITY_SWARM_CAPABILITIES_META).toEqual({ antigravity: { swarm: true } });
     expect(agentAdvertisesAntigravitySwarm({ _meta: { antigravity: { swarm: true } } })).toBe(true);
     expect(
       agentAdvertisesAntigravitySwarm({ _meta: { antigravity: { swarm: { enabled: true } } } }),

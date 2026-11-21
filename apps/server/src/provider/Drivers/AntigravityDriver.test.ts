@@ -417,6 +417,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             terminal: false,
             session: { notices: {}, compaction: {} },
             elicitation: { form: {} },
+            _meta: { antigravity: { swarm: true } },
           },
         ]);
 
