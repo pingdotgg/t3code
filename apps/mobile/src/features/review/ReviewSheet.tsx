@@ -761,7 +761,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     )}
                   />
                 )
-              ) : selectedSection.isLoading && selectedSection.diff === null ? (
+              ) : error && selectedSection.diff === null ? null : selectedSection.isLoading &&
+                selectedSection.diff === null ? (
                 <ContentStatus loading detail={gt("Loading diff…")} />
               ) : parsedDiff.kind === "empty" ? (
                 <ContentStatus
