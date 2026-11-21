@@ -327,6 +327,9 @@ int main(int argc, char **argv) {
     expect(yield* h.installation.start).toMatchObject({ source: "local", phase: "succeeded" });
     expect((yield* h.installation.resolve()).executablePath).toBe(h.localBinaryPath);
     expect(h.downloads()).toBe(0);
+    expect(yield* h.fs.readFileString(`${h.baseDir}/caches/codex-local-probe.json`)).not.toContain(
+      launcher,
+    );
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

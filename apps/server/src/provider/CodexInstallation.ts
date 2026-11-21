@@ -432,11 +432,12 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       );
     return output;
   }, Effect.scoped);
+  const isVersionManagerLauncher = (realExecutablePath: string) =>
+    /^(?:volta-shim|mise|aqua-proxy)(?:\.exe)?$/iu.test(path.basename(realExecutablePath));
   // Native Codex needs its adjacent host; launchers resolve their own payloads.
   const hasCodeModeHost = Effect.fn("CodexInstallation.hasCodeModeHost")(
     function* (realExecutablePath: string) {
-      if (/^(?:volta-shim|mise|aqua-proxy)(?:\.exe)?$/iu.test(path.basename(realExecutablePath)))
-        return true;
+      if (isVersionManagerLauncher(realExecutablePath)) return true;
       if (platform === "win32") {
         if (path.extname(realExecutablePath).toLowerCase() !== ".exe") return true;
         for (const extension of [".bunx", ".shim"]) {
@@ -503,6 +504,8 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           managedVersionDirectory: null,
         }) satisfies CodexExecutable;
       // Only successful probes persist, so a slow or failed one is retried on the next start.
+      // Version managers switch Codex without touching the launcher, so their probes never persist.
+      const persists = !isVersionManagerLauncher(realExecutablePath);
       const persisted = fs.readFileString(localProbePath).pipe(
         Effect.flatMap(decodeLocalProbe),
         Effect.map((record) =>
@@ -517,11 +520,12 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         const version = /^codex-cli (\d+\.\d+\.\d+)$/u.exec(output.trim())?.[1];
         if (!version) return null;
         yield* runCommand(executablePath, ["app-server", "--help"]);
-        yield* fs.makeDirectory(path.dirname(localProbePath), { recursive: true }).pipe(
-          Effect.andThen(encodeLocalProbe({ executablePath, fingerprint, version })),
-          Effect.flatMap((record) => fs.writeFileString(localProbePath, record)),
-          Effect.ignore,
-        );
+        if (persists)
+          yield* fs.makeDirectory(path.dirname(localProbePath), { recursive: true }).pipe(
+            Effect.andThen(encodeLocalProbe({ executablePath, fingerprint, version })),
+            Effect.flatMap((record) => fs.writeFileString(localProbePath, record)),
+            Effect.ignore,
+          );
         return local(version);
       }).pipe(
         Effect.timeout("5 seconds"),
