@@ -425,8 +425,9 @@ export function resolveAppModelSelectionState(
     const selectedModel = selectedEntry ? selection.model : null;
     // Use the cheap generation default; the catalog default is the expensive chat flagship.
     const options = getTextGenerationModelOptionsForInstance(settings, entry);
+    const resolvedSelectedModel = resolveSelectableModel(entry.driverKind, selectedModel, options);
     const model =
-      resolveSelectableModel(entry.driverKind, selectedModel, options) ??
+      resolvedSelectedModel ??
       resolveSelectableModel(
         entry.driverKind,
         DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind],
@@ -445,6 +446,7 @@ export function resolveAppModelSelectionState(
       model,
       models: entry.models,
       modelOptions: selectedEntry ? selection.options : undefined,
+      modelOwnedOptions: resolvedSelectedModel === model ? selection.options : undefined,
       includePlanAgent: selectsPlanAgent(selection.options),
     });
 

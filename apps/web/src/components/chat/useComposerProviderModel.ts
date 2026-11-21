@@ -2,6 +2,7 @@ import {
   type DraftId,
   deriveEffectiveComposerModelState,
   useComposerDraftModelState,
+  useComposerDraftStore,
 } from "../../composerDraftStore";
 import { draftModelSelectionApplies } from "../../lib/chatThreadActions";
 import {
@@ -24,8 +25,9 @@ const NO_PROVIDER_MODELS: ServerProvider["models"] = [];
 
 /**
  * The provider instances the composer offers, which one is selected, and the model and options
- * the draft resolves to on it. The draft store is read first so every derivation follows the only
- * hook here; in the composer body they would straddle its later hooks and lose their cache.
+ * the draft resolves to on it. Keep both draft-store reads before the derivations so React
+ * Compiler can cache the derived values; in the composer body they would straddle its later hooks
+ * and lose their cache.
  */
 export function useComposerProviderModel(
   input: Omit<Parameters<typeof resolveComposerProviderSelection>[0], "entries"> & {
@@ -53,6 +55,9 @@ export function useComposerProviderModel(
     threadStarted,
   } = input;
   const draftModelState = useComposerDraftModelState(threadRef);
+  const stickyOptionsByModelByProvider = useComposerDraftStore(
+    (store) => store.stickyOptionsByModelByProvider,
+  );
   const providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry> = providerInstanceEntriesFor(
     providerStatuses,
     settings,
@@ -91,6 +96,8 @@ export function useComposerProviderModel(
     models: selectedProviderModels,
     promptInjectionState,
     modelOptions: modelState.modelOptions?.[selectedInstanceId],
+    modelOwnedOptions:
+      stickyOptionsByModelByProvider[selectedInstanceId]?.[modelState.selectedModel],
   });
   return {
     providerInstanceEntries,
