@@ -2,6 +2,7 @@ import { Check } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { cardTitle, type CardState, type CardView, type ForYouItem } from "../domain/forYou";
+import { describeTrackerWrite } from "../issues/issueLinks";
 import { answerItem, type ForYouTarget } from "../foryou/actions";
 import { ApprovalBody } from "./ApprovalBody";
 import { ItemActions } from "./ItemActions";
@@ -13,6 +14,7 @@ const KIND_LABEL = {
   merge_approval: "Merge approval",
   question: "Question",
   ticket_draft: "Ticket draft",
+  tracker_write: "Tracker write",
   gate: "Gate",
   read: "Read",
   resume: "Resume",
@@ -123,6 +125,14 @@ export function ForYouCard({ view, context }: { view: CardView; context: CardCon
             </p>
           )}
           {card.item.kind === "merge_approval" && <MergeApprovalConditions item={card.item} />}
+          {card.item.kind === "tracker_write" && (
+            <pre
+              data-testid="tracker-write"
+              className="max-h-40 overflow-auto rounded-md border border-line bg-bg p-2 font-mono text-[11px] break-words whitespace-pre-wrap text-fg"
+            >
+              {describeTrackerWrite(card.item.write)}
+            </pre>
+          )}
           <ItemActions
             item={card.item}
             sent={sent}

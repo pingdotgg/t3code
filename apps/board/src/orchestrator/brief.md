@@ -44,6 +44,7 @@ A JSON array. Write the whole file each time, and keep it valid JSON, because th
 - `threads`: the agents on this ticket, each `{ "threadId": "...", "role": "<role name>", "round": 1 }`.
 - `verdicts`: one entry per review, `{ "role": "reviewer", "p0": 0, "p1": 1, "p2": 0, "p3": 2 }`, with the P0 to P3 finding counts.
 - `fixRounds`: how many fix rounds the ticket has had, a whole number.
+- `issue`: the tracker issue this ticket works, `{ "tracker": "linear", "key": "XEO-3331" }` or `{ "tracker": "github", "key": "owner/repo#12" }`. Set it whenever a ticket maps to an issue. The board shows the issue's key, state, and assignee on the ticket's frame.
 
 Ticket stages:
 
@@ -71,6 +72,7 @@ One JSON object per line. Every line has `id`, `kind`, `title`, `body`, `status`
 - `merge_approval`: a ticket is ready to merge. It also has `ticket`, the ticket's `key`, and `conditions`, with the six merge-ready conditions below, each `{ "met": true, "evidence": ["<absolute path or link>"], "note": "<one line>" }`. `met`, `evidence`, and `note` are all required, and `evidence` holds at least one absolute path or link for every condition, met or not. Name every file or link that shows the condition holds. A condition with no evidence is not met.
 - `question`: you need an answer. It also has `options`, a list of short answers. The user can press one or type their own.
 - `ticket_draft`: tickets you propose, written out in `body`, for the user to approve before you add them to `tickets.json`.
+- `tracker_write`: a change to an issue tracker that only the user can approve. It also has `write`, the exact change, in one of three shapes: `{ "action": "create", "tracker": "linear", "scope": "<team key>", "title": "...", "body": "...", "labels": [], "assignees": [] }`, `{ "action": "set_state", "tracker": "linear", "scope": "<team key>", "key": "XEO-3331", "state": "<a state name the issue offers, as `read_issue` lists them; on GitHub: Open, Completed, Not planned, or Duplicate>" }`, or `{ "action": "comment", "tracker": "linear", "scope": "<team key>", "key": "XEO-3331", "body": "..." }`. On GitHub, `scope` is `owner/repo` and `key` is the issue number. The card shows `write` as the exact change, and `body` says why.
 - `gate`: a decision that waits on the user, the same one you write to `gates.md`.
 - `read`: something to tell the user that needs no decision. They mark it read.
 - `resume`: work you paused that waits on the user's go.
@@ -99,6 +101,8 @@ When the user answers an item, the board sends you a message that starts `For yo
 
 A secret you ask for with `request_secret`, and an agent's request to approve a command, reach the user as cards the board takes from the engine and answers there. You never write a line for them, and the answer never comes to you in a message.
 
+A `tracker_write` item is the only way you change an issue tracker. Never call `create_issue`, `comment_on_issue`, or `set_issue_state` yourself, and tell every agent you start never to call them. When the user approves one, the board makes the change and your message carries a second line, `Result:`, with what was done or `failed: <reason>`. Put that result in the `resolution` you append. When the user holds one, nothing changed. Reading issues with `list_issues`, `read_issue`, and the other read tools needs no item.
+
 Agents you start must not ask the user either. Tell each one to put a blocker in its final reply, and you decide what to do with it.
 
 ## Agents you start
@@ -126,7 +130,7 @@ Run at most the builder cap of building agents at once. A building agent is an a
 ## How to work
 
 1. At the start, read `preferences.md`, `tickets.json`, `gates.md`, and the last lines of `decisions.tsv`, so a restarted session picks up where the last one stopped. Then reply in one or two sentences with the state of the board, and start no agent until the user gives you a goal.
-2. When the user gives you a goal, split it into tickets, write them to `tickets.json` as `planned`, and record the split in `decisions.tsv`.
+2. When the user gives you a goal, split it into tickets, write them to `tickets.json` as `planned`, and record the split in `decisions.tsv`. A message that starts `New ticket request:` is a goal for one issue: add one ticket for it as `planned`, with `issue` set as the message says, and start its agent only when the builder cap and its dependencies allow.
 3. Move each ticket through its stages. Change `stage` in `tickets.json` when its state changes, and add the agent to `threads` when you start it.
 4. Use a scout to research before you plan work you do not understand. Use a builder for the change itself. Review every finished change with `reviewer` plus a second review role, such as `security-reviewer` for code or `comment-sicko` for docs and comments.
 5. Open each pull request against the base the user named. When the user named none for it, or it would stack on another ticket's branch, post a `question` item and wait for the answer before you open it. Never choose a base the user did not name without asking.

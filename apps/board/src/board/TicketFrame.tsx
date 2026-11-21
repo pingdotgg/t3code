@@ -11,6 +11,7 @@ import { AgentCard } from "./AgentCard";
 import { ArtifactCards } from "./ArtifactCards";
 import { ArtifactCount } from "./ArtifactCount";
 import { artifactsHeight, CARD_GAP, FRAME_PAD, type FrameBox, hasChips, hasPrRow } from "./layout";
+import { IssueChip } from "../issues/IssueChip";
 import { PrChip } from "./PrChip";
 import { RemoveWorktree } from "./RemoveWorktree";
 import { ReviewChanges } from "./ReviewChanges";
@@ -170,6 +171,9 @@ export function TicketFrame({
         )}
         {hasChips(ticket) && (
           <div className="mt-1.5 flex h-[44px] flex-wrap content-start gap-1 overflow-hidden">
+            {ticket.issue != null && (
+              <IssueChip ticket={ticket} onOpenThread={(threadId) => onOpen(threadId)} />
+            )}
             {ticket.headSha != null && (
               <span className={`${chip} font-mono`}>{ticket.headSha.slice(0, 7)}</span>
             )}

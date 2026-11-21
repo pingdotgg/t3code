@@ -31,6 +31,14 @@ export interface PickableModel {
 /** Where a new orchestrator starts: Claude Code on this model at this effort. */
 export const DEFAULT_ORCHESTRATOR = { model: "claude-opus-5-5", effort: "medium" } as const;
 
+/**
+ * Codex runs T3's tracker write tools with no way to ask first: its per-tool approval needs a
+ * server entry that only the engine can write. So the board runs no orchestrator on it, which keeps
+ * every tracker write behind the operator's approval.
+ */
+export const CODEX_TRACKER_WRITES =
+  "Codex cannot ask before it changes an issue tracker, so boards run on Claude Code";
+
 /** A Claude Code or Codex instance the engine reports, as the picker lists it. */
 export interface PickableInstance {
   readonly instanceId: string;
@@ -107,7 +115,11 @@ export function pickableInstances(
         signIn: SIGN_IN[provider.auth.status],
         account: provider.auth.email ?? provider.auth.label ?? null,
         canSignIn: provider.setup?.canAuthenticate === true,
-        unavailable: provider.installed ? null : "Not installed on the machine that runs T3",
+        unavailable: !provider.installed
+          ? "Not installed on the machine that runs T3"
+          : provider.driver === "codex"
+            ? CODEX_TRACKER_WRITES
+            : null,
         message: provider.message ?? null,
         offered: provider.models.map((model) => model.slug),
         models: models.map((model) => ({

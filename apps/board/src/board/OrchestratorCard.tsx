@@ -1,10 +1,14 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { Plus } from "lucide-react";
+import { useState } from "react";
+import { createPortal } from "react-dom";
 
 import { BOARD_KEY, useArtifacts } from "../artifacts/ArtifactsContext";
 import { isRunLive } from "../chat/timeline";
 import { STAGE_LABEL, TICKET_STAGES } from "../domain/ticket";
+import { AddFromIssue } from "../issues/AddFromIssue";
 import type { OrchestratorStats } from "../orchestrator/brief";
 import { useEnvironmentThread } from "../state/threads";
 import type { ValidBoard } from "../store/boardFiles";
@@ -34,6 +38,7 @@ export function OrchestratorCard({
     ).data,
   );
   const { groups, expanded } = useArtifacts();
+  const [adding, setAdding] = useState(false);
   const status =
     board.orchestratorThreadId === null
       ? "Not started"
@@ -50,6 +55,18 @@ export function OrchestratorCard({
     >
       <header className="flex items-center gap-2">
         <h3 className="min-w-0 flex-1 truncate font-semibold">{board.name}</h3>
+        {board.orchestratorThreadId !== null && (
+          <button
+            type="button"
+            data-testid="add-from-tracker"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => setAdding(true)}
+            className="inline-flex shrink-0 items-center gap-1 rounded border border-line px-1.5 text-[11px] leading-5 text-muted hover:bg-hover hover:text-fg"
+          >
+            <Plus className="size-3" aria-hidden />
+            Add from tracker
+          </button>
+        )}
         <span data-testid="card-status" className="text-[11px] text-muted">
           {status}
         </span>
@@ -97,6 +114,16 @@ export function OrchestratorCard({
           <ArtifactCards artifacts={groups.board} rows={ARTIFACT_ROWS} />
         </div>
       )}
+      {adding &&
+        board.orchestratorThreadId !== null &&
+        createPortal(
+          <AddFromIssue
+            project={project}
+            orchestratorThreadId={board.orchestratorThreadId}
+            onDone={() => setAdding(false)}
+          />,
+          document.body,
+        )}
     </section>
   );
 }

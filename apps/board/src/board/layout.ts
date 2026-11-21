@@ -32,6 +32,7 @@ const MERGE_CARD = 660;
 const QUESTION_CARD = 260;
 const ENGINE_CARD = 240;
 const PLAIN_CARD = 150;
+const TRACKER_CARD = 250;
 const RESOLVED_CARD = 34;
 const LEFT = 40;
 /** The orchestrator card's place on the canvas. */
@@ -66,6 +67,7 @@ export interface Layout {
 
 /** Whether a ticket has anything to show in the row of chips under its branch. */
 export const hasChips = (ticket: Ticket): boolean =>
+  ticket.issue != null ||
   ticket.headSha != null ||
   (ticket.fixRounds ?? 0) > 0 ||
   (ticket.dependsOn ?? []).length > 0 ||
@@ -111,6 +113,7 @@ export function forYouHeight(views: ReadonlyArray<CardView>): number {
     if (view.state === "resolved") return RESOLVED_CARD;
     if (view.card.origin === "engine") return ENGINE_CARD;
     if (view.card.item.kind === "merge_approval") return MERGE_CARD;
+    if (view.card.item.kind === "tracker_write") return TRACKER_CARD;
     return view.card.item.kind === "question" ? QUESTION_CARD : PLAIN_CARD;
   };
   return views.reduce((sum, view) => sum + height(view) + CARD_GAP, FOR_YOU_NOTE);

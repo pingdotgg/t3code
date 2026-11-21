@@ -5,6 +5,7 @@ import { engineEnvironmentIdAtom, environmentProjects } from "../state/projects"
 import { engineSettingsAtom } from "../state/server";
 import { CleanupPage } from "./CleanupPage";
 import { Select } from "./controls/Select";
+import { IntegrationsPage } from "./IntegrationsPage";
 import { pageTitle, SettingsNav, type SettingsPage } from "./SettingsNav";
 import { UpdatesPage } from "./UpdatesPage";
 import { type SaveStatus, useSettingsWrite } from "./useSettingsWrite";
@@ -37,6 +38,7 @@ const markPainted = paintedMarker("board:settings-painted");
 const PAGE_PAINTED = {
   worktrees: paintedMarker("board:worktrees-painted"),
   cleanup: paintedMarker("board:cleanup-painted"),
+  integrations: paintedMarker("board:integrations-painted"),
   updates: paintedMarker("board:updates-painted"),
 } satisfies Record<SettingsPage, ReturnType<typeof paintedMarker>>;
 
@@ -85,7 +87,7 @@ export function SettingsScreen({
               >
                 {statusText(status)}
               </span>
-              {page !== "updates" && (
+              {(page === "worktrees" || page === "cleanup") && (
                 <Select
                   label="Settings for"
                   value={project?.id ?? ENVIRONMENT}
@@ -103,6 +105,8 @@ export function SettingsScreen({
               project={project}
               save={(input) => void save(input)}
             />
+          ) : page === "integrations" ? (
+            <IntegrationsPage environmentId={environmentId} />
           ) : page === "updates" ? (
             <UpdatesPage settings={settings} save={(input) => void save(input)} />
           ) : (

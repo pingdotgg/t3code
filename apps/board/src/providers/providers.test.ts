@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canStart,
+  CODEX_TRACKER_WRITES,
   defaultPick,
   NO_PICK,
   pickableInstances,
@@ -200,12 +201,13 @@ describe("the orchestrator's pick", () => {
     });
   });
 
-  it("Given a signed-out Claude Code, when nothing is picked, then the first signed-in instance and its default model start, with the reason", () => {
+  it("Given a signed-out Claude Code and a Codex, when nothing is picked, then Codex is not chosen because it cannot ask before a tracker write", () => {
     const instances = pickableInstances([claude("unauthenticated"), codex]);
-    expect(defaultPick(instances)).toEqual({
-      value: { instanceId: "codex", model: "gpt-5.6-terra", effort: "" },
-      reason: "Claude Code is signed out. Starting on Codex instead.",
-    });
+    expect(defaultPick(instances).value.instanceId).toBe("claudeAgent");
+    expect(canStart(instances.find((instance) => instance.driver === "codex")!)).toBe(false);
+    expect(instances.find((instance) => instance.driver === "codex")?.unavailable).toBe(
+      CODEX_TRACKER_WRITES,
+    );
   });
 
   it("Given a signed-in Claude Code without Opus 5.5, when nothing is picked, then the reason names the missing model", () => {
@@ -234,7 +236,7 @@ describe("the orchestrator's pick", () => {
   it("Given a model typed before any pick, when the pick resolves, then the typed model is kept on the default instance", () => {
     const instances = pickableInstances([codex, claude("unauthenticated")]);
     expect(resolvePick(instances, { ...NO_PICK, model: "gpt-6-luna" })).toEqual({
-      instanceId: "codex",
+      instanceId: "claudeAgent",
       model: "gpt-6-luna",
       effort: "",
     });

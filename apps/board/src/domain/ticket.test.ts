@@ -28,6 +28,7 @@ describe("tickets.json", () => {
       threads: [{ threadId: "th-1", role: "task", round: 1 }],
       verdicts: [{ role: "reviewer", p0: 0, p1: 1, p2: 0, p3: 2 }],
       fixRounds: 1,
+      issue: { tracker: "linear", key: "XEO-3331" },
     };
     const parsed = parseTickets(JSON.stringify([ticket]));
     expect(Result.isSuccess(parsed) ? parsed.success : null).toEqual([ticket]);

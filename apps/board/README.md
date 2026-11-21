@@ -248,6 +248,8 @@ The gear in the sidebar footer opens a settings screen laid out like Orca's, wit
 
 **Cleanup** edits the automatic worktree cleanup rules (`storageCleanup` for All projects, `projectSettingsOverrides.<id>.worktreeCleanup` for a project, which is Inherit, Off, or Custom). **Delete now** runs `server.runStorageCleanup` and lists the latest `StorageCleanupReport`, which `server.getStorageCleanupReport` also pushes. A cleanup waits 60 seconds after a thread settles before it removes the worktree, even with settled retention at 0 days. **Delete a worktree** removes one worktree with `vcs.removeWorktree` after a confirm. The list comes from the thread shells, checked against `vcs.listRefs`, so a folder that is already gone is not offered.
 
+**Integrations** lists the source-control hosts the engine found and the task trackers, with a Connect Linear dialog that sends the key through `issueTrackers.connect` and a per-project team binding (`issueTrackers.bindProject`). **Add from tracker** on an orchestrator card searches GitHub or Linear issues (`issues.list`) and sends the orchestrator a ticket request that carries the issue's description and comments (`issues.detail`, `issues.comments`). A ticket whose `issue` field names a tracker issue shows its state and assignee as a chip. The orchestrator asks to change a tracker by posting a `tracker_write` For you item. Approve makes the change through the engine's issue tools, and Hold changes nothing. The board starts no Codex orchestrator, because Codex cannot ask before it changes a tracker.
+
 ## Tests
 
 ```sh

@@ -59,7 +59,12 @@ export function ForYouLane({
     ...views.filter((view) => view.state === "held"),
   ];
   const context = (id: string) => ({
-    target: { registry, environmentId: project.environmentId, boardId: board.id },
+    target: {
+      registry,
+      environmentId: project.environmentId,
+      boardId: board.id,
+      projectId: project.id,
+    },
     orchestratorThreadId: board.orchestratorThreadId,
     focused: id === focusedId,
   });

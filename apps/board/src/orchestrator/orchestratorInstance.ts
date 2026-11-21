@@ -41,6 +41,19 @@ export const standingInstructions = (rules: string) =>
 // T3 splits launch arguments like a shell does, so a double-quoted token holds any text once `\`, `"`, `$`, and backtick are escaped.
 const quote = (text: string) => `"${text.replace(/[\\"$`]/g, "\\$&")}"`;
 
+// T3 runs its three tracker write tools with no approval in any runtime mode. An ask rule on the
+// instance makes each wait as an engine approval, and covers every ticket worktree with nothing
+// written into the repository.
+const claudeTrackerArgs = `--settings ${quote(
+  JSON.stringify({
+    permissions: {
+      ask: ["create_issue", "comment_on_issue", "set_issue_state"].map(
+        (tool) => `mcp__t3-code__${tool}`,
+      ),
+    },
+  }),
+)}`;
+
 /**
  * The launch arguments that give a session standing instructions the provider re-sends after every
  * compaction. Claude Code also loses its built-in subagent tool, whose children T3 creates outside the registry.
@@ -48,7 +61,7 @@ const quote = (text: string) => `"${text.replace(/[\\"$`]/g, "\\$&")}"`;
 function standingArgs(driver: string, instructions: string): string | null {
   switch (driver) {
     case "claudeAgent":
-      return `--append-system-prompt ${quote(instructions)} --disallowedTools ${quote("Task,Agent")}`;
+      return `--append-system-prompt ${quote(instructions)} --disallowedTools ${quote("Task,Agent")} ${claudeTrackerArgs}`;
     case "codex":
       // Codex reads the value as TOML, and a JSON string is a valid TOML basic string.
       return `-c ${quote(`developer_instructions=${JSON.stringify(instructions)}`)}`;
@@ -186,6 +199,6 @@ export function planAgentsInstance(input: {
     ...input,
     instanceId: agentsInstanceId(input.base.instanceId),
     label: "board agents",
-    extraArgs: null,
+    extraArgs: claudeTrackerArgs,
   });
 }
