@@ -107,10 +107,11 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
             <GlobalVoiceInputIndicator />
           </DialogPrimitive.Popup>
           {/* The titlebar strip still moves the window. It follows the popup because Electron
-              lets the later region win, and below sm the popup covers it. */}
+              lets the later region win. pointer-events-none keeps clicks on the backdrop, where
+              fullscreen macOS (no native drag) still dismisses. */}
           <div
             aria-hidden
-            className="absolute inset-x-0 top-0 h-(--app-modal-titlebar-height) [-webkit-app-region:drag]"
+            className="pointer-events-none absolute inset-x-0 top-0 h-(--app-modal-titlebar-height) [-webkit-app-region:drag]"
           />
         </DialogPrimitive.Viewport>
       </DialogPrimitive.Portal>
