@@ -157,7 +157,8 @@ impl RightPanel {
             .update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
         self.terminal
             .update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
-        self.api.update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
+        self.api
+            .update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
         self.browser.update(cx, |p, cx| p.set_tokens(tokens, cx));
         cx.notify();
     }

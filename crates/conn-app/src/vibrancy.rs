@@ -113,7 +113,9 @@ fn add_vibrancy(window: &Window) {
             objc2::msg_send![&*subviews, count]
         };
         let same = std::ptr::eq(view, &*content);
-        eprintln!("vibrancy: effect view added; content subviews {count}, gpui view is content view: {same}");
+        eprintln!(
+            "vibrancy: effect view added; content subviews {count}, gpui view is content view: {same}"
+        );
     }
 }
 

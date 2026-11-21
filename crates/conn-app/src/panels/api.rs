@@ -11,13 +11,13 @@ use conn_desktop::api_request::response_view::{
     response_summary, status_variant,
 };
 use conn_desktop::api_request::store::{
-    API_METHODS, ApiHeaderRow, ApiRequestDraft, ApiRequestPatch, ApiRequestStore,
-    BODY_PLACEHOLDER, URL_PLACEHOLDER,
+    API_METHODS, ApiHeaderRow, ApiRequestDraft, ApiRequestPatch, ApiRequestStore, BODY_PLACEHOLDER,
+    URL_PLACEHOLDER,
 };
 use conn_theme::Tokens;
+use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::{
     AnyElement, Context, Entity, Hsla, IntoElement, KeyDownEvent, ParentElement, Render,
     SharedString, Styled, Subscription, Window, div, px,
@@ -275,26 +275,36 @@ impl ApiPanel {
     }
 
     fn toggle_menu(&mut self, menu: OpenMenu, cx: &mut Context<'_, Self>) {
-        self.menu = if self.menu == Some(menu) { None } else { Some(menu) };
+        self.menu = if self.menu == Some(menu) {
+            None
+        } else {
+            Some(menu)
+        };
         cx.notify();
     }
 
     fn render_toolbar(&self, request: &ApiRequestDraft, cx: &mut Context<'_, Self>) -> AnyElement {
         let tokens = &self.tokens;
         let mono: SharedString = MONO_FONT.into();
-        let sending = self
-            .store
-            .result(&request.id)
-            .is_some_and(|r| r.sending);
+        let sending = self.store.result(&request.id).is_some_and(|r| r.sending);
 
         // Saved requests menu (`RequestsMenu`).
         let entity = cx.entity();
-        let mut requests_anchor = div().relative().child(chrome::toolbar_group(tokens).child(
-            chrome::icon_button("api-requests-btn", "superhero/list.svg", tokens, false, {
-                let entity = entity.clone();
-                move |_, _, cx| entity.update(cx, |p, cx| p.toggle_menu(OpenMenu::Requests, cx))
-            }),
-        ));
+        let mut requests_anchor =
+            div()
+                .relative()
+                .child(chrome::toolbar_group(tokens).child(chrome::icon_button(
+                    "api-requests-btn",
+                    "superhero/list.svg",
+                    tokens,
+                    false,
+                    {
+                        let entity = entity.clone();
+                        move |_, _, cx| {
+                            entity.update(cx, |p, cx| p.toggle_menu(OpenMenu::Requests, cx))
+                        }
+                    },
+                )));
         if self.menu == Some(OpenMenu::Requests) {
             requests_anchor = requests_anchor.child(self.requests_menu(request, cx));
         }
@@ -320,7 +330,7 @@ impl ApiPanel {
                 let entity = entity.clone();
                 move |_, _, cx| entity.update(cx, |p, cx| p.toggle_menu(OpenMenu::Method, cx))
             })
-            .child(div().font_family(mono.clone()).child(request.method.clone()))
+            .child(div().font_family(mono).child(request.method.clone()))
             .child(superhero_icon(
                 "superhero/chevron-down.svg",
                 chrome::ICON_BUTTON_GLYPH_PX,
@@ -331,15 +341,13 @@ impl ApiPanel {
             method_anchor = method_anchor.child(self.method_menu(request, cx));
         }
 
-        let url_field = chrome::soft_input_group(tokens)
-            .child(method_anchor)
-            .child(
-                div().flex_1().min_w_0().pl(px(11.0)).pr(px(14.0)).child(
-                    Input::new(&self.url_input)
-                        .appearance(false)
-                        .text_size(px(UI_TEXT_PX)),
-                ),
-            );
+        let url_field = chrome::soft_input_group(tokens).child(method_anchor).child(
+            div().flex_1().min_w_0().pl(px(11.0)).pr(px(14.0)).child(
+                Input::new(&self.url_input)
+                    .appearance(false)
+                    .text_size(px(UI_TEXT_PX)),
+            ),
+        );
 
         let send_icon = if sending {
             "superhero/spinner.svg"
@@ -363,7 +371,11 @@ impl ApiPanel {
 
     fn requests_menu(&self, selected: &ApiRequestDraft, cx: &mut Context<'_, Self>) -> AnyElement {
         let entity = cx.entity();
-        let Some(project) = self.project_key.as_deref().and_then(|k| self.store.project(k)) else {
+        let Some(project) = self
+            .project_key
+            .as_deref()
+            .and_then(|k| self.store.project(k))
+        else {
             return div().into_any_element();
         };
         let mut entries: Vec<MenuEntry> = project
@@ -414,14 +426,16 @@ impl ApiPanel {
             }
         }));
         entries.push(action("Duplicate", |p| {
-            if let (Some(key), Some(copy)) =
-                (p.project_key.clone(), p.selected().map(ApiRequestDraft::duplicate))
-            {
+            if let (Some(key), Some(copy)) = (
+                p.project_key.clone(),
+                p.selected().map(ApiRequestDraft::duplicate),
+            ) {
                 p.store.add(&key, copy);
             }
         }));
         entries.push(action("Delete", |p| {
-            if let (Some(key), Some(id)) = (p.project_key.clone(), p.selected().map(|r| r.id.clone()))
+            if let (Some(key), Some(id)) =
+                (p.project_key.clone(), p.selected().map(|r| r.id.clone()))
             {
                 p.store.remove(&key, &id);
                 p.store.ensure_request(&key, None);
@@ -493,15 +507,16 @@ impl ApiPanel {
                 count: None,
             },
         ];
-        let tab_row = chrome::section_tabs("api-editor-tabs", &tokens, &tabs, self.editor_tab, None, {
-            let entity = entity.clone();
-            move |tab, _, cx| {
-                entity.update(cx, |p, cx| {
-                    p.editor_tab = tab;
-                    cx.notify();
-                });
-            }
-        });
+        let tab_row =
+            chrome::section_tabs("api-editor-tabs", &tokens, &tabs, self.editor_tab, None, {
+                let entity = entity.clone();
+                move |tab, _, cx| {
+                    entity.update(cx, |p, cx| {
+                        p.editor_tab = tab;
+                        cx.notify();
+                    });
+                }
+            });
 
         let mono: SharedString = MONO_FONT.into();
         let body: AnyElement = if self.editor_tab == "headers" {
@@ -569,35 +584,32 @@ impl ApiPanel {
                         ))
                         .child(field(&name, !row.enabled))
                         .child(field(&value, false))
-                        .child(
-                            div()
-                                .invisible()
-                                .group_hover(group, |s| s.visible())
-                                .child(chrome::icon_button(
-                                    SharedString::from(format!("api-header-remove-{}", row.id)),
-                                    "superhero/close.svg",
-                                    &tokens,
-                                    false,
-                                    move |_, _, cx| {
-                                        let id = remove_id.clone();
-                                        entity_remove.update(cx, |p, cx| {
-                                            if let Some(r) = p.selected() {
-                                                let headers = r
-                                                    .headers
-                                                    .iter()
-                                                    .filter(|h| h.id != id)
-                                                    .cloned()
-                                                    .collect();
-                                                p.header_inputs.remove(&id);
-                                                p.set_headers(headers, cx);
-                                            }
-                                        });
-                                    },
-                                )),
-                        ),
+                        .child(div().invisible().group_hover(group, |s| s.visible()).child(
+                            chrome::icon_button(
+                                SharedString::from(format!("api-header-remove-{}", row.id)),
+                                "superhero/close.svg",
+                                &tokens,
+                                false,
+                                move |_, _, cx| {
+                                    let id = remove_id.clone();
+                                    entity_remove.update(cx, |p, cx| {
+                                        if let Some(r) = p.selected() {
+                                            let headers = r
+                                                .headers
+                                                .iter()
+                                                .filter(|h| h.id != id)
+                                                .cloned()
+                                                .collect();
+                                            p.header_inputs.remove(&id);
+                                            p.set_headers(headers, cx);
+                                        }
+                                    });
+                                },
+                            ),
+                        )),
                 );
             }
-            let entity_add = entity.clone();
+            let entity_add = entity;
             rows = rows.child(div().pl(px(10.0)).pt(px(6.0)).child(chrome::text_button(
                 "api-add-header",
                 Some("superhero/add.svg"),

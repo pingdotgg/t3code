@@ -239,8 +239,14 @@ pub async fn open_ssh_tunnel(
                 target, &text, &exited,
             )));
         }
+        // Another process can take the port between `free_port` and ssh's bind; ssh then
+        // exits (`ExitOnForwardFailure`). So a listener only counts while ssh still runs.
         if accepts(local_port).await {
-            return Ok(tunnel);
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            if matches!(tunnel.child.try_wait(), Ok(None)) {
+                return Ok(tunnel);
+            }
+            continue;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
