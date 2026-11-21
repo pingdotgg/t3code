@@ -8135,7 +8135,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   })
                   .pipe(Effect.mapError(rejectedModel));
                 appliedModel = requestedModel;
-              } else if (flavor.resolvesUnlistedModels === true) {
+              } else if (
+                flavor.resolvesUnlistedModels === true &&
+                requestedModel !== "default" &&
+                requestedModel !== "auto"
+              ) {
                 // The model option's current value then names the model the agent resolved.
                 yield* runtime
                   .setConfigOption(modelOption.id, requestedModel, { allowUnlistedValue: true })

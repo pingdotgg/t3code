@@ -1171,6 +1171,7 @@ describe("AcpRegistryAdapterV2", () => {
     it.effect.each([
       { name: "resolves", stored: "mistral-large-4-0-3", resolvedTo: "mistral-large-4-0" },
       { name: "rejects", stored: "missing", resolvedTo: undefined },
+      { name: "keeps default", stored: "default", resolvedTo: "mistral-medium-latest" },
     ] as const)("lets Mistral Vibe judge an unlisted stored model: $name", (testCase) => {
       const vibeModel = (currentValue: string) => ({
         ...modelOption("model", currentValue),
@@ -1185,25 +1186,28 @@ describe("AcpRegistryAdapterV2", () => {
           setup: { configOptions: [vibeModel("mistral-medium-latest")] },
           storedModel: testCase.stored,
           ...(testCase.resolvedTo === undefined ? { rejectedModel: testCase.stored } : {}),
-          pickFrames: [
-            outbound("session/set_config_option", {
-              sessionId: "agent-session",
-              configId: "model",
-              value: testCase.stored,
-            }),
-            testCase.resolvedTo === undefined
-              ? {
-                  type: "emit_inbound",
-                  frame: {
-                    kind: "response",
-                    method: "session/set_config_option",
-                    error: { code: -32602, message: `Unknown model: ${testCase.stored}` },
-                  },
-                }
-              : answer("session/set_config_option", {
-                  configOptions: [vibeModel(testCase.resolvedTo)],
-                }),
-          ],
+          pickFrames:
+            testCase.stored === "default"
+              ? []
+              : [
+                  outbound("session/set_config_option", {
+                    sessionId: "agent-session",
+                    configId: "model",
+                    value: testCase.stored,
+                  }),
+                  testCase.resolvedTo === undefined
+                    ? {
+                        type: "emit_inbound",
+                        frame: {
+                          kind: "response",
+                          method: "session/set_config_option",
+                          error: { code: -32602, message: `Unknown model: ${testCase.stored}` },
+                        },
+                      }
+                    : answer("session/set_config_option", {
+                        configOptions: [vibeModel(testCase.resolvedTo)],
+                      }),
+                ],
         });
         if (testCase.resolvedTo !== undefined) {
           assert.equal(configurations[0]?.currentModelId, testCase.resolvedTo);
