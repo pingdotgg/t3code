@@ -208,6 +208,12 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
         roles: ["sidebarRowHover", "sidebarRowActive", "sidebarRowSelected"],
       },
       {
+        id: "sidebar-pinned",
+        label: "Pinned threads",
+        role: "sidebarRowPinned",
+        roles: ["sidebarRowPinned"],
+      },
+      {
         id: "terminal-background",
         label: msg("Terminal background"),
         role: "terminalBackground",
