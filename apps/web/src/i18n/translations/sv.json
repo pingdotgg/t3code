@@ -5105,6 +5105,7 @@
   "ce6b7e994161e68f": "Lägg till rutt",
   "d3ef4f9486e31279": "Lägg till",
   "c246e33dafd359cc": "Lägg till",
+  "d24cc1734912f197": "Hantera i T3 Connect…",
   "b0c1beb79a87d97b": "Auktoriseringsbegäran",
   "0311d7ed2b7eb2f6": "Den här anslutningslänken är ofullständig",
   "09e69d04f7e588eb": "Länken saknar sin auktoriseringsbegäran. Kör `t3 connect` igen i terminalen och öppna den nyutskrivna URL:en.",

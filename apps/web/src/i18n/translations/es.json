@@ -5104,6 +5104,7 @@
   "ce6b7e994161e68f": "Añadir ruta",
   "d3ef4f9486e31279": "Añadir",
   "c246e33dafd359cc": "Añadir",
+  "d24cc1734912f197": "Administrar en T3 Connect…",
   "b0c1beb79a87d97b": "Solicitud de autorización",
   "0311d7ed2b7eb2f6": "Este enlace de conexión está incompleto",
   "09e69d04f7e588eb": "Al enlace le falta su solicitud de autorización. Vuelve a ejecutar `t3 connect` en tu terminal y abre la URL que se acaba de imprimir.",
