@@ -15,7 +15,7 @@ import { EnvironmentId, ThreadId, type WorkflowQuestion } from "@t3tools/contrac
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { T, Var, useGT, useMessages } from "gt-react-native";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -299,29 +299,43 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
     reportFailure: false,
   });
   const [busy, setBusy] = useState(false);
-  const target = { environmentId, input: { runId: run.runId } };
-  const resumeRun = async () => {
-    if (busy) return;
+  // Taken in the handler itself: a second tap can land before the busy state renders.
+  const acting = useRef(false);
+  const act = async (work: () => Promise<void>) => {
+    if (acting.current) return;
+    acting.current = true;
     setBusy(true);
-    const result = await resume(target);
+    await work();
+    acting.current = false;
     setBusy(false);
-    reportFailure(gt("Could not resume the run"), result);
   };
+  const target = { environmentId, input: { runId: run.runId } };
+  const resumeRun = () =>
+    act(async () => reportFailure(gt("Could not resume the run"), await resume(target)));
   const cancelRun = () =>
-    Dialog.alert(gt("Cancel this run?"), gt("Its agents stop and the run cannot be resumed."), [
-      { text: gt("Keep it"), style: "cancel" },
-      {
-        text: gt("Cancel run"),
-        style: "destructive",
-        onPress: () => {
-          setBusy(true);
-          void cancel(target).then((result) => {
-            setBusy(false);
-            reportFailure(gt("Could not cancel the run"), result);
-          });
-        },
-      },
-    ]);
+    act(
+      () =>
+        new Promise<void>((done) =>
+          Dialog.alert(
+            gt("Cancel this run?"),
+            gt("Its agents stop and the run cannot be resumed."),
+            [
+              { text: gt("Keep it"), style: "cancel", onPress: () => done() },
+              {
+                text: gt("Cancel run"),
+                style: "destructive",
+                onPress: () => {
+                  void cancel(target).then((result) => {
+                    reportFailure(gt("Could not cancel the run"), result);
+                    done();
+                  });
+                },
+              },
+            ],
+            { onDismiss: () => done() },
+          ),
+        ),
+    );
   const openThread = (thread: NonNullable<WorkflowBeat["thread"]>) =>
     navigation.dispatch(
       StackActions.push("Thread", {
@@ -541,7 +555,12 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
         </View>
       )}
       {!ended && canOperate ? (
-        <Button tone="text" label={gt("Cancel run")} disabled={busy} onPress={cancelRun} />
+        <Button
+          tone="text"
+          label={gt("Cancel run")}
+          disabled={busy}
+          onPress={() => void cancelRun()}
+        />
       ) : null}
     </ScreenScrollView>
   );

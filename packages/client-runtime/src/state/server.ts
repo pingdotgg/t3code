@@ -1461,6 +1461,18 @@ export function createServerEnvironmentAtoms<R, E>(
     const live = workflowsLive({ environmentId, input: {} });
     return (get: Atom.AtomContext) => Option.getOrUndefined(AsyncResult.value(get(live)));
   };
+  // One change of a run or file at a time per target, so a double click does not act twice.
+  const workflowRunConcurrency = {
+    mode: "singleFlight" as const,
+    key: ({ environmentId, input }: { environmentId: EnvironmentId; input: { runId: string } }) =>
+      JSON.stringify([environmentId, input.runId]),
+  };
+  const workflowDefinitionScheduler = createAtomCommandScheduler();
+  const workflowDefinitionConcurrency = {
+    mode: "serial" as const,
+    key: ({ environmentId, input }: { environmentId: EnvironmentId; input: { name: string } }) =>
+      JSON.stringify([environmentId, input.name]),
+  };
   const welcome = (target: {
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
@@ -1930,22 +1942,33 @@ export function createServerEnvironmentAtoms<R, E>(
     answerWorkflowQuestion: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:workflows:answer",
       tag: WS_METHODS.workflowsAnswer,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.runId, input.name]),
+      },
     }),
     resumeWorkflowRun: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:workflows:resume",
       tag: WS_METHODS.workflowsResume,
+      concurrency: workflowRunConcurrency,
     }),
     cancelWorkflowRun: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:workflows:cancel",
       tag: WS_METHODS.workflowsCancel,
+      concurrency: workflowRunConcurrency,
     }),
+    // Saves and deletes of one file go one after another: each carries its own text.
     saveWorkflowDefinition: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:workflows:save-definition",
       tag: WS_METHODS.workflowsSaveDefinition,
+      scheduler: workflowDefinitionScheduler,
+      concurrency: workflowDefinitionConcurrency,
     }),
     deleteWorkflowDefinition: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:workflows:delete-definition",
       tag: WS_METHODS.workflowsDeleteDefinition,
+      scheduler: workflowDefinitionScheduler,
+      concurrency: workflowDefinitionConcurrency,
     }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
