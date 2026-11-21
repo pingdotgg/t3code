@@ -173,10 +173,13 @@ interface Canvas2D {
   context: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
 }
 
+// Display P3 contains sRGB, so wide-gamut sources keep their colors and encoders embed the profile.
+const CANVAS_SETTINGS: CanvasRenderingContext2DSettings = { colorSpace: "display-p3" };
+
 function createCanvas(width: number, height: number): Canvas2D | null {
   if (typeof OffscreenCanvas === "function") {
     const canvas = new OffscreenCanvas(width, height);
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext("2d", CANVAS_SETTINGS);
     if (!context) return null;
     return { canvas, context };
   }
@@ -184,7 +187,7 @@ function createCanvas(width: number, height: number): Canvas2D | null {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
-  const context = canvas.getContext("2d");
+  const context = canvas.getContext("2d", CANVAS_SETTINGS);
   if (!context) return null;
   return { canvas, context };
 }
