@@ -60,6 +60,13 @@ export const MuseItem = Schema.Struct({
   reason: Schema.optional(Schema.String),
 });
 export type MuseItem = typeof MuseItem.Type;
+// Muse 1.4.15 sends skill-read bookkeeping as items without a kind, against its published schema.
+const MuseViewItem = Schema.Union([
+  MuseItem,
+  Schema.Struct({ itemId: NonEmptyString, kind: Schema.optionalKey(Schema.Never) }),
+]);
+export const isMuseItem = (item: typeof MuseViewItem.Type): item is MuseItem =>
+  item.kind !== undefined;
 
 export const MuseSessionResult = Schema.Struct({
   session: Schema.Struct({
@@ -69,19 +76,23 @@ export const MuseSessionResult = Schema.Struct({
   }),
   history: Schema.optional(
     Schema.Struct({
-      items: Schema.NullOr(Schema.Array(MuseItem)),
+      items: Schema.NullOr(Schema.Array(MuseViewItem)),
       noneReason: Schema.optional(Schema.String),
       snapshot: Schema.optional(
         Schema.NullOr(
           Schema.Struct({
             schemaVersion: Schema.optional(Schema.Int),
-            state: Schema.Struct({ items: Schema.Array(MuseItem) }),
+            state: Schema.Struct({ items: Schema.Array(MuseViewItem) }),
           }),
         ),
       ),
     }),
   ),
 });
+export const MuseSkillList = Schema.Struct({
+  skills: Schema.Array(Schema.Struct({ selector: NonEmptyString })),
+});
+
 export const MuseTurnStartResult = Schema.Struct({ turnId: NonEmptyString });
 
 export const MuseApproval = Schema.Struct({
@@ -199,7 +210,7 @@ export const MuseCompactResult = Schema.Struct({
   reason: Schema.optional(Schema.String),
 });
 
-export const MuseItemEvent = Schema.Struct({ item: MuseItem });
+export const MuseItemEvent = Schema.Struct({ item: MuseViewItem });
 export const MuseDelta = Schema.Struct({
   itemId: NonEmptyString,
   delta: Schema.String,
