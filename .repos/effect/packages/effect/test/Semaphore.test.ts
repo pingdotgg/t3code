@@ -51,6 +51,44 @@ describe("Semaphore", () => {
       yield* Fiber.joinAll(waiters)
     }))
 
+  it.effect("admits a queued zero-permit waiter after exhausting the release budget", () =>
+    Effect.gen(function*() {
+      const turns: Array<() => void> = []
+      const scheduler = new Scheduler.MixedScheduler("async", (run) => {
+        turns.push(run)
+        return () => {}
+      })
+      const sem = yield* Semaphore.make(1)
+      yield* sem.take(1)
+      const admitted: Array<number> = []
+      const request = (permits: number) =>
+        Effect.forkChild(
+          Effect.andThen(sem.take(permits), Effect.sync(() => admitted.push(permits))).pipe(
+            Effect.provideService(Scheduler.Scheduler, scheduler)
+          ),
+          { startImmediately: true }
+        )
+      const positive = yield* request(1)
+      yield* sem.release(1).pipe(Effect.provideService(Scheduler.Scheduler, scheduler))
+      // The positive waiter is eligible but has not resumed, so take(0) must queue behind it.
+      const cancelled = yield* request(0)
+      const zero = yield* request(0)
+      assert.isUndefined(cancelled.pollUnsafe())
+      yield* Fiber.interrupt(cancelled)
+      assert.isUndefined(zero.pollUnsafe())
+      assert.deepStrictEqual(admitted, [])
+
+      yield* Effect.sync(() => turns.shift()!())
+      assert.deepStrictEqual(admitted, [1, 0])
+      yield* Fiber.joinAll([positive, zero])
+      yield* sem.release(1)
+      yield* Effect.sync(() => {
+        while (turns.length > 0) turns.shift()!()
+      })
+      assert.isTrue(yield* sem.takeIfAvailable(1))
+      assert.isFalse(yield* sem.takeIfAvailable(1))
+    }))
+
   it.effect("basic single partition operation", () =>
     Effect.gen(function*() {
       const sem = yield* PartitionedSemaphore.make({ permits: 4 })

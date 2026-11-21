@@ -1,12 +1,17 @@
 import type { GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
+import { T, useGT } from "gt-react";
 import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
-import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
+import {
+  PIERRE_TREE_UNSAFE_CSS,
+  pierreTreeStyle,
+  titleClippedPierreTreeRow,
+} from "~/pierre-tree-theme";
 
 import {
   areAllDirectoriesExpanded,
@@ -20,9 +25,9 @@ import {
   compareDiffFileTreeEntries,
   collectDirectoryPaths,
   diffFileTreeModel,
-  diffFileTreePositions,
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
+import { diffFileTreePositions } from "@t3tools/client-runtime/diff-file-order";
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
@@ -47,6 +52,7 @@ export function DiffFileTree({
   footer,
   className,
 }: DiffFileTreeProps) {
+  const gt = useGT();
   const { resolvedTheme } = useTheme();
   const paths = entries.map((entry) => entry.path);
   const presented = diffFileTreeModel(paths);
@@ -190,7 +196,9 @@ export function DiffFileTree({
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
-        <span className="px-1 font-medium text-foreground">Files</span>
+        <span className="px-1 font-medium text-foreground">
+          <T>Files</T>
+        </span>
         <span className="ml-auto tabular-nums">{entries.length}</span>
         {headerAccessory}
         {directoryPaths.length > 0 ? (
@@ -202,7 +210,7 @@ export function DiffFileTree({
                   size="icon-xs"
                   variant="ghost"
                   aria-label={
-                    allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
+                    allDirectoriesExpanded ? gt("Collapse all folders") : gt("Expand all folders")
                   }
                   onClick={() =>
                     setAllDirectoriesExpanded(model, directoryPaths, !allDirectoriesExpanded)
@@ -217,7 +225,7 @@ export function DiffFileTree({
               )}
             </TooltipTrigger>
             <TooltipPopup>
-              {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+              {allDirectoriesExpanded ? gt("Collapse all folders") : gt("Expand all folders")}
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -249,6 +257,7 @@ export function DiffFileTree({
         }}
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
+        onPointerOver={titleClippedPierreTreeRow}
       />
       {footer}
     </div>

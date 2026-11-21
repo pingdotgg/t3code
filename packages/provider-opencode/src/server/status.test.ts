@@ -20,6 +20,7 @@ import { buildProviderOptionSelectionsFromDescriptors } from "@t3tools/shared/mo
 import { settingsSecretLiteral } from "@t3tools/contracts";
 
 import { OpenCodeSettings } from "../settings.ts";
+import type { ProviderCompatibilityLookup } from "@t3tools/provider-core/server/compatibility";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import {
@@ -36,6 +37,7 @@ import {
   OPENCODE_2_RESPONSES,
   replayOpenCodeServer,
 } from "./probeResponses.fixture.ts";
+import { DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
@@ -507,6 +509,7 @@ const checkProvider = Effect.fn("checkProvider")(function* (
     ReadonlyArray<OpenCode2Model>,
     OpenCodeRuntime.OpenCodeRuntimeError
   > = Effect.succeed([]),
+  compatibility?: ProviderCompatibilityLookup,
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -520,9 +523,14 @@ const checkProvider = Effect.fn("checkProvider")(function* (
         Effect.provideService(HttpClient.HttpClient, server),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
       );
-      return yield* checkOpenCodeProviderStatus(settings, cwd, probe, openCode2Models).pipe(
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-      );
+      return yield* checkOpenCodeProviderStatus(
+        settings,
+        cwd,
+        probe,
+        openCode2Models,
+        environment,
+        compatibility,
+      ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner));
     }),
   );
 });
@@ -676,6 +684,10 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         variantDescriptor.options.find((option) => option.isDefault === true)?.id,
         "medium",
       );
+      NodeAssert.equal(
+        variantDescriptor.options.find((option) => option.id === "xhigh")?.label,
+        "Extra High",
+      );
       const agentDescriptor = model.capabilities?.optionDescriptors?.find(
         (descriptor) => descriptor.id === "agent" && descriptor.type === "select",
       );
@@ -685,6 +697,68 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         "build",
       );
     }),
+  );
+
+  it.effect.each(["1.x", "2.x"] as const)(
+    "offers a Default reasoning choice for a %s custom model with no inferable default",
+    (generation) =>
+      Effect.gen(function* () {
+        const variants = ["low", "medium", "high"];
+        runtimeMock.state.versionStdout =
+          generation === "2.x" ? "opencode v2.0.18\n" : DEFAULT_VERSION_STDOUT;
+        runtimeMock.state.inventory = {
+          providerList: {
+            connected: ["acme"],
+            all: [
+              {
+                id: "acme",
+                name: "Acme",
+                models: {
+                  "acme-chat": {
+                    id: "acme-chat",
+                    name: "Acme Chat",
+                    variants: Object.fromEntries(variants.map((id) => [id, {}])),
+                  },
+                },
+              },
+            ],
+            default: {},
+          },
+          agents: [],
+        };
+
+        const snapshot = yield* checkProvider(
+          makeOpenCodeSettings(),
+          process.cwd(),
+          undefined,
+          undefined,
+          Effect.succeed([
+            {
+              providerID: "acme",
+              id: "acme-chat",
+              name: "Acme Chat",
+              variants: variants.map((id) => ({ id })),
+            },
+          ]),
+        );
+        const variant = snapshot.models
+          .find((model) => model.slug === "acme/acme-chat")
+          ?.capabilities?.optionDescriptors?.find((descriptor) => descriptor.id === "variant");
+
+        NodeAssert.ok(variant?.type === "select");
+        NodeAssert.deepEqual(
+          variant.options.find((option) => option.id === DEFAULT_VARIANT_CHOICE_ID),
+          { id: DEFAULT_VARIANT_CHOICE_ID, label: "Default" },
+          "OpenCode cannot infer a default variant, so the picker needs a choice that sends none",
+        );
+        NodeAssert.equal(variant.currentValue, DEFAULT_VARIANT_CHOICE_ID);
+        NodeAssert.deepEqual(
+          variant.options
+            .map((option) => option.id)
+            .filter((id) => id !== DEFAULT_VARIANT_CHOICE_ID),
+          variants,
+        );
+      }),
   );
 
   it.effect("keeps Agent without inventing Reasoning for models with no variants", () =>
@@ -846,7 +920,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             providerID: "opencode",
             id: "space-bunny-free",
             name: "Space Bunny Free",
-            variants: [{ id: "low" }, { id: "medium" }, { id: "high" }],
+            variants: [{ id: "low" }, { id: "medium" }, { id: "high" }, { id: "xhigh" }],
           },
           {
             providerID: "opencode-go",
@@ -879,7 +953,13 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         ?.capabilities?.optionDescriptors?.[0];
       NodeAssert.deepEqual(
         variant?.type === "select" ? variant.options.map((option) => option.id) : [],
-        ["low", "medium", "high"],
+        ["low", "medium", "high", "xhigh"],
+      );
+      NodeAssert.equal(
+        variant?.type === "select"
+          ? variant.options.find((option) => option.id === "xhigh")?.label
+          : undefined,
+        "Extra High",
       );
       const goVariant = snapshot.models.find(
         (model) => model.slug === "opencode-go/deepseek-v4.1-flash",
@@ -907,6 +987,13 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         ["opencode", "flash-free", "flash", "2026-09-10", "active"],
         ["opencode", "big-pickle", undefined, "2025-10-17", "active"],
         ["openrouter", "opus-4-5", "claude-opus", "2025-11-24", "active"],
+        ["opencode", "gemini-4-argon", "gemini", "2026-10-13", "active", [2, 10]],
+        ["opencode", "gemini-4-carbon", "gemini", "2026-11-10", "active", [2, 10]],
+        ["opencode", "gemini-4-hydrogen", "gemini", "2026-11-12", "active", [1.5, 7.5]],
+        ["opencode", "muse-wonder-1.0", "muse", "2026-10-12", "active", [4, 20]],
+        ["opencode", "muse-ember-1.0", "muse", "2026-11-09", "active", [0.1, 0.5]],
+        ["opencode", "llama-3.1-8b", "llama", "2026-07-23", "active", [0.05, 0.08]],
+        ["opencode", "llama-3.3-70b", "llama", "2026-12-06", "active", [0.6, 0.8]],
       ] as const;
       const legacySlugs = (
         models: ReadonlyArray<{ readonly slug: string; readonly isLegacy?: boolean | undefined }>,
@@ -915,7 +1002,9 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
           .filter((model) => model.isLegacy)
           .map((model) => model.slug)
           .toSorted();
-      const expected = ["opencode/opus-4-5", "opencode/opus-preview"];
+      // One OpenCode `family` can hold several model sizes: Carbon replaces Argon at its price,
+      // while Hydrogen, Wonder, Ember and the 8b and 70b Llamas are other sizes.
+      const expected = ["opencode/gemini-4-argon", "opencode/opus-4-5", "opencode/opus-preview"];
 
       runtimeMock.state.inventory = {
         providerList: {
@@ -926,9 +1015,17 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             models: Object.fromEntries(
               releases
                 .filter(([provider]) => provider === providerID)
-                .map(([, id, family, releaseDate, status]) => [
+                .map(([, id, family, releaseDate, status, cost]) => [
                   id,
-                  { id, name: id, family, release_date: releaseDate, status, variants: {} },
+                  {
+                    id,
+                    name: id,
+                    family,
+                    release_date: releaseDate,
+                    status,
+                    variants: {},
+                    ...(cost ? { cost: { input: cost[0], output: cost[1] } } : {}),
+                  },
                 ]),
             ),
           })),
@@ -948,7 +1045,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         undefined,
         undefined,
         Effect.succeed(
-          releases.map(([providerID, id, family, releaseDate, status]) => ({
+          releases.map(([providerID, id, family, releaseDate, status, cost]) => ({
             providerID,
             id,
             name: id,
@@ -956,6 +1053,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             family,
             released: Date.parse(releaseDate),
             deprecated: status === "deprecated",
+            ...(cost ? { price: `${cost[0]}/${cost[1]}` } : {}),
           })),
         ),
       );
@@ -1093,18 +1191,39 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
     }),
   );
 
-  it.effect("rejects an unsupported server before loading inventory", () =>
+  it.effect("reports a version the policy rates broken before loading inventory", () =>
     Effect.gen(function* () {
-      runtimeMock.state.connectionError = new Error(
-        "OpenCode v1.14.18 is too old. Upgrade to v1.14.19 or newer.",
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        () =>
+          Effect.succeed({
+            status: "broken",
+            message: null,
+            recommendedVersion: null,
+            recommendedRange: ">=2.0.18",
+          }),
       );
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.match(snapshot.message ?? "", /OpenCode 1\.14\.19 does not work/);
+      NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
+    }),
+  );
+
+  it.effect("reports a failed server connection before loading inventory", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.connectionError = new Error("OpenCode server refused the connection.");
       const snapshot = yield* checkProvider(
         makeOpenCodeSettings({ serverUrl: "http://127.0.0.1:9999" }),
       );
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.models.length, 0);
-      NodeAssert.match(snapshot.message ?? "", /v1\.14\.18 is too old/);
+      NodeAssert.match(snapshot.message ?? "", /refused the connection/);
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
     }),
   );

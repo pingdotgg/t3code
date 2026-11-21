@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
+import { decodeMsg } from "gt-react";
 
 import {
   filterAvailableSettingsSearchItems,
@@ -78,6 +79,12 @@ describe("searchSettings", () => {
   it("hides the Secrets page from nav and search while the secrets feature is disabled", () => {
     expect(SETTINGS_NAV_GROUPS.flatMap((group) => group.paths)).not.toContain("/settings/secrets");
     expect(searchSettings("1password").map((item) => item.to)).not.toContain("/settings/secrets");
+  });
+
+  it("finds where subagents and side chats open by any of its names", () => {
+    for (const query of ["side panel", "subagent", "side chat", "linked thread", "middle click"]) {
+      expect(searchSettings(query).map((item) => item.id)).toContain("side-thread-open-target");
+    }
   });
 
   it("finds the Scheduled tasks page", () => {
@@ -336,7 +343,7 @@ describe("source control host search items", () => {
 
   it("lists a host by its label, its keywords, and its settings fields", () => {
     const items = sourceControlHostSearchItems([UNKNOWN_SOURCE_CONTROL_CLIENT, definition]);
-    expect(items.map((item) => item.title)).toEqual(["Example credentials"]);
+    expect(items.map((item) => decodeMsg(item.title))).toEqual(["Example credentials"]);
     expect(searchSettings("sample apitoken", items).map((item) => item.id)).toEqual([
       sourceControlHostSettingsSearchId("example"),
     ]);
@@ -356,7 +363,7 @@ describe("source control host search items", () => {
         },
       },
     ]);
-    expect(items.map((item) => item.title)).toEqual(["Example accounts and token"]);
+    expect(items.map((item) => decodeMsg(item.title))).toEqual(["Example accounts and token"]);
     expect(searchSettings("ex switch accounts", items)).toHaveLength(1);
   });
 
