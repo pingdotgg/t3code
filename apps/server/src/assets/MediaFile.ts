@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
 import * as NodeStream from "@effect/platform-node/NodeStream";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -44,19 +45,44 @@ const realpathLikeFileSystem = (filePath: string) =>
     NodeFS.realpath(filePath, (error, resolved) => (error ? reject(error) : resolve(resolved)));
   });
 
+const sameFileIdentity = (left: NodeFS.BigIntStats, right: NodeFS.BigIntStats) =>
+  left.dev === right.dev && left.ino === right.ino;
+
+const matchesClaimedIdentity = (
+  stat: NodeFS.BigIntStats,
+  identity: { readonly device: string; readonly inode: string },
+) => stat.dev.toString() === identity.device && stat.ino.toString() === identity.inode;
+
+// Windows virtualizing filter drivers (such as FSLogix) can return different (dev, ino)
+// for lstat vs open()/fstat(); verify handle identity within the fstat domain instead.
+async function verifyWindowsFilterDriverHandle(
+  filePath: string,
+  before: NodeFS.BigIntStats,
+  info: NodeFS.BigIntStats,
+  hasClaimedIdentity: boolean,
+): Promise<boolean> {
+  if (before.birthtimeNs !== info.birthtimeNs) return false;
+  if (hasClaimedIdentity) return true;
+  const verify = await NodeFSP.open(filePath, NodeFS.constants.O_RDONLY);
+  try {
+    const verifyInfo = await verify.stat({ bigint: true });
+    return verifyInfo.isFile() && sameFileIdentity(info, verifyInfo);
+  } finally {
+    await verify.close();
+  }
+}
+
 export const openMediaFile = Effect.fn("openMediaFile")(function* (
   filePath: string,
   identity?: { readonly device: string; readonly inode: string },
 ) {
+  const isWindows = yield* HostProcess.isWindows;
   return yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: async () => {
         const before = await NodeFSP.lstat(filePath, { bigint: true });
         if (!before.isFile() || before.ino === 0n) return null;
-        if (
-          identity &&
-          (before.dev.toString() !== identity.device || before.ino.toString() !== identity.inode)
-        ) {
+        if (!isWindows && identity && !matchesClaimedIdentity(before, identity)) {
           return null;
         }
 
@@ -70,17 +96,27 @@ export const openMediaFile = Effect.fn("openMediaFile")(function* (
         let accepted = false;
         try {
           const info = await handle.stat({ bigint: true });
-          if (!info.isFile() || info.dev !== before.dev || info.ino !== before.ino) return null;
-          if (
-            identity &&
-            (info.dev.toString() !== identity.device || info.ino.toString() !== identity.inode)
-          ) {
+          if (!info.isFile() || info.ino === 0n) return null;
+          if (identity && !matchesClaimedIdentity(info, identity)) {
             return null;
           }
           // Match FileSystem.realPath's JS behavior; native realpath expands Windows 8.3 names too.
           if ((await realpathLikeFileSystem(filePath)) !== filePath) return null;
+          if (!sameFileIdentity(info, before)) {
+            if (!isWindows) return null;
+            if (
+              !(await verifyWindowsFilterDriverHandle(
+                filePath,
+                before,
+                info,
+                identity !== undefined,
+              ))
+            ) {
+              return null;
+            }
+          }
           const after = await NodeFSP.lstat(filePath, { bigint: true });
-          if (!after.isFile() || info.dev !== after.dev || info.ino !== after.ino) return null;
+          if (!after.isFile() || !sameFileIdentity(before, after)) return null;
           accepted = true;
           return { handle, info } satisfies OpenMediaFile;
         } finally {
