@@ -3584,6 +3584,51 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("stages the worktree once for a typed commit message", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "typed\n");
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({ gitCommands });
+
+      const created = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Typed subject\n\nTyped body",
+      });
+
+      expect(created.commit).toMatchObject({ status: "created", subject: "Typed subject" });
+      expect(gitCommands.filter((args) => args.endsWith("add -A"))).toHaveLength(1);
+      expect((yield* runGit(repoDir, ["log", "-1", "--pretty=%B"])).stdout.trim()).toBe(
+        "Typed subject\n\nTyped body",
+      );
+
+      // Status shows the staged change, but staging the reverted worktree leaves nothing.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "staged\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "typed\n");
+      const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+
+      const skipped = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Nothing to commit",
+      });
+
+      expect(skipped.commit.status).toBe("skipped_no_changes");
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(head);
+      expect((yield* runGit(repoDir, ["show", ":README.md"])).stdout).toBe("staged\n");
+
+      // A generated message already checked a scratch index, so staging again stays at two.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "generated\n");
+      gitCommands.length = 0;
+      const generated = yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+      expect(generated.commit.status).toBe("created");
+      expect(gitCommands.filter((args) => args.endsWith("add -A"))).toHaveLength(2);
+    }),
+  );
+
   it.effect("lowercases a capitalized Conventional Commits description", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
