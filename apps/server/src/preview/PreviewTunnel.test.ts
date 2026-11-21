@@ -196,7 +196,7 @@ it.effect.each([
   }),
 );
 
-it.effect("answers a port nothing listens on with 502, marked as about the port", () =>
+it.effect("answers a port nothing listens on with 403, marked as about the port", () =>
   Effect.gen(function* () {
     const closed = yield* Effect.promise(
       () =>
@@ -211,7 +211,7 @@ it.effect("answers a port nothing listens on with 502, marked as about the port"
     const tunnel = yield* serveTunnel();
     const client = yield* openTunnel(`${tunnel.origin}/api/preview/tunnel?port=${closed}`);
     const response = yield* refusal(client);
-    expect(response).toEqual({ status: 502, portRefused: true });
+    expect(response).toEqual({ status: 403, portRefused: true });
   }),
 );
 

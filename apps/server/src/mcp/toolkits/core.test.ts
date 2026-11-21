@@ -1299,7 +1299,13 @@ it.effect(
       const result = yield* server
         .callTool({ name: "t3_background_wait", arguments: { taskIds: ["checks"] } })
         .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            ...scope,
+            capabilities: new Set<McpInvocationContext.McpCapability>([
+              "orchestration",
+              "background-wait",
+            ]),
+          }),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(result.structuredContent).toEqual({ matched: ["checks"], unmatched: [] });

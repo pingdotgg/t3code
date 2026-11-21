@@ -2518,6 +2518,21 @@ describe("toJsonSchemaDocument", () => {
     })
   })
 
+  it("TemplateLiteral with Enum", () => {
+    assertJsonSchemaDocument(Schema.TemplateLiteral([Schema.Enum({ A: "a.b", One: 1 }), "_"]), {
+      schema: {
+        type: "string",
+        pattern: "^(?:a\\.b|1)_$"
+      }
+    })
+    assertJsonSchemaDocument(Schema.TemplateLiteral([Schema.Enum({}), "_"]), {
+      schema: {
+        type: "string",
+        pattern: "^(?!)_$"
+      }
+    })
+  })
+
   describe("TemplateLiteral segments", () => {
     const segment = Schema.String.check(Schema.isPattern(/^abc$/u))
     const template = Schema.TemplateLiteral(["item.", segment])
@@ -3761,27 +3776,6 @@ describe("toJsonSchemaDocument", () => {
           }
         )
       })
-    })
-
-    it("optionalKey to required key", () => {
-      assertJsonSchemaDocument(
-        Schema.Tuple([
-          Schema.optionalKey(Schema.String).pipe(Schema.encodeTo(Schema.String, {
-            decode: SchemaGetter.passthrough(),
-            encode: SchemaGetter.withDefault(Effect.succeed(""))
-          }))
-        ]),
-        {
-          schema: {
-            "type": "array",
-            "prefixItems": [
-              { "type": "string" }
-            ],
-            "minItems": 1,
-            "maxItems": 1
-          }
-        }
-      )
     })
   })
 

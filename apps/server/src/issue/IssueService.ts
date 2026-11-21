@@ -29,6 +29,7 @@ import {
   type IssueTemplateList,
   type IssueTrackerSummary,
   type IssueTrackerProjectBinding,
+  issueTrackerBindingScopes,
   type IssueUpdateInput,
   type OrchestrationProjectShell,
   type ProjectId,
@@ -157,9 +158,13 @@ export class IssueService extends Context.Service<
     readonly update: (input: IssueUpdateInput) => Effect.Effect<void, IssueError>;
     readonly setState: (input: IssueSetStateInput) => Effect.Effect<void, IssueError>;
     readonly react: (input: IssueReactionInput) => Effect.Effect<void, IssueError>;
-    /** The tracker and container a project's own issues live in. */
+    /**
+     * The tracker and container a project's own issues live in: the bound `scope` when named, else
+     * the one `key`'s prefix names, else the project's default.
+     */
     readonly projectScope: (
       projectId: ProjectId,
+      select?: { readonly key?: string | undefined; readonly scope?: string | undefined },
     ) => Effect.Effect<IssueScopeRef & { readonly host: string }, IssueError>;
     /**
      * Resolve through a matching project, preferring `preferredProjectId`; other scopes are read-only.
@@ -186,11 +191,18 @@ const make = Effect.gen(function* () {
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const bindings = yield* IssueTrackerBindings.IssueTrackerBindingsRepository;
 
-  const resolveStandaloneBinding = (binding: IssueTrackerProjectBinding | undefined) => {
-    if (binding === undefined) return null;
+  const resolveStandaloneBindings = (
+    binding: IssueTrackerProjectBinding | undefined,
+  ): ReadonlyArray<ProjectTrackerBinding> => {
+    if (binding === undefined) return [];
     const api = registry.get(binding.tracker);
-    if (api === null || !isStandaloneIssueTracker(api)) return null;
-    return { tracker: binding.tracker, host: api.standalone.host, scope: binding.scope };
+    if (api === null || !isStandaloneIssueTracker(api)) return [];
+    const host = api.standalone.host;
+    return issueTrackerBindingScopes(binding).map((scope) => ({
+      tracker: binding.tracker,
+      host,
+      scope,
+    }));
   };
 
   /**
@@ -206,9 +218,8 @@ const make = Effect.gen(function* () {
       : repositoryIdentities.resolve(project.workspaceRoot)
     ).pipe(
       Effect.map((repositoryIdentity) => {
-        const standalone = resolveStandaloneBinding(binding);
         const gitHost = resolveGitHostBindings({ ...project, repositoryIdentity });
-        return standalone === null ? gitHost : [standalone, ...gitHost];
+        return [...resolveStandaloneBindings(binding), ...gitHost];
       }),
     );
 
@@ -428,7 +439,7 @@ const make = Effect.gen(function* () {
           if (page._tag === "Failure") {
             if (cursor !== undefined) nextCursors[key] = cursor;
             recordFailure(project, page.failure);
-            // A fork reads two repositories, so its failure names the one that failed.
+            // A fork or a multi-team binding reads several scopes; the failure names its own.
             const forked = supported.some(
               (other) => other.project.id === project.project.id && other.scope !== project.scope,
             );
@@ -670,11 +681,24 @@ const make = Effect.gen(function* () {
 
   const projectScope: IssueService["Service"]["projectScope"] = Effect.fn(
     "IssueService.projectScope",
-  )(function* (projectId) {
+  )(function* (projectId, select) {
     const { supported } = yield* listProjects({ projectId });
-    const [own] = supported;
-    if (own === undefined) {
+    if (supported.length === 0) {
       return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+    }
+    const named = select?.scope?.trim().toLowerCase();
+    const prefix = select?.key?.toLowerCase();
+    const own =
+      named === undefined
+        ? (supported.find((candidate) => prefix?.startsWith(`${candidate.scope.toLowerCase()}-`)) ??
+          supported[0])
+        : supported.find((candidate) => candidate.scope.toLowerCase() === named);
+    if (own === undefined) {
+      return yield* new IssueOperationError({
+        operation: "scope",
+        reason: "not-found",
+        detail: `This project does not track ${select?.scope?.trim()}. Use one of: ${[...new Set(supported.map((candidate) => candidate.scope))].join(", ")}.`,
+      });
     }
     return { projectId, tracker: own.tracker, host: own.host, scope: own.scope };
   });

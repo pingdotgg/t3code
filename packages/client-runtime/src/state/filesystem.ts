@@ -25,7 +25,7 @@ import {
   hasTrailingPathSeparator,
   isFilesystemBrowseQuery,
 } from "./projects.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 const BROWSE_IDLE_TTL_MS = 5_000;
 
@@ -217,6 +217,28 @@ export function createFilesystemEnvironmentAtoms<R, E>(
       // lists it again. The short TTL only keeps the old listing on screen while it refreshes.
       idleTtlMs: BROWSE_IDLE_TTL_MS,
       staleTimeMs: 0,
+    }),
+    /** Repositories under a folder and in its `.code-workspace` file, read from disk each time. */
+    scanFolders: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workspace:scan-folders",
+      tag: WS_METHODS.workspaceScanFolders,
+      staleTimeMs: 0,
+    }),
+    /** A project's tracked folders with what is on disk now: a repository, plain files, or gone. */
+    listFolders: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workspace:list-folders",
+      tag: WS_METHODS.workspaceListFolders,
+      staleTimeMs: 0,
+    }),
+    /** The task folder a thread's `worktreePath` belongs to, with each repository's worktree. */
+    taskFolder: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workspace:task-folder",
+      tag: WS_METHODS.workspaceTaskFolder,
+      staleTimeMs: 0,
+    }),
+    addTaskFolderRepository: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:workspace:add-task-folder-repository",
+      tag: WS_METHODS.workspaceAddTaskFolderRepository,
     }),
   };
 }

@@ -186,6 +186,8 @@ vi.mock("../state/entities", () => ({
   useThreadChipIcons: () => new Map(),
   useEnvironmentPreviewTunnelOff: () => false,
 }));
+vi.mock("../state/peerLinks", () => ({ useLinkedEnvironments: () => new Map() }));
+vi.mock("../features/threads/useOpenThreadLink", () => ({ useOpenThreadLink: () => vi.fn() }));
 vi.mock("../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: null }),
 }));
