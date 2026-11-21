@@ -572,6 +572,8 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
 });
 export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;
 
+export const MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES = 250;
+
 /**
  * Which standalone tracker scopes a project's issues come from, beside its git host's own.
  * `scope` is where agents file new issues; `additionalScopes` are listed and written too.
@@ -580,7 +582,9 @@ export const IssueTrackerProjectBinding = Schema.Struct({
   tracker: IssueTrackerKind,
   scope: TrimmedNonEmptyString,
   additionalScopes: Schema.optionalKey(
-    Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50)),
+    Schema.Array(TrimmedNonEmptyString).check(
+      Schema.isMaxLength(MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES),
+    ),
   ),
 });
 export type IssueTrackerProjectBinding = typeof IssueTrackerProjectBinding.Type;

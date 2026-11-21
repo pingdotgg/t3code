@@ -1,7 +1,9 @@
 import {
   boundIssueTrackerScopes,
   issueTrackerBindingFor,
+  issueTrackerScopeOptions,
   issueTrackerSummary,
+  type IssueTrackerPick,
 } from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -214,6 +216,8 @@ export function IssueTrackerProjectRows(props: {
   readonly environmentId: EnvironmentId;
   readonly tracker: IssueTrackerConnection;
   readonly bindings: IssueTrackerConnectionList["bindings"];
+  readonly refreshing: boolean;
+  readonly refreshFailed: boolean;
   readonly disabled: boolean;
 }) {
   const gt = useGT();
@@ -222,29 +226,34 @@ export function IssueTrackerProjectRows(props: {
     label: `bind project to ${tracker.displayName}`,
   });
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
-  const [binding, setBinding] = useState<ProjectId | null>(null);
+  const [pick, setPick] = useState<IssueTrackerPick | null>(null);
+  const [saving, setSaving] = useState(false);
+  if (pick !== null && !saving && !props.refreshing && !props.refreshFailed) setPick(null);
+  const busy = saving || (pick !== null && props.refreshing);
+  const bound = (projectId: ProjectId) =>
+    pick?.projectId === projectId
+      ? pick.scopes
+      : boundIssueTrackerScopes(tracker.tracker, props.bindings[projectId]);
   const change = async (projectId: ProjectId, scopes: ReadonlyArray<string>) => {
-    if (props.disabled || binding !== null) return;
-    setBinding(projectId);
-    await bind({
-      environmentId,
-      input: {
-        projectId,
-        binding: issueTrackerBindingFor(tracker.tracker, props.bindings[projectId], scopes),
-      },
-    });
-    setBinding(null);
+    if (props.disabled || busy) return;
+    const binding = issueTrackerBindingFor(tracker.tracker, bound(projectId), scopes);
+    setSaving(true);
+    setPick({ projectId, scopes: boundIssueTrackerScopes(tracker.tracker, binding ?? undefined) });
+    const result = await bind({ environmentId, input: { projectId, binding } });
+    if (result._tag !== "Success") setPick(null);
+    setSaving(false);
   };
   return projects.map((project) => {
     // A project bound to another tracker keeps that binding; this row shows it unbound.
-    const value = boundIssueTrackerScopes(tracker.tracker, props.bindings[project.id]);
+    const value = bound(project.id);
+    const options = issueTrackerScopeOptions(tracker, value);
     const toggle = (key: string) =>
       key === UNBOUND
         ? []
         : value.includes(key)
           ? value.filter((scope) => scope !== key)
           : [...value, key];
-    const locked = props.disabled || binding !== null;
+    const locked = props.disabled || busy;
     return (
       <Menu
         key={project.id}
@@ -260,11 +269,11 @@ export function IssueTrackerProjectRows(props: {
             state: value.length === 0 ? "on" : "off",
             attributes: { disabled: locked },
           },
-          ...tracker.scopes.map((scope) => ({
+          ...options.map((scope) => ({
             id: scope.key,
             title: `${scope.name} (${scope.key})`,
             state: value.includes(scope.key) ? ("on" as const) : ("off" as const),
-            attributes: { disabled: locked },
+            attributes: { disabled: locked || !scope.addable },
           })),
         ]}
         onPressAction={({ nativeEvent }) => void change(project.id, toggle(nativeEvent.event))}

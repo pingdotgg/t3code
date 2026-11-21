@@ -1,6 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  hasIssueTrackerTeams,
+  issueTrackerSummary,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   AuthSettingsWriteScope,
@@ -192,7 +195,7 @@ export function SettingsIssueTrackerRouteScreen({
               disabled={disabled}
             />
           </SettingsSection>
-          {usable && tracker.scopes.length > 0 ? (
+          {usable && hasIssueTrackerTeams(tracker, query.data?.bindings ?? {}) ? (
             <SettingsSection
               title={gt("Projects")}
               footer={gt(
@@ -204,6 +207,8 @@ export function SettingsIssueTrackerRouteScreen({
                 environmentId={environmentId}
                 tracker={tracker}
                 bindings={query.data?.bindings ?? {}}
+                refreshing={query.isPending}
+                refreshFailed={query.error !== null}
                 disabled={disabled}
               />
             </SettingsSection>
