@@ -275,7 +275,6 @@ const runDelegation = (input: {
         yield* TestClock.adjust("1 second");
       }
       yield* Fiber.join(childFailed);
-      assert.isFalse(armed, "the injected read failed once");
 
       if (!input.parentEndsFirst) yield* endParentTurn;
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -283,6 +282,7 @@ const runDelegation = (input: {
         yield* TestClock.adjust("30 seconds");
       }
 
+      assert.isFalse(armed, "the injected read failed once");
       const parent = yield* orchestrator.getThreadProjection(parentThreadId);
       const settled = parent.subagents.find((row) => row.id === task.id);
       assert.equal(settled?.status, "failed");
