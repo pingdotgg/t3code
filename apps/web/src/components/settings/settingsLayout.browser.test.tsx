@@ -3,7 +3,6 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
 import { PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE } from "../../hooks/useSettings";
-import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
 import type { useOptionalSettingsScope } from "./SettingsScopeContext";
@@ -79,27 +78,13 @@ it.each([
     );
 
     await userEvent.tab();
-    await expect
-      .element(screen.getByRole("group", { name: "Provider update checks" }))
-      .toHaveFocus();
+    const wrapper = screen.getByRole("group", { name: "Provider update checks" });
+    await expect.element(wrapper).toHaveFocus();
+    await expect.element(wrapper).toHaveAttribute("aria-disabled", "true");
+    await expect.element(wrapper).toHaveAccessibleDescription(reason);
+    await expect.element(wrapper).toHaveStyle({ cursor: "not-allowed" });
     await expect.element(page.getByText(reason)).toBeVisible();
     await userEvent.keyboard("{Enter} ");
     expect(changed).not.toHaveBeenCalled();
   },
 );
-
-it("names a self-disabled control by its row and its own label", async () => {
-  setup({ available: true, scoped: false });
-  await using screen = await render(
-    <SettingsRow
-      title="Version"
-      disabledReason="No update feed is configured."
-      control={<Button disabled>Check for Updates</Button>}
-    />,
-  );
-
-  await userEvent.tab();
-  await expect
-    .element(screen.getByRole("group", { name: "Version Check for Updates" }))
-    .toHaveAccessibleDescription("No update feed is configured.");
-});

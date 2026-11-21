@@ -311,14 +311,6 @@ function AboutVersionSection() {
     action === "none"
       ? !canCheckForUpdate(updateState)
       : isDesktopUpdateButtonDisabled(updateState);
-  const buttonDisabledReason = isUpdateActionPending
-    ? gt("An update installation is pending.")
-    : buttonDisabled && updateState
-      ? (getDesktopUpdateDisabledReason(updateState, updatesDenial, messages) ??
-        (updateState.status === "checking"
-          ? gt("Checking for updates.")
-          : (buttonTooltip ?? undefined)))
-      : undefined;
 
   const actionLabel: Record<string, string> = { download: gt("Download"), install: gt("Install") };
   const statusLabel: Record<string, string> = {
@@ -342,7 +334,6 @@ function AboutVersionSection() {
         title={<AboutVersionTitle />}
         description={description}
         managed={updatesDenial}
-        disabledReason={buttonDisabledReason}
         control={
           <Tooltip>
             <TooltipTrigger
@@ -405,13 +396,6 @@ function AboutVersionSection() {
             )
           }
           managed={updatesDenial}
-          disabledReason={
-            updateRun !== null
-              ? gt("Wait for the current update to finish before switching tracks.")
-              : switchChannel !== null
-                ? gt("Finish reviewing the update track switch first.")
-                : undefined
-          }
           control={
             <Select
               value={selectedUpdateChannel}

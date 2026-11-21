@@ -329,7 +329,6 @@ export function SettingsRow({
   managedPaths = EMPTY_MANAGED_PATHS,
   mixed: mixedOverride,
   managed,
-  disabledReason,
   children,
   className,
   ...rowProps
@@ -349,14 +348,11 @@ export function SettingsRow({
   mixed?: boolean;
   /** Why an administrator's policy turns this row's control off, from the contract's denial helpers. */
   managed?: string | undefined;
-  /** Why the control, which disables itself, cannot be used right now. */
-  disabledReason?: string | undefined;
   children?: ReactNode;
 }) {
   const gt = useGT();
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const titleId = useId();
-  const controlId = useId();
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -434,7 +430,7 @@ export function SettingsRow({
     ) : (
       resetAction
     );
-  const inertControl = (message: string, selfDisabled = false) => (
+  const inertControl = (message: string) => (
     <Tooltip>
       <TooltipTrigger
         render={
@@ -442,20 +438,15 @@ export function SettingsRow({
             tabIndex={0}
             role="group"
             aria-disabled="true"
-            // A self-disabled control stays out of `inert` so its own label names the action.
-            aria-labelledby={selfDisabled ? `${titleId} ${controlId}` : titleId}
+            aria-labelledby={titleId}
             aria-description={message}
             className="flex w-full cursor-not-allowed items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @min-[32rem]/settings-row:w-auto"
           />
         }
       >
         <div
-          id={controlId}
-          inert={!selfDisabled}
-          className={cn(
-            "flex w-full items-center gap-2 @min-[32rem]/settings-row:w-auto",
-            !selfDisabled && "opacity-50",
-          )}
+          inert
+          className="flex w-full items-center gap-2 opacity-50 @min-[32rem]/settings-row:w-auto"
         >
           {control}
         </div>
@@ -495,9 +486,7 @@ export function SettingsRow({
             ? inertControl(gt("Environment-wide setting. Select an environment to change it."))
             : deviceReadOnly && control
               ? inertControl(gt("Saved on this device. Select All projects to change it."))
-              : disabledReason !== undefined && control
-                ? inertControl(disabledReason, true)
-                : control;
+              : control;
   const customized =
     context !== null &&
     settingKeys.some((key) =>
