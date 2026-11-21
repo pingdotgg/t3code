@@ -482,6 +482,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+    readonly shouldUnloadThreadPromptly?: boolean;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
@@ -601,6 +602,12 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             : {
                 hasPendingBackgroundWorkForThread: () => options.hasPendingBackgroundWorkForThread!,
               }),
+          ...(options.shouldUnloadThreadPromptly === undefined
+            ? {}
+            : {
+                shouldUnloadThreadPromptly: () =>
+                  Effect.succeed(options.shouldUnloadThreadPromptly!),
+              }),
           ensureThread: () => unimplemented("ensureThread unused in test"),
           resumeThread: (threadInput) =>
             Ref.update(state, (current) => ({
@@ -670,6 +677,7 @@ function layerTest(input: {
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+  readonly shouldUnloadThreadPromptly?: boolean;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
@@ -718,6 +726,9 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWorkForThread === undefined
         ? {}
         : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
+      ...(input.shouldUnloadThreadPromptly === undefined
+        ? {}
+        : { shouldUnloadThreadPromptly: input.shouldUnloadThreadPromptly }),
       ...(input.backgroundTasksEndWithProcess === undefined
         ? {}
         : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
@@ -5466,6 +5477,98 @@ it.effect.each([
                 : {}),
             // Another thread's work keeps the shared session open past the children's idle unloads.
             hasPendingBackgroundWork: Effect.succeed(keptOpen),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect.each([true, false])(
+  "ProviderSessionManagerV2 unloads an idle thread after a short delay only when its runtime asks (prompt: %s)",
+  (prompt) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const unloads = yield* Queue.unbounded<string>();
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-prompt-unload");
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "Use the computer",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const subscription = yield* runtime.subscribeEvents!;
+        yield* Queue.offer((yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-turn-prompt-unload",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* subscription.events.pipe(Stream.runHead);
+
+        yield* TestClock.adjust("5 seconds");
+        if (prompt) {
+          assert.equal(yield* Queue.take(unloads), "unload:native-thread");
+        } else {
+          assert.isTrue(Option.isNone(yield* Queue.poll(unloads)));
+          yield* TestClock.adjust("30 minutes");
+          assert.equal(yield* Queue.take(unloads), "unload:native-thread");
+        }
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 30 * 60 * 1000,
+            unloads,
+            shouldUnloadThreadPromptly: prompt,
+            // Another thread's work keeps the session open, so only the thread unloads.
+            hasPendingBackgroundWork: Effect.succeed(true),
           }),
         ),
       );

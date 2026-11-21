@@ -9543,6 +9543,144 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
+  const computerUseItem = (input: {
+    readonly threadId: string;
+    readonly turnId: string;
+  }): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> =>
+    (["inProgress", "completed"] as const).map((status) => ({
+      type: "emit_inbound",
+      label: `computer-use/${status}`,
+      frame: {
+        method: status === "inProgress" ? "item/started" : "item/completed",
+        params: {
+          item: {
+            type: "mcpToolCall",
+            id: "call-codex-computer-use",
+            server: "cua_repl",
+            tool: "js",
+            status,
+            arguments: { code: 'let app = await cua.getApp("Calculator")' },
+          },
+          threadId: input.threadId,
+          turnId: input.turnId,
+        },
+      },
+    }));
+
+  it.effect.each(["root", "subagent"] as const)(
+    "unloads promptly, with any native subagent, once the %s thread used Computer Use",
+    (usedBy) =>
+      Effect.gen(function* () {
+        const unsubscribed: Array<string> = [];
+        const unsubscribe = (
+          id: number,
+          threadId: string,
+        ): CodexReplay.CodexAppServerReplayEntry[] => [
+          {
+            type: "expect_outbound",
+            label: `unsubscribe ${threadId}`,
+            frame: { id, method: "thread/unsubscribe", params: { threadId } },
+          },
+          {
+            type: "emit_inbound",
+            label: `unsubscribed ${threadId}`,
+            frame: { id, result: { status: "unsubscribed" } },
+          },
+        ];
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-computer-use-prompt-unload",
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId: RESUME_NATIVE_THREAD,
+                nativeTurnId: RESUME_NATIVE_TURN,
+                prompt: RESUME_PROMPT,
+              }),
+              ...(usedBy === "root"
+                ? computerUseItem({ threadId: RESUME_NATIVE_THREAD, turnId: RESUME_NATIVE_TURN })
+                : [
+                    {
+                      type: "emit_inbound" as const,
+                      label: "item/completed/subAgentActivity-started",
+                      frame: {
+                        method: "item/completed",
+                        params: {
+                          item: {
+                            type: "subAgentActivity",
+                            id: "call-codex-resume-spawn",
+                            kind: "started",
+                            agentThreadId: RESUME_CHILD_THREAD,
+                            agentPath: "/root/resume_agent",
+                          },
+                          threadId: RESUME_NATIVE_THREAD,
+                          turnId: RESUME_NATIVE_TURN,
+                        },
+                      },
+                    },
+                    childTurnStarted(RESUME_CHILD_TURN_1),
+                    ...computerUseItem({
+                      threadId: RESUME_CHILD_THREAD,
+                      turnId: RESUME_CHILD_TURN_1,
+                    }),
+                    childTurnCompleted(RESUME_CHILD_TURN_1),
+                  ]),
+              {
+                type: "emit_inbound",
+                label: "turn/completed/root",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: RESUME_NATIVE_THREAD,
+                    turn: makeCodexReplayTurn({ id: RESUME_NATIVE_TURN, status: "completed" }),
+                  },
+                },
+              },
+              ...unsubscribe(4, RESUME_NATIVE_THREAD),
+              ...(usedBy === "subagent" ? unsubscribe(5, RESUME_CHILD_THREAD) : []),
+            ],
+          }),
+          undefined,
+          (method, params) =>
+            Effect.sync(() => {
+              if (method === "thread/unsubscribe") {
+                unsubscribed.push((params as { readonly threadId: string }).threadId);
+              }
+            }),
+        );
+        const shouldUnloadPromptly = () =>
+          harness.runtime.shouldUnloadThreadPromptly!(harness.providerThread);
+        assert.isFalse(yield* shouldUnloadPromptly());
+
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-computer-use"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* harness.firstTerminal;
+        assert.isTrue(yield* shouldUnloadPromptly());
+
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        assert.isFalse(yield* shouldUnloadPromptly());
+        assert.deepEqual(
+          unsubscribed,
+          usedBy === "root" ? [RESUME_NATIVE_THREAD] : [RESUME_NATIVE_THREAD, RESUME_CHILD_THREAD],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("wakes the parent when a native child finishes after the parent's turn", () =>
     Effect.gen(function* () {
       const entries = resumeSubagentTranscript.entries;

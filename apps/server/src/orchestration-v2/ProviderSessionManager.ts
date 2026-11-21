@@ -69,6 +69,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
+const PROMPT_THREAD_UNLOAD_MS = 5 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 /** Past adapters' own 10 s stop fallbacks, so they settle first when the provider answers at all. */
 export const PROVIDER_INTERRUPT_TIMEOUT_MS = 15 * 1000;
@@ -1994,7 +1995,14 @@ export const layerWithOptions = (
           if (tracked === undefined) return;
           const [threadId, pending] = tracked;
           const generation = pending.generation + 1;
-          const fiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
+          const prompt =
+            entry.runtime.shouldUnloadThreadPromptly === undefined
+              ? false
+              : yield* entry.runtime
+                  .shouldUnloadThreadPromptly(pending.providerThread)
+                  .pipe(Effect.catchCause(() => Effect.succeed(false)));
+          const delayMs = prompt ? Math.min(PROMPT_THREAD_UNLOAD_MS, idleTimeoutMs) : idleTimeoutMs;
+          const fiber = yield* Effect.sleep(Duration.millis(delayMs)).pipe(
             Effect.andThen(unloadIdleThread({ providerSessionId, threadId, generation })),
             Effect.forkIn(layerScope),
           );

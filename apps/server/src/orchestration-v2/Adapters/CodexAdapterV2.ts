@@ -2227,6 +2227,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         /** Completed by thread/closed after this connection unsubscribes from the native thread. */
         const threadClosings = new Map<string, Deferred.Deferred<void>>();
+        // On macOS the Computer Use service outlives its turn until the thread's MCP servers exit.
+        // Keyed by the native thread that ran it (a subagent's own), valued by the root it unloads with.
+        const computerUseNativeThreads = new Map<string, OrchestrationV2ProviderThread["id"]>();
         /** Codex acceptForSession covers only the exact command or patch, not future commands. */
         const sessionApprovals = new Map<
           string,
@@ -4316,6 +4319,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const projection = yield* projectCodexDynamicToolItem(item).pipe(
               Effect.provideService(Digest.Digest, digest),
             );
+            const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
+            if (projection.toolSurface === "computer" && nativeThreadId != null) {
+              computerUseNativeThreads.set(
+                nativeThreadId,
+                approvalOwnerCodexTurn(context).owner.providerThread.id,
+              );
+            }
             const node: OrchestrationV2ExecutionNode = {
               id: nodeId,
               threadId: context.projectionThreadId,
@@ -8054,6 +8064,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             return false;
           }),
+          shouldUnloadThreadPromptly: (providerThread) =>
+            Effect.sync(() =>
+              Array.from(computerUseNativeThreads.values()).includes(providerThread.id),
+            ),
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
               Effect.andThen(
@@ -8364,6 +8378,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   threadClosings.set(nativeThreadId, yield* Deferred.make<void>());
                 }
                 yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
+              }
+              // Unloading a parent leaves its native subagents loaded, and their Computer Use with them.
+              for (const [usedBy, root] of computerUseNativeThreads) {
+                if (root !== unloadInput.providerThread.id && usedBy !== nativeThreadId) continue;
+                computerUseNativeThreads.delete(usedBy);
+                if (usedBy === nativeThreadId) continue;
+                yield* client.request("thread/unsubscribe", { threadId: usedBy }).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("orchestration-v2.codex-computer-use-unload-failed", {
+                      threadId: usedBy,
+                      cause,
+                    }),
+                  ),
+                );
               }
               // No turn/completed arrives for an unloaded thread, so a Stop Codex never
               // confirmed would otherwise keep its turn open for the life of the session.
