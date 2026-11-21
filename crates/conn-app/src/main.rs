@@ -14,6 +14,7 @@ mod palette;
 mod settings;
 mod shell;
 mod sidebar;
+mod stderr_log;
 mod superhero;
 mod theme;
 mod vibrancy;
@@ -52,6 +53,7 @@ fn main() {
         std::process::exit(code);
     }
 
+    stderr_log::install();
     let application = gpui_kit::application().with_assets(superhero::AppAssets);
     application.run(|cx| {
         gpui_kit::init(cx);
@@ -63,6 +65,7 @@ fn main() {
         theme::apply_kit_theme(&tokens, cx);
         let server = live::server_config_from_env();
         app::register_keybindings(cx);
+        app::start_frame_log(cx);
 
         // `CONN_GPUI_WINDOW=x,y,width,height` (points, top-left origin) places the window
         // exactly, so captures line up with a reference app at the same frame.

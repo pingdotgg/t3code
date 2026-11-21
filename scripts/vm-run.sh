@@ -29,8 +29,11 @@ stop
 (cd "$ROOT" && cargo build -p conn-app --features automation,cef 2>&1 | tail -1)
 "$ROOT/scripts/bundle-app.sh" debug >/dev/null
 rm -f "$DEV/automation-port"
-open -n "$APP" \
+EXTRA=()
+[[ -n "${CONN_GPUI_METAL_DISPLAY_LINK:-}" ]] && EXTRA+=(--env CONN_GPUI_METAL_DISPLAY_LINK=1)
+open -n "$APP" ${EXTRA[@]+"${EXTRA[@]}"} \
   --env CONN_WEB_TRACE=1 \
+  --env CONN_GPUI_FRAME_LOG=1 \
   --env CONN_GPUI_WINDOW=20,41,1440,900 \
   --env CONN_GPUI_SERVER=http://127.0.0.1:3891 \
   --env CONN_GPUI_TOKEN_FILE="$DEV/bearer" \

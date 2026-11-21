@@ -68,6 +68,8 @@ pub(crate) struct ConnApp {
     command_palette: Option<Entity<crate::palette::CommandPalette>>,
     settings_modal: Option<Entity<crate::settings::SettingsModal>>,
     overlay_subscriptions: Vec<gpui_kit::Subscription>,
+    /// What had the keyboard before the palette or Settings opened; it gets it back on close.
+    focus_before_overlay: Option<FocusHandle>,
     server_url: Option<String>,
 }
 
@@ -163,6 +165,7 @@ impl ConnApp {
             command_palette: None,
             settings_modal: None,
             overlay_subscriptions: Vec::new(),
+            focus_before_overlay: None,
             server_url,
         }
     }
@@ -171,10 +174,12 @@ impl ConnApp {
     pub(crate) fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         use crate::palette::{CommandPalette, PaletteAction, PaletteEvent, PaletteItems};
         if self.command_palette.take().is_some() {
+            self.restore_focus(window, cx);
             self.sync_browser_visibility(cx);
             cx.notify();
             return;
         }
+        self.remember_focus(window, cx);
         let items = PaletteItems::from_shell(
             &self.shell,
             self.layout.selected_thread_id.as_deref(),
@@ -187,6 +192,7 @@ impl ConnApp {
             window,
             |app, _entity, event: &PaletteEvent, window, cx| {
                 app.command_palette = None;
+                app.restore_focus(window, cx);
                 match event {
                     PaletteEvent::SelectThread(id) => app.select_thread(id.clone(), cx),
                     PaletteEvent::ApplyTheme(id) => {
@@ -216,14 +222,32 @@ impl ConnApp {
         cx.notify();
     }
 
+    /// Notes what has the keyboard before an overlay takes it.
+    fn remember_focus(&mut self, window: &Window, cx: &App) {
+        self.focus_before_overlay = window.focused(cx);
+    }
+
+    /// Gives the keyboard back after an overlay closes: to what had it before, or to the shell
+    /// root. Without this nothing keeps focus, and the app's shortcuts (Cmd+K, Cmd+N) stop
+    /// working until a click.
+    fn restore_focus(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let handle = self
+            .focus_before_overlay
+            .take()
+            .unwrap_or_else(|| self.focus_handle.clone());
+        window.focus(&handle, cx);
+    }
+
     /// Opens (or closes) the Settings route modal.
     pub(crate) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         use crate::settings::{SettingsConnectionInfo, SettingsEvent, SettingsModal};
         if self.settings_modal.take().is_some() {
+            self.restore_focus(window, cx);
             self.sync_browser_visibility(cx);
             cx.notify();
             return;
         }
+        self.remember_focus(window, cx);
         let connection = SettingsConnectionInfo {
             server_url: self.server_url.clone(),
             status: self.status.clone(),
@@ -231,15 +255,17 @@ impl ConnApp {
         let theme_id = self.theme_id.clone();
         let tokens = self.tokens.clone();
         let modal = cx.new(|cx| SettingsModal::new(theme_id, tokens, connection, window, cx));
-        let sub = cx.subscribe(
+        let sub = cx.subscribe_in(
             &modal,
-            |app, _entity, event: &SettingsEvent, cx| match event {
+            window,
+            |app, _entity, event: &SettingsEvent, window, cx| match event {
                 SettingsEvent::ApplyTheme(id) => {
                     // set_theme pushes the new tokens into the open modal too.
                     app.set_theme(id, cx);
                 }
                 SettingsEvent::Close => {
                     app.settings_modal = None;
+                    app.restore_focus(window, cx);
                     app.sync_browser_visibility(cx);
                     cx.notify();
                 }
@@ -675,6 +701,8 @@ impl ConnApp {
             "sidebarOpen": self.layout.sidebar_open,
             "rightPanel": self.layout.right_panel_open.then(|| format!("{:?}", self.layout.right_panel_tab)),
             "timeline": timeline,
+            "palette": self.command_palette.is_some(),
+            "settings": self.settings_modal.is_some(),
         })
     }
 
@@ -1035,11 +1063,44 @@ impl Focusable for ConnApp {
     }
 }
 
+/// Renders of the root view, for `CONN_GPUI_FRAME_LOG=1` (frames actually drawn).
+static RENDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Logs root renders per second to stderr when `CONN_GPUI_FRAME_LOG` is set.
+pub(crate) fn start_frame_log(cx: &mut App) {
+    if std::env::var_os("CONN_GPUI_FRAME_LOG").is_none() {
+        return;
+    }
+    cx.spawn(async move |cx| {
+        let mut last = 0;
+        loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(1))
+                .await;
+            let now = RENDERS.load(std::sync::atomic::Ordering::Relaxed);
+            if now != last {
+                eprintln!("frames: {} renders in the last second", now - last);
+                last = now;
+            }
+        }
+    })
+    .detach();
+}
+
 impl Render for ConnApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut root = div()
             .id("conn-shell-root")
             .track_focus(&self.focus_handle)
+            .capture_key_down(|event, _window, _cx| {
+                if std::env::var_os("CONN_GPUI_FRAME_LOG").is_some() {
+                    eprintln!(
+                        "key: {:?} {:?}",
+                        event.keystroke.modifiers, event.keystroke.key
+                    );
+                }
+            })
             .on_action(cx.listener(|app, _: &ToggleSidebar, _window, cx| {
                 app.toggle_sidebar(cx);
             }))
@@ -1051,6 +1112,9 @@ impl Render for ConnApp {
             }))
             .on_action(
                 cx.listener(|app, _: &crate::palette::OpenCommandPalette, window, cx| {
+                    if std::env::var_os("CONN_GPUI_FRAME_LOG").is_some() {
+                        eprintln!("action: open command palette");
+                    }
                     app.open_command_palette(window, cx);
                 }),
             )

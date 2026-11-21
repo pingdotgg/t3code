@@ -95,3 +95,12 @@ opt-level = 3
 codegen-units = 1
 lto = "thin"
 strip = true
+
+[patch.crates-io]
+# gpui-pre-macos 0.3.11 as published, plus Threadbear's patch (vendor/gpui-pre-macos/src/window.rs,
+# another_view_has_the_keyboard): with a native view holding the keyboard (an embedded web page),
+# keys without Cmd or Control go to that view rather than a hidden GPUI text box.
+# conn-gpui also paces frames with CVDisplayLink instead of CAMetalDisplayLink (window.rs, at
+# `metal_frames`): under the Metal link, frames drawn during key dispatch stayed off screen until
+# the next mouse event (2026-11-21, reproduced in nick-vm). CONN_GPUI_METAL_DISPLAY_LINK=1 opts back in.
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }

@@ -1183,6 +1183,7 @@ dependencies = [
  "gpui-kit",
  "image",
  "libc",
+ "log",
  "markdown",
  "objc2 0.6.5",
  "objc2-core-graphics",
@@ -3229,8 +3230,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-macos"
 version = "0.3.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7410cfdaa1fa55a414346cc492d18ce340e3a8b6d0ac3213b984ed690c82b92"
 dependencies = [
  "accesskit",
  "accesskit_macos",

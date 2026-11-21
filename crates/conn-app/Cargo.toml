@@ -22,6 +22,7 @@ gpui-kit.workspace = true
 alacritty_terminal.workspace = true
 futures.workspace = true
 image.workspace = true
+log = "0.4"
 markdown.workspace = true
 raw-window-handle.workspace = true
 rust-embed.workspace = true
