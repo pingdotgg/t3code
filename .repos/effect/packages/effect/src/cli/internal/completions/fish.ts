@@ -161,8 +161,12 @@ const generateCompletions = (
 
   // Flag completions
   for (const flag of descriptor.flags) {
-    const dedup = takesSeparateValue(flag) ? valueFlagDedupCondition(flag) : flagContainsOptCondition(flag)
-    const flagCondition = condition ? `${condition}; and ${dedup}` : dedup
+    const dedup = flag.repeatable === true
+      ? ""
+      : takesSeparateValue(flag)
+      ? valueFlagDedupCondition(flag)
+      : flagContainsOptCondition(flag)
+    const flagCondition = [condition, dedup].filter((part) => part !== "").join("; and ")
     const flagCondArg = flagCondition ? `-n '${flagCondition}'` : ``
 
     const parts = [`complete -c ${executableName}`]
@@ -193,7 +197,9 @@ const generateCompletions = (
     const bareBase = condition ? `${condition}; and ${notDash}` : notDash
 
     for (const flag of descriptor.flags) {
-      const bareCondition = `${bareBase}; and ${flagContainsOptCondition(flag)}`
+      const bareCondition = flag.repeatable === true
+        ? bareBase
+        : `${bareBase}; and ${flagContainsOptCondition(flag)}`
       const negation = negatedName(flag)
 
       const parts = [`complete -c ${executableName}`]

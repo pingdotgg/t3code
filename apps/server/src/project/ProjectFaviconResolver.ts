@@ -63,6 +63,9 @@ const FAVICON_CANDIDATES = [
   "AppIcon.icns",
 ] as const;
 
+// Flutter's default favicon ranks below icons a project declares in its source.
+const FALLBACK_FAVICON_CANDIDATES = ["web/favicon.png"] as const;
+
 const ICON_SOURCE_FILES = [
   "index.html",
   "public/index.html",
@@ -315,9 +318,14 @@ export const make = Effect.gen(function* () {
       return wellKnown;
     }
 
-    return yield* firstInOrder(ICON_SOURCE_FILES, (sourceFile) =>
+    const sourceDeclared = yield* firstInOrder(ICON_SOURCE_FILES, (sourceFile) =>
       findIconFromSource(projectCwd, sourceFile),
     );
+    if (sourceDeclared) {
+      return sourceDeclared;
+    }
+
+    return yield* findExistingFile(projectCwd, FALLBACK_FAVICON_CANDIDATES, "workspace");
   });
 
   const faviconCache = yield* Cache.makeWith<string, string | null, ProjectFaviconResolutionError>(
