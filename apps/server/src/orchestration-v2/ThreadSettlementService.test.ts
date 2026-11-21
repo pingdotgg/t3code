@@ -2147,8 +2147,14 @@ describe("ThreadSettlementServiceV2 worker", () => {
           url: "https://example.test/owner/repository/pull/42",
         },
       });
+      const legacyOwner = makeThread("legacy-owner", {
+        branch: "feature",
+        createdAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        linkedPullRequest: cachedSibling.branchPullRequest,
+      });
       const fixture = yield* makeHarness({
-        snapshot: makeSnapshot([owner, sibling, cachedSibling]),
+        snapshot: makeSnapshot([owner, sibling, legacyOwner, cachedSibling]),
         settings: {
           ...DEFAULT_SERVER_SETTINGS,
           sidebarAutoSettleOnMerge: true,
@@ -2164,9 +2170,11 @@ describe("ThreadSettlementServiceV2 worker", () => {
         yield* Queue.take(fixture.snapshotReads);
         yield* reactor.drain;
 
-        expect([
-          ...new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
-        ]).toEqual([owner.id]);
+        expect(
+          [
+            ...new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
+          ].toSorted(),
+        ).toEqual([legacyOwner.id, owner.id].toSorted());
       }).pipe(Effect.provide(fixture.layer));
     }),
   );

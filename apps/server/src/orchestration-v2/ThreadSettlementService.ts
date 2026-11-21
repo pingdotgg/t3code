@@ -499,7 +499,7 @@ export const make = Effect.gen(function* () {
       const reference = thread.linkedPullRequest ?? thread.branchPullRequest;
       if (reference != null) {
         return JSON.stringify([
-          "linked",
+          thread.linkedPullRequest != null ? "linked" : "branch-reference",
           reference.projectId,
           reference.repository,
           reference.number,
