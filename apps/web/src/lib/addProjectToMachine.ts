@@ -1,39 +1,21 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
-  executeAtomQuery,
-  runAtomCommand,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+  readProjectFilesToCopy,
+  writeProjectFilesAfterClone,
+} from "@t3tools/client-runtime/state/project-file-copy";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
-import type {
-  EnvironmentId,
-  ProjectCloneSnapshot,
-  ProjectId,
-  ScopedProjectRef,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { create } from "zustand";
 
+import { environmentCatalog } from "../connection/catalog";
 import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
-import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
+import { silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
-
-/** Matches the server's read cap: a larger file would arrive truncated. */
-export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
-
-/** The server lists at most this many ignored files, so one pick never exceeded it. */
-export const COPIED_FILES_MAX_COUNT = 200;
-
-const DEFAULT_COPIED_FILE_NAME = /^(?:\.env(?:\..+)?|\.envrc|\.dev\.vars)$/;
-
-/** Env files are the ignored files people almost always want on a new machine. */
-export function isDefaultCopiedFile(path: string): boolean {
-  const name = path.split("/").at(-1) ?? path;
-  return DEFAULT_COPIED_FILE_NAME.test(name);
-}
 
 export interface AddProjectToMachineInput {
   readonly source: { readonly environmentId: EnvironmentId; readonly cwd: string };
@@ -50,31 +32,6 @@ export interface AddProjectToMachineInput {
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
   const error = squashAtomCommandFailure(result);
   return thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
-}
-
-/**
- * Resolves when the clone finishes, or null once it is removed. A failed or
- * cancelled clone keeps waiting, since the composer offers a retry.
- */
-function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
-  return new Promise<ProjectCloneSnapshot | null>((resolve) => {
-    const atom = environmentProjectClonesAtom(environmentId);
-    let seen = false;
-    let settled = false;
-    let unsubscribe: (() => void) | null = null;
-    const check = (clones: ReadonlyArray<ProjectCloneSnapshot>) => {
-      if (settled) return;
-      const clone = clones.find((candidate) => candidate.projectId === projectId);
-      if (clone) seen = true;
-      const result = clone?.phase === "done" ? clone : !clone && seen ? null : undefined;
-      if (result === undefined) return;
-      settled = true;
-      unsubscribe?.();
-      resolve(result);
-    };
-    unsubscribe = appAtomRegistry.subscribe(atom, check);
-    check(appAtomRegistry.get(atom));
-  });
 }
 
 export type ProjectFileCopy =
@@ -113,21 +70,12 @@ export function dismissProjectFileCopy(ref: ScopedProjectRef) {
  * caller opens it, and its composer shows progress, so nothing toasts.
  */
 export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<ProjectId> {
-  // Read first, so the copy reflects the files as they were when the user asked.
-  const reads = await Promise.all(
-    input.files.map(async (relativePath) => {
-      const result = await executeAtomQuery(
-        appAtomRegistry,
-        projectEnvironment.readFile({
-          environmentId: input.source.environmentId,
-          input: { cwd: input.source.cwd, relativePath },
-        }),
-        { label: "Read file to copy", reportFailure: false, refresh: true },
-      );
-      if (result._tag === "Failure") return { relativePath, error: failureMessage(result) };
-      if (result.value.truncated) return { relativePath, error: m(msg("Too large to copy.")) };
-      return { relativePath, contents: result.value.contents };
-    }),
+  const reads = await readProjectFilesToCopy(
+    appAtomRegistry,
+    projectEnvironment,
+    input.source,
+    input.files,
+    m,
   );
 
   const requestedRef = { environmentId: input.target.environmentId, projectId: input.projectId };
@@ -168,36 +116,23 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
   void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
   if (reads.length === 0) return projectId;
 
-  void (async () => {
-    const clone = await waitForClone(input.target.environmentId, projectId);
-    if (!clone) {
-      setFileCopy(copyKey, null);
-      return;
-    }
-    const failed: Array<string> = [];
-    for (const read of reads) {
-      if (!("contents" in read)) {
-        failed.push(`${read.relativePath}: ${read.error}`);
-        continue;
-      }
-      const written = await runAtomCommand(
-        appAtomRegistry,
-        projectEnvironment.writeFile,
-        {
-          environmentId: input.target.environmentId,
-          input: {
-            cwd: started.value.cwd,
-            relativePath: input.subdirectory
-              ? `${input.subdirectory}/${read.relativePath}`
-              : read.relativePath,
-            contents: read.contents,
-          },
-        },
-        { label: "Copy file to machine", reportFailure: false },
-      );
-      if (written._tag === "Failure")
-        failed.push(`${read.relativePath}: ${failureMessage(written)}`);
-    }
+  void writeProjectFilesAfterClone(
+    appAtomRegistry,
+    projectEnvironment,
+    {
+      clonesAtom: sourceControlEnvironment.projectClones({
+        environmentId: input.target.environmentId,
+        input: {},
+      }),
+      sessionGenerationAtom: environmentCatalog.sessionGenerationAtom(input.target.environmentId),
+      environmentId: input.target.environmentId,
+      projectId,
+      cwd: started.value.cwd,
+      subdirectory: input.subdirectory,
+      reads,
+    },
+    m,
+  ).then((failed) =>
     setFileCopy(
       copyKey,
       failed.length === 0
@@ -210,7 +145,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
             ),
             failures: failed,
           },
-    );
-  })();
+    ),
+  );
   return projectId;
 }

@@ -7,6 +7,12 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryPath,
 } from "@t3tools/client-runtime/operations/projects";
+import {
+  COPIED_FILES_MAX_COUNT,
+  COPYABLE_FILE_MAX_BYTES,
+  defaultCopiedFiles,
+  projectSubdirectory,
+} from "@t3tools/client-runtime/state/project-file-copy";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   type EnvironmentId,
@@ -28,12 +34,7 @@ import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
-import {
-  COPIED_FILES_MAX_COUNT,
-  COPYABLE_FILE_MAX_BYTES,
-  addProjectToMachine,
-  isDefaultCopiedFile,
-} from "../lib/addProjectToMachine";
+import { addProjectToMachine } from "../lib/addProjectToMachine";
 import { formatBytes } from "../lib/formatBytes";
 import { seedDraftModelSelection } from "../lib/seedDraftModelSelection";
 import { newProjectId } from "../lib/utils";
@@ -154,7 +155,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const files = ignoredFiles.data?.files ?? [];
   // Keyed by path with the file kept, so picks made under one search survive the next.
   const [selected, setSelected] = useState<ReadonlyMap<string, ProjectIgnoredFile> | null>(null);
-  const selectedFiles = selected ?? defaultSelection(allIgnoredFiles.data?.files ?? []);
+  const selectedFiles = selected ?? defaultCopiedFiles(allIgnoredFiles.data?.files ?? []);
   const copyable = files.filter((file) => file.byteLength <= COPYABLE_FILE_MAX_BYTES);
   const allCopyableSelected = copyable.every((file) => selectedFiles.has(file.path));
   const atSelectionLimit = selectedFiles.size >= COPIED_FILES_MAX_COUNT;
@@ -478,31 +479,6 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         </form>
       </DialogPopup>
     </Dialog>
-  );
-}
-
-/**
- * A project can be rooted below its repository's top folder. The clone lands
- * at the top, so copied files keep the same path below it.
- */
-function projectSubdirectory(repositoryRoot: string | undefined, workspaceRoot: string) {
-  if (!repositoryRoot) return "";
-  const prefix = repositoryRoot.replace(/[\\/]+$/, "");
-  const rest = workspaceRoot.slice(prefix.length);
-  return workspaceRoot.startsWith(prefix) && /^[\\/]/.test(rest)
-    ? rest.slice(1).replaceAll("\\", "/")
-    : "";
-}
-
-function defaultSelection(
-  files: readonly ProjectIgnoredFile[],
-): ReadonlyMap<string, ProjectIgnoredFile> {
-  return new Map(
-    files
-      .filter(
-        (file) => file.byteLength <= COPYABLE_FILE_MAX_BYTES && isDefaultCopiedFile(file.path),
-      )
-      .map((file) => [file.path, file]),
   );
 }
 

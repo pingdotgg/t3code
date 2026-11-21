@@ -165,6 +165,12 @@ vi.mock("../../state/sourceControl", () => ({
     },
   },
 }));
+vi.mock("../../connection/catalog", () => ({
+  environmentCatalog: { sessionGenerationAtom: () => null },
+}));
+vi.mock("../../state/projectClones", () => ({
+  setProjectFilesCopying: () => {},
+}));
 vi.mock("../../state/projects", () => ({
   projectEnvironment: {
     createNew: () => state.createNewResult,
