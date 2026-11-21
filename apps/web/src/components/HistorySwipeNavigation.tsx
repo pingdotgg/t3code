@@ -152,7 +152,10 @@ export function HistorySwipeNavigation() {
         if (event.deltaX === 0 && event.deltaY === 0) return release();
         gesture.travelX += Math.abs(event.deltaX);
         gesture.travelY += Math.abs(event.deltaY);
-        if (isVerticalScroll(gesture.travelX, gesture.travelY)) {
+        if (
+          isVerticalScroll(gesture.travelX, gesture.travelY) ||
+          (event.deltaX !== 0 && canScrollHorizontally(event.composedPath(), event.deltaX))
+        ) {
           gesture = { kind: "ignored" };
           return hideIndicator();
         }
