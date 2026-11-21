@@ -8723,10 +8723,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             postSettleContinuationEnabled &&
               settledStatus === "completed" &&
               !directStopQuarantine &&
-              flavor.watchPromptOutcome !== undefined
+              context.checkPromptOutcome !== undefined
               ? {
                   sessionId: context.nativeThreadId,
-                  check: yield* flavor.watchPromptOutcome(context.nativeThreadId),
+                  check: context.checkPromptOutcome,
                 }
               : null,
           );
