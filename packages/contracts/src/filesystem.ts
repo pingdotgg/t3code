@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-const FILESYSTEM_PATH_MAX_LENGTH = 512;
+export const FILESYSTEM_PATH_MAX_LENGTH = 512;
 
 export const FILESYSTEM_METADATA_BATCH_LIMIT = 64;
 
@@ -27,6 +27,7 @@ export const FilesystemGetMetadataResult = Schema.Struct({
 export type FilesystemGetMetadataResult = typeof FilesystemGetMetadataResult.Type;
 
 export const FilesystemBrowseInput = Schema.Struct({
+  searchQuery: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
   partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))),
 });
@@ -39,6 +40,7 @@ export const FilesystemBrowseEntry = Schema.Struct({
 export type FilesystemBrowseEntry = typeof FilesystemBrowseEntry.Type;
 
 export const FilesystemBrowseResult = Schema.Struct({
+  recursive: Schema.optionalKey(Schema.Boolean),
   parentPath: TrimmedNonEmptyString,
   entries: Schema.Array(FilesystemBrowseEntry),
 });

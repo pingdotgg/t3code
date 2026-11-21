@@ -615,6 +615,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
       ? [gt("Add project base directory")]
       : []),
+    ...(settings.projectSearchDirectories.length ? ["Project search folders"] : []),
     ...(settings.ghqCloneLayout !== DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout
       ? [gt("Clone into host folders")]
       : []),
@@ -740,6 +741,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      projectSearchDirectories: DEFAULT_UNIFIED_SETTINGS.projectSearchDirectories,
       ghqCloneLayout: DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmTerminalClose: DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose,
@@ -1976,12 +1978,46 @@ export function ThreadsSettingsPanel() {
     textGenerationModelInstanceEntries,
     true,
   );
+  const mixedProjectSearchDirectories = useScopedSettingsMixed(["projectSearchDirectories"]);
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
 
   return (
     <SettingsPageContainer>
       <SettingsSection id="new-projects" title={gt("New projects")}>
+        <SettingsRow
+          serverScoped
+          settingKeys={["projectSearchDirectories"]}
+          {...setting("project-search-directories")}
+          description={gt(
+            "Search nested folders in these locations. Separate paths with semicolons. Leave empty to search under the folder you are browsing.",
+          )}
+          control={
+            <DraftInput
+              size="sm"
+              className="w-full sm:w-72"
+              value={
+                mixedProjectSearchDirectories ? "" : settings.projectSearchDirectories.join("; ")
+              }
+              onCommit={(next) =>
+                updateSettings({
+                  projectSearchDirectories: [
+                    ...new Set(
+                      next
+                        .split(";")
+                        .map((entry) => entry.trim())
+                        .filter(Boolean),
+                    ),
+                  ].slice(0, 32),
+                })
+              }
+              placeholder={mixedProjectSearchDirectories ? gt("Mixed") : "~/projects; ~/work"}
+              spellCheck={false}
+              aria-label={gt("Project search folders")}
+            />
+          }
+        />
+
         <SettingsRow
           serverScoped
           settingKeys={["addProjectBaseDirectory"]}

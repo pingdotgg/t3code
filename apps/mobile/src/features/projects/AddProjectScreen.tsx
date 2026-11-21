@@ -47,8 +47,10 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
+  ensureBrowseDirectoryPath,
   inferProjectTitleFromPath,
   isWindowsPlatform,
+  isFilesystemBrowseQuery,
 } from "@t3tools/client-runtime/state/projects";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
@@ -1048,9 +1050,24 @@ function FolderBrowser(props: {
   readonly cloning?: boolean;
 }) {
   const messages = useMessages();
-  const browsePath = getFilesystemBrowsePath(props.pathInput, props.environment.platform);
+  const browsePath = getFilesystemBrowsePath(
+    props.pathInput,
+    props.environment.platform,
+    true,
+    props.cloning ? undefined : props.environment.baseDirectory || "~/",
+  );
   const browseInput =
-    browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null;
+    browsePath.directoryPath.length > 0
+      ? {
+          partialPath: browsePath.directoryPath,
+          ...(!props.cloning &&
+          !isFilesystemBrowseQuery(props.pathInput, props.environment.platform) &&
+          browsePath.filterQuery &&
+          !browsePath.filterQuery.startsWith(".")
+            ? { searchQuery: browsePath.filterQuery }
+            : {}),
+        }
+      : null;
   const fileAccessSession = useEnvironmentQuery(
     environmentSession.sessionStateAtom(props.environment.environmentId),
   );
@@ -1078,10 +1095,10 @@ function FolderBrowser(props: {
     ? browsePath.filterQuery.toLowerCase() === pinnedDirectoryName.toLowerCase()
     : browsePath.filterQuery === pinnedDirectoryName;
   const browseFilterQuery = pinnedDirectoryMatches ? "" : browsePath.filterQuery;
-  const { visibleEntries: visibleBrowseEntries } = filterFilesystemBrowseEntries(
-    browseState.data?.entries ?? [],
-    browseFilterQuery,
-  );
+  const visibleBrowseEntries = browseState.data?.recursive
+    ? browseState.data.entries
+    : filterFilesystemBrowseEntries(browseState.data?.entries ?? [], browseFilterQuery)
+        .visibleEntries;
   const gt = useGT();
 
   return (
@@ -1104,8 +1121,13 @@ function FolderBrowser(props: {
       )}
       <ListSection>
         {fileAccess.isPending || (browseState.isPending && browseState.data === null) ? (
-          <View className="items-center py-5">
+          <View className="flex-row items-center justify-center gap-2 px-4 py-5">
             <AppActivityIndicator colorClassName="accent-icon-muted" />
+            <Text className="shrink text-sm text-foreground-muted" numberOfLines={1}>
+              {browseInput?.searchQuery
+                ? gt("Searching folders for {query}…", { query: browseInput.searchQuery })
+                : gt("Loading folders…")}
+            </Text>
           </View>
         ) : null}
         {browsePath.canBrowseUp ? (
@@ -1146,8 +1168,10 @@ function FolderBrowser(props: {
             right={null}
             onPress={() => {
               void props.navigateToBrowsePath({
-                browseDirectoryPath: browsePath.directoryPath,
-                selectedDirectoryName: entry.name,
+                browseDirectoryPath: browseState.data?.recursive
+                  ? ensureBrowseDirectoryPath(entry.fullPath)
+                  : browsePath.directoryPath,
+                ...(browseState.data?.recursive ? {} : { selectedDirectoryName: entry.name }),
               });
             }}
           />
@@ -1462,8 +1486,13 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   const [error, setError] = useState<string | null>(null);
   const gt = useGT();
 
+  const canSubmitPath =
+    canCreateProject &&
+    environment !== null &&
+    isFilesystemBrowseQuery(pathInput, environment?.platform);
+
   const submitPath = async () => {
-    if (!environment || isBrowseNavigating || isSubmitting) return;
+    if (!environment || !canSubmitPath || isBrowseNavigating || isSubmitting) return;
     setError(null);
     const resolved = resolveAddProjectPath(
       {
@@ -1501,7 +1530,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
           <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
           <PrimaryActionButton
             label={gt("Add project")}
-            disabled={!canCreateProject || isBrowseNavigating || isSubmitting}
+            disabled={!canSubmitPath || isBrowseNavigating || isSubmitting}
             onPress={submitPath}
             loading={isSubmitting}
           />

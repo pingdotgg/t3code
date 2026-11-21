@@ -729,7 +729,7 @@ describe("local project navigation", () => {
 describe("local folder path", () => {
   function findPathInput(
     node: ReactNode,
-  ): { value: string; onChangeText: (value: string) => void } | null {
+  ): { value: string; onChangeText: (value: string) => void; onSubmit: () => void } | null {
     if (Array.isArray(node)) {
       for (const child of node) {
         const input = findPathInput(child);
@@ -748,7 +748,8 @@ describe("local folder path", () => {
       return null;
     }
     const { value, onChangeText, onSubmit } = node.props;
-    if (typeof value === "string" && onChangeText && onSubmit) return { value, onChangeText };
+    if (typeof value === "string" && onChangeText && onSubmit)
+      return { value, onChangeText, onSubmit };
     return findPathInput(node.props.children);
   }
 
@@ -764,13 +765,18 @@ describe("local folder path", () => {
     const root = createRoot(document.createElement("div"));
     const renderedPaths: string[] = [];
     let input: ReturnType<typeof findPathInput> = null;
+    let submit: (() => void) | null = null;
     function LocalFolderObserver(props: { environmentId?: string }) {
-      input = findPathInput(AddProjectLocalFolderScreen(props));
+      const content = AddProjectLocalFolderScreen(props);
+      input = findPathInput(content);
+      submit = findAction(content, "Add project", true);
       if (input) renderedPaths.push(input.value);
       return null;
     }
     return {
       renderedPaths,
+      submit: () => act(() => submit!()),
+      submitKeyboard: () => act(() => input!.onSubmit()),
       get path() {
         return input?.value;
       },
@@ -784,6 +790,18 @@ describe("local folder path", () => {
       },
     };
   }
+
+  it("does not submit a bare folder search through the action or keyboard", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render("environment");
+    await screen.type("project");
+    state.projects = [];
+    state.dispatch.mockReset();
+    await screen.submit();
+    await screen.submitKeyboard();
+    expect(state.projects).toEqual([]);
+    expect(state.dispatch).not.toHaveBeenCalled();
+  });
 
   it("shows the new host's default path on the first render after the host changes", async () => {
     await using screen = mountLocalFolder();

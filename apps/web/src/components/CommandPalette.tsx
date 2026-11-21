@@ -39,6 +39,7 @@ import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
+  findExactFilesystemBrowseEntry,
   getFilesystemBrowsePath,
   getFilesystemBrowseTabCompletion,
 } from "@t3tools/client-runtime/state/filesystem";
@@ -158,6 +159,7 @@ import {
 } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
+  ensureBrowseDirectoryPath,
   findProjectByPath,
   getBrowseDirectoryPath,
   hasTrailingPathSeparator,
@@ -276,6 +278,7 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
+import { Spinner } from "./ui/spinner";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { suggestAppAccessForRemote } from "./sourceControlAppAccessToast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -705,7 +708,14 @@ function OpenCommandPaletteDialog(props: {
       : "";
   const canBrowsePaths =
     browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && newProjectFlow === null;
-  const browsePath = getFilesystemBrowsePath(query, browseEnvironmentPlatform, canBrowsePaths);
+  const browsePath = getFilesystemBrowsePath(
+    query,
+    browseEnvironmentPlatform,
+    canBrowsePaths,
+    addProjectEnvironmentId !== null && !isRemoteProjectCloneFlow
+      ? browseEnvironment?.serverConfig?.settings.addProjectBaseDirectory || "~/"
+      : undefined,
+  );
   const isBrowsing = browsePath.isBrowsing;
   const browseDirectoryPath = browsePath.directoryPath;
   const paletteMode = getCommandPaletteMode({ currentView, isBrowsing });
@@ -768,12 +778,23 @@ function OpenCommandPaletteDialog(props: {
     browsePath.directoryPath.length > 0 &&
     browseEnvironmentId !== null &&
     !relativePathNeedsActiveProject;
+  const folderSearchRoots =
+    environments
+      .find((environment) => environment.environmentId === browseEnvironmentId)
+      ?.serverConfig?.settings.projectSearchDirectories?.filter((root) => root.length > 0) ?? [];
+  const folderSearchQuery =
+    !isRemoteProjectCloneFlow &&
+    !isFilesystemBrowseQuery(query, browseEnvironmentPlatform) &&
+    !browsePath.filterQuery.startsWith(".")
+      ? browsePath.filterQuery
+      : "";
   const browseQuery = useEnvironmentQuery(
     browseAccess.canReadFiles && hasBrowseTarget
       ? filesystemEnvironment.browse({
           environmentId: browseEnvironmentId,
           input: {
             partialPath: browsePath.directoryPath,
+            ...(folderSearchQuery ? { searchQuery: folderSearchQuery } : {}),
             ...(currentProjectCwdForBrowse ? { cwd: currentProjectCwdForBrowse } : {}),
           },
         })
@@ -794,7 +815,12 @@ function OpenCommandPaletteDialog(props: {
           pinnedDirectoryName: pinnedCloneDirectoryName,
           caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
         })
-      : filterFilesystemBrowseEntries(browseEntries, browsePath.filterQuery);
+      : browseResult?.recursive
+        ? {
+            visibleEntries: browseEntries,
+            exactEntry: findExactFilesystemBrowseEntry(browseEntries, browsePath.filterQuery),
+          }
+        : filterFilesystemBrowseEntries(browseEntries, browsePath.filterQuery);
 
   const prefetchBrowsePath = async (
     partialPath: string,
@@ -1007,8 +1033,11 @@ function OpenCommandPaletteDialog(props: {
     if (
       source instanceof HTMLInputElement &&
       resolvedQuery === nextQuery &&
-      (canBrowsePaths && isFilesystemBrowseQuery(resolvedQuery, browseEnvironmentPlatform)) !==
-        isBrowsing
+      (canBrowsePaths &&
+        (isFilesystemBrowseQuery(resolvedQuery, browseEnvironmentPlatform) ||
+          (addProjectEnvironmentId !== null &&
+            !isRemoteProjectCloneFlow &&
+            resolvedQuery.trim().length > 0))) !== isBrowsing
     ) {
       remountSelectionRef.current = {
         value: resolvedQuery,
@@ -2379,7 +2408,11 @@ function OpenCommandPaletteDialog(props: {
           cloneDirectoryName: pinnedCloneDirectoryName,
           caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
         })
-      : appendBrowsePathSegment(query, name);
+      : browseResult?.recursive
+        ? ensureBrowseDirectoryPath(
+            browseEntries.find((entry) => entry.name === name)?.fullPath ?? name,
+          )
+        : appendBrowsePathSegment(query, name);
     await browseNavigation.run(
       () => prefetchBrowsePath(getBrowseDirectoryPath(nextQuery)),
       () => {
@@ -2599,6 +2632,7 @@ function OpenCommandPaletteDialog(props: {
   const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
   const canSubmitBrowsePath =
     isBrowsing &&
+    (isFilesystemBrowseQuery(query, browseEnvironmentPlatform) || exactBrowseEntry !== null) &&
     !relativePathNeedsActiveProject &&
     canCreateProject &&
     (!isCloneDestinationStep || canCloneProject) &&
@@ -2795,7 +2829,7 @@ function OpenCommandPaletteDialog(props: {
         : getFilesystemBrowseTabCompletion(visibleBrowseEntries, browsePath.filterQuery);
       if (completion?.isComplete) {
         void browseTo(completion.name);
-      } else if (completion && !pinnedCloneDirectoryName) {
+      } else if (completion && !pinnedCloneDirectoryName && !browseResult?.recursive) {
         setHighlightedItemValue(null);
         setQuery(`${getBrowseDirectoryPath(query)}${completion.name}`);
       }
@@ -3024,13 +3058,11 @@ function OpenCommandPaletteDialog(props: {
         ariaLabel={browseSubmitLabel}
         tooltip={browseSubmitLabel}
         disabled={
-          !canCreateProject ||
-          !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
-          relativePathNeedsActiveProject ||
+          !canSubmitBrowsePath ||
           (isCloneDestinationStep && (!canCloneProject || isRemoteProjectPending))
         }
         onSubmit={() => {
-          if (relativePathNeedsActiveProject) {
+          if (!canSubmitBrowsePath || (isCloneDestinationStep && isRemoteProjectPending)) {
             return;
           }
           if (isCloneDestinationStep) {
@@ -3153,10 +3185,8 @@ function OpenCommandPaletteDialog(props: {
         <div role="alert" className="px-4 py-3 text-sm text-muted-foreground">
           {browseAccessError}
         </div>
-      ) : isBrowsePending && browseResult === null ? (
-        <div role="status" className="px-4 py-3 text-sm text-muted-foreground">
-          <T>Loading folders...</T>
-        </div>
+      ) : isBrowsePending && browseResult === null && resultRows.rows.length > 0 ? (
+        <FolderBrowseStatus searchQuery={folderSearchQuery} searchRoots={folderSearchRoots} />
       ) : null}
       <CommandPaletteVirtualizedResults
         rows={resultRows.rows}
@@ -3182,12 +3212,46 @@ function OpenCommandPaletteDialog(props: {
                       "Press Enter to create this folder and add it as a project.",
                     ),
                   }
-                : isThreadSearchPending
-                  ? { emptyStateMessage: gt("Searching thread messages…") }
-                  : isThreadSearchFailed
-                    ? { emptyStateMessage: gt("Couldn't search thread messages.") }
-                    : {})}
+                : isBrowsePending && browseResult === null && !browseAccessError
+                  ? {
+                      emptyStateMessage: (
+                        <FolderBrowseStatus
+                          searchQuery={folderSearchQuery}
+                          searchRoots={folderSearchRoots}
+                        />
+                      ),
+                    }
+                  : isThreadSearchPending
+                    ? { emptyStateMessage: gt("Searching thread messages…") }
+                    : isThreadSearchFailed
+                      ? { emptyStateMessage: gt("Couldn't search thread messages.") }
+                      : {})}
       />
     </CommandPaletteContent>
+  );
+}
+
+function FolderBrowseStatus(props: { searchQuery: string; searchRoots: ReadonlyArray<string> }) {
+  const gt = useGT();
+  const roots = props.searchRoots.length > 0 ? props.searchRoots.join(", ") : null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-center justify-center gap-2 px-4 py-3 text-sm text-muted-foreground"
+    >
+      <Spinner size="sm" tone="muted" aria-hidden />
+      <span className="min-w-0 truncate">
+        {props.searchQuery ? (
+          <>
+            <T>Searching folders for</T>{" "}
+            <span className="text-foreground">{props.searchQuery}</span>
+            {roots ? gt(" in {roots}…", { roots }) : "…"}
+          </>
+        ) : (
+          gt("Loading folders…")
+        )}
+      </span>
+    </div>
   );
 }

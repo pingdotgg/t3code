@@ -1,3 +1,4 @@
+import { scoreFilePathMatch } from "@t3tools/shared/searchRanking";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -93,7 +94,7 @@ function flatten(
   query: string,
 ): boolean {
   if (node.entry) {
-    if (query && !node.entry.path.toLowerCase().includes(query)) return false;
+    if (query && scoreFilePathMatch(node.entry.path, query) === null) return false;
     output.push({ node, depth });
     return true;
   }

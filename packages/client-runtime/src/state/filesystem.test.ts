@@ -4,6 +4,7 @@ import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/co
 import {
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
+  findExactFilesystemBrowseEntry,
   getFilesystemBrowsePath,
   getFilesystemBrowseTabCompletion,
   resolveFilesystemReadAccess,
@@ -75,6 +76,13 @@ describe("filesystem browse model", () => {
       isBrowsing: true,
       directoryPath: "~/projects/",
       filterQuery: "t3",
+      parentPath: "~/",
+      canBrowseUp: true,
+    });
+    expect(getFilesystemBrowsePath("hlw", "", true, "~/projects")).toEqual({
+      isBrowsing: true,
+      directoryPath: "~/projects/",
+      filterQuery: "hlw",
       parentPath: "~/",
       canBrowseUp: true,
     });
@@ -206,4 +214,15 @@ describe("browse entry filtering", () => {
       exactEntry: entries[4],
     });
   });
+});
+
+it("resolves only a unique exact basename from recursive folder results", () => {
+  const entries = [
+    { name: "team/project", fullPath: "/work/team/project" },
+    { name: "other/project", fullPath: "/work/other/project" },
+  ];
+  expect(findExactFilesystemBrowseEntry(entries.slice(0, 1), "project")).toEqual(entries[0]);
+  expect(findExactFilesystemBrowseEntry(entries, "project")).toBeNull();
+  expect(findExactFilesystemBrowseEntry(entries, "proj")).toBeNull();
+  expect(findExactFilesystemBrowseEntry(entries, "/work/team/project")).toEqual(entries[0]);
 });
