@@ -617,6 +617,67 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     }),
   );
 
+  it.effect.each([
+    {
+      scenario: "preserves environment-variable setup beside agent sign-in",
+      method: {
+        type: "env_var",
+        id: "z_ai_api_key",
+        name: "Z.AI API key",
+        description:
+          "API key for the Z.AI / Zhipu AI service. Generate one at https://z.ai/manage-apikey/apikey-list",
+        vars: [{ name: "Z_AI_API_KEY", label: "Z.AI API key", secret: true, optional: false }],
+        link: "https://z.ai/manage-apikey/apikey-list",
+      },
+      expected: [
+        {
+          type: "env_var",
+          id: "z_ai_api_key",
+          name: "Z.AI API key",
+          description:
+            "API key for the Z.AI / Zhipu AI service. Generate one at https://z.ai/manage-apikey/apikey-list",
+          vars: [{ name: "Z_AI_API_KEY", label: "Z.AI API key" }],
+          link: "https://z.ai/manage-apikey/apikey-list",
+        },
+      ],
+    },
+    {
+      scenario: "does not expose an incomplete environment-variable method as agent sign-in",
+      method: { type: "env_var", id: "z_ai_api_key", name: "Z.AI API key" },
+      expected: [],
+    },
+  ])("$scenario on ACP v1", ({ method, expected }) =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const initialized = yield* acp.agent
+        .initialize({ protocolVersion: 2 })
+        .pipe(Effect.forkScoped);
+      const { id } = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(InitializeRequestV1))),
+      );
+      const agent = {
+        id: "z-ai-api-key",
+        name: "Z.AI API key",
+        description:
+          "Set Z_AI_API_KEY in the environment, or run `glm-acp-agent --setup` once to store the key on disk. Generate one at https://z.ai/manage-apikey/apikey-list",
+      };
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            protocolVersion: 1,
+            agentInfo: { name: "glm-acp-agent", version: "1.17.1" },
+            authMethods: [agent, method],
+          },
+        }),
+      );
+      assert.deepEqual((yield* Fiber.join(initialized)).authMethods, [agent, ...expected]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("replays buffered notifications to handlers registered after they arrive", () =>
     Effect.gen(function* () {
       const updates = yield* Ref.make<Array<unknown>>([]);

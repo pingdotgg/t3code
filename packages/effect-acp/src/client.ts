@@ -587,6 +587,53 @@ function toV2ForkRequest(request: AcpSchema.ForkSessionRequest): AcpSchemaV2.For
   };
 }
 
+function normalizeEnvVarAuthMethod(
+  base: Pick<AcpSchema.AuthMethod, "id" | "name" | "description" | "_meta">,
+  vars: unknown,
+  link: unknown,
+): Extract<AcpSchema.AuthMethod, { readonly type: "env_var" }> | undefined {
+  if (
+    !Array.isArray(vars) ||
+    !vars.every(
+      (variable) =>
+        typeof variable === "object" &&
+        variable !== null &&
+        typeof (variable as { readonly name?: unknown }).name === "string",
+    )
+  ) {
+    return undefined;
+  }
+  return {
+    ...base,
+    type: "env_var",
+    vars: vars.map((variable) => {
+      const value = variable as { readonly name: string; readonly label?: unknown };
+      return {
+        name: value.name,
+        ...(typeof value.label === "string" ? { label: value.label } : {}),
+      };
+    }),
+    ...(typeof link === "string" ? { link } : {}),
+  };
+}
+
+function normalizeV1InitializeResponse(
+  response: typeof AcpRpcs.CompatInitializeResponseV1.Type,
+): AcpSchema.InitializeResponse {
+  const { authMethods, ...initialize } = response;
+  if (authMethods === undefined) return initialize;
+  return {
+    ...initialize,
+    authMethods: authMethods
+      .map((method) => {
+        if (!("type" in method) || method.type !== "env_var") return method;
+        const { type: _type, vars, link, ...base } = method;
+        return normalizeEnvVarAuthMethod(base, vars, link);
+      })
+      .filter(Predicate.isNotUndefined),
+  };
+}
+
 function normalizeInitializeResponse(
   response: AcpSchemaV2.InitializeResponse,
 ): AcpSchema.InitializeResponse {
@@ -637,28 +684,8 @@ function normalizeInitializeResponse(
                 ...(record.description === undefined ? {} : { description: record.description }),
                 ...(record._meta === undefined ? {} : { _meta: record._meta }),
               };
-              if (
-                record.type === "env_var" &&
-                Array.isArray(record.vars) &&
-                record.vars.every(
-                  (variable) =>
-                    typeof variable === "object" &&
-                    variable !== null &&
-                    typeof (variable as { readonly name?: unknown }).name === "string",
-                )
-              ) {
-                return {
-                  ...base,
-                  type: "env_var" as const,
-                  vars: record.vars.map((variable) => {
-                    const value = variable as { readonly name: string; readonly label?: unknown };
-                    return {
-                      name: value.name,
-                      ...(typeof value.label === "string" ? { label: value.label } : {}),
-                    };
-                  }),
-                  ...(typeof record.link === "string" ? { link: record.link } : {}),
-                };
+              if (record.type === "env_var") {
+                return normalizeEnvVarAuthMethod(base, record.vars, record.link);
               }
               if (record.type === "agent") return { ...base, type: "agent" as const };
               if (record.type !== "terminal") return undefined;
@@ -1113,7 +1140,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
               negotiatedProtocolGeneration = isV2 ? 2 : 1;
               const normalized = isV2
                 ? normalizeInitializeResponse(response)
-                : (response as AcpSchema.InitializeResponse);
+                : normalizeV1InitializeResponse(response);
               sessionDeleteSupported =
                 normalized.agentCapabilities?.sessionCapabilities?.delete != null;
               return normalized;
