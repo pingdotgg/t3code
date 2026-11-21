@@ -3388,6 +3388,21 @@
     }
   ],
   "1b1131295f62c44c": "Leverantörsprocessen finns inte längre. Avbryt eller starta om undertråden för att svara.",
+  "8352a09ea135a7fd": "Ogiltiga inställningar för Claude-instansen. Kontrollera leverantörens konfiguration.",
+  "40f0d24623711879": "Claude Cloud kan inte använda referenser till hemligheter i terminalens miljövariabler.",
+  "d2e086de6404108b": "Claude Cloud kräver ett POSIX-skal. Ta bort åsidosättningen av terminalskalet för den här leverantören.",
+  "48663793775fdb14": "Det gick inte att öppna molnterminalen.",
+  "c28f7f8e6042d092": "Sessions-ID eller https://claude.ai/code/…",
+  "31440832ea290102": "Uppföljningsmeddelande",
+  "9f52ea3133da8ea4": "Uppgift",
+  "db78b4852560c604": "Öppnar terminal…",
+  "71d86050aea72e62": "Skicka uppföljning",
+  "b593427f32419fbd": "Starta i molnet",
+  "1bd65d483581b833": "Claude Cloud",
+  "7dc5e7cda547f5a1": "Starta en ny uppgift eller skicka ett uppföljningsmeddelande med det valda Claude-kontot.",
+  "728dffa329f6ee9a": "Nya uppgifter använder det aktuella kodarkivet. Claude kan klona dess pushade gren eller ladda upp versionshanterade filer. Den lokala konversationen överförs inte.",
+  "53ae3a8246d4cf40": "Befintlig molnsession (valfritt)",
+  "f2564dc994e02443": "Terminalen visar sessionslänken eller leveranskvittot. Följ förloppet och läs svaren i Claude. Spara länken innan du stänger terminalen: när den stängs raderas historiken, men molnuppgiften fortsätter att köras.",
   "da66023072c473d1": [
     "Kunde inte läsa in utdata: ",
     {

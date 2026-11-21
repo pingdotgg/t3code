@@ -3389,6 +3389,21 @@
     }
   ],
   "1b1131295f62c44c": "Der Anbieterprozess ist beendet. Unterbrich den untergeordneten Thread oder starte ihn neu, um zu antworten.",
+  "8352a09ea135a7fd": "Ungültige Einstellungen für die Claude-Instanz. Überprüfe die Anbieterkonfiguration.",
+  "40f0d24623711879": "Claude Cloud kann keine Secret-Referenzen in Terminal-Umgebungsvariablen verwenden.",
+  "d2e086de6404108b": "Claude Cloud benötigt eine POSIX-Shell. Entferne die benutzerdefinierte Terminal-Shell aus den Einstellungen dieses Anbieters.",
+  "48663793775fdb14": "Das Cloud-Terminal konnte nicht geöffnet werden.",
+  "c28f7f8e6042d092": "Sitzungs-ID oder https://claude.ai/code/…",
+  "31440832ea290102": "Folgenachricht",
+  "9f52ea3133da8ea4": "Aufgabe",
+  "db78b4852560c604": "Terminal wird geöffnet…",
+  "71d86050aea72e62": "Folgenachricht senden",
+  "b593427f32419fbd": "In der Cloud starten",
+  "1bd65d483581b833": "Claude Cloud",
+  "7dc5e7cda547f5a1": "Starte eine neue Aufgabe oder sende eine Folgenachricht mit dem ausgewählten Claude-Konto.",
+  "728dffa329f6ee9a": "Neue Aufgaben verwenden das aktuelle Repository. Claude kann dessen gepushten Branch klonen oder versionierte Dateien hochladen. Die lokale Unterhaltung wird nicht übertragen.",
+  "53ae3a8246d4cf40": "Vorhandene Cloud-Sitzung (optional)",
+  "f2564dc994e02443": "Das Terminal zeigt den Sitzungslink oder die Zustellbestätigung an. Fortschritt und Antworten findest du in Claude. Speichere den Link, bevor du das Terminal schließt: Beim Schließen wird der Verlauf gelöscht, die Cloud-Aufgabe läuft jedoch weiter.",
   "da66023072c473d1": [
     "Ausgabe konnte nicht geladen werden: ",
     {

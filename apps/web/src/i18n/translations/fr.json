@@ -3388,6 +3388,21 @@
     }
   ],
   "1b1131295f62c44c": "Le processus du fournisseur n’existe plus. Interrompez ou redémarrez le fil enfant pour répondre.",
+  "8352a09ea135a7fd": "Les paramètres de l'instance Claude sont invalides. Vérifiez la configuration du fournisseur.",
+  "40f0d24623711879": "Claude Cloud ne peut pas utiliser de références à des secrets dans les variables d'environnement du terminal.",
+  "d2e086de6404108b": "Claude Cloud nécessite un shell POSIX. Supprimez le remplacement du shell du terminal dans la configuration de ce fournisseur.",
+  "48663793775fdb14": "Impossible d'ouvrir le terminal cloud.",
+  "c28f7f8e6042d092": "ID de session ou https://claude.ai/code/…",
+  "31440832ea290102": "Message de suivi",
+  "9f52ea3133da8ea4": "Tâche",
+  "db78b4852560c604": "Ouverture du terminal…",
+  "71d86050aea72e62": "Envoyer un suivi",
+  "b593427f32419fbd": "Lancer dans le cloud",
+  "1bd65d483581b833": "Claude Cloud",
+  "7dc5e7cda547f5a1": "Démarrez une nouvelle tâche ou envoyez un message de suivi avec le compte Claude sélectionné.",
+  "728dffa329f6ee9a": "Les nouvelles tâches utilisent le dépôt actuel. Claude peut cloner sa branche poussée vers le dépôt distant ou téléverser les fichiers suivis par le contrôle de version. La conversation locale n'est pas transférée.",
+  "53ae3a8246d4cf40": "Session cloud existante (facultatif)",
+  "f2564dc994e02443": "Le terminal affiche le lien de la session ou l'accusé de réception. Consultez la progression et les réponses dans Claude. Enregistrez le lien avant de fermer le terminal : sa fermeture supprime son historique, mais n'arrête pas la tâche dans le cloud.",
   "da66023072c473d1": [
     "Impossible de charger la sortie : ",
     {

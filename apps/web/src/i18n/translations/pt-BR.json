@@ -3388,6 +3388,21 @@
     }
   ],
   "1b1131295f62c44c": "O processo do provedor não existe mais. Interrompa ou reinicie a thread filha para responder.",
+  "8352a09ea135a7fd": "As configurações da instância do Claude são inválidas. Verifique a configuração do provedor.",
+  "40f0d24623711879": "O Claude Cloud não pode usar referências a segredos nas variáveis de ambiente do terminal.",
+  "d2e086de6404108b": "O Claude Cloud requer um shell POSIX. Remova a configuração personalizada do shell do terminal deste provedor.",
+  "48663793775fdb14": "Não foi possível abrir o terminal na nuvem.",
+  "c28f7f8e6042d092": "ID da sessão ou https://claude.ai/code/…",
+  "31440832ea290102": "Mensagem de acompanhamento",
+  "9f52ea3133da8ea4": "Tarefa",
+  "db78b4852560c604": "Abrindo terminal…",
+  "71d86050aea72e62": "Enviar acompanhamento",
+  "b593427f32419fbd": "Iniciar na nuvem",
+  "1bd65d483581b833": "Claude Cloud",
+  "7dc5e7cda547f5a1": "Inicie uma nova tarefa ou envie uma mensagem de acompanhamento usando a conta do Claude selecionada.",
+  "728dffa329f6ee9a": "As novas tarefas usam o repositório atual. O Claude pode clonar a branch enviada ao remoto ou fazer upload dos arquivos sob controle de versão. A conversa local não é transferida.",
+  "53ae3a8246d4cf40": "Sessão existente na nuvem (opcional)",
+  "f2564dc994e02443": "O terminal mostra o link da sessão ou o comprovante de entrega. Confira o progresso e as respostas no Claude. Salve o link antes de fechar o terminal: ao fechar, o histórico é excluído, mas a tarefa na nuvem continua em execução.",
   "da66023072c473d1": [
     "Não foi possível carregar a saída: ",
     {

@@ -3388,6 +3388,21 @@
     }
   ],
   "1b1131295f62c44c": "Provider process is gone. Interrupt or restart the child thread to respond.",
+  "8352a09ea135a7fd": "Invalid Claude instance settings. Check the provider configuration.",
+  "40f0d24623711879": "Claude Cloud cannot use secret references in terminal environment variables.",
+  "d2e086de6404108b": "Claude Cloud requires a POSIX shell. Remove the terminal shell override from this provider.",
+  "48663793775fdb14": "Could not open the cloud terminal.",
+  "c28f7f8e6042d092": "Session ID or https://claude.ai/code/…",
+  "31440832ea290102": "Follow-up message",
+  "9f52ea3133da8ea4": "Task",
+  "db78b4852560c604": "Opening terminal…",
+  "71d86050aea72e62": "Send follow-up",
+  "b593427f32419fbd": "Launch in cloud",
+  "1bd65d483581b833": "Claude Cloud",
+  "7dc5e7cda547f5a1": "Start a new task or send a follow-up using the selected Claude account.",
+  "728dffa329f6ee9a": "New tasks use the current repository. Claude may clone its pushed branch or upload tracked files. The local conversation is not transferred.",
+  "53ae3a8246d4cf40": "Existing cloud session (optional)",
+  "f2564dc994e02443": "The terminal shows the session link or delivery receipt. Check progress and replies in Claude. Save the link before closing the terminal: closing deletes its history but does not stop the cloud task.",
   "da66023072c473d1": [
     "Couldn't load output: ",
     {
