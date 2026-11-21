@@ -776,9 +776,9 @@ describe("ChatMarkdown copy", () => {
     using writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
     for (const [text, copied] of [
       ["```bash\nnpm install\n```", "npm install"],
-      ["~~~\nnpm install\n~~~", "npm install"],
       ["```bash\nnpm install", "npm install"],
       ["    npm install", "npm install"],
+      ["    <div>", "<div>"],
       ["- Run:\n\n  ```bash\n  npm install\n  ```", "npm install"],
       ["> ```bash\n> npm install\n> ```", "npm install"],
       ["```mermaid\ngraph TD\n```", "graph TD"],

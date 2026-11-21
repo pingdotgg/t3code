@@ -78,7 +78,7 @@ export function codeBlockCopyText(
   if (!code.endsWith("\n")) return code;
   const start = node?.position?.start.offset;
   if (start === undefined) return code.slice(0, -1);
-  const rawHtmlStart = /[ \t>]*</y;
+  const rawHtmlStart = /[ \t>]*<pre[\s>]/iy;
   rawHtmlStart.lastIndex = start;
   return rawHtmlStart.test(text) ? code : code.slice(0, -1);
 }
