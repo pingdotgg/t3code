@@ -1258,9 +1258,10 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
             step_index: 1,
             type: "PLANNER_RESPONSE",
             status: "DONE",
-            tool_calls: [{ name: "swarm_wait" }],
+            tool_calls: [{ name: "post_message" }, { name: "swarm_wait" }],
           },
           { step_index: 2, type: "GENERIC", status: "DONE" },
+          { step_index: 3, type: "GENERIC", status: "DONE" },
         ]
           .map((step) => JSON.stringify(step))
           .join("\n") + "\n",
