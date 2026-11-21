@@ -12529,5 +12529,6 @@
   "2258ffb7d1a1b24f": "Reset agent limit to default",
   "ea78dc5af6e6903a": "Show a strip under the header with each connected machine's load and room for more agents, the Claude limits, and where the next thread fits. Hidden in narrow windows.",
   "56dafe176c45523e": "machines hub power load memory agents room next thread top strip",
-  "2229ac1d24096dfa": "machine bar most agents working at once cap room memory"
+  "2229ac1d24096dfa": "machine bar most agents working at once cap room memory",
+  "dffec1f0549853b0": "{machine}: waiting for data"
 }

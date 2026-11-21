@@ -12527,5 +12527,6 @@
   "2258ffb7d1a1b24f": "Återställ agentgränsen till standard",
   "ea78dc5af6e6903a": "Visar en remsa under rubrikraden med varje ansluten dators last och utrymme för fler agenter, Claude-gränserna och var nästa tråd får plats. Dold i smala fönster.",
   "56dafe176c45523e": "datorer hub power last minne agenter utrymme nästa tråd remsa överst",
-  "2229ac1d24096dfa": "datorfält högst agenter samtidigt gräns utrymme minne"
+  "2229ac1d24096dfa": "datorfält högst agenter samtidigt gräns utrymme minne",
+  "dffec1f0549853b0": "{machine}: väntar på data"
 }

@@ -10,6 +10,10 @@ export interface MachineEnvironment {
   readonly label: string;
   /** null while the environment is offline or its server sent nothing yet. */
   readonly status: MachineStatus | null;
+  /** When this client received `status`, so a server that stops answering goes grey. */
+  readonly receivedAt: number;
+  /** Connected, and the first answer is still on its way. */
+  readonly loading: boolean;
 }
 
 // Polls only while the machine bar reads it; servers cache a sample for 5 s.
@@ -43,6 +47,8 @@ export const machineEnvironmentsAtom = Atom.make((get): ReadonlyArray<MachineEnv
       environmentId,
       label: presentation.entry.target.label,
       status: result?._tag === "Success" ? result.value : null,
+      receivedAt: result?._tag === "Success" ? result.timestamp : 0,
+      loading: result?._tag === "Initial",
     });
   }
   return environments;

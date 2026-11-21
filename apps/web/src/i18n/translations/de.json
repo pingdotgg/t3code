@@ -12520,5 +12520,6 @@
   "2258ffb7d1a1b24f": "Agent-Limit auf Standard zurücksetzen",
   "ea78dc5af6e6903a": "Zeigt unter der Kopfzeile eine Leiste mit der Last jedes verbundenen Rechners und dem Platz für weitere Agenten, den Claude-Limits und wo der nächste Thread passt. In schmalen Fenstern ausgeblendet.",
   "56dafe176c45523e": "rechner maschinen hub power last speicher agenten platz nächster thread leiste oben",
-  "2229ac1d24096dfa": "rechnerleiste höchstens agenten gleichzeitig limit platz speicher"
+  "2229ac1d24096dfa": "rechnerleiste höchstens agenten gleichzeitig limit platz speicher",
+  "dffec1f0549853b0": "{machine}: wartet auf Daten"
 }

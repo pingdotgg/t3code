@@ -12520,5 +12520,6 @@
   "2258ffb7d1a1b24f": "Réinitialiser la limite d'agents à la valeur par défaut",
   "ea78dc5af6e6903a": "Affiche sous l'en-tête une bande avec la charge de chaque machine connectée et la place pour d'autres agents, les limites de Claude et l'endroit où le prochain fil a sa place. Masquée dans les fenêtres étroites.",
   "56dafe176c45523e": "machines hub power charge mémoire agents place prochain fil bande haut",
-  "2229ac1d24096dfa": "barre des machines maximum agents en même temps limite place mémoire"
+  "2229ac1d24096dfa": "barre des machines maximum agents en même temps limite place mémoire",
+  "dffec1f0549853b0": "{machine} : en attente de données"
 }

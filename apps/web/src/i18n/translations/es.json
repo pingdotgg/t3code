@@ -12515,5 +12515,6 @@
   "2258ffb7d1a1b24f": "Restablecer el límite de agentes al valor predeterminado",
   "ea78dc5af6e6903a": "Muestra una franja bajo la cabecera con la carga de cada máquina conectada y el espacio para más agentes, los límites de Claude y dónde cabe el siguiente hilo. Se oculta en ventanas estrechas.",
   "56dafe176c45523e": "máquinas hub power carga memoria agentes espacio siguiente hilo franja superior",
-  "2229ac1d24096dfa": "barra de máquinas máximo agentes a la vez límite espacio memoria"
+  "2229ac1d24096dfa": "barra de máquinas máximo agentes a la vez límite espacio memoria",
+  "dffec1f0549853b0": "{machine}: esperando datos"
 }

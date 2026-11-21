@@ -5,6 +5,9 @@ import type { LimitAccount } from "@t3tools/shared/usageLimits";
 import type { MachineEnvironment } from "../../state/machineStatus";
 import { claudeAccountLetter } from "../chat/autoRoute";
 
+// Three missed polls: the server is connected but no longer answering.
+const STALE_AFTER_MS = 90_000;
+
 export interface MachineChip {
   readonly key: string;
   readonly environmentId: EnvironmentId;
@@ -13,13 +16,19 @@ export interface MachineChip {
   readonly name: string;
   readonly status: MachineStatus | null;
   readonly capacity: MachineCapacity | null;
+  /** No status yet because the first answer is on its way, not because the machine is off. */
+  readonly loading: boolean;
 }
 
 /** One chip per machine: environments that reach the same host share the first one's chip. */
-export function machineChips(environments: ReadonlyArray<MachineEnvironment>): MachineChip[] {
+export function machineChips(
+  environments: ReadonlyArray<MachineEnvironment>,
+  now: number,
+): MachineChip[] {
   const chips: MachineChip[] = [];
   const hosts = new Set<string>();
-  for (const { environmentId, label, status } of environments) {
+  for (const { environmentId, label, status: reported, receivedAt, loading } of environments) {
+    const status = reported !== null && now - receivedAt <= STALE_AFTER_MS ? reported : null;
     const key = status === null ? `environment:${environmentId}` : status.hostname.toLowerCase();
     if (hosts.has(key)) continue;
     hosts.add(key);
@@ -30,6 +39,7 @@ export function machineChips(environments: ReadonlyArray<MachineEnvironment>): M
       name: status?.hostname ?? label,
       status,
       capacity: status === null ? null : machineCapacity(status),
+      loading: status === null && loading,
     });
   }
   return chips;

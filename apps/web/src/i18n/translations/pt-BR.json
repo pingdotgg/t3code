@@ -12520,5 +12520,6 @@
   "2258ffb7d1a1b24f": "Redefinir o limite de agentes para o padrão",
   "ea78dc5af6e6903a": "Mostra uma faixa abaixo do cabeçalho com a carga de cada máquina conectada e o espaço para mais agentes, os limites do Claude e onde cabe a próxima thread. Oculta em janelas estreitas.",
   "56dafe176c45523e": "máquinas hub power carga memória agentes espaço próxima thread faixa superior",
-  "2229ac1d24096dfa": "barra de máquinas máximo agentes ao mesmo tempo limite espaço memória"
+  "2229ac1d24096dfa": "barra de máquinas máximo agentes ao mesmo tempo limite espaço memória",
+  "dffec1f0549853b0": "{machine}: aguardando dados"
 }
