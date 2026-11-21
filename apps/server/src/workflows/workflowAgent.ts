@@ -291,7 +291,7 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
       problem = `the agent did not return a result: ${decoded.failure}`;
       if (correction >= CORRECTIONS) break;
       // Back to the same thread: it has the context and only owes the result.
-      turn = yield* journaled(
+      const corrected = yield* journaled(
         run,
         name,
         `agent/${name}/${round}/correct/${correction}`,
@@ -302,6 +302,11 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
           threadOf(turn),
         ),
       );
+      if (corrected.failed !== undefined) {
+        problem = `${problem}, and it could not be asked again: ${corrected.failed}`;
+        break;
+      }
+      turn = corrected;
     }
     // The turn may only be out of sight, not dead: it is stopped before another does its work again.
     // A stop that does not get through pauses the run unrecorded, or gives up a step that returns.
@@ -325,8 +330,9 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
     }
     // A turn that died is not the job's fault the first time: once more, on a thread of its own,
     // or on the same thread for a step that continues one, since only that thread has its project.
-    // One a person stopped is not tried again behind their back.
-    if (round % 2 === 0 && !stopped && !lingers) continue;
+    // Anything else is not tried again behind a person's back: one they stopped, one that never
+    // started, or one that did its work and would not give its result, which may have acted.
+    if (round % 2 === 0 && died && !lingers) continue;
     if (onFailure === "return") {
       yield* journaled(
         run,
