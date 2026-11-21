@@ -117,7 +117,6 @@ export class WorkspaceEntries extends Context.Service<
   }
 >()("t3/workspace/WorkspaceEntries") {}
 
-/** Ignored files offered for copying; more than this is a build folder, not config. */
 const IGNORED_FILES_LIMIT = 200;
 
 /** Paths sent to one `git check-ignore` call when labelling a folder's children. */
@@ -401,7 +400,7 @@ export const make = Effect.gen(function* () {
                   relativePath: directoryPath,
                 })
                 .pipe(Effect.mapError(toError));
-        const { entries, throughSymlink, nestedGitRoots } = yield* Effect.tryPromise({
+        const { entries, throughSymlink, skippedPaths, nestedGitRoots } = yield* Effect.tryPromise({
           try: async () => {
             const root = await NodeFSP.realpath(normalizedCwd);
             const directory = await NodeFSP.realpath(target.absolutePath);
@@ -496,6 +495,18 @@ export const make = Effect.gen(function* () {
               }),
               // Git refuses to classify paths beyond a symbolic link.
               throughSymlink: relative !== target.relativePath.split("/").join(path.sep),
+              skippedPaths:
+                input.reportSkipped === true
+                  ? children.flatMap((child, index) =>
+                      kinds[index] === undefined
+                        ? [
+                            target.relativePath
+                              ? `${target.relativePath}/${child.name}`
+                              : child.name,
+                          ]
+                        : [],
+                    )
+                  : [],
             };
           },
           catch: toError,
@@ -535,6 +546,7 @@ export const make = Effect.gen(function* () {
           return {
             entries: entries.map((entry) => ({ ...entry, ignored: true })),
             truncated: false,
+            ...(input.reportSkipped === true ? { skippedPaths } : {}),
           };
         }
         const ignored = new Set<string>();
@@ -550,6 +562,7 @@ export const make = Effect.gen(function* () {
             ignored.has(entry.path) ? { ...entry, ignored: true } : entry,
           ),
           truncated: false,
+          ...(input.reportSkipped === true ? { skippedPaths } : {}),
         };
       }
       const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths");
@@ -565,8 +578,7 @@ export const make = Effect.gen(function* () {
     "WorkspaceEntries.listIgnoredFiles",
   )(function* (input) {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-    // `--directory` reports a folder holding nothing but ignored files as one
-    // `name/` entry, which is how `node_modules` and build output drop out.
+    // Keep ignored folders collapsed so opening the picker never scans their contents.
     const result = yield* vcsProcess
       .run({
         operation: "WorkspaceEntries.listIgnoredFiles",
@@ -594,23 +606,31 @@ export const make = Effect.gen(function* () {
     const paths = result.stdout
       .split("\0")
       .filter(
-        (entry) => entry.length > 0 && !entry.endsWith("/") && entry.toLowerCase().includes(query),
+        (entry) =>
+          entry.length > 0 &&
+          (input.includeDirectories === true || !entry.endsWith("/")) &&
+          entry.toLowerCase().includes(query),
       )
       .toSorted();
+    const selectedPaths = [
+      ...paths.filter((entry) => !entry.endsWith("/")).slice(0, IGNORED_FILES_LIMIT),
+      ...paths.filter((entry) => entry.endsWith("/")).slice(0, IGNORED_FILES_LIMIT),
+    ].toSorted();
     const files = yield* Effect.promise(() =>
       Promise.all(
-        paths.slice(0, IGNORED_FILES_LIMIT).map(async (relativePath) => {
+        selectedPaths.map(async (relativePath) => {
           // lstat: a symlink usually points outside the workspace, where reads refuse to go.
-          const stat = await NodeFSP.lstat(path.join(normalizedCwd, relativePath)).catch(
-            () => null,
-          );
+          const stat = await NodeFSP.lstat(
+            path.join(normalizedCwd, relativePath.replace(/\/$/, "")),
+          ).catch(() => null);
+          if (stat?.isDirectory()) return { path: relativePath, byteLength: 0 };
           return stat?.isFile() ? { path: relativePath, byteLength: stat.size } : null;
         }),
       ),
     );
     return {
       files: files.filter((file) => file !== null),
-      truncated: paths.length > IGNORED_FILES_LIMIT,
+      truncated: paths.length > selectedPaths.length,
     };
   });
 

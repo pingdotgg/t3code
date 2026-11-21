@@ -135,7 +135,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     project && canListFiles
       ? projectEnvironment.listIgnoredFiles({
           environmentId: project.environmentId,
-          input: { cwd: project.workspaceRoot },
+          input: { cwd: project.workspaceRoot, includeDirectories: true },
         })
       : null,
   );
@@ -146,7 +146,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     project && searching
       ? projectEnvironment.listIgnoredFiles({
           environmentId: project.environmentId,
-          input: { cwd: project.workspaceRoot, query: sentFileQuery },
+          input: { cwd: project.workspaceRoot, query: sentFileQuery, includeDirectories: true },
         })
       : null,
   );
@@ -158,10 +158,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const copyable = files.filter((file) => file.byteLength <= COPYABLE_FILE_MAX_BYTES);
   const allCopyableSelected = copyable.every((file) => selectedFiles.has(file.path));
   const atSelectionLimit = selectedFiles.size >= COPIED_FILES_MAX_COUNT;
-  const selectedBytes = [...selectedFiles.values()].reduce(
-    (total, file) => total + file.byteLength,
-    0,
-  );
+  const selectedBytes = [...selectedFiles.values()].some((file) => file.path.endsWith("/"))
+    ? null
+    : [...selectedFiles.values()].reduce((total, file) => total + file.byteLength, 0);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -292,7 +291,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                 <span>
                   {selectedFiles.size === 0
                     ? gt("no files")
-                    : gt("{count, plural, one {+ {count} file} other {+ {count} files}}", {
+                    : gt("{count, plural, one {+ {count} item} other {+ {count} items}}", {
                         count: selectedFiles.size,
                       })}
                 </span>
@@ -378,7 +377,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2">
                   <Label className="flex-1">
-                    <T>Copy ignored files</T>
+                    <T>Copy ignored files and folders</T>
                   </Label>
                   {copyable.length > 0 ? (
                     <>
@@ -387,7 +386,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                           selected: selectedFiles.size,
                           total: allIgnoredFiles.data?.files.length ?? 0,
                         })}
-                        {selectedBytes > 0 ? ` · ${formatBytes(selectedBytes)}` : ""}
+                        {selectedBytes !== null && selectedBytes > 0
+                          ? ` · ${formatBytes(selectedBytes)}`
+                          : ""}
                       </span>
                       <Button type="button" variant="ghost" size="xs" onClick={toggleShownFiles}>
                         {allCopyableSelected
@@ -419,10 +420,10 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                 ) : files.length === 0 ? (
                   <p className="text-muted-foreground text-xs">
                     {!ignoredFiles.isSuccess
-                      ? gt("Finding ignored files…")
+                      ? gt("Finding ignored files or folders…")
                       : searching
-                        ? gt("No ignored files match.")
-                        : gt("No ignored files to copy.")}
+                        ? gt("No ignored files or folders match.")
+                        : gt("No ignored files or folders to copy.")}
                   </p>
                 ) : (
                   <div className="max-h-52 overflow-y-auto rounded-md border">
@@ -441,21 +442,21 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                   <p className="text-muted-foreground text-xs">
                     {canSearchFiles
                       ? gt(
-                          "{count, plural, one {Showing the first {count} files. Search to find the rest.} other {Showing the first {count} files. Search to find the rest.}}",
+                          "{count, plural, one {Showing the first {count} items. Search to find the rest.} other {Showing the first {count} items. Search to find the rest.}}",
                           {
                             count: files.length,
                           },
                         )
                       : gt(
-                          "{count, plural, one {Showing the first {count} files.} other {Showing the first {count} files.}}",
+                          "{count, plural, one {Showing the first {count} items.} other {Showing the first {count} items.}}",
                           { count: files.length },
                         )}
                   </p>
                 ) : null}
                 <p className="text-muted-foreground text-xs">
                   <T>
-                    Files are copied after the clone finishes. Folders git ignores whole, like
-                    node_modules, are left out.
+                    Files are copied after the clone finishes. Selected folders include their files
+                    and subfolders.
                   </T>
                 </p>
               </div>
@@ -528,7 +529,11 @@ function IgnoredFileRow({
       />
       <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>
       <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-        {tooLarge ? gt("Over 1 MB") : formatBytes(file.byteLength)}
+        {file.path.endsWith("/")
+          ? gt("Folder")
+          : tooLarge
+            ? gt("Over 1 MB")
+            : formatBytes(file.byteLength)}
       </span>
     </label>
   );

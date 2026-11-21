@@ -278,6 +278,7 @@ export const make = Effect.gen(function* () {
       projectCloneTracking: true,
       projectOrganization: true,
       ignoredFileListing: true,
+      ...(hostPlatform === "win32" ? {} : { privateFileWrites: true }),
       ignoredFileSearch: true,
       triage: true,
       oneTimeSchedules: true,

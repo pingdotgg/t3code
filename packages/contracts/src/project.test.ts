@@ -7,6 +7,9 @@ import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 
 import {
   ProjectFaviconPath,
+  ProjectListEntriesInput,
+  ProjectListEntriesResult,
+  ProjectIgnoredFile,
   ReceivedProjectIcon,
   StoredProjectIcon,
   ProjectReadFileError,
@@ -34,6 +37,23 @@ describe("project RPC errors", () => {
     for (const relativePath of [" ", " report.txt", "report.txt\t"]) {
       const cwd = "/workspace";
       const resolvedPath = `${cwd}/${relativePath}`;
+      expect(
+        roundTrip(ProjectListEntriesInput, { cwd, directoryPath: relativePath }).directoryPath,
+      ).toBe(relativePath);
+      expect(
+        roundTrip(ProjectListEntriesResult, {
+          entries: [{ path: relativePath, kind: "file" }],
+          truncated: false,
+          skippedPaths: [relativePath],
+        }),
+      ).toEqual({
+        entries: [{ path: relativePath, kind: "file" }],
+        truncated: false,
+        skippedPaths: [relativePath],
+      });
+      expect(roundTrip(ProjectIgnoredFile, { path: relativePath, byteLength: 0 }).path).toBe(
+        relativePath,
+      );
       expect(roundTrip(ProjectReadFileInput, { cwd, relativePath }).relativePath).toBe(
         relativePath,
       );
