@@ -617,6 +617,7 @@ export const make = Effect.gen(function* () {
 
     const tailscaleEndpoints = yield* resolveTailscaleAdvertisedEndpoints({
       port: state.port,
+      bindHost: state.bindHost,
       serveEnabled: state.tailscaleServeEnabled,
       servePort: state.tailscaleServePort,
       networkInterfaces: currentNetworkInterfaces,
