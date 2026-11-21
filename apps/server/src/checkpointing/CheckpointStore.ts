@@ -49,12 +49,16 @@ export interface DiffCheckpointsInput {
   readonly filePaths?: ReadonlyArray<string>;
   /** Folders below `cwd` left out of the diff, as in a capture. */
   readonly excludePaths?: ReadonlyArray<string>;
+  /** What `resolveTurnStart` returned for these refs, so it is not looked up again. */
+  readonly turnStart?: string;
 }
 
 export interface ListAuthoredPathsInput {
   readonly cwd: string;
   readonly fromCheckpointRef: CheckpointRef;
   readonly toCheckpointRef: CheckpointRef;
+  /** What `resolveTurnStart` returned for these refs, so it is not looked up again. */
+  readonly turnStart?: string;
 }
 
 export interface DeleteCheckpointRefsInput {
@@ -89,6 +93,11 @@ export class CheckpointStore extends Context.Service<
     readonly restoreCheckpoint: (
       input: RestoreCheckpointInput,
     ) => Effect.Effect<boolean, CheckpointStoreError>;
+
+    /** The commit a turn's changes are read from; `from` unless the turn switched branches. */
+    readonly resolveTurnStart: (
+      input: ListAuthoredPathsInput,
+    ) => Effect.Effect<string, CheckpointStoreError>;
 
     readonly diffCheckpoints: (
       input: DiffCheckpointsInput,
@@ -160,6 +169,13 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.restoreCheckpoint(input);
   });
 
+  const resolveTurnStart: CheckpointStore["Service"]["resolveTurnStart"] = Effect.fn(
+    "CheckpointStore.resolveTurnStart",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
+    return yield* checkpoints.resolveTurnStart(input);
+  });
+
   const diffCheckpoints: CheckpointStore["Service"]["diffCheckpoints"] = Effect.fn(
     "diffCheckpoints",
   )(function* (input) {
@@ -188,6 +204,7 @@ export const make = Effect.gen(function* () {
     captureHeadCheckpoint,
     hasCheckpointRef,
     restoreCheckpoint,
+    resolveTurnStart,
     diffCheckpoints,
     listAuthoredPaths,
     deleteCheckpointRefs,

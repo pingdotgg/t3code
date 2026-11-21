@@ -2235,6 +2235,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return true;
     }, Effect.scoped),
 
+    resolveTurnStart,
+
     diffCheckpoints: Effect.fn("GitVcsDriver.checkpoints.diffCheckpoints")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.diffCheckpoints";
       if (input.filePaths?.length === 0) return "";
@@ -2248,7 +2250,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       });
 
       const diffExclusions = excludedPathspecs(input.excludePaths);
-      let fromRevision = yield* resolveTurnStart(input);
+      let fromRevision = input.turnStart ?? (yield* resolveTurnStart(input));
       if (input.fallbackFromToHead === true) {
         const resolvedFromCommit = yield* resolveCheckpointCommit(
           input.cwd,
@@ -2315,7 +2317,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     listAuthoredPaths: Effect.fn("GitVcsDriver.checkpoints.listAuthoredPaths")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.listAuthoredPaths";
-      const turnStart = yield* resolveTurnStart(input);
+      const turnStart = input.turnStart ?? (yield* resolveTurnStart(input));
       const heads = yield* execute({
         operation,
         cwd: input.cwd,

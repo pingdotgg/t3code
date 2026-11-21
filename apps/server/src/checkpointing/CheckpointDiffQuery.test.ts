@@ -60,6 +60,7 @@ function layerFor(input: {
         }),
         Layer.mock(CheckpointStore.CheckpointStore)({
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),
+          resolveTurnStart: (input) => Effect.succeed(input.fromCheckpointRef),
           listAuthoredPaths: () => Effect.succeed(input.authoredPaths ?? null),
         }),
       ),
