@@ -2,11 +2,11 @@ import { Toolbar } from "./Toolbar";
 
 import type { AppBarMenu, AppBarMenuItem } from "./AppBar.types";
 
-function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
+export function renderNativeHeaderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
   return items.map((item) =>
     "items" in item ? (
       <Toolbar.Menu key={item.id} title={item.title} icon={item.icon} inline={item.inline}>
-        {renderMenuItems(item.items)}
+        {renderNativeHeaderMenuItems(item.items)}
       </Toolbar.Menu>
     ) : (
       <Toolbar.MenuAction
@@ -34,7 +34,7 @@ export function createNativeHeaderMenu(menu: AppBarMenu) {
       separateBackground={menu.separateBackground ?? true}
     >
       {menu.status ? <Toolbar.Label>{menu.status}</Toolbar.Label> : null}
-      {renderMenuItems(menu.items)}
+      {renderNativeHeaderMenuItems(menu.items)}
     </Toolbar.Menu>
   );
 }

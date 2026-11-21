@@ -30,6 +30,7 @@ import {
   AuthTerminalReadScope,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
+  isListedThreadLineage,
   isProviderNativeSubagentThread,
   MessageId,
   ThreadId,
@@ -1049,6 +1050,16 @@ function ThreadRouteContent(
                 inspectorMode={inspectorMode}
                 onOpenFilesInspector={handleOpenFilesInspector}
                 onReturnToThread={props.onReturnToThread}
+                settleThread={
+                  canOperateThread &&
+                  serverConfig !== null &&
+                  creationState === null &&
+                  selectedThread.archivedAt === null &&
+                  isListedThreadLineage(selectedThread.lineage)
+                    ? selectedThread
+                    : undefined
+                }
+                snoozePresets={serverConfig?.settings.snoozePresets}
               />
             )
           }

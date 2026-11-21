@@ -42,7 +42,14 @@ type NativeStackHeaderVisibilityPriority = Extract<
   NativeStackHeaderItem,
   { type: "button" }
 >["visibilityPriority"];
-type NativeToolbarItem = NativeStackHeaderItem | HeaderBarButtonSearchBarPlacementItem;
+/** A button that also carries a menu: UIKit opens it on a long press and keeps the tap. */
+export type NativeToolbarButtonItem = Extract<NativeStackHeaderItem, { type: "button" }> & {
+  readonly menu?: NativeStackHeaderItemMenu["menu"];
+};
+type NativeToolbarItem =
+  | NativeStackHeaderItem
+  | NativeToolbarButtonItem
+  | HeaderBarButtonSearchBarPlacementItem;
 type NativeStackOptionsWithToolbar = NativeStackNavigationOptions & {
   unstable_headerToolbarItems?: () => NativeToolbarItem[];
 };
@@ -148,6 +155,7 @@ function convertToolbarChild(
   }
 
   if (typeName === "NativeHeaderToolbarButton") {
+    const menuItems = collectMenuItems(child.props.children, register);
     return {
       type: "button",
       label:
@@ -170,6 +178,7 @@ function convertToolbarChild(
           : "plain",
       identifier: typeof child.props.identifier === "string" ? child.props.identifier : undefined,
       visibilityPriority: child.props.visibilityPriority as NativeStackHeaderVisibilityPriority,
+      ...(menuItems.length > 0 ? { menu: { items: menuItems } } : {}),
     };
   }
 
@@ -290,6 +299,8 @@ function NativeHeaderToolbarRoot(props: {
 function NativeHeaderToolbarButton(_props: {
   readonly accessibilityLabel?: string;
   readonly axisBehavior?: NativeStackHeaderAxisBehavior;
+  /** Menu actions and submenus: a long press on the button opens them. */
+  readonly children?: ReactNode;
   readonly disabled?: boolean;
   readonly icon?: string | Extract<NativeStackHeaderIcon, { type: "image" }>;
   readonly label?: string;

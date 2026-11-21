@@ -55,7 +55,7 @@ vi.mock("@react-navigation/native", async () => {
   };
 });
 
-import { NativeHeaderToolbar } from "./NativeHeaderToolbar";
+import { NativeHeaderToolbar, type NativeToolbarButtonItem } from "./NativeHeaderToolbar";
 import { NativeStackScreenOptions } from "./StackHeader";
 
 let root: Root | null = null;
@@ -182,6 +182,34 @@ it.each(["left", "right", "bottom"] as const)(
     ]);
   },
 );
+
+it("turns a button's menu actions into a menu the button carries beside its tap", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  root = createRoot(document.createElement("div"));
+  const onPress = vi.fn();
+  act(() =>
+    root!.render(
+      <NativeHeaderToolbar placement="right">
+        <NativeHeaderToolbar.Button label="Settle" onPress={() => onPress("settle")}>
+          <NativeHeaderToolbar.MenuAction onPress={() => onPress("snooze")}>
+            Tomorrow
+          </NativeHeaderToolbar.MenuAction>
+        </NativeHeaderToolbar.Button>
+        <NativeHeaderToolbar.Button label="Files" onPress={() => onPress("files")} />
+      </NativeHeaderToolbar>,
+    ),
+  );
+  const [settle, files] = harness.renderedItems as NativeToolbarButtonItem[];
+  if (settle?.type !== "button" || files?.type !== "button") {
+    throw new Error("Expected two native buttons");
+  }
+  expect(files).not.toHaveProperty("menu");
+  const snooze = settle.menu?.items[0];
+  if (snooze?.type !== "action") throw new Error("Expected the menu action");
+  settle.onPress?.();
+  snooze.onPress?.();
+  expect(onPress.mock.calls).toEqual([["settle"], ["snooze"]]);
+});
 
 it("applies a custom header element rendered inside a navigation container", () => {
   renderConnecting("Connecting");

@@ -6,7 +6,7 @@ import type { HeaderBarButtonMailSearchToolbarItem, SearchBarCommands } from "re
 import { NavigationContext, NavigationRouteContext } from "@react-navigation/native";
 import { use, useId, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { View } from "react-native";
-import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
+import { createNativeHeaderMenu, renderNativeHeaderMenuItems } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeStackScreenOptions, useScreenOptionsWriter } from "../../native/StackHeader";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
@@ -113,20 +113,26 @@ export function AppBar(props: AppBarProps) {
     usesNativeMailSearchToolbar;
   const trailingMenus = compactSearch ? (menus?.slice(1) ?? []) : (menus ?? []);
   // The Duo's vertical bar never overflows: items that don't fit slide under the workspace tabs,
-  // and a Live Activity pushes them down further. More than one tool shares one menu there.
+  // and a Live Activity pushes them down further. More than one tool shares one menu there,
+  // and a primary action keeps its own button: the rail fits that button and the menu.
+  const foldableActions = (props.actions ?? []).filter((action) => !action.primary);
   const groupTrailing =
     usesNativeWorkspaceColumns &&
     isDuoDevice(deviceType) &&
     props.onClose === undefined &&
-    (props.actions?.length ?? 0) + trailingMenus.length > 1;
-  const actions = groupTrailing ? [] : (props.actions ?? []);
+    foldableActions.length + trailingMenus.length > 1;
+  const actions = groupTrailing
+    ? (props.actions ?? [])
+        .filter((action) => action.primary)
+        .map((action) => ({ ...action, separateBackground: true }))
+    : (props.actions ?? []);
   const visibleMenus: ReadonlyArray<AppBarMenu> = groupTrailing
     ? [
         {
           title: gt("More actions"),
           icon: "ellipsis",
           items: [
-            ...(props.actions ?? []).map((action) => ({
+            ...foldableActions.map((action) => ({
               id: action.accessibilityLabel,
               title: action.accessibilityLabel,
               icon: iosIcon(action.icon),
@@ -261,7 +267,7 @@ export function AppBar(props: AppBarProps) {
       props.confirm ||
       closeInspector ? (
         <Toolbar placement="right">
-          {actions.map(({ loading, ...action }) =>
+          {actions.map(({ loading, menu, ...action }) =>
             loading ? (
               <Toolbar.Custom key={action.accessibilityLabel}>
                 <View
@@ -277,7 +283,9 @@ export function AppBar(props: AppBarProps) {
                 {...action}
                 icon={iosIcon(action.icon)}
                 separateBackground={action.separateBackground ?? true}
-              />
+              >
+                {menu ? renderNativeHeaderMenuItems(menu) : null}
+              </ScreenHeaderButton>
             ),
           )}
           {visibleMenus.map(createNativeHeaderMenu)}

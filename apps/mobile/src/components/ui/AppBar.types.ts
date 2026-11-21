@@ -19,6 +19,13 @@ export interface AppBarAction {
   readonly overflowOnly?: boolean;
   /** iOS: false shares one glass capsule with neighbouring items. Defaults to true. */
   readonly separateBackground?: boolean;
+  /** iOS Duo: stays a rail button beside the menu its neighbours fold into. One per bar fits. */
+  readonly primary?: boolean;
+  /**
+   * iOS: a long press on the bar button opens these; a tap still runs `onPress`. Dropped while
+   * the action is loading or folded into a menu.
+   */
+  readonly menu?: ReadonlyArray<AppBarMenuItem>;
 }
 
 export type AppBarMenuItem =
