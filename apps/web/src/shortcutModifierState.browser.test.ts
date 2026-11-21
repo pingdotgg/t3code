@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   shortcutModifierStateAfterKeyboardEvent,
+  shortcutModifierStore,
   type ShortcutModifierState,
 } from "./shortcutModifierState";
 
@@ -107,5 +108,18 @@ describe("shortcutModifierState", () => {
       keyboardEventLike("keydown", { key: "a", metaKey: false }),
     );
     expect(state).toEqual(emptyState());
+  });
+
+  it("clears a stuck Meta when pointer input reports it released", () => {
+    const unsubscribe = shortcutModifierStore.subscribe(() => {});
+    try {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true }));
+      window.dispatchEvent(new PointerEvent("pointermove", { metaKey: true }));
+      expect(shortcutModifierStore.getSnapshot().metaKey).toBe(true);
+      window.dispatchEvent(new PointerEvent("pointermove", { metaKey: false }));
+      expect(shortcutModifierStore.getSnapshot()).toEqual(emptyState());
+    } finally {
+      unsubscribe();
+    }
   });
 });
