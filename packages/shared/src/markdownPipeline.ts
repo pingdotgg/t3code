@@ -9,6 +9,7 @@ import type {
   TableCell,
   Text,
 } from "mdast";
+import { isAssistantFieldParagraph } from "./markdownFieldLines.ts";
 import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
 import { type PluggableList, type Processor, type Transformer, unified } from "unified";
 import remarkParse from "remark-parse";
@@ -749,6 +750,17 @@ function remarkNormalizeLinksAndTagInlineCode() {
     };
 
     visit(tree, false);
+  };
+}
+
+export function remarkAssistantFieldLines(): Transformer<Root> {
+  const addLineBreaks = remarkBreaks();
+  return (tree, file) => {
+    const source = String(file);
+    addLineBreaks({
+      type: "root",
+      children: tree.children.filter((node) => isAssistantFieldParagraph(node, source)),
+    });
   };
 }
 

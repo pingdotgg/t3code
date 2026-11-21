@@ -539,6 +539,10 @@
       "types": "./src/generatedImageMarkdown.ts",
       "import": "./src/generatedImageMarkdown.ts"
     },
+    "./markdownFieldLines": {
+      "types": "./src/markdownFieldLines.ts",
+      "import": "./src/markdownFieldLines.ts"
+    },
     "./markdownPipeline": {
       "types": "./src/markdownPipeline.ts",
       "import": "./src/markdownPipeline.ts"

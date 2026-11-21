@@ -4,6 +4,7 @@ import { m } from "../../i18n/messages";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
+import { hardBreakAssistantFieldLines } from "@t3tools/shared/markdownFieldLines";
 import { Sheet } from "../../components/ui/Sheet";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListSection } from "../../components/ui/ListSection";
@@ -1450,7 +1451,14 @@ function AssistantMarkdownBlocks(props: {
     const blocks = splitMarkdownDetails(props.markdown, m).map((block) =>
       block.kind === "details"
         ? block
-        : { ...block, segments: splitCodexArtifactTemplateMarkdown(block.markdown) },
+        : {
+            ...block,
+            segments: splitCodexArtifactTemplateMarkdown(block.markdown).map((segment) =>
+              segment.kind === "markdown"
+                ? { ...segment, markdown: hardBreakAssistantFieldLines(segment.markdown) }
+                : segment,
+            ),
+          },
     );
     const [first] = blocks;
     // A reply rendered as one document resolves its own references; skip the extra parse.
