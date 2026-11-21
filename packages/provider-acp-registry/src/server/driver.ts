@@ -110,10 +110,12 @@ export function updateAcpRegistryEnrichmentCache(input: {
     // was still in flight cannot overwrite that newer state when it lands.
     return { ...cache, generation: cache.generation + 1 };
   }
+  // Every cached model keeps its options, so replaying a configuration changes nothing.
   const provider = applyAcpRegistryLiveConfiguration(
     cache.entry.provider,
     configuration,
     customModels,
+    cache.entry.provider.models,
   );
   if (Equal.equals(provider, cache.entry.provider)) return cache;
   return {
@@ -161,25 +163,30 @@ function modelsFromDiscovery(
       >
     | undefined,
   customModels: ReadonlyArray<CustomModelSetting>,
-  previousModels: ReadonlyArray<ServerProviderModel> = [],
+  observedModels: ReadonlyArray<ServerProviderModel> = [],
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
   const capabilities =
     discovery === undefined || discovery.configOptions.length === 0
       ? EMPTY_CAPABILITIES
       : createModelCapabilities({ optionDescriptors: discovery.configOptions });
-  // Model-specific options describe only the session's current model; other
-  // models keep the shared ones plus what an earlier session reported for them.
+  // Model-specific options describe only the session's current model. A model an
+  // earlier session opened keeps what it reported; one no session opened borrows
+  // the current model's, and the adapter skips values the chosen model rejects.
   const modelOptionIds = new Set(discovery?.modelOptionIds ?? []);
   const shared = (discovery?.configOptions ?? []).filter(
     (descriptor) => !modelOptionIds.has(descriptor.id),
   );
+  const current = (discovery?.configOptions ?? []).filter((descriptor) =>
+    modelOptionIds.has(descriptor.id),
+  );
   const sharedIds = new Set(shared.map((descriptor) => descriptor.id));
   const capabilitiesFor = ({ id: slug, reasoningEffort }: AcpRegistryProbeModel) => {
     if (slug === discovery?.currentModelId) return capabilities;
-    // The levels a model advertises replace the ones an earlier session reported.
+    const observed = observedModels.find((model) => model.slug === slug);
+    // The levels a model advertises replace the reasoning option it reported or borrowed.
     const own = (
-      previousModels.find((model) => model.slug === slug)?.capabilities?.optionDescriptors ?? []
+      observed === undefined ? current : (observed.capabilities?.optionDescriptors ?? [])
     ).filter(
       (descriptor) =>
         !sharedIds.has(descriptor.id) &&
@@ -349,11 +356,18 @@ export function applyAcpRegistryAvailableCommands(
   });
 }
 
+// Only a probe session (it sets nativeSessions) proves the default model was opened;
+// without one, the default is the "default" placeholder.
+const openedModels = (provider: ServerProvider): ReadonlyArray<ServerProviderModel> =>
+  provider.nativeSessions === undefined
+    ? []
+    : provider.models.filter((model) => model.isDefault === true);
+
 export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
   configuration: AcpRegistryLiveConfiguration,
   customModels: ReadonlyArray<CustomModelSetting>,
-  previousModels: ReadonlyArray<ServerProviderModel> = provider.models,
+  observedModels: ReadonlyArray<ServerProviderModel> = openedModels(provider),
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
   // session/load may omit models (Kimi returns `{}`); keep the probed list
@@ -395,7 +409,7 @@ export function applyAcpRegistryLiveConfiguration(
         : modelsFromDiscovery(
             discovery,
             customModels,
-            previousModels.filter((model) => !model.isCustom),
+            observedModels.filter((model) => !model.isCustom),
           ),
   };
 }
@@ -687,9 +701,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         environment,
         processEnvironment,
       });
-    // Refreshes rebuild the snapshot from the probe, so per-model options
-    // learned from earlier sessions are kept here.
-    const learnedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
+    // Refreshes rebuild the snapshot from the probe, so the models a session has
+    // opened keep their reported options here. A live session outranks the probe,
+    // whose result may be a cached replay; a newer probe replaces an older one.
+    const learnedModels = yield* Ref.make<{
+      readonly live: ReadonlyArray<ServerProviderModel>;
+      readonly probed: ReadonlyArray<ServerProviderModel>;
+    }>({ live: [], probed: [] });
+    const without = (
+      models: ReadonlyArray<ServerProviderModel>,
+      replaced: ReadonlyArray<ServerProviderModel>,
+    ) => models.filter(({ slug }) => !replaced.some((model) => model.slug === slug));
     const applyLiveConfiguration = (
       provider: ServerProvider,
       configuration: AcpRegistryLiveConfiguration,
@@ -699,11 +721,21 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           provider,
           configuration,
           effectiveConfig.customModels,
-          learned.length > 0 ? learned : provider.models,
+          [...learned.live, ...without(learned.probed, learned.live)],
         );
-        return [next, next.models === provider.models ? learned : next.models];
+        if (next.models === provider.models) return [next, learned];
+        return [
+          next,
+          {
+            ...learned,
+            live: next.models.filter(
+              (model) =>
+                model.isDefault === true || learned.live.some(({ slug }) => slug === model.slug),
+            ),
+          },
+        ];
       });
-    const clearLearnedModels = Ref.set(learnedModels, []);
+    const clearLearnedModels = Ref.set(learnedModels, { live: [], probed: [] });
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
       input: ServerProvider,
     ) {
@@ -724,11 +756,18 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           }).pipe(
             Effect.flatMap(({ commands, configuration, authAction }) => {
               const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
-              return Option.match(configuration, {
-                onNone: () => Effect.succeed(withCommands),
-                onSome: (liveConfiguration) =>
-                  applyLiveConfiguration(withCommands, liveConfiguration),
-              }).pipe(
+              const opened = openedModels(withCommands);
+              return Ref.update(learnedModels, ({ live, probed }) => ({
+                live,
+                probed: [...opened, ...without(probed, opened)],
+              })).pipe(
+                Effect.andThen(
+                  Option.match(configuration, {
+                    onNone: () => Effect.succeed(withCommands),
+                    onSome: (liveConfiguration) =>
+                      applyLiveConfiguration(withCommands, liveConfiguration),
+                  }),
+                ),
                 Effect.map((withConfiguration) =>
                   applyAcpRegistryUrlAuthAction(withConfiguration, authAction),
                 ),
