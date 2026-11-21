@@ -625,8 +625,9 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
 // Explorer opens a default folder for a missing /select target, so reveal fails instead.
 // Windows resolves `..` lexically and drops trailing dots and spaces, and on WSL a Linux name may
-// hold `\` or `:`, so the folder Windows opens could differ from the one checked here.
-const WINDOWS_AMBIGUOUS_SEGMENT = /[\\:]|[. ]$/;
+// hold `\` or `:` or be a reserved device name, so Windows could open a different item.
+const WINDOWS_AMBIGUOUS_SEGMENT =
+  /[\\:]|[. ]$|^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i;
 
 const resolveRevealTarget = Effect.fn("externalLauncher.resolveRevealTarget")(function* (
   target: string,

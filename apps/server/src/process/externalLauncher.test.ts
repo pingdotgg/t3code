@@ -676,13 +676,15 @@ it.effect.skipIf(windowsHost)(
       // Windows resolves `link/..` lexically to the payload's folder; the kernel would follow the link.
       yield* fileSystem.makeDirectory(path.join(workspace, "real", "sub"), { recursive: true });
       yield* fileSystem.symlink(path.join(workspace, "real", "sub"), path.join(workspace, "link"));
-      // Windows reads each of these folder names as a different item, mostly payload.bat itself.
+      // Windows reads each of these folder names as a different item: payload.bat or a device.
       const lookalikes = [
         "real\\payload.bat",
         "x\\..\\payload.bat",
         "payload.bat.",
         "payload.bat ",
         "payload.bat:x",
+        "NUL.txt",
+        "com1",
       ];
       for (const folder of ["real/payload.bat", ...lookalikes]) {
         yield* fileSystem.makeDirectory(path.join(workspace, folder), { recursive: true });
