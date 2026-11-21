@@ -2982,16 +2982,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return yield* readStatusDetailsLocal(cwd, options);
   });
 
-  const statusDetails: GitVcsDriver.GitVcsDriver["Service"]["statusDetails"] = Effect.fn(
-    "statusDetails",
-  )(function* (cwd) {
-    yield* refreshStatusUpstreamIfStale(cwd).pipe(
+  const refreshStatusUpstream = (cwd: string) =>
+    refreshStatusUpstreamIfStale(cwd).pipe(
       Effect.catchTags({
         GitCommandError: (error) =>
           isMissingGitCwdError(error) ? Effect.void : Effect.fail(error),
       }),
       Effect.ignoreCause({ log: true }),
     );
+
+  const statusDetails: GitVcsDriver.GitVcsDriver["Service"]["statusDetails"] = Effect.fn(
+    "statusDetails",
+  )(function* (cwd) {
+    yield* refreshStatusUpstream(cwd);
     return yield* readStatusDetailsLocal(cwd);
   });
 
@@ -3569,7 +3572,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const pushCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pushCurrentBranch"] = Effect.fn(
     "pushCurrentBranch",
   )(function* (cwd, fallbackBranch, options) {
-    const details = yield* readStatusDetailsRemote(cwd, true, false);
+    // Refresh first so the branch, upstream and divergence reads below stay close together.
+    yield* refreshStatusUpstream(cwd);
+    const details = yield* readStatusDetailsRemote(cwd, false, false);
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
       return yield* new GitCommandError({
