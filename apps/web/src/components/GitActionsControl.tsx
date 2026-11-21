@@ -107,7 +107,7 @@ import { useFilesystemReadAccess } from "~/state/filesystem";
 import { reviewEnvironment } from "~/state/review";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import {
-  selectThreadBranchBaseRef,
+  selectRepositoryBranchBaseRef,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "~/diffPanelStore";
@@ -2083,7 +2083,7 @@ export default function ThreadGitActionsControl({
   const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const changesBaseRef = useDiffPanelStore((state) =>
-    selectThreadBranchBaseRef(state, activeThreadRef),
+    selectRepositoryBranchBaseRef(state, activeThreadRef, null),
   );
   const sourceControlScope = { environmentId: activeEnvironmentId, cwd: gitCwd };
   // The same subscription the control below holds, so this adds no read of its own.

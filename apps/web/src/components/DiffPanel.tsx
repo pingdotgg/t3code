@@ -46,6 +46,7 @@ import {
   resolveToolCallDiffTarget,
   selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
+  selectThreadGitRepository,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "../diffPanelStore";
@@ -346,7 +347,9 @@ export default function DiffPanel({
     folders: projectFoldersQuery.data?.folders ?? null,
     threadCwd: activeCwd ?? null,
   });
-  const [gitRepositoryPath, setGitRepositoryPath] = useState<string | null>(null);
+  const gitRepositoryPath = useDiffPanelStore((state) =>
+    selectThreadGitRepository(state.gitRepositoryByThreadKey, routeThreadRef),
+  );
   const gitRepository =
     gitRepositories.find((repository) => repository.repositoryPath === gitRepositoryPath) ??
     (threadFolderIsRepo ? null : (gitRepositories[0] ?? null));
@@ -994,12 +997,8 @@ export default function DiffPanel({
   };
   const selectGitRepository = (value: string) => {
     const nextPath = value === THREAD_FOLDER ? null : value;
-    if (nextPath === (gitRepository?.repositoryPath ?? null)) return;
-    setGitRepositoryPath(nextPath);
-    // A commit or base ref of the repository being left means nothing in the next one.
-    if (selectedCommitSha === null && rememberedBaseRef === null) return;
-    selectBranchBaseRef(null);
-    if (selectedGitScope === "unstaged") selectGitScope("unstaged");
+    if (!routeThreadRef || nextPath === (gitRepository?.repositoryPath ?? null)) return;
+    useDiffPanelStore.getState().selectGitRepository(routeThreadRef, nextPath);
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
