@@ -137,8 +137,10 @@ import { m } from "../i18n/messages";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 
 // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
-import SideThreadPane from "./chat/SideThreadPane";
-import { LinkedThreadPane } from "./chat/LinkedThreadPane";
+const SideThreadPane = lazy(() => import("./chat/SideThreadPane"));
+const LinkedThreadPane = lazy(() =>
+  import("./chat/LinkedThreadPane").then((module) => ({ default: module.LinkedThreadPane })),
+);
 const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
@@ -753,22 +755,26 @@ function ThreadSurfaceContent({
   switch (surface.kind) {
     case "thread":
       return (
-        <SideThreadPane
-          key={surface.id}
-          parentRef={threadRef}
-          surface={surface}
-          parentPanel={sideChatParentPanel}
-          onClose={() => void closeThreadSurface(threadRef, surface.id)}
-        />
+        <Suspense fallback={null}>
+          <SideThreadPane
+            key={surface.id}
+            parentRef={threadRef}
+            surface={surface}
+            parentPanel={sideChatParentPanel}
+            onClose={() => void closeThreadSurface(threadRef, surface.id)}
+          />
+        </Suspense>
       );
     case "linked-thread":
       return (
-        <LinkedThreadPane
-          key={surface.id}
-          panelRef={threadRef}
-          surface={surface}
-          visible={visible}
-        />
+        <Suspense fallback={null}>
+          <LinkedThreadPane
+            key={surface.id}
+            panelRef={threadRef}
+            surface={surface}
+            visible={visible}
+          />
+        </Suspense>
       );
     case "preview":
       return (
