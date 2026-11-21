@@ -1,7 +1,9 @@
-import type {
-  ProviderApprovalOption,
-  ProviderUserInputAnswers,
-  UserInputQuestion,
+import {
+  type OrchestrationV2UserInputQuestion,
+  type ProviderApprovalOption,
+  type ProviderUserInputAnswers,
+  TrimmedNonEmptyString,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import * as Option from "effect/Option";
@@ -10,6 +12,7 @@ import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
+import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
 import {
@@ -176,6 +179,191 @@ export function makeAntigravityUserInputResponse(
   const option = matchingLabels.length === 1 ? matchingLabels[0] : undefined;
   return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : undefined;
 }
+
+const ElicitationChoice = Schema.Struct({
+  const: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  description: Schema.optional(Schema.NullOr(Schema.String)),
+});
+type ElicitationChoice = typeof ElicitationChoice.Type;
+
+const isElicitationForm = Schema.is(
+  Schema.Struct({
+    properties: Schema.Record(Schema.String, Schema.Unknown),
+    required: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  }),
+);
+const isSingleElicitationQuestion = Schema.is(
+  Schema.Struct({
+    type: Schema.Literal("string"),
+    title: TrimmedNonEmptyString,
+    oneOf: Schema.NonEmptyArray(ElicitationChoice),
+    enum: Schema.optional(Schema.Null),
+  }),
+);
+const isMultiElicitationQuestion = Schema.is(
+  Schema.Struct({
+    type: Schema.Literal("array"),
+    title: TrimmedNonEmptyString,
+    items: Schema.Struct({
+      type: Schema.optional(Schema.Null),
+      anyOf: Schema.NonEmptyArray(ElicitationChoice),
+      enum: Schema.optional(Schema.Null),
+    }),
+    minItems: Schema.optional(Schema.Null),
+    maxItems: Schema.optional(Schema.Null),
+  }),
+);
+const isElicitationCompanion = Schema.is(
+  Schema.Struct({
+    type: Schema.Literal("string"),
+    oneOf: Schema.optional(Schema.Null),
+    enum: Schema.optional(Schema.Null),
+    anyOf: Schema.optional(Schema.Null),
+  }),
+);
+
+// Matches file references appended by `appendUserInputAttachmentPaths`.
+const QUESTION_ATTACHMENT_PATTERN = /^Attached (?:image|file) "(?:\\.|[^"\\\r\n])*": "/;
+
+function extractElicitationChoices(field: unknown):
+  | {
+      readonly title: string;
+      readonly choices: ReadonlyArray<ElicitationChoice>;
+      readonly multiSelect: boolean;
+    }
+  | undefined {
+  if (isSingleElicitationQuestion(field)) {
+    return { title: field.title.trim(), choices: field.oneOf, multiSelect: false };
+  }
+  if (isMultiElicitationQuestion(field)) {
+    return { title: field.title.trim(), choices: field.items.anyOf, multiSelect: true };
+  }
+  return undefined;
+}
+
+/**
+ * ask_question pairs each qN choice (single- or multi-select) with a qN_other text field and
+ * puts the question text in title. Fold each pair into one question and route custom answers or
+ * attachment notes to qN_other (agy appends qN_other to the resolved option labels).
+ */
+export const extractAntigravityElicitationForm: NonNullable<
+  AcpAdapterV2Flavor["extractElicitationForm"]
+> = (request) => {
+  if (request.mode !== "form" || !isElicitationForm(request.requestedSchema)) return undefined;
+  const { properties, required } = request.requestedSchema;
+  if (required !== undefined && required !== null && required.length > 0) return undefined;
+
+  const matched: Array<{
+    readonly id: string;
+    readonly index: number;
+    readonly title: string;
+    readonly choices: ReadonlyArray<ElicitationChoice>;
+    readonly optionValues: ReadonlySet<string>;
+    readonly multiSelect: boolean;
+  }> = [];
+
+  for (const [id, field] of Object.entries(properties)) {
+    if (!/^q[1-9]\d*$/.test(id)) continue;
+    const parsed = extractElicitationChoices(field);
+    const companionId = `${id}_other`;
+    if (
+      parsed === undefined ||
+      !Object.hasOwn(properties, companionId) ||
+      !isElicitationCompanion(properties[companionId])
+    ) {
+      return undefined;
+    }
+    const optionValues = new Set(parsed.choices.map((option) => option.const));
+    if (optionValues.size !== parsed.choices.length) return undefined;
+    matched.push({
+      id,
+      index: Number(id.slice(1)),
+      title: parsed.title,
+      choices: parsed.choices,
+      optionValues,
+      multiSelect: parsed.multiSelect,
+    });
+  }
+
+  // Leave partial or differently shaped forms to the generic ACP fallback.
+  if (matched.length === 0 || Object.keys(properties).length !== matched.length * 2) {
+    return undefined;
+  }
+
+  // Go serializes map keys lexicographically (q1, q10, q2); restore numeric order.
+  matched.sort((left, right) => left.index - right.index);
+
+  const questions: OrchestrationV2UserInputQuestion[] = matched.map((entry, position) => ({
+    id: entry.id,
+    header: `Question ${position + 1}`,
+    question: entry.title,
+    options: entry.choices.map((option) => {
+      const label = option.title.trim();
+      return {
+        label,
+        value: option.const,
+        description: option.description?.trim() || label,
+      };
+    }),
+    ...(entry.multiSelect ? { multiSelect: true } : {}),
+  }));
+
+  return {
+    questions,
+    respond: (answers) => {
+      const entries: Array<[string, EffectAcpSchema.ElicitationContentValue]> = [];
+      for (const entry of matched) {
+        const answer = Object.hasOwn(answers, entry.id) ? answers[entry.id] : undefined;
+        const companionId = `${entry.id}_other`;
+
+        if (entry.multiSelect) {
+          if (Array.isArray(answer)) {
+            const selected = new Set<string>();
+            const notes: string[] = [];
+            for (const item of answer) {
+              if (typeof item !== "string") return { action: "cancel" };
+              if (entry.optionValues.has(item)) {
+                selected.add(item);
+              } else if (QUESTION_ATTACHMENT_PATTERN.test(item)) {
+                notes.push(item);
+              } else {
+                return { action: "cancel" };
+              }
+            }
+            if (selected.size === 0 && notes.length === 0) return { action: "cancel" };
+            if (selected.size > 0) entries.push([entry.id, [...selected]]);
+            if (notes.length > 0) entries.push([companionId, notes.join("\n")]);
+          } else if (typeof answer === "string" && answer.trim().length > 0) {
+            entries.push([companionId, answer]);
+          } else {
+            return { action: "cancel" };
+          }
+          continue;
+        }
+
+        if (typeof answer !== "string" || answer.trim().length === 0) {
+          return { action: "cancel" };
+        }
+        if (entry.optionValues.has(answer)) {
+          entries.push([entry.id, answer]);
+          continue;
+        }
+        const marker = answer.indexOf("\n\n");
+        if (marker >= 0) {
+          const prefix = answer.slice(0, marker);
+          const note = answer.slice(marker + 2);
+          if (entry.optionValues.has(prefix) && QUESTION_ATTACHMENT_PATTERN.test(note)) {
+            entries.push([entry.id, prefix], [companionId, note]);
+            continue;
+          }
+        }
+        entries.push([companionId, answer]);
+      }
+      return { action: "accept", content: Object.fromEntries(entries) };
+    },
+  };
+};
 
 function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
   return text.length <= limit

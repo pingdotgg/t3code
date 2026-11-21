@@ -4,6 +4,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import {
+  extractAntigravityElicitationForm,
   extractAntigravityUserInputQuestion,
   antigravityApprovalOptions,
   antigravitySubagentOutput,
@@ -264,6 +265,229 @@ describe("Antigravity permissions and questions", () => {
     expect(question?.question.length).toBeLessThanOrEqual(8_000);
     expect(question?.options[0]?.label.length).toBeLessThanOrEqual(512);
     expect(question?.options[0]?.value).toBe("stable-choice");
+  });
+
+  const elicitationRequest = (
+    properties: Record<string, unknown>,
+    required?: ReadonlyArray<string>,
+  ) =>
+    ({
+      sessionId: "session-1",
+      mode: "form",
+      message: "The agent has 2 questions.",
+      requestedSchema: {
+        type: "object",
+        properties,
+        ...(required === undefined ? {} : { required }),
+      },
+    }) as EffectAcpSchema.CreateElicitationRequest;
+
+  const singleChoiceField = {
+    type: "string",
+    title: "For Layer 2 of the pipeline, which LLM backend should we default to?",
+    oneOf: [
+      { const: "1", title: "OpenAI-compatible adapter", description: "Local and cloud via config" },
+      { const: "2", title: "Local-only server" },
+    ],
+  };
+  const multiChoiceField = {
+    type: "array",
+    title: "Which verification stages should run automatically?",
+    items: {
+      anyOf: [
+        { const: "1", title: "Type checking" },
+        { const: "2", title: "Unit tests" },
+        { const: "3", title: "Fuzzing" },
+      ],
+    },
+  };
+  const otherField = (question: string) => ({
+    type: "string",
+    title: "Other",
+    description: `Optional free-form answer to: ${question}`,
+  });
+
+  it("folds ask_question single- and multi-select choices with their Other field and orders numerically", () => {
+    const form = extractAntigravityElicitationForm(
+      elicitationRequest({
+        q1: singleChoiceField,
+        q1_other: otherField(singleChoiceField.title),
+        q10: {
+          type: "string",
+          title: "Final confirmation?",
+          oneOf: [{ const: "1", title: "Yes" }],
+        },
+        q10_other: otherField("Final confirmation?"),
+        q2: multiChoiceField,
+        q2_other: otherField(multiChoiceField.title),
+      }),
+    );
+
+    expect(form?.questions).toEqual([
+      {
+        id: "q1",
+        header: "Question 1",
+        question: singleChoiceField.title,
+        options: [
+          {
+            label: "OpenAI-compatible adapter",
+            value: "1",
+            description: "Local and cloud via config",
+          },
+          { label: "Local-only server", value: "2", description: "Local-only server" },
+        ],
+      },
+      {
+        id: "q2",
+        header: "Question 2",
+        question: multiChoiceField.title,
+        options: [
+          { label: "Type checking", value: "1", description: "Type checking" },
+          { label: "Unit tests", value: "2", description: "Unit tests" },
+          { label: "Fuzzing", value: "3", description: "Fuzzing" },
+        ],
+        multiSelect: true,
+      },
+      {
+        id: "q10",
+        header: "Question 3",
+        question: "Final confirmation?",
+        options: [{ label: "Yes", value: "1", description: "Yes" }],
+      },
+    ]);
+
+    expect(form?.respond({ q1: "2", q2: ["1", "3", "1"], q10: "1" })).toEqual({
+      action: "accept",
+      content: { q1: "2", q2: ["1", "3"], q10: "1" },
+    });
+
+    expect(
+      form?.respond({ q1: "Use Gemini Flash", q2: "Only integration checks", q10: "Wait" }),
+    ).toEqual({
+      action: "accept",
+      content: {
+        q1_other: "Use Gemini Flash",
+        q2_other: "Only integration checks",
+        q10_other: "Wait",
+      },
+    });
+  });
+
+  it("splits attachment references onto qN_other while keeping selected choices on qN", () => {
+    const form = extractAntigravityElicitationForm(
+      elicitationRequest({
+        q1: singleChoiceField,
+        q1_other: otherField(singleChoiceField.title),
+        q2: multiChoiceField,
+        q2_other: otherField(multiChoiceField.title),
+      }),
+    );
+    const imageRef = 'Attached image "shot.png": "/tmp/shot.png"';
+    const fileRef = 'Attached file "spec.txt": "/tmp/spec.txt"';
+
+    expect(
+      form?.respond({
+        q1: `1\n\n${imageRef}`,
+        q2: ["1", "3", fileRef],
+      }),
+    ).toEqual({
+      action: "accept",
+      content: {
+        q1: "1",
+        q1_other: imageRef,
+        q2: ["1", "3"],
+        q2_other: fileRef,
+      },
+    });
+
+    expect(form?.respond({ q1: imageRef, q2: fileRef })).toEqual({
+      action: "accept",
+      content: { q1_other: imageRef, q2_other: fileRef },
+    });
+  });
+
+  it.each([
+    ["missing answer", { q2: ["1"] }],
+    ["blank single-select answer", { q1: "   ", q2: ["1"] }],
+    ["array answer for single-select", { q1: ["1"], q2: ["1"] }],
+    ["empty multi-select array", { q1: "1", q2: [] }],
+    ["unknown option in multi-select array", { q1: "1", q2: ["1", "unknown"] }],
+    ["blank multi-select custom text", { q1: "1", q2: "  " }],
+  ])("cancels ask_question elicitation on %s", (_, answers) => {
+    const form = extractAntigravityElicitationForm(
+      elicitationRequest({
+        q1: singleChoiceField,
+        q1_other: otherField(singleChoiceField.title),
+        q2: multiChoiceField,
+        q2_other: otherField(multiChoiceField.title),
+      }),
+    );
+    expect(form?.respond(answers)).toEqual({ action: "cancel" });
+  });
+
+  it.each([
+    [
+      "url elicitation",
+      {
+        sessionId: "session-1",
+        mode: "url",
+        elicitationId: "e-1",
+        message: "Sign in",
+        url: "https://example.com",
+      } as EffectAcpSchema.CreateElicitationRequest,
+    ],
+    [
+      "extra unrelated field",
+      elicitationRequest({
+        q1: singleChoiceField,
+        q1_other: otherField(singleChoiceField.title),
+        note: { type: "string", title: "Note" },
+      }),
+    ],
+    ["orphan companion", elicitationRequest({ q1_other: otherField("orphan") })],
+    [
+      "required field",
+      elicitationRequest({ q1: singleChoiceField, q1_other: otherField(singleChoiceField.title) }, [
+        "q1",
+      ]),
+    ],
+    [
+      "enum companion",
+      elicitationRequest({
+        q1: singleChoiceField,
+        q1_other: { type: "string", enum: ["a"] },
+      }),
+    ],
+    [
+      "enum choice instead of oneOf",
+      elicitationRequest({
+        q1: { type: "string", title: "Pick one", enum: ["1", "2"] },
+        q1_other: otherField("Pick one"),
+      }),
+    ],
+    [
+      "multi-select with item count constraints",
+      elicitationRequest({
+        q1: { ...multiChoiceField, minItems: 1 },
+        q1_other: otherField(multiChoiceField.title),
+      }),
+    ],
+    [
+      "duplicate option values",
+      elicitationRequest({
+        q1: {
+          type: "string",
+          title: "Pick one",
+          oneOf: [
+            { const: "1", title: "First" },
+            { const: "1", title: "Second" },
+          ],
+        },
+        q1_other: otherField("Pick one"),
+      }),
+    ],
+  ])("leaves %s to the generic ACP form parser", (_, request) => {
+    expect(extractAntigravityElicitationForm(request)).toBeUndefined();
   });
 });
 
