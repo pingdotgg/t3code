@@ -25,6 +25,7 @@ it.effect.each(["t3code", "T3 Code (Alpha)"])(
         appDataDirectory: directory,
         isDevelopment: false,
         platform: "win32",
+        stateDir: path.join(directory, "userdata"),
       });
       assert.equal(yield* fs.readFileString(path.join(destination, "Local State")), state);
       assert.equal(yield* fs.readFileString(path.join(source, "Local State")), state);
@@ -34,6 +35,7 @@ it.effect.each(["t3code", "T3 Code (Alpha)"])(
         appDataDirectory: directory,
         isDevelopment: false,
         platform: "win32",
+        stateDir: path.join(directory, "userdata"),
       });
       assert.equal(
         yield* fs.readFileString(path.join(destination, "Local State")),

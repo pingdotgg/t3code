@@ -160,14 +160,11 @@ describe("DesktopAppIdentity", () => {
     ),
   );
 
-  it.effect("keeps using the legacy development profile", () =>
+  it.effect("keeps the development profile inside the T3 home, not the shared legacy one", () =>
     withIdentity(
       Effect.gen(function* () {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
-        assert.equal(
-          yield* identity.resolveUserDataPath,
-          "/Users/alice/Library/Application Support/T3 Code (Dev)",
-        );
+        assert.equal(yield* identity.resolveUserDataPath, "/Users/alice/.t3/dev/electron");
       }),
       {
         legacyPathExists: true,
