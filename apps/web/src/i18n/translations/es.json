@@ -12392,5 +12392,7 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
+  "03cc9d13df338ec1": "Tailscale denegó el permiso para configurar HTTPS. En el host, permite que la cuenta que ejecuta T3 Code administre Tailscale (en Linux: {command}) y reinicia el backend de T3 Code.",
+  "3fc83e017b2ed200": "No se pudo configurar HTTPS de Tailscale en el host. Comprueba que Tailscale esté en ejecución y tenga la sesión iniciada, y que MagicDNS y los certificados HTTPS estén activados en la tailnet. Luego reinicia el backend de T3 Code."
 }

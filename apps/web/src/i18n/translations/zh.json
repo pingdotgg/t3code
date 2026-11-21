@@ -12422,5 +12422,7 @@
   "27d76249d09eb69f": "审查导览已就绪",
   "faa3bb26abb39c93": "审查导览生成失败",
   "b7df38b7d8792d78": "打开导览",
-  "9e91e9a77b664e4e": "无法开始生成审查导览"
+  "9e91e9a77b664e4e": "无法开始生成审查导览",
+  "03cc9d13df338ec1": "Tailscale 拒绝了配置 HTTPS 的请求。请在主机上授予运行 T3 Code 的账户管理 Tailscale 的权限（Linux：{command}），然后重启 T3 Code 后端。",
+  "3fc83e017b2ed200": "主机上的 Tailscale HTTPS 配置失败。请确认 Tailscale 正在运行且已登录，并确认 tailnet 已启用 MagicDNS 和 HTTPS 证书，然后重启 T3 Code 后端。"
 }

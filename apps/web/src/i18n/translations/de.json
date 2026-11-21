@@ -12397,5 +12397,7 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "03cc9d13df338ec1": "Tailscale hat die HTTPS-Einrichtung verweigert. Gib dem Konto, unter dem T3 Code auf dem Host läuft, die Berechtigung, Tailscale zu verwalten (unter Linux: {command}). Starte dann das T3-Code-Backend neu.",
+  "3fc83e017b2ed200": "Die HTTPS-Einrichtung auf dem Host ist fehlgeschlagen. Prüfe, ob Tailscale läuft und angemeldet ist und ob MagicDNS und HTTPS-Zertifikate für das Tailnet aktiviert sind. Starte dann das T3-Code-Backend neu."
 }

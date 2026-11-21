@@ -5393,5 +5393,7 @@
   "ad208e3e32c85029": "Ocultar todo",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Llamadas a herramientas en el chat",
-  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran."
+  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
+  "03cc9d13df338ec1": "Tailscale denegó el permiso para configurar HTTPS. En el host, permite que la cuenta que ejecuta T3 Code administre Tailscale (en Linux: {command}) y reinicia el backend de T3 Code.",
+  "3fc83e017b2ed200": "No se pudo configurar HTTPS de Tailscale en el host. Comprueba que Tailscale esté en ejecución y tenga la sesión iniciada, y que MagicDNS y los certificados HTTPS estén activados en la tailnet. Luego reinicia el backend de T3 Code."
 }

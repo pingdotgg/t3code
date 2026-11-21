@@ -5393,5 +5393,7 @@
   "ad208e3e32c85029": "Tout masquer",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
-  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours."
+  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
+  "03cc9d13df338ec1": "Tailscale a refusé la configuration HTTPS. Sur l’hôte, autorisez le compte qui exécute T3 Code à gérer Tailscale (sous Linux : {command}), puis redémarrez le backend de T3 Code.",
+  "3fc83e017b2ed200": "La configuration HTTPS de Tailscale a échoué sur l’hôte. Vérifiez que Tailscale fonctionne avec une session ouverte et que MagicDNS et les certificats HTTPS sont activés pour le tailnet, puis redémarrez le backend de T3 Code."
 }

@@ -12404,5 +12404,7 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "03cc9d13df338ec1": "Tailscale nekade behörighet att konfigurera HTTPS. Ge kontot som kör T3 Code på värden behörighet att hantera Tailscale (på Linux: {command}) och starta sedan om T3 Code-servern.",
+  "3fc83e017b2ed200": "Det gick inte att konfigurera Tailscale HTTPS på värden. Kontrollera att Tailscale körs och är inloggat och att MagicDNS och HTTPS-certifikat är aktiverade för ditt tailnet. Starta sedan om T3 Code-servern."
 }

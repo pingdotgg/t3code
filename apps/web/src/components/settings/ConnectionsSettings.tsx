@@ -1,6 +1,9 @@
 import { errorDisplayMessage, thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
-import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
+import {
+  managedCapabilityDenial,
+  tailscaleServeFailureMessage,
+} from "@t3tools/client-runtime/contract-labels";
 import { SessionPermissions } from "./SessionPermissions";
 import { useSearch } from "@tanstack/react-router";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
@@ -627,7 +630,7 @@ function ConnectionsSettingsContent({
     setIsUpdatingTailscaleServe(false);
   };
 
-  const handleStartTailscaleServeDisable = (_endpoint: AdvertisedEndpoint) => {
+  const handleStartTailscaleServeDisable = () => {
     setDisableTailscaleServeDialogOpen(true);
   };
 
@@ -840,6 +843,11 @@ function ConnectionsSettingsContent({
     }
   };
   const tailscaleHttpsEndpoint = desktopAdvertisedEndpoints.find(isTailscaleHttpsEndpoint) ?? null;
+  const tailscaleServeEnabled = desktopServerExposureState?.tailscaleServeEnabled ?? false;
+  const tailscaleFailure =
+    tailscaleHttpsEndpoint?.status === "available"
+      ? null
+      : tailscaleServeFailureMessage(primaryServerConfig?.tailscaleServeFailure, m);
   const visibleDesktopNetworkAdvertisedEndpoints = isLocalBackendNetworkAccessible
     ? desktopAdvertisedEndpoints.filter((endpoint) => !isTailscaleHttpsEndpoint(endpoint))
     : [];
@@ -1145,29 +1153,30 @@ function ConnectionsSettingsContent({
     <SettingsRow
       title={searchableSetting("tailscale-https").title}
       description={
-        tailscaleHttpsEndpoint
+        tailscaleFailure ??
+        (tailscaleHttpsEndpoint
           ? tailscaleHttpsEndpoint.status === "available"
             ? tailscaleHttpsEndpoint.httpBaseUrl
             : gt("Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL.")
-          : missingTailscaleEndpointDescription(desktopServerExposureState, m)
+          : missingTailscaleEndpointDescription(desktopServerExposureState, m))
       }
       control={
-        tailscaleHttpsEndpoint ? (
+        tailscaleHttpsEndpoint || tailscaleServeEnabled ? (
           <Switch
-            checked={tailscaleHttpsEndpoint.status === "available"}
+            checked={tailscaleServeEnabled}
             disabled={isUpdatingTailscaleServe}
             onCheckedChange={(checked) => {
-              if (checked) {
+              if (checked && tailscaleHttpsEndpoint) {
                 handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
                 return;
               }
-              handleStartTailscaleServeDisable(tailscaleHttpsEndpoint);
+              handleStartTailscaleServeDisable();
             }}
             aria-label={gt("Enable Tailscale HTTPS")}
           />
         ) : null
       }
-      managed={tailscaleHttpsEndpoint?.status === "available" ? undefined : remoteClientsDenial}
+      managed={tailscaleServeEnabled ? undefined : remoteClientsDenial}
     />
   );
   const newestPairingLink = visibleDesktopPairingLinks.find(
@@ -1394,7 +1403,15 @@ function ConnectionsSettingsContent({
                 {renderWslRow()}
               </>
             ) : canManageLocalBackend ? (
-              renderDisabledNetworkAccessRow()
+              <>
+                {renderDisabledNetworkAccessRow()}
+                {tailscaleFailure ? (
+                  <SettingsRow
+                    title={searchableSetting("tailscale-https").title}
+                    description={tailscaleFailure}
+                  />
+                ) : null}
+              </>
             ) : null}
             {canReadRelay || canManageRelay ? (
               <CloudLinkRow
