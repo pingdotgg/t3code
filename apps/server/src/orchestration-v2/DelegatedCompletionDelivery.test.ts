@@ -1414,7 +1414,7 @@ const seedRestartCancelledChild = (input: {
   readonly name: string;
   readonly completionWake: "always" | "settled_only";
   readonly continuationPending: boolean;
-  readonly runStatus?: "cancelled" | "completed";
+  readonly runStatus?: "cancelled" | "completed" | "interrupted";
   readonly lostWork?: OrchestrationV2Run["restartCancelledBackgroundWork"];
   readonly now: DateTime.Utc;
 }) =>
@@ -5150,6 +5150,72 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         `Child task completed without an assistant result.\n\n${stopReason}`,
       );
       assert.isUndefined(task?.cancelledRunId);
+
+      // Codex 0.169 reports a hook-stopped turn as interrupted; its reason is the interrupt result.
+      const interrupted = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "cancel-finished-interrupted-child",
+        completionWake: "always",
+        continuationPending: false,
+        runStatus: "interrupted",
+        now,
+      });
+      yield* eventSink.write({
+        commandId: CommandId.make("command:cancel-finished-interrupted-child:result"),
+        events: [
+          {
+            id: EventId.make("event:cancel-finished-interrupted-child:result"),
+            type: "turn-item.updated",
+            threadId: interrupted.childThreadId,
+            runId: interrupted.childRunId,
+            nodeId: rootNodeId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: IdAllocator.derive.runSignalTurnItem({
+                runId: interrupted.childRunId,
+                signal: "interrupt-result",
+              }),
+              type: "run_interrupt_result",
+              threadId: interrupted.childThreadId,
+              runId: interrupted.childRunId,
+              nodeId: rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 98,
+              status: "interrupted",
+              title: "Interrupted",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              message: stopReason,
+            },
+          },
+        ],
+      });
+      yield* orchestrator.cancelDelegatedTask({
+        parentThreadId: threadId,
+        taskId: interrupted.taskId,
+        command: {
+          type: "thread.stop",
+          commandId: CommandId.make("cancel-finished-interrupted-child"),
+          threadId: interrupted.childThreadId,
+          stopDelegatedTasks: false,
+        },
+        stopDescendants: () => Effect.void,
+      });
+      const interruptedTask = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+        (row) => row.id === interrupted.taskId,
+      );
+      assert.equal(
+        interruptedTask?.result,
+        `Child task ended with status interrupted.\n\n${stopReason}`,
+      );
     }),
   );
 

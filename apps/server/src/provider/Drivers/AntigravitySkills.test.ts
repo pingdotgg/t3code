@@ -403,6 +403,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           path.join(projectSkills, "deploy"),
           "---\nname: deploy\n---\n",
         );
+        yield* writeSkill(path.join(projectSkills, "internal"), "---\nname: internal\n---\n");
 
         const globalConfigDir = path.join(input.userHome, ".gemini", "config");
         const inheritedConfigPath = path.join(input.userHome, "shared-skills.json");
@@ -425,7 +426,10 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         yield* fileSystem.writeFileString(
           path.join(input.cwd, ".agents", "skills.json"),
           JSON.stringify({
-            entries: [{ path: "tools/skills" }],
+            entries: [
+              { path: "tools/skills/deploy/SKILL.md" },
+              { path: "tools/skills/internal/SKILL.md", exclude: ["internal"] },
+            ],
           }),
         );
 
