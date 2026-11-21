@@ -1,6 +1,6 @@
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
-import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
+import * as CodexManagedResponses from "./CodexManagedResponses.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "@effect/vitest";
@@ -174,11 +174,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   const layerBaseDeps = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-test",
   }).pipe(
-    Layer.provideMerge(
-      Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
-        endpoint: Effect.succeed("unused-private-pipe"),
-      }),
-    ),
+    Layer.provideMerge(Layer.mock(CodexManagedResponses.CodexManagedResponses)({})),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(
       Layer.mock(CodexInstallation.CodexInstallation)({
