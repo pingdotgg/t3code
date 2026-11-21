@@ -159,10 +159,22 @@ export function isParentThreadRelationship(
   return edge.kind !== "transfer" && edge.targetThreadId === currentThreadId;
 }
 
+export function isSettledForkRelationship(
+  graph: ThreadRelationshipGraph,
+  row: Pick<ThreadRelationshipWalkRow, "threadId" | "edge">,
+): boolean {
+  return (
+    row.edge.kind === "fork" &&
+    row.threadId === row.edge.targetThreadId &&
+    graph.nodes.get(row.threadId)?.thread?.settledOverride === "settled"
+  );
+}
+
 export function threadRelationshipRowStatus(
   graph: ThreadRelationshipGraph,
   row: Pick<ThreadRelationshipWalkRow, "threadId" | "edge">,
 ): string | null {
+  if (isSettledForkRelationship(graph, row)) return "settled";
   if (row.edge.kind === "transfer" || row.threadId === row.edge.targetThreadId) {
     return row.edge.status;
   }

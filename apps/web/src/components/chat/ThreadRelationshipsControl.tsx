@@ -18,6 +18,7 @@ import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
   isParentThreadRelationship,
+  isSettledForkRelationship,
   threadRelationshipRowStatus,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
@@ -616,12 +617,15 @@ export function ThreadRelationshipsPanel(props: {
   const {
     related = [],
     active = [],
+    settledForks = [],
     previous = [],
     sideChats = [],
   } = groupBy(visibleRelationships, ({ threadId, edge }) => {
+    const row = { threadId, edge };
     const isParent = isParentThreadRelationship(edge, props.threadId);
     if (!isParent && graph.nodes.get(threadId)?.thread?.lineage.sideChat === true)
       return "sideChats";
+    if (isSettledForkRelationship(graph, row)) return "settledForks";
     if (edge.kind !== "subagent" || isParent) return "related";
     return isFinishedAgentStatus(edge.status) ? "previous" : "active";
   });
@@ -639,6 +643,12 @@ export function ThreadRelationshipsPanel(props: {
   }> = [
     { id: "related", label: null, rows: related, expanded: true },
     { id: "active", label: null, rows: [...active, ...remoteActive], expanded: true },
+    {
+      id: "settled-forks",
+      label: gt("Settled forks"),
+      rows: settledForks,
+      expanded: false,
+    },
     {
       id: "previous",
       label: gt("Previous agents"),
@@ -658,6 +668,7 @@ export function ThreadRelationshipsPanel(props: {
     props.showLineage &&
     (related.length > 0 ||
       active.length > 0 ||
+      settledForks.length > 0 ||
       previous.length > 0 ||
       runningCount > 0 ||
       remoteActive.length > 0 ||
@@ -1045,7 +1056,8 @@ export function ThreadRelationshipsPanel(props: {
               ? gt("Lineage · {runningCount} running", { runningCount })
               : gt("Lineage", { $context: "thread details section: parent and child agents" })
           }
-          // A lone "Previous agents" row names itself; the heading returns for status or actions.
+          // Collapsed groups name themselves; the heading returns for status or actions.
+
           showHeading={
             runningCount > 0 ||
             canDetach ||
