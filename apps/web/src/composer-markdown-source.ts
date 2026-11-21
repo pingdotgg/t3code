@@ -221,9 +221,9 @@ function collapseRegion(tr: Transaction, region: TextRange, type: MarkType): voi
 function collapseMarkdownSource(
   tr: Transaction,
   keep: (region: TextRange) => boolean = () => false,
-): void {
+): TextRange[] {
   const type = tr.doc.type.schema.marks[MARKDOWN_SOURCE_MARK];
-  if (!type) return;
+  if (!type) return [];
   const regions: TextRange[] = [];
   for (const region of sourceRegions(tr.doc, type)) {
     const extended = withAdjacentDelimiters(tr.doc, region);
@@ -235,6 +235,7 @@ function collapseMarkdownSource(
     if (keep(region)) tr.addMark(region.from, region.to, type.create());
     else collapseRegion(tr, region, type);
   }
+  return regions;
 }
 
 function mapSelection(tr: Transaction, selection: Selection, map: (pos: number) => number) {
@@ -248,7 +249,14 @@ function mapSelection(tr: Transaction, selection: Selection, map: (pos: number) 
 
 /** Parses all shown source first, so a command that splits it keeps its styles. */
 export const collapseShownMarkdownSource: Command = ({ tr }) => {
-  collapseMarkdownSource(tr);
+  const { selection } = tr;
+  const type = tr.doc.type.schema.marks[MARKDOWN_SOURCE_MARK];
+  const marks = tr.storedMarks ?? selection.$from.marks();
+  const regions = collapseMarkdownSource(tr);
+  // A caret after the closing markers is outside the styles, though parsed text there is inclusive.
+  if (type && selection.empty && regions.some(({ to }) => to === selection.from)) {
+    tr.setStoredMarks(type.removeFromSet(marks));
+  }
   return true;
 };
 
@@ -550,10 +558,20 @@ export const ComposerMarkdownSourceExtension = TiptapMark.create({
     // in another style. Parse the source first and toggle the result.
     const toggle = (name: RichTextMark) => () => {
       const { state } = this.editor;
-      if (state.selection.empty) return false;
-      const touched = sourceRegions(state.doc, this.type).some((region) =>
-        touches(state.selection, region),
-      );
+      const { selection } = state;
+      const touched = sourceRegions(state.doc, this.type).some((region) => {
+        if (!touches(selection, region)) return false;
+        if (!selection.empty) return true;
+        // Turning a style off just inside its own markers would type into them.
+        // Everywhere else Tiptap's own toggle styles the typed text correctly.
+        const { units } = regionUnits(state.doc, region);
+        const offset = selection.from - region.from;
+        const [before, after] = [units[offset - 1], units[offset]];
+        return (
+          (before === null && after?.includes(name) === true) ||
+          (after === null && before?.includes(name) === true)
+        );
+      });
       if (!touched) return false;
       return this.editor.chain().command(collapseShownMarkdownSource).toggleMark(name).run();
     };

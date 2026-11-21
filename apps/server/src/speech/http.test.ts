@@ -15,6 +15,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  type EnvironmentSpeechModel,
   EnvironmentVoiceHttpApi,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -79,7 +80,8 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
           status: Effect.succeed({ supported: false as const, reason: "test" }),
           prepareModel: Effect.void,
           models: () => Effect.succeed({ models: [] }),
-          downloadModel: () => Effect.succeed({ models: [] }),
+          downloadModel: () => Effect.succeed({ models: [], cancelled: false }),
+          linkModels: () => Effect.succeed({ models: [] }),
           selectModel: () => Effect.succeed({ models: [] }),
           cancelDownload: () => Effect.succeed({ models: [] }),
           updateAcceleration: () => Effect.succeed({ supported: false as const, reason: "test" }),
@@ -160,11 +162,32 @@ effectIt.effect(
           return Effect.fail(new CloudSpeechError({ provider, reason: "rejected-key" }));
         },
       });
+      const linkedModel: EnvironmentSpeechModel = {
+        id: "fixture/model",
+        name: "Fixture",
+        description: "",
+        size: 1,
+        languages: ["en"],
+        accuracy: 0,
+        speed: 0,
+        recommended: false,
+        supportsStreaming: false,
+        supportsLanguageDetection: false,
+        supportsTranslation: false,
+        active: true,
+        state: "installed",
+        linkedFrom: "/home/someone/models/fixture.gguf",
+      };
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
           Layer.provide(principal(AuthOrchestrationOperateScope, AuthSettingsWriteScope)),
-          Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+          Layer.provide(
+            Layer.mock(SpeechService.SpeechService)({
+              models: () => Effect.succeed({ models: [linkedModel] }),
+              downloadModel: () => Effect.succeed({ models: [linkedModel], cancelled: true }),
+            }),
+          ),
           Layer.provide(cloud),
           Layer.provide(dependencies),
           Layer.provide(HttpServer.layerServices),
@@ -228,7 +251,39 @@ effectIt.effect(
         422,
       );
       expect(transcribe).toHaveBeenLastCalledWith("openrouter", "acme/transcribe-1");
-    }).pipe(Effect.scoped),
+      // Naming a path on the environment needs filesystem access, not only settings access.
+      const link = yield* Effect.promise(() =>
+        handler(
+          new Request("http://localhost/api/voice/models/link", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ path: "/models" }),
+          }),
+          context,
+        ),
+      );
+      expect(link.status).toBe(403);
+      const listed = yield* Effect.promise(() =>
+        handler(new Request("http://localhost/api/voice/models"), context),
+      );
+      expect(yield* Effect.promise(() => listed.text())).not.toContain("/home/someone");
+      const downloaded = yield* Effect.promise(() =>
+        handler(
+          new Request("http://localhost/api/voice/models/download", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ modelId: linkedModel.id }),
+          }),
+          context,
+        ),
+      );
+      expect(downloaded.status).toBe(200);
+      const { linkedFrom: _, ...publicModel } = linkedModel;
+      expect(yield* Effect.promise(() => downloaded.json())).toEqual({
+        models: [publicModel],
+        cancelled: true,
+      });
+    }),
 );
 
 effectIt.effect.each([
@@ -268,6 +323,7 @@ effectIt.effect.each([
         prepareModel: Effect.void,
         models: () => Effect.succeed({ models: [] }),
         downloadModel: () => Effect.fail(error),
+        linkModels: () => Effect.fail(error),
         selectModel: () => Effect.fail(error),
         cancelDownload: () => Effect.fail(error),
         updateAcceleration: () => Effect.fail(error),
@@ -319,5 +375,5 @@ effectIt.effect.each([
         code: "invalid_request",
         reason,
       });
-    }).pipe(Effect.scoped),
+    }),
 );
