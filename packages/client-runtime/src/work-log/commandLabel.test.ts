@@ -1,6 +1,40 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { commandDisplayText, commandProgramName } from "./commandLabel.ts";
+import {
+  commandDisplayText,
+  commandHighlightLanguage,
+  commandProgramName,
+} from "./commandLabel.ts";
+
+describe("commandHighlightLanguage", () => {
+  it.each([
+    ["get-childitem -Force", "powershell"],
+    ["gEt-cHiLdItEm | fOrEaCh-oBjEcT { $_.Name }", "powershell"],
+    ["foreach-object { $_.Name }", "powershell"],
+    ["write-output 'hello'", "powershell"],
+    ["Get-CustomItem", "powershell"],
+    ["$env:TEMP = 'C:\\Temp'; write-output $env:TEMP", "powershell"],
+    ['pwsh -Command "echo %TEMP%"', "powershell"],
+    ['cmd.exe /c "echo %TEMP% & dir"', "bat"],
+    ['"C:\\Windows\\System32\\CMD.EXE" /D /C "echo hello"', "bat"],
+    ["cmd /k echo hello", "bat"],
+    ["@echo off\r\ndir /b", "bat"],
+    ["echo %TEMP% & dir", "bat"],
+    ["setlocal EnableDelayedExpansion\necho !TEMP!", "bat"],
+    ["dir /b", "bat"],
+    ["printf '%s%%\\n' \"$HOME\"", "shellscript"],
+    ["printf '%TEMP%'", "shellscript"],
+    ["echo '%TEMP%'", "shellscript"],
+    ["dir /bin", "shellscript"],
+    ['git status && echo "$HOME"', "shellscript"],
+    ["/bin/bash -lc 'echo %TEMP% & dir'", "shellscript"],
+    ["update-alternatives --display editor", "shellscript"],
+    ["install-info example.info dir", "shellscript"],
+    ["cmd --help", "shellscript"],
+  ])("selects %s as %s", (command, language) => {
+    expect(commandHighlightLanguage(command)).toBe(language);
+  });
+});
 
 describe("commandProgramName", () => {
   it.each([
