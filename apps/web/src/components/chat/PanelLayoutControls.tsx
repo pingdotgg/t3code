@@ -9,6 +9,8 @@ import { useGT } from "gt-react";
 import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
 
 import { cn } from "~/lib/utils";
+import { isElectron } from "~/env";
+import { OVERLAY_PANEL_CONTROLS_CLASS } from "~/workspaceTitlebar";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
@@ -234,6 +236,7 @@ export function WorkspaceTitlebarControls(props: {
       ref={controlsRef}
       className={cn(
         "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        isElectron && props.rightPanelOpen && OVERLAY_PANEL_CONTROLS_CLASS,
         mobileSidebarSheetMounted && "hidden",
       )}
       data-workspace-titlebar-controls
