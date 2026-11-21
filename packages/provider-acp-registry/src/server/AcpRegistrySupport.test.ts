@@ -511,6 +511,27 @@ describe("AcpRegistrySupport", () => {
       const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
       expect(npmCommands.match(/^install --global /gmu)).toHaveLength(1);
       expect(npmCommands).toContain("install --global @example/acp@V1.2.3");
+
+      // A missing npm bin link must not select an unrelated command from the user's PATH.
+      const userBin = `${cacheDir}/user-bin`;
+      yield* fileSystem.makeDirectory(userBin);
+      yield* fileSystem.writeFileString(`${userBin}/example-agent`, "#!/bin/sh\n");
+      yield* fileSystem.chmod(`${userBin}/example-agent`, 0o755);
+      yield* fileSystem.remove(toolchain.executablePath);
+      const userEnvironment = {
+        ...toolchain.environment,
+        PATH: `${userBin}:${toolchain.environment.PATH}`,
+      };
+      const repaired = yield* resolver.resolve(settings(), "/workspace", userEnvironment);
+      expect(repaired.spawn.command).toBe(toolchain.executablePath);
+      const repairCommands = yield* fileSystem.readFileString(toolchain.logPath);
+      expect(repairCommands.match(/^install --global /gmu)).toHaveLength(2);
+
+      yield* fileSystem.remove(toolchain.executablePath);
+      const failedRepair = yield* resolver
+        .resolve(settings(), "/workspace", { ...userEnvironment, npm_config_bin_links: "false" })
+        .pipe(Effect.flip);
+      expect(failedRepair.reason).toBe("install_failed");
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -788,6 +809,55 @@ describe("AcpRegistrySupport", () => {
                 );
           return Effect.succeed(HttpClientResponse.fromWeb(request, response));
         }),
+      ),
+    );
+  });
+
+  it.effect("gives Antigravity a T3-owned temp directory that is removed with the process", () => {
+    const agent = {
+      ...makeAgent({ binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./agy" } } }),
+      id: "antigravity-acp",
+    };
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-runtime-temp-",
+      });
+      const runtimeTempDir = `${cacheDir}/antigravity-tmp/acp-registry`;
+      yield* fileSystem.makeDirectory(`${runtimeTempDir}/run-killed/_MEI123`, { recursive: true });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        runtimeTempDir,
+        registryUrl,
+      });
+      expect(yield* fileSystem.exists(`${runtimeTempDir}/run-killed`)).toBe(false);
+
+      const temp = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const resolved = yield* resolver.resolve(
+            settings({ agentId: "antigravity-acp" }),
+            "/workspace",
+            { TMPDIR: "/tmp" },
+          );
+          const directory = resolved.spawn.env?.TMPDIR ?? "";
+          expect(directory.startsWith(`${runtimeTempDir}/run-`)).toBe(true);
+          expect(yield* fileSystem.exists(directory)).toBe(true);
+          return directory;
+        }),
+      );
+      expect(yield* fileSystem.exists(temp)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(request.url === registryUrl ? makeRegistry(agent) : "#!/bin/sh\n"),
+            ),
+          ),
+        ),
       ),
     );
   });
@@ -1537,6 +1607,60 @@ describe("AcpRegistrySupport", () => {
       ),
     );
   });
+
+  it.effect(
+    "installs the registry's current version when a cached index pins a removed build",
+    () => {
+      const binaryAgent = (version: string) => ({
+        ...makeAgent({
+          binary: {
+            "linux-x86_64": {
+              archive: `https://registry.test/example-agent-${version}.bin`,
+              cmd: "./bin/example-agent",
+              args: ["acp"],
+            },
+          },
+        }),
+        version,
+      });
+      const requests: Array<string> = [];
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-stale-",
+        });
+        yield* fileSystem.makeDirectory(`${cacheDir}/acp-registry`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${cacheDir}/acp-registry/registry.json`,
+          makeRegistry(binaryAgent("1.2.3")),
+        );
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        });
+        const resolved = yield* resolver.resolve(settings(), "/workspace");
+
+        expect(resolved.agent?.version).toBe("1.2.4");
+        expect(resolved.spawn.command).toContain("/tools/example-agent/1.2.4/");
+        expect(requests).toContain(registryUrl);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) => {
+            requests.push(request.url);
+            const response =
+              request.url === registryUrl
+                ? new Response(makeRegistry(binaryAgent("1.2.4")))
+                : request.url.endsWith("-1.2.4.bin")
+                  ? new Response("#!/bin/sh\necho example\n")
+                  : new Response("forbidden", { status: 403 });
+            return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("rejects unsafe command paths before downloading an archive", () => {
     const agent = makeAgent({
