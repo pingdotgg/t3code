@@ -96,7 +96,10 @@ import { selectThreadModel } from "../../state/thread-model-selection";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { providerWorkspaceSnapshotRefresh } from "../../state/provider-workspace-snapshot-refresh";
-import { threadAllowsProviderSwitch } from "../../state/thread-provider-switching";
+import {
+  providerSwitchAwaitsThreadDetails,
+  threadAllowsProviderSwitch,
+} from "../../state/thread-provider-switching";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -293,6 +296,8 @@ type ThreadSettingsSessionProps = {
   readonly cwd: string | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly lockedProviderInstanceId?: ProviderInstanceId;
+  /** The thread's details have not loaded, so whether it may switch provider is not known yet. */
+  readonly providerSwitchPending?: boolean;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly selectedModel: ModelSelection | null;
   readonly prompt: string;
@@ -317,6 +322,7 @@ type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
+  readonly providerSwitchPending: boolean;
   readonly favoriteKeys: ReadonlySet<string>;
   readonly favoritesLoaded: boolean;
   readonly toggleFavorite: (option: ModelOption) => void;
@@ -641,6 +647,7 @@ function ThreadSettingsSessionProvider(
     environmentId,
     providerInstanceId: props.providerInstanceId,
     providerGroups,
+    providerSwitchPending: props.providerSwitchPending === true,
     manageHidden,
     setManageHidden,
     toggleHidden,
@@ -1128,6 +1135,15 @@ function ThreadSettingsMainContent(props: {
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
   const listItems = [
     ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
+    ...(session.providerSwitchPending
+      ? ([
+          {
+            kind: "notice",
+            key: "notice:provider-switch-pending",
+            text: gt("Loading other providers…"),
+          },
+        ] as const)
+      : []),
     { kind: "options", key: "options" },
   ] satisfies ReadonlyArray<ThreadSettingsCatalogItem>;
   const renderCatalogItem = (itemProps: LegendListRenderItemProps<ThreadSettingsCatalogItem>) => {
@@ -1520,10 +1536,8 @@ export function ExistingThreadSettingsRouteScreen({
     selectedThreadCwd,
   );
   const modelSelection = draftSettings.modelSelection ?? selectedThread.modelSelection;
-  const lockedProviderInstanceId = threadAllowsProviderSwitch({
-    thread: selectedThread,
-    projection: structure?.projection,
-  })
+  const providerSwitch = { thread: selectedThread, projection: structure?.projection };
+  const lockedProviderInstanceId = threadAllowsProviderSwitch(providerSwitch)
     ? undefined
     : modelSelection.instanceId;
   const modelOptions = buildModelOptions(
@@ -1548,6 +1562,7 @@ export function ExistingThreadSettingsRouteScreen({
       cwd={selectedThreadCwd}
       providerInstanceId={modelSelection.instanceId}
       {...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {})}
+      providerSwitchPending={providerSwitchAwaitsThreadDetails(providerSwitch)}
       providerGroups={groupByProvider(modelOptions)}
       selectedModel={modelSelection}
       prompt={prompt}

@@ -1,7 +1,10 @@
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { threadAllowsProviderSwitch } from "./thread-provider-switching";
+import {
+  providerSwitchAwaitsThreadDetails,
+  threadAllowsProviderSwitch,
+} from "./thread-provider-switching";
 
 const startedThread = {
   latestRun: { id: "run-1" },
@@ -66,5 +69,14 @@ describe("threadAllowsProviderSwitch", () => {
 
   it("keeps a started thread bound until its projection resolves a session", () => {
     expect(threadAllowsProviderSwitch({ thread: startedThread, projection: null })).toBe(false);
+    expect(providerSwitchAwaitsThreadDetails({ thread: startedThread, projection: null })).toBe(
+      true,
+    );
+    expect(
+      providerSwitchAwaitsThreadDetails({
+        thread: startedThread,
+        projection: projectionWithSession(false),
+      }),
+    ).toBe(false);
   });
 });

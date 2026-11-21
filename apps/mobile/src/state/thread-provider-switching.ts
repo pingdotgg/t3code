@@ -22,3 +22,11 @@ export function threadAllowsProviderSwitch(input: {
     ? threadSupportsProviderHandoff(input.projection)
     : !threadShellHasStarted(input.thread);
 }
+
+/** A started thread stays on its provider until its details say whether the session can hand off. */
+export function providerSwitchAwaitsThreadDetails(input: {
+  readonly thread: ThreadStartMarkers | null | undefined;
+  readonly projection: ThreadStructure | null | undefined;
+}): boolean {
+  return input.projection == null && threadShellHasStarted(input.thread);
+}
