@@ -40,14 +40,24 @@ import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityCli
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
+  antigravitySwarmAddChildSessionId,
+  antigravitySwarmAddModel,
   antigravityToolOutlivesPrompt,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
+  identifyAntigravitySwarmToolCall,
   makeAntigravityReadRepair,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
+import {
+  ANTIGRAVITY_SWARM_CAPABILITIES_META,
+  ANTIGRAVITY_SWARM_NOTIFICATION_METHOD,
+  AntigravitySwarmNotification,
+  agentAdvertisesAntigravitySwarm,
+  makeAntigravitySwarmTracker,
+} from "../../provider/acp/AntigravitySwarm.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 import {
   AcpProviderCapabilitiesV2,
@@ -106,13 +116,21 @@ export interface AntigravityAdapterV2Options {
 }
 
 /**
- * Native subagent tools report no child session ids, so children stay read-only.
- * Only permission prompts carry the launch; NativeChildWorkQuery matches their ids by this text.
+ * Projects `invoke_subagent`, `start_subagent`, and legacy `swarm` (`action: "add"`) tool calls as
+ * native subagents. When the connected `agy acp` server streams `_antigravity/swarm` notifications,
+ * worker subagents are projected directly from the swarm roster with their live child session ids.
  */
-const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractSubagentUpdate"]> = (
-  toolCall,
-) => {
+function extractAntigravitySubagentUpdate(
+  toolCall: Parameters<NonNullable<AcpAdapterV2Flavor["extractSubagentUpdate"]>>[0],
+  options?: { readonly nativeSwarmProtocol?: boolean | undefined },
+): ReturnType<NonNullable<AcpAdapterV2Flavor["extractSubagentUpdate"]>> {
   if (classifyAntigravitySubagentToolCall(toolCall) !== "subagent") {
+    return undefined;
+  }
+  if (
+    options?.nativeSwarmProtocol === true &&
+    identifyAntigravitySwarmToolCall(toolCall)?.tool === "swarm"
+  ) {
     return undefined;
   }
   const status =
@@ -122,18 +140,18 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
   return {
     nativeTaskId: toolCall.toolCallId,
     prompt:
-      launch?.prompt ??
-      antigravitySubagentOutput(toolCall) ??
-      toolCall.detail ??
-      toolCall.title ??
+      launch?.prompt ||
+      antigravitySubagentOutput(toolCall) ||
+      toolCall.detail ||
+      toolCall.title ||
       ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
     title: launch?.title ?? ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
-    model: null,
+    model: antigravitySwarmAddModel(toolCall),
     status,
-    childSessionId: null,
+    childSessionId: antigravitySwarmAddChildSessionId(toolCall),
     result: status === "failed" ? (antigravitySubagentOutput(toolCall) ?? null) : null,
   };
-};
+}
 
 interface AntigravityFlavorServices {
   readonly random: SecureRandom.SecureRandom["Service"];
@@ -146,6 +164,8 @@ export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
   const { profileDirectory } = options;
+  const swarmTracker = makeAntigravitySwarmTracker();
+  let nativeSwarmProtocol = false;
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
@@ -198,13 +218,17 @@ export function makeAntigravityAcpAdapterFlavor(
           );
         },
         start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tap(
-                (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
+          runtime.start().pipe(
+            Effect.tap((started) =>
+              Effect.sync(() => {
+                nativeSwarmProtocol = agentAdvertisesAntigravitySwarm(
+                  started.initializeResult.agentCapabilities,
+                );
+              }).pipe(
+                Effect.andThen(options.onSessionStarted?.(started, input.cwd) ?? Effect.void),
               ),
             ),
+          ),
       } satisfies typeof runtime;
     },
     Effect.provideService(SecureRandom.SecureRandom, options.random),
@@ -285,7 +309,38 @@ export function makeAntigravityAcpAdapterFlavor(
       };
     },
     normalizeToolCall: normalizeAntigravityToolCall,
-    extractSubagentUpdate: extractAntigravitySubagentUpdate,
+    clientCapabilitiesMeta: ANTIGRAVITY_SWARM_CAPABILITIES_META,
+    registerExtensions: (context) =>
+      context.runtime.handleExtNotification(
+        ANTIGRAVITY_SWARM_NOTIFICATION_METHOD,
+        AntigravitySwarmNotification,
+        (notification) =>
+          Effect.gen(function* () {
+            nativeSwarmProtocol = true;
+            const mutation = swarmTracker.applyNotification(notification);
+            if (mutation.activeBackgroundWork) {
+              yield* context.setExternalBackgroundWork({
+                sessionId: mutation.sessionId,
+                active: true,
+              });
+            }
+            for (const subagent of mutation.subagents) {
+              yield* context.upsertSubagent({
+                sessionId: mutation.sessionId,
+                subagent,
+                allowReopenFromIdle: true,
+              });
+            }
+            if (!mutation.activeBackgroundWork) {
+              yield* context.setExternalBackgroundWork({
+                sessionId: mutation.sessionId,
+                active: false,
+              });
+            }
+          }),
+      ),
+    extractSubagentUpdate: (toolCall) =>
+      extractAntigravitySubagentUpdate(toolCall, { nativeSwarmProtocol }),
     supportsImagePrompts: true,
     compactViaAdvertisedCommand: true,
     requiresSignIn: isAntigravitySignInRequiredError,
@@ -294,17 +349,28 @@ export function makeAntigravityAcpAdapterFlavor(
     promptInactivityTimeout: "15 minutes",
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
+    subagentsOutlivingPrompt: Effect.fn("AntigravityAdapterV2.subagentsOutlivingPrompt")(
+      function* ({ sessionId, nativeTaskIds }) {
+        const { runningSwarmTaskIds, unmanagedTaskIds } = swarmTracker.partitionTaskIds(
+          sessionId,
+          nativeTaskIds,
+        );
+        if (profileDirectory === undefined || unmanagedTaskIds.length === 0) {
+          return runningSwarmTaskIds;
+        }
+        const diskAtWork = yield* readAntigravityChildrenAtWork({
+          profileDirectory,
+          rootSessionId: sessionId,
+          toolCallIds: unmanagedTaskIds,
+        });
+        return [...new Set([...runningSwarmTaskIds, ...diskAtWork])];
+      },
+    ),
     ...(profileDirectory === undefined
       ? {}
       : {
           watchPromptOutcome: (sessionId: string) =>
             watchAntigravityPromptOutcome(profileDirectory, sessionId),
-          subagentsOutlivingPrompt: ({ sessionId, nativeTaskIds }) =>
-            readAntigravityChildrenAtWork({
-              profileDirectory,
-              rootSessionId: sessionId,
-              toolCallIds: nativeTaskIds,
-            }),
           hasPendingReply: (sessionId: string) =>
             readAntigravityPendingReply({
               profileDirectory,
