@@ -269,6 +269,19 @@ function withLabelCandidateEdit(
     changed = true;
     return { ...candidate, isApplied: applied };
   });
+  // The host lists applied labels past its first page first, as one found by a search becomes.
+  const missing = applied
+    ? labels.filter((label) => !value.candidates.some((held) => held.name === label.name))
+    : [];
+  if (missing.length > 0) {
+    return {
+      ...value,
+      candidates: [
+        ...missing.map((label) => ({ ...label, description: null, isApplied: true })),
+        ...candidates,
+      ],
+    };
+  }
   return changed ? { ...value, candidates } : value;
 }
 
@@ -1041,12 +1054,17 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   const writableLabelSearch = Atom.family((source: ReturnType<typeof labelSearchQueries>) =>
     writableQuery(source),
   );
-  const labelSearch = (target: Parameters<typeof labelSearchQueries>[0]) =>
-    editedQuery(writableLabelSearch(labelSearchQueries(target)), {
+  // Searches a write's colours are read from, since a label found by one is not in the first page.
+  const labelSearchTargets = new WeakMap<object, Parameters<typeof labelSearchQueries>[0]>();
+  const labelSearch = (target: Parameters<typeof labelSearchQueries>[0]) => {
+    const atom = editedQuery(writableLabelSearch(labelSearchQueries(target)), {
       environmentId: target.environmentId,
       concerns: (reference) => samePullRequest(target.input, reference),
       edit: (value, edits) => edits.reduce(withLabelCandidateEdit, value),
     });
+    labelSearchTargets.set(atom, target);
+    return atom;
+  };
   const labelEdit = (
     registry: AtomRegistry.AtomRegistry,
     target: {
@@ -1057,16 +1075,29 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       };
     },
   ): PullRequestPendingEdit => {
-    const candidates = Option.getOrUndefined(
-      loadedValue<PullRequestLabelCandidateList>(registry, labelCandidates(target)),
-    )?.candidates;
+    const lists = [labelCandidates(target)];
+    for (const atom of registry.getNodes().keys()) {
+      const search = typeof atom === "string" ? undefined : labelSearchTargets.get(atom);
+      if (
+        search?.environmentId === target.environmentId &&
+        samePullRequest(search.input, target.input)
+      )
+        lists.push(atom as (typeof lists)[number]);
+    }
+    const candidates = lists.flatMap(
+      (list) =>
+        Option.getOrUndefined(loadedValue<PullRequestLabelCandidateList>(registry, list))
+          ?.candidates ?? [],
+    );
     return {
       reference: pullRequestReference(target.input),
       labels: {
         applied: target.input.applied,
         labels: target.input.labels.map((name) => ({
           name,
-          color: candidates?.find((candidate) => candidate.name === name)?.color ?? null,
+          color:
+            candidates.find((candidate) => candidate.name === name && candidate.color !== null)
+              ?.color ?? null,
         })),
       },
     };

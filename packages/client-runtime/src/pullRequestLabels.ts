@@ -49,3 +49,20 @@ export function labelCandidateView(input: {
     truncated: listed?.truncated === true,
   };
 }
+
+/**
+ * Whether the host has a label applied, for diffing picks on close. Where the first page and a
+ * search disagree, what the user saw when picking it decides, so the pick is still sent.
+ */
+export function labelAppliedOnHost(
+  lists: ReadonlyArray<PullRequestLabelCandidateList | null>,
+  picked: PullRequestLabelCandidate,
+): boolean {
+  const held = lists.flatMap(
+    (list) => list?.candidates.filter((entry) => entry.name === picked.name) ?? [],
+  );
+  const first = held[0];
+  return first !== undefined && held.every((entry) => entry.isApplied === first.isApplied)
+    ? first.isApplied
+    : picked.isApplied;
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { hostLabelQuery, labelCandidateView } from "./pullRequestLabels.ts";
+import { hostLabelQuery, labelAppliedOnHost, labelCandidateView } from "./pullRequestLabels.ts";
 
 const label = (name: string) => ({ name, color: null, description: null, isApplied: false });
 const firstPage = { candidates: [label("area: one"), label("area: two")], truncated: true };
@@ -36,5 +36,14 @@ describe("labelCandidateView", () => {
       labelCandidateView({ loaded: firstPage, query: "zzz", debouncedQuery: "zzz", search: idle })
         .searchPending,
     ).toBe(false);
+  });
+
+  it("reads the host's applied state, or the picked one where the lists disagree", () => {
+    const picked = { ...label("ready"), isApplied: true };
+    const searched = { candidates: [picked], truncated: false };
+    const stale = { candidates: [label("ready")], truncated: true };
+    expect(labelAppliedOnHost([stale, searched], picked)).toBe(true);
+    expect(labelAppliedOnHost([stale, null], picked)).toBe(false);
+    expect(labelAppliedOnHost([firstPage, null], picked)).toBe(true);
   });
 });

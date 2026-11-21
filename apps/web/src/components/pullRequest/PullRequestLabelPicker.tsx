@@ -9,7 +9,11 @@ import { m } from "~/i18n/messages";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
-import { hostLabelQuery, labelCandidateView } from "@t3tools/client-runtime/pull-request-labels";
+import {
+  hostLabelQuery,
+  labelAppliedOnHost,
+  labelCandidateView,
+} from "@t3tools/client-runtime/pull-request-labels";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   emptySelection,
@@ -89,13 +93,8 @@ export function PullRequestLabelPicker({
   const onOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
     if (nextOpen) return;
-    const latest = [
-      ...(candidatesQuery.data?.candidates ?? []),
-      ...(searchResult.data?.candidates ?? []),
-    ];
-    const { add, remove } = selectionChanges(
-      draft,
-      (name, label) => latest.find((entry) => entry.name === name)?.isApplied ?? label.isApplied,
+    const { add, remove } = selectionChanges(draft, (_name, label) =>
+      labelAppliedOnHost([candidatesQuery.data, searchResult.data], label),
     );
     setDraft(emptySelection());
     // Adding first keeps the Labels row from showing empty between the two writes.
@@ -121,7 +120,7 @@ export function PullRequestLabelPicker({
       errorLabel={gt("The labels could not be read.")}
       truncated={truncated}
       truncatedLabel={gt(
-        "This repository has more labels than are listed here. Apply the rest on the host.",
+        "This repository has more labels than are listed here. Search to find the rest.",
       )}
       candidateKey={(candidate) => candidate.name}
       onSelect={(candidate) =>

@@ -1,6 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
-import { LegendList } from "@legendapp/list/react-native";
+import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -14,18 +14,23 @@ import {
 import type { PullRequestLabelCandidate } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { T, useGT } from "gt-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Platform, View } from "react-native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { useContentTopInset } from "../../components/ui/useBarInset";
 import { SelectionRow } from "../../components/ui/SelectionRow";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { useDebouncedValue } from "../../state/queries";
-import { hostLabelQuery, labelCandidateView } from "@t3tools/client-runtime/pull-request-labels";
+import {
+  hostLabelQuery,
+  labelAppliedOnHost,
+  labelCandidateView,
+} from "@t3tools/client-runtime/pull-request-labels";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestLabelDot } from "./PullRequestLabelDot";
 import { pullRequestLabelColor } from "./pullRequestList";
@@ -62,6 +67,13 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
   const result = useEnvironmentQuery(composerPullRequests.labelCandidates(target));
   const setLabels = useAtomCommand(composerPullRequests.setLabels, { reportFailure: false });
   const [query, setQuery] = useState("");
+  const contentTopInset = useContentTopInset();
+  const listRef = useRef<LegendListRef>(null);
+  // A new search shows its matches from the top, not under the header where the last list was.
+  const search = (next: string) => {
+    setQuery(next);
+    listRef.current?.scrollToOffset({ offset: -contentTopInset, animated: false });
+  };
   const [draft, setDraft] = useState(emptySelection<PullRequestLabelCandidate>);
   const needle = query.trim();
   // Past the first page the host is asked, since what was loaded cannot answer for the rest.
@@ -82,17 +94,14 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
     debouncedQuery,
     search: searchResult,
   });
-  const loadedCandidates = result.data?.candidates;
-  const searchedCandidates = searchResult.data?.candidates;
+  const loaded = result.data;
+  const searched = searchResult.data;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- picks are sent when the sheet leaves the navigation stack, however it is dismissed
   useEffect(
     () =>
       navigation.addListener("beforeRemove", () => {
-        const latest = [...(loadedCandidates ?? []), ...(searchedCandidates ?? [])];
-        const { add, remove } = selectionChanges(
-          draft,
-          (name, label) =>
-            latest.find((entry) => entry.name === name)?.isApplied ?? label.isApplied,
+        const { add, remove } = selectionChanges(draft, (_name, label) =>
+          labelAppliedOnHost([loaded, searched], label),
         );
         const sendBatch = async (
           labels: ReadonlyArray<PullRequestLabelCandidate>,
@@ -120,7 +129,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
         // Adding first keeps the Labels row from showing empty between the two writes.
         void send(add, true).then(() => send(remove, false));
       }),
-    [navigation, draft, loadedCandidates, searchedCandidates, setLabels, target, gt],
+    [navigation, draft, loaded, searched, setLabels, target, gt],
   );
   return (
     <PullRequestSearchSheet
@@ -129,10 +138,11 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
       closeAccessibilityLabel={gt("Close labels")}
       clearAccessibilityLabel={gt("Clear label search")}
       query={query}
-      onQueryChange={setQuery}
+      onQueryChange={search}
     >
       {({ paddingBottom }) => (
         <LegendList
+          ref={listRef}
           renderScrollComponent={NativeScrollView}
           data={candidates}
           keyExtractor={(candidate) => candidate.name}
@@ -198,8 +208,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
             truncated ? (
               <Text className="py-4 text-xs text-foreground-muted">
                 <T>
-                  This repository has more labels than are listed here. Apply the rest on the
-                  provider.
+                  This repository has more labels than are listed here. Search to find the rest.
                 </T>
               </Text>
             ) : undefined
