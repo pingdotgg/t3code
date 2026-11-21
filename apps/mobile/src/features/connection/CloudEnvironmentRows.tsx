@@ -329,6 +329,8 @@ function CloudEnvironmentRowShell(props: {
   const errorCanExpand = props.connectionError !== null && errorLineCount > 1;
   const isErrorExpanded = errorCanExpand && props.errorExpanded;
   const StatusContainer = errorCanExpand ? Pressable : View;
+  const ContentContainer = props.onOpen || props.onRemove ? Pressable : View;
+  const ChevronContainer = props.onOpen || props.onRemove ? Pressable : View;
   const onMeasuredErrorTextLayout = (event: TextLayoutEvent) => {
     if (!props.connectionError) {
       return;
@@ -348,20 +350,15 @@ function CloudEnvironmentRowShell(props: {
       : undefined;
   return (
     <View collapsable={false} className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5">
-      {props.onOpen || props.onRemove ? (
-        <Pressable
-          accessibilityHint={
-            props.onRemove ? gt("Long press to remove from this device") : undefined
-          }
-          accessibilityRole={props.onOpen ? "button" : undefined}
-          accessibilityLabel={rowActionLabel}
-          onPress={props.onOpen}
-          onLongPress={props.onRemove}
-          className="absolute inset-0 active:opacity-70"
-        />
-      ) : null}
-      <View pointerEvents="box-none" className="min-w-0 flex-1 gap-0.5">
-        <View pointerEvents="none" className="min-w-0 flex-row items-center gap-2">
+      <ContentContainer
+        className="min-w-0 flex-1 gap-0.5 active:opacity-70"
+        accessibilityHint={props.onRemove ? gt("Long press to remove from this device") : undefined}
+        accessibilityRole={props.onOpen ? "button" : undefined}
+        accessibilityLabel={rowActionLabel}
+        onPress={props.onOpen}
+        onLongPress={props.onRemove}
+      >
+        <View className="min-w-0 flex-row items-center gap-2">
           <ConnectionStatusDot state={props.connectionState} pulse={shouldPulse} size={7} />
           <EnvironmentMachineSymbol
             kind={props.machine}
@@ -378,6 +375,7 @@ function CloudEnvironmentRowShell(props: {
         {props.connectionError ? (
           <Text
             aria-hidden
+            pointerEvents="none"
             onTextLayout={onMeasuredErrorTextLayout}
             className={cn("absolute inset-x-0 -z-[1] text-xs opacity-0", statusClassName)}
           >
@@ -387,7 +385,7 @@ function CloudEnvironmentRowShell(props: {
         <StatusContainer
           {...(errorCanExpand
             ? { accessibilityRole: "button" as const, onPress: props.onToggleError }
-            : { pointerEvents: errorTraceId ? ("box-none" as const) : ("none" as const) })}
+            : {})}
           className="min-w-0 flex-row items-start gap-1"
         >
           <Text
@@ -420,7 +418,7 @@ function CloudEnvironmentRowShell(props: {
             />
           ) : null}
         </StatusContainer>
-      </View>
+      </ContentContainer>
       <ThemedSwitch
         accessibilityLabel={gt("Enable {environment}", { environment: props.label })}
         style={{ alignSelf: "center" }}
@@ -429,10 +427,12 @@ function CloudEnvironmentRowShell(props: {
         value={props.value}
       />
       {props.opensDetails || props.showChevron ? (
-        <View
-          pointerEvents="none"
+        <ChevronContainer
+          accessible={false}
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
+          onPress={props.onOpen}
+          onLongPress={props.onRemove}
           style={{
             opacity: props.opensDetails ? 1 : 0.4,
             minWidth: 44,
@@ -442,7 +442,7 @@ function CloudEnvironmentRowShell(props: {
           }}
         >
           <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
-        </View>
+        </ChevronContainer>
       ) : null}
     </View>
   );
