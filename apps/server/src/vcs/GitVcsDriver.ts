@@ -350,6 +350,8 @@ export class GitVcsDriver extends Context.Service<
     ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
     /** Refs, HEAD and shallow boundaries. Null when the snapshot cannot be read. */
     readonly readRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
+    /** Index and working-tree state, including untracked files. Null when it cannot be read. */
+    readonly readWorkingTreeSnapshot: (cwd: string) => Effect.Effect<string | null>;
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],

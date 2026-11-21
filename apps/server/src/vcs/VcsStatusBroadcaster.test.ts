@@ -80,6 +80,7 @@ function layerTestFor(state: {
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
   localStatusBranchChanges?: Array<boolean>;
   refSnapshot?: string | null;
+  workingTreeSnapshot?: string | null;
   remoteStatusError?: GitManagerError;
   backgroundWorkEnabled?: boolean;
   automaticFetchInterval?: Effect.Effect<Duration.Duration>;
@@ -143,6 +144,10 @@ function layerTestFor(state: {
               ),
         readRefSnapshot: () =>
           Effect.sync(() => (state.refSnapshot === undefined ? "refs" : state.refSnapshot)),
+        readWorkingTreeSnapshot: () =>
+          Effect.sync(() =>
+            state.workingTreeSnapshot === undefined ? "tree" : state.workingTreeSnapshot,
+          ),
         upstreamDivergence: () =>
           Effect.sync(() =>
             state.currentRemoteStatus?.hasUpstream && state.currentLocalStatus.refName !== null
@@ -926,6 +931,7 @@ describe("VcsStatusBroadcaster", () => {
             localStatus: () => Effect.succeed(localStatus),
             currentBranch: () => Effect.succeed(localStatus.refName),
             readRefSnapshot: () => Effect.succeed("refs"),
+            readWorkingTreeSnapshot: () => Effect.succeed("tree"),
             remoteStatus: () => Effect.succeed(remoteStatus),
             invalidateLocalStatus: () => Effect.void,
             invalidateRemoteStatus: () => Effect.void,
@@ -1023,6 +1029,7 @@ describe("VcsStatusBroadcaster", () => {
           localStatus: () => Effect.succeed(baseLocalStatus),
           currentBranch: () => Effect.succeed(baseLocalStatus.refName),
           readRefSnapshot: () => Effect.succeed("refs"),
+          readWorkingTreeSnapshot: () => Effect.succeed("tree"),
           remoteStatus: () =>
             Effect.gen(function* () {
               remoteReads += 1;
@@ -1070,6 +1077,7 @@ describe("VcsStatusBroadcaster", () => {
           localStatus: () => Effect.succeed(baseLocalStatus),
           currentBranch: () => Effect.succeed(baseLocalStatus.refName),
           readRefSnapshot: () => Effect.succeed("refs"),
+          readWorkingTreeSnapshot: () => Effect.succeed("tree"),
           remoteStatus: () =>
             Effect.gen(function* () {
               remoteReads += 1;
@@ -1124,6 +1132,7 @@ describe("VcsStatusBroadcaster", () => {
             }),
           currentBranch: () => Effect.succeed(state.currentLocalStatus.refName),
           readRefSnapshot: () => Effect.succeed("refs"),
+          readWorkingTreeSnapshot: () => Effect.succeed("tree"),
           remoteStatus: () =>
             Effect.suspend(() => {
               state.remoteStatusCalls += 1;
@@ -1294,7 +1303,7 @@ describe("VcsStatusBroadcaster", () => {
   });
 
   it.effect(
-    "a remote poll refreshes Changes totals only when refs moved or cannot be snapshotted",
+    "a remote poll refreshes local status only when refs or the working tree changed",
     () => {
       const state: Parameters<typeof layerTestFor>[0] = {
         currentLocalStatus: {
@@ -1344,6 +1353,24 @@ describe("VcsStatusBroadcaster", () => {
         assert.equal(state.remoteStatusCalls, remoteBeforeIdle + 2);
         assert.equal(state.localStatusCalls, localBeforeIdle);
 
+        // Editing a tracked file moves no ref but still refreshes local status on the next poll.
+        state.workingTreeSnapshot = "edited";
+        state.currentLocalStatus = {
+          ...state.currentLocalStatus,
+          hasWorkingTreeChanges: true,
+          workingTree: {
+            files: [{ path: "a.ts", insertions: 1, deletions: 0 }],
+            insertions: 1,
+            deletions: 0,
+          },
+        };
+        yield* TestClock.adjust("30 seconds");
+        assert.equal(state.localStatusCalls, localBeforeIdle + 1);
+        assert.isTrue((yield* broadcaster.getStatus({ cwd: "/repo" })).hasWorkingTreeChanges);
+        yield* TestClock.adjust("30 seconds");
+        assert.equal(state.localStatusCalls, localBeforeIdle + 1);
+        const localBeforeMove = state.localStatusCalls;
+
         // Moving a ref during a poll refreshes local totals even when remote status is unchanged.
         state.beforeRemoteStatus = Effect.sync(() => {
           state.refSnapshot = "moved";
@@ -1355,25 +1382,25 @@ describe("VcsStatusBroadcaster", () => {
         yield* TestClock.adjust("30 seconds");
         const movedLocal = yield* Deferred.await(movedTotalsPublished);
         assert.deepStrictEqual(movedLocal.branchChanges, state.currentLocalStatus.branchChanges);
-        assert.equal(state.localStatusCalls, localBeforeIdle + 1);
+        assert.equal(state.localStatusCalls, localBeforeMove + 1);
 
         // Falling back to null ref snapshots conservatively refreshes local status.
         state.beforeRemoteStatus = Effect.void;
         state.refSnapshot = null;
         yield* TestClock.adjust("30 seconds");
-        assert.equal(state.localStatusCalls, localBeforeIdle + 2);
+        assert.equal(state.localStatusCalls, localBeforeMove + 2);
 
         // Omitted Changes totals (e.g. transient totals failure) retry on the next poll even with unchanged refs.
         state.refSnapshot = "moved";
         state.currentLocalStatus = { ...baseLocalStatus };
         yield* TestClock.adjust("30 seconds");
-        assert.equal(state.localStatusCalls, localBeforeIdle + 3);
+        assert.equal(state.localStatusCalls, localBeforeMove + 3);
         state.currentLocalStatus = {
           ...baseLocalStatus,
           branchChanges: { baseRef: "origin/main", insertions: 5, deletions: 2 },
         };
         yield* TestClock.adjust("30 seconds");
-        assert.equal(state.localStatusCalls, localBeforeIdle + 4);
+        assert.equal(state.localStatusCalls, localBeforeMove + 4);
         assert.deepStrictEqual(
           (yield* broadcaster.getStatus({ cwd: "/repo" })).branchChanges,
           state.currentLocalStatus.branchChanges,
@@ -1520,6 +1547,7 @@ describe("VcsStatusBroadcaster", () => {
             currentBranch: () => Effect.succeed(baseLocalStatus.refName),
             invalidateRemoteStatus: () => Effect.void,
             readRefSnapshot: () => Effect.sync(() => refSnapshot),
+            readWorkingTreeSnapshot: () => Effect.succeed("tree"),
             remoteStatus: () =>
               Deferred.succeed(fetchStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(finishFetch)),

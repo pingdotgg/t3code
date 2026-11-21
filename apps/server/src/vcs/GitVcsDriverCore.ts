@@ -1947,6 +1947,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     Effect.orElseSucceed(() => null),
   );
 
+  const readWorkingTreeSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readWorkingTreeSnapshot"] =
+    Effect.fn("GitVcsDriver.readWorkingTreeSnapshot")(
+      function* (cwd) {
+        const worktreeRoot = (yield* resolveRepositoryPaths(cwd))?.worktreeRoot;
+        if (!worktreeRoot) return null;
+        const result = yield* executeGit(
+          "GitVcsDriver.readWorkingTreeSnapshot",
+          worktreeRoot,
+          ["status", "--porcelain=2", "-z", "--untracked-files=all", "--no-ahead-behind"],
+          { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+        );
+        if (result.exitCode !== 0) return null;
+        // Records carry index hashes; size and mtime stand in for unhashed working-tree content.
+        const records = result.stdout.split("\0");
+        const paths: string[] = [];
+        for (let index = 0; index < records.length; index++) {
+          const record = records[index]!;
+          const filePath = parsePorcelainPath(record);
+          if (filePath) paths.push(filePath);
+          if (record.startsWith("2 ")) index++;
+        }
+        const stats = yield* Effect.forEach(
+          paths,
+          (filePath) =>
+            fileSystem.stat(path.join(worktreeRoot, filePath)).pipe(
+              Effect.map(
+                (info) => `${info.size}:${Option.getOrUndefined(info.mtime)?.getTime() ?? ""}`,
+              ),
+              Effect.orElseSucceed(() => "-"),
+            ),
+          { concurrency: 16 },
+        );
+        return `${result.stdout}\0${stats.join("\0")}`;
+      },
+      Effect.orElseSucceed(() => null),
+    );
+
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
     cwd: string,
   ) {
@@ -6498,6 +6535,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetailsLocal,
     statusDetailsRemote,
     readRefSnapshot,
+    readWorkingTreeSnapshot,
     prepareCommitContext,
     commit: Effect.fnUntraced(function* (cwd, subject, body, options) {
       return yield* withListRefsInvalidation(cwd, commit(cwd, subject, body, options));

@@ -5627,6 +5627,38 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("a working-tree snapshot detects edits that move no ref", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const snapshot = driver.readWorkingTreeSnapshot(cwd);
+        const seen: Array<string | null> = [yield* snapshot];
+        const expectNew = Effect.fn(function* () {
+          const next = yield* snapshot;
+          assert.isNotNull(next);
+          assert.notInclude(seen, next);
+          assert.equal(yield* snapshot, next);
+          seen.push(next);
+        });
+        assert.isNotNull(seen[0]);
+        assert.equal(yield* snapshot, seen[0]);
+
+        yield* writeTextFile(cwd, "README.md", "edited\n");
+        yield* expectNew();
+        yield* writeTextFile(cwd, "README.md", "edited again\n");
+        yield* expectNew();
+        yield* git(cwd, ["add", "README.md"]);
+        yield* expectNew();
+        yield* writeTextFile(cwd, "nested/untracked.txt", "new\n");
+        yield* expectNew();
+        yield* writeTextFile(cwd, "nested/untracked.txt", "new and longer\n");
+        yield* expectNew();
+
+        assert.isNull(yield* driver.readWorkingTreeSnapshot(yield* makeTmpDir()));
+      }),
+    );
+
     it.effect.each([
       { fetch: "statusDetailsRemote" },
       // Storage cleanup's merge check fetches the default branch on every sweep.
