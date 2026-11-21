@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use conn_contract::{
@@ -75,6 +76,7 @@ struct PendingStream {
 
 struct DriverState {
     config: ServerConfig,
+    shared_bearer: Arc<RwLock<Option<String>>>,
     http: reqwest::Client,
     backoff: Backoff,
     next_request_id: i64,
@@ -91,10 +93,15 @@ struct DriverState {
 }
 
 impl DriverState {
-    fn new(config: ServerConfig) -> Self {
+    fn new(
+        config: ServerConfig,
+        shared_bearer: Arc<RwLock<Option<String>>>,
+        http: reqwest::Client,
+    ) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            shared_bearer,
+            http,
             backoff: Backoff::new(),
             next_request_id: 1,
             shell_subscribed: false,
@@ -190,10 +197,12 @@ impl DriverState {
 
 pub(crate) async fn run(
     config: ServerConfig,
+    shared_bearer: Arc<RwLock<Option<String>>>,
+    http: reqwest::Client,
     mut cmd_rx: mpsc::UnboundedReceiver<Command>,
     events_tx: mpsc::Sender<ClientEvent>,
 ) {
-    let mut state = DriverState::new(config);
+    let mut state = DriverState::new(config, shared_bearer, http);
 
     if events_tx
         .send(ClientEvent::Status(ConnectionStatus::Connecting))
@@ -295,6 +304,9 @@ async fn resolve_bearer(
             match exchange_pairing_code(&state.http, &state.config.http_base_url, &code).await {
                 Ok(token) => {
                     state.config.credential = Credential::Bearer(token.clone());
+                    if let Ok(mut guard) = state.shared_bearer.write() {
+                        *guard = Some(token.clone());
+                    }
                     let _ = events_tx
                         .send(ClientEvent::BearerIssued(token.clone()))
                         .await;

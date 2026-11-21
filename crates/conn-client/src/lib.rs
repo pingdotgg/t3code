@@ -15,11 +15,16 @@
 //! - [`Connection::call`] / [`Connection::call_json`]: unary RPCs.
 
 mod auth;
+pub mod device_hub;
 mod driver;
 mod wire;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
+
+pub use crate::device_hub::{
+    DEFAULT_DEVICE_HUB_BASE_PATH, DeviceHubAccess, DeviceHubVendor, mint_device_hub_access,
+};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -118,10 +123,21 @@ pub enum ClientEvent {
 pub struct StreamId(u64);
 
 /// Handle to a running connection. Cheap to clone; every method is non-blocking.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Connection {
     cmd_tx: mpsc::UnboundedSender<Command>,
     next_stream_id: Arc<AtomicU64>,
+    http_base_url: url::Url,
+    bearer: Arc<RwLock<Option<String>>>,
+    http: reqwest::Client,
+}
+
+impl std::fmt::Debug for Connection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connection")
+            .field("http_base_url", &self.http_base_url.as_str())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Connection {
@@ -134,12 +150,65 @@ impl Connection {
     ) -> (Self, mpsc::Receiver<ClientEvent>) {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (events_tx, events_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
-        rt.spawn(driver::run(config, cmd_rx, events_tx));
+        let http_base_url = config.http_base_url.clone();
+        let initial_bearer = match &config.credential {
+            Credential::Bearer(token) => Some(token.clone()),
+            Credential::PairingCode(_) => None,
+        };
+        let bearer = Arc::new(RwLock::new(initial_bearer));
+        let http = reqwest::Client::new();
+        rt.spawn(driver::run(
+            config,
+            Arc::clone(&bearer),
+            http.clone(),
+            cmd_rx,
+            events_tx,
+        ));
         let conn = Self {
             cmd_tx,
             next_stream_id: Arc::new(AtomicU64::new(1)),
+            http_base_url,
+            bearer,
+            http,
         };
         (conn, events_rx)
+    }
+
+    /// Mints a short-lived media ticket (`POST /api/auth/websocket-ticket/media`) for accessing
+    /// the device hub proxy (`/api/device-hub/vendor/...`) over HTTP, SSE, and WebSockets.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::Auth`] if no bearer token has been issued yet or the server rejects
+    /// it, [`ClientError::InvalidUrl`] if URL construction fails, [`ClientError::Codec`] if the
+    /// response JSON is invalid, or [`ClientError::Connection`] on transport errors.
+    pub async fn mint_device_hub_access(
+        &self,
+        hub_base_path: &str,
+        host_id: Option<&str>,
+    ) -> Result<DeviceHubAccess, ClientError> {
+        let token = self
+            .bearer
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .ok_or_else(|| {
+                ClientError::Auth("no bearer token available for device hub access yet".to_owned())
+            })?;
+        mint_device_hub_access(
+            &self.http,
+            &self.http_base_url,
+            &token,
+            hub_base_path,
+            host_id,
+        )
+        .await
+    }
+
+    /// Shared HTTP client for auxiliary requests against the connected server.
+    #[must_use]
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http
     }
 
     /// Subscribes to `orchestration.subscribeShell`.
@@ -258,6 +327,8 @@ const _: () = {
     assert_send_sync::<ServerConfig>();
     assert_send_sync::<ClientEvent>();
     assert_send_sync::<StreamId>();
+    assert_send_sync::<DeviceHubAccess>();
+    assert_send_sync::<DeviceHubVendor>();
 };
 
 #[cfg(test)]
