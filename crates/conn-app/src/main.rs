@@ -182,7 +182,19 @@ fn main() {
     }
 
     stderr_log::install();
+    let (url_tx, url_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    for arg in std::env::args().skip(1) {
+        if conn_desktop::control::parse_deep_link(&arg).is_some() {
+            let _ = url_tx.send(arg);
+        }
+    }
+
     let mut application = gpui_kit::application().with_assets(superhero::AppAssets);
+    application.on_open_urls(move |urls| {
+        for url in urls {
+            let _ = url_tx.send(url);
+        }
+    });
     match ReqwestHttpClient::new() {
         Ok(http_client) => {
             application = application.with_http_client(Arc::new(http_client));
@@ -252,11 +264,64 @@ fn main() {
                 window.activate_window();
             })
             .ok();
+        let (control_tx, control_rx) =
+            tokio::sync::mpsc::unbounded_channel::<conn_desktop::control::IncomingControlRequest>();
+        let control_server = start_desktop_control_socket(control_tx);
+        app.update(cx, |app, cx| {
+            app.attach_activation_channels(url_rx, control_rx, control_server, window, cx);
+        });
         #[cfg(feature = "automation")]
         automation::serve(&app, window, cx);
         #[cfg(not(feature = "automation"))]
         let _ = (window, app);
     });
+}
+
+fn start_desktop_control_socket(
+    tx: tokio::sync::mpsc::UnboundedSender<conn_desktop::control::IncomingControlRequest>,
+) -> Option<conn_desktop::control::ControlServerHandle> {
+    if std::env::var_os("CONN_GPUI_DISABLE_CONTROL_SOCKET").is_some() {
+        return None;
+    }
+    let state_dir = std::env::var_os("CONN_GPUI_CONTROL_STATE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            home.join(".t3").join("userdata")
+        });
+    let uid = nix_uid();
+    let address = conn_desktop::control::resolve_control_socket_address(
+        &state_dir,
+        &std::env::temp_dir(),
+        uid,
+    );
+    let _guard = live::RT.enter();
+    match conn_desktop::control::start_control_server(&address, tx) {
+        Ok(handle) => {
+            eprintln!(
+                "conn-app: control socket listening at {}",
+                handle.address().display()
+            );
+            Some(handle)
+        }
+        Err(err) => {
+            eprintln!("conn-app: could not start desktop control socket: {err}");
+            None
+        }
+    }
+}
+
+#[cfg(unix)]
+fn nix_uid() -> Option<u32> {
+    // SAFETY: `libc::getuid` is an always-safe POSIX syscall returning the process's real UID.
+    Some(unsafe { libc::getuid() })
+}
+
+#[cfg(not(unix))]
+fn nix_uid() -> Option<u32> {
+    None
 }
 
 #[cfg(test)]

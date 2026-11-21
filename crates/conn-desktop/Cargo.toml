@@ -20,6 +20,7 @@ serde.workspace = true
 # Keep JSON object order: pretty bodies as JSON.stringify writes them, tool input schemas list
 # form fields, `.mcp.json` lists servers.
 serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "io-util"] }
 # Orbit Tasks realtime: Reverb (Pusher protocol) over wss, trusting the same keychain roots.

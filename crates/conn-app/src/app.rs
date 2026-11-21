@@ -90,6 +90,12 @@ pub(crate) struct ConnApp {
     connection_gen: u64,
     /// Orbit Gateway Nodes/Instances, profile, workspace, theme, and desktop settings sync state.
     orbit: crate::orbit_sync::OrbitSyncState,
+    /// Thread id requested via `conn://thread/...` or control socket while switching servers.
+    pending_open_thread: Option<String>,
+    /// Live control socket server handle (dropped on app exit).
+    _control_server: Option<conn_desktop::control::ControlServerHandle>,
+    /// Background task draining `conn://` URLs and Unix control socket requests.
+    _activation_task: Option<gpui_kit::Task<()>>,
     /// Project id currently subscribed to `annotations.subscribe` on `self.connection`.
     subscribed_annotation_project: Option<String>,
     /// Live annotations queue for `subscribed_annotation_project`.
@@ -273,6 +279,9 @@ impl ConnApp {
             server_label: None,
             connection_gen: 1,
             orbit,
+            pending_open_thread: None,
+            _control_server: None,
+            _activation_task: None,
             subscribed_annotation_project: None,
             annotations: Vec::new(),
             annotation_watching_threads: HashSet::new(),
@@ -683,7 +692,12 @@ impl ConnApp {
                 {
                     connection.subscribe_shell();
                 }
-                if self.layout.selected_thread_id.is_none()
+                if let Some(pending_id) = self.pending_open_thread.clone()
+                    && self.shell.threads.iter().any(|t| t.id == pending_id)
+                {
+                    self.pending_open_thread = None;
+                    self.select_thread(pending_id, cx);
+                } else if self.layout.selected_thread_id.is_none()
                     && let Some(first) = self.shell.threads.first()
                 {
                     let (project_id, thread_id) = (first.project_id.clone(), first.id.clone());
@@ -1180,6 +1194,253 @@ impl ConnApp {
         self.active_workspace = workspace_id;
         self.sidebar_filter_menu_open = false;
         cx.notify();
+    }
+
+    /// Attaches the macOS `conn://` URL receiver and Unix domain control socket server to this
+    /// window so Orbit CLI, Rooms, and OS URL handlers can activate workspaces and threads.
+    pub(crate) fn attach_activation_channels(
+        &mut self,
+        mut url_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+        mut control_rx: tokio::sync::mpsc::UnboundedReceiver<
+            conn_desktop::control::IncomingControlRequest,
+        >,
+        control_server: Option<conn_desktop::control::ControlServerHandle>,
+        window: gpui_kit::AnyWindowHandle,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self._control_server = control_server;
+        let entity = cx.entity().downgrade();
+        let task = cx.spawn(async move |_, cx| {
+            loop {
+                enum Ev {
+                    Url(String),
+                    Control(conn_desktop::control::IncomingControlRequest),
+                    Closed,
+                }
+                let next = crate::live::RT
+                    .spawn(async move {
+                        let ev = tokio::select! {
+                            maybe_url = url_rx.recv() => match maybe_url {
+                                Some(url) => Ev::Url(url),
+                                None => Ev::Closed,
+                            },
+                            maybe_ctrl = control_rx.recv() => match maybe_ctrl {
+                                Some(req) => Ev::Control(req),
+                                None => Ev::Closed,
+                            },
+                        };
+                        (ev, url_rx, control_rx)
+                    })
+                    .await;
+                let Ok((ev, next_url_rx, next_control_rx)) = next else {
+                    break;
+                };
+                url_rx = next_url_rx;
+                control_rx = next_control_rx;
+                match ev {
+                    Ev::Closed => break,
+                    Ev::Url(url) => {
+                        let ok = entity.update(cx, |app, cx| {
+                            app.handle_deep_link(&url, cx);
+                        });
+                        if ok.is_err() {
+                            break;
+                        }
+                        let _ = window.update(cx, |_, window, cx| {
+                            cx.activate(true);
+                            window.activate_window();
+                        });
+                    }
+                    Ev::Control((request, reply_tx)) => {
+                        let reply =
+                            entity.update(cx, |app, cx| app.handle_control_request(request, cx));
+                        match reply {
+                            Ok(response) => {
+                                let _ = reply_tx.send(response);
+                                let _ = window.update(cx, |_, window, cx| {
+                                    cx.activate(true);
+                                    window.activate_window();
+                                });
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+        });
+        self._activation_task = Some(task);
+    }
+
+    fn workspace_candidates(&self) -> Vec<(String, String)> {
+        if !self.orbit.workspaces.is_empty() {
+            return self
+                .orbit
+                .workspaces
+                .iter()
+                .map(|w| (w.id.clone(), w.name.clone()))
+                .collect();
+        }
+        self.shell
+            .projects
+            .iter()
+            .filter(|p| p.archived_at.is_none())
+            .map(|p| (p.id.clone(), p.title.clone()))
+            .collect()
+    }
+
+    /// Handles a `conn://` or `t3code://` deep link URL.
+    pub(crate) fn handle_deep_link(&mut self, raw_url: &str, cx: &mut Context<'_, Self>) -> bool {
+        use conn_desktop::control::{DeepLink, match_workspace, parse_deep_link};
+        let Some(link) = parse_deep_link(raw_url) else {
+            return false;
+        };
+        match link {
+            DeepLink::Workspace(token) => {
+                let candidates = self.workspace_candidates();
+                match match_workspace(&token, &candidates) {
+                    Some(None) => {
+                        self.select_workspace(None, cx);
+                        true
+                    }
+                    Some(Some((id, _name))) => {
+                        self.select_workspace(Some(id), cx);
+                        true
+                    }
+                    None => false,
+                }
+            }
+            DeepLink::Thread {
+                thread_id,
+                environment_id,
+            } => self.activate_thread(&thread_id, environment_id.as_deref(), cx),
+            DeepLink::WorkspaceRoot(root) => self.activate_workspace_root(&root, cx).is_ok(),
+        }
+    }
+
+    /// Handles one request arriving over Conn's Unix domain control socket.
+    pub(crate) fn handle_control_request(
+        &mut self,
+        request: conn_desktop::control::ControlRequest,
+        cx: &mut Context<'_, Self>,
+    ) -> conn_desktop::control::ControlResponse {
+        use conn_desktop::control::{ControlRequest, ControlResponse, match_workspace};
+        match request {
+            ControlRequest::SelectWorkspace {
+                request_id,
+                workspace,
+                ..
+            } => {
+                let candidates = self.workspace_candidates();
+                match match_workspace(&workspace, &candidates) {
+                    Some(None) => {
+                        self.select_workspace(None, cx);
+                        ControlResponse::workspace_ok(request_id, None, None)
+                    }
+                    Some(Some((id, name))) => {
+                        self.select_workspace(Some(id.clone()), cx);
+                        ControlResponse::workspace_ok(request_id, Some(id), Some(name))
+                    }
+                    None => ControlResponse::failure(
+                        request_id,
+                        "workspace-not-found",
+                        format!("Workspace \"{workspace}\" was not found."),
+                    ),
+                }
+            }
+            ControlRequest::OpenThread {
+                request_id,
+                environment_id,
+                thread_id,
+                ..
+            } => {
+                if let Some(thread) = self.shell.threads.iter().find(|t| t.id == thread_id) {
+                    let project_id = thread.project_id.clone();
+                    self.select_thread(thread_id.clone(), cx);
+                    return ControlResponse::thread_ok(request_id, project_id, thread_id);
+                }
+                if self.activate_thread(&thread_id, Some(&environment_id), cx) {
+                    let project_id = self
+                        .shell
+                        .threads
+                        .iter()
+                        .find(|t| t.id == thread_id)
+                        .map(|t| t.project_id.clone())
+                        .unwrap_or_default();
+                    return ControlResponse::thread_ok(request_id, project_id, thread_id);
+                }
+                ControlResponse::failure(
+                    request_id,
+                    "thread-not-found",
+                    format!("Thread \"{thread_id}\" was not found."),
+                )
+            }
+            ControlRequest::OpenWorkspace {
+                request_id,
+                workspace_root,
+                ..
+            } => match self.activate_workspace_root(&workspace_root, cx) {
+                Ok((project_id, thread_id)) => {
+                    ControlResponse::thread_ok(request_id, project_id, thread_id)
+                }
+                Err(msg) => ControlResponse::failure(request_id, "thread-open-failed", msg),
+            },
+        }
+    }
+
+    fn activate_thread(
+        &mut self,
+        thread_id: &str,
+        environment_id: Option<&str>,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        if self.shell.threads.iter().any(|t| t.id == thread_id) {
+            self.pending_open_thread = None;
+            self.select_thread(thread_id.to_owned(), cx);
+            return true;
+        }
+        if let Some(env_id) = environment_id
+            && self.orbit.fleet.find_by_server_id(env_id).is_some()
+        {
+            self.pending_open_thread = Some(thread_id.to_owned());
+            self.connect_orbit_target(env_id.to_owned(), cx);
+            return true;
+        }
+        false
+    }
+
+    fn activate_workspace_root(
+        &mut self,
+        workspace_root: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<(String, String), String> {
+        let needle = workspace_root.trim().trim_end_matches('/');
+        let project = self
+            .shell
+            .projects
+            .iter()
+            .find(|p| p.workspace_root.trim_end_matches('/') == needle)
+            .cloned()
+            .ok_or_else(|| format!("No project matches workspace root \"{workspace_root}\"."))?;
+
+        if let Some(thread) = self
+            .shell
+            .threads
+            .iter()
+            .find(|t| t.project_id == project.id && t.settled_at.is_none())
+            .or_else(|| {
+                self.shell
+                    .threads
+                    .iter()
+                    .find(|t| t.project_id == project.id)
+            })
+        {
+            let tid = thread.id.clone();
+            self.select_thread(tid.clone(), cx);
+            return Ok((project.id, tid));
+        }
+
+        self.start_new_thread(Some(project.id.clone()), cx);
+        Ok((project.id, String::new()))
     }
 
     /// Toggles the sidebar project-scope filter popover menu.

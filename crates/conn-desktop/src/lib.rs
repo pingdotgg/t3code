@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod api_request;
+pub mod control;
 pub mod database;
 pub mod mcp;
 pub mod operator;
