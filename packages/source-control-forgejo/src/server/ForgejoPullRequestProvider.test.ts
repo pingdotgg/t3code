@@ -91,6 +91,10 @@ it.effect("filters listed pull requests by the requested state", () =>
         Layer.mock(ForgejoCli.ForgejoCli)({
           api: (input) => {
             const [path, query] = input.path.split("?");
+            if (path === "repos/maria/project/branches/main")
+              return Effect.succeed(TestSourceControlHost.processOutput("{}"));
+            if (path === "repos/maria/project/statuses/head-sha")
+              return Effect.succeed(TestSourceControlHost.processOutput("[]"));
             assert.strictEqual(path, "repos/maria/project/pulls");
             const params = new URLSearchParams(query);
             // A merged list asks Forgejo for closed rows and separates them itself.
