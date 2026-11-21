@@ -57,6 +57,7 @@ function fixture(
       disabled?: boolean;
       project_id?: string;
       id_token?: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
+      quota?: { observed_at?: string; signals?: Record<string, string> };
     }>;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
@@ -652,6 +653,101 @@ describe("CLIProxyAPI built-in management API", () => {
           "/v0/management/api-call",
         );
       }),
+  );
+
+  it.effect("reads a Devin account's quota signals without upstream calls", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          {
+            id: "devin-mika.json",
+            auth_index: "d",
+            provider: "devin",
+            email: "mika@example.com",
+            quota: {
+              observed_at: "2099-01-01T00:00:00Z",
+              signals: {
+                daily_quota_remaining_percent: "100%",
+                daily_quota_reset_at: "2099-01-02T00:00:00Z",
+                weekly_quota_remaining_percent: "25%",
+                weekly_quota_reset_at: "2099-01-08T00:00:00Z",
+                plan: "Max",
+              },
+            },
+          },
+        ],
+      });
+      const [account] = yield* (yield* test.api).readAccounts(config);
+      expect(account).toMatchObject({ driver: "devin", email: "mika@example.com", plan: "Max" });
+      expect(account?.usageLimits.windows).toMatchObject([
+        {
+          id: "daily",
+          kind: "session",
+          label: "Daily",
+          usedPercent: 0,
+          resetsAt: "2099-01-02T00:00:00Z",
+          windowDurationMins: 1440,
+        },
+        {
+          id: "weekly",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 75,
+          resetsAt: "2099-01-08T00:00:00Z",
+          windowDurationMins: 10080,
+        },
+      ]);
+      expect(test.requests.map((request) => request.path)).toEqual(["/v0/management/auth-files"]);
+    }),
+  );
+
+  it.effect("reports a Devin account without observed quota signals as unreadable", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          { id: "devin.json", auth_index: "d", provider: "devin", email: "d@example.com" },
+        ],
+      });
+      const [account] = yield* (yield* test.api).readAccounts(config);
+      expect(account?.driver).toBe("devin");
+      expect(account?.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(test.requests.map((request) => request.path)).toEqual(["/v0/management/auth-files"]);
+    }),
+  );
+
+  it.effect("drops a Devin window whose reset already passed", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1788710400000);
+      const test = fixture({
+        accounts: [
+          {
+            id: "devin-stale.json",
+            auth_index: "d",
+            provider: "devin",
+            email: "stale@example.com",
+            quota: {
+              observed_at: "2020-01-01T00:00:00Z",
+              signals: {
+                daily_quota_remaining_percent: "0%",
+                daily_quota_reset_at: "2020-01-02T00:00:00Z",
+                weekly_quota_remaining_percent: "25%",
+                weekly_quota_reset_at: "2099-01-08T00:00:00Z",
+              },
+            },
+          },
+        ],
+      });
+      const [account] = yield* (yield* test.api).readAccounts(config);
+      expect(account?.usageLimits.windows).toMatchObject([
+        {
+          id: "weekly",
+          kind: "weekly",
+          usedPercent: 75,
+          resetsAt: "2099-01-08T00:00:00Z",
+        },
+      ]);
+      expect(test.requests.map((request) => request.path)).toEqual(["/v0/management/auth-files"]);
+    }),
   );
 
   it.effect("skips accounts of providers the hub table does not know", () =>

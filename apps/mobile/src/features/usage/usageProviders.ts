@@ -4,6 +4,7 @@ import { providerColors } from "./providerColors";
 
 export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
   "codex",
+  "devin",
   "claude",
   "grok",
   "cursor",
@@ -21,6 +22,7 @@ export function usageProviderKind(driver: string): UsageProviderKind | null {
 export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
   claude: "Claude Code",
   codex: "Codex",
+  devin: "Devin",
   grok: "Grok Build",
   cursor: "Cursor",
   opencode: "OpenCode",
