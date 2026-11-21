@@ -45,6 +45,7 @@ import {
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
+const OFFLINE_RECHECK_MS = 30_000;
 const SESSION_LOSS_RETRY_DELAY_MS = 250;
 // Someone is approving this device on the host; check back soon rather than climbing the ladder.
 const APPROVAL_PENDING_RETRY_DELAY_MS = 4_000;
@@ -1185,6 +1186,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       pendingRetry = Option.none();
     };
     let replacing = false;
+    let offlineRecheckDue = false;
 
     for (;;) {
       const retryRequested = yield* Ref.getAndSet(resetRetryState, false);
@@ -1205,15 +1207,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
       // The platform's offline report can stay wrong after the network is back,
-      // so an explicit retry still tries instead of waiting for it to change.
-      const ignoreOffline = replacing || retryRequested;
+      // so an explicit retry, or every OFFLINE_RECHECK_MS, still tries once.
+      const recheck =
+        offlineRecheckDue && !replacing && !retryRequested && currentIntent.network === "offline";
+      const ignoreOffline = replacing || retryRequested || recheck;
       if (currentIntent.network === "offline" && !ignoreOffline) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
-        const applicationActivated = yield* waitForSignal;
+        const applicationActivated = yield* waitForRetrySignal(OFFLINE_RECHECK_MS);
         if (applicationActivated) {
           resetRetryLadder();
         }
+        offlineRecheckDue = true;
         continue;
       }
 
@@ -1236,6 +1241,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           ),
       );
       replacing = false;
+      offlineRecheckDue = false;
       const failedProbe = yield* Ref.getAndSet(probeUnanswered, false);
       if (outcome.established) {
         // A session came up, so no earlier failure describes the connection.
@@ -1252,6 +1258,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           resetRetryLadder();
           replacing = true;
         }
+        continue;
+      }
+      // A failed recheck while still reported offline is not a connection failure.
+      if (recheck && !outcome.established && (yield* Ref.get(intent)).network === "offline") {
         continue;
       }
 
