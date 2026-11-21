@@ -302,7 +302,7 @@ const makeTmpDir = (
 ): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    return yield* fileSystem.makeTempDirectoryScoped({ prefix });
+    return yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped({ prefix }));
   });
 
 const writeTextFile = (
@@ -1993,6 +1993,94 @@ it.effect("a refreshed ref list reads the current branch and repository paths on
         Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     ),
+  ),
+);
+
+it.effect("concurrent status and branch refreshes share one worktree scan", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const scanStarted = yield* Deferred.make<void>();
+      const releaseScan = yield* Deferred.make<void>();
+      let worktreeScans = 0;
+      let trackScans = false;
+      const recordingSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const handle = yield* delegate.spawn(command);
+          if (
+            trackScans &&
+            ChildProcess.isStandardCommand(command) &&
+            command.args.includes("worktree") &&
+            command.args.includes("--porcelain")
+          ) {
+            worktreeScans++;
+            return ChildProcessSpawner.makeHandle({
+              ...handle,
+              exitCode: handle.exitCode.pipe(
+                Effect.tap(() =>
+                  Deferred.succeed(scanStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseScan)),
+                  ),
+                ),
+              ),
+            });
+          }
+          return handle;
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      const list = driver.listRefs({ cwd, refresh: true });
+      yield* list;
+      trackScans = true;
+
+      const status = yield* driver.readRefSnapshot(cwd, "refs").pipe(Effect.forkChild);
+      yield* Deferred.await(scanStarted);
+      const first = yield* list.pipe(Effect.forkChild({ startImmediately: true }));
+      const second = yield* list.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(releaseScan, undefined);
+
+      assert.deepEqual(yield* Fiber.join(first), yield* Fiber.join(second));
+      assert.isNotNull(yield* Fiber.join(status));
+      assert.equal(worktreeScans, 1);
+    }).pipe(Effect.provide(layerTest)),
+  ),
+);
+
+it.effect("keeps cached branch occupancy when Git cannot rescan worktrees", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let failWorktreeScan = false;
+      const spawner = ChildProcessSpawner.make((command) =>
+        failWorktreeScan &&
+        ChildProcess.isStandardCommand(command) &&
+        command.args.includes("worktree") &&
+        command.args.includes("--porcelain")
+          ? Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "ChildProcess",
+                method: "spawn",
+              }),
+            )
+          : delegate.spawn(command),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      const list = driver.listRefs({ cwd, refresh: true, query: initialBranch });
+      const cached = yield* list;
+      assert.equal(cached.refs[0]?.worktreePath, cwd);
+
+      failWorktreeScan = true;
+      assert.deepEqual(yield* list, cached);
+    }).pipe(Effect.provide(layerTest)),
   ),
 );
 

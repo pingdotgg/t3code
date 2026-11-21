@@ -1356,14 +1356,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const readWorktreeBranchPaths = Effect.fn("GitVcsDriver.readWorktreeBranchPaths")(function* (
     gitCommonDir: string,
-    timeoutMs = DEFAULT_TIMEOUT_MS,
   ) {
     const cwd = path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
     const result = yield* executeWorktreeList(
       "GitVcsDriver.readWorktreeBranchPaths",
       cwd,
       ["--git-dir", gitCommonDir],
-      { timeoutMs, allowNonZeroExit: true, maxOutputBytes: 16 * 1024 * 1024 },
+      { allowNonZeroExit: true, maxOutputBytes: 16 * 1024 * 1024 },
     );
     if (result.exitCode !== 0) return null;
 
@@ -1391,6 +1390,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         .sort()
         .join("\n"),
     };
+  });
+
+  // Share overlapping reads without retaining occupancy across external Git commands.
+  const worktreeBranchPathsCache = yield* Cache.makeWith(readWorktreeBranchPaths, {
+    capacity: LIST_REFS_SNAPSHOT_CACHE_CAPACITY,
+    timeToLive: () => Duration.zero,
   });
 
   const runGitStdoutWithOptions = (
@@ -2037,7 +2042,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     function* (cwd, refs) {
       const localRefs = refs ?? (yield* readLocalStatusRefSnapshot(cwd));
       if (localRefs === null) return null;
-      const worktrees = yield* readWorktreeBranchPaths(yield* resolveGitCommonDir(cwd), 5_000);
+      const gitCommonDir = yield* resolveGitCommonDir(cwd);
+      const worktrees = yield* Cache.get(worktreeBranchPathsCache, gitCommonDir).pipe(
+        Effect.timeoutOption(5_000),
+        Effect.map(Option.getOrNull),
+      );
       return worktrees === null ? null : `${localRefs}\0${worktrees.stamp}`;
     },
     Effect.orElseSucceed(() => null),
@@ -5354,7 +5363,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
     const gitDirArgs = ["--git-dir", gitCommonDir] as const;
     // Read occupancy first so a concurrent worktree addition changes the cached stamp.
-    const worktrees = yield* readWorktreeBranchPaths(gitCommonDir);
+    const worktrees = yield* Cache.get(worktreeBranchPathsCache, gitCommonDir);
     const [refsResult, defaultRefResult, remoteNamesResult] = yield* Effect.all(
       [
         executeGitWithStableDiagnostics(
@@ -5566,10 +5575,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           if (currentListRefsGeneration(gitCommonDir) === generation) return snapshot;
           continue;
         }
-        // A forced refresh may follow an external worktree change inside the coalescing window.
-        const worktrees = yield* readWorktreeBranchPaths(gitCommonDir);
+        // A joined load may have read occupancy before this refresh was requested.
+        const worktrees = yield* Cache.get(worktreeBranchPathsCache, gitCommonDir).pipe(
+          Effect.orElseSucceed(() => null),
+        );
         if (currentListRefsGeneration(gitCommonDir) !== generation) continue;
-        if (cached.value.worktreeStamp === (worktrees?.stamp ?? null)) return cached.value;
+        if (worktrees === null || cached.value.worktreeStamp === worktrees.stamp)
+          return cached.value;
         yield* invalidateListRefsSnapshots(gitCommonDir, generation);
         continue;
       }
