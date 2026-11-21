@@ -1,11 +1,14 @@
 import { FitSheet } from "../../../components/ui/FitSheet";
+import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { T, useGT, Var } from "gt-react-native";
 import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
+import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/ui/AppText";
@@ -25,7 +28,10 @@ type GitCommitSheetProps = StaticScreenProps<{
 export function GitCommitSheet(_props: GitCommitSheetProps) {
   const gt = useGT();
   const navigation = useNavigation();
-  const { selectedThread } = useThreadSelection();
+  const insets = useSafeAreaInsets();
+  const android = Platform.OS === "android";
+  const [footerHeight, setFooterHeight] = useState(0);
+  const { selectedThread, selectedThreadProject } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -65,21 +71,46 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     });
   };
 
-  return (
-    <FitSheet
-      header={
-        <SheetHeader
-          title={gt("Commit changes")}
-          subtitle={gitStatus.data?.refName ?? gt("(detached HEAD)")}
-          onCancel={() => navigation.goBack()}
-          accessibilityLabel={gt("Cancel commit")}
-        />
-      }
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="on-drag"
-      automaticallyAdjustKeyboardInsets
-      contentContainerClassName="px-5 pt-4 gap-5"
+  const actions = (
+    <View className="gap-2">
+      <Button
+        label={gt("Commit changes")}
+        icon="checkmark"
+        tone="primary"
+        fullWidth
+        disabled={!canWriteSourceControl || noneSelected || busy}
+        onPress={() => void runCommitAction(false)}
+      />
+      <Button
+        label={gt("Commit on a new branch")}
+        icon="arrow.branch"
+        tone="text"
+        fullWidth
+        disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
+        onPress={() => void runCommitAction(true)}
+      />
+    </View>
+  );
+  const footer = (
+    <View
+      className="shrink-0 gap-2 border-t border-border-subtle bg-sheet-solid px-5 pt-3"
+      onLayout={android ? (event) => setFooterHeight(event.nativeEvent.layout.height) : undefined}
+      style={{ paddingBottom: Math.max(insets.bottom, 18) }}
     >
+      {actions}
+    </View>
+  );
+  const header = (
+    <SheetHeader
+      title={gt("Commit changes")}
+      subtitle={gitStatus.data?.refName ?? gt("(detached HEAD)")}
+      onCancel={() => navigation.goBack()}
+      accessibilityLabel={gt("Cancel commit")}
+    />
+  );
+
+  const content = (
+    <>
       {isDefaultRef ? (
         <Text className="text-sm text-warning-foreground">
           <T>You’re on the default branch. You can create a new branch when committing.</T>
@@ -203,24 +234,64 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           })
         )}
       </View>
-      <View className="gap-2">
-        <Button
-          label={gt("Commit changes")}
-          icon="checkmark"
-          tone="primary"
-          fullWidth
-          disabled={!canWriteSourceControl || noneSelected || busy}
-          onPress={() => void runCommitAction(false)}
+    </>
+  );
+
+  if (!android) {
+    return (
+      <FitSheet
+        header={header}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets
+        contentContainerClassName="px-5 pt-4 gap-5"
+      >
+        {content}
+        {actions}
+      </FitSheet>
+    );
+  }
+
+  return (
+    // Material sheet drags follow the first nested-scrolling native view, and the inline
+    // header's Compose button is one, so Android renders content first and reverses the column.
+    <View
+      collapsable={false}
+      className="bg-sheet ios:flex-1 android:absolute android:inset-0 android:flex-col-reverse"
+    >
+      {android ? (
+        <NativeStackScreenOptions
+          options={{ unstable_sheetFooter: () => footer }}
+          optionsVersion={{
+            threadId: selectedThread?.id,
+            cwd: selectedThreadCwd,
+            hasProject: selectedThreadProject !== null,
+            commitMessage: dialogCommitMessage,
+            filePaths: selectedFiles.map((file) => file.path),
+            allSelected,
+            busy,
+            canWriteSourceControl,
+            canChangeThreadBranch,
+            bottomInset: insets.bottom,
+          }}
         />
-        <Button
-          label={gt("Commit on a new branch")}
-          icon="arrow.branch"
-          tone="text"
-          fullWidth
-          disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
-          onPress={() => void runCommitAction(true)}
-        />
-      </View>
-    </FitSheet>
+      ) : null}
+      <ScreenContent>
+        <ScrollView
+          nestedScrollEnabled
+          contentInsetAdjustmentBehavior="automatic"
+          className="flex-1"
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          automaticallyAdjustKeyboardInsets
+          contentContainerClassName="px-5 pt-4 pb-6 gap-5"
+          contentContainerStyle={android ? { paddingBottom: footerHeight + 24 } : undefined}
+        >
+          {content}
+        </ScrollView>
+        {android ? null : footer}
+      </ScreenContent>
+      {header}
+    </View>
   );
 }
