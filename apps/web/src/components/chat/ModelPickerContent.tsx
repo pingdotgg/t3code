@@ -27,6 +27,7 @@ import {
 import { ChevronRightIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
+import { groupUpdateRequiredNotices } from "./ProviderModelPicker.logic";
 import { useProviderWorkspaceSnapshotRefresh } from "./useProviderWorkspaceSnapshotRefresh";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
 import {
@@ -209,12 +210,13 @@ function ModelPickerProviderNotices({
 }: {
   setupEntries: ReadonlyArray<ProviderInstanceEntry>;
   emptyLabel: string;
-  updateRequiredNotices: ReadonlyArray<{ instanceId: ProviderInstanceId; notice: string }>;
+  updateRequiredNotices: ReturnType<typeof groupUpdateRequiredNotices>;
   onRequestClose: (() => void) | undefined;
   onOpenProviderSetup: ((instanceId: ProviderInstanceId) => void) | undefined;
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const locale = useLocale();
   const navigate = useNavigate();
   return (
     <>
@@ -242,12 +244,20 @@ function ModelPickerProviderNotices({
       ) : (
         <ComboboxEmpty className="empty:h-0">{emptyLabel}</ComboboxEmpty>
       )}
-      {updateRequiredNotices.map(({ instanceId, notice }) => (
+      {updateRequiredNotices.map(({ notice, instanceNames }) => (
         <p
-          key={instanceId}
+          key={notice}
           className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
         >
-          {notice}{" "}
+          {instanceNames.length > 0
+            ? gt("{instances}: {notice}", {
+                instances: new Intl.ListFormat(locale, { type: "conjunction" }).format(
+                  instanceNames,
+                ),
+                notice,
+                $context: "provider instance names, then the update notice that applies to them",
+              })
+            : notice}{" "}
           <InlineButton
             onClick={() => {
               onRequestClose?.();
@@ -811,15 +821,20 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         )
       : [];
 
-  const updateRequiredNotices = instanceEntries.flatMap((entry) => {
-    const shown = isSearching
-      ? matchesLockedProvider(entry)
-      : entry.instanceId === selectedEntry?.instanceId;
-    const notice = shown
-      ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery, messages, locale)
-      : null;
-    return notice ? [{ instanceId: entry.instanceId, notice }] : [];
-  });
+  const updateRequiredNotices = groupUpdateRequiredNotices(
+    instanceEntries.flatMap((entry) => {
+      const shown = isSearching
+        ? matchesLockedProvider(entry)
+        : entry.instanceId === selectedEntry?.instanceId;
+      const notice = shown
+        ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery, messages, locale)
+        : null;
+      if (!notice) return [];
+      // A search spans instances, so the notice names them when a model row would badge one.
+      const named = isSearching && shouldShowInstanceBadge(entry, instanceEntries);
+      return [{ notice, instanceName: entry.displayName, named }];
+    }),
+  );
 
   const modelJumpModelKeys = visibleModels
     .filter((model) => !getModelDisabledReason?.(model.instanceId, model.slug))
