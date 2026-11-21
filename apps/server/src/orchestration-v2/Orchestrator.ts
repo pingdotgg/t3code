@@ -133,7 +133,14 @@ import {
   resolveMessageDispatch,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
-import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
+import {
+  type AnyCommandReceiptV2,
+  archivedByCascade,
+  CommandReceiptStoreV2,
+  type CommandReceiptV2,
+  matchesLegacyCascadePath,
+  supersedesCascade,
+} from "./CommandReceiptStore.ts";
 import {
   ContextHandoffServiceV2,
   readForkHistoryItems,
@@ -375,9 +382,12 @@ export class OrchestratorCommandIdConflictError extends Schema.TaggedError<Orche
     commandType: Schema.String,
     receiptThreadId: ThreadId,
     commandThreadId: ThreadId,
+    receiptCommandType: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.receiptCommandType !== undefined)
+      return `Command ${this.commandId} was already handled as ${this.receiptCommandType} and cannot be replayed as ${this.commandType}.`;
     return `Command ${this.commandId} was already handled for thread ${this.receiptThreadId} and cannot be replayed for ${this.commandThreadId}.`;
   }
 }
@@ -401,6 +411,9 @@ export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 export interface OrchestratorV2DispatchResult {
   readonly sequence: number;
   readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+  readonly subagentCascades?: ReadonlyArray<EffectOutbox.SubagentCascadeEffect>;
+  readonly cascadeIdOccupied?: true;
+  readonly cascadeReplayedCommandId?: CommandId;
   /** The command id was already accepted; analytics skip it. */
   readonly replayed?: true;
 }
@@ -481,6 +494,9 @@ export interface OrchestratorV2Shape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
+  readonly getSubagentChildThreads: (
+    ...args: Parameters<ProjectionStoreV2["Service"]["getSubagentChildThreads"]>
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2AppThread>, OrchestratorV2Error>;
   readonly getCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionCheckpointContext, OrchestratorV2Error>;
@@ -555,6 +571,10 @@ export interface OrchestratorV2Shape {
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
+  readonly hasRecordedThreadDeletion: (
+    commandId: CommandId,
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean, OrchestratorV2Error>;
   readonly streamStoredEvents: Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
   /** Events arrive projected for the wire and shared by every subscriber; never mutate them. */
   readonly streamStoredEventsFrom: (input?: {
@@ -1905,6 +1925,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     projectionStore
       .findThread(threadId)
       .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+
+  const sideChatLifecycleSuffix = (threadId: ThreadId) => `:side-chat:${threadId}`;
+  const sideChatLifecycleCommandId = (commandId: CommandId, threadId: ThreadId) =>
+    CommandId.make(`${commandId}${sideChatLifecycleSuffix(threadId)}`);
+
+  // A cascade walks the whole subtree itself, so its own commands start none.
+  const subagentCascadeEffects = Effect.fn("Orchestrator.subagentCascadeEffects")(function* (
+    { commandId, threadId }: { readonly commandId: CommandId; readonly threadId: ThreadId },
+    operation: "thread.archive" | "thread.unarchive" | "thread.delete",
+    projectId: ProjectId,
+    sideChat?: EffectOutbox.EmbeddedSideChatCascade,
+  ) {
+    const cascade = yield* EffectOutbox.SubagentCascade;
+    if (cascade?.path.at(-1) === threadId) return [];
+    if (sideChat && sideChat.projectId !== projectId) return [];
+    if (operation === "thread.unarchive" && sideChat && !sideChat.archiveCommandId) return [];
+    if ((yield* projectionStore.getSubagentChildThreads(threadId)).length === 0) return [];
+    const cutoff = cascade?.source?.cutoff;
+    // The generated receipt would hide the side chat's newer choice from the cascade worker.
+    if (sideChat && operation !== "thread.delete" && cutoff !== undefined) {
+      const latest = yield* commandReceipts.getLatestLifecycle(threadId, [
+        "thread.archive",
+        "thread.unarchive",
+      ]);
+      if (supersedesCascade(latest, cutoff, commandId)) return [];
+    }
+    const limit = yield* DispatchModeLimit;
+    const request = {
+      type: "subagent-threads.cascade",
+      operation,
+      limit,
+      stableSkipPrefix: true,
+      ...(operation === "thread.delete" && sideChat === undefined
+        ? { directDelete: true as const }
+        : {}),
+      ...(sideChat === undefined ? {} : { sideChat: { ...sideChat, cutoff } }),
+    } as const;
+    const id = `effect:${commandId}:subagent-threads.cascade`;
+    return [{ id, commandId, threadId, request } satisfies EffectOutbox.SubagentCascadeEffect];
+  });
 
   /** Side chats live inside their parent, so deleting or archiving the parent takes them too. */
   const liveSideChatIds = Effect.fn("Orchestrator.liveSideChatIds")(
@@ -4400,6 +4460,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    sideChat?: EffectOutbox.EmbeddedSideChatCascade,
   ) {
     const thread = yield* projectionStore.getThread(command.threadId).pipe(
       Effect.mapError(
@@ -5630,6 +5691,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           request: { type: "provider-session.apply-thread-title", title: updatedThread.title },
         } satisfies PendingOrchestrationEffectV2,
       ]);
+    }
+
+    if (command.type === "thread.archive" || command.type === "thread.unarchive") {
+      const cascade = yield* subagentCascadeEffects(
+        command,
+        command.type,
+        thread.projectId,
+        sideChat,
+      ).pipe(mapDispatchError(command));
+      yield* Ref.update(effects, (existing) => [...existing, ...cascade]);
     }
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
@@ -15704,6 +15775,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const now = yield* DateTime.now;
         const planDeletion = Effect.fn("Orchestrator.planDeletion")(function* (
           deletion: typeof command,
+          sideChat?: EffectOutbox.EmbeddedSideChatCascade,
         ) {
           const projection = yield* projectionStore
             .getThreadRecords(deletion.threadId, [
@@ -15719,7 +15791,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 (cause) => new OrchestratorProjectionError({ threadId: deletion.threadId, cause }),
               ),
             );
-          return yield* mapDispatchError(command)(
+          const plan = yield* mapDispatchError(command)(
             planThreadDeletion({
               command: deletion,
               projection,
@@ -15730,6 +15802,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               idAllocator,
             }),
           );
+          const cascade = yield* subagentCascadeEffects(
+            deletion,
+            deletion.type,
+            projection.thread.projectId,
+            sideChat,
+          ).pipe(mapDispatchError(command));
+          return {
+            ...plan,
+            projectId: projection.thread.projectId,
+            effects: [...plan.effects, ...cascade],
+          };
         });
         // Checked under the thread lock: a message sent since the client looked keeps the thread.
         if (command.onlyIfUnused === true) {
@@ -15745,14 +15828,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         }
         // The dispatch wrapper holds each side chat's lock, so none can commit after this plan.
+        const parent = yield* planDeletion(command);
         const plans = [
-          yield* planDeletion(command),
+          parent,
           ...(yield* Effect.forEach(sideChatIds, (threadId) =>
-            planDeletion({
-              ...command,
-              commandId: CommandId.make(`${command.commandId}:side-chat:${threadId}`),
-              threadId,
-            }),
+            planDeletion(
+              {
+                ...command,
+                commandId: sideChatLifecycleCommandId(command.commandId, threadId),
+                threadId,
+              },
+              { parentThreadId: command.threadId, projectId: parent.projectId },
+            ),
           )),
         ];
         return {
@@ -15762,8 +15849,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       case "thread.archive":
       case "thread.unarchive": {
-        const parentArchivedAt = (yield* findThread(command.threadId))?.archivedAt ?? null;
+        const parent = yield* findThread(command.threadId);
+        const parentArchivedAt = parent?.archivedAt ?? null;
         yield* dispatchThreadMutation(command, events, effects);
+        if (parent === null || sideChatIds.length === 0) break;
+        const parentArchive =
+          command.type === "thread.unarchive"
+            ? yield* commandReceipts
+                .getLatestLifecycle(parent.id, ["thread.archive"])
+                .pipe(mapDispatchError(command))
+            : null;
         // Unarchive restores the side chats this parent's archive took, not ones archived before it.
         for (const threadId of sideChatIds) {
           const sideChatArchivedAt = (yield* findThread(threadId))?.archivedAt ?? null;
@@ -15782,15 +15877,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               .pipe(mapDispatchError(command));
             if (hasRunningDelegatedTasks(subagents)) continue;
           }
-          yield* dispatchThreadMutation(
-            {
-              ...command,
-              commandId: CommandId.make(`${command.commandId}:side-chat:${threadId}`),
-              threadId,
-            },
-            events,
-            effects,
-          );
+          const sideChatCommand = {
+            ...command,
+            commandId: sideChatLifecycleCommandId(command.commandId, threadId),
+            threadId,
+          };
+          const derivedArchiveId =
+            parentArchive !== null
+              ? sideChatLifecycleCommandId(parentArchive.commandId, threadId)
+              : undefined;
+          const sideChatArchive =
+            derivedArchiveId === undefined
+              ? null
+              : yield* commandReceipts
+                  .getLatestLifecycle(threadId, ["thread.archive"])
+                  .pipe(mapDispatchError(command));
+          yield* dispatchThreadMutation(sideChatCommand, events, effects, {
+            parentThreadId: parent.id,
+            projectId: parent.projectId,
+            archiveCommandId:
+              sideChatArchive !== null &&
+              sideChatArchive.commandId === derivedArchiveId &&
+              sideChatArchive.resultSequence === parentArchive?.resultSequence
+                ? sideChatArchive.commandId
+                : undefined,
+          });
         }
         break;
       }
@@ -16093,6 +16204,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
+  const rejectConflictingSideChatReceipt = Effect.fn(
+    "OrchestratorV2.rejectConflictingSideChatReceipt",
+  )(function* (command: OrchestrationV2ServerCommand, receipt: CommandReceiptV2) {
+    if (receipt.commandType !== "thread.archive" && receipt.commandType !== "thread.unarchive")
+      return;
+    const suffix = sideChatLifecycleSuffix(receipt.threadId);
+    if (receipt.commandId.length <= suffix.length || !receipt.commandId.endsWith(suffix)) return;
+    const parentId = CommandId.make(receipt.commandId.slice(0, -suffix.length));
+    const parent = Option.getOrUndefined(
+      yield* commandReceipts.getByCommandId(parentId).pipe(mapDispatchError(command)),
+    );
+    if (
+      parent?.status === "accepted" &&
+      parent.commandType === receipt.commandType &&
+      parent.resultSequence === receipt.resultSequence &&
+      parent.threadId !== receipt.threadId
+    ) {
+      return yield* new OrchestratorCommandIdConflictError({
+        commandId: command.commandId,
+        commandType: command.type,
+        receiptThreadId: receipt.threadId,
+        commandThreadId: receipt.threadId,
+        receiptCommandType: receipt.commandType,
+      });
+    }
+  });
+
   const replayCommandReceipt = Effect.fn("orchestrationV2.dispatch.replayReceipt")(function* (
     command: OrchestrationV2ServerCommand,
     receipt: CommandReceiptV2,
@@ -16114,6 +16252,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandThreadId: dispatchThreadId,
       });
     }
+    if (receipt.commandType !== command.type)
+      yield* rejectConflictingSideChatReceipt(command, receipt);
     const storedEvents = yield* eventSink.readByCommandId({ commandId: command.commandId }).pipe(
       Stream.runCollect,
       Effect.map((events): ReadonlyArray<OrchestrationV2StoredEvent> => Array.from(events)),
@@ -16141,6 +16281,133 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
+  type ThreadMembership = Pick<OrchestrationV2AppThread, "projectId" | "lineage">;
+  const sameMembership = (left: ThreadMembership, right: ThreadMembership) =>
+    left.projectId === right.projectId &&
+    left.lineage.parentThreadId === right.lineage.parentThreadId &&
+    left.lineage.relationshipToParent === right.lineage.relationshipToParent;
+
+  const legacyMembershipHistory = Effect.fn("Orchestrator.legacyMembershipHistory")(function* (
+    threadId: ThreadId,
+    throughSequence: number,
+  ) {
+    const events = yield* eventSink.readRetainedThreadHistory({
+      threadId,
+      throughSequence,
+      limit: 256,
+    });
+    return events?.flatMap(({ commandId, event, sequence }) => {
+      const { payload, type } = event;
+      return "projectId" in payload && "lineage" in payload
+        ? [{ commandId, membership: payload, sequence, type }]
+        : [];
+    });
+  });
+
+  const provesLegacyChildEligibility = Effect.fn("Orchestrator.provesLegacyChildEligibility")(
+    function* (thread: OrchestrationV2AppThread, receipt: CommandReceiptV2) {
+      const history = yield* legacyMembershipHistory(thread.id, receipt.resultSequence);
+      const lifecycleType =
+        receipt.commandType === "thread.archive" ? "thread.archived" : "thread.unarchived";
+      const lifecycle = history?.find(
+        (event) => event.commandId === receipt.commandId && event.type === lifecycleType,
+      );
+      if (
+        history === undefined ||
+        lifecycle === undefined ||
+        !sameMembership(lifecycle.membership, thread)
+      )
+        return false;
+
+      // The earlier accepted command held this thread's dispatch lock before the lifecycle plan.
+      let witness = undefined;
+      for (const event of history.toReversed()) {
+        if (
+          event.sequence >= lifecycle.sequence ||
+          event.commandId === null ||
+          event.commandId === receipt.commandId
+        )
+          continue;
+        const commandType =
+          event.type === "thread.metadata-updated"
+            ? "thread.metadata.update"
+            : event.type === "thread.archived"
+              ? "thread.archive"
+              : event.type === "thread.unarchived"
+                ? "thread.unarchive"
+                : undefined;
+        if (commandType === undefined) continue;
+        const prior = Option.getOrUndefined(yield* commandReceipts.getByCommandId(event.commandId));
+        if (
+          prior?.status === "accepted" &&
+          prior.threadId === thread.id &&
+          prior.commandType === commandType &&
+          prior.resultSequence >= event.sequence &&
+          prior.resultSequence < lifecycle.sequence
+        ) {
+          witness = event;
+          break;
+        }
+      }
+      if (
+        witness === undefined ||
+        !history.every(
+          (event) => event.sequence < witness.sequence || sameMembership(event.membership, thread),
+        )
+      )
+        return false;
+
+      const children = yield* projectionStore.getSubagentChildThreads(thread.id);
+      for (const child of children) {
+        const childHistory = yield* legacyMembershipHistory(child.id, receipt.resultSequence);
+        if (childHistory === undefined) continue;
+        const atWitness = childHistory.findLast((event) => event.sequence <= witness.sequence);
+        if (
+          atWitness !== undefined &&
+          sameMembership(atWitness.membership, child) &&
+          childHistory.every(
+            (event) =>
+              event.sequence <= witness.sequence || sameMembership(event.membership, child),
+          )
+        )
+          return true;
+      }
+      return false;
+    },
+  );
+
+  const ownsLegacyCascadeReceipt = Effect.fn("Orchestrator.ownsLegacyCascadeReceipt")(function* (
+    command: OrchestrationV2ServerCommand,
+    thread: OrchestrationV2AppThread,
+    receipt: CommandReceiptV2,
+    parentArchiveCommandId: CommandId,
+  ) {
+    if (receipt.archiveSourceCommandId !== undefined)
+      return receipt.archiveSourceCommandId === parentArchiveCommandId;
+
+    const read = mapDispatchError(command);
+    const directEffect = yield* effectOutbox
+      .get(`effect:${receipt.commandId}:subagent-threads.cascade`)
+      .pipe(read);
+    if (Option.isSome(directEffect)) return false;
+
+    // An eligible child before planning implies a direct command would still have its own effect.
+    const cutoff = DateTime.subtractDuration(
+      yield* DateTime.now,
+      EffectOutbox.SETTLED_EFFECT_RETENTION,
+    );
+    if (
+      !DateTime.isLessThan(receipt.acceptedAt, cutoff) &&
+      (yield* provesLegacyChildEligibility(thread, receipt).pipe(read))
+    )
+      return true;
+    return yield* new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: "Cannot verify the archive or restore that owns the legacy cascade path.",
+    });
+  });
+
   /** `sideChatIds` are the live side chats a delete, archive, or unarchive cascades to, read under their locks. */
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
@@ -16153,24 +16420,112 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.thread_id": commandThreadId(command),
     });
 
-    const existingReceipt = yield* commandReceipts.getByCommandId(command.commandId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause,
-          }),
-      ),
-    );
+    const cascade = yield* EffectOutbox.SubagentCascade;
+    const read = mapDispatchError(command);
+    const cascadeThread =
+      cascade !== undefined &&
+      (command.type === "thread.archive" ||
+        command.type === "thread.unarchive" ||
+        command.type === "thread.delete")
+        ? yield* projectionStore.getThread(command.threadId).pipe(read)
+        : undefined;
+    if (cascadeThread !== undefined) {
+      const parentId = cascadeThread.lineage.parentThreadId;
+      const parent =
+        parentId === null ? null : yield* projectionStore.getThread(parentId).pipe(read);
+      if (parent?.projectId !== cascadeThread.projectId)
+        return { sequence: cascade?.source?.cutoff ?? 0, storedEvents: [] };
+      yield* refuseAboveDispatchModeLimit(command, cascadeThread.id, cascadeThread);
+    }
+    const occupiedCascadeId = (receipt: AnyCommandReceiptV2) =>
+      cascadeThread !== undefined &&
+      ("projectId" in receipt ||
+        receipt.threadId !== cascadeThread.id ||
+        receipt.status !== "accepted" ||
+        receipt.commandType !== command.type ||
+        (command.type === "thread.delete" && cascadeThread.deletedAt === null) ||
+        (cascade?.source !== undefined && receipt.resultSequence < cascade.source.cutoff) ||
+        (command.type === "thread.archive" &&
+          receipt.archiveSourceCommandId !== undefined &&
+          receipt.archiveSourceCommandId !== cascade?.parentArchiveCommandId));
 
+    const legacyLatest =
+      cascadeThread !== undefined &&
+      cascade?.source !== undefined &&
+      cascade.legacyPath !== undefined
+        ? yield* commandReceipts
+            .getLatestLifecycle(cascadeThread.id, ["thread.archive", "thread.unarchive"])
+            .pipe(read)
+        : undefined;
+    if (
+      cascadeThread !== undefined &&
+      cascade?.source !== undefined &&
+      cascade.legacyPath !== undefined &&
+      legacyLatest?.status === "accepted" &&
+      legacyLatest.commandType === command.type &&
+      (legacyLatest.commandId !== command.commandId ||
+        (command.type === "thread.archive" && cascade.legacyPath.verified === true)) &&
+      legacyLatest.resultSequence > cascade.source.cutoff &&
+      cascadeThread.deletedAt === null &&
+      (command.type === "thread.archive"
+        ? cascadeThread.archivedAt !== null
+        : cascadeThread.archivedAt === null) &&
+      (yield* matchesLegacyCascadePath(
+        commandReceipts,
+        cascade.legacyPath.anchorId,
+        cascade.path.slice(cascade.legacyPath.depth),
+        legacyLatest.commandId,
+        occupiedCascadeId,
+      ).pipe(read))
+    ) {
+      if (
+        !(yield* ownsLegacyCascadeReceipt(
+          command,
+          cascadeThread,
+          legacyLatest,
+          cascade.parentArchiveCommandId,
+        ))
+      )
+        return { sequence: legacyLatest.resultSequence, storedEvents: [] };
+      if (command.type === "thread.archive" && legacyLatest.archiveSourceCommandId === undefined) {
+        const recorded = yield* commandReceipts
+          .setArchiveSourceIfMissing({
+            commandId: legacyLatest.commandId,
+            threadId: cascadeThread.id,
+            resultSequence: legacyLatest.resultSequence,
+            sourceCommandId: cascade.parentArchiveCommandId,
+          })
+          .pipe(read);
+        if (!recorded) {
+          const current = Option.getOrUndefined(
+            yield* commandReceipts.getByCommandId(legacyLatest.commandId).pipe(read),
+          );
+          if (current?.archiveSourceCommandId !== cascade.parentArchiveCommandId)
+            return { sequence: legacyLatest.resultSequence, storedEvents: [] };
+        }
+      }
+      const replay = yield* replayCommandReceipt(
+        { ...command, commandId: legacyLatest.commandId },
+        legacyLatest,
+      );
+      return { ...replay, cascadeReplayedCommandId: legacyLatest.commandId };
+    }
+
+    const existingReceipt = yield* read(
+      cascadeThread === undefined
+        ? commandReceipts.getByCommandId(command.commandId)
+        : commandReceipts.getAnyByCommandId(command.commandId),
+    );
     if (Option.isSome(existingReceipt)) {
-      return yield* replayCommandReceipt(command, existingReceipt.value);
+      const receipt = existingReceipt.value;
+      if (occupiedCascadeId(receipt))
+        return { sequence: receipt.resultSequence, storedEvents: [], cascadeIdOccupied: true };
+      if ("threadId" in receipt) return yield* replayCommandReceipt(command, receipt);
     }
 
     // Recheck under the lock; the user may have raised modes since sender preflight.
     const limit = yield* DispatchModeLimit;
-    if (limit !== undefined) {
+    if (cascadeThread === undefined && limit !== undefined) {
       // Fork and merge-back sources are unlocked; validate the modes copied by their dispatch.
       const threadId = commandThreadId(command);
       const shell = yield* projectionStore
@@ -16196,6 +16551,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           Effect.andThen(startNextQueuedRun(command.threadId, { latestRunEnded: true })),
         ),
       );
+    }
+
+    // Decided under the child's lock, so a newer independent choice on it always wins.
+    if (
+      cascadeThread !== undefined &&
+      cascade?.source !== undefined &&
+      command.type !== "thread.delete"
+    ) {
+      const { source, path } = cascade;
+      const latest =
+        legacyLatest === undefined
+          ? yield* commandReceipts
+              .getLatestLifecycle(cascadeThread.id, ["thread.archive", "thread.unarchive"])
+              .pipe(read)
+          : legacyLatest;
+      const applies =
+        cascadeThread.deletedAt === null &&
+        (command.type === "thread.archive"
+          ? cascadeThread.archivedAt === null &&
+            !supersedesCascade(latest, source.cutoff, command.commandId)
+          : cascadeThread.archivedAt !== null &&
+            (yield* archivedByCascade(
+              commandReceipts,
+              latest,
+              source.threadId,
+              path,
+              source.archiveCommandId,
+            ).pipe(read)));
+      if (!applies) return { sequence: source.cutoff, storedEvents: [] };
     }
 
     const plan = yield* dispatchOnce(command, sideChatIds).pipe(
@@ -16343,6 +16727,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 }).pipe(mapDispatchError(command)),
               ],
         effects: plan.effects,
+        ...(command.type === "thread.archive"
+          ? { archiveSourceCommandId: cascade?.parentArchiveCommandId ?? command.commandId }
+          : {}),
         ...(plan.cancelUnsettledEffects === undefined
           ? {}
           : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),
@@ -16361,6 +16748,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
 
+    if (!committed.committed && occupiedCascadeId(committed.receipt))
+      return {
+        sequence: committed.receipt.resultSequence,
+        storedEvents: [],
+        cascadeIdOccupied: true,
+      };
+    if ("projectId" in committed.receipt)
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Conflicting receipt is not a thread command receipt.",
+      });
     if (committed.receipt.status === "rejected") {
       return yield* new OrchestratorCommandPreviouslyRejectedError({
         commandId: command.commandId,
@@ -16378,6 +16777,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandThreadId: commandThreadId(command),
       });
     }
+    if (!committed.committed && committed.receipt.commandType !== command.type)
+      yield* rejectConflictingSideChatReceipt(command, committed.receipt);
     if (
       command.type === "queue.resume" ||
       command.type === "queued-run.start" ||
@@ -16417,9 +16818,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     }
 
+    const subagentCascades =
+      committed.committed &&
+      (command.type === "thread.archive" ||
+        command.type === "thread.unarchive" ||
+        command.type === "thread.delete")
+        ? plan.effects.filter(
+            (effect): effect is EffectOutbox.SubagentCascadeEffect =>
+              effect.request.type === "subagent-threads.cascade",
+          )
+        : [];
     return {
       sequence: committed.receipt.resultSequence,
       storedEvents: committed.storedEvents,
+      ...(subagentCascades.length === 0 ? {} : { subagentCascades }),
       ...(committed.committed ? {} : { replayed: true as const }),
     } satisfies OrchestratorV2DispatchResult;
   }, withCommandMetrics);
@@ -16469,7 +16881,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         ),
       );
-      return yield* command.type === "thread.delete"
+      // A subagent cascade already owns the deletion lock outside its ancestor thread locks.
+      return yield* command.type === "thread.delete" &&
+      (yield* EffectOutbox.SubagentCascade) === undefined
         ? threadDispatch.withDeletionLock(cascade)
         : cascade;
     }
@@ -17132,6 +17546,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       },
     ),
+    // The projection read owns the discovery span.
+    getSubagentChildThreads: Effect.fnUntraced(function* (threadId: ThreadId) {
+      return yield* projectionStore
+        .getSubagentChildThreads(threadId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+    }),
     getThreadProjection: Effect.fn("OrchestratorV2.getThreadProjection")(function (threadId) {
       return projectionStore
         .getThreadProjection(threadId)
@@ -17222,6 +17642,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return eventSink
         .latestSequence({ threadId })
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+    }),
+    hasRecordedThreadDeletion: Effect.fn("OrchestratorV2.hasRecordedThreadDeletion")(function (
+      commandId: CommandId,
+      threadId: ThreadId,
+    ) {
+      return eventSink.readByCommandId({ commandId }).pipe(
+        Stream.filter(
+          ({ event }) => event.type === "thread.deleted" && event.threadId === threadId,
+        ),
+        Stream.runHead,
+        Effect.map(Option.isSome),
+        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+      );
     }),
     streamStoredEvents: eventSink.stream().pipe(
       Stream.mapError(

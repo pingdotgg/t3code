@@ -60,6 +60,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -552,6 +553,17 @@ export interface ThreadManagementServiceShape {
     void,
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
+  readonly cascadeSubagentLifecycle: (input: {
+    readonly threadId: ThreadId;
+    readonly commandId: CommandId;
+    readonly operation: "thread.archive" | "thread.unarchive" | "thread.delete";
+    readonly sideChat?: EffectOutbox.EmbeddedSideChatCascade | undefined;
+    readonly directDelete?: true | undefined;
+    readonly stableSkipPrefix?: true | undefined;
+  }) => Effect.Effect<
+    void,
+    Orchestrator.OrchestratorV2Error | CommandReceiptStore.CommandReceiptStoreV2Error
+  >;
   readonly getThreadEventSequence: Orchestrator.OrchestratorV2["Service"]["getThreadEventSequence"];
   readonly recoverDelegatedTask: Orchestrator.OrchestratorV2["Service"]["recoverDelegatedTask"];
   readonly cancelDelegatedTask: Orchestrator.OrchestratorV2["Service"]["cancelDelegatedTask"];
@@ -844,7 +856,35 @@ const make = Effect.gen(function* () {
     ensureCommandTranscripts(command).pipe(
       Effect.andThen(assertDispatchTargetEnabled(command)),
       Effect.andThen(orchestrator.dispatch(command)),
+      Effect.tap((result) => cascadeBeforeReply(result)),
     );
+
+  // Clients read archive snapshots as soon as this returns; the outbox effect only backs it up.
+  // A replay or a no-op (an unused-only delete that kept the thread) leaves it to that effect.
+  const cascadeBeforeReply = Effect.fn("ThreadManagementService.cascadeBeforeReply")(function* (
+    result: Orchestrator.OrchestratorV2DispatchResult,
+  ) {
+    yield* Effect.forEach(
+      result.subagentCascades ?? [],
+      ({ commandId, threadId, request }) =>
+        cascadeSubagentLifecycle({
+          commandId,
+          threadId,
+          operation: request.operation,
+          sideChat: request.sideChat,
+          directDelete: request.directDelete,
+          stableSkipPrefix: request.stableSkipPrefix,
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Subagent lifecycle cascade left to the effect worker", {
+              threadId,
+              cause,
+            }),
+          ),
+        ),
+      { discard: true },
+    );
+  });
 
   const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (
     input,
@@ -1774,6 +1814,201 @@ const make = Effect.gen(function* () {
     if (failures[0] !== undefined) return yield* failures[0];
   });
 
+  // An older embedded delete can share its derived ID with an accepted unused-only close.
+  const legacySideChatDeletionParent = Effect.fn(
+    "ThreadManagementService.legacySideChatDeletionParent",
+  )(function* (commandId: CommandId, threadId: ThreadId) {
+    const suffix = `:side-chat:${threadId}`;
+    if (commandId.length <= suffix.length || !commandId.endsWith(suffix)) return;
+    const parentCommandId = CommandId.make(commandId.slice(0, -suffix.length));
+    const parent = Option.getOrUndefined(yield* receipts.getByCommandId(parentCommandId));
+    if (
+      parent?.status !== "accepted" ||
+      parent.commandType !== "thread.delete" ||
+      parent.threadId === threadId
+    )
+      return;
+    const direct = Option.getOrUndefined(yield* receipts.getByCommandId(commandId));
+    if (
+      direct?.threadId === threadId &&
+      direct.commandType === "thread.delete" &&
+      direct.status === "accepted"
+    ) {
+      if (yield* orchestrator.hasRecordedThreadDeletion(commandId, threadId)) return;
+    }
+    return parent.threadId;
+  });
+
+  const cascadeSubagentLifecycle: ThreadManagementServiceShape["cascadeSubagentLifecycle"] =
+    Effect.fn("ThreadManagementService.cascadeSubagentLifecycle")(function* (input) {
+      const { sideChat } = input;
+      if (input.operation === "thread.unarchive" && sideChat && !sideChat.archiveCommandId) return;
+      const parentThreadId =
+        sideChat?.parentThreadId ??
+        (input.operation === "thread.delete" && !input.directDelete
+          ? yield* legacySideChatDeletionParent(input.commandId, input.threadId)
+          : undefined);
+      const receipt =
+        input.operation === "thread.delete"
+          ? undefined
+          : Option.getOrUndefined(yield* receipts.getByCommandId(input.commandId));
+      if (input.operation !== "thread.delete" && receipt?.status !== "accepted") return;
+      const source = receipt && {
+        threadId: receipt.threadId,
+        cutoff: sideChat?.cutoff ?? receipt.resultSequence,
+        archiveCommandId: sideChat?.archiveCommandId,
+      };
+      type LegacyPath = {
+        readonly anchorId: CommandId;
+        readonly depth: number;
+        readonly verified?: true;
+      };
+      const dispatchChild = Effect.fn("ThreadManagementService.dispatchCascadeChild")(function* (
+        threadId: ThreadId,
+        baseId: CommandId,
+        path: ReadonlyArray<ThreadId>,
+        parentArchiveCommandId: CommandId,
+        legacyPath: LegacyPath | undefined,
+      ) {
+        for (let retry = 0; retry < CommandReceiptStore.cascadeCommandIdLimit; retry++) {
+          const commandId = CommandReceiptStore.cascadeCommandIdAt(baseId, retry);
+          const result = yield* orchestrator
+            .dispatch({ type: input.operation, commandId, threadId })
+            .pipe(
+              Effect.tap(cascadeBeforeReply),
+              Effect.provideService(EffectOutbox.SubagentCascade, {
+                source,
+                path,
+                parentArchiveCommandId,
+                legacyPath,
+              }),
+              Effect.catchTags({
+                OrchestratorThreadAboveModeLimitError: () => Effect.undefined,
+              }),
+            );
+          if (result === undefined) return;
+          if (!result.cascadeIdOccupied)
+            return result.replayed || result.storedEvents.length > 0
+              ? {
+                  commandId: result.cascadeReplayedCommandId ?? commandId,
+                  verified: result.cascadeReplayedCommandId !== undefined,
+                }
+              : null;
+        }
+        return yield* new Orchestrator.OrchestratorDispatchError({
+          commandId: baseId,
+          commandType: input.operation,
+          cause: "All 32 subagent lifecycle command IDs were occupied or rejected.",
+        });
+      });
+
+      const visit: (
+        thread: {
+          readonly id: ThreadId;
+          readonly deletedAt: unknown;
+          readonly projectId?: unknown;
+        },
+        parentCommandId: CommandId,
+        path: ReadonlyArray<ThreadId>,
+        parentArchiveCommandId: CommandId,
+        legacyPath?: LegacyPath,
+      ) => ReturnType<ThreadManagementServiceShape["cascadeSubagentLifecycle"]> = Effect.fn(
+        "ThreadManagementService.visitSubagentCascade",
+      )(function* (thread, parentCommandId, path, parentArchiveCommandId, legacyPath) {
+        const baseId =
+          path.length === 0
+            ? parentCommandId
+            : CommandId.make(`${parentCommandId}:subagent:${thread.id}`);
+        const dispatched =
+          path.length === 0
+            ? { commandId: baseId, verified: false }
+            : thread.deletedAt === null
+              ? yield* dispatchChild(thread.id, baseId, path, parentArchiveCommandId, legacyPath)
+              : null;
+        if (dispatched === undefined) return;
+        const ownCommandId = dispatched?.commandId ?? null;
+        // Holds each thread's lock while visiting its subagents, so locks nest parent before child.
+        yield* threadDispatch.withLock(
+          thread.id,
+          Effect.gen(function* () {
+            // A deleted or moved thread, one above the caller's limit or a newer choice keeps its subtree.
+            const limit = yield* DispatchModeLimit;
+            const current = (yield* orchestrator.getThreadRecords(thread.id, [])).thread;
+            if (path.length > 0 && current.projectId !== thread.projectId) return;
+            if (path.length === 0 && parentThreadId !== undefined) {
+              if (
+                current.lineage.sideChat !== true ||
+                current.lineage.parentThreadId !== parentThreadId
+              )
+                return;
+              const { thread: parent } = yield* orchestrator.getThreadRecords(parentThreadId, []);
+              if (
+                current.projectId !== parent.projectId ||
+                (sideChat && current.projectId !== sideChat.projectId)
+              )
+                return;
+            }
+            if (limit && exceededDispatchModeLimit(limit, current)) return;
+            if (source && current.deletedAt !== null) return;
+            const latest = source
+              ? yield* receipts.getLatestLifecycle(thread.id, [
+                  "thread.archive",
+                  "thread.unarchive",
+                ])
+              : null;
+            if (
+              source &&
+              CommandReceiptStore.supersedesCascade(
+                latest,
+                source.cutoff,
+                ownCommandId ?? undefined,
+              )
+            )
+              return;
+            const archiveCommandId =
+              input.operation === "thread.archive" &&
+              latest?.commandType === "thread.archive" &&
+              latest.commandId === ownCommandId
+                ? ownCommandId
+                : parentArchiveCommandId;
+            const children = yield* orchestrator.getSubagentChildThreads(thread.id);
+            if (children.length === 0) return;
+            // Older jobs may have committed descendants under a suffixed skip.
+            const legacyPrefix =
+              ownCommandId === null && !input.stableSkipPrefix
+                ? yield* CommandReceiptStore.legacyCascadeCommandId(receipts, baseId)
+                : baseId;
+            const prefix = ownCommandId ?? legacyPrefix ?? baseId;
+            const childLegacyPath = dispatched?.verified
+              ? { anchorId: prefix, depth: path.length, verified: true as const }
+              : ownCommandId === null
+                ? (legacyPath ??
+                  (source && legacyPrefix !== baseId
+                    ? { anchorId: parentCommandId, depth: path.length - 1 }
+                    : undefined))
+                : undefined;
+            const [, failures] = yield* Effect.partition(children, (child) =>
+              visit(child, prefix, [...path, child.id], archiveCommandId, childLegacyPath),
+            );
+            // Finish healthy siblings before reporting a failure to the durable worker.
+            if (failures[0] !== undefined) return yield* failures[0];
+          }),
+        );
+      });
+      const walk = visit(
+        { id: input.threadId, deletedAt: null },
+        input.commandId,
+        [],
+        input.commandId,
+      );
+      const cascade =
+        parentThreadId === undefined ? walk : threadDispatch.withLock(parentThreadId, walk);
+      yield* input.operation === "thread.delete" &&
+      (yield* EffectOutbox.SubagentCascade) === undefined
+        ? threadDispatch.withDeletionLock(cascade)
+        : cascade;
+    });
+
   return ThreadManagementService.of({
     ensureLegacyTranscript,
     searchThreadStream: (input) =>
@@ -1874,6 +2109,7 @@ const make = Effect.gen(function* () {
     settleThread,
     interruptThread,
     stopDelegatedTasks,
+    cascadeSubagentLifecycle,
     stopWorkflow,
     forceStopThread,
     awaitBackgroundTasks,

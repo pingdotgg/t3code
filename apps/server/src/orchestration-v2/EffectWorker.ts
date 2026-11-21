@@ -30,6 +30,7 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
@@ -680,6 +681,27 @@ export const layerExecutor: Layer.Layer<
               ),
             );
           }
+          case "subagent-threads.cascade":
+            return threads
+              .cascadeSubagentLifecycle({
+                commandId: effect.commandId,
+                threadId: effect.threadId,
+                operation: effect.request.operation,
+                sideChat: effect.request.sideChat,
+                directDelete: effect.request.directDelete,
+                stableSkipPrefix: effect.request.stableSkipPrefix,
+              })
+              .pipe(
+                Effect.provideService(DispatchModeLimit, effect.request.limit),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "thread-title.generate":
             return threadTitleRegeneration
               .execute({
