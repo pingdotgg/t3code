@@ -101,14 +101,17 @@ describe("Antigravity Auto", () => {
     expect(antigravitySessionMode("auto", modeState)).toBe(expected);
   });
 
-  it.each(["execute", "read"] as const)("asks about the %s requests agy's Auto sends", (kind) => {
+  it.each([
+    { kind: "execute", expected: "ask" },
+    { kind: "read", expected: "allow" },
+  ] as const)("answers $expected to $kind requests in Auto", ({ kind, expected }) => {
     const request = {
       sessionId: "session-1",
       toolCall: { toolCallId: "call-1", title: "Tool call", kind },
       options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
     } satisfies EffectAcpSchema.RequestPermissionRequest;
     expect(antigravityPermissionDisposition({ runtimeMode: "auto", cwd: null }, request)).toBe(
-      "ask",
+      expected,
     );
   });
 
