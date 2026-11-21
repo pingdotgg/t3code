@@ -1,4 +1,5 @@
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -264,7 +265,7 @@ function ChangeBreakdownLine(props: {
       return additions === 0 && deletions === 0
         ? []
         : [
-            `${m(BREAKDOWN_LABELS[kind])} +${additions.toLocaleString()} −${deletions.toLocaleString()}`,
+            `${m(BREAKDOWN_LABELS[kind])} +${formatDiffCount(additions)} −${formatDiffCount(deletions)}`,
           ];
     },
   );
