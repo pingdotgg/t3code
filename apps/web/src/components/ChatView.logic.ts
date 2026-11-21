@@ -1243,7 +1243,7 @@ export function chatActionErrorMessage(error: unknown, resolve: MessageResolver 
 }
 
 /** A local copy of the runtime's error shares the runtime's key, so one dismissal covers both. */
-export function threadErrorIsServerRuntime(input: {
+function threadErrorIsServerRuntime(input: {
   readonly isServerThread: boolean;
   readonly localServerError: string | null;
   readonly runtimeError: string | null;
@@ -1252,6 +1252,47 @@ export function threadErrorIsServerRuntime(input: {
     input.isServerThread &&
     (input.localServerError === null || input.localServerError === input.runtimeError)
   );
+}
+
+/**
+ * Resolves the displayed thread error and its session-dismissal descriptor.
+ * Only server runtime errors need session-level dismissal (their errors persist
+ * in server projections across remounts); local and draft errors live in component
+ * state and are cleared directly on dismiss so later identical errors show again.
+ */
+export function resolveThreadErrorBanner(input: {
+  readonly isServerThread: boolean;
+  readonly localServerError: string | null;
+  readonly localDraftError: string | null;
+  readonly runtimeError: string | null;
+  readonly runtimeErrorSource: string | null;
+}): {
+  readonly threadError: string | null;
+  readonly sessionDismissal: {
+    readonly error: string;
+    readonly source: string | null;
+  } | null;
+} {
+  const threadError = input.isServerThread
+    ? (input.localServerError ?? input.runtimeError ?? null)
+    : input.localDraftError;
+  if (
+    threadError === null ||
+    !threadErrorIsServerRuntime({
+      isServerThread: input.isServerThread,
+      localServerError: input.localServerError,
+      runtimeError: input.runtimeError,
+    })
+  ) {
+    return { threadError, sessionDismissal: null };
+  }
+  return {
+    threadError,
+    sessionDismissal: {
+      error: threadError,
+      source: input.runtimeErrorSource,
+    },
+  };
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(

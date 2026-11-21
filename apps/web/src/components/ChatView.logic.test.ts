@@ -20,10 +20,18 @@ import {
 } from "./ChatView.logic";
 import {
   isThreadEnvironmentLocked,
+  makeThreadErrorSetter,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
-  threadErrorIsServerRuntime,
+  resolveThreadErrorBanner,
+  type LocalThreadErrorEntry,
 } from "./ChatView.logic";
+import {
+  dismissThreadErrorBannerForSession,
+  getThreadErrorBannerKey,
+  isThreadErrorBannerDismissedForSession,
+  shouldShowThreadErrorBanner,
+} from "./chat/ThreadErrorBanner";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
@@ -1642,38 +1650,283 @@ describe("prepareRevertedMessageAttachments", () => {
   });
 });
 
-describe("threadErrorIsServerRuntime", () => {
-  it("is true for a server thread's runtime error, and for a local copy of that same error", () => {
-    expect(
-      threadErrorIsServerRuntime({
-        isServerThread: true,
-        localServerError: null,
-        runtimeError: "E",
-      }),
-    ).toBe(true);
-    expect(
-      threadErrorIsServerRuntime({
-        isServerThread: true,
-        localServerError: "E",
-        runtimeError: "E",
-      }),
-    ).toBe(true);
+describe("resolveThreadErrorBanner", () => {
+  function visibleErrorFor(input: {
+    readonly routeThreadKey: string;
+    readonly isServerThread: boolean;
+    readonly localServerError: string | null;
+    readonly localDraftError: string | null;
+    readonly runtimeError: string | null;
+    readonly runtimeErrorSource: string | null;
+  }) {
+    const { threadError, sessionDismissal } = resolveThreadErrorBanner(input);
+    const bannerKey =
+      sessionDismissal === null
+        ? null
+        : getThreadErrorBannerKey(
+            input.routeThreadKey,
+            sessionDismissal.error,
+            sessionDismissal.source,
+          );
+    const visibleThreadError = shouldShowThreadErrorBanner(
+      input.routeThreadKey,
+      threadError,
+      isThreadErrorBannerDismissedForSession(bannerKey),
+    )
+      ? threadError
+      : null;
+    return { threadError, bannerKey, visibleThreadError };
+  }
+
+  it("uses the server runtime key for a server runtime error and for a local copy of that same error", () => {
+    const routeThreadKey = "env:thread-runtime-match";
+    const runtimeBanner = resolveThreadErrorBanner({
+      isServerThread: true,
+      localServerError: null,
+      localDraftError: null,
+      runtimeError: "Turn failed",
+      runtimeErrorSource: "item-1@2026-11-20T00:00:00Z",
+    });
+    expect(runtimeBanner).toEqual({
+      threadError: "Turn failed",
+      sessionDismissal: {
+        error: "Turn failed",
+        source: "item-1@2026-11-20T00:00:00Z",
+      },
+    });
+
+    const localCopyBanner = resolveThreadErrorBanner({
+      isServerThread: true,
+      localServerError: "Turn failed",
+      localDraftError: null,
+      runtimeError: "Turn failed",
+      runtimeErrorSource: "item-1@2026-11-20T00:00:00Z",
+    });
+    expect(localCopyBanner).toEqual(runtimeBanner);
+
+    const beforeDismiss = visibleErrorFor({
+      routeThreadKey,
+      isServerThread: true,
+      localServerError: "Turn failed",
+      localDraftError: null,
+      runtimeError: "Turn failed",
+      runtimeErrorSource: "item-1@2026-11-20T00:00:00Z",
+    });
+    expect(beforeDismiss.visibleThreadError).toBe("Turn failed");
+    expect(beforeDismiss.bannerKey).not.toBeNull();
+
+    // One dismiss clears the local copy and keeps the underlying runtime error dismissed across remounts.
+    dismissThreadErrorBannerForSession(beforeDismiss.bannerKey);
+    const afterDismiss = visibleErrorFor({
+      routeThreadKey,
+      isServerThread: true,
+      localServerError: null,
+      localDraftError: null,
+      runtimeError: "Turn failed",
+      runtimeErrorSource: "item-1@2026-11-20T00:00:00Z",
+    });
+    expect(afterDismiss.visibleThreadError).toBeNull();
+
+    // A later server run with the same error text gets a new source and reappears.
+    const laterRun = visibleErrorFor({
+      routeThreadKey,
+      isServerThread: true,
+      localServerError: null,
+      localDraftError: null,
+      runtimeError: "Turn failed",
+      runtimeErrorSource: "item-2@2026-11-20T00:01:00Z",
+    });
+    expect(laterRun.visibleThreadError).toBe("Turn failed");
   });
 
-  it("is false for a local error that differs from the runtime error, and for draft threads", () => {
-    expect(
-      threadErrorIsServerRuntime({
+  it("keeps a sourceless server runtime error dismissed for the session", () => {
+    const routeThreadKey = "env:thread-runtime-sourceless";
+    const initial = visibleErrorFor({
+      routeThreadKey,
+      isServerThread: true,
+      localServerError: null,
+      localDraftError: null,
+      runtimeError: "Session failed",
+      runtimeErrorSource: null,
+    });
+    expect(initial.visibleThreadError).toBe("Session failed");
+    expect(initial.bannerKey).not.toBeNull();
+
+    dismissThreadErrorBannerForSession(initial.bannerKey);
+    const afterRemount = visibleErrorFor({
+      routeThreadKey,
+      isServerThread: true,
+      localServerError: null,
+      localDraftError: null,
+      runtimeError: "Session failed",
+      runtimeErrorSource: null,
+    });
+    expect(afterRemount.visibleThreadError).toBeNull();
+  });
+
+  it("re-shows a local server error after dismissal even when the same message repeats in the same millisecond", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-20T12:00:00.000Z"));
+    try {
+      const environmentId = EnvironmentId.make("env-local-repeat");
+      const threadId = ThreadId.make("thread-local-repeat");
+      const routeThreadRef = { environmentId, threadId };
+      const routeThreadKey = `${environmentId}:${threadId}`;
+      let localServerErrors: Record<string, LocalThreadErrorEntry> = {};
+      let localDraftErrors: Record<string, LocalThreadErrorEntry> = {};
+      const setThreadError = makeThreadErrorSetter({
+        routeThreadRef,
+        routeThreadKey,
+        draftId: null,
+        serverThreadRef: routeThreadRef,
+        setLocalServerErrorsByThreadKey: (update) => {
+          localServerErrors = typeof update === "function" ? update(localServerErrors) : update;
+        },
+        setLocalDraftErrorsByDraftId: (update) => {
+          localDraftErrors = typeof update === "function" ? update(localDraftErrors) : update;
+        },
+      });
+
+      setThreadError(threadId, "Network timeout");
+      const first = visibleErrorFor({
+        routeThreadKey,
         isServerThread: true,
-        localServerError: "E2",
-        runtimeError: "E",
-      }),
-    ).toBe(false);
-    expect(
-      threadErrorIsServerRuntime({
+        localServerError: localServerErrors[routeThreadKey]?.message ?? null,
+        localDraftError: null,
+        runtimeError: null,
+        runtimeErrorSource: null,
+      });
+      expect(first.visibleThreadError).toBe("Network timeout");
+      expect(first.bannerKey).toBeNull();
+
+      // Dismiss clears local state without caching a session dismissal key.
+      setThreadError(threadId, null);
+      dismissThreadErrorBannerForSession(first.bannerKey);
+      const dismissed = visibleErrorFor({
+        routeThreadKey,
+        isServerThread: true,
+        localServerError: localServerErrors[routeThreadKey]?.message ?? null,
+        localDraftError: null,
+        runtimeError: null,
+        runtimeErrorSource: null,
+      });
+      expect(dismissed.visibleThreadError).toBeNull();
+
+      // Repeating the identical local error in the same millisecond shows again.
+      setThreadError(threadId, "Network timeout");
+      const repeat = visibleErrorFor({
+        routeThreadKey,
+        isServerThread: true,
+        localServerError: localServerErrors[routeThreadKey]?.message ?? null,
+        localDraftError: null,
+        runtimeError: null,
+        runtimeErrorSource: null,
+      });
+      expect(repeat.visibleThreadError).toBe("Network timeout");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not dismiss an underlying server runtime error when dismissing a different local server error", () => {
+    const routeThreadKey = "env:thread-local-over-runtime";
+    const localBanner = visibleErrorFor({
+      routeThreadKey,
+      isServerThread: true,
+      localServerError: "Attachment upload failed",
+      localDraftError: null,
+      runtimeError: "Provider crashed",
+      runtimeErrorSource: "item-9@2026-11-20T00:00:00Z",
+    });
+    expect(localBanner.visibleThreadError).toBe("Attachment upload failed");
+    expect(localBanner.bannerKey).toBeNull();
+
+    dismissThreadErrorBannerForSession(localBanner.bannerKey);
+
+    // Clearing the local error reveals the undismissed server runtime error underneath.
+    const underlyingRuntime = visibleErrorFor({
+      routeThreadKey,
+      isServerThread: true,
+      localServerError: null,
+      localDraftError: null,
+      runtimeError: "Provider crashed",
+      runtimeErrorSource: "item-9@2026-11-20T00:00:00Z",
+    });
+    expect(underlyingRuntime.visibleThreadError).toBe("Provider crashed");
+    expect(underlyingRuntime.bannerKey).not.toBeNull();
+
+    // Repeating the same local error later still shows.
+    const repeatLocal = visibleErrorFor({
+      routeThreadKey,
+      isServerThread: true,
+      localServerError: "Attachment upload failed",
+      localDraftError: null,
+      runtimeError: "Provider crashed",
+      runtimeErrorSource: "item-9@2026-11-20T00:00:00Z",
+    });
+    expect(repeatLocal.visibleThreadError).toBe("Attachment upload failed");
+  });
+
+  it("re-shows a local draft error after dismissal even when the same message repeats in the same millisecond", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-20T12:00:00.000Z"));
+    try {
+      const environmentId = EnvironmentId.make("env-draft-repeat");
+      const threadId = ThreadId.make("thread-draft-repeat");
+      const draftId = DraftId.make("draft-repeat");
+      const routeThreadRef = { environmentId, threadId };
+      const routeThreadKey = `${environmentId}:${threadId}`;
+      let localServerErrors: Record<string, LocalThreadErrorEntry> = {};
+      let localDraftErrors: Record<string, LocalThreadErrorEntry> = {};
+      const setThreadError = makeThreadErrorSetter({
+        routeThreadRef,
+        routeThreadKey,
+        draftId,
+        serverThreadRef: null,
+        setLocalServerErrorsByThreadKey: (update) => {
+          localServerErrors = typeof update === "function" ? update(localServerErrors) : update;
+        },
+        setLocalDraftErrorsByDraftId: (update) => {
+          localDraftErrors = typeof update === "function" ? update(localDraftErrors) : update;
+        },
+      });
+
+      setThreadError(threadId, "Worktree creation failed");
+      const first = visibleErrorFor({
+        routeThreadKey,
         isServerThread: false,
         localServerError: null,
-        runtimeError: "E",
-      }),
-    ).toBe(false);
+        localDraftError: localDraftErrors[draftId]?.message ?? null,
+        runtimeError: "Ignored on draft thread",
+        runtimeErrorSource: "item-1@2026-11-20T00:00:00Z",
+      });
+      expect(first.visibleThreadError).toBe("Worktree creation failed");
+      expect(first.bannerKey).toBeNull();
+
+      setThreadError(threadId, null);
+      dismissThreadErrorBannerForSession(first.bannerKey);
+      const dismissed = visibleErrorFor({
+        routeThreadKey,
+        isServerThread: false,
+        localServerError: null,
+        localDraftError: localDraftErrors[draftId]?.message ?? null,
+        runtimeError: null,
+        runtimeErrorSource: null,
+      });
+      expect(dismissed.visibleThreadError).toBeNull();
+
+      setThreadError(threadId, "Worktree creation failed");
+      const repeat = visibleErrorFor({
+        routeThreadKey,
+        isServerThread: false,
+        localServerError: null,
+        localDraftError: localDraftErrors[draftId]?.message ?? null,
+        runtimeError: null,
+        runtimeErrorSource: null,
+      });
+      expect(repeat.visibleThreadError).toBe("Worktree creation failed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
