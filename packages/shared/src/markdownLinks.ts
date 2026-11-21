@@ -461,17 +461,18 @@ function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
 }
 
 function markdownLinkTailScanner(markdown: string) {
-  const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
-  const doubleQuoteEnd = markdownRunEndFinder(markdown, /"/g);
-  const singleQuoteEnd = markdownRunEndFinder(markdown, /'/g);
-  const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
+  // A blank line ends the paragraph, so no part of a link's tail runs past one.
+  const whitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
+  const doubleQuoteEnd = markdownRunEndFinder(markdown, /"|\n[ \t\r]*\n/g);
+  const singleQuoteEnd = markdownRunEndFinder(markdown, /'|\n[ \t\r]*\n/g);
+  const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
   return (start: number) => {
     const end = whitespaceEnd(start);
     const quote = markdown[end];
     if (quote === ")") return end + 1;
     if (end === start || (quote !== '"' && quote !== "'")) return null;
     const quoteEnd = (quote === '"' ? doubleQuoteEnd : singleQuoteEnd)(end + 1);
-    if (quoteEnd === markdown.length) return null;
+    if (markdown[quoteEnd] !== quote) return null;
     const close = titleWhitespaceEnd(quoteEnd + 1);
     return markdown[close] === ")" ? close + 1 : null;
   };
