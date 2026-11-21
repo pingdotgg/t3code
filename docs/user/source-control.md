@@ -443,6 +443,10 @@ to one of the team's issues, in any project. It changes threads, never issues. L
 supported tracker. Rules read statuses through the first Linear account you connected, so they
 cover the teams in its workspace.
 
+You can also ask an agent, for example "settle my threads when Engineering issues move to Done".
+It reads and changes the same rules as Settings. To change a rule, the thread must run in Full
+access.
+
 The server checks linked issues about once a minute while it runs, with or without a client
 open. Only a status change counts: the first check after you save a rule records the current
 statuses, and a thread you organize by hand stays that way until one of its issues moves again. A

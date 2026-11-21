@@ -68,6 +68,7 @@ import {
 import { scrubFeedback } from "../../apps/server/src/feedback/scrubFeedback.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
+import { IssueRulesToolkit } from "../../apps/server/src/mcp/toolkits/issueRules/tools.ts";
 import { IssuesToolkit } from "../../apps/server/src/mcp/toolkits/issues/tools.ts";
 import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
@@ -509,6 +510,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PullRequestsToolkit,
   PreviewToolkit,
   IssuesToolkit,
+  IssueRulesToolkit,
   DeviceToolkit,
   HtmlToolkit,
   MessageToolkit,
