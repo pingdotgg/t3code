@@ -85,6 +85,7 @@ interface ThreadDetailsPanelProps extends Pick<
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
   onOpenChanges?: () => void;
+  onOpenRepositoryChanges?: (repositoryPath: string) => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -196,7 +197,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             (folderIsRepo || (!tracksFolders && taskFolder === null)) &&
             (visible.gitActions || (visible.changes && folderIsRepo)),
           // Also for a project that tracks nothing: a thread can change a submodule.
-          repositories: offersGit && density !== "essential" && visible.gitActions,
+          repositories:
+            offersGit && density !== "essential" && (visible.gitActions || visible.changes),
         };
         return (
           <>
@@ -296,6 +298,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         onTaskFolderChange={taskFolderQuery.refresh}
                         explainsEmpty={!folderIsRepo}
                         showActions={visible.gitActions}
+                        showChanges={visible.changes}
+                        {...(props.onOpenRepositoryChanges
+                          ? { onOpenChanges: props.onOpenRepositoryChanges }
+                          : {})}
                       />
                     ) : null}
                   </div>

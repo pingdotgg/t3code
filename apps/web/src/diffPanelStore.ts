@@ -33,7 +33,10 @@ const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
+  /** The tracked repository the Git scopes read; absent reads the thread's folder. */
+  gitRepositoryByThreadKey: Record<string, string>;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
+  selectGitRepository: (ref: ScopedThreadRef, repositoryPath: string | null) => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
@@ -63,6 +66,27 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     (set) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      gitRepositoryByThreadKey: {},
+      selectGitRepository: (ref, repositoryPath) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          if ((state.gitRepositoryByThreadKey[threadKey] ?? null) === repositoryPath) return state;
+          const { [threadKey]: _previousRepository, ...otherRepositories } =
+            state.gitRepositoryByThreadKey;
+          const previous = state.byThreadKey[threadKey];
+          // A commit or base ref of the repository being left means nothing in the next one.
+          return {
+            gitRepositoryByThreadKey:
+              repositoryPath === null
+                ? otherRepositories
+                : { ...otherRepositories, [threadKey]: repositoryPath },
+            byThreadKey:
+              previous?.kind === "branch" || previous?.kind === "commit"
+                ? { ...state.byThreadKey, [threadKey]: { kind: "branch", baseRef: null } }
+                : state.byThreadKey,
+            branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [threadKey]: null },
+          };
+        }),
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -179,13 +203,19 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       removeThread: (ref) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
-          if (!(threadKey in state.byThreadKey) && !(threadKey in state.branchBaseRefByThreadKey)) {
+          if (
+            !(threadKey in state.byThreadKey) &&
+            !(threadKey in state.branchBaseRefByThreadKey) &&
+            !(threadKey in state.gitRepositoryByThreadKey)
+          ) {
             return state;
           }
           const { [threadKey]: _removed, ...byThreadKey } = state.byThreadKey;
           const { [threadKey]: _removedBaseRef, ...branchBaseRefByThreadKey } =
             state.branchBaseRefByThreadKey;
-          return { byThreadKey, branchBaseRefByThreadKey };
+          const { [threadKey]: _removedRepository, ...gitRepositoryByThreadKey } =
+            state.gitRepositoryByThreadKey;
+          return { byThreadKey, branchBaseRefByThreadKey, gitRepositoryByThreadKey };
         }),
     }),
     {
@@ -237,6 +267,27 @@ export function selectThreadDiffPanelSelection(
 ): DiffPanelSelection {
   if (!ref) return DEFAULT_SELECTION;
   return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTION;
+}
+
+export function selectThreadGitRepository(
+  gitRepositoryByThreadKey: Record<string, string>,
+  ref: ScopedThreadRef | null | undefined,
+): string | null {
+  return ref ? (gitRepositoryByThreadKey[scopedThreadKey(ref)] ?? null) : null;
+}
+
+/** The remembered base ref, only while `repositoryPath` (null: the thread's folder) is selected. */
+export function selectRepositoryBranchBaseRef(
+  state: Pick<
+    DiffPanelStoreState,
+    "byThreadKey" | "branchBaseRefByThreadKey" | "gitRepositoryByThreadKey"
+  >,
+  ref: ScopedThreadRef | null | undefined,
+  repositoryPath: string | null,
+): string | null {
+  return selectThreadGitRepository(state.gitRepositoryByThreadKey, ref) === repositoryPath
+    ? selectThreadBranchBaseRef(state, ref)
+    : null;
 }
 
 export function selectThreadBranchBaseRef(

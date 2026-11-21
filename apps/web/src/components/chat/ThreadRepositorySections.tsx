@@ -32,6 +32,7 @@ import { msg, T, useGT } from "gt-react";
 import { memo, useState } from "react";
 
 import { m } from "~/i18n/messages";
+import { selectRepositoryBranchBaseRef, useDiffPanelStore } from "~/diffPanelStore";
 import { cn } from "~/lib/utils";
 import { useQuietThreadProjection } from "~/state/entities";
 import { filesystemEnvironment, useFilesystemReadAccess } from "~/state/filesystem";
@@ -68,6 +69,9 @@ interface ThreadRepositorySectionsProps {
   /** Says so when no repository is listed, instead of leaving the section blank. */
   explainsEmpty: boolean;
   showActions: boolean;
+  showChanges: boolean;
+  /** Opens the Diff panel on the repository at this path. */
+  onOpenChanges?: (repositoryPath: string) => void;
 }
 
 const RepositorySection = memo(function RepositorySection(props: {
@@ -79,6 +83,8 @@ const RepositorySection = memo(function RepositorySection(props: {
   expanded: boolean;
   owner: { readonly threadId?: ThreadId; readonly projectId?: ProjectId };
   showActions: boolean;
+  showChanges: boolean;
+  onOpenChanges: ((repositoryPath: string) => void) | undefined;
   onToggle: (key: string) => void;
   onRemove: (key: string) => void;
 }) {
@@ -91,6 +97,9 @@ const RepositorySection = memo(function RepositorySection(props: {
     }),
   );
   const summary = repositorySectionSummary(status.data);
+  const changesBaseRef = useDiffPanelStore((state) =>
+    selectRepositoryBranchBaseRef(state, props.threadRef, props.sectionKey),
+  );
   const Chevron = props.expanded ? ChevronDownIcon : ChevronRightIcon;
   const bodyId = `thread-repository-${props.sectionKey}`;
   const gt = useGT();
@@ -147,7 +156,11 @@ const RepositorySection = memo(function RepositorySection(props: {
             threadRef={props.threadRef}
             owner={props.owner}
             showActions={props.showActions}
-            showChanges={false}
+            showChanges={props.showChanges}
+            changesBaseRef={changesBaseRef}
+            {...(props.onOpenChanges
+              ? { onOpenChanges: () => props.onOpenChanges?.(props.sectionKey) }
+              : {})}
           />
           {props.removable ? (
             <ThreadDetailsControl
@@ -296,6 +309,8 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
       expanded={expandedKey === section.key}
       owner={owner}
       showActions={props.showActions}
+      showChanges={props.showChanges}
+      onOpenChanges={props.onOpenChanges}
       onToggle={toggle}
       onRemove={remove}
     />
