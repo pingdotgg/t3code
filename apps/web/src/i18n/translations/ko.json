@@ -8413,6 +8413,8 @@
   "bd788c3bdf99d29e": "{route} 경로를 제거할까요?\n{address}",
   "2d22ff842ebd95f5": "{environment}(으)로 가는 경로, 우선순위 순",
   "c44f306568c17f1f": "자동으로 찾음",
+  "f41ec19eb4cba8b1": "{route} 경로의 MCP URL 복사",
+  "32f5a22aa78ece11": "MCP URL 복사",
   "f6e62d06f525c520": "{route} 순서 변경, {position}번째",
   "136b22b496135313": "{route} 경로 제거",
   "ead3fcfb887f845b": "경로 추가",

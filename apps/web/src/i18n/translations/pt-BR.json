@@ -8452,6 +8452,8 @@
   "bd788c3bdf99d29e": "Remover a rota {route}?\n{address}",
   "2d22ff842ebd95f5": "Rotas para {environment}, preferida primeiro",
   "c44f306568c17f1f": "encontrada automaticamente",
+  "f41ec19eb4cba8b1": "Copiar URL do MCP da rota {route}",
+  "32f5a22aa78ece11": "Copiar URL do MCP",
   "f6e62d06f525c520": "Reordenar {route}, posição {position}",
   "136b22b496135313": "Remover a rota {route}",
   "ead3fcfb887f845b": "Adicionar rota",

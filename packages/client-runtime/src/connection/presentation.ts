@@ -4,7 +4,7 @@ import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
 import { type MarkedText, resolveMarkedText } from "../errors/translatable.ts";
-import type { ConnectionCatalogEntry } from "./catalog.ts";
+import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import type { ConnectionTarget, SupervisorConnectionState } from "./model.ts";
 import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
 
@@ -165,11 +165,21 @@ export function environmentMcpUrl(input: {
     (route) => connectionRouteId(route.target) === connectedRouteId,
   );
   for (const route of connectedRoute ? [connectedRoute, ...routes] : routes) {
-    const httpBaseUrl = routeHttpBaseUrl(route);
-    const mcpUrl = httpBaseUrl === null ? null : mcpUrlFromBase(httpBaseUrl);
+    const mcpUrl = connectionRouteMcpUrl(route, input.relayHttpBaseUrl);
     if (mcpUrl !== null) return mcpUrl;
   }
   return null;
+}
+
+export function connectionRouteMcpUrl(
+  route: ConnectionRoute,
+  relayHttpBaseUrl: string | undefined,
+): string | null {
+  const httpBaseUrl =
+    route.target._tag === "RelayConnectionTarget"
+      ? (relayHttpBaseUrl ?? null)
+      : routeHttpBaseUrl(route);
+  return httpBaseUrl === null ? null : mcpUrlFromBase(httpBaseUrl);
 }
 
 function mcpUrlFromBase(httpBaseUrl: string): string | null {

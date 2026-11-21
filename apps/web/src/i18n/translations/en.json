@@ -8462,6 +8462,8 @@
   "bd788c3bdf99d29e": "Remove {route} route?\n{address}",
   "2d22ff842ebd95f5": "Routes to {environment}, preferred first",
   "c44f306568c17f1f": "found automatically",
+  "f41ec19eb4cba8b1": "Copy {route} MCP URL",
+  "32f5a22aa78ece11": "Copy MCP URL",
   "f6e62d06f525c520": "Reorder {route}, position {position}",
   "136b22b496135313": "Remove {route} route",
   "ead3fcfb887f845b": "Add route",

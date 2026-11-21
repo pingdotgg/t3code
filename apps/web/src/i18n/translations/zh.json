@@ -8470,6 +8470,8 @@
   "bd788c3bdf99d29e": "移除 {route} 线路？\n{address}",
   "2d22ff842ebd95f5": "连接 {environment} 的线路，优先线路在前",
   "c44f306568c17f1f": "自动发现",
+  "f41ec19eb4cba8b1": "复制 {route} 线路的 MCP URL",
+  "32f5a22aa78ece11": "复制 MCP URL",
   "f6e62d06f525c520": "重新排序 {route}，位置 {position}",
   "136b22b496135313": "移除 {route} 线路",
   "ead3fcfb887f845b": "添加线路",

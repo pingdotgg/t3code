@@ -66,7 +66,14 @@ function routesList(routes: ReadonlyArray<ConnectionRoute>) {
     serverConfig: null,
     refusedRouteIds: [],
   };
-  return <EnvironmentRoutesList environment={environment} onAddRoute={() => undefined} />;
+  return (
+    <EnvironmentRoutesList
+      environment={environment}
+      relayHttpBaseUrl={undefined}
+      onAddRoute={() => undefined}
+      onCopyMcpUrl={() => undefined}
+    />
+  );
 }
 
 it("shows a route added after a reorder was saved, once another route is removed", async () => {

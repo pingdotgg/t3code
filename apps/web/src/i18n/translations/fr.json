@@ -8453,6 +8453,8 @@
   "bd788c3bdf99d29e": "Supprimer la route {route} ?\n{address}",
   "2d22ff842ebd95f5": "Routes vers {environment}, par ordre de préférence",
   "c44f306568c17f1f": "trouvée automatiquement",
+  "f41ec19eb4cba8b1": "Copier l’URL MCP de la route {route}",
+  "32f5a22aa78ece11": "Copier l’URL MCP",
   "f6e62d06f525c520": "Réordonner {route}, position {position}",
   "136b22b496135313": "Supprimer la route {route}",
   "ead3fcfb887f845b": "Ajouter une route",

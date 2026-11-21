@@ -8410,6 +8410,8 @@
   "bd788c3bdf99d29e": "ルート {route} を削除しますか？\n{address}",
   "2d22ff842ebd95f5": "{environment} へのルート (優先順)",
   "c44f306568c17f1f": "自動検出",
+  "f41ec19eb4cba8b1": "ルート {route} の MCP URL をコピー",
+  "32f5a22aa78ece11": "MCP URL をコピー",
   "f6e62d06f525c520": "{route} を並べ替え、位置 {position}",
   "136b22b496135313": "ルート {route} を削除",
   "ead3fcfb887f845b": "ルートを追加",
