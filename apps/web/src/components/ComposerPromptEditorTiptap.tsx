@@ -113,6 +113,7 @@ import {
   type ComposerChangeKind,
   groupUndoByChangeKind,
   markAsClipboardEdit,
+  markAsCompositionReplace,
 } from "~/composer-undo-grouping";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
@@ -745,6 +746,15 @@ const ComposerChipSelectionExtension = Extension.create({
         },
         props: {
           decorations: (state) => ChipSelectionPluginKey.getState(state),
+          handleDOMEvents: {
+            // Chrome's IME skips deleting a range bounded by a user-select: none chip.
+            compositionstart: (view) => {
+              if (ChipSelectionPluginKey.getState(view.state)?.find().length) {
+                view.dispatch(markAsCompositionReplace(view.state.tr.deleteSelection()));
+              }
+              return false;
+            },
+          },
         },
       }),
     ];
