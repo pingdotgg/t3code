@@ -9,6 +9,7 @@ import {
 import {
   type FilePreviewScroll,
   filePreviewRestoreScrollMessage,
+  type HtmlRenderBox,
   isFilePreviewScrollRestored,
   readFilePreviewScroll,
   type HtmlRenderShortcut,
@@ -21,6 +22,7 @@ import {
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
+  readHtmlRenderSelection,
 } from "@t3tools/shared/htmlRender";
 import {
   isMacPlatform,
@@ -74,6 +76,12 @@ const HTML_RENDER_SHORTCUT_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
   ...THREAD_JUMP_KEYBINDING_COMMANDS,
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 ]);
+
+/**
+ * Bubbles from an HTML render's frame with the page's selection, in the frame's
+ * viewport coordinates, or null once the page clears it.
+ */
+export const HTML_RENDER_SELECTION_EVENT = "t3:html-render-selection";
 
 export const isPdfPreviewFile = (path: string): boolean =>
   /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
@@ -402,6 +410,26 @@ export function HtmlRenderDocument(props: {
     const height = readHtmlRenderContentHeight(event.data);
     if (height !== undefined) {
       props.onContentHeight?.(height);
+      return;
+    }
+    // A selection only shows Cite, and nothing reaches the composer until the reader clicks it,
+    // so it skips the activation check: long drags and touch selection outlast that activation.
+    const selection = readHtmlRenderSelection(event.data);
+    if (selection !== undefined) {
+      if (selection !== null && document.activeElement !== frame) return;
+      const clamp = (value: number, max: number) => Math.min(Math.max(value, 0), max);
+      const inFrame = (box: HtmlRenderBox) => ({
+        left: clamp(box.left, frame.clientWidth),
+        top: clamp(box.top, frame.clientHeight),
+        right: clamp(box.right, frame.clientWidth),
+        bottom: clamp(box.bottom, frame.clientHeight),
+      });
+      const detail = selection && {
+        text: selection.text,
+        rect: inFrame(selection.rect),
+        bounds: inFrame(selection.bounds),
+      };
+      frame.dispatchEvent(new CustomEvent(HTML_RENDER_SELECTION_EVENT, { bubbles: true, detail }));
       return;
     }
     if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;

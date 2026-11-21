@@ -4,6 +4,7 @@ import {
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
+  readHtmlRenderSelection,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
@@ -155,6 +156,41 @@ describe("readHtmlRenderImageRequest", () => {
     // An index that does not point at the clicked image falls back to that image alone.
     expect(request({ index: 0 })).toEqual({ images: [b], index: 0 });
     expect(request({ index: -1 })).toEqual({ images: [b], index: 0 });
+  });
+});
+
+describe("readHtmlRenderSelection", () => {
+  it("reads a selection with its bounds and last line box, a clear, and nothing else", () => {
+    const selection = (params: unknown, method = "t3/notifications/selection-changed") => ({
+      jsonrpc: "2.0",
+      method,
+      params,
+    });
+    const rect = { left: 8, top: 20, right: 120, bottom: 38 };
+    const bounds = { left: 8, top: 0, right: 300, bottom: 38 };
+    expect(readHtmlRenderSelection(selection({ text: " Quoted\nwords ", rect, bounds }))).toEqual({
+      text: " Quoted\nwords ",
+      rect,
+      bounds,
+    });
+    expect(readHtmlRenderSelection(selection({ text: "" }))).toBeNull();
+    expect(readHtmlRenderSelection(selection({ text: " \n ", rect, bounds }))).toBeNull();
+    for (const params of [
+      { text: "Quoted", bounds },
+      { text: "Quoted", rect },
+      { text: "Quoted", rect: { ...rect, top: Number.NaN }, bounds },
+      { text: "Quoted", rect: { ...rect, right: 0 }, bounds },
+      { text: "Quoted", rect, bounds: { ...bounds, bottom: Number.POSITIVE_INFINITY } },
+      { text: "Quoted", rect, bounds: { ...bounds, top: 40 } },
+      { text: 1, rect, bounds },
+    ]) {
+      expect(readHtmlRenderSelection(selection(params))).toBeUndefined();
+    }
+    expect(
+      readHtmlRenderSelection(
+        selection({ text: "Quoted", rect, bounds }, "t3/notifications/open-image"),
+      ),
+    ).toBeUndefined();
   });
 });
 
