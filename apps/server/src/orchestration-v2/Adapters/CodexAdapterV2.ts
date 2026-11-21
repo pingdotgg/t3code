@@ -798,6 +798,15 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   }
 }
 
+// An explicit approval or sandbox policy stays authoritative, as it does in ClaudeAdapterV2.
+function usesCodexFullAccessDefaults(policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) {
+  return (
+    policy.runtimeMode === "full-access" &&
+    policy.approvalPolicy === undefined &&
+    policy.sandboxPolicy === undefined
+  );
+}
+
 const isCodexCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
 
 function codexCyberAccess(
@@ -5987,6 +5996,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
+            // Under the granular policy Codex still asks before commands it judges dangerous.
+            // Terminal input and managed-network prompts stay with the user.
+            if (
+              usesCodexFullAccessDefaults(context.input.runtimePolicy) &&
+              (payload.kind ?? "command") === "command" &&
+              (payload.networkApprovalContext ?? null) === null &&
+              (payload.proposedNetworkPolicyAmendments ?? []).length === 0
+            ) {
+              return {
+                decision: "accept",
+              } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
+            }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("command")) {
               return {
@@ -6057,6 +6078,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `No active Codex turn context for file change approval turn ${payload.turnId}.`,
                 payload,
               );
+            }
+            // A grant root asks for session-wide writes, which stays the user's call.
+            if (
+              usesCodexFullAccessDefaults(context.input.runtimePolicy) &&
+              (payload.grantRoot ?? null) === null
+            ) {
+              return {
+                decision: "accept",
+              } satisfies CodexSchema.FileChangeRequestApprovalResponse;
             }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("file-change")) {
