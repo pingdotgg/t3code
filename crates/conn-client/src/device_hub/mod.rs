@@ -8,6 +8,7 @@
 pub mod input;
 pub mod mjpeg;
 pub mod sse;
+pub mod video;
 
 use std::fmt;
 use std::time::Duration;
@@ -30,6 +31,12 @@ pub use self::sse::{
     DEVICE_EVENT_LOG_LIMIT, DeviceEventLogEntry, DeviceForegroundInfo, DeviceHubHttpError,
     SseEvent, SseParser, append_device_event_log, capture_device_screenshot,
     stream_device_event_log, stream_device_foreground,
+};
+pub use self::video::{
+    AvccChunk, AvccConfig, AvccDemuxer, AvccStreamError, ParsedAnnexBAccessUnit, SEMU_FLAG_KEY,
+    SEMU_HEADER_BYTES, SEMU_MAGIC, SemuPacket, annex_b_to_avcc, avcc_stream_url,
+    normalize_avcc_to_4byte_lengths, parse_avcc_record, parse_semu_packet, split_annex_b_nals,
+    stream_avcc_chunks,
 };
 
 use crate::ClientError;
