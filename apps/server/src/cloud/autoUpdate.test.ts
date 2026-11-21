@@ -92,9 +92,10 @@ const selfUpdateStub = (
     return { calls, service };
   });
 
+// Far above the package version, so a version bump never makes this release current.
 const check = (
   service: ServerSelfUpdate["Service"],
-  newest: Effect.Effect<string, CliUpdateError> = Effect.succeed("0.1.11"),
+  newest: Effect.Effect<string, CliUpdateError> = Effect.succeed("999.0.0"),
 ) =>
   autoUpdateCheck({ newest, lastOutcome: undefined }).pipe(
     Effect.provideService(ServerSelfUpdate, service),
@@ -110,7 +111,9 @@ describe("autoUpdateCheck", () => {
       const { calls, service } = yield* selfUpdateStub(() => Effect.void);
       yield* check(service);
       expect(calls).toEqual(
-        updates ? [{ targetVersion: "0.1.11", stageOnly: true }, { targetVersion: "0.1.11" }] : [],
+        updates
+          ? [{ targetVersion: "999.0.0", stageOnly: true }, { targetVersion: "999.0.0" }]
+          : [],
       );
     }).pipe(Effect.provide(Layer.fresh(SqlitePersistence.layerMemory))),
   );
@@ -121,21 +124,21 @@ describe("autoUpdateCheck", () => {
         input.stageOnly === true ? insertRun("running").pipe(Effect.orDie) : Effect.void,
       );
       yield* check(service);
-      expect(calls).toEqual([{ targetVersion: "0.1.11", stageOnly: true }]);
+      expect(calls).toEqual([{ targetVersion: "999.0.0", stageOnly: true }]);
     }).pipe(Effect.provide(Layer.fresh(SqlitePersistence.layerMemory))),
   );
 
   it.effect("a failed release lookup or download does not fail the scheduled check", () =>
     Effect.gen(function* () {
       const { calls, service } = yield* selfUpdateStub(() =>
-        Effect.fail(new ServerSelfUpdateError({ reason: "Could not prepare t3@0.1.11." })),
+        Effect.fail(new ServerSelfUpdateError({ reason: "Could not prepare t3@999.0.0." })),
       );
       yield* check(
         service,
         Effect.fail(new CliUpdateError({ reason: "Could not list t3 releases." })),
       );
       yield* check(service);
-      expect(calls).toEqual([{ targetVersion: "0.1.11", stageOnly: true }]);
+      expect(calls).toEqual([{ targetVersion: "999.0.0", stageOnly: true }]);
     }).pipe(Effect.provide(Layer.fresh(SqlitePersistence.layerMemory))),
   );
 });
