@@ -767,6 +767,9 @@ it("does not resend a failed recording after consent is revoked", async () => {
 
 it("revokes across windows even before the storage event and survives stale preference writes", async () => {
   setup({ destination: "env-a" });
+  // Browser test files share one localStorage, so settings left here leak into later files.
+  const settingsKey = "t3code:client-settings:v1";
+  const previousSettings = localStorage.getItem(settingsKey);
   await using _screen = await render(<Probe />);
   await act(() => mocks.voice.start());
   expect(mocks.voice.state.phase).toBe("recording");
@@ -798,6 +801,7 @@ it("revokes across windows even before the storage event and survives stale pref
   } finally {
     other.remove();
   }
+  expect(localStorage.getItem(settingsKey)).toBe(previousSettings);
 });
 
 it.each(["not-json", JSON.stringify("off")])(
