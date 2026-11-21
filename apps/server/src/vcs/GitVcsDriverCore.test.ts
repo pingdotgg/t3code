@@ -2725,6 +2725,90 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("explains a worktree path git cannot create", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const blocker = yield* makeTmpDir("git-worktrees-");
+          yield* writeTextFile(blocker, "blocker", "a file, not a directory");
+          const worktreePath = path.join(blocker, "blocker", "wt");
+
+          const failure = yield* driver
+            .createWorktree({
+              cwd,
+              path: worktreePath,
+              refName: initialBranch,
+              newRefName: "feature/blocked",
+            })
+            .pipe(Effect.flip);
+
+          assert.equal(failure.reason, "path_unwritable");
+          assert.equal(
+            failure.detail,
+            "Git could not create a directory this needs. Check that the path's parents are writable directories, or pick a different path.",
+          );
+        }),
+      ).pipe(Effect.provide(layerTest)),
+    );
+
+    it.effect("explains a worktree write that ran out of disk space", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "full");
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("worktree") &&
+              command.args.includes("add")
+            ) {
+              return ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.empty,
+                stderr: Stream.encodeText(
+                  Stream.make(`fatal: cannot mkdir '${worktreePath}': No space left on device`),
+                ),
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              });
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+
+        const failure = yield* driver
+          .createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/full",
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(failure.reason, "disk_full");
+        assert.equal(
+          failure.detail,
+          "Git ran out of disk space writing this. Free some space and retry.",
+        );
+      }).pipe(Effect.provide(layerTest)),
+    );
+
     it.effect.each([
       { action: "worktree add", detail: "git worktree add failed" },
       { action: "worktree add -b", detail: "git branch failed" },

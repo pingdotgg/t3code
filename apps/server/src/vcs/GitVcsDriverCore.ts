@@ -533,6 +533,13 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
     /^[ \t]*![ \t]+\[rejected\][^\n]*\((?:non-fast-forward|fetch first)\)[\s\S]*^error: failed to push some refs/im,
     "push_rejected_non_fast_forward",
   ],
+  // A failed write reports the errno of the directory creation git could not do; the create
+  // verb on a diagnostic line is the filesystem refusing, not a credential refusal.
+  [/No space left on device/i, "disk_full"],
+  [
+    /(?:could not create leading directories of|cannot mkdir|cannot create (?:directory|worktree dir)|could not create worktree dir)/i,
+    "path_unwritable",
+  ],
 ];
 
 // Reasons the user can act on get a sentence in place of the generic detail.
@@ -543,6 +550,9 @@ const GIT_FAILURE_REASON_DETAILS: Partial<Record<GitCommandFailureReason, string
     "The remote has commits this branch doesn't have. Pull or rebase, then push again.",
   config_locked:
     "Another Git process kept the repository's config locked. Wait for it to finish, then retry.",
+  disk_full: "Git ran out of disk space writing this. Free some space and retry.",
+  path_unwritable:
+    "Git could not create a directory this needs. Check that the path's parents are writable directories, or pick a different path.",
 };
 
 function gitFailureDetail(reason: GitCommandFailureReason | null): string {
@@ -1284,7 +1294,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
             ...(reason === null ? {} : { reason }),
-            detail: options.fallbackErrorDetail ?? gitFailureDetail(reason),
+            // A recognized cause's sentence beats a call site's static fallback.
+            detail:
+              (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ??
+              options.fallbackErrorDetail ??
+              gitFailureDetail(reason),
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
