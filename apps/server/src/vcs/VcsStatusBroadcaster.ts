@@ -1269,7 +1269,9 @@ export const make = Effect.gen(function* () {
               else detailedSubscribers.set(cwd, remaining);
             }).pipe(Effect.andThen(trimCachedStatuses)),
         );
-        if (input.includeRemote !== false) yield* acquireBranchChangesDemand(cwd);
+        if (input.includeRemote !== false || input.includeBranchChanges === true) {
+          yield* acquireBranchChangesDemand(cwd);
+        }
         const subscription = yield* PubSub.subscribe(changesPubSub);
         // Watch before reading so a checkout in between still publishes.
         yield* Effect.acquireRelease(retainHeadWatcher(cwd), () => releaseHeadWatcher(cwd));
