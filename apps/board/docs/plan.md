@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, R2, A1, O1, X1, and Y1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, R2, A1, P1, O1, X1, and Y1.
 
 ## How to read this
 
@@ -38,9 +38,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. R2 after L1. A1 after L1. O1 after B12, R2, and A1. X1 after O1. Y1 after O1.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. R2 after L1. A1 after L1. P1 after R2 and A1. O1 after B12 and P1. X1 after O1. Y1 after O1.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 and R2 also edit the separate `13kparkin/pstack-t3` repo.
-- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, L1, R2, A1, X1, and Y1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, L1, R2, A1, P1, X1, and Y1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -1808,9 +1808,65 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends A1 to the base-branch stack and the operator lands it bottom-up.
 
+## Open tickets and agents in the right sidebar, not a drawer (P1)
+
+**Depends on.** R2 and A1.
+
+**Files.**
+
+- [ ] Edit `apps/board/src/browser/panel.ts`, `apps/board/src/browser/PanelTabs.tsx`, `apps/board/src/browser/PanelHost.tsx`, `apps/board/src/board/BoardScreen.tsx`, `apps/board/src/state/boardUi.ts`, and every caller that opens the peek.
+- [ ] Move `apps/board/src/board/PeekDrawer.tsx` to `apps/board/src/board/TicketPanel.tsx`.
+
+**Build.**
+
+- [ ] Clicking a card never opens a second sidebar. Remove the peek drawer that floats over the canvas's right edge.
+- [ ] Add a **Ticket** tab to the right sidebar, after Chat. It draws the content the drawer drew: the ticket's summary and why, M1's check rows, the readiness checklist, and the chosen agent's log. It draws into the panel the same way Chat and Checks do, through a slot.
+- [ ] Clicking a ticket frame or an agent card opens the right sidebar when it is closed, and shows the Ticket tab for that ticket and agent. An unassigned agent shows as "Unassigned" with its log. With nothing chosen, the tab says "Select a ticket or agent card".
+- [ ] The choice stays when the operator switches to another tab and back, and clears when the board changes.
+
+**You see.**
+
+- [ ] One right sidebar. A card's details open in its Ticket tab, and the canvas is never covered.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] No new unit test. The change moves UI, and the panel's tab rules already have tests. Run `vp test run` from `apps/board`, and it passes.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk opens the peek drawer over the canvas, so record that. Click a ticket frame at head. Save `p1-ticket.png`. Pass when the right sidebar shows the Ticket tab and no drawer element exists.
+- [ ] Lane 2. Click an agent card. Save `p1-agent.png`. Pass when the Ticket tab shows that agent's log.
+- [ ] Lane 3. Click an unassigned agent. Save `p1-unassigned.png`. Pass when the tab reads "Unassigned" with its log.
+- [ ] Lane 4. Close the sidebar, then click a card. Save `p1-reopen.png`. Pass when the sidebar opens on the Ticket tab.
+- [ ] Lane 5. Switch to Chat and back. Save `p1-keep.txt`. Pass when the same ticket and agent show.
+- [ ] Lane 6. Open another board. Save `p1-clear.png`. Pass when the tab says "Select a ticket or agent card".
+- [ ] Lane 7. Open a ticket with a pull request. Save `p1-checks.txt`. Pass when the tab's check rows equal the card's and the Checks tab's.
+- [ ] Lane 8. Open an agent card whose worktree setup failed. Save `p1-setup.png`. Pass when the failure panel shows uncovered, and Open terminal works.
+- [ ] Lane 9. Run the Windows app and click a ticket. Save `p1-windows.png` from a full-window capture. Pass when the Ticket tab matches lane 1.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `p1-checks-run.txt`. Pass when all three exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from clicking a card to the Ticket tab's first paint.
+- [ ] Probe. Log `board:ticket-open` and `board:ticket-painted` ten times.
+- [ ] Baseline. Trunk's drawer, timed the same way.
+- [ ] Rule. The median stays within 20 ms of trunk's, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 2, and 4 screenshots into `apps/board/docs/media/p1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/p1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends P1 to the base-branch stack and the operator lands it bottom-up.
+
 ## Meet every recorded speed budget (O1)
 
-**Depends on.** B12, R2, and A1.
+**Depends on.** B12 and P1.
 
 **Files.**
 
