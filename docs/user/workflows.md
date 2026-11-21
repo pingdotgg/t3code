@@ -8,10 +8,30 @@ For one prompt on a timer or webhook, use a scheduled task. Use a workflow when 
 
 Workflow files live in `~/.t3/workflows/` (or wherever `T3CODE_WORKFLOWS` points — a folder or a single file). Nothing needs to be enabled; the server watches the folder and reloads changes without a restart.
 
-- **Ask an agent (recommended):** copy the [`t3-workflows` skill](../../skills/t3-workflows/SKILL.md) into your agent's skills folder (such as `~/.claude/skills/` or `~/.agents/skills/`) and describe what you want.
+- **Ask an agent (recommended):** copy the [`t3-workflows` skill](https://github.com/pingdotgg/t3code/blob/main/skills/t3-workflows/SKILL.md) into your agent's skills folder (such as `~/.claude/skills/` or `~/.agents/skills/`) and describe what you want.
 - **Edit directly:** edit files in `~/.t3/workflows/`, or use **Definitions** on the Workflows page (saving and deleting in the app require terminal access).
 
-Saving checks that the file loads, does not duplicate a workflow name and version, and does not remove a version with unfinished runs. A broken file does not stop other workflows: its last working version keeps running while the Workflows page shows the error. Mistakes inside a workflow body surface when a run hits them and pauses. To change steps while runs are unfinished, add the new body under a higher `version` and keep the old one until those runs end.
+A small workflow, saved as `~/.t3/workflows/release.ts`:
+
+```ts
+const { workflow, step, ask, stop, title } = T3;
+
+export default workflow(
+  "release",
+  { version: 1, payload: Schema.Struct({ name: Schema.String }) },
+  Effect.fn(function* (payload) {
+    yield* title(`Release ${payload.name}`);
+    const notes = yield* step("notes", { returns: Schema.String }, Effect.succeed("3 fixes"));
+    const answer = yield* ask("ship", { title: `Ship ${payload.name}? ${notes}`, choices: ["Ship", "Hold"] });
+    if (Option.isNone(answer) || answer.value.choice !== "Ship") return yield* stop("held back");
+    return { shipped: payload.name };
+  }),
+);
+```
+
+Start it with `t3 workflow start release --input '{"name":"v1.4"}' --key v1.4`, then answer its question in the app. `T3`, `Effect`, `Schema` and `Option` are provided; a workflow file imports nothing from T3 or Effect. Name files with letters, digits, `-`, `_` and `.`; other names are skipped with a warning.
+
+Saving checks that the file loads, does not duplicate a workflow name and version, and does not remove a version with unfinished runs. A file that fails these checks keeps its last working version while the Workflows page shows why; other files are not affected. Mistakes inside a workflow body surface when a run hits them and pauses. To change steps while runs are unfinished, add the new body under a higher `version` and keep the old one until those runs end.
 
 Dot-files and subfolders are ignored. Keep shared helpers in a subfolder and restart the server after editing an imported file.
 
@@ -19,10 +39,10 @@ Dot-files and subfolders are ignored. Keep shared helpers in a subfolder and res
 
 ```sh
 t3 workflow start <name> --input '<json>' --key <key>
-t3 workflow list
+t3 workflow list [--status paused]
 t3 workflow show <run>
 t3 workflow resume <run>
-t3 workflow cancel <run>
+t3 workflow cancel <run> [--reason '<why>']
 t3 workflow questions
 t3 workflow signal '{"choice":"yes"}' --run <run> --wait <name>
 t3 workflow signal '<json>' --workflow <name> --channel <channel>
@@ -31,21 +51,21 @@ t3 workflow store list
 t3 workflow store set <key> '<json>'
 ```
 
-Starting twice with the same `--key` returns the same run — even after a version bump — so retries do not duplicate work. Use `signal` with `--run` and `--wait` to answer a question or wake a run, or with `--workflow` and `--channel` to wake whichever run waits on that channel. Use `store` to read or change state kept between runs.
+Every start needs a `--key`: starting twice with the same key returns the same run — even after a version bump — so retries do not duplicate work. Use `signal` with `--run` and `--wait` to answer a question or wake a run, or with `--workflow` and `--channel` to wake whichever run waits on that channel. A signal for a question that is no longer open is kept for a later wait rather than refused, so check `t3 workflow questions` first. Use `store` to read or change state kept between runs.
 
 ## Triggers
 
-- **Schedules:** `every` runs on an interval; `daily` runs at a local time of day (a time missed by more than 10 minutes while the server is down is skipped).
-- **Webhooks:** `t3 workflow hooks` prints each hook's path; prepend your server's address (the same origin scheduled task webhooks use). The path contains the hook's secret, so share it only with the sender. Organization policies blocking webhook tasks block workflow webhooks too.
+- **Schedules:** `every` runs on an interval, starting one interval after the workflow loads; `daily` runs at a local time of day (a time missed by more than 10 minutes while the server is down is skipped).
+- **Webhooks:** `t3 workflow hooks` prints each hook's path; prepend your server's address. The path contains the hook's secret, so share it only with the sender. A sender's retry that repeats its delivery header (such as GitHub's `X-GitHub-Delivery`) starts no second run, and bodies over 1 MiB are refused. Organization policies blocking webhook tasks block workflow webhooks too.
 - **Issues and pull requests:** workflows can start on new issues or pull requests and read, comment on, or update them via **Settings → Source control & issues** — no webhook needed. T3 Code checks roughly once a minute, and only items opened after the workflow was first loaded start runs.
 
 ## Follow runs in the app
 
-Once a server has runs, **Workflows** appears in the sidebar with a count of open questions and paused runs waiting on you; on mobile, use the **Workflows** tab. Filter by **Needs you**, **Running**, or **All** (skipped runs stay hidden unless toggled on), open child runs from their parent, and answer questions, resume paused runs, or cancel active runs (requires permission to operate threads).
+Once a connected server has runs, **Workflows** appears in the sidebar with a count of open questions and paused runs waiting on you; before that, open it with **Open workflows** in the command palette. On mobile, use the **Workflows** tab. Filter by **Needs you**, **Running**, or **All** (skipped runs stay hidden unless toggled on), open child runs from their parent, and answer questions, resume paused runs, or cancel active runs (requires permission to operate threads).
 
 ### Agent threads
 
-Each `agent` step runs in an ordinary thread hidden from the main thread list. Open it from the run to watch it live, read its transcript, or send follow-up messages; the thread links back to the run.
+Each `agent` step runs in an ordinary thread, left out of thread lists (including `t3 thread list`). Open it from the run to watch it live, read its transcript, or send follow-up messages; the thread links back to the run.
 
 An `agent` step can launch a new thread with its own `workspace` (such as a worktree), `runtimeMode`, `interactionMode`, `title`, and typed `returns`, or continue an earlier step's thread. Runs can set their display name with `title(text)`. An `agent` step can also target a project on a [linked environment](remote-access.md#link-another-environment) (requires **Settings → Labs → Linked environments**); the run itself stays on the server that started it.
 
