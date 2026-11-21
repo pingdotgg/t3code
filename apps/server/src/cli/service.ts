@@ -215,14 +215,24 @@ function formatServiceStatus(
       `  Next: Run \`${commands.update}\` to match it, or pass \`--allow-downgrade\` to \`${commands.install}\` explicitly.`,
     ].join("\n");
   }
+  const { homeOwner } = status;
   return [
     "T3 Code service",
-    `  Status: ${status.current ? `installed · t3@${installedVersion}` : "needs an update or repair"}`,
+    `  Status: ${status.current ? `${homeOwner === undefined ? "installed" : "waiting"} · t3@${installedVersion}` : "needs an update or repair"}`,
+    ...(homeOwner === undefined
+      ? []
+      : [
+          `  Waiting: ${BootService.formatBootServiceHomeOwner(homeOwner, status.installedBaseDir)}. The service starts once it stops.`,
+        ]),
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...formatProtection(protection),
     ...problems,
-    ...(status.current ? [] : [`  Next: Run \`${commands.install}\` to repair it.`]),
+    ...(!status.current
+      ? [`  Next: Run \`${commands.install}\` to repair it.`]
+      : homeOwner === undefined
+        ? []
+        : [`  Next: ${BootService.BOOT_SERVICE_HOME_OWNER_NEXT}`]),
   ].join("\n");
 }
 
