@@ -282,6 +282,11 @@ When the check reports an export, remove the `export` keyword or the code. If a 
 import graph uses the export, add `/** @public */` above it. For a single exception, put
 `// fallow-ignore-next-line unused-export` on the line above.
 
+Two blind spots differ from Knip. A name that a package entry re-exports with `export *` (most of
+`@t3tools/contracts`) counts as used, so delete such exports by reading their callers. A namespace
+import that escapes as a value, such as `Contracts as Record<string, unknown>`, marks every export
+of that module used; read namespace members by name instead.
+
 ## Desktop artifacts
 
 Local artifact builds are unsigned by default and write to `release/`:
