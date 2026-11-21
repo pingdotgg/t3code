@@ -434,7 +434,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2]
     steps:
       # Depth 2 brings the base commit the change is diffed against.
       - name: Checkout
