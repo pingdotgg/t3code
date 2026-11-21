@@ -19,14 +19,15 @@ export function RightPanelResizeHandle({ handlers, className, label, ...separato
       aria-orientation="vertical"
       {...separatorProps}
       className={cn(
-        "group absolute inset-y-0 left-0 z-40 w-1 cursor-col-resize touch-none select-none any-pointer-coarse:-left-2 any-pointer-coarse:w-4",
+        // Chromium picks the cursor before useResizeDrag rules out a scrollbar thumb under the pointer.
+        "group absolute inset-y-0 left-0 z-40 w-1 cursor-default touch-none select-none data-[hover-zone=resize]:cursor-col-resize any-pointer-coarse:-left-2 any-pointer-coarse:w-4",
         className,
       )}
       {...handlers}
     >
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-transparent transition-colors duration-150 group-hover:bg-border group-focus-visible:bg-primary/60 group-active:bg-primary/60 any-pointer-coarse:left-2"
+        className="pointer-events-none absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-transparent transition-colors duration-150 group-hover:bg-border group-focus-visible:bg-primary/60 group-active:bg-primary/60 group-data-[hover-zone=scrollbar-thumb]:hidden any-pointer-coarse:left-2"
       />
     </div>
   );
