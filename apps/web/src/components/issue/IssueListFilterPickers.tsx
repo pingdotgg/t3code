@@ -7,7 +7,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   FolderGit2Icon,
-  FolderIcon,
   LayersIcon,
   ListFilterIcon,
   TagIcon,

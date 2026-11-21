@@ -117,8 +117,11 @@ function DiffWorkerReady({ failed, children }: { failed: boolean; children?: Rea
   );
 }
 
-/** `failed` marks a pool whose worker died, so its views render plain text instead of waiting. */
-export function useDiffWorkerPoolReady(workerPool: WorkerPoolManager | undefined, failed = false) {
+/** A null pool is one whose worker died: its views render plain text instead of waiting. */
+export function useDiffWorkerPoolReady(
+  workerPool: WorkerPoolManager | null | undefined,
+  failed = workerPool === null,
+) {
   const [readyPool, setReadyPool] = useState<WorkerPoolManager>();
   const ready = workerPool
     ? readyPool === workerPool || workerPool.isInitialized() || !workerPool.isWorkingPool()

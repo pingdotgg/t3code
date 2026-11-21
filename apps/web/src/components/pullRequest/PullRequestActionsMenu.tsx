@@ -469,7 +469,9 @@ export function PullRequestActionsMenu({
           {openOnHostText}
         </MenuItem>
         {repositoryUrl ? (
-          <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}>
+          <MenuItem
+            onClick={(event) => void openLink(repositoryUrl, { event }).catch(console.error)}
+          >
             <FolderGit2Icon className="size-3.5" />
             <T>
               Open <Var>{detail.repository}</Var>
