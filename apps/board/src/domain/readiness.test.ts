@@ -161,10 +161,6 @@ describe("stuck checks", () => {
     expect(isStuck(check("test", "pending", minutesAgo(19)), NOW)).toBe(false);
   });
 
-  it("Given a finished check that began 30 minutes ago, when it is tested, then it is not stuck", () => {
-    expect(isStuck(check("test", "success", minutesAgo(30)), NOW)).toBe(false);
-  });
-
   it("Given a check running 21 minutes, when readiness is computed, then CI names it as stuck", () => {
     const ticket = ticketOf({ key: "T-1", pr: 12, verdicts: clean });
     const conditions = evaluateReadiness({

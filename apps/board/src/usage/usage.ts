@@ -23,11 +23,10 @@ const KIND_ORDER = {
   other: 3,
 } as const satisfies Record<ServerProviderUsageWindow["kind"], number>;
 
-/** The engine labels a model window `Weekly · Fable`. A window with `modelIds` is one even without that separator. */
+/** The engine labels a model window `Weekly · Fable`. */
 function modelName(window: ServerProviderUsageWindow): string | undefined {
   const separator = window.label.lastIndexOf("·");
-  if (separator >= 0) return window.label.slice(separator + 1).trim();
-  return window.modelIds !== undefined && window.modelIds.length > 0 ? window.label : undefined;
+  return separator >= 0 ? window.label.slice(separator + 1).trim() : undefined;
 }
 
 /** Time to reset: `5d 22h`, `3h 12m`, or minutes under an hour. */

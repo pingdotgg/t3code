@@ -100,36 +100,27 @@ const offer = { version: "2.1.312", canUpdate: true };
 const idle = { automatic: false, busy: false, activeRuns: 0 };
 
 describe("deciding an update's action", () => {
-  it("Given an offer and the switch off, when decided, then it only notifies", () => {
-    expect(decideUpdate({ ...idle, offer })).toBe("notify");
-  });
-
-  it("Given an automatic switch and no active run, when decided, then it starts", () => {
-    expect(decideUpdate({ ...idle, offer, automatic: true })).toBe("start");
-  });
-
-  it("Given an automatic switch and an active run, when decided, then it waits", () => {
-    expect(decideUpdate({ ...idle, offer, automatic: true, activeRuns: 2 })).toBe("wait");
-  });
-
-  it("Given an update waiting on a run, when the run goes idle, then it starts", () => {
-    const waiting = { ...idle, offer, automatic: true };
-    expect(decideUpdate({ ...waiting, activeRuns: 1 })).toBe("wait");
-    expect(decideUpdate({ ...waiting, activeRuns: 0 })).toBe("start");
-  });
-
-  it("Given an instance that cannot update itself, when the switch is on, then it still only notifies", () => {
-    expect(
-      decideUpdate({ ...idle, offer: { version: "2.1.312", canUpdate: false }, automatic: true }),
-    ).toBe("notify");
-  });
-
-  it("Given no offer, when decided, then there is nothing to do", () => {
-    expect(decideUpdate({ ...idle, offer: null, automatic: true })).toBe("none");
-  });
-
-  it("Given an update that runs or already ran, when decided, then it is left alone", () => {
-    expect(decideUpdate({ ...idle, offer, automatic: true, busy: true })).toBe("none");
+  it.each([
+    ["an offer and the switch off", { ...idle, offer }, "notify"],
+    [
+      "an automatic switch and no active run, or a run that went idle",
+      { ...idle, offer, automatic: true },
+      "start",
+    ],
+    [
+      "an automatic switch and an active run",
+      { ...idle, offer, automatic: true, activeRuns: 2 },
+      "wait",
+    ],
+    [
+      "an instance that cannot update itself",
+      { ...idle, offer: { version: "2.1.312", canUpdate: false }, automatic: true },
+      "notify",
+    ],
+    ["no offer", { ...idle, offer: null, automatic: true }, "none"],
+    ["an update that runs or already ran", { ...idle, offer, automatic: true, busy: true }, "none"],
+  ])("Given %s, when decided, then the action is %s", (_case, input, action) => {
+    expect(decideUpdate(input)).toBe(action);
   });
 });
 

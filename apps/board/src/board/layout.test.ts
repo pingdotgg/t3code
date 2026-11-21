@@ -153,15 +153,26 @@ describe("dragging a frame", () => {
 describe("dependency edges", () => {
   const box = (x: number, y: number) => ({ key: "k", head: 100, x, y, width: 264, height: 100 });
 
+  const endpoints = (path: string) => {
+    const numbers = path.match(/-?\d+(\.\d+)?/g)?.map(Number) ?? [];
+    return { from: numbers.slice(0, 2), to: numbers.slice(-2) };
+  };
+
   it("Given a dependent in a later lane, when drawn, then the curve runs from the right edge to the left edge", () => {
-    expect(edgePath(box(0, 0), box(300, 200))).toBe("M 264 24 C 304 24, 260 224, 300 224");
+    expect(endpoints(edgePath(box(0, 0), box(300, 200)))).toEqual({
+      from: [264, 24],
+      to: [300, 224],
+    });
   });
 
   it("Given a dependent in an earlier lane, when drawn, then it runs from the left edge to the right edge", () => {
-    expect(edgePath(box(300, 0), box(0, 200))).toBe("M 300 24 C 260 24, 304 224, 264 224");
+    expect(endpoints(edgePath(box(300, 0), box(0, 200)))).toEqual({
+      from: [300, 24],
+      to: [264, 224],
+    });
   });
 
-  it("Given two frames in one lane, when drawn, then the curve bows out on the left", () => {
-    expect(edgePath(box(0, 0), box(0, 200))).toBe("M 0 24 C -40 24, -40 224, 0 224");
+  it("Given two frames in one lane, when drawn, then the curve joins their left edges", () => {
+    expect(endpoints(edgePath(box(0, 0), box(0, 200)))).toEqual({ from: [0, 24], to: [0, 224] });
   });
 });

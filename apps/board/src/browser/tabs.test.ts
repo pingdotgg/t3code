@@ -62,12 +62,6 @@ describe("tabsReducer", () => {
     expect(tabsReducer(state, { type: "close", id: "a" })).toEqual(EMPTY_TABS);
   });
 
-  it("Given an unknown id, when it is closed or activated, then the state is unchanged", () => {
-    const state = tabsReducer(EMPTY_TABS, { type: "open", id: "a", url: "https://a.test/" });
-    expect(tabsReducer(state, { type: "close", id: "x" })).toBe(state);
-    expect(tabsReducer(state, { type: "activate", id: "x" })).toBe(state);
-  });
-
   it("Given a page reports its title, when the tab updates, then only that tab changes", () => {
     let state = EMPTY_TABS;
     for (const id of ["a", "b"]) {

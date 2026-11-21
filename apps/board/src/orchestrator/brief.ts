@@ -15,10 +15,6 @@ export interface BoardFacts {
   readonly projectDir: string;
 }
 
-export interface BriefInput extends BoardFacts {
-  readonly roles?: ReadonlyArray<ResolvedRole>;
-}
-
 function targetText({ target }: ResolvedRole): string {
   const parts = [
     ...(target.providerInstanceId === undefined
@@ -59,11 +55,6 @@ export function renderFacts(input: BoardFacts): string {
     .replaceAll("{{builderCap}}", String(input.builderCap))
     .replaceAll("{{project}}", input.project)
     .replaceAll("{{projectDir}}", input.projectDir);
-}
-
-/** The rules and the board facts in one message, for an orchestrator that has no standing instructions. */
-export function renderBrief(input: BriefInput): string {
-  return `${renderRules(input.roles)}\n\n${renderFacts(input)}`;
 }
 
 export interface StoreFiles {

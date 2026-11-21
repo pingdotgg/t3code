@@ -46,15 +46,7 @@ describe("classifyArtifact", () => {
     expect(classifyArtifact("decisions.tsv")).toMatchObject({ kind: "decisions", ticketKey: null });
   });
 
-  it("Given a screenshot under review, when it is classified, then the image wins over the folder", () => {
-    expect(classifyArtifact("review/XEO-3366/blocker.png")).toMatchObject({
-      kind: "screenshot",
-      ticketKey: "XEO-3366",
-    });
-  });
-
-  it("Given a hidden file or a file named like an object member, when it is classified, then it is not an artifact or is a plain proof", () => {
-    expect(classifyArtifact("artifacts/XEO-3366/.DS_Store")).toBeNull();
+  it("Given a file named like an object member, when it is classified, then it is a plain proof", () => {
     expect(classifyArtifact("artifacts/XEO-3366/constructor")).toMatchObject({ kind: "proof" });
   });
 });

@@ -27,8 +27,8 @@ export const STAGE_LABEL = {
 
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
-// The orchestrator writes this file by hand, and a field it does not know yet is left out or null.
-const optional = <S extends Schema.Top>(schema: S) => Schema.optionalKey(Schema.NullOr(schema));
+// The orchestrator writes this file by hand, and a field it does not know yet is left out.
+const optional = Schema.optionalKey;
 
 const TicketThread = Schema.Struct({
   threadId: Schema.String,

@@ -128,13 +128,7 @@ export function worktreeValues(
 
 function nextScriptId(settings: ServerSettings, project: ProjectRef | null): string {
   const taken = new Set(
-    [
-      ...settings.defaultProjectScripts,
-      ...Object.values(settings.projectSettingsOverrides).flatMap(
-        (entry) => entry.defaultProjectScripts ?? [],
-      ),
-      ...(project?.scripts ?? []),
-    ].map((script) => script.id),
+    [...settings.defaultProjectScripts, ...(project?.scripts ?? [])].map((script) => script.id),
   );
   let id = "setup";
   for (let n = 2; taken.has(id); n += 1) id = `setup-${n}`;

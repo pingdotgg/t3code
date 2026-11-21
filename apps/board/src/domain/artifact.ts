@@ -95,11 +95,11 @@ function extensionOf(name: string): string {
 
 /**
  * The artifact a path under the store folder is, or null for a file that is not one, such as
- * `tickets.json`. An image is a screenshot wherever it sits.
+ * `tickets.json`.
  */
 export function classifyArtifact(path: string): ArtifactRef | null {
   const segments = path.split("/");
-  if (segments.some((segment) => segment === "" || segment.startsWith("."))) return null;
+  if (segments.some((segment) => segment === "")) return null;
   const name = segments.at(-1) ?? "";
   const [first = ""] = segments;
   const inFolder = segments.length > 1;
@@ -109,10 +109,7 @@ export function classifyArtifact(path: string): ArtifactRef | null {
   if (inFolder ? folder === null : own(ROOT_FILES, name) === undefined) return null;
 
   const byExtension = own(BY_EXTENSION, extension);
-  const kind =
-    byExtension === "screenshot"
-      ? "screenshot"
-      : (own(BY_NAME, name) ?? folder?.kind ?? byExtension ?? "proof");
+  const kind = own(BY_NAME, name) ?? folder?.kind ?? byExtension ?? "proof";
   const ticketKey = folder?.keyed === true && segments.length > 2 ? (segments[1] ?? null) : null;
   return { path, name, kind, ticketKey };
 }

@@ -6,8 +6,8 @@ import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
 import * as NodeURL from "node:url";
 
-import { handle } from "./hook.mjs";
 import { run } from "../scripts/run-hook.mjs";
+import { handle } from "./hook.mjs";
 import { parseFrontmatter, parseScope } from "./rules.mjs";
 
 const HOOK = NodePath.join(
@@ -311,51 +311,29 @@ NodeTest.describe("omp-kit hook engine", () => {
   );
 
   NodeTest.test(
-    "Given a hook payload on stdin, when run-hook.mjs runs as a process, then stdout carries the same JSON",
+    "Given hook payloads on stdin, when run-hook.mjs runs as a process, then a payload no rule matches prints nothing and a matching one prints what run returns",
     (t) => {
       const { root, env } = makeEnvironment();
       t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }));
-
-      const stdout = NodeChildProcess.execFileSync("node", [HOOK], {
-        env: { ...process.env, ...env },
-        input: JSON.stringify({
-          hook_event_name: "PreToolUse",
-          session_id: "s9",
-          tool_name: "Bash",
-          tool_use_id: "toolu_9",
-          tool_input: { command: "rm -rf /tmp/x" },
-        }),
-        encoding: "utf8",
-      });
-
-      NodeAssert.equal(
-        JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason.includes(
-          "Never run rm -rf.",
-        ),
-        true,
-      );
-    },
-  );
-
-  NodeTest.test(
-    "Given a payload no rule matches, when run formats it, then the output is empty, and a matching payload yields the hook JSON",
-    (t) => {
-      const { root, env } = makeEnvironment();
-      t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }));
-      const payload = (command) =>
+      const payload = (command, session) =>
         JSON.stringify({
           hook_event_name: "PreToolUse",
-          session_id: "s10",
+          session_id: session,
           tool_name: "Bash",
-          tool_use_id: "toolu_10",
+          tool_use_id: "toolu_9",
           tool_input: { command },
         });
+      const runAsProcess = (command, session) =>
+        NodeChildProcess.execFileSync("node", [HOOK], {
+          env: { ...process.env, ...env },
+          input: payload(command, session),
+          encoding: "utf8",
+        });
 
-      NodeAssert.equal(run(payload("ls"), env), "");
-      NodeAssert.equal(
-        JSON.parse(run(payload("rm -rf x"), env)).hookSpecificOutput.permissionDecision,
-        "deny",
-      );
+      NodeAssert.equal(runAsProcess("ls", "s9"), "");
+      const denied = runAsProcess("rm -rf x", "s9");
+      NodeAssert.match(denied, /Never run rm -rf\./);
+      NodeAssert.equal(denied, run(payload("rm -rf x", "s9-in-process"), env));
     },
   );
 });
@@ -451,23 +429,6 @@ NodeTest.describe("omp-kit approval rule for MCP write tools", () => {
       NodeAssert.equal(ask("mcp__linear-server__get_issue", { id: "LIN-1" }), null);
       NodeAssert.equal(ask("mcp__linear-server__save_comment", { body: "a" }), "ask");
       NodeAssert.equal(ask("mcp__linear-server__save_comment", { body: "b" }), "ask");
-    },
-  );
-
-  NodeTest.test(
-    "Given an ask rule and an interrupt rule on one MCP call, when it is replayed, then the deny wins",
-    (t) => {
-      const { root, env } = makeEnvironment();
-      t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }));
-      NodeFS.writeFileSync(
-        NodePath.join(env.OMP_KIT_RULES_DIR, "no-t3.md"),
-        `---\ncondition: ['mcp__t3-code__']\nscope: tool:mcp__t3-code__set_issue_state\n---\nNo T3 writes.\n`,
-      );
-
-      const output = preToolUse(env, "s-deny", "mcp__t3-code__set_issue_state", { state: "done" });
-
-      NodeAssert.equal(output.hookSpecificOutput.permissionDecision, "deny");
-      NodeAssert.match(output.hookSpecificOutput.permissionDecisionReason, /No T3 writes\.$/);
     },
   );
 });

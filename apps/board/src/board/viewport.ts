@@ -42,7 +42,7 @@ export function fitToContent(content: Rect | null, size: Size): View {
   if (!content) return INITIAL_VIEW;
   const availW = size.width - FIT_PADDING * 2;
   const availH = size.height - FIT_PADDING * 2;
-  const k = Math.max(FIT_FLOOR, Math.min(1, availW / content.width, availH / content.height));
+  const k = Math.max(FIT_FLOOR, Math.min(availW / content.width, availH / content.height));
   const fitsW = content.width * k <= availW;
   const fitsH = content.height * k <= availH;
   return {
@@ -59,16 +59,12 @@ const revealAxis = (
   frameSize: number,
   margin: number,
 ) => {
-  if (start < frameStart + margin || size > frameSize - margin * 2)
-    return frameStart + margin - start;
+  if (start < frameStart + margin) return frameStart + margin - start;
   const overflow = start + size - (frameStart + frameSize - margin);
   return overflow > 0 ? -overflow : 0;
 };
 
-/**
- * How far to pan so `target` sits inside `frame` with `margin` to spare, both in screen px. A
- * target too big for the frame lines up with its top left corner instead.
- */
+/** How far to pan so `target` sits inside `frame` with `margin` to spare, both in screen px. */
 export const revealDelta = (target: Rect, frame: Rect, margin: number) => ({
   dx: revealAxis(target.x, target.width, frame.x, frame.width, margin),
   dy: revealAxis(target.y, target.height, frame.y, frame.height, margin),

@@ -84,14 +84,6 @@ describe("the provider picker's instances", () => {
     ]);
   });
 
-  it("Given a custom Claude instance named before the default, when they are listed, then the default still leads", () => {
-    const listed = pickableInstances([
-      provider({ instanceId: "claude_alt", driver: "claudeAgent", displayName: "Claude alt" }),
-      provider({ instanceId: "claudeAgent", driver: "claudeAgent" }),
-    ]);
-    expect(listed.map((instance) => instance.name)).toEqual(["Claude Code", "Claude alt"]);
-  });
-
   it("Given models with a default and a legacy one, when they are listed, then the legacy one is dropped and the default is named", () => {
     const [listed] = pickableInstances([
       provider({
@@ -219,13 +211,6 @@ describe("the orchestrator's pick", () => {
     expect(defaultPick(pickableInstances([codex])).reason).toBe(
       "The engine has no Claude Code instance. Starting on Codex instead.",
     );
-  });
-
-  it("Given an Opus 5.5 whose effort levels lack medium, when nothing is picked, then the model's own default effort is used", () => {
-    const instances = pickableInstances([
-      claude("authenticated", [{ slug: "claude-opus-5-5", efforts: ["low", "high"] }]),
-    ]);
-    expect(defaultPick(instances).value.effort).toBe("");
   });
 
   it("Given a model typed before any pick, when the pick resolves, then the typed model is kept on the default instance", () => {

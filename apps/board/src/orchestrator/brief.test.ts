@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { orchestratorStats, renderBrief, renderFacts, renderRules } from "./brief";
+import { orchestratorStats, renderFacts, renderRules } from "./brief";
 import { resolveRoles, ROLES } from "./roles";
 
 const FACTS = {
@@ -54,11 +54,6 @@ describe("the orchestrator's standing rules and board facts", () => {
     expect(renderRules(roles)).toContain(
       "- claude-fable-5-1 is not offered by claudeAgent, so it uses the orchestrator's model.",
     );
-  });
-
-  it("Given the rules and the facts, when the whole brief renders, then it is the rules, then the facts", () => {
-    const brief = renderBrief(FACTS);
-    expect(brief).toBe(`${renderRules()}\n\n${renderFacts(FACTS)}`);
   });
 
   it("Given the rules, when they render, then they require the real clock, every stage, a named PR base, and evidence", () => {

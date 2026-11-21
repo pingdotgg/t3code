@@ -358,8 +358,6 @@ export interface ForYouToast {
   readonly title: string;
 }
 
-const MAX_TOASTS = 4;
-
 export const NO_TOASTS: ToastState = { seen: new Map(), toasts: [] };
 
 export interface ToastState {
@@ -399,5 +397,5 @@ export function nextToasts(
   }
   return fresh.length === 0
     ? { seen, toasts: previous.toasts }
-    : { seen, toasts: [...previous.toasts, ...fresh].slice(-MAX_TOASTS) };
+    : { seen, toasts: [...previous.toasts, ...fresh] };
 }

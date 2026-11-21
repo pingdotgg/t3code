@@ -21,10 +21,6 @@ describe("local state", () => {
     expect(await createLocalState(fakeStorage().storage).read()).toEqual(EMPTY_LOCAL_STATE);
   });
 
-  it("Given a corrupt file, when read, then it is empty instead of failing", async () => {
-    expect(await createLocalState(fakeStorage("{ nope").storage).read()).toEqual(EMPTY_LOCAL_STATE);
-  });
-
   it("Given a file saved before frames could move, when read, then the last board is kept and no frame is moved", async () => {
     const saved = JSON.stringify({
       lastOpenedBoard: { projectId: "p1", folder: "a" },

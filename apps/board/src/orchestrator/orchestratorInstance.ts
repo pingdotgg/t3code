@@ -98,24 +98,17 @@ const configOf = (instance: ProviderInstanceConfig | undefined) =>
 
 const PLUGIN_DIRS = "CLAUDE_CODE_PLUGIN_DIRS";
 
-// An environment value is plain text or a reference to a secret.
-const isPlainText = Schema.is(Schema.String);
-
 /**
  * Claude Code loads a plugin folder named in CLAUDE_CODE_PLUGIN_DIRS for that session only, so
- * pstack-t3 reaches the board's instances and no other Claude Code session. A folder the picked
- * instance already lists stays, and a duplicate is not added.
+ * pstack-t3 reaches the board's instances and no other Claude Code session.
  */
 function withPluginDir(
   environment: ProviderInstanceConfig["environment"],
   pluginDir: string,
 ): NonNullable<ProviderInstanceConfig["environment"]> {
-  const own = (environment ?? []).find((entry) => entry.name === PLUGIN_DIRS);
-  const dirs = (isPlainText(own?.value) ? own.value : "").split(":").filter((dir) => dir !== "");
-  const value = (dirs.includes(pluginDir) ? dirs : [...dirs, pluginDir]).join(":");
   return [
     ...(environment ?? []).filter((entry) => entry.name !== PLUGIN_DIRS),
-    { name: PLUGIN_DIRS, value, sensitive: false },
+    { name: PLUGIN_DIRS, value: pluginDir, sensitive: false },
   ];
 }
 

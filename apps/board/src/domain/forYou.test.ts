@@ -309,17 +309,4 @@ describe("toasts", () => {
       },
     ]);
   });
-
-  it("Given an item that leaves and comes back, when the board changes again, then it does not toast twice", () => {
-    const start = nextToasts(NO_TOASTS, [board("a", true, [])]);
-    const shown = nextToasts(start, [board("a", true, ["x"])]);
-    const gone = nextToasts({ ...shown, toasts: [] }, [board("a", true, [])]);
-    expect(cardIds(nextToasts(gone, [board("a", true, ["x"])]))).toEqual([]);
-  });
-
-  it("Given more new items than the stack holds, when they appear, then the newest four stay", () => {
-    const start = nextToasts(NO_TOASTS, [board("a", true, [])]);
-    const next = nextToasts(start, [board("a", true, ["1", "2", "3", "4", "5"])]);
-    expect(cardIds(next)).toEqual(["2", "3", "4", "5"]);
-  });
 });

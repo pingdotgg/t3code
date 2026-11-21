@@ -25,7 +25,7 @@ export function boardRoots(
   ];
   for (const ticket of tickets) {
     const cwd = trimSlashes(ticket.worktreePath ?? "");
-    if (cwd !== "" && !roots.some((root) => root.cwd === cwd)) {
+    if (cwd !== "") {
       roots.push({ cwd, label: `${ticket.key} worktree`, base: ticket.base ?? null });
     }
   }
@@ -60,23 +60,15 @@ export const absolutePathOf = (target: Pick<FileTarget, "cwd" | "path">) =>
 export const nameOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
 /**
- * The root and relative path of an absolute path on the engine's host, from the deepest root that
+ * The root and relative path of an absolute path on the engine's host, from the first root that
  * holds it. Null when no root does.
  */
 export function locate(
   roots: ReadonlyArray<FilesRoot>,
   absolutePath: string,
 ): { readonly root: FilesRoot; readonly path: string } | null {
-  let best: FilesRoot | null = null;
-  for (const root of roots) {
-    if (
-      absolutePath.startsWith(`${root.cwd}/`) &&
-      (best === null || root.cwd.length > best.cwd.length)
-    ) {
-      best = root;
-    }
-  }
-  return best === null ? null : { root: best, path: absolutePath.slice(best.cwd.length + 1) };
+  const root = roots.find((candidate) => absolutePath.startsWith(`${candidate.cwd}/`));
+  return root === undefined ? null : { root, path: absolutePath.slice(root.cwd.length + 1) };
 }
 
 export const fileTarget = (board: FilesBoard, { cwd, path, line }: FileRef): FileTarget => ({

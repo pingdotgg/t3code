@@ -20,7 +20,6 @@ import {
   saveBranchNaming,
   saveCleanupMode,
   saveCleanupRules,
-  saveProviderUpdateChecks,
   saveSetupScript,
   worktreeValues,
 } from "./settingsModel";
@@ -149,19 +148,6 @@ describe("saveSetupScript", () => {
           },
         ],
       },
-    });
-  });
-
-  it("Given an id taken by another project, when a script is added, then it takes the next free id", () => {
-    const bare = { ...settings, defaultProjectScripts: [] };
-    const input = saveSetupScript(bare, null, "echo hi");
-    expect(input.patch.defaultProjectScripts?.[0]?.id).toBe("setup");
-    const taken = {
-      ...bare,
-      projectSettingsOverrides: { [BETA]: { defaultProjectScripts: [envSetup] } },
-    };
-    expect(saveSetupScript(taken, alpha, "echo").patch.projectSettingsOverrides).toMatchObject({
-      [ALPHA]: { defaultProjectScripts: [{ ...envSetup, id: "setup-2", command: "echo" }] },
     });
   });
 
@@ -395,13 +381,5 @@ describe("removedWorktreePaths", () => {
       ]),
     );
     expect([...paths]).toEqual(["/w/a"]);
-  });
-});
-
-describe("saveProviderUpdateChecks", () => {
-  it("Given the switch turned off, when saved, then the patch sets T3's update checks to false", () => {
-    expect(saveProviderUpdateChecks(false)).toEqual({
-      patch: { enableProviderUpdateChecks: false },
-    });
   });
 });

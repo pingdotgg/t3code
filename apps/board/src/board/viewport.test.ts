@@ -63,13 +63,6 @@ describe("fitToContent", () => {
     }
   });
 
-  it("does not zoom in past 100% and centers small content", () => {
-    const view = fitToContent({ x: 100, y: 100, width: 200, height: 100 }, size);
-    expect(view.k).toBe(1);
-    expect(view.x + 100 + 100).toBeCloseTo(500, 6);
-    expect(view.y + 100 + 50).toBeCloseTo(400, 6);
-  });
-
   it("shows the top left of content that is too large to fit", () => {
     const view = fitToContent({ x: 50, y: 20, width: 5000, height: 5000 }, size);
     expect(view.k).toBe(FIT_FLOOR);
@@ -103,13 +96,6 @@ describe("revealDelta", () => {
     expect(revealDelta({ x: -300, y: 100, width: 200, height: 200 }, frame, 24)).toEqual({
       dx: 324,
       dy: 0,
-    });
-  });
-
-  it("Given a target taller than the frame, when it is revealed, then its top lines up with the top margin", () => {
-    expect(revealDelta({ x: 100, y: 300, width: 200, height: 900 }, frame, 24)).toEqual({
-      dx: 0,
-      dy: -276,
     });
   });
 });
