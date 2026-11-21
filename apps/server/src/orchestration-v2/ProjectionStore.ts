@@ -920,11 +920,10 @@ export const writeThreadTouches = Effect.fnUntraced(function* (
   touches: ReadonlyMap<ThreadId, string>,
 ) {
   for (const [threadId, updatedAt] of touches) {
+    // The payload also carries `updatedAt`, but rewriting it copies every linked PR on each touch.
     yield* sql`
       UPDATE orchestration_v2_projection_threads
-      SET
-        updated_at = ${updatedAt},
-        payload_json = json_set(payload_json, '$.updatedAt', ${updatedAt})
+      SET updated_at = ${updatedAt}
       WHERE thread_id = ${threadId}
     `;
   }
@@ -1233,6 +1232,11 @@ type PayloadRow = {
   readonly payload_json: string;
 };
 
+/** A thread payload read together with `updated_at`, which `writeThreadTouches` keeps current. */
+type ThreadPayloadRow = PayloadRow & {
+  readonly updated_at: string;
+};
+
 type ShellPendingTurnItemRow = PayloadRow & {
   readonly thread_id: string;
   readonly owning_provider_instance_id: string | null;
@@ -1253,9 +1257,8 @@ export type AgentAwarenessThread = ProjectThreadAwarenessV2Input["thread"] &
     | "hasActionableProposedPlan"
   >;
 
-type ShellThreadRow = {
+type ShellThreadRow = ThreadPayloadRow & {
   readonly thread_id: string;
-  readonly payload_json: string;
   readonly forked_from_run_source_thread_id: string | null;
   readonly latest_run_id: string | null;
   readonly latest_run_status: string | null;
@@ -1301,6 +1304,7 @@ type SettlementThreadRow = Pick<
   ShellThreadRow,
   | "thread_id"
   | "payload_json"
+  | "updated_at"
   | "latest_run_id"
   | "latest_run_status"
   | "latest_run_requested_at"
@@ -1444,6 +1448,20 @@ const decodePullRequestThread = Schema.decodeUnknownEffect(
 const decodeThreadPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
 );
+const decodeThreadUpdatedAt = Schema.decodeUnknownEffect(
+  OrchestrationV2AppThreadJsonSchema.fields.updatedAt,
+);
+// A touch writes only the `updated_at` column, so the payload's `updatedAt` can be stale. Any read
+// that exposes or writes back `updatedAt` must take it from the column through this.
+const withStoredUpdatedAt = <T extends { readonly updatedAt: DateTime.Utc }>(
+  thread: T,
+  row: ThreadPayloadRow,
+) =>
+  decodeThreadUpdatedAt(row.updated_at).pipe(Effect.map((updatedAt) => ({ ...thread, updatedAt })));
+const decodeThreadRow = (row: ThreadPayloadRow) =>
+  decodeThreadPayload(row.payload_json).pipe(
+    Effect.flatMap((thread) => withStoredUpdatedAt(thread, row)),
+  );
 const decodeRunPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2RunJsonSchema),
 );
@@ -3894,8 +3912,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         fields?: ReadonlyArray<ProjectionRecordField>,
         filter?: ProjectionRecordFilter,
       ) {
-        const threadRows = yield* sql<PayloadRow>`
-          SELECT payload_json
+        const threadRows = yield* sql<ThreadPayloadRow>`
+          SELECT payload_json, updated_at
           FROM orchestration_v2_projection_threads
           WHERE thread_id = ${threadId}
           LIMIT 1
@@ -4134,7 +4152,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           contextHandoffRows,
           contextTransferRows,
         ] = yield* Effect.all([
-          decodeThreadPayload(threadRow.payload_json),
+          decodeThreadRow(threadRow),
           (fields !== undefined && !fields.includes("runs")) ||
           (window === undefined &&
             (matchesNothing(filter?.runIds) ||
@@ -4950,14 +4968,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const getLimitRecoveryCandidates = Effect.fn("ProjectionStore.getLimitRecoveryCandidates")(
       function* (options: Parameters<ProjectionStoreV2Shape["getLimitRecoveryCandidates"]>[0]) {
-        const rows = yield* sql<{
-          readonly payload_json: string;
-          readonly run_id: string;
-          readonly completed_at: string | null;
-          readonly failure_payload_json: string;
-          readonly last_error: string | null;
-        }>`
-          SELECT t.payload_json, r.run_id, r.completed_at,
+        const rows = yield* sql<
+          ThreadPayloadRow & {
+            readonly run_id: string;
+            readonly completed_at: string | null;
+            readonly failure_payload_json: string;
+            readonly last_error: string | null;
+          }
+        >`
+          SELECT t.payload_json, t.updated_at, r.run_id, r.completed_at,
             item.payload_json AS failure_payload_json,
             (
               SELECT json_extract(session.payload_json, '$.lastError')
@@ -5009,7 +5028,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_valid(item.payload_json)
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
             AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
-            AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
+            AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, t.updated_at))
             AND (
               (
                 json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
@@ -5051,7 +5070,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         `;
         const candidates: Array<ProjectionLimitRecoveryCandidate> = [];
         for (const row of rows) {
-          const thread = yield* decodeThreadPayload(row.payload_json);
+          const thread = yield* decodeThreadRow(row);
           const item = yield* decodeTurnItemPayload(row.failure_payload_json);
           const summary = threadErrorSummary(
             item.type === "error" ? item.failure : null,
@@ -5628,14 +5647,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getRuntimeRecoveryProjection: ProjectionStoreV2Shape["getRuntimeRecoveryProjection"] =
       Effect.fn("ProjectionStore.getRuntimeRecoveryProjection")(
         function* (threadId) {
-          const threadRows = yield* sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_threads
+          const threadRows = yield* sql<ThreadPayloadRow>`
+            SELECT payload_json, updated_at FROM orchestration_v2_projection_threads
             WHERE thread_id = ${threadId}
           `;
           if (threadRows[0] === undefined) {
             return yield* new ProjectionStoreThreadNotFoundError({ threadId });
           }
-          const thread = yield* decodeThreadPayload(threadRows[0].payload_json);
+          const thread = yield* decodeThreadRow(threadRows[0]);
           // One worker round trip and one SQLite snapshot; decisions still read after the prior commit.
           const queries = {
             runs: sql<PayloadRow>`
@@ -5971,12 +5990,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
 
     const selectThread = (threadId: ThreadId) =>
-      sql<PayloadRow>`
-        SELECT payload_json FROM orchestration_v2_projection_threads
+      sql<ThreadPayloadRow>`
+        SELECT payload_json, updated_at FROM orchestration_v2_projection_threads
         WHERE thread_id = ${threadId}
       `.pipe(
         Effect.flatMap((rows) =>
-          rows[0] === undefined ? Effect.succeed(null) : decodeThreadPayload(rows[0].payload_json),
+          rows[0] === undefined ? Effect.succeed(null) : decodeThreadRow(rows[0]),
         ),
         Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
       );
@@ -8390,6 +8409,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT
               t.thread_id,
               t.payload_json,
+              t.updated_at,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
                   AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
@@ -8807,7 +8827,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .withTransaction(
           Effect.gen(function* () {
             const rows = yield* sql<SettlementThreadRow>`
-            SELECT t.thread_id, t.payload_json,
+            SELECT t.thread_id, t.payload_json, t.updated_at,
               r.run_id AS latest_run_id,
               r.status AS latest_run_status,
               r.requested_at AS latest_run_requested_at,
@@ -8889,7 +8909,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               });
             return yield* Effect.forEach(rows, (row) =>
               Effect.gen(function* () {
-                const thread = yield* decodeThreadPayload(row.payload_json);
+                const thread = yield* decodeThreadRow(row);
                 const status = shellStatusFromStoredRunStatus(row.latest_run_status);
                 const latestRunId =
                   row.latest_run_id === null ? null : RunId.make(row.latest_run_id);
@@ -9041,7 +9061,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           providerThreadsByThreadId,
           pendingTurnItemsByThreadId,
         } = input;
-        const thread = yield* decodeThreadPayload(row.payload_json);
+        const thread = yield* decodeThreadRow(row);
         const latestUserAuthoredMessageAt =
           row.latest_user_authored_message_at === null
             ? null
@@ -9340,8 +9360,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     )(function* ({ threadId, unsettledOnly = false }) {
       const { rows, sequenceRows } = yield* sql.withTransaction(
         Effect.gen(function* () {
-          const rows = yield* sql<PayloadRow>`
-          SELECT t.payload_json FROM orchestration_v2_projection_threads t
+          const rows = yield* sql<ThreadPayloadRow>`
+          SELECT t.payload_json, t.updated_at FROM orchestration_v2_projection_threads t
           WHERE t.deleted_at IS NULL${
             threadId === undefined
               ? sql` AND t.archived_at IS NULL`
@@ -9364,6 +9384,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       // Decode after releasing the reader, keeping rows and sequence from the same transaction.
       const threads = yield* Effect.forEach(rows, (row) =>
         decodePullRequestThread(row.payload_json).pipe(
+          Effect.flatMap((thread) => withStoredUpdatedAt(thread, row)),
           Effect.map((thread) => ({ ...thread, pullRequests: threadPullRequestsOf(thread) })),
         ),
       );

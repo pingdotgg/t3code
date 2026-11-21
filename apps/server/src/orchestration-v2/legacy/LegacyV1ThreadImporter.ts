@@ -67,6 +67,7 @@ interface LegacyThreadRow {
 
 interface LegacyRepairRow extends LegacyThreadRow {
   readonly payload_json: string;
+  readonly projection_updated_at: string;
 }
 
 interface LegacyMessageRow {
@@ -127,6 +128,9 @@ const decodePullRequests = Schema.decodeUnknownOption(Schema.Array(ThreadPullReq
 const decodeLinkedPullRequest = Schema.decodeUnknownOption(ThreadLinkedPullRequest);
 const decodeStoredThread = Schema.decodeUnknownOption(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
+);
+const decodeStoredUpdatedAt = Schema.decodeUnknownOption(
+  OrchestrationV2AppThreadJson.fields.updatedAt,
 );
 const decodeMessageContext = Schema.decodeUnknownOption(OrchestrationMessageContext);
 
@@ -467,7 +471,8 @@ const make = Effect.gen(function* () {
         thread.branch_pull_request_json,
         thread.active_order_key,
         thread.deleted_at,
-        projection.payload_json
+        projection.payload_json,
+        projection.updated_at AS projection_updated_at
       FROM orchestration_v2_legacy_imports AS legacy_import
       INNER JOIN projection_threads AS thread
         ON thread.thread_id = legacy_import.thread_id
@@ -487,8 +492,10 @@ const make = Effect.gen(function* () {
     let repairedThreadCount = 0;
     for (const row of repairRows) {
       const decoded = decodeStoredThread(row.payload_json);
-      if (Option.isNone(decoded)) continue;
-      const current = decoded.value;
+      // The payload's updatedAt can lag the column, and this write replays it into the row.
+      const storedUpdatedAt = decodeStoredUpdatedAt(row.projection_updated_at);
+      if (Option.isNone(decoded) || Option.isNone(storedUpdatedAt)) continue;
+      const current = { ...decoded.value, updatedAt: storedUpdatedAt.value };
       const legacy = importedThread(row, now);
       const legacyPullRequests = legacy.pullRequests ?? [];
       const repaired: OrchestrationV2AppThread = {
