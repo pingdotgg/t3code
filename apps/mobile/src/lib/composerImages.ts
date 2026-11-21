@@ -359,7 +359,7 @@ export async function pickComposerFiles(input: {
           mimeType,
           sizeBytes,
           dataUrl,
-          previewUri: fitted?.uri ?? dataUrl,
+          previewUri: dataUrl,
         });
       } finally {
         await removePersistedComposerAttachmentFile(attachment.fileUri);
@@ -531,7 +531,7 @@ export async function pickComposerMedia(input: {
           base64: fitted?.base64 ?? base64,
           mimeType: originalMimeType,
           name,
-          previewUri: fitted?.uri ?? asset.uri,
+          previewUri: asset.uri,
         };
       } else {
         const rendered = await renderPhoto(asset.uri);
@@ -635,8 +635,8 @@ export async function convertPastedImagesToAttachments(input: {
       const rendered = mimeType === sourceMimeType ? null : await renderPhoto(uri);
       const pastedBase64 = rendered?.base64 ?? (await file.base64());
       const fitted = rendered ?? (await fitComposerImage({ uri, mimeType, base64: pastedBase64 }));
-      if (fitted !== null) {
-        temporaryUris.push(fitted.uri);
+      if (rendered !== null) {
+        temporaryUris.push(rendered.uri);
       }
       let base64 = fitted?.base64 ?? pastedBase64;
       if (
