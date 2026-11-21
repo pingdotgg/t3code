@@ -52,15 +52,11 @@ const isCompanionField = Schema.is(
   }),
 );
 
-function copyBoundedText(text: string): string {
-  return Buffer.from(text, "utf16le").toString("utf16le");
-}
-
 function boundPrefix(text: string, limit: number): string {
   const trimmed = text.trim();
   if (trimmed.length <= limit) return trimmed;
   const prefix = trimmed.slice(0, limit - 3).replace(/[\uD800-\uDBFF]$/u, "");
-  return copyBoundedText(`${prefix}...`);
+  return `${prefix}...`;
 }
 
 function splitAppendedAttachments(
