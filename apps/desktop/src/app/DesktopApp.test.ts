@@ -46,6 +46,7 @@ import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
+import * as DesktopTray from "../window/DesktopTray.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
@@ -166,6 +167,10 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         Effect.provideService(DesktopSnapShot.DesktopSnapShot, {
           initialize: Effect.void,
         } as DesktopSnapShot.DesktopSnapShot["Service"]),
+        Effect.provideService(DesktopTray.DesktopTray, {
+          initialize: stub.record("tray"),
+          configure: () => Effect.void,
+        }),
         Effect.provideService(DesktopState.DesktopState, {
           quitting,
         } as DesktopState.DesktopState["Service"]),
@@ -309,7 +314,7 @@ it.effect.each([false, true])(
       // The backend spawns before menus, and its token is minted without waiting for the renderer.
       assert.deepEqual(
         events.filter((event) => event !== "token"),
-        ["identity", "ready", "identity", "backend", "menu", "window"],
+        ["identity", "ready", "identity", "backend", "menu", "tray", "window"],
       );
       assert.isAbove(events.indexOf("token"), events.indexOf("backend"));
       assert.isFalse(yield* Deferred.isDone(registrationStopped));

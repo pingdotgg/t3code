@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { applyLanguage } from "../../i18n/messages.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
+import * as DesktopTray from "../../window/DesktopTray.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
@@ -26,8 +27,10 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings) {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
     const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
+    const tray = yield* DesktopTray.DesktopTray;
     yield* clientSettings.set(settings);
     yield* snapShot.configure(settings);
+    yield* tray.configure(settings.keepRunningInTray);
     yield* applyLanguage(settings.language);
   }),
 });

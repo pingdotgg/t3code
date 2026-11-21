@@ -59,6 +59,7 @@ export interface SettingsSearchItem {
   readonly scope?: SettingsSearchScope;
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
+  readonly nonMacOnly?: boolean;
   readonly windowsOnly?: boolean;
   readonly releaseChannelOnly?: boolean;
   readonly secretsFeatureOnly?: boolean;
@@ -678,6 +679,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Test model"),
     to: "/settings/voice",
     searchTerms: [msg("test voice speech model transcription recognition")],
+  },
+  {
+    id: "keep-running-in-tray",
+    title: msg("Keep running in tray"),
+    to: "/settings/labs",
+    searchTerms: [
+      msg("beta system tray background close window minimize hide server agents remote"),
+    ],
+    desktopOnly: true,
+    nonMacOnly: true,
   },
   {
     id: "auto-settle-inactive-threads",
@@ -1659,6 +1670,7 @@ export function settingsForThisPlatform(
       (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
       (!item.secretsFeatureOnly || isSecretsFeatureEnabled) &&
       (!item.macOnly || isMacPlatform(platform)) &&
+      (!item.nonMacOnly || !isMacPlatform(platform)) &&
       (!item.windowsOnly || isWindowsPlatform(platform)),
   );
 }

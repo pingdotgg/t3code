@@ -4,6 +4,8 @@ import { Link } from "@tanstack/react-router";
 import { T, useGT, useMessages } from "gt-react";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { isElectron } from "~/env";
+import { isMacPlatform } from "~/lib/utils";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
@@ -27,6 +29,7 @@ export function LabsSettingsPanel() {
         <PromptSuggestionsRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
+        {isElectron && !isMacPlatform(navigator.platform) ? <KeepRunningInTrayRow /> : null}
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -79,6 +82,33 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label={gt("Two-line folder rows")}
+        />
+      }
+    />
+  );
+}
+
+function KeepRunningInTrayRow() {
+  const gt = useGT();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("keep-running-in-tray")}
+      description={
+        navigator.platform.toLowerCase().includes("linux")
+          ? gt(
+              "Closing the window keeps T3 Code running in the system tray, so agents and remote connections keep working. Open or quit it from the tray icon. Linux requires system tray support. If no icon appears, launch T3 Code again to restore the window.",
+            )
+          : gt(
+              "Closing the window keeps T3 Code running in the system tray, so agents and remote connections keep working. Open or quit it from the tray icon.",
+            )
+      }
+      control={
+        <Switch
+          checked={settings.keepRunningInTray}
+          onCheckedChange={(checked) => updateSettings({ keepRunningInTray: Boolean(checked) })}
+          aria-label={gt("Keep running in tray")}
         />
       }
     />
