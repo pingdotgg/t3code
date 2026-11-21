@@ -11,6 +11,11 @@ export interface ForkCatalogRekeyInput {
   readonly renamedSource: Catalog;
   readonly generatedSource: Catalog;
   readonly locales: Readonly<Record<string, Catalog>>;
+  /**
+   * The rename as shared code applies it, for catalogs whose own text is kept (mobile) while they
+   * collect messages from renamed shared packages. Gets and returns JSON text.
+   */
+  readonly renameSharedText?: (json: string) => string;
 }
 
 export interface ForkCatalogRekeyResult {
@@ -42,7 +47,11 @@ export function rekeyForkCatalogs(input: ForkCatalogRekeyInput): ForkCatalogReke
   const paired = new Set<string>();
   for (const [key, value] of Object.entries(renamedSource)) {
     if (Object.hasOwn(generatedSource, key)) continue;
-    const candidates = added.get(text(value)) ?? [];
+    const exact = added.get(text(value)) ?? [];
+    const candidates =
+      exact.length === 0 && input.renameSharedText
+        ? (added.get(input.renameSharedText(text(value))) ?? [])
+        : exact;
     if (candidates.length === 0) {
       problems.push(`${key} ${text(value)} has no new key`);
     } else if (candidates.length > 1) {
@@ -69,5 +78,10 @@ export function rekeyForkCatalogs(input: ForkCatalogRekeyInput): ForkCatalogReke
   const locales = Object.fromEntries(
     Object.entries(input.locales).map(([locale, catalog]) => [locale, rekey(catalog)]),
   );
-  return { source: rekey(renamedSource), moved, locales, problems };
+  const source = Object.fromEntries(
+    Object.entries(renamedSource).map(([key, value]) =>
+      moved[key] ? [moved[key], generatedSource[moved[key]]] : [key, value],
+    ),
+  );
+  return { source, moved, locales, problems };
 }

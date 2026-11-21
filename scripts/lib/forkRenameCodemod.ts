@@ -90,6 +90,7 @@ const RenameOccurrenceSchema = Schema.Struct({
   index: Schema.Number,
   column: Schema.Number,
   previousLine: Schema.String,
+  nextLine: Schema.String,
 });
 
 export class ForkRenameUnclassifiedOccurrenceError extends Schema.TaggedError<ForkRenameUnclassifiedOccurrenceError>()(

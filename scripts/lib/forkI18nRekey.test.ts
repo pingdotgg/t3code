@@ -22,6 +22,19 @@ describe("rekeyForkCatalogs", () => {
     ]);
   });
 
+  it("pairs text the catalog kept but shared source renamed, taking the generated English", () => {
+    const result = rekeyForkCatalogs({
+      renamedSource: { a1: "Update Acme Code", b2: "Mobile Acme Code text" },
+      generatedSource: { z9: "Update Lathe", b2: "Mobile Acme Code text" },
+      locales: { de: { a1: "Acme Code aktualisieren", b2: "Mobiler Text" } },
+      renameSharedText: (value) => value.replaceAll("Acme Code", "Lathe"),
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.source).toEqual({ z9: "Update Lathe", b2: "Mobile Acme Code text" });
+    expect(result.locales.de).toEqual({ z9: "Acme Code aktualisieren", b2: "Mobiler Text" });
+  });
+
   it("refuses to pair a stale key when its renamed text matches several new keys", () => {
     const result = rekeyForkCatalogs({
       renamedSource: { a1: "Lathe" },
@@ -48,12 +61,12 @@ describe("rekeyForkCatalogs", () => {
   it("reports a kept key whose generated text differs from the renamed catalog", () => {
     const result = rekeyForkCatalogs({
       renamedSource: { a1: "Restart Lathe?" },
-      generatedSource: { a1: "Restart T3 Code?" },
+      generatedSource: { a1: "Restart Acme Code?" },
       locales: {},
     });
 
     expect(result.problems).toEqual([
-      'a1: catalog says "Restart Lathe?", source says "Restart T3 Code?"',
+      'a1: catalog says "Restart Lathe?", source says "Restart Acme Code?"',
     ]);
   });
 });

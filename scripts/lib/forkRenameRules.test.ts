@@ -33,6 +33,12 @@ describe("FORK_RENAME_RULES", () => {
     ["apps/web/src/a.ts", 'import { X } from "@t3tools/contracts";', "identifier"],
     ["apps/web/src/a.tsx", "export function T3ComposerEditorView() {}", "identifier"],
     ["apps/web/src/a.ts", 'const message = "Restart T3 Code?";', "display"],
+    [
+      "apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx",
+      "  make it available through T3\n  Connect.",
+      "upstream-reference",
+    ],
+    ["apps/web/src/a.tsx", "  Open a T3\n  thread.", "display"],
     ["apps/server/src/cli/config.ts", 'Config.String("T3CODE_HOME")', "persisted"],
     ["scripts/build-desktop-artifact.ts", "process.env.T3CODE_DESKTOP_PLATFORM", "identifier"],
     [

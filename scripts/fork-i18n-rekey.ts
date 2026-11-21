@@ -11,6 +11,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { type Catalog, rekeyForkCatalogs } from "./lib/forkI18nRekey.ts";
+import { renameForkText } from "./lib/forkRenameCodemod.ts";
 
 const GENERATE: Record<string, readonly [string, ...string[]]> = {
   "apps/web": ["node_modules/.bin/gt", "generate"],
@@ -18,6 +19,8 @@ const GENERATE: Record<string, readonly [string, ...string[]]> = {
   "apps/desktop": [process.execPath, "scripts/i18n-generate.mjs"],
 };
 
+// Mobile keeps upstream's names but its catalog also collects messages from the shared packages.
+const SHARED_SOURCE_PATH = "packages/client-runtime/src/messages.ts";
 const readJson = (file: string): Catalog => JSON.parse(NodeFS.readFileSync(file, "utf8"));
 const root = NodePath.resolve(import.meta.dirname, "..");
 const writes: Array<readonly [string, string]> = [];
@@ -60,6 +63,7 @@ for (const [app, [command, ...args]] of Object.entries(GENERATE)) {
       locales: Object.fromEntries(
         Object.entries(localeFiles).map(([locale, file]) => [locale, readJson(file)]),
       ),
+      renameSharedText: (json) => renameForkText(SHARED_SOURCE_PATH, json).text,
     });
     problems.push(...result.problems.map((problem) => `${app}: ${problem}`));
     movedCount += Object.keys(result.moved).length;

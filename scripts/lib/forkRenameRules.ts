@@ -52,6 +52,8 @@ export interface RenameOccurrence {
   readonly column: number;
   /** The line before `line`, or "" on the first line; object fields split across lines. */
   readonly previousLine: string;
+  /** The line after `line`, or "" on the last line; prose wrapped across lines. */
+  readonly nextLine: string;
 }
 
 export interface RenameRule {
@@ -86,7 +88,9 @@ export const findRenameOccurrences = (path: string, text: string): Array<RenameO
   const occurrences: Array<RenameOccurrence> = [];
   let lineStart = 0;
   let previousLine = "";
-  for (const line of text.split("\n")) {
+  const lines = text.split("\n");
+  for (const [lineNumber, line] of lines.entries()) {
+    const nextLine = lines[lineNumber + 1] ?? "";
     for (const match of line.matchAll(RENAME_TOKEN_PATTERN)) {
       const token = match[0];
       for (let at = token.search(/t3/i); at !== -1;) {
@@ -98,6 +102,7 @@ export const findRenameOccurrences = (path: string, text: string): Array<RenameO
           index: lineStart + match.index + at,
           column: match.index + at,
           previousLine,
+          nextLine,
         });
         const next = token.slice(at + 2).search(/t3/i);
         at = next === -1 ? -1 : at + 2 + next;
@@ -1170,6 +1175,17 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     class: "identifier",
     reason: "camelCase or PascalCase code symbol (T3ComposerEditorView, allT3, t3Home).",
     test: (o) => /[a-z]T3|T3[A-Z][a-z]|^t3[A-Z][a-z]|[A-Z]T3[A-Z][a-z]/.test(stem(o)),
+  },
+
+  {
+    id: "upstream-service-name-wrapped",
+    class: "upstream-reference",
+    reason:
+      "Prose wrapped between T3 and an upstream service name (T3 / Connect), which upstream-service-names keeps on one line.",
+    test: (o) =>
+      o.token === "T3" &&
+      o.line.trimEnd().length === o.column + 2 &&
+      /^\s*(?:Connect|Chat|Tools|account|services)\b/.test(o.nextLine),
   },
 
   // display: text a person reads
