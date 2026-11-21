@@ -1,7 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import * as Struct from "effect/Struct";
 
 import { AuthMcpClientAccess } from "./auth.ts";
 import {
@@ -129,10 +128,16 @@ export const OrchestratorMcpTarget = Schema.Struct({
 });
 export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 
-/** A task runs in its own project's environment, which `schedule_task` names at the top level. */
-export const OrchestratorMcpScheduledTaskTarget = OrchestratorMcpTarget.mapFields(
-  Struct.omit(["environmentId", "projectId"]),
-);
+/**
+ * A task runs in its own project's environment, which `schedule_task` names at the top level.
+ * No descriptions: they count against the agent context budget, and agents fill this in without them.
+ */
+export const OrchestratorMcpScheduledTaskTarget = Schema.Struct({
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  driverKind: Schema.optional(ProviderDriverKind),
+  model: Schema.optional(TrimmedNonEmptyString),
+  options: Schema.optional(OrchestratorMcpTargetOptions),
+});
 export type OrchestratorMcpScheduledTaskTarget = typeof OrchestratorMcpScheduledTaskTarget.Type;
 
 export const OrchestratorMcpRuntimeMode = Schema.Union([Schema.Literal("inherit"), RuntimeMode]);
@@ -741,11 +746,7 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
         "Post here, else new thread per run. Unset: true in own project, else false; updates keep it.",
     }),
   ),
-  target: Schema.optional(
-    OrchestratorMcpScheduledTaskTarget.annotate({
-      description: "As in `delegate_task`. Unbound tasks only.",
-    }),
-  ),
+  target: Schema.optional(OrchestratorMcpScheduledTaskTarget),
   freshSession: Schema.optional(
     Schema.Boolean.annotate({
       description:
