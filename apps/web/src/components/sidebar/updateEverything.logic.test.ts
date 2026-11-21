@@ -282,7 +282,7 @@ describe("localSwitchBlockReason", () => {
     ).toContain("does not support yet");
     // A WSL backend still starting has no client entry, so its database is unchecked.
     expect(localSwitchBlockReason(nightly, stable, [windows], 2, true)).toBe(
-      "its server is not connected, so its database cannot be checked",
+      "This app cannot switch: its server is not connected, so its database cannot be checked.",
     );
     // A cached head from a disconnected server proves nothing.
     expect(
@@ -293,11 +293,13 @@ describe("localSwitchBlockReason", () => {
         1,
         true,
       ),
-    ).toBe("its server is not connected, so its database cannot be checked");
+    ).toBe(
+      "This app cannot switch: its server is not connected, so its database cannot be checked.",
+    );
     expect(localSwitchBlockReason("0.1.3", stable, [], 1, true)).toBeNull();
     // A primary backend still starting has no entry or bootstrap yet, unless Local environment is off.
     expect(localSwitchBlockReason(nightly, stable, [], 0, true)).toBe(
-      "its server is not connected, so its database cannot be checked",
+      "This app cannot switch: its server is not connected, so its database cannot be checked.",
     );
     expect(localSwitchBlockReason(nightly, stable, [], 0, false)).toBeNull();
   });
