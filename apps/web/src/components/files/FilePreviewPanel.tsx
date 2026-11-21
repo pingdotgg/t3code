@@ -611,13 +611,15 @@ interface FileRevealState {
   cancelGuard: (() => void) | null;
   handledRequestId: number | null;
   latestRequestId: number | null;
-  /** The path's code view offset when it last unmounted, restored when it is shown again. */
-  scrollTop: number;
   scrollContainer: HTMLElement | null;
   restoreFrameId: number | null;
 }
 
+// Session-only and keyed by thread, so a file's offset outlives the panel unmounting on a thread switch.
+const scrollTopByFileKey = new Map<string, number>();
+
 function useFileLineReveal(
+  threadRef: ScopedThreadRef,
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
@@ -626,6 +628,7 @@ function useFileLineReveal(
 
   return (fileContainer, instance, phase) => {
     if (relativePath === null) return;
+    const fileKey = `${threadRef.environmentId}:${threadRef.threadId}:${relativePath}`;
 
     const existingState = revealStatesByPath.get(relativePath);
     const state: FileRevealState = existingState ?? {
@@ -633,7 +636,6 @@ function useFileLineReveal(
       cancelGuard: null,
       handledRequestId: null,
       latestRequestId: null,
-      scrollTop: 0,
       scrollContainer: null,
       restoreFrameId: null,
     };
@@ -657,7 +659,11 @@ function useFileLineReveal(
       // A view torn down before its restore ran never showed the saved offset, so keep it.
       const restorePending = state.restoreFrameId !== null;
       cancelPendingReveal();
-      if (scrollContainer && !restorePending) state.scrollTop = scrollContainer.scrollTop;
+      if (scrollContainer && !restorePending) {
+        if (scrollContainer.scrollTop > 0)
+          scrollTopByFileKey.set(fileKey, scrollContainer.scrollTop);
+        else scrollTopByFileKey.delete(fileKey);
+      }
       state.scrollContainer = null;
       return;
     }
@@ -677,7 +683,7 @@ function useFileLineReveal(
 
     if (scrollContainer && state.scrollContainer !== scrollContainer) {
       state.scrollContainer = scrollContainer;
-      const savedScrollTop = state.scrollTop;
+      const savedScrollTop = scrollTopByFileKey.get(fileKey) ?? 0;
       // A pending line reveal owns the scroll position.
       if (
         savedScrollTop > 0 &&
@@ -1519,7 +1525,7 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const onFilePostRender = useFileLineReveal(threadRef, relativePath, revealLine, revealRequestId);
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
     canReadFiles &&

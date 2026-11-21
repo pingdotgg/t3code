@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   mintUrl: vi.fn<() => Promise<string | null>>(),
   browserAssetMints: 0,
   openedBrowserUrls: [] as string[],
+  testRun: 0,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
@@ -164,7 +165,8 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
 import FilePreviewPanel from "./FilePreviewPanel";
 
 const environmentId = EnvironmentId.make("markdown-preview-test");
-const threadRef = { environmentId, threadId: ThreadId.make("thread") };
+// A thread per test, so a file offset saved for the session does not carry into the next test.
+const testThreadRef = () => ({ environmentId, threadId: ThreadId.make(`thread-${state.testRun}`) });
 function setup() {
   const keys = ["t3code.fileExplorerOpen", "t3code.renderMarkdown"];
   const previous = keys.map((key) => localStorage.getItem(key));
@@ -174,6 +176,7 @@ function setup() {
   state.optimistic = null;
   state.assetUrl = { _tag: "Loading" };
   state.openedBrowserUrls = [];
+  state.testRun += 1;
   let mints = 0;
   state.mintUrl.mockReset().mockImplementation(async () => `/assets/report.docx?mint=${++mints}`);
   state.writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -199,6 +202,7 @@ function markdownPreview(truncated: boolean, contents = "- [ ] Keep the rest of 
 }
 
 function filePreview(relativePath: string, workspaceMutationId: string | null = null) {
+  const threadRef = testThreadRef();
   return (
     <FilePreviewPanel
       environmentId={environmentId}
