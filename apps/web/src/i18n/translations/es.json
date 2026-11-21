@@ -12455,5 +12455,10 @@
   "b7df38b7d8792d78": "Abrir guía",
   "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
   "d8aaf932f90429c4": "Mover este comando al principio de la cola ({shortcut})",
-  "425ab15036aec8a4": "Mover este comando al principio de la cola"
+  "425ab15036aec8a4": "Mover este comando al principio de la cola",
+  "35934ab67a435d71": "Sesión",
+  "ddef80b526009cfc": "Semanal",
+  "1611b63d626f63c3": "Mensual",
+  "d070d05a7761f7f4": "Límite de crédito mensual",
+  "4633d5b11e248ed6": "Semanal · {model}"
 }
