@@ -78,10 +78,13 @@ export const readMerged = Effect.fn("TanStackSourceListing.readMerged")(function
     (latest, read) => (latest === undefined || newer(read.oldest!, latest) ? read.oldest : latest),
     undefined,
   );
+  const seen = new Set<number>();
   const merged = reads
     .flatMap((read) => read.rows.map((entry) => ({ ...entry, state: read.state })))
     .filter((entry) => cutoff === undefined || !newer(cutoff, entry.row))
-    .toSorted((a, b) => (newer(a.row, b.row) ? -1 : newer(b.row, a.row) ? 1 : 0));
+    .toSorted((a, b) => (newer(a.row, b.row) ? -1 : newer(b.row, a.row) ? 1 : 0))
+    // A row that changed state between the reads of two states is in both; it is one row.
+    .filter((entry) => !seen.has(entry.row.number) && seen.add(entry.row.number) !== undefined);
   const keep = input.keep ?? (() => true);
   const delivered: Array<(typeof merged)[number]> = [];
   let consumed = 0;

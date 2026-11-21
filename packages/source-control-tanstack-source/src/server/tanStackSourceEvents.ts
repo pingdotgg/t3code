@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import * as Sse from "effect/encoding/Sse";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -26,6 +25,29 @@ export interface PullRequestEventsInput {
   readonly number: number;
 }
 
+/**
+ * Reads Source's stream a line at a time; true where a frame that reports a change ends. Source
+ * also sends frames with an id alone, which only move the cursor, and `: ok` keep-alives; a
+ * generic SSE decoder drops the former without recording their id.
+ */
+export function frameReader(cursor: { lastEventId: string | undefined }) {
+  let reports = false;
+  return (line: string): boolean => {
+    if (line === "") {
+      const ended = reports;
+      reports = false;
+      return ended;
+    }
+    if (line.startsWith(":")) return false;
+    const colon = line.indexOf(":");
+    const field = colon < 0 ? line : line.slice(0, colon);
+    const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /u, "");
+    if (field === "id") cursor.lastEventId = value;
+    else if (field === "event" || field === "data") reports = true;
+    return false;
+  };
+}
+
 /** How one connection ended: Source closes every stream after a minute, which is `reconnect`. */
 type Ending = { readonly _tag: "reconnect"; readonly healthy: boolean } | { readonly _tag: "stop" };
 
@@ -40,7 +62,7 @@ export const make = Effect.gen(function* () {
 
   const connection = (
     input: PullRequestEventsInput,
-    cursor: { lastEventId: string | undefined; connected: boolean },
+    cursor: { lastEventId: string | undefined },
   ): Stream.Stream<"changed" | Ending> =>
     Stream.unwrap(
       Effect.gen(function* () {
@@ -70,17 +92,17 @@ export const make = Effect.gen(function* () {
         if (response.status !== 200)
           return Stream.succeed<Ending>({ _tag: "reconnect", healthy: false });
         const openedAt = yield* Clock.currentTimeMillis;
-        // The first stream Source accepts is the catch-up point; later ones resume from the last
-        // event, so they miss nothing and need no refresh of their own.
-        const opening = cursor.connected ? [] : (["changed"] as const);
-        cursor.connected = true;
+        // A stream with nothing to resume from is a catch-up point; one sent `Last-Event-ID`
+        // resumes where the last left off, so it misses nothing and needs no refresh of its own.
+        const opening = cursor.lastEventId === undefined ? (["changed"] as const) : [];
+        const readLine = frameReader(cursor);
         let events = 0;
         return response.stream.pipe(
           Stream.timeoutOrElse({ duration: SILENCE_LIMIT, orElse: () => Stream.fail("silent") }),
           Stream.decodeText,
-          Stream.pipeThroughChannel(Sse.decode()),
-          Stream.map((frame): "changed" => {
-            if (frame.id !== undefined) cursor.lastEventId = frame.id;
+          Stream.splitLines,
+          Stream.filter(readLine),
+          Stream.map((): "changed" => {
             events += 1;
             return "changed";
           }),
@@ -120,7 +142,7 @@ export const make = Effect.gen(function* () {
     const repository = Hosts.tanStackSourceRepositoryPath(input.repository);
     if (host === null || repository === null) return Stream.empty;
     const target = { host, repository, number: input.number };
-    const cursor = { lastEventId: undefined as string | undefined, connected: false };
+    const cursor = { lastEventId: undefined as string | undefined };
 
     const follow = (failures: number): Stream.Stream<void> => {
       let ending: Ending = { _tag: "stop" };

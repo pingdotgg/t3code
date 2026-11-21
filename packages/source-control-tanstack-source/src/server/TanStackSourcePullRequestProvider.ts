@@ -54,8 +54,11 @@ const CAPABILITIES: PullRequestCapabilities = {
 
 const PAGE_LIMIT = 5;
 const VIEWER_TTL = Duration.minutes(5);
-/** Runs of a pull request read for its checks, newest first; older heads' runs come after. */
+/** Runs of a pull request are listed newest first, a page at a time. */
 const CI_RUNS_LIMIT = 30;
+const CI_RUN_PAGES = 3;
+/** Runs at one head whose jobs are read, re-runs included. */
+const MAX_CI_RUNS = 12;
 /** Strips the terminal colour codes CI logs keep. */
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/gu;
 
@@ -177,28 +180,38 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  /** The Source CI jobs of `headSha`, by job id, so its checks link to their runs and logs. */
+  /**
+   * The Source CI jobs of every run at `headSha`, by job id, so each check links to its run and
+   * log and a re-run's jobs group with the ones they replace. Runs come newest first.
+   */
   const readCiJobs = Effect.fn("TanStackSourcePullRequestProvider.readCiJobs")(function* (
     operation: string,
     input: PullRef,
     headSha: string,
   ) {
     const base = yield* repositoryPath(operation, input);
-    const query = new URLSearchParams({ pull: String(input.number), limit: String(CI_RUNS_LIMIT) });
-    const runs = yield* read(
-      operation,
-      input,
-      { path: `${base}/ci/runs?${query}` },
-      Json.SourceCiRuns,
-    );
-    const latest = new Map<string, Json.SourceCiRun>();
-    for (const run of runs.items) {
-      if (run.headSha !== headSha) continue;
-      const held = latest.get(run.workflow);
-      if (held === undefined || run.createdAt > held.createdAt) latest.set(run.workflow, run);
+    const runs: Array<Json.SourceCiRun> = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < CI_RUN_PAGES; page++) {
+      const query = new URLSearchParams({
+        pull: String(input.number),
+        limit: String(CI_RUNS_LIMIT),
+      });
+      if (cursor !== null) query.set("cursor", cursor);
+      const listed: typeof Json.SourceCiRuns.Type = yield* read(
+        operation,
+        input,
+        { path: `${base}/ci/runs?${query}` },
+        Json.SourceCiRuns,
+      );
+      const atHead = listed.items.filter((run) => run.headSha === headSha);
+      runs.push(...atHead);
+      // Runs of older heads follow the head's own, so a page past them ends the search.
+      if (listed.next === null || (atHead.length === 0 && runs.length > 0)) break;
+      cursor = listed.next;
     }
     const details = yield* Effect.forEach(
-      latest.values(),
+      runs.slice(0, MAX_CI_RUNS),
       (run) =>
         read(operation, input, { path: `${base}/ci/runs/${run.id}` }, Json.SourceCiRunDetail).pipe(
           Effect.map((detail) => ({ run, detail })),

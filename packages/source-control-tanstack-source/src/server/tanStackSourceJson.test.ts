@@ -27,8 +27,8 @@ describe("toChecks", () => {
     const checks = Json.toChecks({
       runs: [
         run({ jobId: "old", name: "test (shard: 1)", conclusion: "failure", startedAt: 1 }),
-        // A job of a run the newest one replaced, whose run was not read.
-        run({ jobId: "replaced", name: "test (shard: 1)", conclusion: "failure", startedAt: 0 }),
+        // A job Source CI has not reported a run for yet still shows, under its own name.
+        run({ jobId: "unread", name: "lint", conclusion: "failure", startedAt: 0 }),
         run({ jobId: "new", name: "test (shard: 1)", startedAt: 5, summary: "### Passed\nmore" }),
         run({
           jobId: "",
@@ -55,10 +55,11 @@ describe("toChecks", () => {
           required: true,
         },
         { name: "CodeRabbit", status: "pending", description: null, url: "https://coderabbit.ai" },
+        { name: "lint", status: "failure", description: null, url: null },
       ]),
     );
-    expect(checks).toHaveLength(2);
-    expect(Json.checksStateOf(checks)).toBe("pending");
+    expect(checks).toHaveLength(3);
+    expect(Json.checksStateOf(checks)).toBe("failing");
     expect(Json.parseCiJobUrl(checks.find((check) => check.required)!.url, HOST)).toEqual({
       runId: job.runId,
       job: job.key,

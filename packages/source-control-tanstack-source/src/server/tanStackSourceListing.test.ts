@@ -74,4 +74,24 @@ describe("readMerged", () => {
       assert.isNull(page.next);
     });
   });
+
+  it.effect("hands over a row seen in two states once", () => {
+    const { readPage } = source({
+      open: { "": [[row(90), row(80)], null] },
+      closed: { "": [[row(90)], null] },
+    });
+    return Effect.gen(function* () {
+      const page = yield* readMerged({
+        states: ["open", "closed"],
+        cursor: undefined,
+        limit: 10,
+        maxPages: 1,
+        readPage,
+      });
+      assert.deepStrictEqual(
+        page.items.map((item) => item.number),
+        [90, 80],
+      );
+    });
+  });
 });
