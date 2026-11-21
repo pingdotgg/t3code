@@ -1,6 +1,7 @@
 //! Active Device workspace: screen area (`DeviceStreamView`), right floating controls rail
 //! (`DeviceControlsRail`), and collapsible `DeviceToolsPanel` drawer.
 
+use conn_client::device_hub::HardwareButton;
 use conn_contract::support::JsNumber;
 use conn_contract::{
     DeviceActionInput, DeviceActionInputClearLocation, DeviceActionInputLaunchApp,
@@ -19,8 +20,8 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, Context, Div, Entity, FontWeight, ImageSource, InteractiveElement, IntoElement,
-    MouseButton, ObjectFit, ParentElement, SharedString, Styled, Subscription, Window, canvas, div,
-    img, px,
+    KeyDownEvent, KeyUpEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
+    ParentElement, SharedString, Styled, Subscription, Window, canvas, div, img, px,
 };
 
 use super::super::chrome::{
@@ -149,10 +150,13 @@ pub(super) fn render_workspace(
 
     let mut stage = v_flex().relative().flex_1().min_w_0().min_h_0();
 
-    // Inline error bar matching `DeviceWorkspace.tsx` when tools drawer is closed.
-    if !panel.tools_open
-        && let Some(err) = panel.detail_error.as_deref()
-    {
+    // Inline error / screenshot status bar matching `DeviceWorkspace.tsx`.
+    let top_error = panel.screenshot_error.as_deref().or_else(|| {
+        (!panel.tools_open)
+            .then_some(panel.detail_error.as_deref())
+            .flatten()
+    });
+    if let Some(err) = top_error {
         stage = stage.child(
             div()
                 .w_full()
@@ -162,6 +166,17 @@ pub(super) fn render_workspace(
                 .line_height(px(XS_LINE_HEIGHT_PX))
                 .text_color(to_hsla(tokens.destructive))
                 .child(err.to_owned()),
+        );
+    } else if let Some(notice) = panel.screenshot_notice.as_deref() {
+        stage = stage.child(
+            div()
+                .w_full()
+                .px(px(12.0))
+                .py(px(6.0))
+                .text_size(px(XS_TEXT_PX))
+                .line_height(px(XS_LINE_HEIGHT_PX))
+                .text_color(to_hsla(tokens.muted_foreground))
+                .child(notice.to_owned()),
         );
     }
 
@@ -237,7 +252,29 @@ fn render_device_stream(
         .justify_center()
         .overflow_hidden()
         .pr(px(CONTROLS_RAIL_WIDTH_PX))
-        .track_focus(&panel.focus_handle);
+        .track_focus(&panel.focus_handle)
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                this.handle_screen_mouse_down(event, window, cx);
+                cx.stop_propagation();
+            }),
+        )
+        .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, _cx| {
+            this.handle_screen_mouse_move(event);
+        }))
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(|this, event: &MouseUpEvent, _window, _cx| {
+                this.handle_screen_mouse_up(event);
+            }),
+        )
+        .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+            this.handle_screen_key_down(event, window, cx);
+        }))
+        .on_key_up(cx.listener(|this, event: &KeyUpEvent, window, cx| {
+            this.handle_screen_key_up(event, window, cx);
+        }));
 
     let mut media_host = div()
         .relative()
@@ -258,6 +295,37 @@ fn render_device_stream(
     }
 
     viewport = viewport.child(media_host);
+
+    // Input disconnected pill while video is streaming (`DeviceStreamView.tsx:539-547`).
+    if panel.stream_status == StreamStatus::Streaming && !panel.input_connected {
+        let banner = match panel.input_detail.as_deref() {
+            Some(detail) if !detail.is_empty() => {
+                format!("Input disconnected ({detail}), reconnecting…")
+            }
+            _ => "Input disconnected, reconnecting…".to_owned(),
+        };
+        viewport = viewport.child(
+            div()
+                .absolute()
+                .left_0()
+                .right(px(CONTROLS_RAIL_WIDTH_PX))
+                .bottom_0()
+                .flex()
+                .justify_center()
+                .p(px(8.0))
+                .child(
+                    div()
+                        .rounded(px(CONTROL_RADIUS_PX))
+                        .bg(chrome::alpha(tokens.background, 0.85))
+                        .px(px(8.0))
+                        .py(px(4.0))
+                        .text_size(px(XS_TEXT_PX))
+                        .line_height(px(XS_LINE_HEIGHT_PX))
+                        .text_color(to_hsla(tokens.muted_foreground))
+                        .child(banner),
+                ),
+        );
+    }
 
     // Loading / error overlay matching `DeviceStreamView.tsx:556-582`.
     let show_overlay =
@@ -314,9 +382,7 @@ fn render_controls_rail(
     let runs_host_commands = host_kind.is_some_and(HostKind::runs_host_commands);
     let is_simlock = host_kind == Some(HostKind::Simlock);
     let is_android = device.platform == DevicePlatform::Android;
-    // Hardware button events travel over the serve-sim/serve-emu binary input WebSocket,
-    // which is not yet attached in GPUI.
-    let input_disabled = true;
+    let input_disabled = !panel.input_connected;
 
     let rail_divider = || {
         div()
@@ -337,7 +403,7 @@ fn render_controls_rail(
         .bg(chrome::alpha(tokens.background, 0.80))
         .p(px(8.0));
 
-    // Home button (input WS required).
+    // Home button (`DeviceControlsRail.tsx:68-75`).
     pill = pill.child(
         rail_icon_button(
             "device-rail-home",
@@ -345,7 +411,12 @@ fn render_controls_rail(
             tokens,
             false,
             input_disabled,
-            |_, _, _| {},
+            {
+                let entity = entity.clone();
+                move |_, _, cx| {
+                    entity.update(cx, |p, _| p.press_hardware_button(HardwareButton::Home));
+                }
+            },
         )
         .conn_tooltip("Home", tokens),
     );
@@ -359,7 +430,14 @@ fn render_controls_rail(
                     tokens,
                     false,
                     input_disabled,
-                    |_, _, _| {},
+                    {
+                        let entity = entity.clone();
+                        move |_, _, cx| {
+                            entity.update(cx, |p, _| {
+                                p.press_hardware_button(HardwareButton::Back);
+                            });
+                        }
+                    },
                 )
                 .conn_tooltip("Back", tokens),
             )
@@ -370,7 +448,14 @@ fn render_controls_rail(
                     tokens,
                     false,
                     input_disabled,
-                    |_, _, _| {},
+                    {
+                        let entity = entity.clone();
+                        move |_, _, cx| {
+                            entity.update(cx, |p, _| {
+                                p.press_hardware_button(HardwareButton::Recents);
+                            });
+                        }
+                    },
                 )
                 .conn_tooltip("Recents", tokens),
             );
@@ -457,20 +542,25 @@ fn render_controls_rail(
             pill = pill.child(rotate_anchor);
         }
     } else if !is_simlock {
-        // iOS Rotate button (uses host setOrientation when input WS is absent).
+        // iOS Rotate button: uses input WS `0x07` like Conn when connected, else host RPC fallback.
+        let rotate_disabled = input_disabled && controls_disabled;
         pill = pill.child(
             rail_icon_button(
                 "device-rail-rotate-ios",
                 "superhero/retry.svg",
                 tokens,
                 false,
-                controls_disabled,
+                rotate_disabled,
                 {
                     let entity = entity.clone();
                     let host_id = device.host_id.clone();
                     let device_id = device.id.clone();
                     move |_, _, cx| {
                         entity.update(cx, |p, cx| {
+                            if p.input_connected {
+                                p.rotate_ios_device();
+                                return;
+                            }
                             let next = match p.last_ios_orientation {
                                 DeviceOrientation::Portrait => DeviceOrientation::LandscapeLeft,
                                 DeviceOrientation::LandscapeLeft => {
@@ -620,17 +710,27 @@ fn render_controls_rail(
     }
 
     if !is_simlock {
-        // Screenshot button (requires authenticated hub HTTP ticket stream).
+        let streaming = panel.stream_status == StreamStatus::Streaming;
+        let shot_tooltip = if panel.screenshot_pending {
+            "Capturing screenshot"
+        } else {
+            "Save screenshot"
+        };
         pill = pill.child(
             rail_icon_button(
                 "device-rail-screenshot",
                 "superhero/camera.svg",
                 tokens,
                 false,
-                true,
-                |_, _, _| {},
+                !streaming || panel.screenshot_pending,
+                {
+                    let entity = entity.clone();
+                    move |_, _, cx| {
+                        entity.update(cx, |p, cx| p.capture_screenshot(cx));
+                    }
+                },
             )
-            .conn_tooltip("Save screenshot", tokens),
+            .conn_tooltip(shot_tooltip, tokens),
         );
     }
 
@@ -765,7 +865,7 @@ fn render_tools_panel(
     let mono: SharedString = MONO_FONT.into();
     let is_ios = device.platform == DevicePlatform::Ios;
     let settings = detail.map(|d| &d.settings);
-    let foreground_app = detail.and_then(|d| d.foreground_app.as_ref());
+    let foreground_app_id = panel.effective_foreground_app_id().map(str::to_owned);
 
     // Header: `h-9 shrink-0 items-center gap-2 border-b px-3`.
     let mut header = h_flex()
@@ -867,18 +967,14 @@ fn render_tools_panel(
             .text_size(px(XS_TEXT_PX))
             .line_height(px(XS_LINE_HEIGHT_PX))
             .text_color(fg)
-            .child(
-                foreground_app
-                    .map(|app| app.id.clone())
-                    .unwrap_or_else(|| "-".to_owned()),
-            ),
+            .child(foreground_app_id.clone().unwrap_or_else(|| "-".to_owned())),
     ));
 
-    if let Some(app) = foreground_app {
+    if let Some(app_id) = foreground_app_id.as_ref() {
         let host_id = device.host_id.clone();
         let device_id = device.id.clone();
-        let app_id_term = app.id.clone();
-        let app_id_relaunch = app.id.clone();
+        let app_id_term = app_id.clone();
+        let app_id_relaunch = app_id.clone();
         app_section = app_section.child(
             h_flex()
                 .gap(px(6.0))
@@ -1528,7 +1624,7 @@ fn render_tools_panel(
     let resolved_app_id = if !perm_app_input.is_empty() {
         perm_app_input
     } else {
-        foreground_app.map(|a| a.id.clone()).unwrap_or_default()
+        foreground_app_id.clone().unwrap_or_default()
     };
 
     let mut perm_anchor = div().relative().child(select_trigger_xs(
@@ -1647,7 +1743,7 @@ fn render_tools_panel(
             .value()
             .trim()
             .to_owned();
-        let fg_app_id = foreground_app.map(|a| a.id.clone());
+        let fg_app_id = foreground_app_id.clone();
         let mut push_section = tools_section(tokens, "Push notification", true).child(
             h_flex()
                 .w_full()
@@ -1691,7 +1787,7 @@ fn render_tools_panel(
                     },
                 )),
         );
-        if foreground_app.is_none() {
+        if foreground_app_id.is_none() {
             push_section = push_section.child(
                 div()
                     .text_size(px(XS_TEXT_PX))
@@ -1702,7 +1798,7 @@ fn render_tools_panel(
         }
         content = content.child(push_section);
 
-        // 7. Event log collapsible (iOS)
+        // 7. Event log collapsible (iOS SSE: streams only while open).
         let log_open = panel.tools_inputs.event_log_open;
         let entity_log = entity.clone();
         let mut log_block = v_flex().w_full().child(
@@ -1723,6 +1819,7 @@ fn render_tools_panel(
                 .on_click(move |_, _, cx| {
                     entity_log.update(cx, |p, cx| {
                         p.tools_inputs.event_log_open = !p.tools_inputs.event_log_open;
+                        p.sync_event_log_stream(cx);
                         cx.notify();
                     });
                 })
@@ -1738,16 +1835,42 @@ fn render_tools_panel(
                 ))),
         );
         if log_open {
-            log_block = log_block.child(
-                div()
-                    .px(px(12.0))
-                    .py(px(8.0))
-                    .font_family(mono)
-                    .text_size(px(11.0))
-                    .line_height(px(16.0))
-                    .text_color(muted)
-                    .child("No events yet."),
-            );
+            let mut list = v_flex()
+                .id("device-tools-event-log-list")
+                .max_h(px(256.0))
+                .overflow_y_scroll()
+                .px(px(12.0))
+                .py(px(8.0))
+                .gap(px(2.0))
+                .font_family(mono)
+                .text_size(px(11.0))
+                .line_height(px(16.0));
+            if panel.event_log_entries.is_empty() {
+                list = list.child(div().text_color(muted).child("No events yet."));
+            } else {
+                for entry in &panel.event_log_entries {
+                    let time = entry
+                        .timestamp
+                        .get(11..19)
+                        .unwrap_or(entry.timestamp.as_str())
+                        .to_owned();
+                    list = list.child(
+                        h_flex()
+                            .w_full()
+                            .gap(px(8.0))
+                            .child(div().flex_shrink_0().text_color(muted).child(time))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .truncate()
+                                    .text_color(fg)
+                                    .child(entry.summary.clone()),
+                            ),
+                    );
+                }
+            }
+            log_block = log_block.child(list);
         }
         content = content.child(log_block);
     }

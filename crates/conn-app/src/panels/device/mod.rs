@@ -3,6 +3,7 @@
 //! configuration (local, SSH, Expo/EAS, Simlock), active device workspace with controls rail
 //! and tools drawer, and live screen streaming.
 
+mod h264;
 mod hosts;
 mod logic;
 mod setup;
@@ -15,6 +16,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use conn_client::device_hub::{
+    DeviceEventLogEntry, DeviceForegroundInfo, DeviceInputCommand, HardwareButton, KeyPhase,
+    TouchPhase, android_keycode_for_key, append_device_event_log, hid_usage_for_key,
+};
 use conn_client::{Connection, DEFAULT_DEVICE_HUB_BASE_PATH, StreamId};
 use conn_contract::rpc::device::{
     action, close, configure, detail, eas_account, list, open, shutdown, simlock_identity,
@@ -24,16 +29,17 @@ use conn_contract::rpc::server::{get_config, update_settings};
 use conn_contract::{
     ClientServerSettingsPatch, DeviceActionInput, DeviceCloseInput, DeviceConfigureInput,
     DeviceDetail, DeviceDetailInput, DeviceEasAccountInput, DeviceHostStatus, DeviceListInput,
-    DeviceListInputUpdateTool, DeviceOpenInput, DeviceOrientation, DeviceServiceState,
-    DeviceShutdownInput, DeviceSimlockIdentityInput, DeviceSummary, ServerProbePayload,
-    ServerUpdateSettingsPayload,
+    DeviceListInputUpdateTool, DeviceOpenInput, DeviceOrientation, DevicePlatform,
+    DeviceServiceState, DeviceShutdownInput, DeviceSimlockIdentityInput, DeviceSummary,
+    ServerProbePayload, ServerUpdateSettingsPayload,
 };
 use conn_theme::Tokens;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Bounds, Context, FocusHandle, FontWeight, IntoElement, MouseButton, ParentElement,
-    Pixels, Render, RenderImage, SharedString, Styled, Window, div, px,
+    AnyElement, Bounds, Context, FocusHandle, FontWeight, IntoElement, KeyDownEvent, KeyUpEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render,
+    RenderImage, SharedString, Styled, Window, div, px,
 };
 
 use self::hosts::{
@@ -47,8 +53,9 @@ use self::logic::{
 };
 use self::setup::{SetupPending, SetupStep, render_setup_wizard};
 use self::stream::{
-    ScreenInfo, StreamSessionHandle, StreamStatus, StreamTargetKey, StreamUiEvent,
-    start_stream_session,
+    EventLogHandle, EventLogKey, ScreenInfo, StreamSessionHandle, StreamStatus, StreamTargetKey,
+    StreamUiEvent, capture_and_save_screenshot, map_window_point_to_screen, screen_aspect,
+    start_event_log_stream, start_stream_session,
 };
 use self::ui::{
     LoadingStage, SM_LINE_HEIGHT_PX, SM_TEXT_PX, booting_banner, compact_outline_button,
@@ -125,7 +132,7 @@ pub(crate) struct DevicePanel {
     host_saving: bool,
     host_error: Option<String>,
 
-    // Live device screen stream (`DeviceStreamView.tsx`).
+    // Live device screen stream, input socket, SSE, and screenshots (`DeviceStreamView.tsx`).
     visible: bool,
     focus_handle: FocusHandle,
     screen_viewport_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -135,6 +142,17 @@ pub(crate) struct DevicePanel {
     stream_frame: Option<Arc<RenderImage>>,
     stream_frame_size: Option<(u32, u32)>,
     stream_screen: Option<ScreenInfo>,
+    input_connected: bool,
+    input_detail: Option<String>,
+    active_touch: Option<(f64, f64)>,
+    held_ios_modifiers: Vec<u16>,
+    live_foreground_app: Option<Option<DeviceForegroundInfo>>,
+    event_log_handle: Option<EventLogHandle>,
+    event_log_gen: u64,
+    event_log_entries: Vec<DeviceEventLogEntry>,
+    screenshot_pending: bool,
+    screenshot_error: Option<String>,
+    screenshot_notice: Option<String>,
 }
 
 impl std::fmt::Debug for DevicePanel {
@@ -146,6 +164,7 @@ impl std::fmt::Debug for DevicePanel {
             .field("active_target", &self.active_target)
             .field("visible", &self.visible)
             .field("stream_status", &self.stream_status)
+            .field("input_connected", &self.input_connected)
             .finish_non_exhaustive()
     }
 }
@@ -154,6 +173,9 @@ impl Drop for DevicePanel {
     fn drop(&mut self) {
         if let Some(mut session) = self.stream_session.take() {
             session.stop();
+        }
+        if let Some(mut log) = self.event_log_handle.take() {
+            log.stop();
         }
         if let (Some(conn), Some(stream_id)) = (&self.connection, self.stream_id.take()) {
             conn.cancel_stream(stream_id);
@@ -219,6 +241,17 @@ impl DevicePanel {
             stream_frame: None,
             stream_frame_size: None,
             stream_screen: None,
+            input_connected: false,
+            input_detail: None,
+            active_touch: None,
+            held_ios_modifiers: Vec::new(),
+            live_foreground_app: None,
+            event_log_handle: None,
+            event_log_gen: 0,
+            event_log_entries: Vec::new(),
+            screenshot_pending: false,
+            screenshot_error: None,
+            screenshot_notice: None,
         };
         panel.start_state_subscription(cx);
         panel
@@ -236,6 +269,7 @@ impl DevicePanel {
         }
         self.visible = visible;
         self.sync_stream_session(cx);
+        self.sync_event_log_stream(cx);
         cx.notify();
     }
 
@@ -247,22 +281,44 @@ impl DevicePanel {
                 && (!self.state.onboarding_completed || host_disabled))
     }
 
+    fn resolved_hub_base_path(&self) -> String {
+        if self.state.hub_base_path.trim().is_empty() {
+            DEFAULT_DEVICE_HUB_BASE_PATH.to_owned()
+        } else {
+            self.state.hub_base_path.clone()
+        }
+    }
+
     fn desired_stream_target(&self) -> Option<StreamTargetKey> {
         if !self.visible || self.is_showing_setup() || self.host_config.is_some() {
             return None;
         }
         let device = self.active_device()?;
         let host_kind = find_host(&self.state, &device.host_id).map(|h| h.kind);
-        let hub_base_path = if self.state.hub_base_path.trim().is_empty() {
-            DEFAULT_DEVICE_HUB_BASE_PATH.to_owned()
-        } else {
-            self.state.hub_base_path.clone()
-        };
         Some(StreamTargetKey {
             device: DeviceKey::from_summary(device),
             platform: device.platform,
             host_kind,
-            hub_base_path,
+            hub_base_path: self.resolved_hub_base_path(),
+        })
+    }
+
+    fn desired_event_log_target(&self) -> Option<EventLogKey> {
+        if !self.visible
+            || !self.tools_open
+            || !self.tools_inputs.event_log_open
+            || self.is_showing_setup()
+            || self.host_config.is_some()
+        {
+            return None;
+        }
+        let device = self.active_device()?;
+        if device.platform != DevicePlatform::Ios {
+            return None;
+        }
+        Some(EventLogKey {
+            device: DeviceKey::from_summary(device),
+            hub_base_path: self.resolved_hub_base_path(),
         })
     }
 
@@ -277,6 +333,58 @@ impl DevicePanel {
         self.stream_frame_size = None;
         self.stream_screen = None;
         self.stream_status = StreamStatus::Connecting(None);
+        self.input_connected = false;
+        self.input_detail = None;
+        self.active_touch = None;
+        self.held_ios_modifiers.clear();
+        self.live_foreground_app = None;
+    }
+
+    fn stop_event_log_stream(&mut self) {
+        self.event_log_gen = self.event_log_gen.wrapping_add(1);
+        if let Some(mut handle) = self.event_log_handle.take() {
+            handle.stop();
+        }
+        self.event_log_entries.clear();
+    }
+
+    fn sync_event_log_stream(&mut self, cx: &mut Context<'_, Self>) {
+        let desired = self.desired_event_log_target();
+        if self.event_log_handle.as_ref().map(|h| &h.key) == desired.as_ref() {
+            return;
+        }
+        self.stop_event_log_stream();
+
+        let (Some(target), Some(conn)) = (desired, self.connection.clone()) else {
+            return;
+        };
+        self.event_log_gen = self.event_log_gen.wrapping_add(1);
+        let generation = self.event_log_gen;
+        let (handle, mut rx) = start_event_log_stream(conn, target);
+        self.event_log_handle = Some(handle);
+
+        cx.spawn(async move |this, cx| {
+            while let Some(batch) = rx.recv().await {
+                let keep_going = this
+                    .update(cx, |panel, cx| {
+                        if panel.event_log_gen != generation {
+                            return false;
+                        }
+                        append_device_event_log(
+                            &mut panel.event_log_entries,
+                            batch.entries,
+                            batch.reset,
+                        );
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep_going {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn sync_stream_session(&mut self, cx: &mut Context<'_, Self>) {
@@ -348,6 +456,21 @@ impl DevicePanel {
                             StreamUiEvent::Status(status) => {
                                 panel.stream_status = status;
                             }
+                            StreamUiEvent::InputConnected { connected, detail } => {
+                                panel.input_connected = connected;
+                                panel.input_detail = detail;
+                                if !connected {
+                                    panel.active_touch = None;
+                                    panel.held_ios_modifiers.clear();
+                                }
+                            }
+                            StreamUiEvent::ScreenConfig(info) => {
+                                panel.last_ios_orientation = info.orientation;
+                                panel.stream_screen = Some(info);
+                            }
+                            StreamUiEvent::ForegroundApp(app) => {
+                                panel.live_foreground_app = Some(app);
+                            }
                         }
                         cx.notify();
                         true
@@ -365,6 +488,321 @@ impl DevicePanel {
         self.stop_stream_session(cx);
         self.sync_stream_session(cx);
         cx.notify();
+    }
+
+    /// Foreground app ID preferring live `/appstate` SSE over the last `device.detail` snapshot.
+    pub(super) fn effective_foreground_app_id(&self) -> Option<&str> {
+        match &self.live_foreground_app {
+            Some(Some(live)) => Some(live.id.as_str()),
+            Some(None) => None,
+            None => self
+                .device_detail
+                .as_ref()
+                .and_then(|d| d.foreground_app.as_ref())
+                .map(|a| a.id.as_str()),
+        }
+    }
+
+    fn current_screen_aspect(&self) -> f32 {
+        let platform = self
+            .active_device()
+            .map_or(DevicePlatform::Ios, |d| d.platform);
+        screen_aspect(platform, self.stream_screen, self.stream_frame_size)
+    }
+
+    fn active_uses_avcc(&self) -> bool {
+        let Some(device) = self.active_device() else {
+            return true;
+        };
+        let is_simlock =
+            find_host(&self.state, &device.host_id).is_some_and(|h| h.kind == HostKind::Simlock);
+        is_simlock || device.platform == DevicePlatform::Ios
+    }
+
+    pub(super) fn handle_screen_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        window.focus(&self.focus_handle, cx);
+        if self.workspace_menu.take().is_some() {
+            cx.notify();
+        }
+        if event.button != MouseButton::Left || !self.input_connected || self.active_touch.is_some()
+        {
+            return;
+        }
+        let Some(viewport) = self.screen_viewport_bounds.get() else {
+            return;
+        };
+        let aspect = self.current_screen_aspect();
+        let Some((x, y)) = map_window_point_to_screen(event.position, viewport, aspect, false)
+        else {
+            return;
+        };
+        self.active_touch = Some((x, y));
+        if let Some(session) = &self.stream_session {
+            session.send_input(DeviceInputCommand::Touch {
+                phase: TouchPhase::Begin,
+                x,
+                y,
+            });
+        }
+    }
+
+    pub(super) fn handle_screen_mouse_move(&mut self, event: &MouseMoveEvent) {
+        let Some((last_x, last_y)) = self.active_touch else {
+            return;
+        };
+        if event.pressed_button != Some(MouseButton::Left) {
+            self.active_touch = None;
+            if let Some(session) = &self.stream_session {
+                session.send_input(DeviceInputCommand::Touch {
+                    phase: TouchPhase::End,
+                    x: last_x,
+                    y: last_y,
+                });
+            }
+            return;
+        }
+        let Some(viewport) = self.screen_viewport_bounds.get() else {
+            return;
+        };
+        let aspect = self.current_screen_aspect();
+        let Some((x, y)) = map_window_point_to_screen(event.position, viewport, aspect, true)
+        else {
+            return;
+        };
+        self.active_touch = Some((x, y));
+        if let Some(session) = &self.stream_session {
+            session.send_input(DeviceInputCommand::Touch {
+                phase: TouchPhase::Move,
+                x,
+                y,
+            });
+        }
+    }
+
+    pub(super) fn handle_screen_mouse_up(&mut self, event: &MouseUpEvent) {
+        if event.button != MouseButton::Left {
+            return;
+        }
+        let Some((last_x, last_y)) = self.active_touch.take() else {
+            return;
+        };
+        let (x, y) = self
+            .screen_viewport_bounds
+            .get()
+            .and_then(|vp| {
+                map_window_point_to_screen(event.position, vp, self.current_screen_aspect(), true)
+            })
+            .unwrap_or((last_x, last_y));
+        if let Some(session) = &self.stream_session {
+            session.send_input(DeviceInputCommand::Touch {
+                phase: TouchPhase::End,
+                x,
+                y,
+            });
+        }
+    }
+
+    fn release_held_ios_modifiers(&mut self) {
+        let held = std::mem::take(&mut self.held_ios_modifiers);
+        if let Some(session) = &self.stream_session {
+            for usage in held.into_iter().rev() {
+                session.send_input(DeviceInputCommand::IosKey {
+                    phase: KeyPhase::Up,
+                    usage,
+                });
+            }
+        }
+    }
+
+    pub(super) fn handle_screen_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !self.focus_handle.is_focused(window) || !self.input_connected {
+            return;
+        }
+        let ks = &event.keystroke;
+        let avcc = self.active_uses_avcc();
+
+        // Android paste (Cmd+V / Ctrl+V) forwards clipboard text via `serve-emu` text packets.
+        if !avcc
+            && (ks.modifiers.platform || ks.modifiers.control)
+            && !ks.modifiers.alt
+            && ks.key.eq_ignore_ascii_case("v")
+        {
+            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text())
+                && !text.is_empty()
+                && let Some(session) = &self.stream_session
+            {
+                session.send_input(DeviceInputCommand::AndroidText(text));
+            }
+            cx.stop_propagation();
+            return;
+        }
+
+        // Preserve host app Cmd shortcuts except Cmd+R (React Native reload in Conn).
+        if ks.modifiers.platform && !ks.key.eq_ignore_ascii_case("r") {
+            return;
+        }
+
+        if avcc {
+            let Some((usage, implied_shift)) = hid_usage_for_key(&ks.key) else {
+                return;
+            };
+            self.release_held_ios_modifiers();
+            let mut mods = Vec::new();
+            if ks.modifiers.control {
+                mods.push(0xe0u16);
+            }
+            if ks.modifiers.shift || implied_shift {
+                mods.push(0xe1u16);
+            }
+            if ks.modifiers.alt {
+                mods.push(0xe2u16);
+            }
+            if ks.modifiers.platform {
+                mods.push(0xe3u16);
+            }
+            if let Some(session) = &self.stream_session {
+                for &m in &mods {
+                    session.send_input(DeviceInputCommand::IosKey {
+                        phase: KeyPhase::Down,
+                        usage: m,
+                    });
+                }
+                session.send_input(DeviceInputCommand::IosKey {
+                    phase: KeyPhase::Down,
+                    usage,
+                });
+            }
+            self.held_ios_modifiers = mods;
+            cx.stop_propagation();
+            return;
+        }
+
+        // Android (`serve-emu`): Escape -> back, special keys -> keycode, printable -> text.
+        if let Some(session) = &self.stream_session {
+            if ks.key == "escape" {
+                session.send_input(DeviceInputCommand::AndroidBack);
+                cx.stop_propagation();
+            } else if let Some(keycode) = android_keycode_for_key(&ks.key) {
+                session.send_input(DeviceInputCommand::AndroidKey { keycode });
+                cx.stop_propagation();
+            } else if !ks.modifiers.platform && !ks.modifiers.control {
+                let text = ks
+                    .key_char
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| (ks.key.chars().count() == 1).then_some(ks.key.as_str()));
+                if let Some(text) = text {
+                    session.send_input(DeviceInputCommand::AndroidText(text.to_owned()));
+                    cx.stop_propagation();
+                }
+            }
+        }
+    }
+
+    pub(super) fn handle_screen_key_up(
+        &mut self,
+        event: &KeyUpEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !self.focus_handle.is_focused(window) || !self.input_connected {
+            return;
+        }
+        if !self.active_uses_avcc() {
+            return;
+        }
+        let Some((usage, _)) = hid_usage_for_key(&event.keystroke.key) else {
+            return;
+        };
+        if let Some(session) = &self.stream_session {
+            session.send_input(DeviceInputCommand::IosKey {
+                phase: KeyPhase::Up,
+                usage,
+            });
+        }
+        self.release_held_ios_modifiers();
+        cx.stop_propagation();
+    }
+
+    pub(super) fn press_hardware_button(&mut self, button: HardwareButton) {
+        if !self.input_connected {
+            return;
+        }
+        if let Some(session) = &self.stream_session {
+            session.send_input(DeviceInputCommand::Button(button));
+        }
+    }
+
+    pub(super) fn rotate_ios_device(&mut self) {
+        let current = self
+            .stream_screen
+            .map_or(self.last_ios_orientation, |s| s.orientation);
+        let next = match current {
+            DeviceOrientation::Portrait => DeviceOrientation::LandscapeLeft,
+            DeviceOrientation::LandscapeLeft => DeviceOrientation::PortraitUpsideDown,
+            DeviceOrientation::PortraitUpsideDown => DeviceOrientation::LandscapeRight,
+            DeviceOrientation::LandscapeRight => DeviceOrientation::Portrait,
+        };
+        self.last_ios_orientation = next;
+        if let Some(session) = &self.stream_session {
+            session.send_input(DeviceInputCommand::IosOrientation(next));
+        }
+    }
+
+    pub(super) fn capture_screenshot(&mut self, cx: &mut Context<'_, Self>) {
+        if self.screenshot_pending || !self.visible {
+            return;
+        }
+        let (Some(conn), Some(device)) = (self.connection.clone(), self.active_device().cloned())
+        else {
+            return;
+        };
+        let hub_base_path = self.resolved_hub_base_path();
+        self.screenshot_pending = true;
+        self.screenshot_error = None;
+        self.screenshot_notice = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = capture_and_save_screenshot(
+                conn,
+                hub_base_path,
+                device.host_id,
+                device.platform,
+                device.id,
+                device.name,
+            )
+            .await;
+            let _ = this.update(cx, |panel, cx| {
+                panel.screenshot_pending = false;
+                match result {
+                    Ok(path) => {
+                        let name = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("screenshot.png");
+                        panel.screenshot_notice = Some(format!("Saved screenshot to {name}"));
+                        panel.screenshot_error = None;
+                    }
+                    Err(err) => {
+                        panel.screenshot_error = Some(err);
+                        panel.screenshot_notice = None;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
@@ -1515,13 +1953,10 @@ impl DevicePanel {
 impl Render for DevicePanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.sync_stream_session(cx);
+        self.sync_event_log_stream(cx);
         // Keep tools placeholders synced with active device & foreground app.
         if let Some(device) = self.active_device().cloned() {
-            let fg_id = self
-                .device_detail
-                .as_ref()
-                .and_then(|d| d.foreground_app.as_ref())
-                .map(|a| a.id.clone());
+            let fg_id = self.effective_foreground_app_id().map(str::to_owned);
             let sync_key = (DeviceKey::from_summary(&device), fg_id.clone());
             if self.synced_placeholders.as_ref() != Some(&sync_key) {
                 self.synced_placeholders = Some(sync_key);
