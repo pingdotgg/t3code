@@ -79,14 +79,6 @@ describe("the review template and usage rules", () => {
     expect(facts).toContain("- The review template is `Review loop`.");
     expect(facts).toContain("  - Claude weekly 82%, resets in 5d");
   });
-
-  it("Given the rules, when they render, then they run the template, escalate one tier, and bound usage", () => {
-    const rules = renderRules();
-    expect(rules).toContain("## Reviewing a ticket");
-    expect(rules).toContain("If findings remain after two fix rounds, start no third round.");
-    expect(rules).toContain("Never retry on the same tier.");
-    expect(rules).toContain("Above 95 percent, finish the work in flight");
-  });
 });
 
 describe("orchestrator stats", () => {

@@ -41,7 +41,8 @@ export function TemplateEditor({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const trimmed = name.trim();
-    const picked = (mark: Mark) => rows.filter((skill) => marks.get(skill) === mark);
+    const picked = (mark: Mark) =>
+      [...marks].filter(([, used]) => used === mark).map(([skill]) => skill);
     if (trimmed === "") setError("Name the template.");
     else if (taken.includes(trimmed)) setError(`A template named ${trimmed} already exists.`);
     else if (picked("check").length + picked("lane").length === 0) setError("Pick a skill.");

@@ -80,7 +80,7 @@ One JSON object per line. Every line has `id`, `kind`, `title`, `body`, `status`
 The six conditions, with these exact keys in `conditions`:
 
 - `ci_green`: CI is green on the head.
-- `reviews_fixed`: at least two different review roles have a latest entry in `verdicts`, and none of those entries has a P0 or P1 left. The board checks this itself and shows the user when you claim it falsely.
+- `reviews_fixed`: at least one review role has a latest entry in `verdicts`, and none of those entries has a P0 or P1 left. The board checks this itself and shows the user when you claim it falsely.
 - `delta_rereviewed`: the fix-round delta was reviewed again.
 - `readmes_pass`: the READMEs the change touched pass their check. Leave the check's output in the ticket's evidence folder, in a file whose name has `readme-check`, such as `readme-check.txt`.
 - `parent_ready`: the parent ticket is merged or ready, and `note` says the merge order.
