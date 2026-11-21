@@ -84,9 +84,11 @@ for the new one. With nothing defined but runs kept, an engine with nothing regi
 cluster runner serves their history.
 
 **Each file keeps its last good version.** A file that stops loading does not take its workflows
-down, and does not hold back the other files. What is checked across files, a workflow defined
-twice or a version dropped under unfinished runs, refuses the whole change instead, because
-there is no telling which file was meant to win.
+down, and does not hold back the other files. A change that fails a check across files, a
+workflow defined twice or a version dropped under unfinished runs, is held back the same way:
+the changed file keeps its last good version (a new one stays out, and of two new files the
+first by name wins), and the rest of the change is taken. A held change is tried again on every
+reload, since the runs that held it may have ended.
 
 **The API is globals, so files load one at a time.** `T3.workflow` registers with the load in
 progress, and the globals are the process's. A file is loaded under a new address each time,
