@@ -12216,6 +12216,7 @@
     }
   ],
   "b93dc3faeb8d9b2e": "{label} ({shortcut})",
+  "d9d87c222c4811a4": "Select month",
   "71efdf870da332e8": "{start} to {end}",
   "77100b4211d5cf8c": "Usage breadcrumb",
   "2f96360836544ae6": "Usage period",
@@ -12255,6 +12256,8 @@
   "31fd849033990734": "No providers",
   "0d4d01729dabc81e": "{count, plural, one {{count} providers} other {{count} providers}}",
   "19ace67a44293eba": "Usage",
+  "9f47b4e24a3e8dd0": "This month",
+  "99923f19c9f286aa": "Months",
   "26f2732fd6317056": [
     "API estimate excludes",
     " ",
@@ -12348,6 +12351,7 @@
   "2cddd6095abc734a": "7 days",
   "53493056306708cf": "30 days",
   "c719359d18d37ad3": "90 days",
+  "c869d7fd448a43fe": "This month",
   "8367779e149f723b": "Primary environment request failed during {operation} (HTTP {status}).",
   "c5cd027743a2b5a6": "Invalid pairing token. Check the token and try again.",
   "0e4b49c8203aae81": "Timed out waiting for authenticated session after bootstrap.",

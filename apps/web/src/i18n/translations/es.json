@@ -12201,6 +12201,7 @@
     }
   ],
   "b93dc3faeb8d9b2e": "{label} ({shortcut})",
+  "d9d87c222c4811a4": "Seleccionar mes",
   "71efdf870da332e8": "Del {start} al {end}",
   "77100b4211d5cf8c": "Ruta de navegación de uso",
   "2f96360836544ae6": "Periodo de uso",
@@ -12240,6 +12241,8 @@
   "31fd849033990734": "No hay proveedores",
   "0d4d01729dabc81e": "{count, plural, one {{count} proveedor} other {{count} proveedores}}",
   "19ace67a44293eba": "Uso",
+  "9f47b4e24a3e8dd0": "Este mes",
+  "99923f19c9f286aa": "Meses",
   "26f2732fd6317056": [
     "La estimación de API excluye",
     " ",
@@ -12333,6 +12336,7 @@
   "2cddd6095abc734a": "7 días",
   "53493056306708cf": "30 días",
   "c719359d18d37ad3": "90 días",
+  "c869d7fd448a43fe": "Este mes",
   "8367779e149f723b": "Falló una solicitud al entorno principal durante {operation} (HTTP {status}).",
   "c5cd027743a2b5a6": "El token de emparejamiento no es válido. Revísalo e inténtalo de nuevo.",
   "0e4b49c8203aae81": "Se agotó el tiempo de espera de la sesión autenticada tras el arranque.",

@@ -12206,6 +12206,7 @@
     }
   ],
   "b93dc3faeb8d9b2e": "{label} ({shortcut})",
+  "d9d87c222c4811a4": "Choisir un mois",
   "71efdf870da332e8": "Du {start} au {end}",
   "77100b4211d5cf8c": "Fil d’Ariane de l’utilisation",
   "2f96360836544ae6": "Période d’utilisation",
@@ -12245,6 +12246,8 @@
   "31fd849033990734": "Aucun fournisseur",
   "0d4d01729dabc81e": "{count, plural, one {{count} fournisseur} other {{count} fournisseurs}}",
   "19ace67a44293eba": "Utilisation",
+  "9f47b4e24a3e8dd0": "Ce mois-ci",
+  "99923f19c9f286aa": "Mois",
   "26f2732fd6317056": [
     "L’estimation API exclut",
     " ",
@@ -12338,6 +12341,7 @@
   "2cddd6095abc734a": "7 jours",
   "53493056306708cf": "30 jours",
   "c719359d18d37ad3": "90 jours",
+  "c869d7fd448a43fe": "Ce mois-ci",
   "8367779e149f723b": "La requête vers l’environnement principal a échoué pendant {operation} (HTTP {status}).",
   "c5cd027743a2b5a6": "Jeton d’appairage non valide. Vérifiez le jeton et réessayez.",
   "0e4b49c8203aae81": "Délai dépassé en attendant la session authentifiée après l’amorçage.",

@@ -12208,6 +12208,7 @@
     }
   ],
   "b93dc3faeb8d9b2e": "{label} ({shortcut})",
+  "d9d87c222c4811a4": "Monat auswählen",
   "71efdf870da332e8": "{start} bis {end}",
   "77100b4211d5cf8c": "Navigationspfad der Nutzung",
   "2f96360836544ae6": "Nutzungszeitraum",
@@ -12247,6 +12248,8 @@
   "31fd849033990734": "Keine Anbieter",
   "0d4d01729dabc81e": "{count, plural, one {{count} Anbieter} other {{count} Anbieter}}",
   "19ace67a44293eba": "Nutzung",
+  "9f47b4e24a3e8dd0": "Dieser Monat",
+  "99923f19c9f286aa": "Monate",
   "26f2732fd6317056": [
     "Die API-Schätzung schließt",
     " ",
@@ -12340,6 +12343,7 @@
   "2cddd6095abc734a": "7 Tage",
   "53493056306708cf": "30 Tage",
   "c719359d18d37ad3": "90 Tage",
+  "c869d7fd448a43fe": "Dieser Monat",
   "8367779e149f723b": "Anfrage an die primäre Umgebung während {operation} fehlgeschlagen (HTTP {status}).",
   "c5cd027743a2b5a6": "Ungültiges Kopplungstoken. Prüfe das Token und versuch es erneut.",
   "0e4b49c8203aae81": "Zeitüberschreitung beim Warten auf eine authentifizierte Sitzung nach dem Bootstrap.",
