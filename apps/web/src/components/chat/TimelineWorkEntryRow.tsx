@@ -37,6 +37,8 @@ import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { workGroupImageGallery } from "./markdownImageGallery";
+import { McpSignInAction } from "./McpSignInAction";
+import * as DateTime from "effect/DateTime";
 import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
@@ -509,7 +511,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         tabIndex: 0 as const,
         "aria-label": accessibleDisplayText,
         "aria-expanded": expanded,
-        onClick: toggleExpanded,
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
           if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
             e.preventDefault();
@@ -517,14 +518,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           }
         },
       }
-    : {};
+    : undefined;
 
   return (
     <WorkLogRow
       data-work-entry-id={workEntry.id}
       data-v2-item-type={workEntry.projectedItem?.item.type}
       data-v2-item-visibility={workEntry.projectedItem?.visibility}
-      {...rowToggleProps}
+      onClick={canExpandProjectedItem ? toggleExpanded : undefined}
+      toggle={rowToggleProps}
       icon={
         <span
           className={iconWrapperClass}
@@ -606,6 +608,17 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             >
               <T>Open chat</T>
             </button>
+          ) : null}
+          {payload?.type === "system_notice" &&
+          payload.mcpSignIn !== undefined &&
+          payload.providerThreadId !== null ? (
+            <McpSignInAction
+              environmentId={ctx.activeThreadEnvironmentId}
+              threadId={payload.threadId}
+              providerThreadId={payload.providerThreadId}
+              server={payload.mcpSignIn.server}
+              noticeAt={DateTime.toEpochMillis(payload.updatedAt)}
+            />
           ) : null}
           {notifiedSubagentThreadId ? (
             <InlineButton

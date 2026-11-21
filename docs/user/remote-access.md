@@ -479,6 +479,13 @@ pick one. If this app is connected to both machines, knows an address the first
 can reach the other at, and its session on the other one manages access there,
 it needs no pairing code.
 
+A machine this app is not connected to, shown only because another environment
+links to it, can still be linked without a code when that link has full access:
+drop the plus on it and the environment holding the link gets the pairing code
+from it. Your session on that environment must manage access there. The result
+is a separate link with the access you pick, listed and revocable on the linked
+machine like any other. Links still do not chain.
+
 A link goes one way. To let the other machine's agents work back, tick **Also
 link … back** when you create the link, or select a one-way link and use
 **Link back…**. It is offered when this app is connected to both machines and
