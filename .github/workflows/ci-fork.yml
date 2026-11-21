@@ -118,10 +118,16 @@ jobs:
               sys.stdout.write(line.encode("ascii", "backslashreplace").decode("ascii"))
           '
 
+  # Upstream shards web tests over two 8 vCPU runners. One 4 vCPU runner running all of them
+  # lost its Chromium page partway through, so the fork shards them three ways.
   test_web:
-    name: Test Web
+    name: Test Web ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -151,10 +157,12 @@ jobs:
           --exclude "**/AttachmentFilePreview.browser.test.tsx"
           --exclude "**/ChatView.browser.test.tsx"
           --exclude "**/MessagesTimeline.browser.test.tsx"
+          --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
       # MessagesTimeline gets its own run: after ChatView in the same run, upstream's
       # "keeps the worked-for heading in place" test lands 104px off.
       - name: Test heavy browser files
+        if: matrix.shard == 1
         working-directory: apps/web
         run: |
           vp test run --project browser --no-file-parallelism src/components/files/AttachmentFilePreview.browser.test.tsx src/components/ChatView.browser.test.tsx
