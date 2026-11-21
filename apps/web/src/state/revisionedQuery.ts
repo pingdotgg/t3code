@@ -16,8 +16,12 @@ const isCached = (registry: AtomRegistry.AtomRegistry, query: Atom.Atom<unknown>
   (query.initialValueTarget !== undefined && hasNode(registry, query.initialValueTarget));
 
 const makeRevisionedFamily = (query: Atom.Atom<unknown>) =>
-  Atom.family((revision: string | null) =>
-    Atom.readable(
+  Atom.family((key: string) => {
+    const { revision, placeholder } = JSON.parse(key) as {
+      readonly revision?: string | null;
+      readonly placeholder?: string;
+    };
+    return Atom.readable(
       (get) => {
         // Only a node's first build compares: a node still mounted under the old
         // revision rebuilds when the query refetches, and must not refetch it again.
@@ -27,14 +31,21 @@ const makeRevisionedFamily = (query: Atom.Atom<unknown>) =>
             revisions = new WeakMap();
             readRevisions.set(get.registry, revisions);
           }
+          // Nothing cached: the read below fetches fresh, which a refresh would only restart.
+          const cached = isCached(get.registry, query);
+          if (revision === undefined) {
+            if (!cached && placeholder !== undefined) revisions.set(query, placeholder);
+            return get(query);
+          }
+          const last = revisions.get(query);
           const stale = revisions.has(query)
-            ? revisions.get(query) !== revision
+            ? last !== revision && (placeholder === undefined || last !== placeholder)
             : // A reader without a revision may have cached it before the latest
-              // workspace change; a query nobody has read yet fetches fresh anyway.
-              revision !== null && isCached(get.registry, query);
+              // workspace change.
+              revision !== null;
           // Deferred: this builds while React renders, and a refresh would synchronously
           // re-render the query's other readers, which React rejects.
-          if (stale) {
+          if (stale && cached) {
             const registry = get.registry;
             queueMicrotask(() => {
               // No node, as after the registry is disposed: nothing cached to refetch.
@@ -47,8 +58,8 @@ const makeRevisionedFamily = (query: Atom.Atom<unknown>) =>
       },
       // Refreshing the reader refetches the query it reads.
       (refresh) => refresh(query),
-    ),
-  );
+    );
+  });
 
 // Held as long as the query lives, so one (query, revision) pair keeps one atom; an
 // `Atom.family` would hold the inner family only weakly and could swap the atom under a reader.
@@ -66,15 +77,16 @@ const revisionedFamily = (query: Atom.Atom<unknown>) => {
 };
 
 /**
- * Reads `query` under a workspace revision (latest mutation id); a different
- * revision than the last read refetches it. The first read records the revision,
- * and refetches only a query that a reader without a revision already cached.
- * `undefined` reads without taking part, for readers that must not refetch now.
+ * Reads `query` under a workspace revision (latest mutation id); a revision other than the
+ * last one read refetches a cached query. `undefined` reads without taking part.
+ * `placeholder` stands for a revision not known yet (see `useWorkspaceRevision`): a fetch that a
+ * read without a revision starts is recorded under it, and a query last read under it is current.
  */
 export function revisionedQuery<A>(
   query: Atom.Atom<A>,
   revision: string | null | undefined,
+  placeholder?: string,
 ): Atom.Atom<A> {
-  if (revision === undefined) return query;
-  return revisionedFamily(query)(revision) as Atom.Atom<A>;
+  if (revision === undefined && placeholder === undefined) return query;
+  return revisionedFamily(query)(JSON.stringify({ revision, placeholder })) as Atom.Atom<A>;
 }

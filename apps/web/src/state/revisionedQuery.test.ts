@@ -21,8 +21,8 @@ function setup(readQuery: (cache: Atom.Atom<number>) => Atom.Atom<number> = (cac
       return fetches;
     }).pipe(Atom.keepAlive),
   );
-  const mount = async (revision: string | null | undefined) => {
-    const release = registry.mount(revisionedQuery(query, revision));
+  const mount = async (revision: string | null | undefined, placeholder?: string) => {
+    const release = registry.mount(revisionedQuery(query, revision, placeholder));
     // A stale read refetches in a microtask, after the render that read it.
     await Promise.resolve();
     return () => {
@@ -127,5 +127,56 @@ describe("revisionedQuery", () => {
 
     // A refetch that ran now would throw "registry is disposed" as an uncaught error.
     await Promise.resolve();
+  });
+
+  it("does not refetch when the revision replaces the placeholder the query was read under", async () => {
+    const { mount, fetches } = setup();
+
+    (await mount("thread-a-1"))();
+    (await mount("unloaded-b"))();
+    expect(fetches()).toBe(2);
+
+    (await mount("thread-b-1", "unloaded-b"))();
+    expect(fetches()).toBe(2);
+
+    (await mount("thread-b-2"))();
+    expect(fetches()).toBe(3);
+  });
+
+  it("records a fetch started without a revision under the placeholder", async () => {
+    const fresh = setup();
+    (await fresh.mount(undefined, "unloaded-b"))();
+    (await fresh.mount("thread-b-1", "unloaded-b"))();
+    expect(fresh.fetches()).toBe(1);
+
+    // Cached before the placeholder read: the revision that turns up still refetches it.
+    const cached = setup();
+    (await cached.mount("thread-a-1"))();
+    (await cached.mount(undefined, "unloaded-b"))();
+    expect(cached.fetches()).toBe(1);
+    (await cached.mount("thread-b-1", "unloaded-b"))();
+    expect(cached.fetches()).toBe(2);
+  });
+
+  it("does not restart the fetch of a query whose cache is gone", async () => {
+    let fetches = 0;
+    const scheduled: Array<() => void> = [];
+    const registry = AtomRegistry.make({
+      scheduleTask: (task) => {
+        scheduled.push(task);
+        return () => {};
+      },
+    });
+    const query = Atom.make(() => (fetches += 1));
+    const read = async (revision: string) => {
+      const release = registry.mount(revisionedQuery(query, revision));
+      await Promise.resolve();
+      release();
+      for (const task of scheduled.splice(0)) task();
+    };
+
+    await read("mutation-1");
+    await read("mutation-2");
+    expect(fetches).toBe(2);
   });
 });
