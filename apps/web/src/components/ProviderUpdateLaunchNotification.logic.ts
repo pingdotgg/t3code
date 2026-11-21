@@ -26,7 +26,6 @@ export type ProviderUpdateCandidate = ServerProvider & {
 export type ProviderSettingsUpdateCandidate = ServerProvider & {
   readonly versionAdvisory: NonNullable<ServerProvider["versionAdvisory"]> & {
     readonly canUpdate: true;
-    readonly updateCommand: string;
   };
 };
 
@@ -149,10 +148,78 @@ export function isProviderUpdateActive(provider: Pick<ServerProvider, "updateSta
   return provider.updateState?.status === "queued" || provider.updateState?.status === "running";
 }
 
-export function collectProviderUpdateCandidates(
+/**
+ * Collects one update job per distinct installation of each driver so mixed CLI + managed
+ * instances (for example, CLI Codex alongside T3-managed Codex) can each be updated, while
+ * accounts sharing one installation stay deduplicated into a single job.
+ */
+export function collectOneClickProviderUpdateCandidates(
   providers: ReadonlyArray<ServerProvider>,
 ): ProviderUpdateCandidate[] {
-  return dedupeProvidersByDriver(providers.filter(isProviderUpdateCandidate));
+  const byDriver = new Map<ProviderDriverKind, ProviderUpdateCandidate[]>();
+  for (const provider of providers) {
+    if (!isProviderUpdateCandidate(provider)) {
+      continue;
+    }
+    const existing = byDriver.get(provider.driver);
+    if (existing) {
+      existing.push(provider);
+    } else {
+      byDriver.set(provider.driver, [provider]);
+    }
+  }
+
+  const results: ProviderUpdateCandidate[] = [];
+  for (const driverCandidates of byDriver.values()) {
+    const managed = driverCandidates.filter(
+      (candidate) =>
+        candidate.versionAdvisory.canUpdate === true &&
+        candidate.versionAdvisory.updateCommand === null,
+    );
+    const nonManaged = driverCandidates.filter(
+      (candidate) =>
+        candidate.versionAdvisory.canUpdate !== true ||
+        candidate.versionAdvisory.updateCommand !== null,
+    );
+
+    if (nonManaged.length > 0) {
+      const cliCommands = new Set<string>();
+      let cliEligible = true;
+      for (const candidate of nonManaged) {
+        if (
+          candidate.versionAdvisory.canUpdate !== true ||
+          candidate.versionAdvisory.updateCommand === null
+        ) {
+          cliEligible = false;
+          break;
+        }
+        cliCommands.add(candidate.versionAdvisory.updateCommand);
+      }
+      if (
+        cliEligible &&
+        cliCommands.size === 1 &&
+        !nonManaged.some((candidate) => isProviderUpdateActive(candidate))
+      ) {
+        results.push(
+          nonManaged.reduce(
+            (representative, candidate) =>
+              chooseRepresentativeProvider(representative, candidate) as ProviderUpdateCandidate,
+          ),
+        );
+      }
+    }
+
+    if (managed.length > 0 && !managed.some((candidate) => isProviderUpdateActive(candidate))) {
+      results.push(
+        managed.reduce(
+          (representative, candidate) =>
+            chooseRepresentativeProvider(representative, candidate) as ProviderUpdateCandidate,
+        ),
+      );
+    }
+  }
+
+  return results;
 }
 
 export function isProviderSettingsUpdateCandidate(
@@ -163,8 +230,7 @@ export function isProviderSettingsUpdateCandidate(
     provider.compatibilityAdvisory?.latestVersionStatus !== "broken" &&
     provider.compatibilityAdvisory?.latestVersionStatus !== "unsupported" &&
     provider.versionAdvisory?.status === "behind_latest" &&
-    provider.versionAdvisory.canUpdate === true &&
-    provider.versionAdvisory.updateCommand !== null
+    provider.versionAdvisory.canUpdate === true
   );
 }
 
@@ -172,10 +238,7 @@ export function hasOneClickUpdateProviderCandidate(
   candidate: ProviderUpdateCandidate,
   providers: ReadonlyArray<ServerProvider>,
 ): boolean {
-  if (
-    candidate.versionAdvisory.canUpdate !== true ||
-    candidate.versionAdvisory.updateCommand === null
-  ) {
+  if (candidate.versionAdvisory.canUpdate !== true) {
     return false;
   }
 
@@ -184,19 +247,20 @@ export function hasOneClickUpdateProviderCandidate(
     return false;
   }
 
-  const updateCommands = new Set<string>();
+  // `null` stands for a T3-managed in-process updater; mixed shell and managed installs disagree.
+  const updateMethods = new Set<string | null>();
   for (const provider of driverProviders) {
     if (!isProviderUpdateCandidate(provider)) {
       continue;
     }
     const advisory = provider.versionAdvisory;
-    if (!advisory || advisory.canUpdate !== true || advisory.updateCommand === null) {
+    if (!advisory || advisory.canUpdate !== true) {
       return false;
     }
-    updateCommands.add(advisory.updateCommand);
+    updateMethods.add(advisory.updateCommand);
   }
 
-  return updateCommands.size === 1;
+  return updateMethods.size === 1;
 }
 
 export function canOneClickUpdateProviderCandidate(

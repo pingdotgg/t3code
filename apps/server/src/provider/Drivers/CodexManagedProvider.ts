@@ -22,15 +22,23 @@ import {
   probeCodexSkillsForCwd,
 } from "../CodexProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilities,
+} from "@t3tools/provider-core/server/maintenanceResolver";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   type ProviderDriverCreateInput,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
 import { codexContinuationIdentity } from "./CodexHomeLayout.ts";
+import { runManagedInstallationUpdate } from "../managedInstallationUpdate.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { HttpClient } from "effect/http";
 const DRIVER = ProviderDriverKind.make("codex");
+const MANAGED_CODEX_LOCK_KEY = "codex-managed";
 
 export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(function* (
   input: ProviderDriverCreateInput<CodexSettings>,
@@ -41,6 +49,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
+  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const runtime = yield* makeCodexManagedRuntime({
     instanceId,
     enabled,
@@ -73,8 +82,19 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const check = Effect.gen(function* () {
     const base = yield* pending;
     if (!enabled) return base;
-    const executable = yield* runtime.installation.resolve().pipe(Effect.option);
-    if (Option.isNone(executable))
+    const resolved = yield* runtime.installation.resolve().pipe(Effect.result);
+    if (resolved._tag === "Failure") {
+      const installState = yield* runtime.installation.state;
+      if (installState.source === "managed" && installState.installedVersion !== null) {
+        return {
+          ...base,
+          installed: true,
+          version: installState.installedVersion,
+          status: "error" as const,
+          models: [],
+          message: resolved.failure.detail,
+        };
+      }
       return {
         ...base,
         installed: false,
@@ -82,12 +102,14 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
         message: "Set up Codex to get started.",
         auth: { status: "unauthenticated" as const },
       };
+    }
+    const executable = resolved.success;
     const saved = yield* runtime.auth.read.pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isSome(saved) && !saved.value.scopes.includes("chatgpt.tokens.use.direct"))
       return {
         ...base,
         installed: true,
-        version: executable.value.version,
+        version: executable.version,
         models: [],
         message:
           "Signed in with ChatGPT, but token sharing is disabled. Sign in again and enable token sharing, or use another provider.",
@@ -101,7 +123,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       return {
         ...base,
         installed: true,
-        version: executable.value.version,
+        version: executable.version,
         models: [],
         message: "Sign in with ChatGPT to use Codex.",
         auth: { status: "unauthenticated" as const },
@@ -155,7 +177,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
         stamp({
           ...draft,
           auth: managedAuth,
-          version: draft.version ?? executable.value.version,
+          version: draft.version ?? executable.version,
           usageLimits,
           models: draft.models.map((model) => ({
             ...model,
@@ -185,7 +207,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
           Effect.map((current) => ({
             ...base,
             installed: true,
-            version: executable.value.version,
+            version: executable.version,
             models: [],
             auth: {
               status:
@@ -215,13 +237,60 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(Path.Path, path),
   );
+  const resolveMaintenance = Effect.fn("CodexManagedProvider.resolveMaintenance")(function* () {
+    const executable = yield* runtime.installation.resolve().pipe(Effect.option);
+    const installState = Option.isNone(executable) ? yield* runtime.installation.state : null;
+    const withdrawnInstalledVersion =
+      installState !== null &&
+      installState.source === "managed" &&
+      installState.installedVersion !== null
+        ? installState.installedVersion
+        : null;
+    const isManaged =
+      (Option.isSome(executable) && executable.value.source === "managed") ||
+      withdrawnInstalledVersion !== null;
+    if (!isManaged) {
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        provider: DRIVER,
+        packageName: null,
+        ...(Option.isSome(executable) ? { installPath: executable.value.executablePath } : {}),
+      });
+    }
+    return {
+      provider: DRIVER,
+      packageName: null,
+      update: null,
+      managedUpdate: {
+        lockKey: MANAGED_CODEX_LOCK_KEY,
+        run: (onProgress) => runManagedInstallationUpdate(runtime.installation, onProgress),
+      },
+      latestVersionCacheKey: MANAGED_CODEX_LOCK_KEY,
+      lookupLatestVersion: runtime.installation.lookupLatestVersion,
+      ...(withdrawnInstalledVersion !== null
+        ? { compareVersions: (current: string, latest: string) => (current === latest ? 0 : -1) }
+        : {}),
+    } satisfies ProviderMaintenanceCapabilities;
+  });
   const snapshot = yield* makeManagedServerProvider({
-    resolveMaintenance: () => Effect.succeed({ provider: DRIVER, packageName: null, update: null }),
+    resolveMaintenance,
     getSettings: host.settings.get,
     streamSettings: host.settings.changes,
-    haveSettingsChanged: () => false,
+    haveSettingsChanged: (previous, next) =>
+      previous.enableProviderUpdateChecks !== next.enableProviderUpdateChecks,
+    checkProviderOnSettingsChange: () => false,
     initialSnapshot: () => pending,
     checkProvider: check,
+    enrichSnapshot: ({ settings: serverSettings, snapshot: currentSnapshot, publishSnapshot }) =>
+      resolveMaintenance().pipe(
+        Effect.flatMap((maintenanceCapabilities) =>
+          enrichProviderSnapshotWithVersionAdvisory(currentSnapshot, maintenanceCapabilities, {
+            enableProviderUpdateChecks: serverSettings.enableProviderUpdateChecks,
+          }),
+        ),
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+        Effect.flatMap(publishSnapshot),
+      ),
   }).pipe(
     Effect.mapError(
       (cause) =>

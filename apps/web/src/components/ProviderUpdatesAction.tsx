@@ -14,8 +14,7 @@ import { serverEnvironment } from "~/state/server";
 import { useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
-  canOneClickUpdateProviderCandidate,
-  collectProviderUpdateCandidates,
+  collectOneClickProviderUpdateCandidates,
   getProviderUpdateRunToastView,
   type ProviderUpdateRun,
 } from "./ProviderUpdateLaunchNotification.logic";
@@ -86,9 +85,7 @@ export function useProviderUpdates() {
     ) {
       return [];
     }
-    const candidates = collectProviderUpdateCandidates(providers).filter((candidate) =>
-      canOneClickUpdateProviderCandidate(candidate, providers),
-    );
+    const candidates = collectOneClickProviderUpdateCandidates(providers);
     return candidates.length > 0
       ? [{ environmentId: environment.environmentId, label: environment.label, candidates }]
       : [];
@@ -159,9 +156,13 @@ export function ProviderUpdatesAction() {
         {machines.map((machine) => (
           <div key={machine.environmentId}>
             {machine.label}:{" "}
-            {machine.candidates
-              .map((candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver)
-              .join(", ")}
+            {[
+              ...new Set(
+                machine.candidates.map(
+                  (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
+                ),
+              ),
+            ].join(", ")}
           </div>
         ))}
       </TooltipPopup>

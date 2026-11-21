@@ -3,6 +3,8 @@ import * as NodeCrypto from "node:crypto";
 export type {
   ProviderMaintenanceCapabilities,
   ProviderMaintenanceCommandAction,
+  ProviderMaintenanceManagedAction,
+  ProviderMaintenanceManagedUpdateResult,
 } from "@t3tools/provider-core/server/maintenance";
 import type {
   ProviderMaintenanceCapabilities,
@@ -1444,6 +1446,10 @@ function manualUpdateMessage(latestVersion: string, installPath: string | undefi
     : `Version ${latestVersion} is out. Update it with the app or tool that installed it.`;
 }
 
+function hasProviderUpdateAction(capabilities: ProviderMaintenanceCapabilities): boolean {
+  return capabilities.update !== null || capabilities.managedUpdate !== undefined;
+}
+
 function deriveVersionAdvisory(input: {
   readonly currentVersion: string | null;
   readonly latestVersion: string | null;
@@ -1463,10 +1469,9 @@ function deriveVersionAdvisory(input: {
   ) {
     return {
       status: "behind_latest",
-      message:
-        input.capabilities.update === null
-          ? manualUpdateMessage(input.latestVersion, input.capabilities.installPath)
-          : PROVIDER_UPDATE_ACTION_TOAST_MESSAGE,
+      message: !hasProviderUpdateAction(input.capabilities)
+        ? manualUpdateMessage(input.latestVersion, input.capabilities.installPath)
+        : PROVIDER_UPDATE_ACTION_TOAST_MESSAGE,
     };
   }
   return { status: "current", message: null };
@@ -1496,7 +1501,7 @@ export function createProviderVersionAdvisory(input: {
       resolveLatestProviderUpdateAction(capabilities, latestVersion)?.command ??
       capabilities.manualCommand ??
       null,
-    canUpdate: capabilities.update !== null,
+    canUpdate: hasProviderUpdateAction(capabilities),
     canInstallVersion: makeTargetedProviderUpdateAction(capabilities, "0.0.0") !== null,
     checkedAt: input.checkedAt ?? null,
     message: advisory.message,
@@ -1527,6 +1532,7 @@ function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities
   if (capabilities.latestVersionCacheKey) return capabilities.latestVersionCacheKey;
   const update = capabilities.update;
   if (update) return [update.lockKey, update.executable, ...update.args].join("\0");
+  if (capabilities.managedUpdate) return capabilities.managedUpdate.lockKey;
   return capabilities.installPath
     ? ["manual", capabilities.installPath].join("\0")
     : capabilities.packageName && `npm-registry\0${capabilities.packageName}`;
