@@ -1602,6 +1602,19 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends L1 to the base-branch stack and the operator lands it bottom-up.
 
+**Actuals.** L1 merged as PR #42 at `6969277d83`.
+
+- The issue picker searches with `issues.list`. `issues.candidates` returns labels and assignees, not search results.
+- The picker shows open issues only, and the UI does not say so.
+- The ask rule rides on the board's own Claude instances through `--settings`, not in each folder's `.claude/settings.local.json`. A base instance's own `--settings` is replaced by it.
+- Known gap, recorded by the operator: a child started on the operator's base Claude instance or on Codex can change issue state with no Approve, and agents running `gh` from Bash can close GitHub issues with no Approve.
+- Codex orchestrators are blocked with a reason in the UI, because gating Codex per tool needs an engine change.
+- The `tracker_write` card makes only what it shows: no host, labels, or assignees.
+- Jira is not offered by T3 0.1.10.
+- `vp run --filter @agent-board/app dev:web` drops `AGENT_BOARD_TOKEN`. Run `vp dev --port <port>` from `apps/board` instead.
+- Perf: GitHub-tab search median 734.5 ms against the 300 ms rule, a miss the operator moved to O1. Linear search was not timed.
+- Linear lanes ran in the operator's `t3-board` workspace, team T3.
+
 ## Port pstack to T3 and run the orchestrator in poteto-mode (B12)
 
 **Depends on.** L1.
@@ -1658,14 +1671,14 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B12 to the base-branch stack and the operator lands it bottom-up.
 
-## Run reviews from review templates on the board's orchestrator (R2)
+## Run reviews from review templates, and spend usage wisely, on the board's orchestrator (R2)
 
 **Depends on.** L1.
 
 **Files.**
 
-- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.test.ts`, `apps/board/src/orchestrator/launch.ts`, `apps/board/src/orchestrator/roles.ts`, `apps/board/src/orchestrator/roles.test.ts`, `apps/board/roles/task.md`, `apps/board/roles/reviewer.md`, `apps/board/src/domain/board.ts`, `apps/board/src/store/localState.ts`, `apps/board/src/settings/SettingsNav.tsx`, and `apps/board/src/board/OrchestratorCard.tsx`.
-- [ ] Create `apps/board/src/domain/reviewTemplate.ts`, `apps/board/src/domain/reviewTemplate.test.ts`, and `apps/board/src/settings/ReviewsPage.tsx`.
+- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.test.ts`, `apps/board/src/orchestrator/launch.ts`, `apps/board/src/orchestrator/roles.ts`, `apps/board/src/orchestrator/roles.test.ts`, `apps/board/roles/task.md`, `apps/board/roles/reviewer.md`, `apps/board/roles/sonic.md`, `apps/board/src/domain/board.ts`, `apps/board/src/store/localState.ts`, `apps/board/src/state/orchestrator.ts`, `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, and `apps/board/src/board/ForYouCard.tsx`.
+- [ ] Create `apps/board/src/domain/reviewTemplate.ts`, `apps/board/src/domain/reviewTemplate.test.ts`, `apps/board/src/usage/usageNotice.ts`, `apps/board/src/usage/usageNotice.test.ts`, and `apps/board/src/settings/ReviewsPage.tsx`.
 - [ ] Delete `apps/board/roles/thermo-nuclear-review-subagent.md` and `apps/board/roles/thermo-nuclear-code-quality-review-subagent.md`.
 - [ ] In `13kparkin/pstack-t3`, edit `skills/pstack-t3/SKILL.md`, then re-vendor `apps/board/pstack/` with `apps/board/scripts/vendor-pstack.mjs`.
 
@@ -1681,25 +1694,37 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Delete the two thermo-nuclear roles and their `roles.ts` entries. `ponytail-review` covers bugs, broken callers, and code that should not exist, and the thermo-nuclear code-quality checklist pushes for restructuring that grows code.
 - [ ] In the `pstack-t3` adapter, map every skill step that says to start a subagent, a scout, a task, or a reviewer to `delegate_task` with the matching registry role. This covers user skills such as `pre-pr-reviewer` and `no-comments`.
 - [ ] The skills come from where they already load on the board's Claude instances: `pstack-t3` for `no-comments`, `unslop`, and `swarm`, `~/.claude/skills` for `review-loop`, `simplify`, `pre-pr-reviewer`, `test-evidence-review`, `security-audit`, and `pr-description`, and the user-scope ponytail plugin for `ponytail-review`. Nothing is vendored twice.
+- [ ] Spend usage wisely without losing quality. Save on waste, never on the hard steps. Anthropic measured an orchestrator with subagents at about 15 times a chat's tokens, and found token use explains most of the quality difference, so cutting thinking blindly makes results worse. Sources: [How we built our multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system) and [Which Claude model should you build with?](https://claude.dev/blog/which-claude-model-should-you-build-with/).
+- [ ] Set the role models in `roles.ts` from that guide, not from omp's settings. `reviewer` runs on Sonnet 5.5 at `medium`, for routine lanes. `security-reviewer` runs on Opus 5.5 at `high`, for security and large diffs. `task` runs on Sonnet 5.5 at `medium`. `scout` stays on Sonnet 5.5 at `medium`. `sonic` stays on Haiku 5.5 at `low`. Roles with no model of their own take Opus 5.5 at `medium`. No role uses Fable 5.1 or `xhigh`.
+- [ ] `roles/sonic.md` keeps sonic off source code. It runs tests, reads logs, collects data, and moves text the task gives word for word. The guide keeps code edits off small models, and Haiku costs five times more on prompts over 100K tokens.
+- [ ] `brief.md` gives the orchestrator the usage rules, always on.
+  - [ ] Pick the cheapest role that can do the step.
+  - [ ] When a child fails, or reports it is unsure, re-run that step once on the next tier up: Haiku, then Sonnet, then Opus, at `medium`. Never retry on the same tier. The guide measured low effort with failures re-run at high at about 97% of tasks for $0.17, against 95.3% for $0.29 with every task at high.
+  - [ ] Never cut planning, a lane the board's template requires, security review on a trust boundary, live lanes, receipts, or the stop after two fix rounds.
+  - [ ] Batch small work, and give one reviewer every lane on a diff of a few files. Hand over file paths, not pasted text. Ask children for short reports, because every report stays in the orchestrator's context. Send a short follow-up to a child that already holds the context. Never poll.
+  - [ ] A Codex orchestrator's children all inherit its model, so lean work lowers `effort` instead of switching models.
+- [ ] Send the orchestrator the usage numbers T3 already reports. The launch facts carry one line per usage window of the orchestrator's provider, such as `Claude weekly 82%, resets Fri`. When a window crosses 50, 80, or 95 percent, the board sends one message with that line. Above 80 percent the orchestrator runs lean: only the cheapest roles, and it asks the operator before starting more than two agents at once. Above 95 percent it finishes the work in flight and asks the operator before it starts any new agent.
+- [ ] In `usageNotice.ts`, keep the pure pieces: the usage line a window renders, and the crossings between two readings of the windows.
+- [ ] For-you card bodies render through C2's markdown in its untrusted mode, the one M1 uses for PR comments, so the tables, lists, and Mermaid graphs the orchestrator writes for a decision show as they do in chat. A body can quote issue text from a tracker, so images show as their alt text. `brief.md` tells the orchestrator to give each question the context the operator needs to decide, such as a short table of the options.
 
 **You see.**
 
-- [ ] The operator picks a review template for each board, or builds one from review skills. Every ticket goes through the board's template, and the orchestrator stops and asks after two fix rounds.
+- [ ] The operator picks a review template for each board, or builds one from review skills. Every ticket goes through the board's template, and the orchestrator stops and asks after two fix rounds. Cheap roles do the cheap steps, and the orchestrator slows down and asks as usage limits get close.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `roles.test.ts` asserts the literal registry without the two thermo-nuclear roles. `reviewTemplate.test.ts` asserts the system template's literal facts text, and decodes a fixed local-state file with one custom template into its literal value. Run `vp test run src/orchestrator/roles.test.ts src/domain/reviewTemplate.test.ts` from `apps/board`.
+- [ ] `roles.test.ts` asserts the literal registry with the new models and without the two thermo-nuclear roles. `reviewTemplate.test.ts` asserts the system template's literal facts text, and decodes a fixed local-state file with one custom template into its literal value. `usageNotice.test.ts` turns two fixed readings into the literal messages for a window that crosses 80 percent, and no message for a window that moves without crossing. Run `vp test run src/orchestrator/roles.test.ts src/domain/reviewTemplate.test.ts src/usage/usageNotice.test.ts` from `apps/board`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Every lane uses a real Claude orchestrator on the shared lane repo.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk's orchestrator hands a code-ready ticket to merge approval with no review lanes, so record that. Run a small goal at head on the system template. Save `r2-author-checks.txt`. Pass when the builder's transcript shows `simplify`, `no-comments`, `unslop`, and `pre-pr-reviewer` before code-ready.
-- [ ] Lane 2. Save `r2-lanes.txt` from the same goal. Pass when each applicable reviewer lane starts as its own `delegate_task` child with the `reviewer` role, every skill loads with no refused Skill call, and no Claude built-in subagent call appears.
-- [ ] Lane 3. Give a goal whose builder brief plants one real bug, a comment rendered without the markdown sanitizer. Save `r2-fix-round.txt`. Pass when a lane names it with `file:line`, the builder fixes it, the re-run lanes pass, and the fix round reports its `git diff --shortstat` and adds no guard, fallback, wrapper, or test its finding did not require.
-- [ ] Lane 4. Give a goal whose builder brief asks for three tests of made-up edge cases. Save `r2-tests.txt`. Pass when `test-evidence-review` flags all three and the fix round deletes them.
+- [ ] Lane 2. Save `r2-lanes.txt` from the same goal. Pass when each applicable reviewer lane starts as its own `delegate_task` child, with the `security-reviewer` role for the security lane and the `reviewer` role for the rest, every skill loads with no refused Skill call, and no Claude built-in subagent call appears.
+- [ ] Lane 3. Give a goal whose builder brief plants one real bug, a comment rendered without the markdown sanitizer, and asks for three tests of made-up edge cases. Save `r2-fix-round.txt` and `r2-pr-body.txt`. Pass when a lane names the bug with `file:line`, `test-evidence-review` flags all three tests, the fix round fixes the bug and deletes the tests, reports its `git diff --shortstat`, and adds nothing its findings did not require, and the merged PR body has every `pr-description` section that applies and a Mermaid graph.
+- [ ] Lane 4. Launch a board and record its launch facts. Then send the orchestrator the 80 percent message from the unit fixture, and give it a goal with five tickets. Save `r2-usage.txt`. Pass when the facts' usage lines match the board's usage bar, and after the message the orchestrator starts only the cheapest roles and asks before starting more than two agents.
 - [ ] Lane 5. Create a template named "Security only" with `simplify` as its author check and `security-audit` as its lane, and pick it on a board. Run a small goal. Save `r2-custom.png` and `r2-custom.txt`. Pass when only those two skills run on the ticket.
 - [ ] Lane 6. Give a docs-only goal on the system template. Save `r2-docs.txt`. Pass when the security and test lanes are skipped with their reasons.
-- [ ] Lane 7. Give a goal that still has findings after two fix rounds. Save `r2-escalate.png`. Pass when a For-you question asks the operator and no third fix round starts.
-- [ ] Lane 8. Save `r2-pr-body.txt` from a merged lane PR. Pass when its body has every `pr-description` section that applies and a Mermaid graph.
+- [ ] Lane 7. Give a goal that still has findings after two fix rounds. Save `r2-escalate.png`. Pass when a For-you question asks the operator, its body's table renders as a table, and no third fix round starts.
+- [ ] Lane 8. Run the same three-ticket goal twice in fresh sessions, once with trunk's role models and once at head. Save `r2-models.txt` with each run's tokens per role from the engine's turn usage, its review verdicts, and its fix rounds. Pass when head uses fewer tokens with the same verdicts and no extra fix round, and any escalation re-ran its step exactly one tier up.
 - [ ] Lane 9. Open Settings, then Reviews, and restart the app. Save `r2-templates.png`. Pass when the system template has no edit or delete, the editor lists the skills the instance reports, and the custom template and the board's pick are still there after the restart.
 - [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `r2-checks.txt`. Pass when all three exit 0.
 
@@ -1833,49 +1858,58 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends O1 to the base-branch stack and the operator lands it bottom-up.
 
-## Send tickets to a Warp factory and work with them from the board (X1)
+## Send tickets or a whole board to the cloud, on Warp or Claude, and work with them from the board (X1)
 
 **Depends on.** O1.
 
 **Files.**
 
-- [ ] Create `apps/board/electron/warp.ts` and `apps/board/electron/warp.test.ts`.
+- [ ] Create `apps/board/electron/warp.ts`, `apps/board/electron/warp.test.ts`, and `apps/board/electron/claudeCloud.ts`.
 - [ ] Create `apps/board/src/warp/WarpCard.tsx`, `apps/board/src/warp/SendToWarp.tsx`, `apps/board/src/warp/WarpBadge.tsx`, and `apps/board/src/warp/WarpTaskTab.tsx`.
-- [ ] Create `apps/board/src/warp/warpTasks.ts` and `apps/board/src/warp/warpTasks.test.ts`.
-- [ ] Edit L1's `apps/board/src/settings/IntegrationsPage.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/files/MainTabs.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and the IPC, preload, and bridge files that carry Warp calls.
+- [ ] Create `apps/board/src/warp/warpTasks.ts`, `apps/board/src/warp/warpTasks.test.ts`, and `apps/board/docs/cloud-review.md`.
+- [ ] Edit L1's `apps/board/src/settings/IntegrationsPage.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/files/MainTabs.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/board.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and the IPC, preload, and bridge files that carry Warp calls.
 
 **Build.**
 
 - [ ] Call the Warp Platform API at `https://app.warp.dev/api/v1` from the main process in `electron/warp.ts`, with `fetch` and no SDK. Warp is the one outside service the board calls itself, because T3 has no Warp support. Take paths and fields from Warp's OpenAPI spec at `https://docs.warp.dev/openapi.json`, and record the spec's date in the client. The API key lives in the board's `safeStorage` token store. It never reaches the renderer, the engine, an agent, chat, or a log, and no agent gets Factory MCP, because a Warp key has no read-only or per-factory scope.
 - [ ] Add a **Warp** card to L1's Integrations page in Orca's card style, copied from `src/renderer/src/components/integrations/task-trackers/linear-integration-card.tsx` and `linear-api-key-dialog.tsx` in Orca's source. Connect takes the key, lists the account's factories from `GET /factory`, and Disconnect deletes the key.
-- [ ] Add **Send to Warp** to the ticket frame's menu and the orchestrator card. It opens a dialog with a factory picker searched through `GET /factory?search=`, and a title and prompt filled from the ticket's goal, with L1's linked issue as `ticket_ref` (for example `linear:XEO-123`) and `ticket_url`. Send calls `POST /factory/{uid}/runs` and stores the factory, task, and run IDs in an optional `warp` field on the ticket.
-- [ ] Let the orchestrator propose a send. `brief.md` tells it to ask with a For-you item of a new `warp_send` kind that names the factory and the exact prompt. **Approve** dispatches it, **Hold** sends nothing. Nothing is ever dispatched without the operator.
+- [ ] Only the operator sends work to Warp, from the UI. The orchestrator never sends and never proposes a send.
+- [ ] Add **Send to Warp** to the ticket frame's menu. It opens a dialog with a factory picker searched through `GET /factory?search=`, and a title and prompt filled from the ticket's goal, with L1's linked issue as `ticket_ref` (for example `linear:XEO-123`) and `ticket_url`. Send calls `POST /factory/{uid}/runs` and stores the factory, task, and run IDs in an optional `warp` field on the ticket.
+- [ ] Add **Send board to cloud** to the orchestrator card. Its dialog picks a target, a Warp factory or a Claude cloud orchestrator, and fills the prompt with the board's goal and every open ticket's title, goal, and linked issue. A Warp send dispatches one run and stores the factory and run IDs in an optional `warp` field in `board.json`. The board then shows the factory's tasks from that run as frames with Warp badges. Before building this, dispatch one run in the test factory and record in `cloud-review.md` how the foreman's tasks link back to that run.
+- [ ] A Claude cloud send runs on the operator's Claude subscription, through the `claude` CLI from the main process in `electron/claudeCloud.ts`. It runs `claude --cloud "<prompt>"` in the project's checkout with the operator's claude.ai login, and stores the session ID and URL in an optional `cloud` field in `board.json`. Sources: [Use Claude Code in the cloud](https://code.claude.com/docs/en/claude-code-on-the-web).
+  - [ ] The prompt carries the brief's rules and facts, plus one more rule: after every write to `tickets.json` or `foryou.jsonl`, commit the board folder and push it to the branch `agentboard/<board slug>`.
+  - [ ] The board reads that branch from the main process with `git fetch` and `git show`, every 10 s while the board is visible, and shows its tickets, lanes, and For-you cards as it does for a local board.
+  - [ ] Answering a card sends `claude -p "<the card's answer message>" --cloud <session id> --output-format json`, and the card shows the send failed when the result has `ok: false`.
+  - [ ] **Open in Claude** opens the session's URL in B11's panel, where the operator sees the conversation and answers the session's own approvals.
+  - [ ] Before building this target, run one small cloud session on the lane repo. Record in `cloud-review.md` whether the session can push the store branch, whether a follow-up reaches it, whether `claude --cloud <session id>` attach can stream its events, and whether `claude agents --json` or `/tasks` lists it. If the push or the follow-up fails, drop this target and tell the operator.
+- [ ] `brief.md` tells the orchestrator that a ticket with a `warp` field, or every ticket on a board sent to the cloud, runs there. It starts no local agent on that work and plans the rest around it.
+- [ ] Research how cloud tickets get reviewed before building that part. Compare Warp's own Review stage, R2's review templates, and whether the review skills reach Warp's agents and Claude cloud sessions from the repo. Cloud sessions read the repo's `.claude/`, not `~/.claude`. Record the findings and a proposed fit in `cloud-review.md`, and bring it to the operator for a decision.
 - [ ] In `WarpBadge.tsx`, show a sent ticket's task state from `GET /factory/{uid}/tasks/{task_uid}` on its frame. Poll every 10 s while the board is visible, and stop while it is hidden. A pull request the task opens shows as B10's PR chip, so checks and merge readiness work as they do for a local ticket.
 - [ ] In `WarpTaskTab.tsx`, open a main-view tab per Warp task. It shows the conversation from `GET /agent/runs/{runId}/conversation` through C2's markdown, a reply box that calls `POST /agent/runs/{runId}/followups`, **Interrupt** through `POST /agent/runs/{runId}/interrupt`, **Stop** through `POST /factory/{uid}/tasks/{task_uid}/cancel`, and **Open in Warp**, which opens the run's session link in B11's panel.
 - [ ] Turn the factory inbox from `GET /factory-inbox` into For-you cards for this board's tasks, such as a foreman's plan-review question. Answering sends a follow-up and marks the notification read through `POST /factory-inbox/notifications/read`.
-- [ ] In `warpTasks.ts`, keep the pure pieces: map task and run states to the frame's badge, build the dispatch body from a ticket, and turn inbox notifications into For-you items.
+- [ ] In `warpTasks.ts`, keep the pure pieces: map task and run states to the frame's badge, build the dispatch body from a ticket or a board, and turn inbox notifications into For-you items.
 
 **You see.**
 
-- [ ] Settings connects Warp, any ticket can go to a Warp factory after the operator approves, and the board shows the task's state, conversation, questions, and pull request, with reply, interrupt, and stop.
+- [ ] Settings connects Warp. The operator sends a ticket to a Warp factory, or a whole board to Warp or to a Claude cloud orchestrator, from the UI. The board shows each task's state, conversation, questions, and pull request, with reply, interrupt, and stop on Warp, and tickets, For-you cards, and pull requests on Claude cloud.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `warpTasks.test.ts` maps fixed task and run states to literal badges, builds a literal `POST /factory/{uid}/runs` body from a fixed ticket with a Linear issue, and turns fixed inbox notifications into literal For-you items. `electron/warp.test.ts` runs the client against a local HTTP server and checks the bearer header, the error text for a rejected key and for missing credits, and that no error message contains the key. Run `vp test run src/warp/warpTasks.test.ts electron/warp.test.ts` from `apps/board`.
+- [ ] `warpTasks.test.ts` maps fixed task and run states to literal badges, builds literal `POST /factory/{uid}/runs` bodies from a fixed ticket with a Linear issue and from a fixed board, and turns fixed inbox notifications into literal For-you items. `electron/warp.test.ts` runs the client against a local HTTP server and checks the bearer header, the error text for a rejected key and for missing credits, and that no error message contains the key. Run `vp test run src/warp/warpTasks.test.ts electron/warp.test.ts` from `apps/board`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. The operator creates one test factory in Warp's web app connected only to `13kparkin/agent-board-lanes`, and enters the key into the board's Warp card when the lane asks. Lanes share one small dispatched task to keep credit use low.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. The operator creates one test factory in Warp's web app connected only to `13kparkin/agent-board-lanes`, installs the Claude GitHub App on that repo, and enters the Warp key into the board's Warp card when the lane asks. Lanes share one small dispatched task per target, to keep credit and subscription use low.
 
-- [ ] Lane 1. Regression lane against trunk. Trunk has no Warp card, so record that fact. Connect Warp at head. Save `x1-connect.png`. Pass when the card lists the factories `GET /factory` returns and the key appears in no board file, log, or renderer storage.
-- [ ] Lane 2. Have a real Claude orchestrator propose a `warp_send`. Hold it, then approve it. Save `x1-send.png`. Pass when Hold leaves `GET /factory/{uid}/tasks` unchanged and Approve creates exactly one task carrying the ticket's `ticket_ref`.
-- [ ] Lane 3. Watch the sent ticket. Save `x1-status.png`. Pass when its badge follows the task through at least two states that match the API, with no reload.
+- [ ] Lane 1. Regression lane against trunk. Trunk has no Warp card, so record that fact. Connect Warp at head, then enter a revoked key. Save `x1-connect.png` and `x1-bad-key.png`. Pass when the card lists the factories `GET /factory` returns, the key appears in no board file, log, or renderer storage, and the revoked key is rejected with nothing dispatched.
+- [ ] Lane 2. Send a ticket from its frame menu on a board with a real Claude orchestrator. Save `x1-send.png`. Pass when exactly one task carries the ticket's `ticket_ref`, and the orchestrator starts no local agent on that ticket.
+- [ ] Lane 3. Watch the sent ticket, then stop it. Save `x1-status.png` and `x1-stop.txt`. Pass when its badge follows the task through at least two states that match the API, with no reload, and the API reports it stopped and the badge shows it.
 - [ ] Lane 4. Reply in the Warp tab. Save `x1-reply.png`. Pass when the follow-up appears in the run's conversation from the API and the foreman responds to it.
 - [ ] Lane 5. Answer a foreman question from its For-you card. Save `x1-needs-you.png`. Pass when the card matches the inbox item, the answer reaches the conversation, and the notification reads as read.
 - [ ] Lane 6. Let the task open its pull request on the lane repo. Save `x1-pr.png`. Pass when the PR chip and its checks match `gh pr view`.
-- [ ] Lane 7. Stop the task. Save `x1-stop.txt`. Pass when the API reports it stopped and the badge shows it.
-- [ ] Lane 8. Enter a revoked key. Save `x1-bad-key.png`. Pass when the card says the key was rejected and nothing is dispatched.
+- [ ] Lane 7. Send a two-ticket board to a Claude cloud orchestrator. Save `x1-claude-cloud.png` and `x1-claude-cloud.txt`. Pass when the board's frames and For-you cards match the pushed `agentboard/<board slug>` branch, an answered card reaches the session as a follow-up, and the session's pull request shows as a PR chip.
+- [ ] Lane 8. Send a two-ticket board to a Warp factory from the orchestrator card. Save `x1-board.png`. Pass when the factory's tasks from that run show as frames whose badges match `GET /factory/{uid}/tasks`, and the orchestrator starts no local agent.
 - [ ] Lane 9. Run the Windows app with a Warp tab open beside the board. Save `x1-windows.png` from a full-window capture. Pass when the tab fits beside the board and the Warp card matches Orca's integration cards.
 - [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `x1-checks.txt`. Pass when all three exit 0.
-- [ ] Cleanup. Stop the test task, close its pull request and delete its branches on the lane repo, disconnect Warp in the board, and tell the operator to revoke the key.
+- [ ] Cleanup. Stop the test task, archive the Claude cloud session, close their pull requests and delete their branches on the lane repo, disconnect Warp in the board, and tell the operator to revoke the key.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -1886,7 +1920,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Review gate.** The operator reviews at merge.
 
-- [ ] Copy lane 2, 4, and 5 screenshots into `apps/board/docs/media/x1-review-<slug>.png`.
+- [ ] Copy lane 2, 5, and 8 screenshots into `apps/board/docs/media/x1-review-<slug>.png`.
 - [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/x1-review.mp4`.
 - [ ] Post the screenshots and the video in chat for the operator at merge.
 
