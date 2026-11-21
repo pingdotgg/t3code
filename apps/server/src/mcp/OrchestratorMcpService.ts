@@ -3547,9 +3547,10 @@ const make = Effect.gen(function* () {
         timeline.totalItems,
         shell,
         yield* Clock.currentTimeMillis,
+        // A forwarded agent read names the newest page with a beforePosition past the end.
         input.afterPosition === undefined &&
-          input.beforePosition === undefined &&
-          input.itemId === undefined,
+          input.itemId === undefined &&
+          (input.beforePosition === undefined || input.beforePosition >= timeline.totalItems),
       );
       const recentRuns = target.runs
         .toSorted((left, right) => right.ordinal - left.ordinal)
