@@ -315,9 +315,9 @@ function searchFilter(query: string): string {
   return `(title ~ "${literal}" OR description ~ "${literal}")`;
 }
 
+// Bitbucket answers HTTP 400 to `author.display_name`: it "does not support filtering".
 function authorFilter(login: string): string {
-  const literal = filterLiteral(login);
-  return `(author.nickname = "${literal}" OR author.display_name = "${literal}")`;
+  return `author.nickname = "${filterLiteral(login)}"`;
 }
 
 /**

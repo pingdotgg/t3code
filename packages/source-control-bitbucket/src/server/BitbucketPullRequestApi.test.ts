@@ -166,9 +166,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         draft: false,
       });
 
-      expect(filterOfCall(0)).toBe(
-        '(author.nickname = "ana\\"" OR author.display_name = "ana\\"") AND draft = false',
-      );
+      expect(filterOfCall(0)).toBe('author.nickname = "ana\\"" AND draft = false');
     }),
   );
 
