@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-repositories";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { FolderGitIcon } from "lucide-react";
+import { T, useGT, useMessages } from "gt-react";
 import { memo, useState } from "react";
 
 import { type ComposerThreadTarget, useComposerDraftStore } from "../composerDraftStore";
@@ -63,10 +64,12 @@ export const WorktreeRepositoriesControl = memo(function WorktreeRepositoriesCon
   const effective = drafted ?? chosen;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [filter, setFilter] = useState("");
+  const gt = useGT();
+  const messages = useMessages();
 
   if (choices === null || choices.length === 0) return null;
 
-  const selection = resolveWorktreeRepositorySelection({ choices, chosen: effective });
+  const selection = resolveWorktreeRepositorySelection({ choices, chosen: effective }, messages);
   const selected = new Set(selection.selected);
   const choose = (paths: ReadonlyArray<string>) => {
     setDraftThreadContext(props.draftTarget, { worktreeRepositories: paths });
@@ -86,7 +89,9 @@ export const WorktreeRepositoriesControl = memo(function WorktreeRepositoriesCon
           "min-w-0 flex-initial justify-start",
           selection.needsChoice && "text-warning-foreground dark:text-warning-foreground",
         )}
-        aria-label={`Repositories in the new worktree: ${selection.label}`}
+        aria-label={gt("Repositories in the new worktree: {selection}", {
+          selection: selection.label,
+        })}
         data-composer-context-control
       >
         <FolderGitIcon className="size-3 shrink-0" aria-hidden />
@@ -98,17 +103,21 @@ export const WorktreeRepositoriesControl = memo(function WorktreeRepositoriesCon
             autoFocus
             value={filter}
             onChange={(event) => setFilter(event.currentTarget.value)}
-            placeholder="Filter repositories"
-            aria-label="Filter repositories"
+            placeholder={gt("Filter repositories")}
+            aria-label={gt("Filter repositories")}
           />
         ) : null}
         <MenuGroup>
           <MenuGroupLabel>
             {selection.needsChoice
-              ? "Choose the repositories this thread works on"
-              : "Each gets its own worktree on the thread's branch"}
+              ? gt("Choose the repositories this thread works on")
+              : gt("Each gets its own worktree on the thread's branch")}
           </MenuGroupLabel>
-          {visible.length === 0 ? <MenuItem disabled>No repositories match</MenuItem> : null}
+          {visible.length === 0 ? (
+            <MenuItem disabled>
+              <T>No repositories match</T>
+            </MenuItem>
+          ) : null}
           {visible.map((choice) => (
             <MenuCheckboxItem
               key={choice.repositoryPath}
@@ -141,14 +150,16 @@ export const WorktreeRepositoriesControl = memo(function WorktreeRepositoriesCon
           <>
             <MenuSeparator />
             <MenuGroup>
-              <MenuGroupLabel>Start from this branch where a repository has it</MenuGroupLabel>
+              <MenuGroupLabel>
+                <T>Start from this branch where a repository has it</T>
+              </MenuGroupLabel>
               <MenuSearchInput
                 value={baseBranch}
                 onChange={(event) =>
                   setWorktreeBaseBranch(props.project, event.currentTarget.value.trim())
                 }
-                placeholder="Each repository's default branch"
-                aria-label="Base branch"
+                placeholder={gt("Each repository's default branch")}
+                aria-label={gt("Base branch")}
               />
             </MenuGroup>
           </>
@@ -159,14 +170,14 @@ export const WorktreeRepositoriesControl = memo(function WorktreeRepositoriesCon
           disabled={selected.size === choices.length}
           onClick={() => choose(choices.map((choice) => choice.repositoryPath))}
         >
-          Select all
+          <T>Select all</T>
         </MenuItem>
         <MenuItem
           closeOnClick={false}
           disabled={chosen !== undefined && selected.size === 0}
           onClick={() => choose([])}
         >
-          Select none
+          <T>Select none</T>
         </MenuItem>
       </MenuPopup>
     </Menu>

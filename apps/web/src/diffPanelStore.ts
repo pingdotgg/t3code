@@ -108,7 +108,8 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const previous = state.byThreadKey[threadKey];
-          const requestedPath = filePath?.trim() || null;
+          // Git reports paths with their edge whitespace; only a blank one means no file.
+          const requestedPath = filePath !== undefined && filePath.trim() !== "" ? filePath : null;
           return {
             byThreadKey: {
               ...state.byThreadKey,

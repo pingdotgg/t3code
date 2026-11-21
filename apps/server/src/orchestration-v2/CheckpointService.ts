@@ -11,6 +11,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -377,6 +378,28 @@ export const layer: Layer.Layer<
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
 
+    const captureTimeouts = yield* Cache.make<string, number>({
+      capacity: 128,
+      lookup: () => Effect.succeed(0),
+    });
+    // Both callers hold the workspace lock; post-turn captures always probe for recovery.
+    const captureWorkspaceCheckpoint = Effect.fn("CheckpointService.captureWorkspaceCheckpoint")(
+      function* (input: CheckpointStore.CaptureCheckpointInput, baseline = false) {
+        const capture = checkpointStore.captureCheckpoint(input);
+        yield* (baseline ? capture.pipe(Effect.timeout(BASELINE_CAPTURE_BUDGET)) : capture).pipe(
+          Effect.tap(() => Cache.invalidate(captureTimeouts, input.cwd)),
+          Effect.tapError((error) =>
+            error._tag === "VcsProcessTimeoutError" || error._tag === "TimeoutError"
+              ? Effect.gen(function* () {
+                  const previous = yield* Cache.get(captureTimeouts, input.cwd);
+                  yield* Cache.set(captureTimeouts, input.cwd, previous + 1);
+                })
+              : Cache.invalidate(captureTimeouts, input.cwd),
+          ),
+        );
+      },
+    );
+
     // A failed probe is an operational error, not proof that the workspace has no repository.
     const probeRepository = (scope: OrchestrationV2CheckpointScope) =>
       checkpointStore.isGitRepository(scope.cwd).pipe(
@@ -435,18 +458,26 @@ export const layer: Layer.Layer<
             return;
           }
 
-          yield* checkpointStore
-            .captureCheckpoint({
+          const timeouts = yield* Cache.getOption(captureTimeouts, input.scope.cwd);
+          if (Option.isSome(timeouts) && timeouts.value >= 2) {
+            return yield* Effect.logWarning(
+              "orchestration V2 checkpoint baseline skipped after repeated capture timeouts",
+              { scopeId: input.scope.id, ordinalWithinScope: input.ordinalWithinScope },
+            );
+          }
+
+          yield* captureWorkspaceCheckpoint(
+            {
               cwd: input.scope.cwd,
               checkpointRef,
               ...(input.excludePaths === undefined ? {} : { excludePaths: input.excludePaths }),
-            })
-            .pipe(
-              Effect.timeout(BASELINE_CAPTURE_BUDGET),
-              Effect.catchTags({
-                VcsUnsupportedOperationError: () => Effect.void,
-              }),
-            );
+            },
+            true,
+          ).pipe(
+            Effect.catchTags({
+              VcsUnsupportedOperationError: () => Effect.void,
+            }),
+          );
         }),
       ).pipe(
         Effect.mapError(
@@ -596,7 +627,7 @@ export const layer: Layer.Layer<
 
           const captureStatus = yield* (
             input.cleanHead === undefined
-              ? checkpointStore.captureCheckpoint({
+              ? captureWorkspaceCheckpoint({
                   cwd: input.scope.cwd,
                   checkpointRef,
                   ...(input.ordinalWithinScope > 0 ? { previousCheckpointRef } : {}),

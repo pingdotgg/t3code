@@ -23,12 +23,14 @@ import {
   type ScopedThreadRef,
   type TaskFolder,
 } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { memo, useState } from "react";
 
 import { AppText as Text } from "../../../components/ui/AppText";
 import * as Dialog from "../../../components/ui/Dialog";
 import { ListRow } from "../../../components/ui/ListRow";
 import { ListSection } from "../../../components/ui/ListSection";
+import type { MessageResolver } from "../../../i18n/messages";
 import { filesystemEnvironment } from "../../../state/filesystem";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useEnvironmentScope } from "../../../state/session";
@@ -43,13 +45,23 @@ import { vcsEnvironment } from "../../../state/vcs";
 function repositoryRowDescription(
   summary: RepositorySectionSummary | null,
   error: string | null,
+  resolve: MessageResolver,
 ): string {
-  if (summary === null) return error ?? "Checking status";
-  if (!summary.isRepository) return "Not a Git repository";
-  const branch = summary.branch ?? "Detached HEAD";
-  if (summary.changedFiles === 0) return `${branch} · Clean`;
-  const files = `${summary.changedFiles} file${summary.changedFiles === 1 ? "" : "s"}`;
-  return `${branch} · ${files} · +${formatDiffCount(summary.insertions)} −${formatDiffCount(summary.deletions)}`;
+  if (summary === null) return error ?? resolve(msg("Checking status"));
+  if (!summary.isRepository) return resolve(msg("Not a Git repository"));
+  const branch = summary.branch ?? resolve(msg("Detached HEAD"));
+  if (summary.changedFiles === 0) return resolve(msg("{branch} · Clean", { branch }));
+  return resolve(
+    msg(
+      "{branch} · {count, plural, one {{count} file} other {{count} files}} · +{insertions} −{deletions}",
+      {
+        branch,
+        count: summary.changedFiles,
+        insertions: formatDiffCount(summary.insertions),
+        deletions: formatDiffCount(summary.deletions),
+      },
+    ),
+  );
 }
 
 const RepositoryRow = memo(function RepositoryRow(props: {
@@ -66,11 +78,12 @@ const RepositoryRow = memo(function RepositoryRow(props: {
     }),
   );
   const summary = repositorySectionSummary(status.data);
+  const resolve = useMessages();
   return (
     <ListRow
       icon="folder"
       label={props.section.name}
-      description={repositoryRowDescription(summary, status.error)}
+      description={repositoryRowDescription(summary, status.error, resolve)}
       detail={
         summary?.isRepository && summary.pullRequest ? `#${summary.pullRequest.number}` : undefined
       }
@@ -88,6 +101,7 @@ function OtherRepositoryRows(props: {
   readonly sections: ThreadRepositorySections;
   readonly onPick: (repository: PinnedThreadRepository) => void;
 }) {
+  const gt = useGT();
   const folders = useEnvironmentQuery(
     filesystemEnvironment.listFolders({
       environmentId: props.environmentId,
@@ -97,7 +111,7 @@ function OtherRepositoryRows(props: {
   if (folders.data === null) {
     return (
       <Text textRole="footnote" className="px-4 py-3 text-foreground-muted">
-        {folders.error ?? "Loading repositories…"}
+        {folders.error ?? gt("Loading repositories…")}
       </Text>
     );
   }
@@ -115,7 +129,7 @@ function OtherRepositoryRows(props: {
   if (repositories.length === 0) {
     return (
       <Text textRole="footnote" className="px-4 py-3 text-foreground-muted">
-        No other repositories
+        <T>No other repositories</T>
       </Text>
     );
   }
@@ -151,6 +165,7 @@ export function ThreadRepositoryRows(props: {
   readonly onOpen: (section: ThreadRepositorySection) => void;
 }) {
   const { threadRef, taskFolder } = props;
+  const gt = useGT();
   const structure = useQuietThreadStructure(threadRef);
   const pinned = useThreadRepositoryPins(threadRef);
   const canReadFiles = useEnvironmentScope(threadRef.environmentId, AuthFilesystemReadScope);
@@ -185,7 +200,7 @@ export function ThreadRepositoryRows(props: {
       if (isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        `Could not add ${repository.name}`,
+        gt("Could not add {name}", { name: repository.name }),
         error instanceof Error ? error.message : String(error),
       );
       return;
@@ -203,12 +218,12 @@ export function ThreadRepositoryRows(props: {
     (showAll && sections.visible.length > THREAD_REPOSITORY_SECTIONS_VISIBLE);
 
   return (
-    <ListSection title="Repositories">
+    <ListSection title={gt("Repositories")}>
       {explainsEmpty ? (
         <Text textRole="footnote" className="px-4 py-3 text-foreground-muted">
           {taskFolder === null
-            ? "Repositories appear here once this thread changes them."
-            : "This thread has no repository worktrees yet."}
+            ? gt("Repositories appear here once this thread changes them.")
+            : gt("This thread has no repository worktrees yet.")}
         </Text>
       ) : null}
       {sections.visible.map((section) => (
@@ -222,7 +237,9 @@ export function ThreadRepositoryRows(props: {
       {foldable ? (
         <ListRow
           icon={showAll ? "chevron.up" : "chevron.down"}
-          label={showAll ? "Show fewer" : `Show ${sections.hidden.length} more`}
+          label={
+            showAll ? gt("Show fewer") : gt("Show {count} more", { count: sections.hidden.length })
+          }
           onPress={() => setShowAll((current) => !current)}
         />
       ) : null}
@@ -230,14 +247,16 @@ export function ThreadRepositoryRows(props: {
         <ListRow
           icon="folder.badge.plus"
           label={
-            addingName === null ? "Other repositories…" : `Adding a worktree of ${addingName}…`
+            addingName === null
+              ? gt("Other repositories…")
+              : gt("Adding a worktree of {name}…", { name: addingName })
           }
           description={
             isPickerOpen || addingName !== null
               ? undefined
               : taskFolder === null
-                ? "Add a tracked repository to this thread"
-                : "Add a worktree of a tracked repository"
+                ? gt("Add a tracked repository to this thread")
+                : gt("Add a worktree of a tracked repository")
           }
           disabled={addingName !== null}
           onPress={() => setIsPickerOpen((current) => !current)}

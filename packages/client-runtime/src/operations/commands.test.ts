@@ -339,6 +339,86 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestRandom)),
   );
 
+  it.effect(
+    "sends fallback text only on empty manual continuations for servers without native resume",
+    () =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({ commands, projects: [] });
+        const resumedRunId = RunId.make("run-interrupted");
+
+        yield* startThreadTurn({
+          commandId: CommandId.make("command-resume-empty"),
+          threadId: v2ThreadId,
+          manualContinuationOfRunId: resumedRunId,
+          message: {
+            messageId: MessageId.make("message-resume-empty"),
+            role: "user",
+            text: "",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          dispatchMode: "start",
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+        yield* startThreadTurn({
+          commandId: CommandId.make("command-resume-text"),
+          threadId: v2ThreadId,
+          manualContinuationOfRunId: resumedRunId,
+          message: {
+            messageId: MessageId.make("message-resume-text"),
+            role: "user",
+            text: "Keep going",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          dispatchMode: "start",
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+        yield* startThreadTurn({
+          commandId: CommandId.make("command-start-empty"),
+          threadId: v2ThreadId,
+          message: {
+            messageId: MessageId.make("message-start-empty"),
+            role: "user",
+            text: "",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          dispatchMode: "start",
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+        expect(commands).toEqual([
+          expect.objectContaining({
+            type: "message.dispatch",
+            commandId: "command-resume-empty",
+            threadId: v2ThreadId,
+            manualContinuationOfRunId: resumedRunId,
+            text: "Continue where you left off.",
+            dispatchMode: { type: "start_immediately" },
+          }),
+          expect.objectContaining({
+            type: "message.dispatch",
+            commandId: "command-resume-text",
+            threadId: v2ThreadId,
+            manualContinuationOfRunId: resumedRunId,
+            text: "Keep going",
+            dispatchMode: { type: "start_immediately" },
+          }),
+          expect.objectContaining({
+            type: "message.dispatch",
+            commandId: "command-start-empty",
+            threadId: v2ThreadId,
+            text: "",
+            dispatchMode: { type: "start_immediately" },
+          }),
+        ]);
+      }).pipe(Effect.provide(layerTestRandom)),
+  );
+
   // A dead socket reaches the caller as a protocol error, or as an interrupt when
   // the supervisor closes the session before the protocol reports the error.
   it.effect.each([

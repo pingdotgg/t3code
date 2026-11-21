@@ -66,7 +66,8 @@ function patchInFolder(patch: string, folder: string): string {
       }
       const binary = BINARY_FILES.exec(line);
       return binary
-        ? `Binary files ${pathInFolder(binary[1]!, folder, "a/")} and ${pathInFolder(binary[2]!, folder, "b/")} differ`
+        ? // oxlint-disable-next-line t3code/no-untranslated-copy -- a line of Git patch text, parsed as a diff
+          `Binary files ${pathInFolder(binary[1]!, folder, "a/")} and ${pathInFolder(binary[2]!, folder, "b/")} differ`
         : line;
     })
     .join("\n");

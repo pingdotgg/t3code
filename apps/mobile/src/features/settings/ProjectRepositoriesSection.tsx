@@ -14,6 +14,7 @@ import {
   type ProjectTrackedFolder,
   type WorkspaceFolderState,
 } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { Pressable } from "react-native";
 
@@ -29,9 +30,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
 
 const FOLDER_STATE_LABELS: Record<WorkspaceFolderState, string> = {
-  git: "Git repository",
-  plain: "Folder",
-  missing: "Missing",
+  git: msg("Git repository"),
+  plain: msg("Folder", { $context: "a plain folder that is not a Git repository" }),
+  missing: msg("Missing", { $context: "folder state: not found on disk" }),
 };
 
 /** Tracked folders are paths on one environment, so each checkout gets its own section. */
@@ -40,6 +41,8 @@ export function ProjectRepositoriesSection(props: {
   readonly title: string;
 }) {
   const { member } = props;
+  const gt = useGT();
+  const m = useMessages();
   const tracked = member.trackedFolders ?? [];
   const canEdit = useEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope);
   const canReadFiles = useEnvironmentScope(member.environmentId, AuthFilesystemReadScope);
@@ -82,8 +85,8 @@ export function ProjectRepositoriesSection(props: {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
-          "Failed to update repositories",
-          error instanceof Error ? error.message : "An error occurred.",
+          gt("Failed to update repositories"),
+          error instanceof Error ? error.message : gt("An error occurred."),
         );
       }
       return;
@@ -93,9 +96,11 @@ export function ProjectRepositoriesSection(props: {
 
   const remove = (folder: ProjectTrackedFolder) =>
     Dialog.confirm({
-      title: "Remove folder",
-      message: `Agents in this project stop working in ${folder.name}. Files on disk are not touched.`,
-      confirmText: "Remove",
+      title: gt("Remove folder"),
+      message: gt("Agents in this project stop working in {name}. Files on disk are not touched.", {
+        name: folder.name,
+      }),
+      confirmText: gt("Remove", { $context: "verb, removes a folder from the project" }),
       destructive: true,
       onConfirm: () => void save(added.filter((entry) => entry.path !== folder.path)),
     });
@@ -104,8 +109,8 @@ export function ProjectRepositoriesSection(props: {
     const next = appendTrackedFolders(added, [folder]);
     if (next === null) {
       Dialog.alert(
-        "Too many folders",
-        `A project can cover up to ${PROJECT_TRACKED_FOLDERS_MAX} folders.`,
+        gt("Too many folders"),
+        gt("A project can cover up to {max} folders.", { max: PROJECT_TRACKED_FOLDERS_MAX }),
       );
       return;
     }
@@ -116,7 +121,9 @@ export function ProjectRepositoriesSection(props: {
     return (
       <SettingsSection
         title={props.title}
-        footer="Repositories inside this project's folder are part of it as soon as they are there."
+        footer={gt(
+          "Repositories inside this project's folder are part of it as soon as they are there.",
+        )}
       >
         {null}
       </SettingsSection>
@@ -139,7 +146,7 @@ export function ProjectRepositoriesSection(props: {
                   folder.state === "missing" ? "text-warning-foreground" : "text-foreground-muted"
                 }
               >
-                {FOLDER_STATE_LABELS[folder.state]}
+                {m(FOLDER_STATE_LABELS[folder.state])}
               </Text>
             )
           }
@@ -148,12 +155,14 @@ export function ProjectRepositoriesSection(props: {
             folder.discovered === true ? undefined : (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Remove ${folder.name} from the project`}
+                accessibilityLabel={gt("Remove {name} from the project", { name: folder.name })}
                 disabled={!canEdit || isBusy}
                 onPress={() => remove(folder)}
                 className="rounded-full border border-border bg-card px-3 py-1.5 disabled:opacity-40"
               >
-                <Text className="font-t3-medium text-xs text-danger-foreground">Remove</Text>
+                <Text className="font-t3-medium text-xs text-danger-foreground">
+                  <T context="verb, removes a folder from the project">Remove</T>
+                </Text>
               </Pressable>
             )
           }
@@ -163,8 +172,8 @@ export function ProjectRepositoriesSection(props: {
         <ListActionRow
           key={folder.path}
           icon="plus"
-          label={`Add ${folder.name}`}
-          description={`Listed in the workspace file · ${folder.path}`}
+          label={gt("Add {name}", { name: folder.name })}
+          description={gt("Listed in the workspace file · {path}", { path: folder.path })}
           disabled={!canEdit || isBusy}
           onPress={() => add(folder)}
         />

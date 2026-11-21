@@ -16,6 +16,7 @@ import {
   type WorkspaceFolderState,
 } from "@t3tools/contracts";
 import { FolderIcon, PlusIcon } from "lucide-react";
+import { T, useGT, Var } from "gt-react";
 import { useId, useState } from "react";
 
 import { checkProjectAccess, reportProjectFailure } from "../../hooks/useProjectGroupUpdate";
@@ -59,9 +60,10 @@ export function ProjectRepositoriesSettings({
   members: ReadonlyArray<SidebarProjectGroupMember>;
 }) {
   const checkouts = members.filter((member) => !member.isScratch);
+  const gt = useGT();
   if (checkouts.length === 0) return null;
   return (
-    <SettingsSection id="project-repositories" title="Repositories">
+    <SettingsSection id="project-repositories" title={gt("Repositories")}>
       {checkouts.map((member) => (
         <CheckoutRepositories key={member.physicalProjectKey} member={member} />
       ))}
@@ -102,6 +104,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   const [isAddingFolder, setIsAddingFolder] = useState(false);
   const disabled = !canEdit || !isConnected || isSaving;
   const added = folders.filter((folder) => folder.discovered !== true);
+  const gt = useGT();
 
   const save = async (next: ReadonlyArray<ProjectTrackedFolder>, failureTitle: string) => {
     if (checkProjectAccess([member], failureTitle)) return false;
@@ -129,7 +132,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   return (
     <>
       <SettingsRow
-        title={member.environmentLabel ?? "Environment"}
+        title={member.environmentLabel ?? gt("Environment")}
         description={member.workspaceRoot}
         control={
           <Button
@@ -139,14 +142,16 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
             onClick={() => setIsAddingFolder(true)}
           >
             <PlusIcon className="size-3.5" />
-            Add folder
+            <T>Add folder</T>
           </Button>
         }
       />
       {folders.length === 0 ? (
         <p className="px-3 py-2 text-base text-muted-foreground sm:px-4 sm:text-sm">
-          Repositories inside this folder are part of the project as soon as they are there. Add a
-          folder to bring in one from somewhere else.
+          <T>
+            Repositories inside this folder are part of the project as soon as they are there. Add a
+            folder to bring in one from somewhere else.
+          </T>
         </p>
       ) : (
         folders.map((folder) => (
@@ -175,7 +180,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
                   size="xs"
                   variant="ghost"
                   disabled={disabled}
-                  aria-label={`Remove ${folder.name} from the project`}
+                  aria-label={gt("Remove {name} from the project", { name: folder.name })}
                   onClick={() =>
                     void save(
                       added.filter((candidate) => candidate.path !== folder.path),
@@ -183,7 +188,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
                     )
                   }
                 >
-                  Remove
+                  <T>Remove</T>
                 </Button>
               )
             }
@@ -198,7 +203,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
             <span className="flex min-w-0 items-center gap-2">
               <span className="min-w-0 truncate text-muted-foreground">{folder.name}</span>
               <Badge size="sm" variant="outline">
-                In workspace file
+                <T>In workspace file</T>
               </Badge>
             </span>
           }
@@ -212,10 +217,10 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
               size="xs"
               variant="ghost"
               disabled={disabled}
-              aria-label={`Add ${folder.name} to the project`}
+              aria-label={gt("Add {name} to the project", { name: folder.name })}
               onClick={() => void save([...added, folder], "Failed to add folder")}
             >
-              Add
+              <T>Add</T>
             </Button>
           }
         />
@@ -296,12 +301,16 @@ function AddTrackedFolderDialog(props: {
           }}
         >
           <DialogHeader>
-            <DialogTitle>Add folder</DialogTitle>
+            <DialogTitle>
+              <T>Add folder</T>
+            </DialogTitle>
             <DialogDescription>
-              Track a repository or folder anywhere on this project's machine.
+              <T>Track a repository or folder anywhere on this project's machine.</T>
             </DialogDescription>
             <div className="flex flex-col gap-2 pt-1">
-              <Label htmlFor={inputId}>Folder path</Label>
+              <Label htmlFor={inputId}>
+                <T>Folder path</T>
+              </Label>
               <Input
                 id={inputId}
                 font="mono"
@@ -338,25 +347,27 @@ function AddTrackedFolderDialog(props: {
                 </p>
               ) : browseQuery.isPending && browseQuery.data === null ? (
                 <p role="status" className="px-2 py-1.5 text-sm text-muted-foreground">
-                  Loading folders…
+                  <T>Loading folders…</T>
                 </p>
               ) : hiddenCount > 0 ? (
                 <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                  {hiddenCount} more. Keep typing to narrow the list.
+                  <T>
+                    <Var>{hiddenCount}</Var> more. Keep typing to narrow the list.
+                  </T>
                 </p>
               ) : !props.canBrowse ? (
                 <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                  This connection cannot browse folders. Enter an absolute path.
+                  <T>This connection cannot browse folders. Enter an absolute path.</T>
                 </p>
               ) : null}
             </div>
           </DialogPanel>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={props.onClose}>
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button type="submit" disabled={folder === null || props.busy}>
-              Add folder
+              <T>Add folder</T>
             </Button>
           </DialogFooter>
         </form>

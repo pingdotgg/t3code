@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import {
   repositoryRewindCheckpoint,
   TASK_FOLDER_DEFAULT_REPOSITORIES_MAX,
@@ -645,17 +647,20 @@ export interface WorktreeRepositorySelection {
  * them up to `TASK_FOLDER_DEFAULT_REPOSITORIES_MAX`, none above. Chosen paths the project no
  * longer tracks are dropped once its folders are known.
  */
-export function resolveWorktreeRepositorySelection(input: {
-  /** Null while the project's tracked folders are still loading. */
-  readonly choices: ReadonlyArray<WorktreeRepositoryChoice> | null;
-  readonly chosen: ReadonlyArray<string> | undefined;
-}): WorktreeRepositorySelection {
+export function resolveWorktreeRepositorySelection(
+  input: {
+    /** Null while the project's tracked folders are still loading. */
+    readonly choices: ReadonlyArray<WorktreeRepositoryChoice> | null;
+    readonly chosen: ReadonlyArray<string> | undefined;
+  },
+  resolve: MFunctionType = mFallback,
+): WorktreeRepositorySelection {
   const { choices, chosen } = input;
   if (choices === null) {
     const selected = chosen ?? [];
     return {
       selected,
-      label: "Repositories",
+      label: resolve(msg("Repositories")),
       needsChoice: false,
       strategyRepositories: chosen?.map((path) => ({ path })),
     };
@@ -671,14 +676,16 @@ export function resolveWorktreeRepositorySelection(input: {
   return {
     selected,
     label: needsChoice
-      ? "Choose repositories"
+      ? resolve(msg("Choose repositories"))
       : selected.length === 0
-        ? "No repositories"
-        : selected.length === 1
-          ? "1 repository"
-          : selected.length === choices.length
-            ? "All repositories"
-            : `${selected.length} repositories`,
+        ? resolve(msg("No repositories"))
+        : selected.length !== 1 && selected.length === choices.length
+          ? resolve(msg("All repositories"))
+          : resolve(
+              msg("{count, plural, one {{count} repository} other {{count} repositories}}", {
+                count: selected.length,
+              }),
+            ),
     needsChoice,
     strategyRepositories: chosen === undefined ? undefined : selected.map((path) => ({ path })),
   };
