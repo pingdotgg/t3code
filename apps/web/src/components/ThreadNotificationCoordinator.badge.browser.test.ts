@@ -2,7 +2,7 @@ import type { AnyRouter } from "@tanstack/react-router";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { fakeTimers, stubGlobal } from "../../test/render";
@@ -37,6 +37,18 @@ vi.mock(import("../state/shell"), async (original) => {
     environmentShell: {
       ...actual.environmentShell,
       stateValueAtom: ((id: string) => shellAtom(id)) as never,
+    },
+  };
+});
+vi.mock(import("../state/server"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      agentAlerts: ((target: { environmentId: string }) =>
+        alertAtom(target.environmentId)) as never,
+      configValueAtom: ((id: string) => configAtom(id)) as never,
     },
   };
 });
@@ -88,6 +100,11 @@ import { startThreadNotifications } from "./ThreadNotificationCoordinator";
 
 let registry: AtomRegistry.AtomRegistry;
 const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
+const alertAtom = Atom.family((_id: string) => Atom.make<unknown>(AsyncResult.initial()));
+// Only "one" runs a server that serves agent alerts.
+const configAtom = Atom.family((id: string) =>
+  Atom.make<unknown>({ environment: { capabilities: id === "one" ? { agentAlerts: true } : {} } }),
+);
 const environmentIdsAtom = Atom.make<ReadonlyArray<string>>([]);
 const noRequestsAtom = Atom.make(new Map());
 const noDelegatedAtom = Atom.make<ReadonlySet<string>>(new Set<string>());
@@ -229,6 +246,9 @@ function setup() {
       stack.defer(startThreadNotifications(testRegistry, router));
     },
     setEnvironmentIds: (ids: ReadonlyArray<string>) => testRegistry.set(environmentIdsAtom, ids),
+    // The stream never ends, so its atom marks every alert as waiting for more.
+    alert: (environmentId: string, alert: { id: string; threadId: string; body: string }) =>
+      testRegistry.set(alertAtom(environmentId), AsyncResult.success(alert, { waiting: true })),
     openThread: (environmentId: string, threadId: string) => {
       route.params = { environmentId, threadId };
       for (const listener of routeListeners) listener();
@@ -452,4 +472,76 @@ it("opening a thread or removing its environment closes only its in-app toasts, 
   state.inApp = false;
   app.changeSettings();
   expect(state.closeToast.mock.calls.slice(3)).toEqual([["one-other"]]);
+});
+
+it("shows an agent's alert once as a desktop notification that opens its thread", async () => {
+  await using app = setup();
+  // Left in the atom by an earlier subscription.
+  app.alert("one", { id: "tool-0", threadId: "thread", body: "already shown" });
+  state.shells.set("one", { ...shell(), status: "synchronizing" });
+  app.start();
+  const alert = { id: "tool-1", threadId: "thread", body: "fleet.lock stuck" };
+  app.alert("one", alert);
+  expect(TestNotification.sent).toEqual([]);
+  state.shells.set("one", shell());
+  // A reconnect replays the last alert the stream held.
+  app.alert("one", { ...alert });
+  app.alert("one", { ...alert, id: "tool-1b", body: "another alert" });
+  app.alert("one", { ...alert, id: "tool-2", threadId: "gone" });
+  app.alert("two", { ...alert, id: "tool-3" });
+  state.shells.set("one", shell({ archivedAt: "2026-09-13T07:00:00.000Z" }));
+  app.alert("one", { ...alert, id: "tool-4" });
+
+  expect(TestNotification.sent.map(({ title, options }) => [title, options.body])).toEqual([
+    ["Test thread", "fleet.lock stuck"],
+    ["Test thread", "another alert"],
+  ]);
+  expect(state.badge).toHaveBeenLastCalledWith(2);
+  expect(TestNotification.sent[0]!.close).not.toHaveBeenCalled();
+  TestNotification.sent[0]!.dispatchEvent(new Event("click"));
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/$environmentId/$threadId",
+    params: { environmentId: EnvironmentId.make("one"), threadId: "thread" },
+  });
+});
+
+it("keeps an agent's alert on screen when its thread then completes", async () => {
+  await using app = setup();
+  app.start();
+  app.alert("one", { id: "tool-1", threadId: "thread", body: "fleet.lock stuck" });
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+    }),
+  );
+
+  expect(TestNotification.sent.map(({ title }) => title)).toEqual([
+    "Test thread",
+    "Thread completed",
+  ]);
+  expect(TestNotification.sent[0]!.close).not.toHaveBeenCalled();
+});
+
+it("toasts an agent's alert in the focused app unless its thread is the open one", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  state.inApp = true;
+  focused = true;
+  state.shells.set("one", shell({}, { id: "other", title: "Other thread" }));
+  app.start();
+  app.openThread("one", "thread");
+  app.alert("one", { id: "tool-1", threadId: "thread", body: "fleet.lock stuck" });
+  expect(state.toast).not.toHaveBeenCalled();
+  expect(state.sound).not.toHaveBeenCalled();
+
+  app.alert("one", { id: "tool-2", threadId: "other", body: "needs a push guard" });
+  expect(state.toast).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      type: "info",
+      title: "Other thread",
+      description: "needs a push guard",
+    }),
+  );
+  expect(TestNotification.sent).toEqual([]);
 });
