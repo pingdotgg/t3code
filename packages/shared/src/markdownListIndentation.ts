@@ -1,3 +1,4 @@
+import { keepLeadingWhitespace, keepsLeadingWhitespace } from "./markdownLeadingWhitespace.ts";
 import { keepOrderedListNumbers, keepsOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
 
 interface MarkdownPosition {
@@ -95,6 +96,15 @@ function blocksFromIndentedCode(node: MarkdownAstNode, parser: MarkdownParser): 
   const recovered = parseRecoveredMarkdown(value, parser);
   if (keepsOrderedListNumbers(parser)) {
     for (const block of recovered.blocks) keepOrderedListNumbers(block, recovered.source);
+  }
+  if (keepsLeadingWhitespace(parser)) {
+    // The trimmed first line sets where the item's content starts.
+    const indent = /^[\t ]*/.exec(String(node.value))![0];
+    const columns = [...indent].reduce(
+      (column, character) => (character === "\t" ? (Math.floor(column / 4) + 1) * 4 : column + 1),
+      0,
+    );
+    keepLeadingWhitespace({ type: "root", children: recovered.blocks }, recovered.source, columns);
   }
   const first = recovered.blocks[0];
   return {

@@ -3,7 +3,9 @@
  * The active `Clock` provides Unix time, monotonic time for measuring elapsed
  * durations, and a `sleep` operation for delaying work. Because time is
  * accessed through a service, tests can replace the clock with a controlled
- * implementation.
+ * implementation. In `Effect`, `sleep`, `delay`, the timeout operators, and
+ * scheduled waits in the repeat, retry, and schedule operators all use the
+ * context's `Clock`.
  *
  * @stability stable
  * @since 2.0.0
@@ -151,7 +153,8 @@ export interface Clock {
 }
 
 /**
- * Context reference for the active time service in the environment.
+ * Context reference for the active time service. Its default value is a live
+ * clock backed by the system clock and JavaScript timers.
  *
  * **When to use**
  *

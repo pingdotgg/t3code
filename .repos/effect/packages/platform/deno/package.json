@@ -1,7 +1,7 @@
 {
   "name": "@effect/platform-deno",
   "type": "module",
-  "version": "4.1.2",
+  "version": "4.1.5",
   "license": "MIT",
   "description": "Platform specific implementations for the Deno runtime",
   "homepage": "https://effect.website",
@@ -65,7 +65,7 @@
     "benchmark:datagram": "deno run -A --unstable-net benchmark/DatagramSocket.ts"
   },
   "dependencies": {
-    "@db/redis": "jsr:^0.42.0",
+    "@db/redis": "jsr:^0.43.0",
     "@effect/platform-node-shared": "workspace:*",
     "@std/fs": "jsr:^1.0.24",
     "@std/media-types": "jsr:^1.1.0",
@@ -80,6 +80,6 @@
     "@testcontainers/redis": "^12.2.1",
     "@types/deno": "^2.7.0",
     "effect": "workspace:^",
-    "tinybench": "^6.2.2"
+    "tinybench": "^6.2.3"
   }
 }
