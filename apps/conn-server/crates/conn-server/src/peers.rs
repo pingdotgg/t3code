@@ -1356,6 +1356,43 @@ fn read_file(file: &std::path::Path) -> Result<Vec<Row>, PeerLinkError> {
     }
 }
 
+/// A T3 peer link as `t3_carry.rs` reads it from `peer_environment_links`. Its token stays
+/// where T3 put it, `secret_name` in the shared secret store.
+pub(crate) struct T3PeerLink {
+    pub environment_id: String,
+    pub secret_name: String,
+    pub label: String,
+    pub urls: Vec<String>,
+    pub access: String,
+    pub linked_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub last_reached_at_ms: Option<u64>,
+    pub last_error: Option<String>,
+}
+
+/// Writes `peer-links.json` in `state_dir` from a T3 server's links, in T3's listing order.
+pub(crate) fn write_t3_import(
+    state_dir: &std::path::Path,
+    links: Vec<T3PeerLink>,
+) -> Result<(), String> {
+    let rows = links
+        .into_iter()
+        .take(MAX_LINKS)
+        .map(|l| Row {
+            environment_id: l.environment_id,
+            secret_name: l.secret_name,
+            label: l.label,
+            urls: l.urls,
+            access: l.access,
+            linked_at_ms: l.linked_at_ms,
+            expires_at_ms: l.expires_at_ms,
+            last_reached_at_ms: l.last_reached_at_ms,
+            last_error: l.last_error,
+        })
+        .collect();
+    write_file(&state_dir.join(FILE), rows).map_err(|e| e.message)
+}
+
 fn write_file(file: &std::path::Path, links: Vec<Row>) -> Result<(), PeerLinkError> {
     let bytes = serde_json::to_vec_pretty(&LinksFile { version: 1, links }).map_err(storage)?;
     conn_support::fs::write_private(file, &bytes).map_err(storage)

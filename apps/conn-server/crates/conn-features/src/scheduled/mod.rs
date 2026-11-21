@@ -370,6 +370,45 @@ fn load(path: &Path) -> Loaded {
     (tasks, credentials)
 }
 
+/// Writes `scheduled-tasks.json` in `state_dir` from a T3 server's tasks, once, before the
+/// store opens. Each task is T3's `ScheduledTask` as its row decodes (`decodeRow`), with the
+/// webhook token and secret of its row; a task that does not decode is skipped, as T3 skips
+/// it. Returns how many tasks were written.
+pub fn write_t3_import(
+    state_dir: &Path,
+    rows: Vec<(Value, Option<webhook::Credentials>)>,
+) -> Result<usize, String> {
+    let mut tasks = Vec::new();
+    let mut hooks = serde_json::Map::new();
+    for (row, credentials) in rows {
+        let task = match from_json::<ScheduledTask>(row) {
+            Ok(task) => task,
+            Err(error) => {
+                eprintln!("scheduled tasks: skipped a T3 task that does not decode: {error}");
+                continue;
+            }
+        };
+        if tasks.len() >= MAX_TASKS {
+            eprintln!("scheduled tasks: over {MAX_TASKS}; dropped {}", task.id);
+            continue;
+        }
+        if let Some(credentials) = credentials
+            && matches!(task.schedule, ScheduledTaskSchedule::Webhook(_))
+        {
+            hooks.insert(
+                task.id.to_string(),
+                serde_json::to_value(credentials).map_err(|e| e.to_string())?,
+            );
+        }
+        tasks.push(task);
+    }
+    let count = tasks.len();
+    let body = json!({"version": 1, "tasks": tasks, "webhooks": hooks}).to_string();
+    conn_support::fs::write_private(&state_dir.join(FILE_NAME), body.as_bytes())
+        .map_err(|e| e.to_string())?;
+    Ok(count)
+}
+
 impl ScheduledTasks {
     /// Opens the store and starts the timer on the current runtime. Runs left `running` by a
     /// stopped server are recorded as failed first (`Run was interrupted by a server restart.`).

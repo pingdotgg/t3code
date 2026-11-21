@@ -25,6 +25,7 @@ pub mod scopes;
 pub mod serve;
 pub mod session;
 pub mod settings;
+pub mod t3_carry;
 pub mod table;
 pub mod text_generation;
 mod workflow_script;

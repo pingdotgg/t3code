@@ -109,6 +109,12 @@ impl ServeOptions {
 ///
 /// Runs until SIGTERM or SIGINT, then stops cleanly: no new connections, open sockets close,
 /// and the runtime drops every task, which kills provider children (`kill_on_drop`).
+/// T3's migration log messages (`packages/shared/src/databaseMigrationLog.ts`). The desktop's
+/// readiness check keeps waiting while the last one in the output is not the finished one.
+const T3_MIGRATIONS_STARTED: &str = "Running database migrations";
+const T3_MIGRATION_PROGRESS: &str = "Upgrading database";
+const T3_MIGRATIONS_FINISHED: &str = "Migrations ran successfully";
+
 pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     serve_with_instances(options, providers, None).await;
 }
@@ -173,6 +179,15 @@ pub async fn serve_with_instances(
         })
         .collect();
     let restart = crate::restart::Restart::detect(desktop.is_some()).await;
+    // A state folder the T3 server used: its sessions, pairing links, peer links and
+    // scheduled tasks, once, before the stores that read them open (`t3_carry.rs`).
+    let carry_dir = state_dir.clone();
+    match tokio::task::spawn_blocking(move || crate::t3_carry::carry_t3_state(&carry_dir)).await {
+        Ok(Ok(Some(report))) => eprintln!("conn-server: {}", report.summary()),
+        Ok(Ok(None)) => {}
+        Ok(Err(error)) => or_exit(Err(error), "cannot carry over the T3 server's state"),
+        Err(error) => or_exit(Err(error), "cannot carry over the T3 server's state"),
+    }
     let load_environment = {
         let state_dir = state_dir.clone();
         tokio::task::spawn_blocking(move || Environment::load(&state_dir, label, cwd, restart))
@@ -221,8 +236,50 @@ pub async fn serve_with_instances(
     });
 
     // A state folder the T3 server used: its threads and projects, once (`t3_import.rs`).
+    // It takes minutes on a large T3 home and the server listens only after it, as the T3
+    // server listens only after its migrations. The lines carry T3's migration messages
+    // (`databaseMigrationLog.ts`): a desktop that waits for readiness reads them in the output
+    // and keeps waiting instead of reporting a failed start.
     let import_dir = state_dir.clone();
-    match tokio::task::spawn_blocking(move || conn_engine::import_t3_state(&import_dir)).await {
+    let imported = tokio::task::spawn_blocking(move || {
+        let started = std::time::Instant::now();
+        let mut announced = false;
+        let result = conn_engine::import_t3_state_with_progress(&import_dir, &mut |p| {
+            if !announced {
+                announced = true;
+                eprintln!(
+                    "conn-server: {} to import the T3 server's threads (once; a large T3 home \
+                     takes minutes, and the server answers when it is done)",
+                    T3_MIGRATIONS_STARTED
+                );
+            }
+            let threads = p
+                .threads
+                .map(|(done, all)| format!(", {done} of {all} threads"))
+                .unwrap_or_default();
+            eprintln!(
+                "conn-server: {}: T3 import step {} of {} ({}{threads}), {} s",
+                T3_MIGRATION_PROGRESS,
+                p.step,
+                p.steps,
+                p.name,
+                started.elapsed().as_secs()
+            );
+        });
+        if announced && result.as_ref().is_ok_and(Option::is_some) {
+            eprintln!(
+                "conn-server: {} (T3 import done in {} s)",
+                T3_MIGRATIONS_FINISHED,
+                started.elapsed().as_secs()
+            );
+        }
+        result
+    })
+    .await;
+    if matches!(imported, Ok(Ok(_))) {
+        crate::t3_carry::finish_carry(&state_dir);
+    }
+    match imported {
         Ok(Ok(Some(report))) => eprintln!("conn-server: {}", report.summary()),
         Ok(Ok(None)) => {}
         Ok(Err(error)) => or_exit(Err(error), "cannot import the T3 server's state"),

@@ -104,7 +104,9 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
   from a T3 server's `statev2.sqlite` in the same folder: projects, threads and every
   projection row with its id and body, read-only from T3's file, renamed into place when
   complete. The server calls it before it opens the engine (`docs/status.md`, "T3 state
-  import"). Tests: `t3_import::tests`.
+  import"); `import_t3_state_with_progress` reports each step for the log. Sessions, peer
+  links and scheduled tasks are the server's (`conn-server/src/t3_carry.rs`), which reads
+  T3's file through `open_t3_read_only`. Tests: `t3_import::tests`.
 
 - **Buffered delivery** (`src/streaming.rs`, T3's `assistantStreaming.ts` and
   `RunExecutionService`). A running `assistant_message` node is never stored. A streaming

@@ -52,9 +52,28 @@ A Conn Server that starts in a T3 server's state folder has the same threads (Ni
   one-time copy keeps its code as it is. T3's file is never written: the T3 server can take
   over again (rollback) with every thread it had; threads made on the Conn Server do not go
   back. An existing `engine.sqlite` is never touched; a partial import is removed and redone.
-- **Not carried over:** T3's event log (compacted; clients read projections), sessions and
-  pairings (devices pair again), command receipts, scheduled tasks (`scheduled_tasks`, 8 on
-  mini) and peer links (`peer_environment_links`, 6 on mini). Session import
+- **Sessions, pairing codes, peer links and scheduled tasks** (2026-11-21, `t3_carry.rs`):
+  at the same first start, before the stores open, T3's live rows go to the server's own
+  files; a file this server wrote itself is never replaced. Until the thread import of that
+  start is in place (`t3-carry.pending`), a later start reads the carried files again from
+  T3, which may have run in between (a revoked session, a spent code). Paired devices keep
+  their tokens: a
+  carried-over session (`auth.json`, `t3Signed`) accepts the token T3 signed, checked as T3's
+  `SessionStore.verify` does (HMAC with T3's `server-signing-key` from the shared secret
+  store, claims version, kind, subject (it picks the native or MCP audience, as in T3),
+  expiry, the session not revoked; the claims' `rtc`/`plk` apply on `/mcp`).
+  Revoking it here works as for any session. Unspent one-time pairing codes stay usable,
+  peer-link codes (`mcp-approval:peer-link:*`) included.
+  Peer links keep their rows (T3's order; a link made before fencing shows as expired, as
+  T3 shows it) and their tokens under the same secret names. Scheduled tasks keep schedule,
+  state, counters, next run and webhook credentials, as T3's `decodeRow` builds them.
+- **Not carried over:** T3's event log (compacted; clients read projections), command
+  receipts, browser cookie and DPoP-bound sessions (this server checks neither; none on
+  mini), pairing codes bound to an MCP sign-in in progress or waiting for T3 Connect
+  approval; for webhook tasks (none on mini) the delivery log, replay keys and deliveries
+  waiting for dispatch, and coalescing, which this server lacks (an imported coalescing task
+  runs once per delivery); tasks over 500 (mini: 8); the grouped `XXXX-XXXX-XXXX` spelling
+  of a pairing code (the compact one works). Session import
   (`agentSessions.*`) stays unserved; it is a different thing.
 - **Proof on a copy of mini's T3 home** (12.3 GB `statev2.sqlite` taken with sqlite `.backup`;
   `~/.t3` untouched): `crates/conn-server/tools/t3-import-diff.mjs` starts the T3 server and the
@@ -83,7 +102,31 @@ A Conn Server that starts in a T3 server's state folder has the same threads (Ni
   omits; the check applies T3's own projection to both sides.
 - **First start takes minutes** on a large T3 home (mini: 3 to 5 minutes and as much free
   disk as `statev2.sqlite`). An interrupted import starts over at the next start and loses
-  nothing.
+  nothing. The server listens only after it, as the T3 server listens only after its
+  migrations: a client gets "connection refused" meanwhile, as during a T3 upgrade, and
+  reconnects. The log carries T3's migration messages ("Running database migrations",
+  "Upgrading database: T3 import step 12 of 18 (turnItems), 63 s", thread counts in the last
+  step, "Migrations ran successfully"), so the desktop's readiness check keeps waiting past
+  its 3 minutes instead of reporting a failed start (`isRunningDatabaseMigrations`).
+- **Proof of the carry-over** (2026-11-21, a fresh `.backup` copy of mini's 12.4 GB
+  `statev2.sqlite`, an APFS clone of it per run; `~/.t3` and the running servers untouched;
+  copies deleted afterwards). Carried: 13 sessions (12 live on mini, plus one issued on the
+  clone by T3's own CLI, `t3 auth session issue`), 1 pairing code (issued the same way),
+  6 peer links, 8 scheduled tasks; import 309 s.
+  - Sessions: the token T3's CLI issued reads `authenticated: true` on `/api/auth/session`,
+    gets the shell (5 projects, 1,536 threads) and a WebSocket ticket; a changed signature
+    gets 401. beast's real peer-link token for mini (an MCP client session, 15 days left)
+    initializes `/mcp` and lists 62 tools, and gets 401 on the native API, as on T3. The T3
+    pairing code exchanged once for a token; a second exchange got 401.
+  - Peer links: `t3_environment_links` lists all 6 with T3's labels, access, expiry and last
+    errors; `t3_thread_list` through the nick link answered (2 threads). beast answers with
+    the error T3 itself has recorded for that link ("did not match this version").
+  - Schedules: the 8 tasks came over with their run counts. One task, changed on the clone
+    to a harmless prompt on Claude Haiku in a new thread, fired on its own timer three times
+    (runs 22 to 24, from T3's 21). Runs 22 and 23 failed for proof-setup reasons (the
+    worktree had no SDK helper installed; a model slug this account lacks); run 24 started
+    its thread and got the answer "pong".
+  - Client meanwhile: `/.well-known/t3/environment` refused connections for 5 min, then 200.
 
 ## Merge-back (2026-11-21)
 

@@ -15,8 +15,9 @@
 //!   `engine.sqlite` only when it is complete; a crash leaves no `engine.sqlite`, and the next
 //!   start removes the partial file and imports again.
 //! - **Once.** An existing `engine.sqlite` is never touched.
-//! - T3's event log is not carried over (T3 compacts it; clients read projections). Sessions,
-//!   pairings and command receipts do not move either.
+//! - T3's event log is not carried over (T3 compacts it; clients read projections), nor are
+//!   command receipts. Sessions, pairing links, peer links and scheduled tasks live in the
+//!   server's own files; `conn-server`'s `t3_carry.rs` carries them over.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,6 +33,21 @@ pub(crate) const ENGINE_FILE: &str = "engine.sqlite";
 const PARTIAL_SUFFIX: &str = ".t3-import";
 /// Threads whose shell rows one write recomputes.
 const SHELL_BATCH: usize = 200;
+/// Shell batches between two progress reports (about 20 s on mini).
+const PROGRESS_BATCHES: usize = 2;
+
+/// One step of an import, for the log: `step` of `steps`, named `name`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImportProgress {
+    pub step: usize,
+    pub steps: usize,
+    pub name: &'static str,
+    /// In the last, longest step: threads done and in all, reported every few hundred.
+    pub threads: Option<(usize, usize)>,
+}
+
+/// Steps an import reports: projects and threads, each collection, search, shell rows.
+const STEPS: usize = COLLECTIONS.len() + 3;
 
 /// What an import carried over.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -265,6 +281,15 @@ const THREADS_SQL: &str = "INSERT INTO threads (id, project_id, deleted, activit
 /// and `<state_dir>/statev2.sqlite` exists. Returns `None` when there is nothing to do.
 /// Blocking: run it off the async runtime.
 pub fn import_t3_state(state_dir: &Path) -> Result<Option<ImportReport>, String> {
+    import_t3_state_with_progress(state_dir, &mut |_| {})
+}
+
+/// [`import_t3_state`], calling `progress` as each step starts. The server logs these so a
+/// first start that takes minutes reads as a running upgrade, not a hung server.
+pub fn import_t3_state_with_progress(
+    state_dir: &Path,
+    progress: &mut dyn FnMut(ImportProgress),
+) -> Result<Option<ImportReport>, String> {
     let engine = state_dir.join(ENGINE_FILE);
     let source = state_dir.join(T3_STATE_FILE);
     if engine.exists() || !source.is_file() {
@@ -272,7 +297,7 @@ pub fn import_t3_state(state_dir: &Path) -> Result<Option<ImportReport>, String>
     }
     let partial = with_suffix(&engine, PARTIAL_SUFFIX);
     remove_sqlite_files(&partial)?;
-    let report = build(&partial, &source)?;
+    let report = build(&partial, &source, progress)?;
     fs::rename(&partial, &engine).map_err(|e| {
         format!(
             "t3 import: cannot move {} into place: {e}",
@@ -285,7 +310,22 @@ pub fn import_t3_state(state_dir: &Path) -> Result<Option<ImportReport>, String>
     Ok(Some(report))
 }
 
-fn build(partial: &Path, source: &Path) -> Result<ImportReport, String> {
+fn build(
+    partial: &Path,
+    source: &Path,
+    progress: &mut dyn FnMut(ImportProgress),
+) -> Result<ImportReport, String> {
+    let mut step = 0;
+    let mut report_step = |name: &'static str| {
+        step += 1;
+        progress(ImportProgress {
+            step,
+            steps: STEPS,
+            name,
+            threads: None,
+        });
+    };
+    report_step("projects and threads");
     // The engine's schema, as a fresh store has it.
     drop(Store::open(partial)?);
     let conn = Connection::open_with_flags(
@@ -314,6 +354,7 @@ fn build(partial: &Path, source: &Path) -> Result<ImportReport, String> {
     report.threads = tx.execute(THREADS_SQL, []).map_err(err)? as u64;
     let mut next_seq: i64 = 1;
     for c in &COLLECTIONS {
+        report_step(c.kind);
         let Some((from, thread)) = source_rows(&tx, c)? else {
             report.collections.push((c.kind, 0));
             continue;
@@ -332,6 +373,7 @@ fn build(partial: &Path, source: &Path) -> Result<ImportReport, String> {
         report.collections.push((c.kind, rows as u64));
     }
     // Final message texts for search, as `index_message` adds them.
+    report_step("message search");
     tx.execute_batch(
         "INSERT OR IGNORE INTO message_keys (thread_id, message_id)
            SELECT thread_id, id FROM entities WHERE kind = 'messages'
@@ -365,14 +407,24 @@ fn build(partial: &Path, source: &Path) -> Result<ImportReport, String> {
     drop(conn);
 
     // The shell rows, computed by the engine as after any write.
+    report_step("thread list");
     let mut store = Store::open(partial)?;
     let ids = store.query_rows_text("SELECT id FROM threads WHERE deleted = 0 ORDER BY rowid")?;
-    for batch in ids.chunks(SHELL_BATCH) {
+    for (n, batch) in ids.chunks(SHELL_BATCH).enumerate() {
         let mut tx = store.tx()?;
         for id in batch {
             tx.touch(id);
         }
         tx.commit(None)?;
+        let done = (n + 1) * SHELL_BATCH;
+        if done.is_multiple_of(SHELL_BATCH * PROGRESS_BATCHES) && done < ids.len() {
+            progress(ImportProgress {
+                step: STEPS,
+                steps: STEPS,
+                name: "thread list",
+                threads: Some((done, ids.len())),
+            });
+        }
     }
     store.checkpoint()?;
     drop(store);
@@ -482,6 +534,14 @@ fn t3_last_sequence(conn: &Connection) -> Result<i64, String> {
 /// Attaches T3's file as `t3`, read-only. A T3 server that stopped cleanly leaves no `-wal`
 /// file, and a read-only open then may need to create one; where it cannot, the file is read
 /// as immutable, which is exact when no `-wal` holds pages.
+/// T3's state file, read-only, attached as `t3` to an empty in-memory database. For the
+/// server's own files (sessions, peer links, scheduled tasks), read once at the first start.
+pub fn open_t3_read_only(source: &Path) -> Result<Connection, String> {
+    let conn = Connection::open_in_memory().map_err(err)?;
+    attach_t3(&conn, source)?;
+    Ok(conn)
+}
+
 fn attach_t3(conn: &Connection, source: &Path) -> Result<(), String> {
     let probe = |uri: String| {
         conn.execute("ATTACH DATABASE ?1 AS t3", [uri])?;

@@ -281,6 +281,25 @@ fn a_partial_import_is_removed_and_redone() {
 }
 
 #[test]
+fn reports_each_step_in_order() {
+    let dir = temp_dir("t3-import-progress");
+    t3_state(&dir);
+    let mut seen = Vec::new();
+    super::import_t3_state_with_progress(&dir, &mut |p| seen.push(p))
+        .unwrap()
+        .unwrap();
+    let steps: Vec<usize> = seen
+        .iter()
+        .filter(|p| p.threads.is_none())
+        .map(|p| p.step)
+        .collect();
+    assert_eq!(steps, (1..=super::STEPS).collect::<Vec<_>>());
+    assert!(seen.iter().all(|p| p.steps == super::STEPS));
+    assert_eq!(seen.last().unwrap().name, "thread list");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn nothing_to_do_without_a_t3_file_or_with_an_engine_file() {
     let dir = temp_dir("none");
     assert_eq!(import_t3_state(&dir).unwrap(), None);
