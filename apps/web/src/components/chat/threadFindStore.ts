@@ -179,6 +179,10 @@ export function findForMessageMatch(
   query: string,
 ): PendingThreadFind {
   const start = match.messageId ? { start: { entryId: match.messageId, occurrence: 0 } } : {};
+  if (messageSearchTokens(query).exact) {
+    const range = findSearchTokenRanges(match.snippet, query)[0];
+    if (range) return { query: match.snippet.slice(range.start, range.end), ...start };
+  }
   // Apostrophes are straight in the query; straightening keeps offsets.
   const together = messagePhrase(query)?.exec(match.snippet.replace(/[\u2018\u2019]/g, "'"));
   if (together) {
