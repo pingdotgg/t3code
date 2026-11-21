@@ -103,9 +103,13 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
   );
 }
 
+function thoughtLabelText(entry: WorkLogEntry): string | undefined {
+  return entry.detail?.trim().replace(/\s+/g, " ");
+}
+
 function singleToolCallLabel(entry: WorkLogEntry, resolve: MessageResolver): string {
   if (entry.itemType === "reasoning") {
-    return entry.detail?.trim().replace(/\s+/g, " ") || resolve(msg("Thought"));
+    return thoughtLabelText(entry) || resolve(msg("Thought"));
   }
   const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed", resolve);
   if (toolPresentation) return toolPresentation.displayName;
@@ -2746,7 +2750,16 @@ function replaceStreamingMessageRows(
     }
     if (row.kind === "work") {
       const groupedEntries = patchGroup(row.groupedEntries);
-      return groupedEntries === row.groupedEntries ? row : { ...row, groupedEntries };
+      if (groupedEntries === row.groupedEntries) return row;
+      // Fork: thinkingSplitsWorkGroup leaves a thought alone in its row, labelled by its
+      // text. Blankness is unchanged, so the text label stays a text label.
+      const [thought] = groupedEntries;
+      if (groupedEntries.length === 1 && thought !== undefined && thoughts.has(thought.id)) {
+        patchedLiveThoughtIds.add(thought.id);
+        const label = row.displayLabel === undefined ? undefined : thoughtLabelText(thought);
+        return { ...row, groupedEntries, ...(label ? { displayLabel: label } : {}) };
+      }
+      return { ...row, groupedEntries };
     }
     if (row.kind !== "message" && row.kind !== "assistant-meta") return row;
     const entry = replacements.get(row.message);
