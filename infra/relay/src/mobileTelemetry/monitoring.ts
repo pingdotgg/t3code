@@ -62,6 +62,7 @@ interface MobileMonitor {
     | "tolerance"
     | "alertOnNoData"
     | "triggerFromNRuns"
+    | "triggerAfterNPositiveResults"
   >;
 }
 
@@ -114,6 +115,7 @@ const mobileMonitors: ReadonlyArray<MobileMonitor> = [
       tolerance: 50,
       rangeMinutes: 60,
       intervalMinutes: 60,
+      triggerAfterNPositiveResults: 2,
       triggerFromNRuns: 2,
     },
   },
