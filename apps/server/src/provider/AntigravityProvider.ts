@@ -65,14 +65,12 @@ type ThinkingConfig = NonNullable<ReturnType<typeof antigravityThinkingConfig>>;
 /** Thinking options each model reported when selected; `null` means it has none. */
 export type AntigravityThinkingLevels = ReadonlyMap<string, ThinkingConfig | null>;
 
-function thinkingCapabilities(config: ThinkingConfig | null | undefined, observed: boolean) {
+function thinkingCapabilities(config: ThinkingConfig | null | undefined) {
   const descriptor = config
     ? acpProviderOptionDescriptors({ configOptions: [config], modeState: undefined })[0]
     : undefined;
   if (descriptor?.type !== "select") return EMPTY_MODEL_CAPABILITIES;
-  // Another model's selected level is not this model's default.
-  const { currentValue: _currentValue, ...unobserved } = descriptor;
-  return createModelCapabilities({ optionDescriptors: [observed ? descriptor : unobserved] });
+  return createModelCapabilities({ optionDescriptors: [descriptor] });
 }
 
 export function buildAntigravityModelsFromSession(
@@ -113,10 +111,9 @@ export function buildAntigravityModelsFromSession(
         ...(entry.value === currentValue
           ? { isDefault: true, aliases: [ANTIGRAVITY_DEFAULT_MODEL] }
           : {}),
-        capabilities:
-          observed === undefined
-            ? thinkingCapabilities(currentThinking, false)
-            : thinkingCapabilities(observed, true),
+        // Levels differ per model, so an unobserved model reports none rather than the
+        // selected model's; the registry then keeps the levels it last reported.
+        capabilities: thinkingCapabilities(observed),
       },
     ];
   });
