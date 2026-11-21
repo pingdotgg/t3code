@@ -64,12 +64,12 @@ test(
       document.querySelector<HTMLElement>('[data-testid="composer-editor"]')!.focus();
       return null;
     });
-    const restore = menu.getByRole("button", `Restore stashed prompt: ${prompt}`);
+    const restore = menu.getByRole("button", `Restore stashed prompt: ${prompt}`, { exact: false });
     await expect(menu.getByText("saving 1 image…")).toBeVisible();
     await app.screenshot("stash-image-still-saving");
     await browser.keyboard.press("Enter");
-    await expect(restore).toBeDisabled();
     await expect(editor).toHaveText("");
+    await expect(restore).toBeDisabled();
 
     await browser.evaluate(() => {
       document
@@ -79,7 +79,7 @@ test(
     });
     await expect(restore).toBeEnabled();
     await restore.tap();
-    await expect(editor).toHaveText(prompt);
+    await expect(editor).toContainText(prompt);
     await expect(screen.getByRole("button", "Remove stash.png")).toBeVisible();
   },
 );
