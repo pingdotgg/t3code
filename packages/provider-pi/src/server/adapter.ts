@@ -491,7 +491,32 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
     ) {
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
-      const mcpSession = yield* mcpSessions.read(input.threadId);
+      let appliedMcpAuthorization: string | undefined = undefined;
+      const mcpAuthDir = yield* fileSystem
+        .makeTempDirectoryScoped({ prefix: "t3-pi-mcp-auth-" })
+        .pipe(
+          Effect.provideService(Scope.Scope, scope),
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
+                driver: PI_PROVIDER,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+          ),
+        );
+      const mcpTokenFilePath = path.join(mcpAuthDir, "token");
+      let mcpTokenWriteOrdinal = 0;
+      const writeMcpTokenFile = Effect.fn("PiAdapterV2.writeMcpTokenFile")(function* (
+        authorizationHeader: string,
+      ) {
+        const bearerToken = authorizationHeader.startsWith("Bearer ")
+          ? authorizationHeader.slice("Bearer ".length)
+          : authorizationHeader;
+        const stagingPath = path.join(mcpAuthDir, `token.${++mcpTokenWriteOrdinal}.tmp`);
+        yield* fileSystem.writeFileString(stagingPath, bearerToken, { mode: 0o600 });
+        yield* fileSystem.rename(stagingPath, mcpTokenFilePath);
+      });
       const provideCacheFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
         effect.pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -536,11 +561,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const startConnection = Effect.fnUntraced(function* (sessionPath?: string) {
         const connectionScope = yield* Scope.fork(scope, "sequential");
         return yield* Effect.gen(function* () {
+          const liveMcpSession = yield* mcpSessions.read(input.threadId);
+          if (liveMcpSession !== undefined) {
+            yield* writeMcpTokenFile(liveMcpSession.authorizationHeader);
+          }
+          appliedMcpAuthorization = liveMcpSession?.authorizationHeader;
           const launch = buildPiRpcLaunch({
             launchArgs: resolvedLaunchArgs.args,
             // PortScanner.AGENT_THREAD_ENV, as a literal because this package cannot reach apps/server.
             environment: { ...options.environment, T3CODE_THREAD_ID: input.threadId },
-            mcpSession,
+            mcpSession: liveMcpSession,
+            mcpBearerTokenFile: liveMcpSession === undefined ? undefined : mcpTokenFilePath,
             extensionPath,
             sessionPath,
             runtimeMode: input.runtimePolicy.runtimeMode,
@@ -3331,6 +3362,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         instanceId: options.instanceId,
         driver: PI_PROVIDER,
         providerSessionId: input.providerSessionId,
+        mcpCredentialRotation: "live",
         get providerSession() {
           return sessionEntity;
         },
@@ -3415,6 +3447,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const continuation =
               turnInput.message.createdBy === "agent" &&
               turnInput.message.creationSource === "provider";
+            const currentMcp = yield* mcpSessions.read(turnInput.threadId);
+            if (
+              currentMcp !== undefined &&
+              currentMcp.authorizationHeader !== appliedMcpAuthorization
+            ) {
+              yield* writeMcpTokenFile(currentMcp.authorizationHeader).pipe(
+                Effect.mapError((cause) =>
+                  protocolError("Could not update Pi MCP credential", cause),
+                ),
+              );
+              appliedMcpAuthorization = currentMcp.authorizationHeader;
+            }
             if (!continuation) yield* applySelection(turnInput.modelSelection);
             if (turnInput.appThread.title !== appliedSessionName) {
               yield* request({

@@ -354,6 +354,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       let broken = false;
       // Only idle host failures can be retried on this runtime.
       let relaunchable = false;
+      let registeredMcpAuthorization: string | undefined;
       let nativeSessionId: string | undefined;
       let thread: OrchestrationV2ProviderThread | undefined;
       let active: ActiveTurn | undefined;
@@ -1908,6 +1909,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           relaunchable = false;
           thread = undefined;
           nativeSessionId = undefined;
+          registeredMcpAuthorization = undefined;
           yield* updateSession("ready", null);
         }
         if (active)
@@ -1921,17 +1923,25 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const requestedId = existing
           ? (existing.nativeThreadRef?.nativeId ?? undefined)
           : input.initialNativeThreadId;
-        if (
-          thread &&
+        const mcpSession = yield* mcpSessions.read(args.threadId);
+        const sameThread =
+          thread !== undefined &&
           (!requestedId || requestedId === nativeSessionId) &&
-          thread.appThreadId === args.threadId
-        )
+          thread.appThreadId === args.threadId;
+        if (
+          thread !== undefined &&
+          sameThread &&
+          registeredMcpAuthorization === mcpSession?.authorizationHeader
+        ) {
           return thread;
-        if (thread) return yield* protocolError("Open a new host to attach another Muse session");
+        }
+        if (thread && !sameThread) {
+          return yield* protocolError("Open a new host to attach another Muse session");
+        }
         let missingNativeSession = false;
         return yield* Effect.gen(function* () {
-          nativeSessionId = requestedId ?? host.connection.mintCommandId();
-          const mcpSession = yield* mcpSessions.read(args.threadId);
+          const resumeExistingId = sameThread ? nativeSessionId : requestedId;
+          nativeSessionId = resumeExistingId ?? host.connection.mintCommandId();
           if (mcpSession && !host.initializeResult.grantedCapabilities.includes("sessionMcp"))
             return yield* protocolError(
               "Update Muse Code to a version that supports session MCP servers",
@@ -1952,8 +1962,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           const startModel = yield* resolveModel(args.modelSelection);
           const permissionProfile = musePermissionProfile(args.runtimePolicy.runtimeMode);
           const result = yield* request(
-            requestedId ? "session/resume" : "session/start",
-            requestedId
+            resumeExistingId ? "session/resume" : "session/start",
+            resumeExistingId
               ? { excludeItems: true, ...(config ? { config } : {}), permissionProfile }
               : {
                   workspaceRoot: cwd,
@@ -1966,7 +1976,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           ).pipe(
             Effect.catch((error) => {
               missingNativeSession =
-                requestedId !== undefined &&
+                resumeExistingId !== undefined &&
                 error.payload instanceof MspError &&
                 (error.payload.kind === "sessionNotFound" || error.payload.kind === "notFound");
               return Effect.fail(error);
@@ -1979,10 +1989,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             return yield* protocolError(
               "Muse cannot stream this session because its live view is unavailable",
             );
-          if (requestedId)
+          if (resumeExistingId)
             yield* request("session/setApprovalMode", {
               mode: museApprovalMode(args.runtimePolicy.runtimeMode),
             });
+          registeredMcpAuthorization = mcpSession?.authorizationHeader;
           const createdAt = yield* DateTime.now;
           thread = existing
             ? {
@@ -2092,6 +2103,17 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const continuation =
           turnInput.message.createdBy === "agent" &&
           turnInput.message.creationSource === "provider";
+        if (!continuation) {
+          const currentMcp = yield* mcpSessions.read(turnInput.threadId);
+          if (currentMcp?.authorizationHeader !== registeredMcpAuthorization) {
+            yield* register({
+              threadId: turnInput.threadId,
+              modelSelection: turnInput.modelSelection,
+              runtimePolicy: turnInput.runtimePolicy,
+              existingProviderThread: turnInput.providerThread,
+            });
+          }
+        }
         const adopted = continuation ? wake : undefined;
         const effort = continuation ? undefined : yield* selectionEffort(turnInput.modelSelection);
         const parts = compact || continuation ? [] : yield* prompt(turnInput.message);
@@ -2276,6 +2298,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         instanceId: options.instanceId,
         driver: MUSE_PROVIDER,
         providerSessionId: input.providerSessionId,
+        mcpCredentialRotation: "live",
         providerSession: session,
         events: Stream.fromQueue(events),
         backgroundTasksEndWithProcess: true,

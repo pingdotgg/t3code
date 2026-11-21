@@ -2172,11 +2172,78 @@ describe("PiAdapterV2", () => {
       // A thread's long-lived process keeps Pi's startup model refresh unless the user opts out.
       assert.notInclude(spawn.args, "--offline");
       assert.isUndefined(spawn.env.PI_OFFLINE);
+      const fs = yield* FileSystem.FileSystem;
       assert.isTrue(extensions.some((path) => path?.endsWith("pi-t3-mcp-extension.ts")));
       assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
       assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
+      assert.isString(spawn.env.T3_MCP_BEARER_TOKEN_FILE);
+      assert.equal(
+        yield* fs.readFileString(String(spawn.env.T3_MCP_BEARER_TOKEN_FILE)),
+        "secret-pi-token",
+      );
       assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
       assert.equal(spawn.env.T3CODE_THREAD_ID, THREAD_ID);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("writes rotated MCP bearer tokens to the session token file before the next turn", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment-pi-mcp-rotate"),
+        threadId: THREAD_ID,
+        providerSessionId: "mcp-session-pi-1",
+        providerInstanceId: PI_INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-pi-token-1",
+        browserToolsAvailable: false,
+      });
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const rawTokenFile = fake.lastSpawn().env.T3_MCP_BEARER_TOKEN_FILE;
+      assert.isString(rawTokenFile);
+      const tokenFile = String(rawTokenFile);
+      assert.equal(yield* fs.readFileString(tokenFile), "secret-pi-token-1");
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+
+      const runTurn = (text: string, ordinal: number) =>
+        Effect.gen(function* () {
+          yield* startTurn(runtime, providerThread, "default", [], text, undefined, ordinal);
+          while (String((yield* fake.takeRequest("prompt"))["message"]).startsWith("/")) {}
+          yield* fake.emit({ type: "agent_start" });
+          yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+          yield* fake.emit({ type: "agent_settled" });
+          yield* takeEvent((event) => event.type === "turn.terminal");
+        });
+
+      yield* runTurn("First turn", 1);
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment-pi-mcp-rotate"),
+        threadId: THREAD_ID,
+        providerSessionId: "mcp-session-pi-2",
+        providerInstanceId: PI_INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-pi-token-2",
+        browserToolsAvailable: false,
+      });
+      yield* runTurn("Second turn", 2);
+
+      assert.equal(yield* fs.readFileString(tokenFile), "secret-pi-token-2");
+      assert.deepEqual(
+        fake
+          .allRequests()
+          .filter(
+            (request) =>
+              request["type"] === "prompt" &&
+              String(request["message"]).includes("secret-pi-token"),
+          ),
+        [],
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

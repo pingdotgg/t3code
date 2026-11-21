@@ -7,6 +7,7 @@ import {
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
   T3_MCP_BEARER_ENV,
+  T3_MCP_BEARER_FILE_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
@@ -250,6 +251,7 @@ export function buildPiRpcLaunch(input: {
   readonly launchArgs: ReadonlyArray<string>;
   readonly environment: NodeJS.ProcessEnv;
   readonly mcpSession: McpProviderSessionConfig | undefined;
+  readonly mcpBearerTokenFile?: string | undefined;
   readonly extensionPath: string | undefined;
   readonly sessionPath?: string | undefined;
   readonly ephemeral?: boolean;
@@ -296,6 +298,7 @@ export function buildPiRpcLaunch(input: {
   // MCP credentials belong to this T3 session; discard inherited server/parent credentials.
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
+  delete environment[T3_MCP_BEARER_FILE_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
 
   return {
@@ -317,6 +320,9 @@ export function buildPiRpcLaunch(input: {
             [T3_MCP_BEARER_ENV]: bearerTokenFromAuthorizationHeader(
               input.mcpSession.authorizationHeader,
             ),
+            ...(input.mcpBearerTokenFile === undefined
+              ? {}
+              : { [T3_MCP_BEARER_FILE_ENV]: input.mcpBearerTokenFile }),
           }
         : {}),
     },

@@ -416,6 +416,55 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("re-resumes with rotated MCP credentials on the next turn", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("test-environment"),
+        threadId: THREAD_ID,
+        providerSessionId: "test-session-1",
+        providerInstanceId: INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43210/mcp",
+        authorizationHeader: "Bearer muse-run-1-token",
+        browserToolsAvailable: false,
+      });
+      const fake = yield* makeFakeMuse();
+      fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
+      const harness = yield* makeHarness(fake, INSTANCE_ID);
+      const started = yield* fake.takeCall("session/start");
+      assert.strictEqual(
+        (
+          started.params.config as {
+            mcpServers?: { "t3-code"?: { headers?: { Authorization?: string } } };
+          }
+        )?.mcpServers?.["t3-code"]?.headers?.Authorization,
+        "Bearer muse-run-1-token",
+      );
+
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("test-environment"),
+        threadId: THREAD_ID,
+        providerSessionId: "test-session-2",
+        providerInstanceId: INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43210/mcp",
+        authorizationHeader: "Bearer muse-run-2-token",
+        browserToolsAvailable: false,
+      });
+      yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread, 2));
+      const resumed = yield* fake.takeCall("session/resume");
+      assert.deepStrictEqual(resumed.params.config, {
+        mcpServers: {
+          "t3-code": {
+            transport: "streamableHttp",
+            mode: "optional",
+            url: "http://127.0.0.1:43210/mcp",
+            headers: { Authorization: "Bearer muse-run-2-token" },
+          },
+        },
+      });
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("selects the runtime mode's permission profile on native start and resume", () =>
     Effect.gen(function* () {
       for (const [runtimeMode, profile, approvalMode] of [

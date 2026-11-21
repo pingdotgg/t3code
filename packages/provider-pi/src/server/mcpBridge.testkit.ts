@@ -63,13 +63,22 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
     readonly inputSchema?: Record<string, unknown>;
+    readonly fetchOverride?: (
+      url: string,
+      transport: { body: string; headers: Record<string, string>; signal?: AbortSignal },
+      request: { readonly id: number; readonly method: string; readonly params?: unknown },
+      defaultResponse: () => Promise<Response>,
+    ) => Promise<Response>;
+    readonly readTokenFileOverride?: (readCurrent: () => string) => Promise<string>;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
+  const commands = new Map<string, (args: string) => Promise<void> | void>();
   const tools: RegisteredTool[] = [];
   const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
   let activeTools = ["read"];
   let bridgeSourcePath = "/fixture/pi-t3-extension.ts";
+  let bearerTokenFileContent = "fixture-token";
   const transports: Array<{
     readonly url: string;
     readonly authorization: string;
@@ -105,12 +114,23 @@ export async function loadMcpBridge(
       env: {
         T3_MCP_URL: "http://fixture.invalid/mcp",
         T3_MCP_BEARER_TOKEN: "fixture-token",
+        T3_MCP_BEARER_TOKEN_FILE: "/fixture/pi-t3-mcp-token",
         T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",
         T3_PI_RUNTIME_MODE: options.runtimeMode,
       },
     },
     AbortSignal,
     NodeCrypto,
+    NodeFSP: {
+      readFile: async (filePath: string) => {
+        if (filePath === "/fixture/pi-t3-mcp-token") {
+          return options.readTokenFileOverride !== undefined
+            ? options.readTokenFileOverride(() => bearerTokenFileContent)
+            : bearerTokenFileContent;
+        }
+        throw new Error(`Unexpected file read: ${filePath}`);
+      },
+    },
     NodePath,
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (
@@ -129,19 +149,28 @@ export async function loadMcpBridge(
         params?: unknown;
       };
       requests.push(request);
-      const result =
-        request.method === "tools/list"
-          ? { tools: catalog }
-          : request.method === "tools/call"
-            ? (options.result ?? { content: [{ type: "text", text: "browser snapshot" }] })
-            : {};
-      return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }), {
-        headers: { "content-type": "application/json" },
-      });
+      const defaultResponse = async () => {
+        const result =
+          request.method === "tools/list"
+            ? { tools: catalog }
+            : request.method === "tools/call"
+              ? (options.result ?? { content: [{ type: "text", text: "browser snapshot" }] })
+              : {};
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }), {
+          headers: { "content-type": "application/json" },
+        });
+      };
+      if (options.fetchOverride !== undefined) {
+        return options.fetchOverride(url, transport, request, defaultResponse);
+      }
+      return defaultResponse();
     },
     pi: {
       on: (name: string, handler: AgentStartHook) => handlers.set(name, handler),
-      registerCommand: () => {},
+      registerCommand: (
+        name: string,
+        command: { readonly handler: (args: string) => Promise<void> | void },
+      ) => commands.set(name, command.handler),
       registerTool: (tool: RegisteredTool) => {
         if (options.allowsTool && !options.allowsTool(tool.name)) return;
         const index = tools.findIndex((current) => current.name === tool.name);
@@ -205,6 +234,7 @@ export async function loadMcpBridge(
   };
   return {
     handlers,
+    commands,
     tools,
     declaredTools,
     callableTools: () => callableTools().map((tool) => tool.name),
@@ -217,6 +247,9 @@ export async function loadMcpBridge(
     },
     setBridgeSourcePath: (path: string) => {
       bridgeSourcePath = path;
+    },
+    setBearerTokenFile: (token: string) => {
+      bearerTokenFileContent = token;
     },
     requests,
     servers,

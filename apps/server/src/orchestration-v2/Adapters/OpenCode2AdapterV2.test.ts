@@ -5486,6 +5486,73 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("removes and re-registers T3 MCP when its bearer token rotates between turns", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+        threadId,
+        providerSessionId: "mcp:opencode2-rotate-1",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer opencode2-run-1",
+        browserToolsAvailable: false,
+      });
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const server = "t3-code-thread_opencode2-adapter";
+      const addFor = (authorization: string) =>
+        out("mcp.add", {
+          server,
+          "location[directory]": WORK,
+          config: {
+            type: "remote",
+            url: "http://127.0.0.1:3773/mcp",
+            headers: { Authorization: authorization },
+            oauth: false,
+          },
+        });
+      const turn = [
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ];
+      const { runtime, thread } = yield* resumed([
+        addFor("Bearer opencode2-run-1"),
+        reply("mcp.add", null),
+        ...turn,
+        out("mcp.remove", { server, "location[directory]": WORK }),
+        reply("mcp.remove", null),
+        addFor("Bearer opencode2-run-2"),
+        reply("mcp.add", null),
+        ...turn,
+        out("mcp.remove", { server, "location[directory]": WORK }),
+        reply("mcp.remove", null),
+      ]);
+      assert.equal(runtime.mcpCredentialRotation, "live");
+
+      const firstTerminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const firstStarted = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.forkScoped);
+      yield* TestClock.adjust("250 millis");
+      yield* Fiber.join(firstStarted);
+      assert.equal((yield* Fiber.join(firstTerminal))?.status, "completed");
+
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+        threadId,
+        providerSessionId: "mcp:opencode2-rotate-2",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer opencode2-run-2",
+        browserToolsAvailable: false,
+      });
+      const secondTerminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const secondStarted = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.forkScoped);
+      yield* TestClock.adjust("250 millis");
+      yield* Fiber.join(secondStarted);
+      assert.equal((yield* Fiber.join(secondTerminal))?.status, "completed");
+    }),
+  );
+
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
     Effect.gen(function* () {
       const child = ThreadId.make(

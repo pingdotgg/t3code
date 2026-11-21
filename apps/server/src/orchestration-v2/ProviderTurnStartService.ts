@@ -61,7 +61,7 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
-import { isProviderCommand, outputInstructions } from "./runOutput.ts";
+import { isProviderCommand, latestOwedOutputRun, outputInstructions } from "./runOutput.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -939,12 +939,17 @@ export const layer: Layer.Layer<
         brokenNativeThread &&
         providerThread.nativeThreadRef !== null &&
         !(yield* providerSessions.isLive(providerSessionId));
+      const owedOutputRun = latestOwedOutputRun(projection.runs);
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,
           providerSessionId,
           modelSelection: run.modelSelection,
           runtimePolicy: resolvedRuntimePolicy,
+          runId: run.id,
+          attemptId: attempt.id,
+          requireRunScopedMcp: run.outputSchema !== undefined,
+          ...(owedOutputRun === undefined ? {} : { owedOutputRunId: owedOutputRun.id }),
           ...(existingSessionProjection === undefined
             ? {}
             : { resumeFromSession: existingSessionProjection }),
@@ -1670,11 +1675,12 @@ export const layer: Layer.Layer<
         resumedHandoffContext = undefined;
         resumedRetryHandoff = undefined;
         if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
-        // Another client is still writing to the native thread. A fresh
-        // session here would silently split the conversation from it.
+        // Another client or active background work owns this native thread;
+        // starting a fresh session would silently split the conversation.
         if (
           resumed._tag === "Failure" &&
-          resumed.failure._tag === "ProviderAdapterThreadInUseError"
+          (resumed.failure._tag === "ProviderAdapterThreadInUseError" ||
+            resumed.failure._tag === "ProviderAdapterMcpRotationBlockedError")
         ) {
           return yield* loadFromProvider(Effect.fail(resumed.failure));
         }

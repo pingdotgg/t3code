@@ -3270,6 +3270,43 @@ effectIt.effect("fails the run instead of replacing a native thread another clie
   }),
 );
 
+effectIt.effect(
+  "fails the run instead of replacing a native thread when active background work blocks MCP rotation",
+  () =>
+    Effect.gen(function* () {
+      const detail =
+        "Cannot refresh MCP credentials while background work is running on this thread.";
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        resumeFailure: new ProviderAdapter.ProviderAdapterMcpRotationBlockedError({
+          driver: ProviderDriverKind.make("codex"),
+          providerSessionId: ProviderSessionId.make("provider-session-mcp-blocked"),
+          providerThreadId: ProviderThreadId.make("new-provider-thread"),
+          detail,
+        }),
+      });
+
+      const exit = yield* Effect.exit(harness.start);
+
+      expect(harness.fallbackEnsureThread).not.toHaveBeenCalled();
+      expect(exit._tag).toBe("Success");
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      const projection = harness.projection();
+      expect(projection.providerThreads.at(-1)?.nativeThreadRef?.nativeId).toBe(
+        "native-resume-thread",
+      );
+      expect(projection.contextHandoffs).toEqual([]);
+      expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+      expect(projection.turnItems).toMatchObject([
+        {
+          type: "error",
+          title: "Provider turn failed to start",
+          failure: { class: "provider_error", message: detail },
+        },
+      ]);
+    }),
+);
+
 effectIt.effect("does not mistake a failed state read for a superseded run", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({ text: "Continue", failReadsAfterRunning: true });

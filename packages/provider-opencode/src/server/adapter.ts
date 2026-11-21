@@ -1096,6 +1096,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           hasT3Mcp,
           mcpSession?.capabilities?.has("device") === true,
         );
+        let appliedMcpAuthorization: string | undefined = undefined;
         if (hasT3Mcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
@@ -1108,6 +1109,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               },
             }),
           );
+          appliedMcpAuthorization = mcpSession.authorizationHeader;
         }
 
         const now = yield* DateTime.now;
@@ -3628,6 +3630,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           driver: OPENCODE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: sessionEntity,
+          mcpCredentialRotation: "live",
           events: Stream.fromEffectRepeat(Queue.take(events)),
           hasPendingBackgroundWork: Effect.sync(
             () =>
@@ -3753,6 +3756,25 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 );
               }
               yield* applyPermissionRules(state, turnInput.runtimePolicy);
+              const currentMcp = yield* mcpSessions.read(turnInput.threadId);
+              if (
+                currentMcp !== undefined &&
+                !connection.external &&
+                currentMcp.authorizationHeader !== appliedMcpAuthorization
+              ) {
+                yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+                  client.mcp.add({
+                    name: "t3-code",
+                    config: {
+                      type: "remote",
+                      url: currentMcp.endpoint,
+                      headers: { Authorization: currentMcp.authorizationHeader },
+                      oauth: false,
+                    },
+                  }),
+                );
+                appliedMcpAuthorization = currentMcp.authorizationHeader;
+              }
               // A continuation admits a wake OpenCode is already running, so it sends no prompt.
               const isCompaction =
                 !continuation &&

@@ -2263,6 +2263,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             : flavor.extractSubagentUpdate?.(tool);
         let turnAttached = yield* Deferred.make<boolean>();
         const activeSessionId = yield* Ref.make<string | null>(null);
+        // Tracks the MCP Authorization header the active ACP session was created/loaded with.
+        const activeMcpAuthorization = yield* Ref.make<string | undefined>(undefined);
         // session/load replays history before activeSessionId names the loaded session.
         const loadingSessionId = yield* Ref.make<string | null>(null);
         const contextUsageBySessionId = yield* Ref.make(
@@ -7931,7 +7933,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: ThreadId | null,
             candidate: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           ) {
-            rememberTerminalEnvironment(candidate.sessionId, yield* readMcpContext(threadId));
+            const mcpContext = yield* readMcpContext(threadId);
+            rememberTerminalEnvironment(candidate.sessionId, mcpContext);
+            yield* Ref.set(activeMcpAuthorization, mcpContext.authorization);
             yield* Ref.set(runtimeRestartRequired, false);
             yield* Ref.set(activeSessionId, candidate.sessionId);
             yield* setActiveSessionSetup(candidate);
@@ -7988,10 +7992,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               prepareClaimableTerminalEnvironment(yield* readMcpContext(input.threadId));
               return yield* startAcpRuntime(input.threadId);
             });
+        const initialMcpContext = yield* readMcpContext(input.threadId);
         yield* Ref.set(activeSessionId, started.sessionId);
+        yield* Ref.set(activeMcpAuthorization, initialMcpContext.authorization);
         yield* Ref.set(loadingSessionId, null);
         yield* setActiveSessionSetup(started);
-        rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
+        rememberTerminalEnvironment(started.sessionId, initialMcpContext);
         yield* runtime.drainEvents;
         const steersWithPrompt = flavor.steersWithPrompt?.(started.initializeResult) === true;
         const capabilities = negotiatedCapabilities(
@@ -8004,6 +8010,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
           started.initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;
+        const usesMcpOverAcp =
+          started.initializeResult.agentCapabilities?.mcpCapabilities?.acp === true;
         const supportsImagePrompts = acpSupportsImagePrompts({
           flavorSupportsImagePrompts: flavor.supportsImagePrompts,
           negotiatedImage:
@@ -8034,8 +8042,38 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     detail: `ACP driver cannot load or resume session ${sessionId}`,
                   });
           }).pipe(Effect.onError(() => Ref.set(loadingSessionId, null)));
-          rememberTerminalEnvironment(activated.sessionId, yield* readMcpContext(threadId));
+          if (runtimeMcpBridge !== undefined && mcpContext.authorization !== undefined) {
+            runtimeMcpBridge.setAuthorization(mcpContext.authorization);
+          }
+          rememberTerminalEnvironment(activated.sessionId, mcpContext);
+          yield* Ref.set(activeMcpAuthorization, mcpContext.authorization);
           return activated;
+        });
+
+        const syncMcpCredentialForSession = Effect.fnUntraced(function* (
+          sessionId: string,
+          threadId: ThreadId | null,
+          options?: { readonly allowReload?: boolean },
+        ) {
+          const currentMcpContext = yield* readMcpContext(threadId);
+          if (currentMcpContext.authorization === (yield* Ref.get(activeMcpAuthorization))) {
+            return false;
+          }
+          rememberTerminalEnvironment(sessionId, currentMcpContext);
+          if (
+            usesMcpOverAcp &&
+            runtimeMcpBridge !== undefined &&
+            currentMcpContext.authorization !== undefined
+          ) {
+            runtimeMcpBridge.setAuthorization(currentMcpContext.authorization);
+            yield* Ref.set(activeMcpAuthorization, currentMcpContext.authorization);
+            return false;
+          }
+          if (options?.allowReload !== false && (canLoadSession || canResumeSession)) {
+            return true;
+          }
+          // Non-loadable agents or continuation wakes keep their active session; do not record as applied.
+          return false;
         });
 
         const validateModelSelection = Effect.fn("AcpAdapterV2.validateModelSelection")(function* (
@@ -9006,6 +9044,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
+          yield* Ref.set(activeMcpAuthorization, undefined);
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
@@ -9279,8 +9318,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
               turnInput.threadId,
             );
+            // Continuations consume existing wake traffic without re-prompting or reloading ACP.
+            const isContinuationTurn =
+              (postSettleContinuationEnabled || followsAgentWorkState) &&
+              acpIsProviderContinuationMessage(turnInput.message);
+            const mcpReloadRequired =
+              !restartAfterInterrupt &&
+              (yield* Ref.get(activeSessionId)) === requestedSessionId &&
+              (yield* syncMcpCredentialForSession(requestedSessionId, turnInput.threadId, {
+                allowReload: !isContinuationTurn,
+              }));
             const needsSessionActivation =
-              (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
+              (yield* Ref.get(activeSessionId)) !== requestedSessionId ||
+              restartAfterInterrupt ||
+              mcpReloadRequired;
             if (needsSessionActivation) {
               const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
               yield* Ref.set(activeSessionId, activated.sessionId);
@@ -9346,10 +9397,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
             yield* Ref.set(suppressPostSettleMonitorPrompt, false);
             yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
-            // Continuations consume existing wake traffic without re-prompting ACP.
-            const isContinuationTurn =
-              (postSettleContinuationEnabled || followsAgentWorkState) &&
-              acpIsProviderContinuationMessage(turnInput.message);
             const isAppOwnedWakeTurn = acpIsAppOwnedWakeTurn(turnInput.message);
             if (!isAppOwnedWakeTurn) {
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
@@ -9829,6 +9876,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return providerSession;
           },
           canResumeAfterRestart: canLoadSession || canResumeSession,
+          mcpCredentialRotation:
+            usesMcpOverAcp && runtimeMcpBridge !== undefined
+              ? "live"
+              : canLoadSession || canResumeSession
+                ? "reload"
+                : "none",
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ...(flavor.getModelContextWindow === undefined
             ? {}
@@ -9975,7 +10028,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
                     threadInput.providerThread.appThreadId,
                   ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
-                  if ((yield* Ref.get(activeSessionId)) !== sessionId || restartAfterInterrupt) {
+                  const mcpReloadRequired =
+                    !restartAfterInterrupt &&
+                    (yield* Ref.get(activeSessionId)) === sessionId &&
+                    (yield* syncMcpCredentialForSession(
+                      sessionId,
+                      threadInput.providerThread.appThreadId,
+                    ));
+                  if (
+                    (yield* Ref.get(activeSessionId)) !== sessionId ||
+                    restartAfterInterrupt ||
+                    mcpReloadRequired
+                  ) {
                     yield* Ref.set(snapshot, emptySnapshotState());
                     const activated = yield* activateSession(
                       sessionId,
@@ -10664,11 +10728,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     acpMcpActivation(mcpContext),
                     forkMeta,
                   );
-                  rememberTerminalEnvironment(
-                    forked.sessionId,
-                    yield* readMcpContext(forkInput.targetThreadId),
-                  );
+                  if (runtimeMcpBridge !== undefined && mcpContext.authorization !== undefined) {
+                    runtimeMcpBridge.setAuthorization(mcpContext.authorization);
+                  }
+                  rememberTerminalEnvironment(forked.sessionId, mcpContext);
                   yield* Ref.set(activeSessionId, forked.sessionId);
+                  yield* Ref.set(activeMcpAuthorization, mcpContext.authorization);
                   yield* setActiveSessionSetup(forked);
                   yield* Ref.set(activeSelection, null);
                   yield* Ref.set(activeInteractionMode, null);

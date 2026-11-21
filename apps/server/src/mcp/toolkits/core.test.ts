@@ -13,6 +13,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunAttemptId,
   RunId,
   ScheduledTaskError,
   ScheduledTask,
@@ -1655,4 +1656,120 @@ it.effect(
       ),
     );
   },
+);
+
+it.effect("t3_submit_output forwards caller run and attempt identity and surfaces rejection", () =>
+  Effect.gen(function* () {
+    const calls: Array<{
+      readonly threadId: ThreadId;
+      readonly json: string;
+      readonly callerRunId?: RunId | undefined;
+      readonly callerAttemptId?: RunAttemptId | undefined;
+      readonly requireCallerRunId?: boolean | undefined;
+    }> = [];
+    const runA = RunId.make("run-a");
+    const attemptA = RunAttemptId.make("attempt-a");
+    const runB = RunId.make("run-b");
+    const attemptB = RunAttemptId.make("attempt-b");
+
+    let rejectNext: string | undefined;
+    const serverLayer = layerThreadToolkit.pipe(
+      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+      Layer.provide(NodeCrypto.layer),
+      Layer.provide(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(McpToolAccessTestkit.liveThreadShell(threadId)),
+          submitRunOutput: (input) => {
+            calls.push({
+              threadId: input.threadId,
+              json: input.json,
+              callerRunId: input.callerRunId,
+              callerAttemptId: input.callerAttemptId,
+              requireCallerRunId: input.requireCallerRunId,
+            });
+            if (rejectNext !== undefined) {
+              const problem = rejectNext;
+              rejectNext = undefined;
+              return Effect.fail(
+                new ThreadManagement.ThreadManagementRunOutputRejectedError({
+                  threadId: input.threadId,
+                  problem,
+                }),
+              );
+            }
+            return Effect.succeed({ runId: runB });
+          },
+        }),
+      ),
+    );
+
+    const callWith = (
+      runId: RunId | undefined,
+      attemptId: RunAttemptId | undefined,
+      json: string,
+    ) =>
+      Effect.gen(function* () {
+        const server = yield* McpServer.McpServer;
+        const { runId: _r, attemptId: _a, ...baseThread } = scope.thread!;
+        return yield* server.callTool({ name: "t3_submit_output", arguments: { json } }).pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            ...scope,
+            thread: {
+              ...baseThread,
+              ...(runId === undefined ? {} : { runId }),
+              ...(attemptId === undefined ? {} : { attemptId }),
+            },
+          }),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      });
+
+    // Unbound MCP callers still pass requireCallerRunId: true and surface service rejections as invalid_request.
+    rejectNext = "This output was submitted for a turn that is no longer active.";
+    const unbound = yield* callWith(undefined, undefined, '{"ok":false}').pipe(
+      Effect.provide(serverLayer),
+    );
+    expect(unbound.isError).toBe(true);
+    expect(declaredFailure(unbound)).toEqual({
+      _tag: "OrchestratorMcpFailure",
+      code: "invalid_request",
+      message: "This output was submitted for a turn that is no longer active.",
+    });
+
+    rejectNext = "This output was submitted for a turn that is no longer active.";
+    const stale = yield* callWith(runA, attemptA, '{"ok":false}').pipe(Effect.provide(serverLayer));
+    expect(stale.isError).toBe(true);
+    expect(declaredFailure(stale)).toEqual({
+      _tag: "OrchestratorMcpFailure",
+      code: "invalid_request",
+      message: "This output was submitted for a turn that is no longer active.",
+    });
+
+    const active = yield* callWith(runB, attemptB, '{"ok":true}').pipe(Effect.provide(serverLayer));
+    expect(active.isError).toBe(false);
+    expect(active.structuredContent).toEqual({ runId: runB });
+    expect(calls).toEqual([
+      {
+        threadId,
+        json: '{"ok":false}',
+        callerRunId: undefined,
+        callerAttemptId: undefined,
+        requireCallerRunId: true,
+      },
+      {
+        threadId,
+        json: '{"ok":false}',
+        callerRunId: runA,
+        callerAttemptId: attemptA,
+        requireCallerRunId: true,
+      },
+      {
+        threadId,
+        json: '{"ok":true}',
+        callerRunId: runB,
+        callerAttemptId: attemptB,
+        requireCallerRunId: true,
+      },
+    ]);
+  }),
 );

@@ -12,6 +12,7 @@ import {
   EnvironmentId,
   PreviewTabId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   type PreviewAutomationLoadError,
   type PreviewAutomationResizeResult,
@@ -21,11 +22,13 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import { HttpServer } from "effect/http";
 import * as Scope from "effect/Scope";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -37,6 +40,7 @@ import { beforeEach, expect, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
@@ -1539,6 +1543,98 @@ it.effect("enforces provider ownership and explicit targets when a session has m
       );
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "preserves browser tab ownership across per-run MCP credential rotations while still blocking separate sessions",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* Broker.PreviewAutomationBroker;
+        const registry = yield* McpSessionRegistry.__testing.make().pipe(
+          Effect.provideService(
+            HttpServer.HttpServer,
+            HttpServer.HttpServer.of({
+              address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+              serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+            }),
+          ),
+        );
+        yield* Effect.yieldNow;
+
+        const runA = yield* registry.issue({
+          threadId: scope.thread.threadId,
+          providerInstanceId: scope.thread.providerInstanceId,
+          capabilities: new Set(["preview"]),
+          runId: RunId.make("run-a"),
+        });
+        const scopeA = yield* registry.resolve(
+          runA.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        expect(scopeA).toBeDefined();
+        const opened = yield* broker.invoke<PreviewAutomationStatus>({
+          scope: scopeA!,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+        const tabId = PreviewTabId.make(opened.tabId!);
+
+        const runB = yield* registry.issue({
+          threadId: scope.thread.threadId,
+          providerInstanceId: scope.thread.providerInstanceId,
+          capabilities: new Set(["preview"]),
+          providerSessionId: runA.config.providerSessionId,
+          runId: RunId.make("run-b"),
+        });
+        expect(runB.config.providerSessionId).toBe(runA.config.providerSessionId);
+        expect(runB.config.credentialId).not.toBe(runA.config.credentialId);
+        const scopeB = yield* registry.resolve(
+          runB.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        expect(scopeB?.thread.runId).toBe("run-b");
+
+        yield* broker.invoke({
+          scope: scopeB!,
+          tabId,
+          operation: "navigate",
+          input: { url: "http://localhost:5173/after-rotation" },
+        });
+        expect(contexts[0]!.page.goto).toHaveBeenCalledWith(
+          "http://localhost:5173/after-rotation",
+          expect.anything(),
+        );
+        const evaluated = yield* broker.invoke({
+          scope: scopeB!,
+          tabId,
+          operation: "evaluate",
+          input: { expression: "ownedAfterRotation()" },
+        });
+        expect(evaluated).toBe("evaluated");
+
+        const separateSession = yield* registry.issue({
+          threadId: scope.thread.threadId,
+          providerInstanceId: scope.thread.providerInstanceId,
+          capabilities: new Set(["preview"]),
+          runId: RunId.make("run-c"),
+        });
+        expect(separateSession.config.providerSessionId).not.toBe(runA.config.providerSessionId);
+        const scopeOther = yield* registry.resolve(
+          separateSession.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        const foreign = yield* broker
+          .invoke<void>({
+            scope: scopeOther!,
+            tabId,
+            operation: "navigate",
+            input: { url: "http://localhost:5173/separate-session" },
+          })
+          .pipe(Effect.flip);
+        expect(foreign).toMatchObject({
+          _tag: "PreviewAutomationControlInterruptedError",
+          reason: "agentMismatch",
+        });
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.effect("a first still that never returns does not stall the tab's later captures", () =>

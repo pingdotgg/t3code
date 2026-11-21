@@ -43,6 +43,7 @@ import {
   type ProviderInstanceId,
   type RunId,
   type RuntimeRequestId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -4375,14 +4376,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
     );
 
-    const prepareTurn = Effect.fnUntraced(function* (
-      sessionId: string,
+    const syncMcpServer = Effect.fnUntraced(function* (
       state: ThreadState,
-      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+      threadId: ThreadId,
+      directory: string,
     ) {
-      const mcpSession = yield* mcpSessions.read(turnInput.threadId);
-      const directory = turnInput.runtimePolicy.cwd ?? host.paths.cwd;
-      const name = yield* mcpServerNameFor(turnInput.threadId);
+      const mcpSession = yield* mcpSessions.read(threadId);
+      const name = yield* mcpServerNameFor(threadId);
       // An external server may not reach T3's MCP endpoint, as with 1.x.
       const wanted =
         mcpSession === undefined || connection.external
@@ -4428,6 +4428,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           yield* Effect.sleep(MCP_TOOL_RELOAD_SETTLE);
         }
       }
+      return { mcpSession, mcpAvailable };
+    });
+
+    const prepareTurn = Effect.fnUntraced(function* (
+      sessionId: string,
+      state: ThreadState,
+      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+    ) {
+      const directory = turnInput.runtimePolicy.cwd ?? host.paths.cwd;
+      const { mcpSession, mcpAvailable } = yield* syncMcpServer(
+        state,
+        turnInput.threadId,
+        directory,
+      );
       const instructions = [
         buildRuntimeInstructions({
           harness: "OpenCode",
@@ -4565,6 +4579,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
+      yield* syncMcpServer(
+        state,
+        turnInput.threadId,
+        turnInput.runtimePolicy.cwd ?? host.paths.cwd,
+      );
       yield* beginTurn(state, turnInput, false);
       yield* lock.withPermit(
         Effect.gen(function* () {
@@ -4764,6 +4783,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       instanceId,
       driver,
       providerSessionId: input.providerSessionId,
+      mcpCredentialRotation: "live",
       get providerSession() {
         return session;
       },

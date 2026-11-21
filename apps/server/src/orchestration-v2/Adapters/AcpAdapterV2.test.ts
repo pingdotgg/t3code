@@ -6646,6 +6646,165 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("refreshes ACP session MCP credentials when the thread token rotates between turns", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const instanceId = ProviderInstanceId.make("acp-test-mcp-rotate");
+      const threadId = ThreadId.make("thread-acp-mcp-rotate");
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment-acp-mcp-rotate"),
+        threadId,
+        providerSessionId: "mcp-session-acp-rotate-1",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer acp-run-1-token",
+        browserToolsAvailable: false,
+      });
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+          }),
+        },
+        selfInvocation,
+        clientTerminals: {},
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-mcp-rotate"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment-acp-mcp-rotate"),
+        threadId,
+        providerSessionId: "mcp-session-acp-rotate-2",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer acp-run-2-token",
+        browserToolsAvailable: false,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+
+      const loggedEvents = [...(yield* Queue.takeAll(protocolEvents))];
+      const reloadRequestEvent = loggedEvents.find(
+        (event) =>
+          event.direction === "outgoing" &&
+          (rawProtocolMethod(event) === "session/load" ||
+            rawProtocolMethod(event) === "session/resume"),
+      );
+      assert.isDefined(
+        reloadRequestEvent,
+        `expected session/load or session/resume in ${JSON.stringify(loggedEvents.map((e) => `${e.direction}:${rawProtocolMethod(e)}`))}`,
+      );
+      const loadRequest = Option.getOrThrow(
+        Option.fromNullishOr(rawProtocolRequest(reloadRequestEvent!)),
+      );
+      const mcpServers = (
+        loadRequest.params as {
+          mcpServers?: ReadonlyArray<{
+            name?: string;
+            env?: ReadonlyArray<{ name: string; value: string }>;
+          }>;
+        }
+      ).mcpServers;
+      const t3Server = mcpServers?.find((server) => server.name === "t3-code");
+      assert.isDefined(t3Server);
+      assert.equal(
+        t3Server?.env?.find((entry) => entry.name === "T3_ACP_MCP_AUTHORIZATION")?.value,
+        "Bearer acp-run-2-token",
+      );
+      assert.equal(runtime.mcpCredentialRotation, "reload");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live(
+    "reports mcpCredentialRotation none for non-loadable ACP agents without MCP-over-ACP",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const instanceId = ProviderInstanceId.make("acp-test-mcp-none");
+        const threadId = ThreadId.make("thread-acp-mcp-none");
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                start: () =>
+                  runtime.start().pipe(
+                    Effect.map((started) => ({
+                      ...started,
+                      initializeResult: {
+                        ...started.initializeResult,
+                        agentCapabilities: {
+                          ...started.initializeResult.agentCapabilities,
+                          loadSession: false,
+                          sessionCapabilities: {},
+                          mcpCapabilities: {
+                            ...started.initializeResult.agentCapabilities?.mcpCapabilities,
+                            acp: false,
+                          },
+                        },
+                      },
+                    })),
+                  ),
+              }),
+            }),
+          },
+          selfInvocation,
+          clientTerminals: {},
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-mcp-none"),
+          modelSelection: { instanceId, model: "default" },
+          runtimePolicy,
+        });
+        assert.equal(runtime.mcpCredentialRotation, "none");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     {
       label: "grants an ID-only execute approval its tracked command",

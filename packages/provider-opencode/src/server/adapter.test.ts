@@ -9,6 +9,7 @@ import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
   CheckpointId,
+  EnvironmentId,
   NodeId,
   ProjectId,
   ProviderInstanceId,
@@ -314,6 +315,69 @@ describe("OpenCodeAdapterV2", () => {
         ),
       );
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  it.effect("refreshes the t3-code MCP server on startTurn when credentials rotate", () =>
+    Effect.gen(function* () {
+      const mcpAdds: Array<unknown> = [];
+      const nativeEvents = asyncEventStream();
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const threadId = ThreadId.make("thread-opencode-mcp-rotate");
+      const instanceId = ProviderInstanceId.make("opencode-mcp-rotate");
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("env-opencode-mcp-rotate"),
+        threadId,
+        providerSessionId: "mcp-session-opencode-1",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer opencode-run-1-token",
+        browserToolsAvailable: false,
+      });
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "mcp-rotate",
+        "ses_mcp_rotate",
+        {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          mcp: {
+            add: async (input: unknown) => {
+              mcpAdds.push(input);
+              return { data: {} };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: { id: "ses_mcp_rotate", time: { created: 1, updated: 1 } },
+            }),
+            promptAsync: async () => ({ data: undefined }),
+          },
+        },
+        {},
+        { exitCode: Effect.never },
+      );
+      assert.equal(mcpAdds.length, 1);
+
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("env-opencode-mcp-rotate"),
+        threadId,
+        providerSessionId: "mcp-session-opencode-2",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer opencode-run-2-token",
+        browserToolsAvailable: false,
+      });
+      yield* harness.startTurn("Second turn", harness.providerThread, harness.policy, false, "2");
+      assert.deepEqual(
+        mcpAdds.map(
+          (entry) =>
+            (entry as { config?: { headers?: { Authorization?: string } } }).config?.headers
+              ?.Authorization,
+        ),
+        ["Bearer opencode-run-1-token", "Bearer opencode-run-2-token"],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+    ),
   );
 
   it.effect.each([

@@ -2550,6 +2550,184 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("applies a rotated MCP bearer token when a Codex thread is unloaded and resumed", () =>
+    Effect.gen(function* () {
+      const scenario = "rotate-mcp-servers";
+      const nativeThreadId = "rotate-mcp-thread";
+      const threadId = ThreadId.make(`thread-${scenario}`);
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment-codex-mcp-rotate"),
+        threadId,
+        providerSessionId: "provider-session-rotate-1",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer codex-run-1-token",
+        browserToolsAvailable: false,
+      });
+      const resumedConfigs: Array<unknown> = [];
+      const preamble = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "rotate-turn-2",
+        prompt: "Second turn",
+      });
+      const turn2Params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId,
+        codexInput: [{ type: "text", text: "Second turn" }],
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        hasT3Mcp: true,
+        browserToolsAvailable: false,
+      });
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...preamble.slice(0, 3),
+            {
+              type: "expect_outbound",
+              label: "config/read initial",
+              frame: { id: 2, method: "config/read", params: { includeLayers: false } },
+            },
+            {
+              type: "emit_inbound",
+              label: "config/read initial",
+              frame: { id: 2, result: { config: {}, origins: {} } },
+            },
+            ...preamble.slice(3, 5).map((entry) => withReplayRequestId(entry, 3)),
+            {
+              type: "expect_outbound",
+              label: "thread/unsubscribe on MCP rotation",
+              frame: {
+                id: 4,
+                method: "thread/unsubscribe",
+                params: { threadId: nativeThreadId },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/unsubscribe result",
+              frame: { id: 4, result: { status: "unsubscribed" } },
+            },
+            {
+              type: "expect_outbound",
+              label: "config/read reload",
+              frame: { id: 5, method: "config/read", params: { includeLayers: false } },
+            },
+            {
+              type: "emit_inbound",
+              label: "config/read reload",
+              frame: { id: 5, result: { config: {}, origins: {} } },
+            },
+            {
+              type: "expect_outbound",
+              label: "thread/resume with rotated token",
+              frame: {
+                id: 6,
+                method: "thread/resume",
+                params: {
+                  threadId: nativeThreadId,
+                  cwd: "/workspace",
+                  model: "gpt-5.4",
+                  excludeTurns: true,
+                  config: {
+                    "tools.update_plan.enabled": true,
+                    mcp_optional_startup_grace_ms: 10_000,
+                    "features.concurrent_reasoning_summaries": true,
+                    "shell_environment_policy.set.T3CODE_THREAD_ID": threadId,
+                    "mcp_servers.t3-code": {
+                      url: "http://127.0.0.1:43123/mcp",
+                      tool_timeout_sec: 3_900,
+                      http_headers: { Authorization: "Bearer codex-run-2-token" },
+                      disabled_tools: ["t3_thread_wait", "delegate_task"],
+                    },
+                    "mcp_servers.t3-code-direct": {
+                      url: "http://127.0.0.1:43123/mcp",
+                      tool_timeout_sec: 3_900,
+                      http_headers: { Authorization: "Bearer codex-run-2-token" },
+                      enabled_tools: ["t3_thread_wait", "delegate_task"],
+                      omit_tools_from: ["code_mode", "deferred"],
+                    },
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/resume result",
+              frame: {
+                id: 6,
+                result: { thread: { id: nativeThreadId, updatedAt: 1782622450, turns: [] } },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "thread/name/set before turn",
+              frame: {
+                id: 7,
+                method: "thread/name/set",
+                params: { threadId: nativeThreadId, name: "Codex continuation test" },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/name/set result",
+              frame: { id: 7, result: {} },
+            },
+            {
+              type: "expect_outbound",
+              label: "turn/start",
+              frame: { id: 8, method: "turn/start", params: turn2Params },
+            },
+            ...preamble.slice(6).map((entry) => withReplayRequestId(entry, 8)),
+          ],
+        }),
+        () => Effect.void,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/resume") resumedConfigs.push(params);
+          }),
+      );
+
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment-codex-mcp-rotate"),
+        threadId,
+        providerSessionId: "provider-session-rotate-2",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer codex-run-2-token",
+        browserToolsAvailable: false,
+      });
+      yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+      const resumedThread = yield* harness.runtime.resumeThread({
+        threadId,
+        providerThread: harness.providerThread,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId,
+          providerThread: resumedThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("codex-rotate-attempt-2"),
+          text: "Second turn",
+        }),
+      );
+      assert.equal(resumedConfigs.length, 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #36520 MCP servers can tell a delegate_task child from a user thread
   it.effect("starts delegate_task children with the subagent thread source", () =>
     Effect.gen(function* () {

@@ -295,6 +295,24 @@ export class ProviderAdapterThreadInUseError extends Schema.TaggedError<Provider
 }
 
 /**
+ * MCP credential rotation requires reloading the thread, which cannot run while
+ * background work is active. Starting a replacement thread would split history.
+ */
+export class ProviderAdapterMcpRotationBlockedError extends Schema.TaggedError<ProviderAdapterMcpRotationBlockedError>()(
+  "ProviderAdapterMcpRotationBlockedError",
+  {
+    driver: ProviderDriverKind,
+    providerSessionId: ProviderSessionId,
+    providerThreadId: ProviderThreadId,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+/**
  * The user sent `/compact` to a driver whose session has no native compaction.
  */
 export class ProviderResumeUnsupportedError extends Schema.TaggedError<ProviderResumeUnsupportedError>()(
@@ -517,6 +535,7 @@ export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterCloseSessionError,
   ProviderAdapterResumeThreadError,
   ProviderAdapterThreadInUseError,
+  ProviderAdapterMcpRotationBlockedError,
   ProviderAdapterEnsureThreadError,
   ProviderAdapterReadThreadSnapshotError,
   ProviderAdapterRollbackThreadError,
@@ -740,6 +759,8 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly providerSession: OrchestrationV2ProviderSession;
   /** False keeps conversations alive when the provider cannot restore them after a restart. */
   readonly canResumeAfterRestart?: boolean;
+  /** How this runtime delivers rotated per-turn MCP credentials ("reload" when omitted). */
+  readonly mcpCredentialRotation?: "live" | "reload" | "none";
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   /** Manager runtimes broadcast independent subscriptions; adapters may expose only a single-consumer stream. */
   readonly subscribeEvents?: Effect.Effect<ProviderAdapterV2EventSubscription>;

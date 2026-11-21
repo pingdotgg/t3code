@@ -1,9 +1,51 @@
-import { parseGoalCommand } from "@t3tools/contracts";
+import { parseGoalCommand, type RunId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as JsonSchema from "effect/JsonSchema";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
+
+/** Latest completed run on the thread that still owes a typed result, if any. */
+export function latestOwedOutputRun<
+  TRun extends {
+    readonly id: RunId;
+    readonly ordinal: number;
+    readonly status: string;
+    readonly outputSchema?: unknown;
+    readonly output?: unknown;
+  },
+>(runs: ReadonlyArray<TRun>): TRun | undefined {
+  return runs
+    .filter(
+      (candidate) =>
+        candidate.outputSchema !== undefined &&
+        candidate.output === undefined &&
+        candidate.status === "completed",
+    )
+    .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+}
+
+/** Whether a turn needs its MCP credential rotated to match its run/attempt identity. */
+export function runRequiresRunScopedMcp(
+  runs: ReadonlyArray<{
+    readonly id: RunId;
+    readonly ordinal: number;
+    readonly status: string;
+    readonly outputSchema?: unknown;
+    readonly output?: unknown;
+  }>,
+  runId: RunId | undefined,
+  currentCredentialRunId?: RunId,
+): boolean {
+  if (
+    runId !== undefined &&
+    runs.some((candidate) => candidate.id === runId && candidate.outputSchema !== undefined)
+  ) {
+    return true;
+  }
+  const owed = latestOwedOutputRun(runs);
+  return owed !== undefined && currentCredentialRunId !== owed.id;
+}
 
 type OutputSchema = Readonly<Record<string, Schema.Json>>;
 

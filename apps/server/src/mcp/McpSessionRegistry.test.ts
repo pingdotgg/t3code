@@ -2,7 +2,13 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderInstanceId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -260,4 +266,67 @@ it.effect.each(["provider-session", "thread", "all"] as const)(
       yield* registry.touch(threadId);
       expect(yield* registry.resolve(token)).toBeUndefined();
     }),
+);
+
+it.effect("carries run and attempt identity on credentials and bounds per-thread retention", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const threadId = ThreadId.make("thread-run-scoped");
+    const tokens: Array<string> = [];
+
+    for (let ordinal = 1; ordinal <= 18; ordinal++) {
+      const runId = RunId.make(`run-${ordinal}`);
+      const attemptId = RunAttemptId.make(`attempt-${ordinal}`);
+      const issued = yield* registry.issue({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(),
+        runId,
+        attemptId,
+      });
+      expect(issued.config.runId).toBe(runId);
+      expect(issued.config.attemptId).toBe(attemptId);
+      tokens.push(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""));
+    }
+
+    // Oldest credentials beyond the 16-token retention bound are evicted; recent ones stay distinct.
+    expect(yield* registry.resolve(tokens[0]!)).toBeUndefined();
+    expect(yield* registry.resolve(tokens[1]!)).toBeUndefined();
+    const keptOldest = yield* registry.resolve(tokens[2]!);
+    const keptNewest = yield* registry.resolve(tokens[17]!);
+    expect(keptOldest?.thread.runId).toBe(RunId.make("run-3"));
+    expect(keptOldest?.thread.attemptId).toBe(RunAttemptId.make("attempt-3"));
+    expect(keptNewest?.thread.runId).toBe(RunId.make("run-18"));
+    expect(keptNewest?.thread.attemptId).toBe(RunAttemptId.make("attempt-18"));
+
+    yield* registry.revokeThread(threadId);
+    expect(yield* registry.resolve(tokens[2]!)).toBeUndefined();
+    expect(yield* registry.resolve(tokens[17]!)).toBeUndefined();
+
+    // Preserving providerSessionId across rotations keeps a stable owner id while revoking per credentialId.
+    const first = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runId: RunId.make("run-owner-1"),
+    });
+    const second = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerSessionId: first.config.providerSessionId,
+      runId: RunId.make("run-owner-2"),
+    });
+    expect(second.config.providerSessionId).toBe(first.config.providerSessionId);
+    expect(second.config.credentialId).toBeDefined();
+    expect(second.config.credentialId).not.toBe(first.config.credentialId);
+    const firstToken = first.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const secondToken = second.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    expect((yield* registry.resolve(secondToken))?.thread.providerSessionId).toBe(
+      first.config.providerSessionId,
+    );
+    yield* registry.revokeCredential(second.config.credentialId!);
+    expect(yield* registry.resolve(secondToken)).toBeUndefined();
+    expect((yield* registry.resolve(firstToken))?.thread.runId).toBe(RunId.make("run-owner-1"));
+    yield* registry.revokeProviderSession(first.config.providerSessionId);
+    expect(yield* registry.resolve(firstToken)).toBeUndefined();
+  }),
 );
