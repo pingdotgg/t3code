@@ -12,13 +12,13 @@ import {
   type TrackerIssueSummary,
 } from "@t3tools/source-control-core/server/IssueTracker";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { definition } from "../shared/definition.ts";
 import * as TanStackSourceApi from "./TanStackSourceApi.ts";
 import * as Hosts from "./tanStackSourceHosts.ts";
 import * as Json from "./tanStackSourceJson.ts";
+import * as Listing from "./tanStackSourceListing.ts";
 
 const KIND = IssueTrackerKind.make(definition.kind);
 
@@ -93,13 +93,7 @@ const IssueDetail = Schema.Struct({
 });
 type IssueDetail = typeof IssueDetail.Type;
 const Created = Schema.Struct({ number: Schema.Int });
-/** One Source cursor per listed state, since `all` reads open and closed apart. */
-const decodeCursors = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Record(Schema.String, Schema.NullOr(Schema.String))),
-);
-const encodeCursors = Schema.encodeSync(
-  Schema.fromJsonString(Schema.Record(Schema.String, Schema.NullOr(Schema.String))),
-);
+const PAGE_LIMIT = 5;
 
 const issueUrl = (host: string, scope: string, number: number | string) =>
   `https://${host}/@${scope}/issues/${number}`;
@@ -247,46 +241,35 @@ export const make = Effect.gen(function* () {
       // Source narrows by one label; the rest are matched below.
       const [label, ...moreLabels] = input.labels ?? [];
       if (label !== undefined) query.set("label", label);
+      // An explicit assignee narrows on Source; being assigned too is checked on the rows.
       if (input.assignee !== undefined) query.set("assignee", input.assignee);
-      if (input.involvement === "assigned") query.set("assignee", "@me");
+      else if (input.involvement === "assigned") query.set("assignee", "@me");
       if (input.involvement === "authored") query.set("author", "@me");
       if (input.involvement === "mentioned") query.set("mention", "@me");
-      const states = input.state === "all" ? (["open", "closed"] as const) : [input.state];
-      const cursors =
-        input.cursor === undefined
-          ? {}
-          : Option.getOrElse(
-              decodeCursors(input.cursor),
-              (): Record<string, string | null> => ({}),
-            );
-      const pages = yield* Effect.forEach(
-        states.filter((state) => input.cursor === undefined || cursors[state] != null),
-        (state) => {
-          const page = new URLSearchParams(query);
-          page.set("state", state);
-          const cursor = cursors[state];
-          if (cursor != null) page.set("cursor", cursor);
-          return read("listIssues", input, { path: `${path}/issues?${page}` }, IssueRows).pipe(
-            Effect.map((rows) => ({ state, rows })),
-          );
+      const viewer = input.involvement === "all" ? null : input.viewer.toLowerCase();
+      const listing = yield* Listing.readMerged({
+        states: input.state === "all" ? ["open", "closed"] : [input.state],
+        cursor: input.cursor,
+        limit: Math.max(1, input.limit),
+        maxPages: PAGE_LIMIT,
+        readPage: (state, page) => {
+          const params = new URLSearchParams(query);
+          params.set("state", state);
+          if (page !== null) params.set("cursor", page);
+          return read("listIssues", input, { path: `${path}/issues?${params}` }, IssueRows);
         },
-        { concurrency: 2 },
-      );
-      const items = pages
-        .flatMap(({ rows }) => rows.items)
-        .filter(
-          (issue) =>
-            (issue.moderation === undefined || issue.moderation === "visible") &&
-            moreLabels.every((name) => issue.labels?.includes(name) === true),
-        )
-        .toSorted((a, b) => b.createdAt - a.createdAt || b.number - a.number)
-        .map((issue) => toSummary(issue, input));
-      const next = Object.fromEntries(pages.map(({ state, rows }) => [state, rows.next]));
+        keep: (issue) =>
+          (issue.moderation === undefined || issue.moderation === "visible") &&
+          moreLabels.every((name) => issue.labels?.includes(name) === true) &&
+          (input.involvement !== "assigned" ||
+            input.assignee === undefined ||
+            (issue.assignees ?? []).some(
+              (assignee) => assigneeLogin(assignee).toLowerCase() === viewer,
+            )),
+      });
       return {
-        items,
-        nextCursor: Object.values(next).some((cursor) => cursor !== null)
-          ? encodeCursors(next)
-          : null,
+        items: listing.items.map((issue) => toSummary(issue, input)),
+        nextCursor: listing.next,
       };
     }),
 
@@ -304,7 +287,7 @@ export const make = Effect.gen(function* () {
       const latest = detail.timeline.reduce((newest, entry) => Math.max(newest, entry.at), 0);
       return {
         ...toSummary(detail, input, latest),
-        commentCount: comments.length,
+        commentCount: detail.comments ?? comments.length,
         body: detail.body ?? "",
         viewer,
         viewerPermissions: {

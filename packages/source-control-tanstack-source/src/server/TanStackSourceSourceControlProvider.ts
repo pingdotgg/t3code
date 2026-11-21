@@ -29,6 +29,8 @@ import * as Hosts from "./tanStackSourceHosts.ts";
 import * as Json from "./tanStackSourceJson.ts";
 
 const HOST = TanStackSource.TANSTACK_SOURCE_HOST;
+/** Pull requests from one branch name, across forks, read in full when looking one up. */
+const MAX_BRANCH_MATCHES = 20;
 const LABEL = "TanStack Source";
 const LOGIN = `src auth login --web --hostname ${HOST}`;
 
@@ -371,16 +373,17 @@ export const make = Effect.gen(function* () {
           { host: target.host, path: `/repos/${target.repository}/pulls?${query}` },
           Json.SourcePulls,
         );
-        // List rows name neither the base nor the head's repository, so matches are read in full.
+        // List rows name neither the base nor the head's repository, so matches are read in full
+        // and the limit counts only those whose head is the one asked for.
         const matches = page.items
           .filter((pull) => Json.headBranchName(pull.head) === branch)
-          .slice(0, limit);
+          .slice(0, MAX_BRANCH_MATCHES);
         const details = yield* Effect.forEach(
           matches,
           (pull) => readPull("listChangeRequests", input.cwd, target, pull.number),
           { concurrency: 4 },
         );
-        return details.filter(
+        const owned = details.filter(
           (detail) =>
             (!source?.repository ||
               detail.headRepositoryNameWithOwner?.toLowerCase() ===
@@ -388,6 +391,7 @@ export const make = Effect.gen(function* () {
             (!source?.owner ||
               detail.headRepositoryOwnerLogin?.toLowerCase() === source.owner.toLowerCase()),
         );
+        return owned.slice(0, limit);
       },
     ),
     createsDraftChangeRequests: true,
@@ -547,23 +551,47 @@ export const make = Effect.gen(function* () {
             cwd: input.cwd,
             args: ["fetch", "--no-tags", remoteName, `+refs/pull/${pull.number}/head:${tracking}`],
           });
-          if (input.force === true)
+          const exists = branches.includes(localBranch);
+          // An existing `pr-<n>` moves only when it holds nothing the pull request lacks, so an
+          // unrelated branch of that name, or local commits, are never switched to or lost.
+          const behind =
+            exists &&
+            input.force !== true &&
+            (yield* git
+              .execute({
+                operation,
+                cwd: input.cwd,
+                args: ["merge-base", "--is-ancestor", `refs/heads/${localBranch}`, tracking],
+              })
+              .pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false),
+              ));
+          if (exists && input.force !== true && !behind)
+            return yield* error(
+              "checkoutChangeRequest",
+              input.cwd,
+              `Local branch ${localBranch} has commits pull request #${pull.number} does not. Rename it, or check out with force to replace it.`,
+            );
+          if (exists)
             yield* git.execute({
               operation,
               cwd: input.cwd,
               args: ["checkout", "--no-track", "-B", localBranch, tracking, "--"],
             });
-          else if (!branches.includes(localBranch))
+          else
             yield* git.createBranch({ cwd: input.cwd, branch: localBranch, startPoint: tracking });
           yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
         }).pipe(
           Effect.mapError((cause) =>
-            error(
-              "checkoutChangeRequest",
-              input.cwd,
-              "Could not check out the TanStack Source pull request.",
-              cause,
-            ),
+            cause._tag === "SourceControlProviderError"
+              ? cause
+              : error(
+                  "checkoutChangeRequest",
+                  input.cwd,
+                  "Could not check out the TanStack Source pull request.",
+                  cause,
+                ),
           ),
         );
       },

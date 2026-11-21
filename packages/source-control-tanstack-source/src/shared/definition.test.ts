@@ -17,6 +17,10 @@ describe("TanStack Source definition", () => {
       "https://source.tanstack.com/@TanStack/router/pull/0",
     ])
       expect(parsePullRequestUrl(url), url).toBeNull();
+    // Some clients send the owner's `@` percent-encoded.
+    expect(
+      definition.parseIssueUrl?.(new URL("https://source.tanstack.com/%40TanStack/ai/issues/12")),
+    ).toEqual({ host: "source.tanstack.com", scope: "tanstack/ai", key: "12" });
   });
 
   it("builds links with the owner's @ and reads src's checkout command", () => {

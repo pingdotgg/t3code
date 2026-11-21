@@ -27,6 +27,8 @@ describe("toChecks", () => {
     const checks = Json.toChecks({
       runs: [
         run({ jobId: "old", name: "test (shard: 1)", conclusion: "failure", startedAt: 1 }),
+        // A job of a run the newest one replaced, whose run was not read.
+        run({ jobId: "replaced", name: "test (shard: 1)", conclusion: "failure", startedAt: 0 }),
         run({ jobId: "new", name: "test (shard: 1)", startedAt: 5, summary: "### Passed\nmore" }),
         run({
           jobId: "",

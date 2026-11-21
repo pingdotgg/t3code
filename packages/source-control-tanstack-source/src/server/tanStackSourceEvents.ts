@@ -40,7 +40,7 @@ export const make = Effect.gen(function* () {
 
   const connection = (
     input: PullRequestEventsInput,
-    cursor: { lastEventId: string | undefined },
+    cursor: { lastEventId: string | undefined; connected: boolean },
   ): Stream.Stream<"changed" | Ending> =>
     Stream.unwrap(
       Effect.gen(function* () {
@@ -70,6 +70,10 @@ export const make = Effect.gen(function* () {
         if (response.status !== 200)
           return Stream.succeed<Ending>({ _tag: "reconnect", healthy: false });
         const openedAt = yield* Clock.currentTimeMillis;
+        // The first stream Source accepts is the catch-up point; later ones resume from the last
+        // event, so they miss nothing and need no refresh of their own.
+        const opening = cursor.connected ? [] : (["changed"] as const);
+        cursor.connected = true;
         let events = 0;
         return response.stream.pipe(
           Stream.timeoutOrElse({ duration: SILENCE_LIMIT, orElse: () => Stream.fail("silent") }),
@@ -80,6 +84,7 @@ export const make = Effect.gen(function* () {
             events += 1;
             return "changed";
           }),
+          Stream.prepend(opening),
           Stream.concat(
             Stream.fromEffect(
               Clock.currentTimeMillis.pipe(
@@ -115,7 +120,7 @@ export const make = Effect.gen(function* () {
     const repository = Hosts.tanStackSourceRepositoryPath(input.repository);
     if (host === null || repository === null) return Stream.empty;
     const target = { host, repository, number: input.number };
-    const cursor = { lastEventId: undefined as string | undefined };
+    const cursor = { lastEventId: undefined as string | undefined, connected: false };
 
     const follow = (failures: number): Stream.Stream<void> => {
       let ending: Ending = { _tag: "stop" };
@@ -138,6 +143,6 @@ export const make = Effect.gen(function* () {
       );
     };
 
-    return Stream.succeed(undefined).pipe(Stream.concat(follow(0)));
+    return follow(0);
   };
 });

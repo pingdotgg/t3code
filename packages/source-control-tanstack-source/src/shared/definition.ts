@@ -18,9 +18,9 @@ import { icon } from "./icon.ts";
 export const TANSTACK_SOURCE_HOST = "source.tanstack.com";
 
 /** Every web page and clone URL names the owner with a leading `@`, as `/@TanStack/router`. */
-const CHANGE_REQUEST_PATH = /^\/@?([^/@]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u;
-const ISSUE_PATH = /^\/@?([^/@]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u;
-const COMMIT_PATH = /^\/@?([^/@]+\/[^/]+)\/commit\/([0-9a-f]+)\/?$/iu;
+const CHANGE_REQUEST_PATH = /^\/(?:@|%40)?([^/@%]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u;
+const ISSUE_PATH = /^\/(?:@|%40)?([^/@%]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u;
+const COMMIT_PATH = /^\/(?:@|%40)?([^/@%]+\/[^/]+)\/commit\/([0-9a-f]+)\/?$/iu;
 const REPOSITORY_PAGE_PATH = /^\/(@[^/@]+\/[^/]+)\/(?:tree|blob)\/[^/]/u;
 const CHECKOUT_COMMAND = /^src\s+pr\s+checkout\s+(.+)$/iu;
 

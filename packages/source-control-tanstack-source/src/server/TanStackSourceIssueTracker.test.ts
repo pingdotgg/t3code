@@ -8,8 +8,13 @@ const target = { cwd: "/repo", host: "source.tanstack.com", scope: "TanStack/ai"
 
 function withApi(routes: Readonly<Record<string, unknown>>) {
   const paths: Array<string> = [];
+  const writes: Array<readonly [string, string, unknown]> = [];
   const request = (input: TanStackSourceApi.TanStackSourceApiRequest) => {
     paths.push(input.path);
+    if (input.method !== undefined && input.method !== "GET") {
+      writes.push([input.method, input.path, input.body]);
+      return Effect.succeed("{}");
+    }
     const body = routes[input.path];
     return body === undefined
       ? Effect.die(`unexpected ${input.path}`)
@@ -22,6 +27,7 @@ function withApi(routes: Readonly<Record<string, unknown>>) {
   });
   return {
     paths,
+    writes,
     tracker: TanStackSourceIssueTracker.make.pipe(
       Effect.provideService(TanStackSourceApi.TanStackSourceApi, api),
     ),
@@ -55,7 +61,7 @@ describe("TanStackSourceIssueTracker", () => {
         ...target,
         involvement: "all",
         state: "all",
-        limit: 50,
+        limit: 2,
         sort: "created",
       });
       assert.deepStrictEqual(
@@ -71,7 +77,7 @@ describe("TanStackSourceIssueTracker", () => {
         ...target,
         involvement: "all",
         state: "all",
-        limit: 50,
+        limit: 2,
         sort: "created",
         cursor: first.nextCursor!,
       });
@@ -90,6 +96,8 @@ describe("TanStackSourceIssueTracker", () => {
       "/user": { username: "alice" },
       "/repos/TanStack/ai/issues/2219": {
         ...row(2219, "open", 1_000),
+        // The issue's own count, which a first timeline page may not reach.
+        comments: 12,
         kind: "issue",
         body: "Spec changed.",
         assignees: [{ username: "bob", note: null }],
@@ -121,6 +129,7 @@ describe("TanStackSourceIssueTracker", () => {
         [["7", "On it."]],
       );
       assert.strictEqual(issue.updatedAt, "1970-01-01T00:00:05.000Z");
+      assert.strictEqual(issue.commentCount, 12);
       assert.deepStrictEqual(issue.linkedPullRequests, [
         {
           repository: "TanStack/ai",
@@ -131,6 +140,50 @@ describe("TanStackSourceIssueTracker", () => {
           isDraft: false,
           closesIssue: true,
         },
+      ]);
+    });
+  });
+
+  it.effect("keeps an explicit assignee while also requiring the viewer to be assigned", () => {
+    const { tracker, paths } = withApi({
+      "/repos/TanStack/ai/issues?assignee=bob&state=open": {
+        items: [
+          { ...row(2, "open", 20), assignees: ["bob"] },
+          { ...row(1, "open", 10), assignees: ["bob", "Alice"] },
+        ],
+        next: null,
+      },
+    });
+    return Effect.gen(function* () {
+      const issues = yield* tracker;
+      const page = yield* issues.listIssues({
+        ...target,
+        involvement: "assigned",
+        viewer: "alice",
+        assignee: "bob",
+        state: "open",
+        limit: 50,
+        sort: "created",
+      });
+      assert.deepStrictEqual(
+        page.items.map((issue) => issue.key),
+        ["1"],
+      );
+      assert.deepStrictEqual(paths, ["/repos/TanStack/ai/issues?assignee=bob&state=open"]);
+    });
+  });
+
+  it.effect("writes each changed field on its own route, clearing labels and assignees", () => {
+    const { tracker, writes } = withApi({});
+    return Effect.gen(function* () {
+      const issues = yield* tracker;
+      yield* issues.update!({ ...target, key: "7", title: "New title", labels: [], assignees: [] });
+      yield* issues.setState!({ ...target, key: "7", state: "Closed" });
+      assert.deepStrictEqual(writes, [
+        ["PATCH", "/repos/TanStack/ai/issues/7", { title: "New title" }],
+        ["PUT", "/repos/TanStack/ai/issues/7/labels", { labels: [] }],
+        ["PUT", "/repos/TanStack/ai/issues/7/assignees", { assignees: [] }],
+        ["PATCH", "/repos/TanStack/ai/issues/7", { state: "closed" }],
       ]);
     });
   });

@@ -24,6 +24,7 @@ import * as TanStackSourceApi from "./TanStackSourceApi.ts";
 import * as Events from "./tanStackSourceEvents.ts";
 import * as Hosts from "./tanStackSourceHosts.ts";
 import * as Json from "./tanStackSourceJson.ts";
+import * as Listing from "./tanStackSourceListing.ts";
 
 const KIND = definition.kind;
 
@@ -62,12 +63,6 @@ const LogSteps = Schema.Array(Schema.Struct({ lines: Schema.Int }));
 const decodeLogSteps = Schema.decodeUnknownOption(Schema.fromJsonString(LogSteps));
 
 type PullRef = ProviderRepositoryRef & { readonly number: number };
-
-const position = (pull: Json.SourcePull) => `${pull.createdAt}~${pull.number}`;
-const parsePosition = (raw: string | undefined) => {
-  const match = raw === undefined ? null : /^(\d+)~(\d+)$/u.exec(raw);
-  return match === null ? null : { created: Number(match[1]), number: Number(match[2]) };
-};
 
 export const make = Effect.gen(function* () {
   const api = yield* TanStackSourceApi.TanStackSourceApi;
@@ -328,57 +323,36 @@ export const make = Effect.gen(function* () {
         if (label?.length === 1) filters.set("label", label[0]!);
         if (input.filters?.draft !== undefined)
           filters.set("draft", input.filters.draft === "only" ? "true" : "false");
-        const resume = parsePosition(input.cursor?.resumeAfter);
-        // Rows come newest first and pages are opaque, so a continuation reads from the top and
-        // keeps the rows created after the last one delivered.
-        const isNew = (pull: Json.SourcePull) =>
-          resume === null ||
-          pull.createdAt < resume.created ||
-          (pull.createdAt === resume.created && pull.number < resume.number);
         const limit = Math.max(1, input.limit);
-        const readState = Effect.fn("readState")(function* (state: "open" | "closed") {
-          const rows: Array<Json.SourcePull> = [];
-          let next: string | null = null;
-          let pages = 0;
-          do {
+        const listing = yield* Listing.readMerged({
+          states: listState(input.state),
+          cursor: input.cursor?.resumeAfter,
+          limit,
+          maxPages: PAGE_LIMIT,
+          readPage: (state, page) => {
             const query = new URLSearchParams(filters);
             query.set("state", state);
-            if (next !== null) query.set("cursor", next);
-            const page: typeof Json.SourcePulls.Type = yield* read(
+            if (page !== null) query.set("cursor", page);
+            return read(
               "listChangeRequests",
               input,
               { path: `${base}/pulls?${query}` },
               Json.SourcePulls,
             );
-            pages += 1;
-            rows.push(
-              ...page.items.filter(
-                (pull) => isNew(pull) && (input.state !== "merged" || pull.state === "merged"),
-              ),
-            );
-            next = page.items.length === 0 ? null : page.next;
-          } while (next !== null && rows.length <= limit && pages < PAGE_LIMIT);
-          return { rows, more: next !== null };
+          },
+          keep: (pull) => input.state !== "merged" || pull.state === "merged",
         });
-        const lists = yield* Effect.forEach(listState(input.state), readState, {
-          concurrency: 2,
-        });
-        const rows = lists
-          .flatMap((list) => list.rows)
-          .toSorted((a, b) => b.createdAt - a.createdAt || b.number - a.number);
-        const delivered = rows.slice(0, limit);
         // List rows name no base, which the list shows, so each delivered row is read in full.
         const details = yield* Effect.forEach(
-          delivered,
+          listing.items,
           (pull) => readPull("listChangeRequests", { ...input, number: pull.number }),
           { concurrency: 8 },
         );
-        const last = delivered.at(-1);
         return {
-          ...(last === undefined ? {} : { resumeAfter: position(last) }),
+          ...(listing.next === null ? {} : { resumeAfter: listing.next }),
           items: details.map((pull) => toSummary(pull, input)),
-          truncated: rows.length > limit || lists.some((list) => list.more),
-          continues: true,
+          truncated: listing.next !== null,
+          continues: listing.next !== null,
         };
       },
     ),

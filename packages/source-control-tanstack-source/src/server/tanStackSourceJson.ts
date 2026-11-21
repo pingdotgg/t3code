@@ -333,6 +333,9 @@ export function toChecks(input: {
   for (const run of input.runs) {
     if (run.view === "superseded") continue;
     const job = run.jobId ? input.jobs.get(run.jobId) : undefined;
+    // Jobs are mapped from the newest run of each workflow, so a Source CI job outside the map
+    // belongs to a run a newer one replaced. Without any map, every job stays.
+    if (run.jobId && job === undefined && input.jobs.size > 0) continue;
     const name = job === undefined ? run.name : `${job.workflow}/${run.name}`;
     const at = run.startedAt ?? run.completedAt ?? 0;
     const held = newest.get(name);
