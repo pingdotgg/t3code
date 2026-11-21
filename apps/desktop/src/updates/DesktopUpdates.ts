@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -396,6 +397,8 @@ export const make = Effect.gen(function* () {
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
+  // Squirrel reports a failed prepare as an updater error too; recovery waits for the backend stops.
+  const preparingInstallRef = yield* Ref.make(false);
   const installRunningBackendsRef = yield* Ref.make<
     ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>
   >([]);
@@ -815,6 +818,11 @@ export const make = Effect.gen(function* () {
     .remove(installRecordPath, { force: true })
     .pipe(Effect.ignore);
 
+  // Squirrel.Mac cannot be cancelled, so a version it took may still install on a later quit.
+  const settleInstallRecord = electronUpdater.nativeInstallVersion.pipe(
+    Effect.flatMap(Option.match({ onNone: () => removeInstallRecord, onSome: writeInstallRecord })),
+  );
+
   const readNotAppliedInstallVersion = fileSystem.readFileString(installRecordPath).pipe(
     Effect.flatMap(decodeInstallRecord),
     Effect.option,
@@ -851,7 +859,7 @@ export const make = Effect.gen(function* () {
       Ref.set(installRunningBackendsRef, []),
       removeUpdateRestartMarker,
       removeUpdateInProgressMarker,
-      removeInstallRecord,
+      settleInstallRecord,
     ],
     { discard: true },
   );
@@ -864,12 +872,13 @@ export const make = Effect.gen(function* () {
         ? ([true, Option.some<UpdateAction>("install-recovery")] as const)
         : ([false, activeAction] as const),
     );
-    if (!ownsRecovery) return;
+    if (!ownsRecovery) return false;
 
     yield* Ref.set(desktopState.quitting, false);
     yield* removeUpdateRestartMarker;
     yield* removeUpdateInProgressMarker;
-    yield* removeInstallRecord;
+    yield* settleInstallRecord;
+    const nativeInstallVersion = yield* electronUpdater.nativeInstallVersion;
     yield* Effect.gen(function* () {
       const runningInstances = yield* Ref.getAndSet(installRunningBackendsRef, []);
       const instances = (yield* pool.list).filter((instance) =>
@@ -879,7 +888,15 @@ export const make = Effect.gen(function* () {
         concurrency: "unbounded",
         discard: true,
       }).pipe(Effect.exit);
-      yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
+      yield* updateState((current) =>
+        reduceDesktopUpdateStateOnInstallFailure(
+          current,
+          Option.isSome(nativeInstallVersion) &&
+            nativeInstallVersion.value === current.downloadedVersion
+            ? `${message} It may still install the next time T3 Code quits.`
+            : message,
+        ),
+      );
       if (Exit.isFailure(restartExit)) {
         yield* logUpdaterError("Desktop update install recovery could not restart every backend.");
       }
@@ -889,6 +906,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.ensuring(finishUpdateAction("install-recovery")),
     );
+    return true;
   });
 
   const installDownloadedUpdate = (expectedVersion?: string) =>
@@ -942,18 +960,33 @@ export const make = Effect.gen(function* () {
             instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
           );
           yield* Ref.set(installRunningBackendsRef, runningInstances);
-          yield* Effect.all(
+          const preparesNatively = environment.platform === "darwin" && downloadedVersion !== null;
+          yield* Ref.set(preparingInstallRef, preparesNatively);
+          const [prepared] = yield* Effect.all(
             [
+              preparesNatively
+                ? electronUpdater.prepareInstall(downloadedVersion).pipe(Effect.result)
+                : Effect.succeed(Result.succeed(undefined)),
               Effect.forEach(
                 instances,
                 (instance) =>
                   instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
-                { concurrency: "unbounded" },
+                { concurrency: "unbounded", discard: true },
               ),
               sshEnvironment.closeAllTunnels,
             ],
             { concurrency: "unbounded" },
-          );
+          ).pipe(Effect.ensuring(Ref.set(preparingInstallRef, false)));
+          if (Result.isFailure(prepared)) {
+            // A late updater error may have recovered and logged first.
+            if (yield* recoverFailedInstall(prepared.failure.message)) {
+              yield* logUpdaterError(prepared.failure.message, {
+                errorTag: prepared.failure._tag,
+                reason: prepared.failure.reason,
+              });
+            }
+            return { accepted: true, completed: false, failed: true };
+          }
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
             isForceRunAfter: true,
@@ -1161,6 +1194,8 @@ export const make = Effect.gen(function* () {
       cause,
     });
     if (Option.isSome(activeAction) && activeAction.value === "install") {
+      // While preparing, the install flow logs and recovers once its backend stops finish.
+      if (yield* Ref.get(preparingInstallRef)) return;
       yield* recoverFailedInstall(error.message);
       yield* logUpdaterError(error.message, {
         errorTag: error._tag,

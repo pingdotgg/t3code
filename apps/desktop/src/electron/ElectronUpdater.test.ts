@@ -3,11 +3,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { autoUpdater } from "electron-updater";
 import type * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeModule from "node:module";
 import { vi } from "vite-plus/test";
 
@@ -116,3 +120,122 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     );
   },
 );
+
+class FakeSquirrel implements ElectronUpdater.NativeUpdater {
+  readonly events = new NodeEvents.EventEmitter();
+  checks = 0;
+  answer: (squirrel: FakeSquirrel) => void = () => {};
+  on(event: string, listener: (...args: Array<never>) => void) {
+    this.events.on(event, listener as (...args: Array<unknown>) => void);
+  }
+  // NativeUpdater listeners take specific arguments; the emitter passes whatever was emitted.
+  once(event: string, listener: (...args: Array<never>) => void) {
+    this.events.once(event, listener as (...args: Array<unknown>) => void);
+  }
+  removeListener(event: string, listener: (...args: Array<never>) => void) {
+    this.events.removeListener(event, listener as (...args: Array<unknown>) => void);
+  }
+  emit(event: string, ...args: Array<unknown>) {
+    this.events.emit(event, ...args);
+  }
+  checkForUpdates() {
+    this.checks += 1;
+    this.answer(this);
+  }
+}
+
+// One persistent watcher per event outlives each prepare; its own listeners must not.
+const settledListeners = (squirrel: FakeSquirrel) =>
+  ["update-downloaded", "update-not-available", "error"].map((event) =>
+    squirrel.events.listenerCount(event),
+  );
+
+describe("prepareInstall", () => {
+  it.effect("succeeds once Squirrel has the update and stops listening", () =>
+    Effect.gen(function* () {
+      const squirrel = new FakeSquirrel();
+      squirrel.answer = (fake) => fake.emit("update-downloaded");
+      yield* ElectronUpdater.makeNativeInstall(() => squirrel).prepareInstall("1.2.4");
+      assert.deepEqual(settledListeners(squirrel), [1, 1, 1]);
+    }),
+  );
+
+  it.effect.each([
+    [
+      "an error",
+      "failed",
+      (fake: FakeSquirrel) => fake.emit("error", new Error("No space left on device")),
+    ],
+    ["no update", "no-update", (fake: FakeSquirrel) => fake.emit("update-not-available")],
+    [
+      "a throw",
+      "failed",
+      () => {
+        throw new Error("no feed URL");
+      },
+    ],
+  ] as const)("fails on %s, stops listening and holds no version", ([, reason, answer]) =>
+    Effect.gen(function* () {
+      const squirrel = new FakeSquirrel();
+      squirrel.answer = answer;
+      const native = ElectronUpdater.makeNativeInstall(() => squirrel);
+      const error = yield* Effect.flip(native.prepareInstall("1.2.4"));
+      assert.equal(error.reason, reason);
+      assert.deepEqual(settledListeners(squirrel), [1, 1, 1]);
+      assert.isTrue(Option.isNone(yield* native.nativeInstallVersion));
+    }),
+  );
+
+  it.effect("counts a prepare that finished after the timeout", () =>
+    Effect.gen(function* () {
+      const squirrel = new FakeSquirrel();
+      const native = ElectronUpdater.makeNativeInstall(() => squirrel);
+      const first = yield* native.prepareInstall("1.2.4").pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("2 minutes");
+      assert.equal((yield* Fiber.join(first)).reason, "timeout");
+      // Squirrel keeps checking after the timeout, so it may still install this version.
+      assert.deepEqual(yield* native.nativeInstallVersion, Option.some("1.2.4"));
+
+      // A retry while Squirrel is still checking waits for that check instead of starting another.
+      const retry = yield* native
+        .prepareInstall("1.2.4")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      assert.equal(squirrel.checks, 1);
+      squirrel.emit("update-downloaded");
+      yield* Fiber.join(retry);
+      yield* native.prepareInstall("1.2.4");
+      assert.equal(squirrel.checks, 1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("refuses another version while Squirrel holds one", () =>
+    Effect.gen(function* () {
+      const squirrel = new FakeSquirrel();
+      squirrel.answer = (fake) => fake.emit("update-downloaded");
+      const native = ElectronUpdater.makeNativeInstall(() => squirrel);
+      yield* native.prepareInstall("1.2.4");
+
+      // Squirrel would install 1.2.4 on this quit, not the newer download.
+      const error = yield* Effect.flip(native.prepareInstall("1.2.5"));
+      assert.equal(error.reason, "holds-other-version");
+      assert.equal(squirrel.checks, 1);
+      assert.deepEqual(yield* native.nativeInstallVersion, Option.some("1.2.4"));
+    }),
+  );
+
+  it.effect("prepares another version once Squirrel gives up on the first", () =>
+    Effect.gen(function* () {
+      const squirrel = new FakeSquirrel();
+      const native = ElectronUpdater.makeNativeInstall(() => squirrel);
+      const first = yield* native.prepareInstall("1.2.4").pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("2 minutes");
+      yield* Fiber.join(first);
+      squirrel.emit("error", new Error("feed closed"));
+
+      squirrel.answer = (fake) => fake.emit("update-downloaded");
+      yield* native.prepareInstall("1.2.5");
+      assert.equal(squirrel.checks, 2);
+      assert.deepEqual(yield* native.nativeInstallVersion, Option.some("1.2.5"));
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+});
