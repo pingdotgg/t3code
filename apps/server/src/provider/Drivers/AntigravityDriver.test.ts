@@ -9,16 +9,22 @@ import {
   ProviderSessionId,
   ThreadId,
   type AntigravitySettings,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
@@ -66,6 +72,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     readonly enabled?: boolean;
     /** Extra instance variables, such as ones a parent T3 turn already exported. */
     readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+    readonly httpClient?: HttpClient.HttpClient;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -93,6 +100,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
       readonly agentVersion?: string;
+      /** Rewrites `antigravity-oauth-token` on launch to simulate `agy` renewing its access token. */
+      readonly renewTokenExpiry?: string;
     } = {},
   ) {
     const directory = path.join(root, name);
@@ -100,10 +109,25 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     yield* fs.makeDirectory(directory, { recursive: true });
     const authorizationUrl =
       "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2F&state=fixture-state";
+    const renewedTokenJson =
+      options.renewTokenExpiry === undefined
+        ? undefined
+        : JSON.stringify({
+            token: {
+              access_token: "renewed-access-token",
+              refresh_token: "refresh-a",
+              expiry: options.renewTokenExpiry,
+            },
+          });
     yield* fs.writeFileString(
       executablePath,
       [
         "#!/bin/sh",
+        ...(renewedTokenJson === undefined
+          ? []
+          : [
+              `printf '%s' ${shellQuote(renewedTokenJson)} > "$GEMINI_HOME/antigravity-acp/antigravity-oauth-token"`,
+            ]),
         ...(options.loginRequired
           ? [`printf '%s\\n' ${shellQuote(ANTIGRAVITY_AUTH_STDOUT_PREFIX + authorizationUrl)}`]
           : []),
@@ -221,7 +245,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       return handle;
     }),
   );
-  const instance = yield* AntigravityDriver.create({
+  const createdInstance = AntigravityDriver.create({
     instanceId,
     displayName: "Google test account",
     enabled: options.enabled ?? true,
@@ -242,6 +266,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     Effect.provide(layerInstallation),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
   );
+  const instance = yield* options.httpClient
+    ? createdInstance.pipe(Effect.provideService(HttpClient.HttpClient, options.httpClient))
+    : createdInstance;
   const refresh = instance.refreshModels;
   if (!refresh) return yield* Effect.die("Antigravity does not expose model refresh.");
   const readRequests = Effect.gen(function* () {
@@ -701,6 +728,133 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "renews an expired CLI token for limits via authenticate without opening a session or clearing auth on failure",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-11-21T12:00:00Z")),
+        );
+        const authorizations: Array<string | undefined> = [];
+        const http = HttpClient.make((request) =>
+          Effect.sync(() => {
+            authorizations.push(request.headers.authorization);
+            return HttpClientResponse.fromWeb(
+              request,
+              request.url.endsWith("/userinfo")
+                ? Response.json({ id: "google-user-1" })
+                : Response.json({
+                    buckets: [
+                      {
+                        bucketId: "gemini-5h",
+                        window: "5h",
+                        remainingFraction: 0.75,
+                        resetTime: "2099-01-01T05:00:00Z",
+                      },
+                    ],
+                  }),
+            );
+          }),
+        );
+        const h = yield* makeHarness({
+          httpClient: http,
+          environment: [
+            { name: "DISPLAY", value: ":0" },
+            { name: "WAYLAND_DISPLAY", value: "wayland-1" },
+          ],
+        });
+        const nextSnapshot = (predicate: (snapshot: ServerProvider) => boolean) =>
+          h.instance.snapshot.streamChanges.pipe(
+            Stream.filter(predicate),
+            Stream.runHead,
+            Effect.forkChild({ startImmediately: true }),
+          );
+        const initialUsagePublish = yield* nextSnapshot(
+          (snapshot) => snapshot.usageLimits?.unavailable?.reason === "unsupported",
+        );
+        yield* h.refresh();
+        if ((yield* h.instance.snapshot.getSnapshot).usageLimits === undefined) {
+          yield* Fiber.join(initialUsagePublish);
+        } else {
+          yield* Fiber.interrupt(initialUsagePublish);
+        }
+        const beforeModels = (yield* h.instance.snapshot.getSnapshot).models;
+        const tokenPath = h.path.join(
+          h.profileDirectory,
+          "antigravity-acp",
+          "antigravity-oauth-token",
+        );
+        const writeExpired = (refreshToken: string) =>
+          h.fs.writeFileString(
+            tokenPath,
+            JSON.stringify({
+              token: {
+                access_token: "expired-access-token",
+                refresh_token: refreshToken,
+                expiry: "2026-11-21T11:00:00Z",
+              },
+            }),
+          );
+        const requestsBefore = (yield* h.readRequests).length;
+        const launchesBefore = h.launches.length;
+        h.controls.selected = yield* h.makeExecutable("runtime renew", {
+          renewTokenExpiry: "2026-11-21T13:00:00Z",
+        });
+        yield* writeExpired("refresh-a");
+
+        const nextUsagePublish = yield* nextSnapshot(
+          (snapshot) =>
+            snapshot.usageLimits !== undefined &&
+            snapshot.usageLimits.unavailable?.reason !== "unsupported",
+        );
+        yield* h.instance.snapshot.refresh;
+        const afterRenewal = yield* Fiber.join(nextUsagePublish);
+        expect(afterRenewal._tag).toBe("Some");
+        if (afterRenewal._tag === "Some") {
+          expect(afterRenewal.value.usageLimits?.unavailable).toBeUndefined();
+          expect(afterRenewal.value.usageLimits?.windows).toEqual([
+            expect.objectContaining({ id: "gemini-5h", usedPercent: 25 }),
+          ]);
+        }
+        expect(authorizations.length).toBeGreaterThan(0);
+        expect(authorizations.every((value) => value === "Bearer renewed-access-token")).toBe(true);
+        const renewalRequests = (yield* h.readRequests)
+          .slice(requestsBefore)
+          .map((request) => request.method);
+        expect(renewalRequests).toEqual(["initialize", "auth/login"]);
+        const renewalLaunch = h.launches
+          .slice(launchesBefore)
+          .find((launch) => launch.tempDirectory !== undefined);
+        expect(renewalLaunch?.environment.DISPLAY).toBeUndefined();
+        expect(renewalLaunch?.environment.WAYLAND_DISPLAY).toBeUndefined();
+        expect(renewalLaunch?.environment.SSH_CONNECTION).toBeTruthy();
+        yield* h.assertClosed;
+
+        // A failed background renewal must not clear models or flip auth to unauthenticated.
+        const failedRenewalStarted = yield* Deferred.make<void>();
+        const allowFailedRenewal = yield* Deferred.make<void>();
+        h.controls.selected = h.signedOut;
+        h.controls.beforeAcquire = Deferred.succeed(failedRenewalStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowFailedRenewal)),
+        );
+        yield* writeExpired("refresh-revoked");
+        yield* TestClock.adjust("1 minute");
+        const afterFailedRefresh = yield* nextSnapshot(
+          (snapshot) => snapshot.checkedAt === "2026-11-21T12:01:01.000Z",
+        );
+        yield* h.instance.snapshot.refresh;
+        yield* Deferred.await(failedRenewalStarted);
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.succeed(allowFailedRenewal, undefined);
+        yield* Fiber.join(afterFailedRefresh);
+        expect(h.releases).toContain(h.signedOut.version);
+        yield* h.assertClosed;
+        const afterFailure = yield* h.instance.snapshot.getSnapshot;
+        expect(afterFailure.auth.status).toBe("authenticated");
+        expect(afterFailure.models).toEqual(beforeModels);
       }),
   );
 });
