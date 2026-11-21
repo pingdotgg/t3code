@@ -18,6 +18,8 @@ import { useContentTopInset, useSheetContentBottomInset } from "../../components
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import {
   ContentBand,
@@ -57,12 +59,14 @@ import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 import { buildReviewSectionMenu } from "./review-section-menu";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import type { usePullRequestFileFilter } from "../pull-requests/usePullRequestFileFilter";
 
 function ReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
     readonly sectionMenu: ReturnType<typeof buildReviewSectionMenu>;
     readonly showSectionToolbar: boolean;
     readonly showChangedFilesToggle: boolean;
+    readonly fileFilter: ReturnType<typeof usePullRequestFileFilter>;
     readonly onSelectSection: (sectionId: string) => void;
     readonly onReturnToThread: () => void;
   },
@@ -122,6 +126,19 @@ function ReviewHeader(
                         gt("Uncommitted", { $context: "diff section: working tree" }),
                       ),
                       sectionAction(props.sectionMenu.latestTurn, gt("Latest turn")),
+                    ],
+                  },
+                  {
+                    id: "files",
+                    inline: true,
+                    items: [
+                      {
+                        id: "hide-tests",
+                        title: gt("Hide test files"),
+                        icon: "line.3.horizontal.decrease",
+                        selected: props.fileFilter.hideTestFiles,
+                        onPress: props.fileFilter.toggle,
+                      },
                     ],
                   },
                   ...(props.sectionMenu.turns.length > 0
@@ -394,6 +411,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
     headerDiffSummary,
     nativeReviewDiffData,
     parsedDiff,
+    allFiles,
+    fileFilter,
     pendingReviewCommentCount,
     loadVisibleFile,
     isPending: areFilePatchesPending,
@@ -427,10 +446,11 @@ export function ReviewSheet(props: ReviewSheetProps) {
   }
   const reviewFileNavigatorRef = useRef<ReviewFileNavigatorHandle>(null);
   const reviewFiles = parsedDiff.kind === "files" ? parsedDiff.files : [];
+  // Hidden files keep their viewed and expanded state for when they are shown again.
   const fileVisibility = useReviewFileVisibility({
     threadKey: reviewCache.threadKey,
     sectionId: selectedSection?.id ?? null,
-    files: reviewFiles,
+    files: allFiles,
     cachedExpandedFileIds: selectedSection?.id
       ? reviewCache.expandedFileIdsBySection[selectedSection.id]
       : undefined,
@@ -560,6 +580,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     NativeReviewDiffView !== null;
   const showChangedFilesToggle = panes.supportsAuxiliaryPane && showChangedFilesPane;
 
+  const allFilesHidden = reviewFiles.length === 0 && fileFilter.hiddenCount > 0;
   const listHeader = (() => {
     const children: ReactElement[] = [];
 
@@ -576,6 +597,20 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
     if (parsedDiffNotice) {
       children.push(<ReviewNotice key="review-notice" notice={parsedDiffNotice} />);
+    }
+
+    if (allFilesHidden) {
+      children.push(
+        <EmptyState
+          key="review-tests-hidden"
+          title={gt("Only test files changed")}
+          detail={gt("Test files are hidden from this review.")}
+          action={
+            <Button label={gt("Show test files")} tone="contrast" onPress={fileFilter.showAll} />
+          }
+          variant="plain"
+        />,
+      );
     }
 
     if (children.length === 0) {
@@ -616,6 +651,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
         selectedSection={selectedSection}
         showSectionToolbar={showSectionToolbar}
         showChangedFilesToggle={showChangedFilesToggle}
+        fileFilter={fileFilter}
         onRefresh={handlePullToRefresh}
         onSelectSection={selectSection}
         onReturnToThread={handleReturnToThread}
@@ -641,7 +677,10 @@ export function ReviewSheet(props: ReviewSheetProps) {
                 onRetry={handleRetryEnvironment}
               />
             </View>
-          ) : selectedSection && parsedDiff.kind === "files" && NativeReviewDiffView ? (
+          ) : selectedSection &&
+            parsedDiff.kind === "files" &&
+            NativeReviewDiffView &&
+            !allFilesHidden ? (
             <View
               className="flex-1"
               style={{
@@ -722,7 +761,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     )}
                   />
                 )
-              ) : selectedSection.isLoading && selectedSection.diff === null ? (
+              ) : error && selectedSection.diff === null ? null : selectedSection.isLoading &&
+                selectedSection.diff === null ? (
                 <ContentStatus loading detail={gt("Loading diff…")} />
               ) : parsedDiff.kind === "empty" ? (
                 <ContentStatus
@@ -740,7 +780,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     </Text>
                   </ScrollView>
                 </ContentBand>
-              ) : parsedDiff.kind === "files" ? (
+              ) : parsedDiff.kind === "files" && !allFilesHidden ? (
                 <ContentBand spacing="roomy">
                   <Text className="text-xs leading-normal text-foreground-muted">
                     <T>Native diff view unavailable. Showing the raw patch.</T>
