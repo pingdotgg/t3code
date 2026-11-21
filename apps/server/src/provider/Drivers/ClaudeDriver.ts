@@ -142,10 +142,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     );
     const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig, processEnv);
     const configDir = yield* resolveClaudeHomePath(effectiveConfig, processEnv);
-    const accountConfigPath = yield* ClaudeResetCredits.claudeAccountConfigPath(
-      effectiveConfig.homePath.trim() || processEnv.CLAUDE_CONFIG_DIR?.trim()
+    // The CLAUDE_CONFIG_DIR that makeClaudeEnvironment hands Claude, if any.
+    const customConfigDir = effectiveConfig.homePath.trim()
+      ? configDir
+      : processEnv.CLAUDE_CONFIG_DIR?.trim()
+        ? processEnv.CLAUDE_CONFIG_DIR
+        : undefined;
+    // Claude keeps its login under CLAUDE_SECURESTORAGE_CONFIG_DIR when set, even to "".
+    const secureStorageDir = processEnv.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+    const credentialsDir =
+      secureStorageDir === undefined
         ? configDir
-        : undefined,
+        : secureStorageDir || path.join(yield* HostProcess.HomeDirectory, ".claude");
+    const keychainConfigDir =
+      secureStorageDir === undefined ? customConfigDir : secureStorageDir || undefined;
+    const accountConfigPath = yield* ClaudeResetCredits.claudeAccountConfigPath(
+      customConfigDir === undefined ? undefined : configDir,
     );
     const stampIdentity = withInstanceIdentity({
       instanceId,
@@ -285,8 +297,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               catalog,
               scopedLimitNames,
               (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
+                ClaudeResetCredits.readClaudeResetCredits(
+                  credentialsDir,
+                  keychainConfigDir,
+                  version,
+                ).pipe(
                   Effect.provideService(HttpClient.HttpClient, httpClient),
+                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                 ),
@@ -368,10 +385,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         if (!grantId || !current.version) return "noCredit" as const;
         const version = current.version;
         return yield* resetCreditCoordinator.redeem(
-          configDir,
+          credentialsDir,
           (requestId) =>
             ClaudeResetCredits.consumeClaudeResetCredit({
-              configDir,
+              configDir: credentialsDir,
+              customConfigDir: keychainConfigDir,
               accountConfigPath,
               version,
               grantId,
@@ -381,6 +399,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         );
       },
       Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.mapError(
