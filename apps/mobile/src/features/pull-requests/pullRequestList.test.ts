@@ -271,6 +271,42 @@ describe("mobile PR scan and filters", () => {
       ),
     ).toEqual([1]);
   });
+  it("resolves authored and author:me by the account each row was read as", () => {
+    const azure = {
+      provider: SourceControlProviderKind.make("azure-devops"),
+      host: "dev.azure.com",
+    };
+    const rows = [
+      entry(1, {
+        ...azure,
+        viewer: "ana@acme.dev",
+        author: { login: "ana@acme.dev", name: null, avatarUrl: null },
+      }),
+      entry(2, {
+        ...azure,
+        viewer: "gus@globex.dev",
+        author: { login: "gus@globex.dev", name: null, avatarUrl: null },
+      }),
+    ];
+    const viewers = { "dev.azure.com": "ana@acme.dev" };
+    expect(
+      filterPullRequestList(
+        rows,
+        { ...DEFAULT_PR_LIST_CONTROLS, involvement: "authored" },
+        viewers,
+        "",
+        new Set(),
+      )
+        .map((row) => row.number)
+        .toSorted(),
+    ).toEqual([1, 2]);
+    expect(
+      filterPullRequestList(rows, DEFAULT_PR_LIST_CONTROLS, viewers, "author:@me", new Set())
+        .map((row) => row.number)
+        .toSorted(),
+    ).toEqual([1, 2]);
+  });
+
   it("reads a typed draft qualifier as a filter and searches only the text left over", () => {
     expect(pullRequestListInput(DEFAULT_PR_LIST_CONTROLS, "draft:false fix")).toEqual({
       state: "open",

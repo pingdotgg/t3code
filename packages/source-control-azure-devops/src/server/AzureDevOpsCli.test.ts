@@ -9,6 +9,7 @@ import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { AzureCliInstallLocation, type AzureCliInstall } from "./azureCliLauncher.ts";
@@ -37,7 +38,13 @@ const layerSupport = Layer.mergeAll(
   NodeServices.layer,
   Layer.succeed(HostProcess.Platform, "linux"),
 );
-const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(layerSupport)), layerSupport);
+const layer = Layer.mergeAll(
+  AzureDevOpsCli.layer.pipe(
+    Layer.provide(AzureDevOpsCredentials.layer),
+    Layer.provide(layerSupport),
+  ),
+  layerSupport,
+);
 
 afterEach(() => {
   mockRun.mockReset();

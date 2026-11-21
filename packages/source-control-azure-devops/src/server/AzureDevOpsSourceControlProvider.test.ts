@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
@@ -87,7 +88,14 @@ it.effect("names the remote's repository when reading the default branch", () =>
       // The selected remote names the project, not the checkout's primary remote.
       if (scoped) assert.include(args, "--project=project", remoteUrl);
     }
-  }).pipe(Effect.provide(AzureDevOpsCli.layer.pipe(Layer.provideMerge(support))));
+  }).pipe(
+    Effect.provide(
+      AzureDevOpsCli.layer.pipe(
+        Layer.provide(AzureDevOpsCredentials.layer),
+        Layer.provideMerge(support),
+      ),
+    ),
+  );
 });
 
 it.effect(

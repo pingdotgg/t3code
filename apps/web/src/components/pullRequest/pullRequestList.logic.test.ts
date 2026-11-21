@@ -157,6 +157,31 @@ describe("pull request involvement filtering", () => {
       filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
     ).toEqual([1]);
   });
+
+  it("uses the account a row was read as over its host's viewer", () => {
+    const azure = SourceControlProviderKind.make("azure-devops");
+    const rows = [
+      entry({
+        number: 1,
+        provider: azure,
+        host: "dev.azure.com",
+        viewer: "ana@acme.dev",
+        author: { login: "ana@acme.dev", name: null, avatarUrl: null },
+      }),
+      entry({
+        number: 2,
+        provider: azure,
+        host: "dev.azure.com",
+        viewer: "gus@globex.dev",
+        author: { login: "ana@acme.dev", name: null, avatarUrl: null },
+      }),
+    ];
+    expect(
+      filterPullRequestsByInvolvement(rows, { "dev.azure.com": "ana@acme.dev" }, "authored").map(
+        (item) => item.number,
+      ),
+    ).toEqual([1]);
+  });
 });
 
 describe("ranking what a search found", () => {

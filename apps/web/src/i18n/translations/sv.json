@@ -10862,7 +10862,10 @@
   "027d70661a6fc7ac": "Genomsök Git- och värdintegrationer igen",
   "847dfcd39ed0f9a5": "Anslut en miljö för att granska dess versionshanteringsverktyg och värdintegrationer.",
   "7b09564f31eb8171": "läs- och skrivåtkomst till pull requests och innehåll",
+  "42b7faef3ecc8a28": "behörigheten Code (Read & write) i den organisationen",
+  "e23fba27fc82e29e": "varje organisation autentiserar sig med sin egen token i az och vid direkta läsningar",
   "8dd881ec9fd8c074": "Token för {host}",
+  "db39b9e0061ef6b2": "Känns inte igen. Prova {example}.",
   "4f7ff2645d23d463": "Ingen token sparad; servern använder {envVar} eller {cliName}-inloggningen.",
   "8ea7a295f2739627": "Sparad för {hosts}.",
   "36c33a32cfe8dc68": [
@@ -10911,7 +10914,43 @@
     },
     "."
   ],
+  "bd7532530e0aec50": [
+    "En token som sparas här har företräde framför ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " och inloggningen i ",
+    {
+      "t": "code",
+      "i": 3,
+      "c": {
+        "i": 4,
+        "k": "_gt_value_4",
+        "v": "v"
+      }
+    },
+    ". Det innebär att ",
+    {
+      "i": 5,
+      "k": "_gt_value_5",
+      "v": "v"
+    },
+    ". Ge token ",
+    {
+      "i": 6,
+      "k": "_gt_value_6",
+      "v": "v"
+    },
+    "."
+  ],
   "c3b322e041dd88da": "Skapa en token",
+  "0c66be22365ace69": "Organisation",
   "ded875ce84c22d60": "Token",
   "c31cd9e1037af9f9": "Commit-meddelanden och titlar och beskrivningar för pull requests följer varje projekts historik.",
   "f512a778a446d715": "Prefix enligt Conventional Commits, med korta titlar och beskrivningar för pull requests.",

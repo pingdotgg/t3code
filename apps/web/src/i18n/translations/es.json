@@ -10850,7 +10850,10 @@
   "027d70661a6fc7ac": "Volver a escanear Git y las integraciones de hosting",
   "847dfcd39ed0f9a5": "Conecta un entorno para inspeccionar sus herramientas de control de versiones e integraciones de hosting.",
   "7b09564f31eb8171": "acceso de lectura y escritura a pull requests y contenido",
+  "42b7faef3ecc8a28": "el ámbito Code (Read & write) en esa organización",
+  "e23fba27fc82e29e": "cada organización se autentica con su propio token en az y en las lecturas directas",
   "8dd881ec9fd8c074": "Token de {host}",
+  "db39b9e0061ef6b2": "No se reconoce. Prueba con {example}.",
   "4f7ff2645d23d463": "No hay token guardado; el servidor usa {envVar} o el inicio de sesión de {cliName}.",
   "8ea7a295f2739627": "Guardado para {hosts}.",
   "36c33a32cfe8dc68": [
@@ -10898,7 +10901,43 @@
     },
     "."
   ],
+  "bd7532530e0aec50": [
+    "Un token guardado aquí tiene prioridad sobre ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " y sobre la sesión de ",
+    {
+      "t": "code",
+      "i": 3,
+      "c": {
+        "i": 4,
+        "k": "_gt_value_4",
+        "v": "v"
+      }
+    },
+    ". Así, ",
+    {
+      "i": 5,
+      "k": "_gt_value_5",
+      "v": "v"
+    },
+    ". Concédele ",
+    {
+      "i": 6,
+      "k": "_gt_value_6",
+      "v": "v"
+    },
+    "."
+  ],
   "c3b322e041dd88da": "Crear un token",
+  "0c66be22365ace69": "Organización",
   "ded875ce84c22d60": "Token",
   "c31cd9e1037af9f9": "Los mensajes de commit y los títulos y descripciones de las pull requests siguen el historial de cada proyecto.",
   "f512a778a446d715": "Prefijos de Conventional Commits, con títulos y descripciones de pull requests breves.",
