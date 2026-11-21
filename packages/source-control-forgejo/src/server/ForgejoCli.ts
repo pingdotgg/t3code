@@ -755,7 +755,9 @@ export const make = Effect.gen(function* () {
                 : {}),
         detail:
           status === 401 || status === 403
-            ? "Forgejo denied access. Check this server's `tea login` credentials and permissions."
+            ? body
+              ? `Forgejo denied access (HTTP ${status}): ${body}`
+              : "Forgejo denied access. Check this server's `tea login` credentials and permissions."
             : status === 404
               ? "Forgejo repository or pull request was not found."
               : status === 429

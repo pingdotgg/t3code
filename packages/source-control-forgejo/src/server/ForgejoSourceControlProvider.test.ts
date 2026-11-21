@@ -1747,6 +1747,14 @@ it.effect("keeps Gitea's failure reason when tea reports an HTTP error", () =>
       assert.include(result.failure.detail, "405");
       assert.include(result.failure.detail, "The head branch is behind the base branch");
     }
+    const denied = yield* cli
+      .api({ cwd: "/repo", repository: "http://forgejo.local:3000/maria/project", path: "user" })
+      .pipe(Effect.result);
+    assert.strictEqual(denied._tag, "Failure");
+    if (denied._tag === "Failure") {
+      assert.strictEqual(denied.failure.reason, "forbidden");
+      assert.include(denied.failure.detail, "required=[read:user]");
+    }
   }).pipe(
     Effect.provideService(
       FileSystem.FileSystem,
@@ -1777,13 +1785,18 @@ it.effect("keeps Gitea's failure reason when tea reports an HTTP error", () =>
                       },
                     ]),
                   )
-                : processOutput(
-                    '{"message":"The head branch is behind the base branch","url":"http://forgejo.local:3000/api/swagger"}',
-                    {
-                      stderr:
-                        "HTTP/1.1 405 Method Not Allowed\nContent-Type: application/json;charset=utf-8\n",
-                    },
-                  ),
+                : input.args.at(-1)?.endsWith("/api/v1/user")
+                  ? processOutput(
+                      '{"message":"token does not have at least one of required scope(s), required=[read:user]"}',
+                      { stderr: "HTTP/1.1 403 Forbidden\n" },
+                    )
+                  : processOutput(
+                      '{"message":"The head branch is behind the base branch","url":"http://forgejo.local:3000/api/swagger"}',
+                      {
+                        stderr:
+                          "HTTP/1.1 405 Method Not Allowed\nContent-Type: application/json;charset=utf-8\n",
+                      },
+                    ),
             ),
         },
       }),
