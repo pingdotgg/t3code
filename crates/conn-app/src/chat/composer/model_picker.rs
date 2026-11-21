@@ -34,28 +34,6 @@ const LIST_MAX_HEIGHT_PX: f32 = 280.0;
 /// Superheroicons 16/solid paths used by the model picker.
 pub(super) const ICON_SEARCH: &str = "superhero/search.svg";
 pub(super) const ICON_CHECK: &str = "superhero/check.svg";
-pub(super) const ICON_AI: &str = "superhero/ai.svg";
-pub(super) const ICON_AGENT: &str = "superhero/agent.svg";
-pub(super) const ICON_CPU: &str = "superhero/cpu.svg";
-pub(super) const ICON_TERMINAL: &str = "superhero/terminal-window.svg";
-
-/// Returns a superheroicons 16/solid path for a provider driver kind.
-#[must_use]
-pub(super) fn provider_icon_path(driver: Option<&str>) -> &'static str {
-    let Some(driver) = driver else {
-        return ICON_AI;
-    };
-    let lower = driver.to_ascii_lowercase();
-    if lower.contains("claude") || lower.contains("anthropic") {
-        ICON_AI
-    } else if lower.contains("codex") || lower.contains("openai") || lower.contains("gpt") {
-        ICON_CPU
-    } else if lower.contains("opencode") || lower.contains("cli") {
-        ICON_TERMINAL
-    } else {
-        ICON_AGENT
-    }
-}
 
 /// One selectable model belonging to a provider instance.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -313,8 +291,8 @@ pub(super) fn render_model_picker(
                 .on_click(cx.listener(move |composer, _, _, cx| {
                     composer.select_picker_provider(provider_id.clone(), cx);
                 }))
-                .child(icons::icon(
-                    provider_icon_path(Some(&provider.driver)),
+                .child(crate::icons::provider_mark(
+                    &provider.driver,
                     18.0,
                     icon_color,
                 ));
@@ -427,8 +405,8 @@ pub(super) fn render_model_picker(
                 .on_click(cx.listener(move |composer, _, _, cx| {
                     composer.pick_model(instance_id.clone(), slug.clone(), cx);
                 }))
-                .child(icons::icon(
-                    provider_icon_path(Some(&model.driver)),
+                .child(crate::icons::provider_mark(
+                    &model.driver,
                     16.0,
                     if is_active { fg } else { muted },
                 ));

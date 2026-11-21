@@ -17,8 +17,6 @@ use gpui_kit::{Hsla, Styled as _, Svg, px, svg};
 
 /// Standard chrome icon size (`size-4` = 16px).
 pub(crate) const CHROME_ICON_PX: f32 = 16.0;
-/// Compact inline icon size (`size-3.5` = 14px) for status and provider glyphs.
-pub(crate) const COMPACT_ICON_PX: f32 = 14.0;
 /// Disclosure chevron / tree caret size (`size-3` = 12px).
 pub(crate) const CARET_ICON_PX: f32 = 12.0;
 
@@ -35,12 +33,6 @@ pub(crate) const PULL_REQUEST: &str = "superhero/pull-request.svg";
 #[must_use]
 pub(crate) fn chrome(name: IconName, color: Hsla) -> Icon {
     sized(name, CHROME_ICON_PX, color)
-}
-
-/// Creates a 14px compact icon tinted with `color`.
-#[must_use]
-pub(crate) fn compact(name: IconName, color: Hsla) -> Icon {
-    sized(name, COMPACT_ICON_PX, color)
 }
 
 /// Creates an icon at an explicit pixel size tinted with `color`.
@@ -115,15 +107,29 @@ pub(crate) fn right_panel_tab_icon(tab: RightPanelTab) -> IconName {
     }
 }
 
-/// Returns the superheroicons fallback icon for a thread's model provider identifier.
-#[must_use]
-pub(crate) fn provider_icon(provider: &str) -> IconName {
+/// The brand mark Conn shows for a provider (driver or instance id such as `claudeAgent`,
+/// `codex`): the Claude starburst in Claude orange, the OpenAI knot in `fallback` color, else
+/// a generic superheroicons agent glyph.
+pub(crate) fn provider_mark(provider: &str, size_px: f32, fallback: Hsla) -> Svg {
     let lower = provider.to_ascii_lowercase();
-    if lower.contains("claude") || lower.contains("anthropic") {
-        IconName::Sparkles
+    let (path, color): (&'static str, Hsla) = if lower.contains("claude")
+        || lower.contains("anthropic")
+        || lower.contains("haiku")
+        || lower.contains("sonnet")
+        || lower.contains("opus")
+    {
+        (
+            "brand/claude.svg",
+            crate::theme::hsla(conn_theme::CLAUDE_BRAND),
+        )
     } else if lower.contains("codex") || lower.contains("openai") || lower.contains("gpt") {
-        IconName::Cpu
+        ("brand/openai.svg", fallback)
     } else {
-        IconName::Bot
-    }
+        ("superhero/agent.svg", fallback)
+    };
+    svg()
+        .path(path)
+        .size(px(size_px))
+        .text_color(color)
+        .flex_none()
 }

@@ -40,7 +40,7 @@ const BODY_LINE_HEIGHT_PX: f32 = 22.75;
 /// Standard panel chrome typography (`text-ui`: `13px` / `20px`).
 const UI_FONT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
-const MONO_FONT_FAMILY: &str = "JetBrains Mono";
+const MONO_FONT_FAMILY: &str = crate::theme::MONO_FONT;
 
 /// Events emitted by [`ChatView`] to the host shell.
 #[derive(Clone, Debug, PartialEq, Eq)]

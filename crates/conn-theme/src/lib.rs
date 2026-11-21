@@ -67,6 +67,14 @@ impl Rgba {
     }
 }
 
+/// Claude's brand orange, as Conn paints the Claude mark (`fill-[#d97757]`).
+pub const CLAUDE_BRAND: Rgba = Rgba::new(
+    0xd9 as f32 / 255.0,
+    0x77 as f32 / 255.0,
+    0x57 as f32 / 255.0,
+    1.0,
+);
+
 /// Errors from loading a theme.
 #[derive(Debug, thiserror::Error)]
 pub enum ThemeError {

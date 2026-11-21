@@ -62,6 +62,8 @@ pub(crate) struct BrowserPanel {
     tokens: Tokens,
     url_input: Entity<InputState>,
     url: String,
+    /// The URL last written into the address field, so it follows navigation.
+    shown_url: String,
     _subscriptions: Vec<Subscription>,
     #[cfg(feature = "cef")]
     phase: RuntimePhase,
@@ -131,6 +133,7 @@ impl BrowserPanel {
         Self {
             tokens,
             url_input,
+            shown_url: initial_url.clone(),
             url: initial_url,
             _subscriptions: subscriptions,
             #[cfg(feature = "cef")]
@@ -159,7 +162,12 @@ impl BrowserPanel {
         {
             if self.visible.get() != visible {
                 self.visible.set(visible);
-                apply_hidden(&self.view, &self.applied_hidden, !visible);
+                // Hide at once (the panel is going away), but show only from the panel's
+                // own paint, so the native page appears in the same frame as its toolbar
+                // instead of a frame early over another panel.
+                if !visible {
+                    apply_hidden(&self.view, &self.applied_hidden, true);
+                }
                 cx.notify();
             }
         }
@@ -572,6 +580,22 @@ impl BrowserPanel {
 
 impl Render for BrowserPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        // Keep the address field on the page's URL (navigation, redirects, links).
+        #[cfg(feature = "cef")]
+        let current_url = self
+            .view
+            .borrow()
+            .as_ref()
+            .map(BrowserView::url)
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| self.url.clone());
+        #[cfg(not(feature = "cef"))]
+        let current_url = self.url.clone();
+        if current_url != self.shown_url {
+            self.shown_url = current_url.clone();
+            self.url_input
+                .update(cx, |input, cx| input.set_value(current_url, window, cx));
+        }
         let field_bg = to_hsla(self.tokens.shell_field);
         let field_border = to_hsla(self.tokens.shell_divider_header);
         let divider = to_hsla(self.tokens.shell_divider);

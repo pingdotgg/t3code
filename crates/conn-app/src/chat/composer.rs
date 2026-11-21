@@ -34,7 +34,7 @@ use self::menus::{
     ComposerTrigger, ComposerTriggerKind, FileMentionEntry, detect_trigger, filter_slash_commands,
     render_command_menu, replace_trigger,
 };
-use self::model_picker::{ModelCatalog, ModelPickerView, provider_icon_path, render_model_picker};
+use self::model_picker::{ModelCatalog, ModelPickerView, render_model_picker};
 use super::color::{hsla, hsla_alpha};
 use super::icons;
 
@@ -617,8 +617,8 @@ impl Render for Composer {
             .on_click(cx.listener(|composer, _, window, cx| {
                 composer.toggle_model_picker(window, cx);
             }))
-            .child(icons::icon(
-                provider_icon_path(driver),
+            .child(crate::icons::provider_mark(
+                driver.unwrap_or_default(),
                 16.0,
                 if self.model_picker_open { fg } else { muted },
             ))

@@ -235,13 +235,14 @@ fn compare_threads(left: &ThreadShell, right: &ThreadShell) -> Ordering {
         .then_with(|| left.id.cmp(&right.id))
 }
 
+/// Conn orders the sidebar by the latest user message, then by update time.
 fn activity_timestamp(thread: &ThreadShell) -> &str {
-    if !thread.updated_at.is_empty() {
-        &thread.updated_at
-    } else if let Some(ts) = thread.latest_user_message_at.as_deref()
+    if let Some(ts) = thread.latest_user_message_at.as_deref()
         && !ts.is_empty()
     {
         ts
+    } else if !thread.updated_at.is_empty() {
+        &thread.updated_at
     } else {
         &thread.created_at
     }

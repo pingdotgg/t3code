@@ -71,3 +71,17 @@ pub(crate) fn tokens_for(theme_id: &str) -> Option<(ThemeDefinition, Tokens)> {
     let tokens = Tokens::derive(&theme);
     Some((theme, tokens))
 }
+
+/// `CONN_GPUI_WINDOW=x,y,width,height` in points, if set and valid.
+pub(crate) fn window_from_env() -> Option<[f32; 4]> {
+    let raw = std::env::var("CONN_GPUI_WINDOW").ok()?;
+    let parts: Vec<f32> = raw
+        .split(',')
+        .map(|p| p.trim().parse::<f32>())
+        .collect::<Result<_, _>>()
+        .ok()?;
+    match parts.as_slice() {
+        [x, y, w, h] if *w > 0.0 && *h > 0.0 => Some([*x, *y, *w, *h]),
+        _ => None,
+    }
+}

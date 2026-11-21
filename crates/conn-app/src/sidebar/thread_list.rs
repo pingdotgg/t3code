@@ -207,8 +207,8 @@ pub(crate) fn render_thread_sidebar(
         ));
     }
 
-    // Settled shelf (`SidebarSectionHeader` in `Sidebar.tsx`): only shown when
-    // settled threads exist, pushed to the bottom of the list with `mt-auto`.
+    // Settled shelf (`SidebarSectionHeader` in `Sidebar.tsx`): always shown, with its count
+    // (Conn shows "Settled 0"), pushed to the bottom of the list with `mt-auto`.
     let settled_threads: Vec<&ThreadShell> = shell
         .archived_threads
         .iter()
@@ -229,7 +229,7 @@ pub(crate) fn render_thread_sidebar(
         .gap(px(1.0))
         .children(thread_rows);
 
-    if settled_count > 0 {
+    {
         let settled_header = div()
             .id("sidebar-settled-footer")
             .flex()
@@ -352,16 +352,10 @@ fn render_thread_card(
     let thread_id = thread.id.clone();
 
     let project_name = project.map(|p| p.title.as_str());
-    let provider_hint = thread
-        .model_selection
-        .provider
-        .as_ref()
-        .and_then(|inner| inner.as_ref())
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| thread.model_selection.model.as_str())
-        .unwrap_or("");
-    let provider_icon_name = icons::provider_icon(provider_hint);
-    let provider_color = provider_tint(provider_hint, tokens);
+    let provider_hint = thread.provider_instance_id.as_str();
+    // Conn: `opacity-60` on the provider mark in the meta line.
+    let provider_mark =
+        icons::provider_mark(provider_hint, 14.0, hsla_alpha(tokens.foreground, 0.60)).opacity(0.6);
 
     // Line 1 (`h-5`, `gap-1.5`): 16px project favicon (with corner StatusDotBadge) + 14px medium title.
     let favicon = project.map_or_else(
@@ -423,7 +417,7 @@ fn render_thread_card(
                 .flex()
                 .items_center()
                 .flex_shrink_0()
-                .child(icons::compact(provider_icon_name, provider_color)),
+                .child(provider_mark),
         );
 
     if let Some(name) = project_name {
@@ -536,15 +530,6 @@ fn render_status_dot_badge(
 /// Provider glyph tint matching `ProviderInstanceIcon.tsx` (`opacity-60`):
 /// Claude uses the theme's warm warning role; OpenAI/Codex and others use
 /// `foreground` at 60% opacity.
-fn provider_tint(provider_hint: &str, tokens: &Tokens) -> gpui_kit::Hsla {
-    let lower = provider_hint.to_ascii_lowercase();
-    if lower.contains("claude") || lower.contains("anthropic") {
-        hsla_alpha(tokens.warning, 0.75)
-    } else {
-        hsla_alpha(tokens.foreground, 0.60)
-    }
-}
-
 fn current_unix_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

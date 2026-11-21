@@ -28,7 +28,7 @@ const CODE_BLOCK_RADIUS_PX: f32 = 14.0;
 /// Monospace code size inside fenced blocks (`leading-1.625`).
 const CODE_FONT_PX: f32 = 12.5;
 const CODE_LINE_HEIGHT_PX: f32 = 20.3;
-const MONO_FONT_FAMILY: &str = "JetBrains Mono";
+const MONO_FONT_FAMILY: &str = crate::theme::MONO_FONT;
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
 

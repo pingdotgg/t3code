@@ -24,6 +24,13 @@ use rust_embed::RustEmbed;
 #[include = "*.svg"]
 struct Drawings;
 
+/// Provider brand marks Conn shows next to provider names, served as `brand/<name>.svg`.
+#[derive(RustEmbed)]
+#[folder = "assets/icons/brand"]
+#[prefix = "brand/"]
+#[include = "*.svg"]
+struct Brands;
+
 /// Lucide names gpui-conn uses that the Conn manifest does not list.
 const EXTRA_LUCIDE: &[(&str, &str)] = &[
     ("git-pull-request", "pull-request"),
@@ -91,6 +98,9 @@ pub(crate) struct AppAssets;
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         if let Some(file) = resolve(path).and_then(|p| Drawings::get(&p)) {
+            return Ok(Some(file.data));
+        }
+        if let Some(file) = Brands::get(path) {
             return Ok(Some(file.data));
         }
         gpui_kit::assets::AllAssets.load(path)

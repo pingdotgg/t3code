@@ -137,6 +137,7 @@ impl MacBrowserView {
         if self.closed.get() || self.bounds.get() == bounds {
             return;
         }
+        trace(&format!("set_bounds {bounds:?}"));
         self.bounds.set(bounds);
         // SAFETY: `self.view` is this browser's `NSView`, alive until `close_inner`
         // removes it; `MacBrowserView` is `!Send` so this runs on the main thread.
@@ -155,6 +156,7 @@ impl MacBrowserView {
     }
 
     pub(crate) fn load_url(&self, url: &str) {
+        trace(&format!("load_url {url}"));
         if self.closed.get() {
             return;
         }
@@ -223,6 +225,7 @@ impl MacBrowserView {
     }
 
     pub(crate) fn set_hidden(&self, hidden: bool) {
+        trace(&format!("set_hidden {hidden}"));
         if self.closed.get() || self.hidden.get() == hidden {
             return;
         }
@@ -306,6 +309,7 @@ wrap_load_handler! {
             can_go_back: c_int,
             can_go_forward: c_int,
         ) {
+            trace(&format!("cef loading={is_loading}"));
             self.shared.loading.store(is_loading == 1, Ordering::Release);
             self.shared
                 .can_go_back
@@ -368,4 +372,19 @@ wrap_display_handler! {
             }
         }
     }
+}
+
+/// With `CONN_WEB_TRACE=1`, logs native browser operations with a millisecond clock to stderr,
+/// to diagnose flicker (hide/show, resize and reload events).
+pub(crate) fn trace(what: &str) {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("CONN_WEB_TRACE").is_some()) {
+        return;
+    }
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() % 100_000)
+        .unwrap_or_default();
+    eprintln!("[conn-web {ms:>5}] {what}");
 }

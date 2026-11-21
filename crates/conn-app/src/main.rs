@@ -60,10 +60,17 @@ fn main() {
         let server = live::server_config_from_env();
         app::register_keybindings(cx);
 
-        let bounds = Bounds::centered(
-            None,
-            size(px(DEFAULT_WINDOW_WIDTH_PX), px(DEFAULT_WINDOW_HEIGHT_PX)),
-            cx,
+        // `CONN_GPUI_WINDOW=x,y,width,height` (points, top-left origin) places the window
+        // exactly, so captures line up with a reference app at the same frame.
+        let bounds = live::window_from_env().map_or_else(
+            || {
+                Bounds::centered(
+                    None,
+                    size(px(DEFAULT_WINDOW_WIDTH_PX), px(DEFAULT_WINDOW_HEIGHT_PX)),
+                    cx,
+                )
+            },
+            |[x, y, w, h]| Bounds::new(point(px(x), px(y)), size(px(w), px(h))),
         );
 
         #[expect(
@@ -91,6 +98,11 @@ fn main() {
             move |window, cx| cx.new(|cx| ConnApp::new(theme.id, tokens, server, window, cx)),
         )
         .expect("failed to open Conn main window");
+        // Become the active app with the window in front, as a launched app should.
+        cx.activate(true);
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
         #[cfg(feature = "automation")]
         automation::serve(&app, window, cx);
         #[cfg(not(feature = "automation"))]
