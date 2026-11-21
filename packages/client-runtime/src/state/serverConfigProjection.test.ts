@@ -29,49 +29,6 @@ describe("reuseUnchanged", () => {
     const dropped = reuseUnchanged({ a: 1, b: 2 }, { a: 1 });
     expect(dropped).toEqual({ a: 1 });
   });
-
-  it("preserves null-prototype records and nested references on partial updates", () => {
-    const kept = { title: "Kept", projectId: null };
-    const previous = Object.assign(Object.create(null), {
-      a: kept,
-      b: { title: "Old", projectId: null },
-    }) as Record<string, { title: string; projectId: null }>;
-    const unchanged = Object.assign(Object.create(null), {
-      a: { title: "Kept", projectId: null },
-      b: { title: "Old", projectId: null },
-    }) as Record<string, { title: string; projectId: null }>;
-    expect(reuseUnchanged(previous, unchanged)).toBe(previous);
-
-    const updated = Object.assign(Object.create(null), {
-      a: { title: "Kept", projectId: null },
-      b: { title: "New", projectId: null },
-    }) as Record<string, { title: string; projectId: null }>;
-    const merged = reuseUnchanged(previous, updated);
-    expect(merged).not.toBe(previous);
-    expect(Object.getPrototypeOf(merged)).toBeNull();
-    expect(merged.a).toBe(kept);
-    expect(merged.b).toEqual({ title: "New", projectId: null });
-
-    const plain = { a: { title: "Kept", projectId: null }, b: { title: "Old", projectId: null } };
-    expect(reuseUnchanged(previous, plain)).toBe(plain);
-
-    const prevProto = Object.defineProperty({}, "__proto__", {
-      value: { title: "Kept" },
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    }) as Record<string, unknown>;
-    const nextProto = Object.defineProperty({ other: { title: "New" } }, "__proto__", {
-      value: { title: "Kept" },
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    }) as Record<string, unknown>;
-    const mergedProto = reuseUnchanged(prevProto, nextProto);
-    expect(Object.getPrototypeOf(mergedProto)).toBe(Object.prototype);
-    expect(Object.hasOwn(mergedProto, "__proto__")).toBe(true);
-    expect(mergedProto["__proto__"]).toBe(prevProto["__proto__"]);
-  });
 });
 
 describe("applyServerConfigProjection settingsUpdated", () => {

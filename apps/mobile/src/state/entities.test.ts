@@ -130,12 +130,7 @@ vi.mock(import("../native/ProjectChipIconImages"), async () => {
   };
 });
 
-import {
-  resolveThreadLink,
-  useLiveThreadLinkLabels,
-  useMessageThreadLinks,
-  useThreadChipIcons,
-} from "./entities";
+import { resolveThreadLink, useMessageThreadLinks, useThreadChipIcons } from "./entities";
 
 function setup() {
   const registry = AtomRegistry.make();
@@ -530,22 +525,4 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
     unsubTitles();
     unsubIcons();
   }
-});
-
-it("does not treat Object.prototype keys as resolved thread link metadata", () => {
-  const { registry, setMetadata } = setup();
-  using _registry = { [Symbol.dispose]: () => registry.dispose() };
-  const envA = EnvironmentId.make("env-a");
-  const protoId = ThreadId.make("constructor");
-  setMetadata(envA, [protoId], AsyncResult.success({}));
-
-  const markdown = `[proto](t3-thread://v2/env-a/${protoId})`;
-  expect(useLiveThreadLinkLabels(markdown, envA)).toBe("proto");
-  expect(
-    resolveThreadLink(
-      registry.get.bind(registry),
-      { environmentId: null, threadId: protoId },
-      envA,
-    ),
-  ).toBeNull();
 });

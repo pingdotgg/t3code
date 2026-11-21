@@ -70,24 +70,9 @@ class ThreadLinkMetadataRequest extends Request.Class<
   ThreadLinkMetadataError
 > {}
 
-function emptyMetadataRecord(): Record<ThreadId, OrchestrationV2ThreadLinkMetadata> {
-  return Object.create(null) as Record<ThreadId, OrchestrationV2ThreadLinkMetadata>;
-}
-
-function metadataMapToRecord(
+const metadataMapToRecord = (
   entries: ReadonlyMap<ThreadId, OrchestrationV2ThreadLinkMetadata>,
-): ThreadLinkMetadataMap {
-  const result = emptyMetadataRecord();
-  for (const [threadId, value] of entries) {
-    Object.defineProperty(result, threadId, {
-      value,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-  }
-  return result;
-}
+): ThreadLinkMetadataMap => Object.fromEntries(entries) as ThreadLinkMetadataMap;
 
 // Runs inside orchestration.fetchThreadLinkMetadataChunked, which owns the span.
 const assertSessionActive = Effect.fnUntraced(function* (
@@ -195,82 +180,49 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       return `${generation}:${latest}`;
     });
   };
+  // Keyed by session so a reconnect never serves the previous session's answers.
   const threadLinkMetadataCache = new WeakMap<
-    AtomRegistry.AtomRegistry,
-    WeakMap<RpcSession.RpcSession, Map<ThreadId, CachedThreadLinkMetadata>>
+    RpcSession.RpcSession,
+    Map<ThreadId, CachedThreadLinkMetadata>
   >();
-  const readShellVersion = (
-    registry: AtomRegistry.AtomRegistry,
-    environmentId: EnvironmentId,
-  ): {
-    readonly generation: number;
-    readonly removedAt: ReadonlyMap<ThreadId, number> | undefined;
-  } => {
+  const readShellVersion = (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
     if (shellState === undefined) return { generation: 0, removedAt: undefined };
-    const current = registry.get(shellState(environmentId));
-    return { generation: current.generation, removedAt: current.removedAt };
-  };
-  const tryReadShellVersion = (
-    registry: AtomRegistry.AtomRegistry,
-    environmentId: EnvironmentId,
-  ): {
-    readonly ok: boolean;
-    readonly generation: number;
-    readonly removedAt: ReadonlyMap<ThreadId, number> | undefined;
-  } => {
-    if (shellState === undefined) return { ok: true, generation: 0, removedAt: undefined };
-    try {
-      const current = registry.get(shellState(environmentId));
-      return { ok: true, generation: current.generation, removedAt: current.removedAt };
-    } catch {
-      // A participating registry may be disposed while a shared batch is in flight.
-      return { ok: false, generation: 0, removedAt: undefined };
-    }
+    const { generation, removedAt } = registry.get(shellState(environmentId));
+    return { generation, removedAt };
   };
   const getCachedThreadLinkMetadata = (
-    registry: AtomRegistry.AtomRegistry,
     session: RpcSession.RpcSession,
     threadId: ThreadId,
     now: number,
-    currentGeneration: number,
-    currentRemovedAt: number,
+    generation: number,
+    removedAtSeq: number,
   ): CachedThreadLinkMetadata | undefined => {
-    const entries = threadLinkMetadataCache.get(registry)?.get(session);
+    const entries = threadLinkMetadataCache.get(session);
     const cached = entries?.get(threadId);
-    if (cached === undefined) return undefined;
+    if (entries === undefined || cached === undefined) return undefined;
+    entries.delete(threadId);
     if (
       cached.expiresAt <= now ||
-      cached.shellGeneration !== currentGeneration ||
-      currentRemovedAt !== cached.removedAtSeq
+      cached.shellGeneration !== generation ||
+      cached.removedAtSeq !== removedAtSeq
     ) {
-      entries?.delete(threadId);
       return undefined;
     }
-    entries?.delete(threadId);
-    entries?.set(threadId, cached);
+    entries.set(threadId, cached);
     return cached;
   };
   const rememberThreadLinkMetadata = (
-    registry: AtomRegistry.AtomRegistry,
     session: RpcSession.RpcSession,
     threadId: ThreadId,
-    value: OrchestrationV2ThreadLinkMetadata | null,
-    expiresAt: number,
-    shellGeneration: number,
-    removedAtSeq: number,
+    cached: CachedThreadLinkMetadata,
   ) => {
-    let bySession = threadLinkMetadataCache.get(registry);
-    if (bySession === undefined) {
-      bySession = new WeakMap();
-      threadLinkMetadataCache.set(registry, bySession);
-    }
-    let entries = bySession.get(session);
+    let entries = threadLinkMetadataCache.get(session);
     if (entries === undefined) {
       entries = new Map();
-      bySession.set(session, entries);
+      threadLinkMetadataCache.set(session, entries);
     }
     entries.delete(threadId);
-    entries.set(threadId, { value, expiresAt, shellGeneration, removedAtSeq });
+    entries.set(threadId, cached);
     while (entries.size > THREAD_LINK_METADATA_CACHE_LIMIT) {
       const oldest = entries.keys().next().value;
       if (oldest === undefined) break;
@@ -285,54 +237,24 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     runAll: Effect.fnUntraced(function* (entries) {
       const first = entries[0];
       if (first === undefined) return;
-      const { session, supervisor } = first.request;
-      const uniqueIds: Array<ThreadId> = [];
-      const seen = new Set<ThreadId>();
-      const registries = new Set<AtomRegistry.AtomRegistry>();
-      for (const entry of entries) {
-        registries.add(entry.request.registry);
-        for (const threadId of entry.request.threadIds) {
-          if (seen.has(threadId)) continue;
-          seen.add(threadId);
-          uniqueIds.push(threadId);
-        }
-      }
-      const beforeByRegistry = new Map<
-        AtomRegistry.AtomRegistry,
-        {
-          readonly generation: number;
-          readonly removedSeq: ReadonlyMap<ThreadId, number>;
-        }
-      >();
-      for (const registry of registries) {
-        const before = tryReadShellVersion(registry, supervisor.target.environmentId);
-        if (!before.ok) continue;
-        const removedSeq = new Map<ThreadId, number>();
-        if (before.removedAt !== undefined) {
-          for (const threadId of uniqueIds) {
-            removedSeq.set(threadId, before.removedAt.get(threadId) ?? -1);
-          }
-        }
-        beforeByRegistry.set(registry, { generation: before.generation, removedSeq });
-      }
+      const { session, supervisor, registry } = first.request;
+      const environmentId = supervisor.target.environmentId;
+      const uniqueIds = [...new Set(entries.flatMap((entry) => entry.request.threadIds))];
+      const before = readShellVersion(registry, environmentId);
       const fetched = yield* fetchThreadLinkMetadataChunked(supervisor, session, uniqueIds);
       const now = yield* Clock.currentTimeMillis;
-      const expiresAt = now + THREAD_LINK_METADATA_STALE_TIME_MS;
-      for (const [registry, before] of beforeByRegistry) {
-        const after = tryReadShellVersion(registry, supervisor.target.environmentId);
-        if (!after.ok || before.generation !== after.generation) continue;
+      const after = readShellVersion(registry, environmentId);
+      // A removal or snapshot that landed while the request was in flight makes its answer stale.
+      if (before.generation === after.generation) {
         for (const threadId of uniqueIds) {
-          const seqBefore = before.removedSeq.get(threadId) ?? -1;
-          if ((after.removedAt?.get(threadId) ?? -1) !== seqBefore) continue;
-          rememberThreadLinkMetadata(
-            registry,
-            session,
-            threadId,
-            fetched.get(threadId) ?? null,
-            expiresAt,
-            before.generation,
-            seqBefore,
-          );
+          const removedAtSeq = before.removedAt?.get(threadId) ?? -1;
+          if ((after.removedAt?.get(threadId) ?? -1) !== removedAtSeq) continue;
+          rememberThreadLinkMetadata(session, threadId, {
+            value: fetched.get(threadId) ?? null,
+            expiresAt: now + THREAD_LINK_METADATA_STALE_TIME_MS,
+            shellGeneration: before.generation,
+            removedAtSeq,
+          });
         }
       }
       for (const entry of entries) {
@@ -366,7 +288,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         emit: (value: ThreadLinkMetadataMap) => Effect.Effect<void>,
         previous: Option.Option<ThreadLinkMetadataMap>,
       ) {
-        if (input.threadIds.length === 0) return emptyMetadataRecord();
+        if (input.threadIds.length === 0) return {};
         const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
         const sessionOption = yield* SubscriptionRef.get(supervisor.session);
         if (Option.isNone(sessionOption)) {
@@ -387,7 +309,6 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         const seenUncached = new Set<ThreadId>();
         for (const threadId of input.threadIds) {
           const cached = getCachedThreadLinkMetadata(
-            registry,
             session,
             threadId,
             now,

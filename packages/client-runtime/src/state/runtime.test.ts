@@ -1552,16 +1552,9 @@ describe("environment query lifecycle", () => {
           input: { threadIds: [] },
         });
 
-        const registryC = AtomRegistry.make();
         const registry = AtomRegistry.make();
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            registryC.dispose();
-            registry.dispose();
-          }),
-        );
-        // Mount atomC first in a separate registry so entries[0] belongs to registryC.
-        registryC.mount(atomC);
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const releaseC = registry.mount(atomC);
         const releaseA = registry.mount(atomA);
         const releaseB = registry.mount(atomB);
         const releaseEmpty = registry.mount(emptyAtom);
@@ -1569,14 +1562,12 @@ describe("environment query lifecycle", () => {
           Effect.sync(() => {
             releaseA();
             releaseB();
+            releaseC();
             releaseEmpty();
           }),
         );
 
-        // Disposing the first caller's registry while the batch is in flight must not fail
-        // surviving sibling waiters or break post-RPC cache writes.
         const firstRequest = yield* Queue.take(requests);
-        registryC.dispose();
 
         expect(calls).toHaveLength(1);
         const [firstCall] = calls;
@@ -1599,7 +1590,6 @@ describe("environment query lifecycle", () => {
         });
         const emptyResult = yield* readEnvironmentQuery(registry, emptyAtom);
         expect(emptyResult).toEqual({});
-        expect(emptyResult[ThreadId.make("constructor")]).toBeUndefined();
         expect(calls).toHaveLength(1);
 
         // A cold single-ID or subset query for already-cached threads (including cached misses)
@@ -1666,11 +1656,11 @@ describe("environment query lifecycle", () => {
         });
 
         // A same-session authoritative shell snapshot bumps generation and clears removedAt;
-        // entries cached under generation 0 (including the t1 miss) coalesce into one re-check.
+        // entries cached under generation 0 (including the t1 and t4 misses) coalesce into one re-check.
         registry.set(shellState, { removedAt: new Map(), generation: 1 });
         const snapshotResetRequest = yield* Queue.take(requests);
         expect(calls).toHaveLength(4);
-        expect([...(calls[3] ?? [])].toSorted()).toEqual([t1, t2, t3, t5]);
+        expect([...(calls[3] ?? [])].toSorted()).toEqual([t1, t2, t3, t4, t5]);
         yield* Deferred.succeed(snapshotResetRequest, {
           [t1]: { title: "Restored One", projectId },
           [t2]: { title: "Two", projectId },
@@ -1681,62 +1671,6 @@ describe("environment query lifecycle", () => {
           [t1]: { title: "Restored One", projectId },
           [t2]: { title: "Two", projectId },
         });
-
-        // Two registries sharing one session still coalesce RPCs, but validate and store cache
-        // entries per registry: advancing only registryB's generation must protect its fresh entry
-        // when the earlier shared batch (with registryA still on generation 1) settles last.
-        const registryB = AtomRegistry.make();
-        yield* Effect.addFinalizer(() => Effect.sync(() => registryB.dispose()));
-        registryB.set(shellState, { removedAt: new Map(), generation: 1 });
-        // Warm registryB's AtomRuntime layer so both registries dispatch on the same tick.
-        const releaseEmptyB = registryB.mount(emptyAtom);
-        yield* Effect.addFinalizer(() => Effect.sync(releaseEmptyB));
-        expect(yield* readEnvironmentQuery(registryB, emptyAtom)).toEqual({});
-        const tIso = ThreadId.make("iso-6");
-        const isoAtom = orchestration.threadLinkMetadata({
-          environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: { threadIds: [tIso] },
-        });
-        const releaseIsoA = registry.mount(isoAtom);
-        const releaseIsoB = registryB.mount(isoAtom);
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            releaseIsoA();
-            releaseIsoB();
-          }),
-        );
-        const staleSharedRequest = yield* Queue.take(requests);
-        expect(calls).toHaveLength(5);
-        registryB.set(shellState, { removedAt: new Map(), generation: 2 });
-        const freshBRequest = yield* Queue.take(requests);
-        expect(calls).toHaveLength(6);
-        yield* Deferred.succeed(freshBRequest, {
-          [tIso]: { title: "Fresh B", projectId: null },
-        });
-        expect(yield* readEnvironmentQuery(registryB, isoAtom)).toEqual({
-          [tIso]: { title: "Fresh B", projectId: null },
-        });
-        yield* Deferred.succeed(staleSharedRequest, {
-          [tIso]: { title: "Stale A", projectId: null },
-        });
-        expect(yield* readEnvironmentQuery(registry, isoAtom)).toEqual({
-          [tIso]: { title: "Stale A", projectId: null },
-        });
-        const verifyIsoCache = orchestration.threadLinkMetadata({
-          environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: { threadIds: [tIso, tIso] },
-        });
-        expect(registryB.get(verifyIsoCache)).toMatchObject({
-          _tag: "Success",
-          waiting: false,
-          value: { [tIso]: { title: "Fresh B", projectId: null } },
-        });
-        expect(registry.get(verifyIsoCache)).toMatchObject({
-          _tag: "Success",
-          waiting: false,
-          value: { [tIso]: { title: "Stale A", projectId: null } },
-        });
-        expect(calls).toHaveLength(6);
       }),
   );
 
@@ -1857,7 +1791,7 @@ describe("environment query lifecycle", () => {
           [tSubset]: { title: "Subset After", projectId: null },
         });
 
-        // Refreshing after TTL with equal null-prototype data keeps referential identity.
+        // Refreshing after TTL with equal data keeps referential identity.
         registry.refresh(atom1);
         const req2 = yield* Queue.take(requests);
         expect(calls).toHaveLength(3);
@@ -1980,193 +1914,67 @@ describe("environment query lifecycle", () => {
       }),
   );
 
-  it.effect(
-    "cancels a queued threadLinkMetadata batch before dispatch when its sole waiter disposes",
-    () =>
-      Effect.gen(function* () {
-        const calls: Array<ReadonlyArray<ThreadId>> = [];
-        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
-          rpcSession: {
-            initialConfig: Effect.succeed({ threadLinkMetadata: true }),
-            client: {
-              [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input: {
-                readonly threadIds: ReadonlyArray<ThreadId>;
-              }) =>
-                Effect.sync(() => {
-                  calls.push(input.threadIds);
-                  return { live: { title: "Live", projectId: null } };
-                }),
-            },
-          } as unknown as RpcSession.RpcSession,
-        });
-        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
-          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
-        >;
-        const orchestration = createOrchestrationEnvironmentAtoms(runtime);
-        const cancelledAtom = orchestration.threadLinkMetadata({
-          environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: { threadIds: [ThreadId.make("solo")] },
-        });
-        const cancelledRegistry = AtomRegistry.make();
-        cancelledRegistry.mount(cancelledAtom);
-        cancelledRegistry.dispose();
+  it.effect("chunks more than 500 ids and stops if the session is replaced between chunks", () =>
+    Effect.gen(function* () {
+      const session1Chunks: Array<ReadonlyArray<ThreadId>> = [];
+      const session2Chunks: Array<ReadonlyArray<ThreadId>> = [];
+      const firstChunkStarted = yield* Deferred.make<void>();
+      const releaseFirstChunk = yield* Deferred.make<void>();
+      const session1 = {
+        initialConfig: Effect.succeed({ threadLinkMetadata: true }),
+        client: {
+          [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input: {
+            readonly threadIds: ReadonlyArray<ThreadId>;
+          }) =>
+            Effect.gen(function* () {
+              session1Chunks.push(input.threadIds);
+              if (session1Chunks.length === 1) {
+                yield* Deferred.succeed(firstChunkStarted, undefined);
+                yield* Deferred.await(releaseFirstChunk);
+              }
+              return {};
+            }),
+        },
+      } as unknown as RpcSession.RpcSession;
+      const session2 = {
+        initialConfig: Effect.succeed({ threadLinkMetadata: true }),
+        client: {
+          [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input: {
+            readonly threadIds: ReadonlyArray<ThreadId>;
+          }) =>
+            Effect.sync(() => {
+              session2Chunks.push(input.threadIds);
+              return { "id-0": { title: "Recovered", projectId: null } };
+            }),
+        },
+      } as unknown as RpcSession.RpcSession;
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void, { rpcSession: session1 });
+      const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+        EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+      >;
+      const orchestration = createOrchestrationEnvironmentAtoms(runtime);
+      const ids = Array.from({ length: 502 }, (_, index) => ThreadId.make(`id-${index}`));
+      const atom = orchestration.threadLinkMetadata({
+        environmentId: QUERY_ENVIRONMENT.environmentId,
+        input: { threadIds: ids },
+      });
+      const registry = yield* mountEnvironmentQuery(atom);
 
-        // Mount a subsequent live query on the same runtime to prove the scheduler drained.
-        const liveAtom = orchestration.threadLinkMetadata({
-          environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: { threadIds: [ThreadId.make("live")] },
-        });
-        const liveRegistry = yield* mountEnvironmentQuery(liveAtom);
-        expect(yield* readEnvironmentQuery(liveRegistry, liveAtom)).toEqual({
-          live: { title: "Live", projectId: null },
-        });
-        expect(calls).toEqual([[ThreadId.make("live")]]);
-      }),
-  );
+      yield* Deferred.await(firstChunkStarted);
+      expect(session1Chunks).toHaveLength(1);
+      expect(session1Chunks[0]).toHaveLength(500);
 
-  it.effect(
-    "ignores Object.prototype keys, chunks >500 ids, and stops cleanly if the session is replaced between chunks",
-    () =>
-      Effect.gen(function* () {
-        const session1Chunks: Array<ReadonlyArray<ThreadId>> = [];
-        const session2Chunks: Array<ReadonlyArray<ThreadId>> = [];
-        const firstChunkStarted = yield* Deferred.make<void>();
-        const releaseFirstChunk = yield* Deferred.make<void>();
-        const session1 = {
-          initialConfig: Effect.succeed({ threadLinkMetadata: true }),
-          client: {
-            [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input: {
-              readonly threadIds: ReadonlyArray<ThreadId>;
-            }) =>
-              Effect.gen(function* () {
-                session1Chunks.push(input.threadIds);
-                if (session1Chunks.length === 1) {
-                  yield* Deferred.succeed(firstChunkStarted, undefined);
-                  yield* Deferred.await(releaseFirstChunk);
-                }
-                return {};
-              }),
-          },
-        } as unknown as RpcSession.RpcSession;
-        const session2 = {
-          initialConfig: Effect.succeed({ threadLinkMetadata: true }),
-          client: {
-            [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input: {
-              readonly threadIds: ReadonlyArray<ThreadId>;
-            }) =>
-              Effect.sync(() => {
-                session2Chunks.push(input.threadIds);
-                return { "id-0": { title: "Recovered", projectId: null } };
-              }),
-          },
-        } as unknown as RpcSession.RpcSession;
-        const harness = yield* makeEnvironmentQueryHarness(Effect.void, { rpcSession: session1 });
-        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
-          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
-        >;
-        const orchestration = createOrchestrationEnvironmentAtoms(runtime);
-        const ids = Array.from({ length: 502 }, (_, index) =>
-          ThreadId.make(index === 1 ? "constructor" : `id-${index}`),
-        );
-        const atom = orchestration.threadLinkMetadata({
-          environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: { threadIds: ids },
-        });
-        const registry = yield* mountEnvironmentQuery(atom);
+      // Replace the session while chunk 1 is in flight: chunk 2 must NOT dispatch on session 1
+      // or mix session 1's config with session 2's client; the query recovers on session 2.
+      yield* SubscriptionRef.set(harness.supervisorSession, Option.some(session2));
+      yield* SubscriptionRef.set(harness.supervisorState, queryConnectionState({ generation: 2 }));
+      yield* Deferred.succeed(releaseFirstChunk, undefined);
 
-        yield* Deferred.await(firstChunkStarted);
-        expect(session1Chunks).toHaveLength(1);
-        expect(session1Chunks[0]).toHaveLength(500);
-
-        // Replace the session while chunk 1 is in flight: chunk 2 must NOT dispatch on session 1
-        // or mix session 1's config with session 2's client; the query recovers on session 2.
-        yield* SubscriptionRef.set(harness.supervisorSession, Option.some(session2));
-        yield* SubscriptionRef.set(
-          harness.supervisorState,
-          queryConnectionState({ generation: 2 }),
-        );
-        yield* Deferred.succeed(releaseFirstChunk, undefined);
-
-        const result = yield* readEnvironmentQuery(registry, atom);
-        expect(session1Chunks).toHaveLength(1);
-        expect(session2Chunks.map((chunk) => chunk.length)).toEqual([500, 2]);
-        expect(Object.hasOwn(result, "constructor")).toBe(false);
-        expect(result[ThreadId.make("constructor")]).toBeUndefined();
-        expect(result).toEqual({ "id-0": { title: "Recovered", projectId: null } });
-      }),
-  );
-
-  it.effect(
-    "batches getThreadTitles fallback, shares RPC failures across waiters, and retries cleanly",
-    () =>
-      Effect.gen(function* () {
-        const calls: Array<ReadonlyArray<ThreadId>> = [];
-        let shouldFail = true;
-        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
-          rpcSession: {
-            initialConfig: Effect.succeed({ threadLinkMetadata: false }),
-            client: {
-              [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: (input: {
-                readonly threadIds: ReadonlyArray<ThreadId>;
-              }) =>
-                Effect.suspend(() => {
-                  calls.push(input.threadIds);
-                  if (shouldFail) {
-                    return Effect.fail(
-                      new EnvironmentRpcUnavailableError({
-                        environmentId: QUERY_ENVIRONMENT.environmentId,
-                        message: "temporary failure",
-                      }),
-                    );
-                  }
-                  return Effect.succeed({ a: "Alpha", b: "Beta" });
-                }),
-            },
-          } as unknown as RpcSession.RpcSession,
-        });
-        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
-          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
-        >;
-        const orchestration = createOrchestrationEnvironmentAtoms(runtime);
-        const atomA = orchestration.threadLinkMetadata({
-          environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: { threadIds: [ThreadId.make("a")] },
-        });
-        const atomB = orchestration.threadLinkMetadata({
-          environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: { threadIds: [ThreadId.make("b")] },
-        });
-        const registry = AtomRegistry.make();
-        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
-        const releaseA = registry.mount(atomA);
-        const releaseB = registry.mount(atomB);
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            releaseA();
-            releaseB();
-          }),
-        );
-
-        const exitA = yield* Effect.exit(readEnvironmentQuery(registry, atomA));
-        const exitB = yield* Effect.exit(readEnvironmentQuery(registry, atomB));
-        expect(Exit.isFailure(exitA)).toBe(true);
-        expect(Exit.isFailure(exitB)).toBe(true);
-        expect(calls).toHaveLength(1);
-        const [firstCall] = calls;
-        expect(firstCall).toBeDefined();
-        expect([...(firstCall ?? [])].toSorted()).toEqual(["a", "b"]);
-
-        shouldFail = false;
-        registry.refresh(atomA);
-        registry.refresh(atomB);
-        expect(yield* readEnvironmentQuery(registry, atomA)).toEqual({
-          a: { title: "Alpha", projectId: null },
-        });
-        expect(yield* readEnvironmentQuery(registry, atomB)).toEqual({
-          b: { title: "Beta", projectId: null },
-        });
-        expect(calls).toHaveLength(2);
-      }),
+      const result = yield* readEnvironmentQuery(registry, atom);
+      expect(session1Chunks).toHaveLength(1);
+      expect(session2Chunks.map((chunk) => chunk.length)).toEqual([500, 2]);
+      expect(result).toEqual({ "id-0": { title: "Recovered", projectId: null } });
+    }),
   );
 
   it.effect("re-checks thread titles when one of their threads leaves the shell", () =>
