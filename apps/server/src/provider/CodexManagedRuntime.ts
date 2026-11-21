@@ -27,6 +27,8 @@ const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>) =>
     "features.api_key_model_discovery=true",
     "features.multi_agent=false",
     "features.multi_agent_v2=false",
+    // Catalog models declaring multi_agent_version still get agent tools without this.
+    "agents.enabled=false",
   ]
     .map((value) => `-c ${JSON.stringify(value)}`)
     .join(" ");
