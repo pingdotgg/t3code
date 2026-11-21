@@ -1604,13 +1604,12 @@ const nativeSubagentRef = (subagent: OrchestrationV2Subagent): DyingNativeSubage
   providerInstanceId: subagent.providerInstanceId,
 });
 
+/** A task this app delegated to a thread of its own, here or in a linked environment. */
+const hasDelegatedChild = (task: OrchestrationV2Subagent) =>
+  task.origin === "app_owned" && (task.childThreadId !== null || task.remoteChild !== undefined);
+
 const hasRunningDelegatedTasks = (subagents: ReadonlyArray<OrchestrationV2Subagent>) =>
-  subagents.some(
-    (task) =>
-      task.origin === "app_owned" &&
-      task.childThreadId !== null &&
-      isOrchestrationV2WorkActive(task.status),
-  );
+  subagents.some((task) => hasDelegatedChild(task) && isOrchestrationV2WorkActive(task.status));
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
   const checkpointService = yield* CheckpointServiceV2;
@@ -14375,10 +14374,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (projection.thread.deletedAt !== null) return undefined;
     // Queued after the interrupt, since a thread's effects run in order.
     const stopDelegatedTasks =
-      command.stopDelegatedTasks === false ||
-      !projection.subagents.some(
-        (task) => task.origin === "app_owned" && task.childThreadId !== null,
-      )
+      command.stopDelegatedTasks === false || !projection.subagents.some(hasDelegatedChild)
         ? Effect.void
         : Ref.update(effects, (existing) => [...existing, delegatedTasksStopEffect(command)]);
     const latestRun = projection.runs.findLast((run) => run.status !== "queued");

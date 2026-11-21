@@ -1,10 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderDriverKind,
@@ -134,6 +136,39 @@ function makeProjection(): OrchestrationV2ThreadProjection {
   };
 }
 
+/** A task delegated to a thread of its own, here (`childThreadId`) or in a linked environment. */
+const delegatedTask = (
+  name: string,
+  status: OrchestrationV2Subagent["status"],
+  child: Pick<OrchestrationV2Subagent, "childThreadId" | "remoteChild">,
+): OrchestrationV2Subagent => ({
+  id: NodeId.make(`task:delete-plan:${name}`),
+  threadId,
+  runId: null,
+  parentNodeId: NodeId.make("node:delete-plan:completed"),
+  origin: "app_owned",
+  createdBy: "agent",
+  driver,
+  providerInstanceId,
+  providerThreadId: null,
+  nativeTaskRef: null,
+  prompt: name,
+  title: null,
+  model: null,
+  status,
+  result: status === "running" ? null : "done",
+  startedAt: createdAt,
+  completedAt: status === "running" ? null : createdAt,
+  updatedAt: createdAt,
+  ...child,
+});
+
+const remoteChild = (name: string) => ({
+  environmentId: EnvironmentId.make("environment:box"),
+  threadId: ThreadId.make(`thread:box:${name}`),
+  label: "Box",
+});
+
 it.effect("cancels active work without reviving a run while disposing delegated completion", () =>
   Effect.gen(function* () {
     const base = makeProjection();
@@ -177,6 +212,16 @@ it.effect("cancels active work without reviving a run while disposing delegated 
           completedAt: createdAt,
           updatedAt: createdAt,
         },
+        // Finished tasks whose threads may since run other work: the deletion leaves them be.
+        delegatedTask("finished-here", "completed", {
+          childThreadId: ThreadId.make("thread:delete-plan:child"),
+        }),
+        ...["first", "second"].map((name) =>
+          delegatedTask(`finished-there-${name}`, "completed", {
+            childThreadId: null,
+            remoteChild: remoteChild(name),
+          }),
+        ),
       ],
     };
     const plan = yield* planThreadDeletion({
@@ -188,6 +233,10 @@ it.effect("cancels active work without reviving a run while disposing delegated 
       now: deletedAt,
       idAllocator: yield* IdAllocator.IdAllocatorV2,
     });
+    assert.notInclude(
+      plan.effects.map((effect) => effect.request.type),
+      "delegated-tasks.stop",
+    );
     const deleted = plan.events.reduce(applyToProjection, projection);
     assert.deepEqual(deleted.thread.deletedAt, deletedAt);
     assert.equal(deleted.thread.worktreePath, "/workspace/feature");
@@ -231,6 +280,12 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
     const projection: OrchestrationV2ThreadProjection = {
       ...base,
       thread: { ...base.thread, deletedAt: createdAt },
+      subagents: [
+        delegatedTask("running-there", "running", {
+          childThreadId: null,
+          remoteChild: remoteChild("running"),
+        }),
+      ],
       providerSessions: ["running", "stopped", "error"].map((status) => ({
         id: ProviderSessionId.make(`session:delete-plan:${status}`),
         driver,
@@ -300,6 +355,8 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         { type: "terminal.cleanup" },
         { type: "preview.cleanup" },
         { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
+        // Last, so a stop waiting on another machine holds up none of the cleanup.
+        { type: "delegated-tasks.stop", reason: "Thread deleted." },
       ],
     );
   }).pipe(Effect.provide(IdAllocator.layer)),

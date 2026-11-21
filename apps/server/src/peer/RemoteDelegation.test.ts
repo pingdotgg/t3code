@@ -44,7 +44,7 @@ import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as TestClock from "effect/testing/TestClock";
-import type * as SqlClient from "effect/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
@@ -2718,42 +2718,54 @@ it.effect("a Stop on a task that has its result reaches there after a restart", 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("a parent stopped while the box is unreachable still stops its task there", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const retries = yield* steppedRetries;
-      const a = yield* makeLaptop(database, offers).pipe(
-        Effect.provideService(RemoteDelegation.FollowRetrySchedule, retries.schedule),
-      );
-      yield* linkTo(a.links, b, "full-access");
-      yield* seedParent(a);
-      // The box sleeps as soon as the task is there, so its follower's first attempt fails.
-      yield* Ref.set(
-        thread.afterLaunch,
-        Ref.set(b.descriptor, descriptorOf("environment-elsewhere", "Elsewhere")),
-      );
-      const delegated = yield* delegateToBox(a);
-      yield* Queue.take(retries.failed);
-      // The parent is stopped meanwhile.
-      yield* a.threads.stopDelegatedTasks({
-        threadId: parentThreadId,
-        commandId: CommandId.make("command:stop:laptop-parent-offline"),
-      });
-      expect(yield* taskResult(a, delegated.taskId)).toMatchObject({ status: "interrupted" });
+it.effect.each(["stop", "delete"] as const)(
+  "a parent's %s while the box is unreachable still stops its task there",
+  (change) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const retries = yield* steppedRetries;
+        const a = yield* makeLaptop(database, offers).pipe(
+          Effect.provideService(RemoteDelegation.FollowRetrySchedule, retries.schedule),
+        );
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
+        // The box sleeps as soon as the task is there, so its follower's first attempt fails.
+        yield* Ref.set(
+          thread.afterLaunch,
+          Ref.set(b.descriptor, descriptorOf("environment-elsewhere", "Elsewhere")),
+        );
+        const delegated = yield* delegateToBox(a);
+        yield* Queue.take(retries.failed);
+        // The parent is stopped or deleted meanwhile, which queues the stop the effect worker runs.
+        const commandId = CommandId.make(`command:${change}:laptop-parent-offline`);
+        yield* a.orchestrator.dispatch({
+          type: `thread.${change}`,
+          commandId,
+          threadId: parentThreadId,
+        });
+        const sql = Context.get(database, SqlClient.SqlClient);
+        expect(
+          yield* sql<{ readonly effect_type: string }>`
+          SELECT effect_type FROM orchestration_v2_effect_outbox
+          WHERE command_id = ${commandId} AND effect_type = 'delegated-tasks.stop'
+        `,
+        ).toHaveLength(1);
+        yield* a.threads.stopDelegatedTasks({ threadId: parentThreadId, commandId });
+        expect(yield* taskResult(a, delegated.taskId)).toMatchObject({ status: "interrupted" });
 
-      // Once the box is back, the follower's next attempt stops the task there.
-      yield* Ref.set(b.descriptor, box);
-      yield* Queue.offer(retries.retry, undefined);
-      yield* Deferred.await(thread.interruptedOnce);
-      expect(yield* Ref.get(thread.interrupted)).toBe(1);
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        // Once the box is back, the follower's next attempt stops the task there.
+        yield* Ref.set(b.descriptor, box);
+        yield* Queue.offer(retries.retry, undefined);
+        yield* Deferred.await(thread.interruptedOnce);
+        expect(yield* Ref.get(thread.interrupted)).toBe(1);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task cancelled while the box is unreachable is stopped there after a restart", () =>
@@ -2794,6 +2806,53 @@ it.effect("a task cancelled while the box is unreachable is stopped there after 
       expect(yield* taskResult(after, delegated.taskId)).toMatchObject({ status: "cancelled" });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a parent deleted while the box is unreachable stops its task there after a restart",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+        // The parent is deleted while the box sleeps, then the laptop restarts before it wakes.
+        const delegated = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const before = yield* makeLaptop(database, offers, linking);
+            yield* linkTo(before.links, b, "full-access");
+            yield* seedParent(before);
+            const task = yield* delegateToBox(before);
+            yield* Ref.set(b.descriptor, descriptorOf("environment-elsewhere", "Elsewhere"));
+            const commandId = CommandId.make("command:delete:laptop-parent-restart");
+            yield* before.orchestrator.dispatch({
+              type: "thread.delete",
+              commandId,
+              threadId: parentThreadId,
+            });
+            // What the deletion's delegated-tasks.stop effect runs.
+            yield* before.threads.stopDelegatedTasks({ threadId: parentThreadId, commandId });
+            expect(yield* taskResult(before, task.taskId)).toMatchObject({ status: "interrupted" });
+            return task;
+          }),
+        );
+        expect(yield* Ref.get(thread.interrupted)).toBe(0);
+
+        yield* Ref.set(b.descriptor, box);
+        const after = yield* makeLaptop(database, offers, linking);
+        expect(yield* after.projections.getOpenRemoteDelegatedTasks).toEqual([
+          { parentThreadId, taskId: delegated.taskId },
+        ]);
+        yield* after.remote.start();
+        yield* Deferred.await(thread.interruptedOnce);
+        yield* stoppedThere(after, delegated.taskId, null);
+        expect(yield* after.projections.getOpenRemoteDelegatedTasks).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 /** Waits until the laptop records that the task's thread there knows its parent is done. */
@@ -2864,7 +2923,7 @@ const finishedOnBox = (
   });
 
 it.effect.each(["settle", "archive", "delete"] as const)(
-  "a parent here that is done (%s) tells its running task's thread there",
+  "a parent here that is done (%s) tells its task's thread there",
   (change) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2878,10 +2937,13 @@ it.effect.each(["settle", "archive", "delete"] as const)(
         yield* linkTo(a.links, b, "full-access");
         yield* seedParent(a);
         yield* a.remote.start();
-        const delegated = yield* delegateToBox(a);
-        yield* endParentRun(a);
+        // Archive waits for the task, as for one delegated here; settle and delete do not.
+        const delegated =
+          change === "archive"
+            ? yield* finishedOnBox(a, thread)
+            : yield* delegateToBox(a).pipe(Effect.tap(() => endParentRun(a)));
 
-        // The task still runs there; the thread there learns its parent is done anyway.
+        // The thread there learns its parent is done, even while the task still runs.
         yield* doneParent(a, change);
         yield* Deferred.await(thread.parentDoneOnce);
         expect(yield* Ref.get(thread.parentDone)).toEqual([

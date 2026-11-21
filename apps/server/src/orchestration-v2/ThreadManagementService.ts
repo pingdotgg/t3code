@@ -14,6 +14,7 @@ import {
   CommandId,
   isDelegatedAppThread,
   isListedThreadLineage,
+  isOrchestrationV2WorkActive,
   MessageId,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
@@ -1703,13 +1704,18 @@ const make = Effect.gen(function* () {
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = Effect.fn(
     "ThreadManagementService.stopDelegatedTasks",
   )(function* (input) {
-    const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, ["subagents"]);
+    const { thread, subagents } = yield* orchestrator.getThreadRecords(input.threadId, [
+      "subagents",
+    ]);
     const failures: Array<
       Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
     > = [];
     const stoppedChildThreadIds = new Set<ThreadId>();
     for (const task of subagents) {
       if (task.origin !== "app_owned") continue;
+      // A deleted parent owes nothing to what a finished task's thread does since: it may be
+      // reused there for other work.
+      if (thread.deletedAt !== null && !isOrchestrationV2WorkActive(task.status)) continue;
       if (task.childThreadId === null) {
         // A task in a linked environment ends here; its follower then stops it there.
         // One with its result keeps it, but its thread there may run follow-up work.

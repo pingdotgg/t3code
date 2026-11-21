@@ -227,13 +227,16 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       const index = yield* (yield* ProjectionStore.ProjectionStoreV2).listActiveShellIndex();
       assert.isTrue(index.find((entry) => entry.id === parent.threadId)?.hasRemoteTasks);
       assert.isFalse(index.find((entry) => entry.id === other.threadId)?.hasRemoteTasks);
-      // Nothing here can cancel the task there, so it must not block archiving.
-      yield* orchestrator.dispatch({
-        type: "thread.archive",
-        commandId: CommandId.make("command:archive:records"),
-        threadId: parent.threadId,
-      });
-      assert.isNotNull((yield* orchestrator.getThreadShell(parent.threadId))?.archivedAt);
+      // Archive waits for it, as it does for a task delegated to a thread here.
+      const archive = yield* orchestrator
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("command:archive:records"),
+          threadId: parent.threadId,
+        })
+        .pipe(Effect.flip);
+      assert.include(String(archive.cause), "has running delegated tasks");
+      assert.isNull((yield* orchestrator.getThreadShell(parent.threadId))?.archivedAt);
     }),
   );
 
@@ -290,6 +293,15 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
         });
       const [first] = yield* request("first");
       assert.deepEqual(yield* owed, []);
+      // Archive waits for the task to end here; its thread there is still owed the parent's end.
+      yield* orchestrator.dispatch({
+        type: "delegated_task.remote.complete",
+        commandId: CommandId.make("command:parent-done:first-completed"),
+        parentThreadId: parent.threadId,
+        taskId: first!,
+        status: "completed",
+        result: "Done there.",
+      });
       yield* change("thread.archive");
       assert.deepEqual(yield* owed, owedThere(first!));
       yield* confirm(first!);

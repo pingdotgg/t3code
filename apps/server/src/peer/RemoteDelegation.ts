@@ -13,6 +13,7 @@ import {
   type OrchestratorMcpThreadTimelineItem,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
+  type OrchestrationV2ThreadShell,
   type ProjectId,
   type ProviderInstanceId,
   ProviderDriverKind,
@@ -587,12 +588,33 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * A deleted parent can no longer call as a thread, so what its task there is still owed goes
+   * as a client held to the modes the parent had.
+   */
+  const deletedParentScope = (
+    parent: Pick<
+      OrchestrationV2ThreadShell,
+      "id" | "title" | "providerInstanceId" | "runtimeMode" | "interactionMode"
+    >,
+    remote: OrchestrationV2RemoteTaskChild,
+  ): McpInvocationContext.McpInvocationScope => ({
+    ...followScope({ threadId: parent.id, providerInstanceId: parent.providerInstanceId }, remote),
+    thread: undefined,
+    client: {
+      sessionId: `remote-task:${parent.id}`,
+      label: parent.title,
+      access: parent.runtimeMode,
+      narrowedTo: { runtimeMode: parent.runtimeMode, interactionMode: parent.interactionMode },
+    },
+  });
+
+  /**
    * Stops the task's own thread there as its Stop button does: its running turn, queued
    * messages, pull request watches and delegated tasks. `key` names the stop (the follower
    * sends one, each cancel its own), and each is recorded there once however often it is sent.
    */
   const stopThere = (
-    scope: ThreadScope,
+    scope: McpInvocationContext.McpInvocationScope,
     remote: OrchestrationV2RemoteTaskChild,
     key: string,
     reason?: string,
@@ -613,7 +635,7 @@ const make = Effect.gen(function* () {
    * Led by a note when its provider reported running another model than it asked for.
    */
   const lastReply = Effect.fn("RemoteDelegation.lastReply")(function* (
-    scope: ThreadScope,
+    scope: McpInvocationContext.McpInvocationScope,
     remote: OrchestrationV2RemoteTaskChild,
     runId: RunId | null,
     failed = false,
@@ -780,10 +802,13 @@ const make = Effect.gen(function* () {
     const { thread, task } = yield* readTask(parentThreadId, taskId);
     if (task?.remoteChild === undefined) return true;
     const remote = task.remoteChild;
-    const scope = followScope(
-      { threadId: parentThreadId, providerInstanceId: thread.providerInstanceId },
-      remote,
-    );
+    const scope =
+      thread.deletedAt === null
+        ? followScope(
+            { threadId: parentThreadId, providerInstanceId: thread.providerInstanceId },
+            remote,
+          )
+        : deletedParentScope(thread, remote);
     // Ended here, maybe while this follower backed off from an unreachable
     // machine or before a restart: it still has to be stopped there. So
     // does one its parent here was stopped after, for what followed there.

@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
   ContextTransferId,
   EventId,
   MessageId,
@@ -651,6 +652,109 @@ it.effect("a repeated Stop that changes nothing still stops the delegated tasks"
     assert.deepEqual(
       walks.map((row) => row.command_id),
       ["stop-again:first", "stop-again:second"],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("deleting a parent leaves alone what its finished tasks' threads do since", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const sql = yield* SqlClient.SqlClient;
+    const parentThreadId = ThreadId.make("thread:delete-finished-parent");
+    yield* createWatchingThread(parentThreadId, 1);
+    yield* send(parentThreadId, "parent", "start_immediately");
+    const childThreadId = yield* delegate(parentThreadId, "finished child");
+    const now = yield* DateTime.now;
+    const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+    yield* projections.apply({
+      id: EventId.make("event:delete-finished:child-run-completed"),
+      type: "run.updated",
+      threadId: childThreadId,
+      runId: childRun.id,
+      occurredAt: now,
+      payload: { ...childRun, status: "completed", completedAt: now },
+    });
+    const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+    const task = parent.subagents.find((candidate) => candidate.childThreadId === childThreadId)!;
+    yield* projections.apply({
+      id: EventId.make("event:delete-finished:task-completed"),
+      type: "subagent.updated",
+      threadId: parentThreadId,
+      ...(task.runId === null ? {} : { runId: task.runId }),
+      nodeId: task.id,
+      driver: task.driver,
+      providerInstanceId: task.providerInstanceId,
+      occurredAt: now,
+      payload: { ...task, status: "completed", result: "Done.", completedAt: now, updatedAt: now },
+    });
+    // Another agent reuses the finished task's thread for work of its own.
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("send:delete-finished:other-agent"),
+      threadId: childThreadId,
+      messageId: MessageId.make("message:delete-finished:other-agent"),
+      text: "other work",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "agent",
+      creationSource: "mcp",
+      senderThreadId: ThreadId.make("thread:delete-finished-other-agent"),
+    });
+    const reused = yield* threadState(childThreadId);
+    assert.deepEqual(reused.runs, ["completed", "starting"]);
+    const parentRun = parent.runs.at(-1)!;
+    for (const name of ["first", "second"]) {
+      yield* orchestrator.dispatch({
+        type: "delegated_task.remote.request",
+        commandId: CommandId.make(`delete-finished:remote:${name}`),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: `remote ${name}`,
+        driver: ProviderDriverKind.make("remote"),
+        modelSelection,
+        remoteChild: {
+          environmentId: EnvironmentId.make("environment:box"),
+          threadId: ThreadId.make(`thread:box:${name}`),
+          label: "Box",
+        },
+      });
+      const remote = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+        (candidate) => candidate.prompt === `remote ${name}`,
+      )!;
+      yield* orchestrator.dispatch({
+        type: "delegated_task.remote.complete",
+        commandId: CommandId.make(`delete-finished:remote-done:${name}`),
+        parentThreadId,
+        taskId: remote.id,
+        status: "completed",
+        result: "Done there.",
+        stoppedThere: "ran-out",
+      });
+    }
+
+    const deleteId = CommandId.make("delete-finished:delete");
+    yield* orchestrator.dispatch({
+      type: "thread.delete",
+      commandId: deleteId,
+      threadId: parentThreadId,
+    });
+    const walks = yield* sql<{ readonly effect_type: string }>`
+      SELECT effect_type FROM orchestration_v2_effect_outbox
+      WHERE command_id = ${deleteId} AND effect_type = 'delegated-tasks.stop'
+    `;
+    assert.lengthOf(walks, 0);
+    // Nor does a walk an earlier server queued for the deletion.
+    yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: deleteId });
+    assert.deepEqual(yield* threadState(childThreadId), reused);
+    const { subagents } = yield* projections.getThreadRecords(parentThreadId, ["subagents"]);
+    assert.deepEqual(
+      subagents.flatMap((candidate) =>
+        candidate.remoteChild === undefined ? [] : [candidate.remoteChild.stoppedThere],
+      ),
+      [true, true],
     );
   }).pipe(Effect.provide(layerTest)),
 );
