@@ -89,7 +89,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
 
   const continuePendingAction = async () => {
     if (!canWriteSourceControl || !confirmAction) return;
-    navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
+    navigation.dispatch(StackActions.popTo("Thread", { environmentId, threadId }, { merge: true }));
     await gitActions.onRunSelectedThreadGitAction({
       action: confirmAction,
       ...(params.commitMessage ? { commitMessage: params.commitMessage } : {}),
@@ -99,7 +99,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
 
   const movePendingActionToFeatureBranch = useCallback(async () => {
     if (!canCreateFeatureBranch || !confirmAction) return;
-    navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
+    navigation.dispatch(StackActions.popTo("Thread", { environmentId, threadId }, { merge: true }));
 
     if (includesCommit) {
       await gitActions.onRunSelectedThreadGitAction({
