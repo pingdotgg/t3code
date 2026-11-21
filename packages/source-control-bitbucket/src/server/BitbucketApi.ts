@@ -249,6 +249,23 @@ export class BitbucketCheckoutError extends Schema.TaggedError<BitbucketCheckout
   }
 }
 
+const MISSING_CREDENTIAL_DETAIL =
+  "Add a Bitbucket token in Settings → Source control & issues, or set the T3CODE_BITBUCKET_* environment variables on the server.";
+
+/** Bitbucket rate-limits anonymous requests; without a credential a 429 will not clear. */
+export class BitbucketCredentialMissingError extends Schema.TaggedError<BitbucketCredentialMissingError>()(
+  "BitbucketCredentialMissingError",
+  {},
+) {
+  get detail(): string {
+    return MISSING_CREDENTIAL_DETAIL;
+  }
+
+  override get message(): string {
+    return `Bitbucket rejected an anonymous request: ${this.detail}`;
+  }
+}
+
 /** Reject response-supplied URLs that could leak credentials. */
 export class BitbucketUntrustedUrlError extends Schema.TaggedError<BitbucketUntrustedUrlError>()(
   "BitbucketUntrustedUrlError",
@@ -278,6 +295,7 @@ export const BitbucketApiError = Schema.Union([
   BitbucketRepositoryRemoteNotFoundError,
   BitbucketPullRequestBodyReadError,
   BitbucketCheckoutError,
+  BitbucketCredentialMissingError,
   SourceControlRateLimit.SourceControlRateLimitPausedError,
   SettingsSecretUnresolvedError,
 ]);
@@ -608,9 +626,7 @@ function authFromCredential(credential: BitbucketCredential | null): SourceContr
     status: "unauthenticated",
     account: Option.none(),
     host: Option.some("bitbucket.org"),
-    detail: Option.some(
-      "Add a Bitbucket token in Settings → Source control & issues, or set the T3CODE_BITBUCKET_* environment variables on the server.",
-    ),
+    detail: Option.some(MISSING_CREDENTIAL_DETAIL),
   };
 }
 
@@ -696,16 +712,15 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const withAuth = (request: HttpClientRequest.HttpClientRequest) =>
-    currentCredential.pipe(
-      Effect.map((credential) =>
-        credential === null
-          ? request
-          : credential.kind === "access-token"
-            ? request.pipe(HttpClientRequest.bearerToken(credential.accessToken))
-            : request.pipe(HttpClientRequest.basicAuth(credential.email, credential.apiToken)),
-      ),
-    );
+  const withAuth = (
+    request: HttpClientRequest.HttpClientRequest,
+    credential: BitbucketCredential | null,
+  ) =>
+    credential === null
+      ? request
+      : credential.kind === "access-token"
+        ? request.pipe(HttpClientRequest.bearerToken(credential.accessToken))
+        : request.pipe(HttpClientRequest.basicAuth(credential.email, credential.apiToken));
 
   /**
    * Every request waits for one of the shared slots, then honors the pause a 429 starts for the
@@ -714,20 +729,31 @@ export const make = Effect.gen(function* () {
    * on it, so it still goes out.
    */
   const throttled = Effect.fn("BitbucketApi.throttled")(
-    function* <A, R>(method: string, effect: Effect.Effect<A, BitbucketApiError, R>) {
+    function* <A, R>(
+      method: string,
+      effect: (credential: BitbucketCredential | null) => Effect.Effect<A, BitbucketApiError, R>,
+    ) {
       const interactive = yield* SourceControlRateLimit.Interactive;
       const lease = yield* limits.check(
         rateLimitKey,
         interactive || method !== "GET" ? { allowPaused: true } : undefined,
       );
-      return yield* effect.pipe(
+      const credential = yield* currentCredential;
+      return yield* effect(credential).pipe(
         Effect.tap(() => limits.recordSuccess({ ...rateLimitKey, lease })),
-        Effect.tapError((error) =>
-          (error._tag === "BitbucketResponseError" ||
-            error._tag === "BitbucketResponseBodyReadError") &&
-          error.status === 429
-            ? limits.recordRateLimit({ ...rateLimitKey, lease, retryAt: error.retryAt })
-            : Effect.void,
+        Effect.catchIf(
+          (error): error is BitbucketResponseError | BitbucketResponseBodyReadError =>
+            (error._tag === "BitbucketResponseError" ||
+              error._tag === "BitbucketResponseBodyReadError") &&
+            error.status === 429,
+          (error): Effect.Effect<never, BitbucketApiError> =>
+            // An anonymous 429 is a missing token, not a quota that resets; pausing the host
+            // would make every later read look rate-limited again.
+            credential === null
+              ? Effect.fail(new BitbucketCredentialMissingError())
+              : limits
+                  .recordRateLimit({ ...rateLimitKey, lease, retryAt: error.retryAt })
+                  .pipe(Effect.andThen(Effect.fail(error))),
         ),
       );
     },
@@ -759,14 +785,9 @@ export const make = Effect.gen(function* () {
     request: HttpClientRequest.HttpClientRequest,
     schema: S,
   ): Effect.Effect<S["Type"], BitbucketApiError, S["DecodingServices"]> =>
-    throttled(
-      request.method,
-      withAuth(request.pipe(HttpClientRequest.acceptJson)).pipe(
-        Effect.flatMap((authed) =>
-          httpClient
-            .execute(authed)
-            .pipe(Effect.mapError((cause) => new BitbucketRequestError({ operation, cause }))),
-        ),
+    throttled(request.method, (credential) =>
+      httpClient.execute(withAuth(request.pipe(HttpClientRequest.acceptJson), credential)).pipe(
+        Effect.mapError((cause) => new BitbucketRequestError({ operation, cause })),
         Effect.flatMap((response) => decodeResponse(operation, schema, response)),
         Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
         Effect.catchTags({
@@ -953,6 +974,7 @@ export const make = Effect.gen(function* () {
     readonly url: string;
     readonly body?: string;
     readonly redirects: number;
+    readonly credential: BitbucketCredential | null;
   }): Effect.Effect<HttpClientResponse.HttpClientResponse, BitbucketApiError> => {
     const url = trustedUrl(input.url);
     if (url === null) {
@@ -973,16 +995,9 @@ export const make = Effect.gen(function* () {
       input.body === undefined
         ? base
         : base.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
-    return withAuth(withBody).pipe(
-      Effect.flatMap((request) =>
-        httpClient
-          .execute(request)
-          .pipe(
-            Effect.mapError(
-              (cause): BitbucketApiError =>
-                new BitbucketRequestError({ operation: "request", cause }),
-            ),
-          ),
+    return httpClient.execute(withAuth(withBody, input.credential)).pipe(
+      Effect.mapError(
+        (cause): BitbucketApiError => new BitbucketRequestError({ operation: "request", cause }),
       ),
       Effect.flatMap((response) => {
         const location = response.headers.location;
@@ -1004,9 +1019,8 @@ export const make = Effect.gen(function* () {
   };
 
   const request: BitbucketApi["Service"]["request"] = (input) =>
-    throttled(
-      input.method,
-      send({ ...input, redirects: 0 }).pipe(
+    throttled(input.method, (credential) =>
+      send({ ...input, redirects: 0, credential }).pipe(
         Effect.flatMap((response) =>
           HttpClientResponse.matchStatus({
             // Read through the body stream rather than `text`, so an oversized diff is stopped as

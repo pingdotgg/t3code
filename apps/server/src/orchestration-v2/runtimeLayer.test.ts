@@ -31,6 +31,7 @@ import {
   type PullRequestDetail,
   type PullRequestComment,
   PullRequestOperationError,
+  PullRequestUnavailableError,
   type PullRequestWatchUntil,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -4544,6 +4545,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     { reason: "failed", activityFails: true },
     { reason: "not-found", activityFails: true },
     { reason: "forbidden", activityFails: true },
+    { reason: "unauthenticated", activityFails: false },
   ] as const)(
     "handles repeated host read failures: $reason (activity fails: $activityFails)",
     ({ reason, activityFails }) =>
@@ -4588,17 +4590,25 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         let passed = false;
         let genericFailure = false;
         const activityFailures = yield* Queue.unbounded<void>();
-        const readFailure = (operation: string, failure: "failed" | "not-found" | "forbidden") =>
-          new PullRequestOperationError({
-            operation,
-            detail: "host read failed",
-            cause: new PullRequestProviderError({
-              provider: SourceControlProviderKind.make("github"),
-              operation,
-              reason: failure,
-              detail: "host read failed",
-            }),
-          });
+        const readFailure = (
+          operation: string,
+          failure: "failed" | "not-found" | "forbidden" | "unauthenticated",
+        ) =>
+          failure === "unauthenticated"
+            ? new PullRequestUnavailableError({
+                reason: "cli-unauthenticated",
+                requirement: "Add a token in Settings.",
+              })
+            : new PullRequestOperationError({
+                operation,
+                detail: "host read failed",
+                cause: new PullRequestProviderError({
+                  provider: SourceControlProviderKind.make("github"),
+                  operation,
+                  reason: failure,
+                  detail: "host read failed",
+                }),
+              });
         const reactor = yield* PullRequestWatchReactor.make.pipe(
           Effect.provide(
             Layer.mergeAll(
@@ -4655,6 +4665,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* sweep;
         assert.deepEqual(yield* summaries, []);
         disconnected = true;
+        if (reason === "unauthenticated") {
+          yield* TestClock.adjust("2 minutes");
+          yield* sweep;
+          const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+          assert.isUndefined(
+            (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch,
+          );
+          assert.include(messages.at(-1)?.text, "Add a token in Settings.");
+          return;
+        }
         for (let pass = 0; pass < 15; pass += 1) {
           genericFailure = reason === "failed" && (pass === 0 || (pass >= 2 && pass <= 8));
           yield* TestClock.adjust("2 minutes");
