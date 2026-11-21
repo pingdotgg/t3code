@@ -1,4 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
+import * as Cause from "effect/Cause";
+import type { AccessibilityActionEvent } from "react-native";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
@@ -84,6 +86,7 @@ import {
   threadHasUnseenCompletion,
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
+  resolveThreadListV2ReadAction,
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
@@ -910,8 +913,58 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     m,
   );
 
+  const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const markThreadUnread = useAtomCommand(threadEnvironment.markUnread, { reportFailure: false });
+  const readAction = resolveThreadListV2ReadAction(thread);
+  const handleToggleRead = useCallback(async () => {
+    if (!canOperateThread || readAction === null) return;
+    const result =
+      readAction === "read"
+        ? await visitThread({
+            environmentId: thread.environmentId,
+            input: { threadId: thread.id, visitedAt: thread.updatedAt },
+          })
+        : await markThreadUnread({
+            environmentId: thread.environmentId,
+            input: { threadId: thread.id },
+          });
+    if (result._tag === "Failure") {
+      Dialog.alert(
+        readAction === "read"
+          ? gt("Could not mark thread read")
+          : gt("Could not mark thread unread"),
+        String(Cause.squash(result.cause)),
+      );
+    }
+  }, [
+    canOperateThread,
+    gt,
+    markThreadUnread,
+    readAction,
+    thread.environmentId,
+    thread.id,
+    thread.updatedAt,
+    visitThread,
+  ]);
+  const swipeRightAction = useMemo(
+    () =>
+      readAction === null
+        ? undefined
+        : {
+            accessibilityLabel:
+              readAction === "read"
+                ? gt("Mark {title} read", { title: thread.title })
+                : gt("Mark {title} unread", { title: thread.title }),
+            icon: readAction === "read" ? ("eye" as const) : ("eye.slash" as const),
+            label:
+              readAction === "read"
+                ? gt("Read", { $context: "verb, mark a thread as read" })
+                : gt("Unread", { $context: "verb, mark a thread as unread" }),
+            onPress: handleToggleRead,
+          },
+    [gt, handleToggleRead, readAction, thread.title],
+  );
   const handleAcknowledgeWoke = useCallback(() => {
     if (props.wokeAt === null) return;
     void visitThread({
@@ -924,13 +977,26 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => [
       ...(prBadgeLabel ? [{ name: "openPullRequests", label: prBadgeLabel }] : []),
       ...(showsWoke ? [{ name: "dismissWoke", label: gt("Dismiss Woke notification") }] : []),
+      ...(canOperateThread && readAction !== null
+        ? [
+            {
+              name: "toggleRead",
+              label: readAction === "read" ? gt("Mark read") : gt("Mark unread"),
+            },
+          ]
+        : []),
     ],
-    [gt, prBadgeLabel, showsWoke],
+    [canOperateThread, gt, prBadgeLabel, readAction, showsWoke],
   );
+
+  const handleRowAccessibilityAction = (event: AccessibilityActionEvent) => {
+    if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
+    if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
+    if (event.nativeEvent.actionName === "toggleRead") void handleToggleRead();
+  };
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
-  const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const canShareWithGuest = useCanShareWithGuest(thread.environmentId);
   const navigation = useNavigation();
   const handleRegenerateTitle = useCallback(
@@ -1357,11 +1423,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : null,
     [gt, handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
-  const swipeAccessibilityHint = !canOperateThread
+  const leftSwipeAccessibilityHint = !canOperateThread
     ? gt("Opens the thread")
     : secondaryAction === null
       ? primaryAction.swipeHint
       : primaryAction.swipeSnoozeHint;
+
+  const swipeAccessibilityHint =
+    canOperateThread && readAction !== null
+      ? `${leftSwipeAccessibilityHint} ${readAction === "read" ? gt("Swipe right to mark read.") : gt("Swipe right to mark unread.")}`
+      : leftSwipeAccessibilityHint;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const cardContent = (
@@ -1643,10 +1714,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityRole="button"
         accessibilityState={{ selected }}
         accessibilityActions={rowAccessibilityActions}
-        onAccessibilityAction={(event) => {
-          if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
-          if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
-        }}
+        onAccessibilityAction={handleRowAccessibilityAction}
         onPress={() => {
           close();
           selectThread();
@@ -1673,6 +1741,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
+        accessibilityActions={rowAccessibilityActions}
+        onAccessibilityAction={handleRowAccessibilityAction}
         className={rowAppearance.className}
         onPress={() => {
           close();
@@ -1775,6 +1845,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         onSwipeableClose={props.onSwipeableClose}
         onSwipeableWillOpen={props.onSwipeableWillOpen}
         primaryAction={primaryAction}
+        swipeRightAction={swipeRightAction}
         secondaryAction={secondaryAction}
         resetKey={`${thread.environmentId}:${thread.id}:${variant}:${snoozedRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}:${thread.pinnedAt}`}
         simultaneousWith={props.simultaneousSwipeGesture}

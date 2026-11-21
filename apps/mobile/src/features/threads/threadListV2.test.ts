@@ -42,6 +42,7 @@ import {
   resolveThreadListV2SnoozePresets,
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
+  resolveThreadListV2ReadAction,
   resolveThreadListV2WokeAt,
   threadListV2ListItemsAreEqual,
   threadListV2RowAccessibilityLabel,
@@ -1890,5 +1891,60 @@ describe("queued messages keep a settled thread active", () => {
       ["settled", "slim"],
     ]);
     expect(layout.settledCount).toBe(1);
+  });
+});
+
+describe("resolveThreadListV2ReadAction", () => {
+  function completedThread() {
+    return presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        latestRunId: RunId.make("read-action-run"),
+        status: "completed",
+        latestRunCompletedAt: DateTime.makeUnsafe(NOW),
+        lastVisitedAt: DateTime.makeUnsafe("2026-06-01T23:59:00.000Z"),
+      }),
+    );
+  }
+
+  it("offers read for unseen completions and unread after visiting", () => {
+    const thread = completedThread();
+    expect(resolveThreadListV2ReadAction(thread)).toBe("read");
+    expect(resolveThreadListV2ReadAction({ ...thread, lastVisitedAt: NOW })).toBe("unread");
+    expect(resolveThreadListV2ReadAction({ ...thread, lastVisitedAt: null })).toBe("unread");
+  });
+
+  it("requires server read tracking and a completed run", () => {
+    const thread = completedThread();
+    expect(resolveThreadListV2ReadAction({ ...thread, lastVisitedAt: undefined })).toBeNull();
+    expect(resolveThreadListV2ReadAction({ ...thread, latestRun: null })).toBeNull();
+    for (const status of ["cancelled", "interrupted"] as const) {
+      expect(
+        resolveThreadListV2ReadAction({ ...thread, latestRun: { ...thread.latestRun!, status } }),
+      ).toBeNull();
+    }
+    expect(
+      resolveThreadListV2ReadAction({
+        ...thread,
+        latestRun: { ...thread.latestRun!, completedAt: null },
+      }),
+    ).toBeNull();
+  });
+
+  it("does not replace pending attention with a read toggle", () => {
+    const thread = completedThread();
+    expect(resolveThreadListV2ReadAction({ ...thread, hasPendingApprovals: true })).toBeNull();
+    expect(resolveThreadListV2ReadAction({ ...thread, hasPendingUserInput: true })).toBeNull();
+    const running = presentThreadShell(
+      environmentId,
+      decodeThreadShell(
+        makeRawThreadShell({
+          status: "running",
+          activeRunId: RunId.make("active-run"),
+          latestRunId: RunId.make("active-run"),
+        }),
+      ),
+    );
+    expect(resolveThreadListV2ReadAction({ ...thread, runtime: running.runtime })).toBeNull();
   });
 });

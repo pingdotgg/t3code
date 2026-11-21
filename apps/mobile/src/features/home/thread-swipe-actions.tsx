@@ -246,6 +246,7 @@ interface ThreadSwipeableProps {
   readonly onSwipeableClose?: (methods: SwipeableMethods) => void;
   readonly onSwipeableWillOpen?: (methods: SwipeableMethods) => void;
   readonly primaryAction: ThreadSwipeAction;
+  readonly swipeRightAction?: ThreadSwipeAction;
   readonly threadKey: string;
   /** Omitted defaults to Delete; null removes it so gated Snooze cannot fall back to Delete. */
   readonly secondaryAction?: ThreadSwipeAction | null;
@@ -259,10 +260,12 @@ const COLLAPSED_ROW_STYLE = { height: 0, overflow: "hidden" } as const;
 
 export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const m = useMessages();
+  const { swipeRightAction } = props;
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const hasSecondaryAction = props.secondaryAction !== null;
   const actionsWidth = swipeActionsWidth(hasSecondaryAction);
   const fullSwipeThreshold = Math.max(actionsWidth + 44, props.fullSwipeWidth * 0.58);
+  const rightSwipeThreshold = Math.max(ACTION_ITEM_WIDTH + 44, props.fullSwipeWidth * 0.58);
   const fullSwipeAction =
     props.fullSwipeAction ?? (props.secondaryAction === undefined ? "delete" : "primary");
   const close = useCallback(() => swipeableRef.current?.close(), []);
@@ -437,17 +440,34 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       onDelete();
     }
   }, [commitPrimaryAction, content, fullSwipeAction, onDelete]);
+  const commitRightSwipe = useCallback(() => {
+    if (!mountedRef.current || contentRef.current !== content) return;
+    swipeableRef.current?.close();
+    swipeRightAction?.onPress();
+  }, [content, swipeRightAction]);
+  const hasRightSwipeAction = swipeRightAction !== undefined;
   const handleRelease = useCallback(
     (translation: SharedValue<number>, canceled: boolean) => {
       "worklet";
       if (dismissing.value) return true;
+      if (!canceled && hasRightSwipeAction && translation.value >= rightSwipeThreshold) {
+        runOnJS(commitRightSwipe)();
+        return true;
+      }
       if (!canceled && -translation.value >= fullSwipeThreshold) {
         runOnJS(commitFullSwipe)();
         return true;
       }
       return false;
     },
-    [commitFullSwipe, dismissing, fullSwipeThreshold],
+    [
+      commitFullSwipe,
+      commitRightSwipe,
+      dismissing,
+      fullSwipeThreshold,
+      hasRightSwipeAction,
+      rightSwipeThreshold,
+    ],
   );
   const handleFullSwipeArmedChange = useCallback(
     (armed: boolean) => {
@@ -475,12 +495,17 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const { secondaryAction, threadTitle } = props;
   // Swipeable calls this on every render; returning the previous element while nothing it shows
   // changed keeps a selection change from re-rendering the hidden actions.
+  const leftActions = useRef<{ deps: readonly unknown[]; element: ReactNode } | null>(null);
   const rightActions = useRef<{ deps: readonly unknown[]; element: ReactNode } | null>(null);
-  const renderRightActions = (
-    _progress: SharedValue<number>,
+  const renderActions = (
+    direction: 1 | -1,
     translation: SharedValue<number>,
     methods: SwipeableMethods,
   ) => {
+    const action = direction === 1 ? swipeRightAction : primaryAction;
+    const commit = direction === 1 ? commitRightSwipe : commitPrimaryAction;
+    const threshold = direction === 1 ? rightSwipeThreshold : fullSwipeThreshold;
+    const cache = direction === 1 ? leftActions : rightActions;
     const deps = [
       dormant,
       translation,
@@ -492,43 +517,51 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       fullSwipeAction,
       fullSwipeThreshold,
       handleFullSwipeArmedChange,
-      primaryAction,
-      commitPrimaryAction,
+      action,
+      commit,
+      threshold,
       onDelete,
       secondaryAction,
       threadTitle,
+      m,
     ];
-    const cached = rightActions.current;
+    const cached = cache.current;
     if (cached && deps.every((dep, index) => Object.is(dep, cached.deps[index]))) {
       return cached.element;
     }
-    const element = dormant ? null : (
-      <Animated.View
-        ref={() => {
-          activeTranslationRef.current = translation;
-        }}
-        style={actionStyle}
-      >
-        <ThreadSwipeActions
-          backgroundColor={backgroundColor}
-          compact={compactActions}
-          rowHeight={measuredRowHeight}
-          fullSwipeAction={fullSwipeAction}
-          fullSwipeThreshold={fullSwipeThreshold}
-          onFullSwipeArmedChange={handleFullSwipeArmedChange}
-          primaryAction={{ ...primaryAction, onPress: commitPrimaryAction }}
-          secondaryAction={resolveSecondaryAction({
-            close: () => methods.close(),
-            onDelete,
-            secondaryAction,
-            threadTitle,
-            resolve: m,
-          })}
-          translation={translation}
-        />
-      </Animated.View>
-    );
-    rightActions.current = { deps, element };
+    const element =
+      dormant || action === undefined ? null : (
+        <Animated.View
+          ref={() => {
+            if (direction === -1) activeTranslationRef.current = translation;
+          }}
+          style={actionStyle}
+        >
+          <ThreadSwipeActions
+            backgroundColor={backgroundColor}
+            compact={compactActions}
+            rowHeight={measuredRowHeight}
+            direction={direction}
+            fullSwipeAction={direction === 1 ? "primary" : fullSwipeAction}
+            fullSwipeThreshold={threshold}
+            onFullSwipeArmedChange={handleFullSwipeArmedChange}
+            primaryAction={{ ...action, onPress: commit }}
+            secondaryAction={
+              direction === 1
+                ? null
+                : resolveSecondaryAction({
+                    close: () => methods.close(),
+                    onDelete,
+                    secondaryAction,
+                    threadTitle,
+                    resolve: m,
+                  })
+            }
+            translation={translation}
+          />
+        </Animated.View>
+      );
+    cache.current = { deps, element };
     return element;
   };
   const childrenContainerStyle = useMemo(() => ({ backgroundColor }), [backgroundColor]);
@@ -564,7 +597,16 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
             onSwipeableWillOpen={handleWillOpen}
             overshootFriction={1}
             overshootRight
-            renderRightActions={renderRightActions}
+            overshootLeft={swipeRightAction !== undefined}
+            leftThreshold={ACTION_ITEM_WIDTH * 0.42}
+            renderLeftActions={
+              swipeRightAction === undefined
+                ? undefined
+                : (_progress, translation, methods) => renderActions(1, translation, methods)
+            }
+            renderRightActions={(_progress, translation, methods) =>
+              renderActions(-1, translation, methods)
+            }
             rightThreshold={actionsWidth * 0.42}
             // Only iPad trackpad pans need rows to swipe while the list scrolls; on Android touch it
             // lets a diagonal swipe scroll the list, which the scroll gate turns into a closed row.
@@ -587,6 +629,7 @@ function SwipeActionButton(props: {
   readonly actionsWidth: number;
   readonly tone: "primary" | "secondary" | "danger";
   readonly compact: boolean;
+  readonly direction?: 1 | -1;
   readonly entryRange: readonly [number, number];
   readonly fullSwipeThreshold: number;
   readonly icon: ComponentProps<typeof SymbolView>["name"];
@@ -599,6 +642,7 @@ function SwipeActionButton(props: {
 }) {
   const {
     actionsWidth,
+    direction = -1,
     entryRange: [entryRangeStart, entryRangeEnd],
     fullSwipeThreshold,
     stretchesOnFullSwipe,
@@ -622,7 +666,7 @@ function SwipeActionButton(props: {
         : labelLineHeight,
   };
   const actionStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(direction * translation.value, 0);
     const entryProgress = interpolate(
       reveal,
       [entryRangeStart, entryRangeEnd],
@@ -642,23 +686,24 @@ function SwipeActionButton(props: {
       transform: [
         {
           translateX:
-            interpolate(entryProgress, [0, 1], [22, 0]) - (stretchesOnFullSwipe ? 0 : stretch),
+            -direction *
+            (interpolate(entryProgress, [0, 1], [22, 0]) - (stretchesOnFullSwipe ? 0 : stretch)),
         },
         { scale: interpolate(entryProgress, [0, 1], [0.78, 1]) },
       ],
     };
   });
   const circleStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(direction * translation.value, 0);
     const stretch = stretchesOnFullSwipe ? Math.max(reveal - actionsWidth, 0) : 0;
 
     return {
-      transform: [{ translateX: -stretch }],
+      transform: [{ translateX: direction === 1 ? 0 : -stretch }],
       width: circleSize + stretch,
     };
   });
   const iconStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(direction * translation.value, 0);
     const stretch = stretchesOnFullSwipe ? Math.max(reveal - actionsWidth, 0) : 0;
     const armedProgress = interpolate(
       reveal,
@@ -668,7 +713,7 @@ function SwipeActionButton(props: {
     );
 
     return {
-      transform: [{ translateX: -stretch * (0.5 + armedProgress * 0.5) }],
+      transform: [{ translateX: direction * stretch * (0.5 + armedProgress * 0.5) }],
     };
   });
   const labelStyle = useAnimatedStyle(() => {
@@ -676,7 +721,7 @@ function SwipeActionButton(props: {
       return { opacity: 1 };
     }
 
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(direction * translation.value, 0);
     const stretch = Math.max(reveal - actionsWidth, 0);
     return {
       opacity: interpolate(
@@ -685,7 +730,7 @@ function SwipeActionButton(props: {
         [1, 0],
         Extrapolation.CLAMP,
       ),
-      transform: [{ translateX: -stretch * 0.5 }],
+      transform: [{ translateX: direction * stretch * 0.5 }],
     };
   });
 
@@ -805,6 +850,7 @@ function SwipeActionButton(props: {
 function ThreadSwipeActions(props: {
   readonly backgroundColor: ColorValue;
   readonly compact: boolean;
+  readonly direction?: 1 | -1;
   readonly fullSwipeAction?: "delete" | "primary";
   readonly fullSwipeThreshold: number;
   readonly onFullSwipeArmedChange: (armed: boolean) => void;
@@ -813,17 +859,23 @@ function ThreadSwipeActions(props: {
   readonly secondaryAction: ThreadSwipeSecondaryAction | null;
   readonly translation: SharedValue<number>;
 }) {
-  const { fullSwipeThreshold, onFullSwipeArmedChange, secondaryAction, translation } = props;
+  const {
+    direction = -1,
+    fullSwipeThreshold,
+    onFullSwipeArmedChange,
+    secondaryAction,
+    translation,
+  } = props;
   const fullSwipeIsPrimary = props.fullSwipeAction === "primary" || secondaryAction === null;
   const actionsWidth = swipeActionsWidth(secondaryAction !== null);
   useAnimatedReaction(
-    () => -translation.value >= fullSwipeThreshold,
+    () => direction * translation.value >= fullSwipeThreshold,
     (armed, previous) => {
       if (armed !== previous) {
         runOnJS(onFullSwipeArmedChange)(armed);
       }
     },
-    [fullSwipeThreshold, onFullSwipeArmedChange, translation],
+    [direction, fullSwipeThreshold, onFullSwipeArmedChange, translation],
   );
 
   return (
@@ -840,6 +892,7 @@ function ThreadSwipeActions(props: {
         actionsWidth={actionsWidth}
         tone={props.primaryAction.destructive === true ? "danger" : "primary"}
         compact={props.compact}
+        direction={direction}
         entryRange={
           secondaryAction === null
             ? [8, ACTION_ITEM_WIDTH * 0.72]
@@ -859,6 +912,7 @@ function ThreadSwipeActions(props: {
           actionsWidth={actionsWidth}
           tone={secondaryAction.tone}
           compact={props.compact}
+          direction={direction}
           entryRange={[8, ACTION_ITEM_WIDTH * 0.72]}
           fullSwipeThreshold={props.fullSwipeThreshold}
           icon={secondaryAction.icon}
