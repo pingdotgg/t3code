@@ -92,6 +92,8 @@ interface FakeProviderScenario {
   prListSequenceByHeadSelector?: Record<string, ReadonlyArray<ReadonlyArray<FakeChangeRequest>>>;
   /** The answer to every listing the other lists leave unanswered. */
   prListOtherwise?: ReadonlyArray<FakeChangeRequest>;
+  /** Answers to listings that name a repository; the lists above answer the others. */
+  prListByRepository?: Record<string, ReadonlyArray<FakeChangeRequest>>;
   defaultBranch?: string;
   pullRequest?: FakeChangeRequest;
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
@@ -490,12 +492,13 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
           limit: input.limit,
         }).pipe(
           Effect.map(() =>
-            (
-              prListQueueByHeadSelector.get(input.headSelector)?.shift() ??
-              scenario.prListByHeadSelector?.[input.headSelector] ??
-              prListQueue.shift() ??
-              scenario.prListOtherwise ??
-              []
+            (input.repository !== undefined
+              ? (scenario.prListByRepository?.[input.repository] ?? [])
+              : (prListQueueByHeadSelector.get(input.headSelector)?.shift() ??
+                scenario.prListByHeadSelector?.[input.headSelector] ??
+                prListQueue.shift() ??
+                scenario.prListOtherwise ??
+                [])
             ).map(toChangeRequest),
           ),
           Effect.tap(() =>
@@ -2751,7 +2754,15 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["branch", "--track", "t3code/new-thread", "origin/main"]);
       yield* runGit(repoDir, ["branch", "--track", "feature/published", "origin/main"]);
       yield* runGit(repoDir, ["branch", "--track", "t3code/pr-300/main", "origin/main"]);
-      yield* runGit(repoDir, ["push", "origin", "feature/published"]);
+      yield* runGit(repoDir, ["branch", "--track", "feature/fork-merged", "origin/main"]);
+      yield* runGit(repoDir, ["branch", "--track", "feature/fork-open", "origin/main"]);
+      yield* runGit(repoDir, [
+        "push",
+        "origin",
+        "feature/published",
+        "feature/fork-merged",
+        "feature/fork-open",
+      ]);
       yield* configureVisibleRemoteUrlWithLocalRewrite(
         repoDir,
         "origin",
@@ -2766,6 +2777,32 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         headRepositoryOwnerLogin: "contributor",
       } as const;
       const { service, calls } = createFakeSourceControlProvider({
+        prListByRepository: {
+          "contributor/codething-mvp": [
+            {
+              number: 12,
+              title: "Merged inside the fork",
+              url: "https://github.com/contributor/codething-mvp/pull/12",
+              baseRefName: "main",
+              headRefName: "feature/fork-merged",
+              state: "merged",
+              isCrossRepository: false,
+              headRepositoryNameWithOwner: "contributor/codething-mvp",
+              headRepositoryOwnerLogin: "contributor",
+            },
+            {
+              number: 13,
+              title: "Open inside the fork",
+              url: "https://github.com/contributor/codething-mvp/pull/13",
+              baseRefName: "main",
+              headRefName: "feature/fork-open",
+              state: "open",
+              isCrossRepository: false,
+              headRepositoryNameWithOwner: "contributor/codething-mvp",
+              headRepositoryOwnerLogin: "contributor",
+            },
+          ],
+        },
         prListByHeadSelector: {
           "contributor:main": [
             {
@@ -2815,6 +2852,27 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         branch: "t3code/pr-300/main",
       });
       expect(pullRequestWorktree?.number).toBe(300);
+
+      // Status keeps searching upstream only, so Create PR there stays available.
+      expect(
+        yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/fork-merged" }),
+      ).toBeNull();
+      // Cleanup also accepts a pull request merged inside the fork.
+      const mergedInFork = yield* manager.branchPullRequest(
+        { cwd: repoDir, branch: "feature/fork-merged" },
+        { refresh: true, includeHeadRepository: true },
+      );
+      expect(mergedInFork).toMatchObject({
+        number: 12,
+        state: "merged",
+        repositoryKey: "github.com/contributor/codething-mvp",
+      });
+      expect(
+        yield* manager.branchPullRequest(
+          { cwd: repoDir, branch: "feature/fork-open" },
+          { refresh: true, includeHeadRepository: true },
+        ),
+      ).toBeNull();
     }),
   );
 
@@ -4426,7 +4484,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect("createPullRequest refuses a branch with commits it has not pushed", () =>
+  it.effect("createPullRequest pushes the branch before opening its PR", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -4434,27 +4492,94 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/unpushed"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/unpushed"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "first.txt"), "first\n");
+      yield* runGit(repoDir, ["add", "first.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "First commit"]);
+      const remoteHead = (branch: string) =>
+        runGit(repoDir, ["ls-remote", "origin", `refs/heads/${branch}`]).pipe(
+          Effect.map((result) => result.stdout.split("\t")[0]),
+        );
+      const localHead = () =>
+        runGit(repoDir, ["rev-parse", "HEAD"]).pipe(Effect.map((result) => result.stdout.trim()));
+
+      // A branch without an upstream is published first.
+      const unpublished = yield* makeManager({ providerScenario: { prListSequence: [[], []] } });
+      yield* unpublished.manager.createPullRequest({
+        cwd: repoDir,
+        projectId: ProjectId.make("project-1"),
+        title: "Feature",
+        body: "Body",
+      });
+      expect(yield* remoteHead("feature/unpushed")).toBe(yield* localHead());
+      expect(created(unpublished.providerCalls)).toMatchObject([
+        { headSelector: "feature/unpushed" },
+      ]);
+
+      // Commits made after publishing are pushed too.
       NodeFS.writeFileSync(NodePath.join(repoDir, "late.txt"), "late\n");
       yield* runGit(repoDir, ["add", "late.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Late commit"]);
-      const { manager, providerCalls } = yield* makeManager({
-        providerScenario: { prListSequence: [[], []] },
+      const ahead = yield* makeManager({ providerScenario: { prListSequence: [[], []] } });
+      yield* ahead.manager.createPullRequest({
+        cwd: repoDir,
+        projectId: ProjectId.make("project-1"),
+        title: "Feature",
+        body: "Body",
       });
+      expect(yield* remoteHead("feature/unpushed")).toBe(yield* localHead());
+      expect(created(ahead.providerCalls)).toHaveLength(1);
 
+      // A rejected push fails with git's reason and opens nothing; it never forces.
+      const otherDir = yield* makeTempDir("t3code-git-manager-other-");
+      yield* runGit(otherDir, ["clone", "--branch", "feature/unpushed", remoteDir, "."]);
+      yield* runGit(otherDir, ["config", "user.email", "other@example.com"]);
+      yield* runGit(otherDir, ["config", "user.name", "Other"]);
+      NodeFS.writeFileSync(NodePath.join(otherDir, "theirs.txt"), "theirs\n");
+      yield* runGit(otherDir, ["add", "theirs.txt"]);
+      yield* runGit(otherDir, ["commit", "-m", "Their commit"]);
+      yield* runGit(otherDir, ["push"]);
+      const theirHead = yield* remoteHead("feature/unpushed");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+      yield* runGit(repoDir, ["add", "mine.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "My commit"]);
+      const rejected = yield* makeManager({ providerScenario: { prListSequence: [[], []] } });
       const error = yield* Effect.flip(
-        manager.createPullRequest({
+        rejected.manager.createPullRequest({
           cwd: repoDir,
           projectId: ProjectId.make("project-1"),
           title: "Feature",
           body: "Body",
         }),
       );
+      expect(error.message).toContain("Could not push feature/unpushed");
+      expect(error.message).toContain("Pull or rebase, then push again");
+      expect(yield* remoteHead("feature/unpushed")).toBe(theirHead);
+      expect(created(rejected.providerCalls)).toEqual([]);
+      yield* runGit(repoDir, ["fetch", "origin"]);
+      yield* runGit(repoDir, ["reset", "--hard", "origin/feature/unpushed"]);
 
-      expect(error.message).toContain("1 unpushed commit");
-      expect(created(providerCalls)).toEqual([]);
+      // A publish whose upstream cannot be recorded says so instead of claiming nothing was pushed.
+      yield* runGit(repoDir, ["checkout", "-b", "feature/locked"]);
+      const lockPath = NodePath.join(repoDir, ".git", "config.lock");
+      NodeFS.writeFileSync(lockPath, "");
+      const locked = yield* makeManager({ providerScenario: { prListSequence: [[], []] } });
+      // The upstream write retries on the real clock before giving up.
+      const lockedError = yield* Effect.flip(
+        TestClock.withLive(
+          locked.manager.createPullRequest({
+            cwd: repoDir,
+            projectId: ProjectId.make("project-1"),
+            title: "Feature",
+            body: "Body",
+          }),
+        ),
+      );
+      NodeFS.rmSync(lockPath);
+      expect(lockedError.message).toContain("could not record it as the branch's upstream");
+      expect(yield* remoteHead("feature/locked")).toBe(yield* localHead());
+      expect(created(locked.providerCalls)).toEqual([]);
+      yield* runGit(repoDir, ["checkout", "feature/unpushed"]);
 
-      // An open PR is returned as it is; returning it publishes nothing.
       const open = {
         number: 7,
         title: "Feature",
@@ -4462,7 +4587,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         baseRefName: "main",
         headRefName: "feature/unpushed",
       };
-      const existing = yield* makeManager({ providerScenario: { prListSequence: [[open]] } });
+      // Pushing into an open PR returns it, and status no longer reports the pushed commit.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "into-open.txt"), "into open\n");
+      yield* runGit(repoDir, ["add", "into-open.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Into open PR"]);
+      const existing = yield* makeManager({
+        providerScenario: { prListSequence: [[open], [open], [open], [open]] },
+      });
+      expect((yield* existing.manager.status({ cwd: repoDir })).aheadCount).toBe(1);
       const found = yield* existing.manager.createPullRequest({
         cwd: repoDir,
         projectId: ProjectId.make("project-1"),
@@ -4470,6 +4602,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         body: "Body",
       });
       expect(found).toMatchObject({ status: "opened_existing", number: 7 });
+      expect((yield* existing.manager.status({ cwd: repoDir })).aheadCount).toBe(0);
 
       // A retry after a failed draft finds the open PR and still drafts it.
       const actions: Array<PullRequestActionInput> = [];
@@ -4492,7 +4625,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       ]);
 
       // A draft of a PR the host does not list yet fails, so a retry drafts it.
-      yield* runGit(repoDir, ["push"]);
       const unlisted = yield* makeManager({
         providerScenario: { prListSequence: [[], []], createsDraftChangeRequests: false },
       });
@@ -4530,6 +4662,73 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ),
       ).toEqual([true]);
       expect(newActions).toEqual([]);
+    }),
+  );
+
+  it.effect("createPullRequest pushes to the push remote and never to the base branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+      const readOrigin = (branch: string) =>
+        runGit(repoDir, ["ls-remote", "origin", `refs/heads/${branch}`]).pipe(
+          Effect.map((result) => result.stdout),
+        );
+      const commit = (file: string) =>
+        Effect.gen(function* () {
+          NodeFS.writeFileSync(NodePath.join(repoDir, file), `${file}\n`);
+          yield* runGit(repoDir, ["add", file]);
+          yield* runGit(repoDir, ["commit", "-m", file]);
+        });
+      const createPr = (manager: GitManager.GitManager["Service"]) =>
+        manager.createPullRequest({
+          cwd: repoDir,
+          projectId: ProjectId.make("project-1"),
+          title: "Feature",
+          body: "Body",
+        });
+
+      // Commits on the base branch are never pushed to it.
+      yield* commit("on-main.txt");
+      const originMain = yield* readOrigin("main");
+      const onBase = yield* makeManager({ providerScenario: { prListSequence: [[]] } });
+      const error = yield* Effect.flip(createPr(onBase.manager));
+      expect(error.message).toContain("main is the base branch");
+      expect(yield* readOrigin("main")).toBe(originMain);
+      expect(created(onBase.providerCalls)).toEqual([]);
+      yield* runGit(repoDir, ["reset", "--hard", "origin/main"]);
+
+      // A push to a separate push remote leaves the upstream behind, and still opens the PR.
+      yield* runGit(repoDir, ["checkout", "-b", "topic"]);
+      yield* commit("topic.txt");
+      yield* runGit(repoDir, ["push", "-u", "origin", "topic"]);
+      yield* commit("late.txt");
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:pingdotgg/codething-mvp.git",
+        originDir,
+      );
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "fork",
+        "git@github.com:octocat/codething-mvp.git",
+        forkDir,
+      );
+      yield* runGit(repoDir, ["config", "remote.pushDefault", "fork"]);
+      const viaFork = yield* makeManager();
+      const result = yield* createPr(viaFork.manager);
+      expect(result.status).toBe("created");
+      expect(
+        yield* runGit(forkDir, ["--git-dir=.", "log", "-1", "--pretty=%s", "topic"]),
+      ).toMatchObject({ stdout: "late.txt\n" });
+      expect(created(viaFork.providerCalls)).toEqual([
+        { baseRefName: "main", headSelector: "octocat:topic" },
+      ]);
     }),
   );
 
