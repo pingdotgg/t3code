@@ -112,7 +112,11 @@ describe("Antigravity process environment", () => {
   });
 
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
-    const baseEnv = { PATH: "/usr/bin", GOOGLE_API_KEY: "ambient-key" };
+    const baseEnv = {
+      PATH: "/usr/bin",
+      GOOGLE_API_KEY: "ambient-key",
+      BROWSER: "open-real-browser",
+    };
     const spawnFor = (auth: AntigravityAuthConfig) =>
       buildAntigravityAcpSpawnInput({
         installation: { executablePath: "/usr/bin/agy" },
@@ -131,6 +135,7 @@ describe("Antigravity process environment", () => {
     expect(geminiKey.GEMINI_API_KEY).toBe("gemini-secret");
     expect(geminiKey.GOOGLE_API_KEY).toBeUndefined();
     expect(geminiKey.GOOGLE_CLOUD_PROJECT).toBeUndefined();
+    expect(geminiKey.BROWSER).toBe("open-real-browser");
 
     const vertexKey = spawnFor({
       authMethod: "agent-platform",
@@ -140,6 +145,7 @@ describe("Antigravity process environment", () => {
     });
     expect(vertexKey.GOOGLE_API_KEY).toBe("vertex-secret");
     expect(vertexKey.GEMINI_API_KEY).toBeUndefined();
+    expect(vertexKey.BROWSER).toBe("open-real-browser");
 
     const business = spawnFor({
       authMethod: "oauth-business",
@@ -149,13 +155,18 @@ describe("Antigravity process environment", () => {
     });
     expect(business.GEMINI_API_KEY).toBeUndefined();
     expect(business.GOOGLE_API_KEY).toBeUndefined();
+    expect(business.BROWSER).toBe(profile.browserCommand);
 
     // Only the Google account method has the `--login` sign-in that works without the keyring.
     for (const env of [geminiKey, vertexKey, business]) expect(env.SSH_CONNECTION).toBeUndefined();
-    expect(
-      spawnFor({ authMethod: "oauth-personal", apiKey: "", gcpProject: "", gcpLocation: "" })
-        .SSH_CONNECTION,
-    ).toBe("127.0.0.1 0 127.0.0.1 0");
+    const personal = spawnFor({
+      authMethod: "oauth-personal",
+      apiKey: "",
+      gcpProject: "",
+      gcpLocation: "",
+    });
+    expect(personal.SSH_CONNECTION).toBe("127.0.0.1 0 127.0.0.1 0");
+    expect(personal.BROWSER).toBe(profile.browserCommand);
   });
 
   it("isolates TEMP and TMP to the profile directory on Windows", () => {

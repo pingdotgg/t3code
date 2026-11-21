@@ -74,7 +74,6 @@ const removedEnvironmentKeys = new Set([
   "GEMINI_HOME",
   "AGY_ACP_FORCE_FILE_STORAGE",
   "AGY_CLI_DISABLE_AUTO_UPDATE",
-  "BROWSER",
   "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE",
   // An inherited pipe whose owner exited makes Electron-as-Node print Crashpad errors to stderr.
@@ -205,10 +204,14 @@ function antigravityEnvironment(
   auth: AntigravityAuthConfig,
   runtimeTempDirectory?: string,
 ) {
+  const usesBrowserAuth = antigravityAuthUsesBrowser(auth.authMethod);
   const environment: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
+    const upper = key.toUpperCase();
     // Windows treats environment keys as case-insensitive. Remove aliases too.
-    if (!removedEnvironmentKeys.has(key.toUpperCase())) environment[key] = value;
+    if (!removedEnvironmentKeys.has(upper) && !(usesBrowserAuth && upper === "BROWSER")) {
+      environment[key] = value;
+    }
   }
   // Put the GCP pair in settings.json because GOOGLE_API_KEY takes precedence in the environment.
   const credential =
@@ -234,9 +237,8 @@ function antigravityEnvironment(
       : {}),
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
-    // agy's troubleshooting docs specify "true"; the interactive CLI keeps self-updating with "1".
     AGY_CLI_DISABLE_AUTO_UPDATE: "true",
-    BROWSER: profile.browserCommand,
+    ...(usesBrowserAuth ? { BROWSER: profile.browserCommand } : {}),
     PYTHONUNBUFFERED: "1",
     ELECTRON_RUN_AS_NODE: "1",
     ...(profile.platform === "win32"
