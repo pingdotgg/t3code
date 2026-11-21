@@ -11,7 +11,9 @@ Use a workflow for multi-stage work that must not be lost or repeated (triage �
 
 ## Quick start
 
-Put a `.ts` file in `~/.t3/workflows/` (the `workflows` folder of T3 home, or the path in `T3CODE_WORKFLOWS`). The server watches the folder and reloads files automatically—nothing to enable or restart. A file name with a space or other unusual character (`fix issue.ts`) is skipped with a warning in the server log: use letters, digits, `-`, `_` and `.`. Files run with Node's type stripping, so only erasable TypeScript works: no `enum`, `namespace` or parameter properties.
+Workflows are a Labs feature, off by default. If `t3 workflow` says workflows are off, ask the user to turn them on in Settings → Labs → Workflows; do not edit their settings yourself.
+
+Put a `.ts` file in `~/.t3/workflows/` (the `workflows` folder of T3 home, or the path in `T3CODE_WORKFLOWS`). Once workflows are on, the server watches the folder and reloads files automatically—nothing to restart. A file name with a space or other unusual character (`fix issue.ts`) is skipped with a warning in the server log: use letters, digits, `-`, `_` and `.`. Files run with Node's type stripping, so only erasable TypeScript works: no `enum`, `namespace` or parameter properties.
 
 Workflow files import nothing from T3 or Effect. `T3`, `Effect`, `Schema`, `Option`, `Duration`, and `Schedule` are injected as globals. Never `import` from `effect` (that loads a second runtime copy the engine cannot run). Node built-ins (`node:fs`, `node:crypto`) can be imported normally.
 
