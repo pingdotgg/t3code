@@ -49,8 +49,10 @@ applies on every machine.
 
 ### Submodules
 
-Submodules need no setup. A thread that changes one shows it as its own repository, with its own
-diff and Git actions, while the repository that holds it shows the changed pin. A submodule never
+Submodules are checked out when a worktree is created. If that fails, a submodule stays
+uninitialized and the thread does not list it until you run `git submodule update --init` in the
+thread's folder. A thread that changes one shows it as its own repository, with its own diff and
+Git actions, while the repository that holds it shows the changed pin. A submodule never
 gets a worktree of its own, because its parent repository decides where it is checked out.
 
 ## Review changes
@@ -143,7 +145,8 @@ What the commands can rely on, and what they must do:
 - **Each command has ten minutes.**
 
 A project with no other repository can declare a layout too. This example gives each thread
-a worktree with its submodules checked out:
+a worktree with its submodules checked out. The command runs in `sh`, and in `cmd.exe` on Windows,
+so write it for the shell of the machine the project is on; this one is for `sh`:
 
 ```json
 {

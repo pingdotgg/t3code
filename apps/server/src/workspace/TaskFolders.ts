@@ -236,6 +236,7 @@ const make = Effect.gen(function* () {
   const store = yield* TaskFolderStore.TaskFolderStore;
   const processes = yield* VcsProcess.VcsProcess;
   const hostEnvironment = yield* HostProcess.Environment;
+  const hostPlatform = yield* HostProcess.Platform;
   const onWindows = yield* HostProcess.isWindows;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
 
@@ -299,6 +300,8 @@ const make = Effect.gen(function* () {
           cwd: taskFolder.projectRoot,
           env: {
             ...hostEnvironment,
+            // A `GIT_DIR` the server inherited would point the command's Git at another repository.
+            ...VcsProcess.unsetInheritedRepositoryEnv(hostEnvironment, hostPlatform),
             T3_PROJECT_ROOT: taskFolder.projectRoot,
             T3_WORKTREE_ROOT: taskFolder.root,
             T3_WORKTREE_PROJECT_PATH: taskFolder.projectPath,
@@ -336,12 +339,21 @@ const make = Effect.gen(function* () {
     const real = (target: string) =>
       fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => target));
     const resolved = yield* gitDirPointer(checkout.worktreePath);
-    return resolved !== null &&
-      isWithinRoot(
+    if (
+      resolved === null ||
+      !isWithinRoot(
         path,
         yield* real(resolved),
         path.join(yield* real(yield* commonGitDir(checkout.repositoryPath)), "worktrees"),
       )
+    )
+      return null;
+    // Git registers one path per worktree: a copy of the checkout elsewhere points here too.
+    const registered = (yield* fileSystem
+      .readFileString(path.join(resolved, "gitdir"))
+      .pipe(Effect.orElseSucceed(() => ""))).trim();
+    return registered !== "" &&
+      (yield* real(path.dirname(registered))) === (yield* real(checkout.worktreePath))
       ? resolved
       : null;
   });
@@ -682,6 +694,8 @@ const make = Effect.gen(function* () {
     input: Omit<Parameters<TaskFolders["Service"]["remove"]>[0], "root">,
     /** Repositories whose `deleteBranch` is not this folder's to delete. */
     keepBranchIn: ReadonlySet<string> = new Set(),
+    /** False when the folder never got as far as its layout command: nothing to tear down. */
+    laidOut = true,
   ) {
     const removed: string[] = [];
     const kept: Array<{ path: string; reason: string }> = [];
@@ -699,7 +713,7 @@ const make = Effect.gen(function* () {
     });
     // The project's own teardown goes first; what it leaves is removed below as usual. Only when
     // every checkout may go: the command cannot be told which ones to keep.
-    const layout = yield* worktreeLayout(taskFolder.projectRoot);
+    const layout = laidOut ? yield* worktreeLayout(taskFolder.projectRoot) : null;
     if (layout?.remove !== undefined) {
       const checkouts = [
         ...taskFolder.repositories,
@@ -723,6 +737,8 @@ const make = Effect.gen(function* () {
           undefined,
           taskFolder.repositories.map((repository) => repository.repositoryPath),
         ).pipe(Effect.ignoreCause({ log: true }));
+        // The command took its time: what it left is looked at again before it is removed.
+        verdicts.clear();
       }
     }
     const removeOne = Effect.fnUntraced(function* (checkout: TaskFolderCheckout) {
@@ -899,6 +915,16 @@ const make = Effect.gen(function* () {
       ];
       // A layout command may check out a branch that was already there; a rollback leaves it.
       const hadBranch = new Set<string>();
+      let layoutStarted = false;
+      // Where this attempt makes the branch: a checkout that fails halfway leaves it behind.
+      let branchMadeIn = [
+        ...taskPlan.repositories
+          .filter((_, index) => !names[index]!.includes(branch))
+          .map((repository) => repository.path),
+        ...(taskPlan.projectIsRepository && !projectNames.includes(branch)
+          ? [taskPlan.projectRoot]
+          : []),
+      ];
       return yield* Effect.gen(function* () {
         yield* fileSystem.makeDirectory(root, { recursive: true });
         // Recorded before any checkout, so an interrupted creation is still found and removed.
@@ -910,6 +936,8 @@ const make = Effect.gen(function* () {
           for (const [index, repositoryPath] of checkedOutFrom.entries()) {
             if (before[index]!.includes(branch)) hadBranch.add(repositoryPath);
           }
+          branchMadeIn = checkedOutFrom.filter((repositoryPath) => !hadBranch.has(repositoryPath));
+          layoutStarted = true;
           const ran = yield* Effect.exit(
             runLayoutCommand(
               "create",
@@ -1034,6 +1062,7 @@ const make = Effect.gen(function* () {
                 current(),
                 { force: true, forget: true, deleteBranch: branch },
                 hadBranch,
+                layoutStarted,
               ),
             ),
             Effect.tap(({ kept }) =>
@@ -1047,6 +1076,15 @@ const make = Effect.gen(function* () {
               Effect.forEach(
                 checkedOutFrom,
                 (cwd) => git.pruneWorktrees({ cwd }).pipe(Effect.ignoreCause({ log: true })),
+                { concurrency: REPOSITORY_CONCURRENCY, discard: true },
+              ),
+            ),
+            // Only now that no checkout is registered on it; most went with their checkout.
+            Effect.andThen(
+              Effect.forEach(
+                branchMadeIn,
+                (cwd) =>
+                  git.deleteLocalBranch({ cwd, refName: branch, force: true }).pipe(Effect.ignore),
                 { concurrency: REPOSITORY_CONCURRENCY, discard: true },
               ),
             ),

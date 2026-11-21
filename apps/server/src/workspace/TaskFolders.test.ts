@@ -66,7 +66,7 @@ const fixture = Effect.gen(function* () {
 });
 
 const tracked = (...folders: ReadonlyArray<string>): ReadonlyArray<ProjectTrackedFolder> =>
-  folders.map((folder) => ({ path: folder, name: folder.split("/").at(-1)! }));
+  folders.map((folder) => ({ path: folder, name: folder.split(/[\\/]/).at(-1)! }));
 
 const create = Effect.fnUntraced(function* (
   branch: string,
