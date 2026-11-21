@@ -17,6 +17,23 @@ export function favoritesFirst(
   return [...favorites, ...others];
 }
 
+export const FAVORITES_PROVIDER_FILTER = "@favorites";
+
+/** Fallback groups keep a removed provider's selected model visible, so they don't count. */
+export function restoredProviderFilter(input: {
+  readonly saved: string | null;
+  readonly providerGroups: ReadonlyArray<ProviderGroup>;
+  readonly catalogProviderKeys: ReadonlyArray<string>;
+}): string | null {
+  if (input.saved === FAVORITES_PROVIDER_FILTER) return input.saved;
+  const saved = input.saved;
+  return saved !== null &&
+    input.catalogProviderKeys.includes(saved) &&
+    input.providerGroups.some((group) => group.providerKey === saved)
+    ? saved
+    : null;
+}
+
 export function modelMatchesCatalogQuery(input: {
   readonly model: ModelOption;
   readonly providerLabel: string;
