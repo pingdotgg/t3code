@@ -228,7 +228,7 @@
   note: "Available again in the regenerated v4 OpenAI client; re-check the schema's Type/Encoded shape against the current specification."
 "@effect/ai-openai/Generated#Batch":
   replacement: "Generated.Batch"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.Batch schema. The object shapes at errors have no catch-all index signature; use their declared fields rather than arbitrary JSON properties."
 "@effect/ai-openai/Generated#BatchError":
   replacement: "Generated.BatchError"
   note: "Available again in the regenerated v4 OpenAI client; re-check the schema's Type/Encoded shape against the current specification."
@@ -405,7 +405,7 @@
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openai/Generated#ChatCompletionResponseMessage":
   replacement: "Generated.ChatCompletionResponseMessage"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.ChatCompletionResponseMessage schema. The object shapes at function_call have no catch-all index signature; use their declared fields rather than arbitrary JSON properties."
 "@effect/ai-openai/Generated#ChatCompletionResponseMessageRole":
   replacement: "none"
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
@@ -479,8 +479,8 @@
   replacement: "none"
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openai/Generated#Client":
-  replacement: "none"
-  note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
+  replacement: "Generated.OpenAiClient"
+  note: "Renamed to `Generated.OpenAiClient<E, R>`. Endpoint effects include E alongside generated client errors and require R. E defaults to HttpClientError.HttpClientError and R to never; carry custom client error and context types through explicit annotations."
 "@effect/ai-openai/Generated#ClientError":
   replacement: "none"
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
@@ -672,7 +672,7 @@
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openai/Generated#CreateChatCompletionRequest":
   replacement: "Generated.CreateChatCompletionRequest"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.CreateChatCompletionRequest schema. The object shapes at web_search_options.user_location and audio have no catch-all index signature; use their declared fields rather than arbitrary JSON properties."
 "@effect/ai-openai/Generated#CreateChatCompletionRequestAudioFormat":
   replacement: "none"
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
@@ -939,7 +939,7 @@
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openai/Generated#CreateThreadAndRunRequest":
   replacement: "Generated.CreateThreadAndRunRequest"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.CreateThreadAndRunRequest schema. The object shapes at tool_resources have no catch-all index signature; use their declared fields rather than arbitrary JSON properties."
 "@effect/ai-openai/Generated#CreateThreadAndRunRequestModelEnum":
   replacement: "none"
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
@@ -1458,7 +1458,7 @@
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openai/Generated#FineTuningJob":
   replacement: "Generated.FineTuningJob"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.FineTuningJob schema. The object shapes at hyperparameters in both union branches have no catch-all index signature; use their declared fields rather than arbitrary JSON properties. The error field still includes a JSON record alternative."
 "@effect/ai-openai/Generated#FineTuningJobCheckpoint":
   replacement: "Generated.FineTuningJobCheckpoint"
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -2094,7 +2094,7 @@
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openai/Generated#ListMessagesResponse":
   replacement: "Generated.ListMessagesResponse"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.ListMessagesResponse schema. Its root object branch has no catch-all index signature; use the declared fields rather than arbitrary JSON properties. The schema still includes primitive, null, and JSON-array alternatives, so narrow to the object branch before accessing its fields."
 "@effect/ai-openai/Generated#ListModelsResponse":
   replacement: "Generated.ListModelsResponse"
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -2184,7 +2184,7 @@
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openai/Generated#ListRunStepsResponse":
   replacement: "Generated.ListRunStepsResponse"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.ListRunStepsResponse schema. Its root object branch has no catch-all index signature; use the declared fields rather than arbitrary JSON properties. The schema still includes primitive, null, and JSON-array alternatives, so narrow to the object branch before accessing its fields."
 "@effect/ai-openai/Generated#ListThreadItemsMethodParams":
   replacement: "Generated.ListThreadItemsMethodParams"
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -2211,7 +2211,7 @@
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openai/Generated#ListVectorStoreFilesResponse":
   replacement: "Generated.ListVectorStoreFilesResponse"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.ListVectorStoreFilesResponse schema. Its root object branch has no catch-all index signature; use the declared fields rather than arbitrary JSON properties. The schema still includes primitive, null, and JSON-array alternatives, so narrow to the object branch before accessing its fields."
 "@effect/ai-openai/Generated#ListVectorStoresParams":
   replacement: "Generated.ListVectorStoresParams"
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -2220,7 +2220,7 @@
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openai/Generated#ListVectorStoresResponse":
   replacement: "Generated.ListVectorStoresResponse"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.ListVectorStoresResponse schema. Its root object branch has no catch-all index signature; use the declared fields rather than arbitrary JSON properties. The schema still includes primitive, null, and JSON-array alternatives, so narrow to the object branch before accessing its fields."
 "@effect/ai-openai/Generated#ListVideosParams":
   replacement: "Generated.ListVideosParams"
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -2268,7 +2268,7 @@
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-openai/Generated#make":
   replacement: "Generated.make"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "make now infers E and R from `HttpClient.With<E, R>` and returns `Generated.OpenAiClient<E, R>`. Preserve those type parameters in wrappers; endpoint effects include the supplied client error E and require R. transformClient must preserve the same E and R."
 "@effect/ai-openai/Generated#MCPApprovalRequest":
   replacement: "Generated.MCPApprovalRequest"
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -2403,7 +2403,7 @@
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-openai/Generated#Model":
   replacement: "Generated.Model"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.Model schema. Its root object branch has no catch-all index signature; use the declared fields rather than arbitrary JSON properties. The schema still includes primitive, null, and JSON-array alternatives, so narrow to the object branch before accessing its fields."
 "@effect/ai-openai/Generated#ModelIdsResponses":
   replacement: "Generated.ModelIdsResponses"
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -2454,7 +2454,7 @@
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-openai/Generated#OpenAIFile":
   replacement: "Generated.OpenAIFile"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.OpenAIFile schema. Its root object branch has no catch-all index signature; use the declared fields rather than arbitrary JSON properties. The schema still includes primitive, null, and JSON-array alternatives, so narrow to the object branch before accessing its fields."
 "@effect/ai-openai/Generated#OpenAIFileObject":
   replacement: "none"
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
@@ -2721,7 +2721,7 @@
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-openai/Generated#RealtimeSessionCreateRequestGA":
   replacement: "Generated.RealtimeSessionCreateRequestGA"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.RealtimeSessionCreateRequestGA schema. The object shapes at audio.input.noise_reduction have no catch-all index signature; use their declared fields rather than arbitrary JSON properties."
 "@effect/ai-openai/Generated#RealtimeSessionCreateRequestGAMaxOutputTokensEnum":
   replacement: "none"
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
@@ -2742,10 +2742,10 @@
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openai/Generated#RealtimeSessionCreateResponse":
   replacement: "Generated.RealtimeSessionCreateResponse"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.RealtimeSessionCreateResponse schema. The object shapes at audio.input.noise_reduction, audio.input.turn_detection, and turn_detection have no catch-all index signature; use their declared fields rather than arbitrary JSON properties."
 "@effect/ai-openai/Generated#RealtimeSessionCreateResponseGA":
   replacement: "Generated.RealtimeSessionCreateResponseGA"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.RealtimeSessionCreateResponseGA schema. The object shapes at audio.input.noise_reduction have no catch-all index signature; use their declared fields rather than arbitrary JSON properties."
 "@effect/ai-openai/Generated#RealtimeSessionCreateResponseGAMaxOutputTokensEnum":
   replacement: "none"
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
@@ -2766,10 +2766,10 @@
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openai/Generated#RealtimeTranscriptionSessionCreateRequest":
   replacement: "Generated.RealtimeTranscriptionSessionCreateRequest"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.RealtimeTranscriptionSessionCreateRequest schema. The object shapes at input_audio_noise_reduction have no catch-all index signature; use their declared fields rather than arbitrary JSON properties."
 "@effect/ai-openai/Generated#RealtimeTranscriptionSessionCreateRequestGA":
   replacement: "Generated.RealtimeTranscriptionSessionCreateRequestGA"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.RealtimeTranscriptionSessionCreateRequestGA schema. The object shapes at audio.input.noise_reduction have no catch-all index signature; use their declared fields rather than arbitrary JSON properties."
 "@effect/ai-openai/Generated#RealtimeTranscriptionSessionCreateRequestGAType":
   replacement: "none"
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
@@ -2784,7 +2784,7 @@
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-openai/Generated#RealtimeTranscriptionSessionCreateResponseGA":
   replacement: "Generated.RealtimeTranscriptionSessionCreateResponseGA"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.RealtimeTranscriptionSessionCreateResponseGA schema. The object shapes at audio.input.noise_reduction have no catch-all index signature; use their declared fields rather than arbitrary JSON properties."
 "@effect/ai-openai/Generated#RealtimeTranscriptionSessionCreateResponseGAType":
   replacement: "none"
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
@@ -2943,7 +2943,7 @@
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-openai/Generated#RunObject":
   replacement: "Generated.RunObject"
-  note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the current Generated.RunObject schema. The object shapes at required_action, last_error, and incomplete_details have no catch-all index signature; use their declared fields rather than arbitrary JSON properties."
 "@effect/ai-openai/Generated#RunObjectIncompleteDetailsReason":
   replacement: "none"
   note: "Removed when the OpenAI specification client was regenerated; use the current Generated or OpenAiSchema request/response schema for the relevant endpoint instead of this old snapshot helper."
@@ -3100,6 +3100,9 @@
 "@effect/ai-openai/Generated#SubmitToolOutputsRunRequest":
   replacement: "Generated.SubmitToolOutputsRunRequest"
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+"@effect/ai-openai/Generated#Summary":
+  replacement: "Generated.SummaryTextContent"
+  note: "Reasoning summary parts are generated as SummaryTextContent. It is a Schema.Struct rather than a class, so type must be supplied as \"summary_text\" instead of defaulting in a constructor."
 "@effect/ai-openai/Generated#SummaryTextContent":
   replacement: "Generated.SummaryTextContent"
   note: "Still generated in v4 from the current OpenAI specification; re-check the schema's Type/Encoded shape because the generated definition changed."
