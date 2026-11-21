@@ -23,14 +23,16 @@ if (hostPlatform !== "darwin") {
   ];
   if (targets === undefined) throw new Error(`Unsupported macOS architecture: ${values.arch}`);
   const root = NodeURL.fileURLToPath(new URL("../../../native/apple-speech/", import.meta.url));
-  const source = NodePath.resolve(root, "AppleSpeech.swift");
+  const sources = ["AppleSpeech.swift", "AppleSpeechEngine.swift"].map((file) =>
+    NodePath.resolve(root, file),
+  );
   const output = values.output ?? NodePath.resolve(root, "build", values.arch, "t3-apple-speech");
   let current = false;
   try {
     current =
       NodeFS.statSync(output).mtimeMs >=
       Math.max(
-        NodeFS.statSync(source).mtimeMs,
+        ...sources.map((source) => NodeFS.statSync(source).mtimeMs),
         NodeFS.statSync(NodeURL.fileURLToPath(import.meta.url)).mtimeMs,
       );
   } catch {}
@@ -50,7 +52,7 @@ if (hostPlatform !== "darwin") {
             "-parse-as-library",
             "-target",
             `${target}-apple-macos26.0`,
-            source,
+            ...sources,
             "-o",
             slices[index],
           ],

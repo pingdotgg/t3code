@@ -1,9 +1,9 @@
 {
   "customNotices": [
     {
-      "bundles": ["desktop"],
+      "bundles": ["desktop", "mobile"],
       "license": "MIT",
-      "name": "Apple Speech helper (adapted from @react-native-ai/apple)",
+      "name": "Apple Speech engine (adapted from @react-native-ai/apple)",
       "sourceUrl": "https://github.com/callstackincubator/ai",
       "generatedNotices": [
         {
@@ -621,17 +621,6 @@
       "generatedNotice": {
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
-      }
-    },
-    {
-      "name": "@react-native-ai/apple",
-      "sourceUrl": "https://github.com/callstackincubator/ai",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": [
-          "Copyright (c) 2024-2025 Szymon Rybczak",
-          "Copyright (c) 2025-present Callstack"
-        ]
       }
     },
     {
