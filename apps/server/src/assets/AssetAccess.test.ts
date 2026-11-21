@@ -47,7 +47,12 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
-  return { ...actual, open: vi.fn(actual.open), realpath: vi.fn(actual.realpath) };
+  return {
+    ...actual,
+    lstat: vi.fn(actual.lstat),
+    open: vi.fn(actual.open),
+    realpath: vi.fn(actual.realpath),
+  };
 });
 
 const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
@@ -1068,6 +1073,153 @@ describe("AssetAccess", () => {
         ),
       ).toBeNull();
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "serves Windows media when a virtualizing filter driver splits lstat and fstat identities",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-filter-driver-" });
+        const filePath = path.join(root, "shot.png");
+        const replacementPath = path.join(root, "replacement.png");
+        const secretPath = path.join(root, "secret.png");
+        yield* fs.writeFile(filePath, screenshotPng);
+        yield* fs.writeFile(secretPath, screenshotPng);
+        const canonicalPath = yield* fs.realPath(filePath);
+        const native = yield* Effect.promise(() =>
+          vi.importActual<typeof NodeFSP>("node:fs/promises"),
+        );
+
+        // Simulate FSLogix: lstat returns the VHDX volume/inode, while open().stat() returns a
+        // consistent virtualized host volume/inode with matching birthtimeNs.
+        const virtualizedDev = 0x8ca13813n;
+        const virtualizedInoMask = 0xe5ff00000000n;
+        const backingDev = 0x08c130c5n;
+        let openCallIndex = 0;
+        let swapFirstOpenToSecret = false;
+        let forgeSecretBirthtime = false;
+        const secretLstat = yield* Effect.promise(() => native.lstat(secretPath, { bigint: true }));
+
+        const wrapHandleStat = (handle: NodeFSP.FileHandle): NodeFSP.FileHandle => {
+          const originalStat = handle.stat.bind(handle);
+          return new Proxy(handle, {
+            get(target, prop, receiver) {
+              if (prop === "stat") {
+                return async (options?: Parameters<NodeFSP.FileHandle["stat"]>[0]) => {
+                  const info = await originalStat(options);
+                  if (typeof info.ino === "bigint") {
+                    return Object.assign(Object.create(Object.getPrototypeOf(info)), info, {
+                      dev: virtualizedDev,
+                      ino: info.ino ^ virtualizedInoMask,
+                    });
+                  }
+                  return info;
+                };
+              }
+              const value = Reflect.get(target, prop, receiver);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          });
+        };
+
+        const lstatSpy = vi.mocked(NodeFSP.lstat).mockImplementation((async (
+          targetPath: Parameters<typeof NodeFSP.lstat>[0],
+          options?: Parameters<typeof NodeFSP.lstat>[1],
+        ) => {
+          const info = await native.lstat(targetPath, options);
+          if (targetPath === canonicalPath && typeof info.ino === "bigint") {
+            return Object.assign(Object.create(Object.getPrototypeOf(info)), info, {
+              dev: backingDev,
+              ...(forgeSecretBirthtime ? { birthtimeNs: secretLstat.birthtimeNs } : {}),
+            });
+          }
+          return info;
+        }) as typeof NodeFSP.lstat);
+
+        const openSpy = vi.mocked(NodeFSP.open).mockImplementation((async (
+          targetPath: Parameters<typeof NodeFSP.open>[0],
+          flags?: Parameters<typeof NodeFSP.open>[1],
+          mode?: Parameters<typeof NodeFSP.open>[2],
+        ) => {
+          if (targetPath === canonicalPath) {
+            openCallIndex += 1;
+            const actualTarget =
+              swapFirstOpenToSecret && openCallIndex === 1 ? secretPath : targetPath;
+            return wrapHandleStat(await native.open(actualTarget, flags, mode));
+          }
+          return native.open(targetPath, flags, mode);
+        }) as typeof NodeFSP.open);
+
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            lstatSpy.mockReset().mockImplementation(native.lstat);
+            openSpy.mockReset().mockImplementation(native.open);
+          }),
+        );
+
+        const input = {
+          resource: {
+            _tag: "media-file" as const,
+            threadId: ThreadId.make("thread-1"),
+            path: filePath,
+          },
+        };
+
+        // On non-Windows platforms, lstat/fstat identity divergence stays strictly rejected.
+        const linuxError = yield* issueAssetUrl(input).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.flip,
+        );
+        expect(linuxError._tag).toBe("AssetWorkspaceAssetNotFoundError");
+
+        // On Windows, minting and serving both succeed and read dimensions/bytes.
+        const issued = yield* issueAssetUrl(input).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+        );
+        expect(issued.imageDimensions).toEqual({ width: 390, height: 844 });
+        const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        const name = suffix.slice(separator + 1);
+
+        // Serving with the signed fstat identity takes only a single open() call.
+        openCallIndex = 0;
+        const resolved = yield* resolveAsset(token, name).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+        );
+        expect(openCallIndex).toBe(1);
+        expect(resolved).toMatchObject({
+          kind: "file",
+          path: canonicalPath,
+          mimeType: "image/png",
+        });
+        if (resolved?.kind !== "file") throw new Error("Expected resolved Windows media file");
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(resolved));
+        expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
+          screenshotPng,
+        );
+
+        // Atomic replacement invalidates the signed URL even under the filter driver.
+        yield* fs.writeFile(replacementPath, screenshotPng);
+        yield* fs.rename(replacementPath, filePath);
+        expect(
+          yield* resolveAsset(token, name).pipe(
+            Effect.provideService(HostProcess.Platform, "win32"),
+          ),
+        ).toBeNull();
+
+        // A swap-and-restore race around the first open() is rejected even with matching birthtimeNs.
+        openCallIndex = 0;
+        swapFirstOpenToSecret = true;
+        forgeSecretBirthtime = true;
+        const swapError = yield* issueAssetUrl(input).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.flip,
+        );
+        expect(swapError._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.skipIf(!symlinksSupported)("validates canonical preview dependency paths", () =>
