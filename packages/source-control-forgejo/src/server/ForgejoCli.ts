@@ -476,7 +476,14 @@ export const make = Effect.gen(function* () {
       command: "fj",
       cwd: yield* HostProcess.HomeDirectory,
       args: ["--host", login.url, "whoami"],
-    });
+    }).pipe(
+      // whoami reads `GET /user`, which tokens without `read:user` cannot; the API calls that
+      // follow report a real denial with its status.
+      Effect.catchIf(
+        (error) => token !== undefined && error.reason === undefined,
+        () => Effect.void,
+      ),
+    );
     // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
     const refreshed = (yield* readKeys(cwd)).hosts[login.name]?.token;
     if (!refreshed)
