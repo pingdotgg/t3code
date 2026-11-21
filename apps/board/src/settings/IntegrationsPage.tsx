@@ -20,7 +20,7 @@ export function IntegrationsPage({ environmentId }: { environmentId: Environment
   const list = AsyncResult.getOrElse(trackers, () => null);
   const hosts = AsyncResult.getOrElse(discovery, () => null)?.sourceControlProviders ?? [];
   const linear = list?.trackers.find((tracker) => tracker.tracker === "linear");
-  const issueHosts = hosts.filter((host) => host.kind === "github" || host.kind === "gitlab");
+  const issueHosts = hosts.filter((host) => host.kind === "github");
   const problem = (message: string, retry: () => void) => (
     <div className="flex items-center justify-between gap-3 px-4 py-3">
       <p role="alert" className="min-w-0 text-xs break-words text-red-400">
@@ -52,7 +52,7 @@ export function IntegrationsPage({ environmentId }: { environmentId: Environment
       </IntegrationGroup>
       <IntegrationGroup
         title="Task trackers"
-        description="Connect the trackers the board can use to browse issues and start boards with their context."
+        description="Connect the trackers the board can use to browse issues."
       >
         {linear !== undefined && list !== null && (
           <LinearCard

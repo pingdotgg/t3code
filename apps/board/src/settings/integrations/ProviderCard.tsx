@@ -40,7 +40,7 @@ export function ProviderCard({
   const guidance = item.status === "missing" ? item.installHint : detail;
   const what =
     purpose === "tracker"
-      ? `Browse ${item.label} issues and start boards from them.`
+      ? "Add GitHub issues to a board as tickets."
       : `Pull requests, checks and review status${item.executable === undefined ? "" : ` through the ${item.executable} CLI`}.`;
   return (
     <IntegrationCard

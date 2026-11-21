@@ -1,6 +1,7 @@
 import { RegistryContext } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { LoaderCircle } from "lucide-react";
+import type { IssueListEntry, IssueRef } from "@t3tools/contracts";
 import { type FormEvent, useContext, useState } from "react";
 
 import { messageOrchestrator } from "../foryou/actions";
@@ -8,7 +9,14 @@ import { readIssueBrief } from "../state/issues";
 import { settingsPageAtom } from "../state/settingsPage";
 import { ticketRequestMessage } from "./issueLinks";
 import { IssuePicker } from "./IssuePicker";
-import { entryRef, type PickerValue } from "./pick";
+
+const entryRef = ({ projectId, tracker, host, scope, key }: IssueListEntry): IssueRef => ({
+  projectId,
+  tracker,
+  host,
+  scope,
+  key,
+});
 
 export function AddFromIssue({
   project,
@@ -20,10 +28,9 @@ export function AddFromIssue({
   onDone: () => void;
 }) {
   const registry = useContext(RegistryContext);
-  const [value, setValue] = useState<PickerValue>({ mode: "linear", text: "", source: null });
+  const [issue, setIssue] = useState<IssueListEntry | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const issue = value.source;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -50,6 +57,7 @@ export function AddFromIssue({
   return (
     <div
       className="fixed inset-0 z-30 grid place-items-center bg-black/50"
+      onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !busy) onDone();
       }}
@@ -66,8 +74,8 @@ export function AddFromIssue({
           <p className="text-xs font-medium text-muted">Issue</p>
           <IssuePicker
             project={project}
-            value={value}
-            onChange={setValue}
+            source={issue}
+            onPick={setIssue}
             onOpenIntegrations={() => {
               registry.set(settingsPageAtom, "integrations");
               onDone();

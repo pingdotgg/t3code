@@ -10,13 +10,13 @@ import { issueTrackerEnvironment } from "../state/issues";
 import { Tooltip } from "../ui/Tooltip";
 import { GITHUB, LINEAR } from "./issueLinks";
 import { IssueResults } from "./IssueResults";
-import type { PickerMode, PickerValue } from "./pick";
 import { LinearIcon } from "./LinearIcon";
 import { useIssueSearch } from "./useIssueSearch";
 
 type Icon = ComponentType<{ className?: string }>;
+type Mode = typeof GITHUB | typeof LINEAR;
 
-const MODES: ReadonlyArray<{ id: PickerMode; label: string; Icon: Icon; placeholder: string }> = [
+const MODES: ReadonlyArray<{ id: Mode; label: string; Icon: Icon; placeholder: string }> = [
   { id: "github", label: "GitHub", Icon: Github, placeholder: "Search GitHub issues" },
   { id: "linear", label: "Linear", Icon: LinearIcon, placeholder: "Search Linear issues" },
 ];
@@ -24,19 +24,20 @@ const MODES: ReadonlyArray<{ id: PickerMode; label: string; Icon: Icon; placehol
 const field =
   "h-9 w-full min-w-0 rounded-md border border-line bg-bg pr-2 pl-8 text-sm text-fg placeholder:text-faint focus:border-focus focus:ring-[3px] focus:ring-focus/30 focus:outline-none";
 
-/** Orca's Create From row: an icon tab for each tracker and a search box. A pick replaces the box with a pill. */
+/** An icon tab for each tracker and a search box. A pick replaces the box with a pill. */
 export function IssuePicker({
   project,
-  value,
-  onChange,
+  source,
+  onPick,
   onOpenIntegrations,
 }: {
   project: EnvironmentProject;
-  value: PickerValue;
-  onChange: (value: PickerValue) => void;
-  onOpenIntegrations?: (() => void) | undefined;
+  source: IssueListEntry | null;
+  onPick: (source: IssueListEntry | null) => void;
+  onOpenIntegrations: () => void;
 }) {
-  const { mode, text, source } = value;
+  const [mode, setMode] = useState<Mode>(LINEAR);
+  const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const current = MODES.find((entry) => entry.id === mode)!;
@@ -60,7 +61,7 @@ export function IssuePicker({
 
   const issues = useIssueSearch(
     project,
-    mode === "linear" ? LINEAR : GITHUB,
+    mode,
     text,
     listing && !(mode === "linear" && linearSetup !== null),
   );
@@ -74,7 +75,7 @@ export function IssuePicker({
 
   const rows = issues.rows;
   const pick = (entry: IssueListEntry) => {
-    onChange({ ...value, source: entry });
+    onPick(entry);
     setOpen(false);
   };
   const keys = (event: KeyboardEvent) => {
@@ -97,11 +98,7 @@ export function IssuePicker({
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <div
-        role="tablist"
-        aria-label="Create from"
-        className="flex min-w-0 items-center gap-1 border-b border-line/40"
-      >
+      <div role="tablist" className="flex min-w-0 items-center gap-1 border-b border-line/40">
         {MODES.map(({ id, label, Icon }) => (
           <Tooltip key={id} text={label} side="bottom">
             <button
@@ -111,8 +108,11 @@ export function IssuePicker({
               aria-label={label}
               data-mode={id}
               onClick={() => {
-                onChange({ mode: id, text: id === mode ? text : "", source: null });
+                if (id !== mode) setText("");
+                setMode(id);
+                onPick(null);
                 setOpen(false);
+                setHighlight(0);
               }}
               className={`relative inline-flex h-7 items-center justify-center rounded-md px-2 after:absolute after:inset-x-0 after:-bottom-px after:h-0.5 after:bg-fg after:transition-opacity hover:text-fg ${mode === id ? "text-fg after:opacity-100" : "text-muted after:opacity-0"}`}
             >
@@ -142,7 +142,10 @@ export function IssuePicker({
             <button
               type="button"
               aria-label="Clear the picked source"
-              onClick={() => onChange({ ...value, text: "", source: null })}
+              onClick={() => {
+                setText("");
+                onPick(null);
+              }}
               className="grid size-6 shrink-0 place-items-center rounded-sm text-muted hover:text-fg"
             >
               <X className="size-3.5" />
@@ -159,7 +162,7 @@ export function IssuePicker({
               onPointerDown={() => setOpen(true)}
               onChange={(event) => {
                 performance.mark("board:issue-search", { detail: { text: event.target.value } });
-                onChange({ ...value, text: event.target.value });
+                setText(event.target.value);
                 setHighlight(0);
                 setOpen(true);
               }}
@@ -176,7 +179,7 @@ export function IssuePicker({
                 onHighlight={setHighlight}
                 onPick={pick}
                 action={
-                  mode === "linear" && linearSetup !== null && onOpenIntegrations !== undefined
+                  mode === "linear" && linearSetup !== null
                     ? { label: "Open Integrations", run: onOpenIntegrations }
                     : null
                 }

@@ -78,7 +78,7 @@ export function IssueChip({
   const { tone, Icon } = stateOf(detail.state);
   const assignee = detail.assignees[0]?.login ?? null;
   return (
-    <>
+    <span className="contents" onPointerDown={(event) => event.stopPropagation()}>
       <button
         type="button"
         data-testid="issue-chip"
@@ -111,6 +111,6 @@ export function IssueChip({
           }))}
         />
       )}
-    </>
+    </span>
   );
 }

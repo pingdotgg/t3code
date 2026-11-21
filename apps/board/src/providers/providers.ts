@@ -33,8 +33,7 @@ export const DEFAULT_ORCHESTRATOR = { model: "claude-opus-5-5", effort: "medium"
 
 /**
  * Codex runs T3's tracker write tools with no way to ask first: its per-tool approval needs a
- * server entry that only the engine can write. So the board runs no orchestrator on it, which keeps
- * every tracker write behind the operator's approval.
+ * server entry that only the engine can write. So the board runs no orchestrator on it.
  */
 export const CODEX_TRACKER_WRITES =
   "Codex cannot ask before it changes an issue tracker, so boards run on Claude Code";

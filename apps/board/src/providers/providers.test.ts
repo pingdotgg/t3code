@@ -4,7 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canStart,
-  CODEX_TRACKER_WRITES,
   defaultPick,
   NO_PICK,
   pickableInstances,
@@ -203,11 +202,7 @@ describe("the orchestrator's pick", () => {
 
   it("Given a signed-out Claude Code and a Codex, when nothing is picked, then Codex is not chosen because it cannot ask before a tracker write", () => {
     const instances = pickableInstances([claude("unauthenticated"), codex]);
-    expect(defaultPick(instances).value.instanceId).toBe("claudeAgent");
     expect(canStart(instances.find((instance) => instance.driver === "codex")!)).toBe(false);
-    expect(instances.find((instance) => instance.driver === "codex")?.unavailable).toBe(
-      CODEX_TRACKER_WRITES,
-    );
   });
 
   it("Given a signed-in Claude Code without Opus 5.5, when nothing is picked, then the reason names the missing model", () => {

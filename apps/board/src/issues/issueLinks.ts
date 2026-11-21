@@ -41,15 +41,10 @@ export interface TicketIssueContext {
   readonly githubScope: string | null;
 }
 
-/**
- * The address `issues.detail` reads an issue at, or null for a key this board cannot place. The
- * orchestrator writes the field by hand, so a key buried in a link or a sentence still resolves.
- */
+/** The address `issues.detail` reads an issue at, or null for a key this board cannot place. */
 export function issueRefOf(issue: TicketIssue, context: TicketIssueContext): IssueRef | null {
   const projectId = ProjectId.make(context.projectId);
-  const key =
-    findIssueKeys(issue.key).find((found) => found.tracker === issue.tracker)?.key ??
-    issue.key.trim();
+  const key = issue.key.trim();
   if (issue.tracker === LINEAR) {
     const team = LINEAR_KEY.exec(key)?.[1];
     return team === undefined
@@ -95,7 +90,6 @@ export function trackerCall(write: TrackerWrite, projectId: string): TrackerCall
   const scope = {
     projectId: ProjectId.make(projectId),
     tracker: IssueTrackerKind.make(write.tracker),
-    ...(write.host == null ? {} : { host: write.host }),
     scope: write.scope,
   };
   switch (write.action) {
@@ -106,8 +100,8 @@ export function trackerCall(write: TrackerWrite, projectId: string): TrackerCall
           ...scope,
           title: write.title,
           body: write.body ?? "",
-          labels: write.labels ?? [],
-          assignees: write.assignees ?? [],
+          labels: [],
+          assignees: [],
         },
       };
     case "set_state":

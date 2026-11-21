@@ -73,7 +73,6 @@ const Question = Schema.Struct({
 
 const trackerScope = {
   tracker: Schema.String.check(Schema.isNonEmpty()),
-  host: optional(Schema.String),
   /** The tracker's container: `owner/repo` on GitHub, the team key on Linear. */
   scope: Schema.String.check(Schema.isNonEmpty()),
 };
@@ -85,8 +84,6 @@ export const TrackerWrite = Schema.Union([
     action: Schema.Literal("create"),
     title: Schema.String.check(Schema.isNonEmpty()),
     body: optional(Schema.String),
-    labels: optional(Schema.Array(Schema.String)),
-    assignees: optional(Schema.Array(Schema.String)),
   }),
   Schema.Struct({
     ...trackerScope,

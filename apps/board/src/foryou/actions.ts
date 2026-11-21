@@ -22,7 +22,6 @@ import {
   type ForYouAnswer,
   type ForYouCard,
   forYouMessage,
-  type TrackerWriteItem,
 } from "../domain/forYou";
 import { trackerCall } from "../issues/issueLinks";
 import { failureText } from "../settings/failureText";
@@ -115,24 +114,11 @@ export async function messageOrchestrator(
   return result._tag === "Success" ? null : failureText(result);
 }
 
-/** Makes the tracker change an item asks for. The orchestrator is told the outcome either way. */
-async function makeTrackerWrite(target: ForYouTarget, item: TrackerWriteItem): Promise<string> {
-  try {
-    return await runTrackerCall(
-      target.registry,
-      target.environmentId,
-      trackerCall(item.write, target.projectId),
-    );
-  } catch (failure) {
-    return `failed: ${failure instanceof Error ? failure.message : String(failure)}`;
-  }
-}
-
 /**
  * Answers a `foryou.jsonl` item by messaging its orchestrator, which records the answer in the file.
  * The card reads as sent from the click, and goes back if the message does not go. Approving a
- * `tracker_write` item makes its change first, and the message carries the outcome. Hold changes
- * nothing. Resolves to the failure text, or null once sent.
+ * `tracker_write` item makes its change first, and the message carries the outcome. A change that
+ * fails leaves the card to retry. Hold changes nothing. Resolves to the failure text, or null once sent.
  */
 export async function answerItem(
   target: ForYouTarget,
@@ -140,27 +126,35 @@ export async function answerItem(
   card: FileCard,
   answer: ForYouAnswer,
 ): Promise<string | null> {
-  if (orchestratorThreadId === null) return "Start this board's orchestrator before answering.";
   performance.mark("board:foryou-click", { detail: { id: card.id } });
   const { item } = card;
   let result: string | undefined;
-  const failure = await messageOrchestrator(
-    target.registry,
-    target.environmentId,
-    orchestratorThreadId,
-    async () => {
-      if (
-        item.kind === "tracker_write" &&
-        answer.type === "choice" &&
-        answer.choice === "approve"
-      ) {
-        result ??= await makeTrackerWrite(target, item);
-        return forYouMessage(card.id, { ...answer, result });
-      }
-      return forYouMessage(card.id, answer);
-    },
-    () => setSent(target, card, answerLabel(answer), false),
-  );
+  let failure: string | null;
+  try {
+    failure = await messageOrchestrator(
+      target.registry,
+      target.environmentId,
+      orchestratorThreadId,
+      async () => {
+        if (
+          item.kind === "tracker_write" &&
+          answer.type === "choice" &&
+          answer.choice === "approve"
+        ) {
+          result ??= await runTrackerCall(
+            target.registry,
+            target.environmentId,
+            trackerCall(item.write, target.projectId),
+          );
+          return forYouMessage(card.id, { ...answer, result });
+        }
+        return forYouMessage(card.id, answer);
+      },
+      () => setSent(target, card, answerLabel(answer), false),
+    );
+  } catch (error) {
+    failure = error instanceof Error ? error.message : String(error);
+  }
   if (failure === null) return null;
   if (result === undefined) {
     setSent(target, card, "", true);

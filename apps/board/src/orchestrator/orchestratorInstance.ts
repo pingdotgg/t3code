@@ -135,6 +135,7 @@ function planCopy(input: {
   const { providerInstances, base, instanceId } = input;
   const source = instanceAt(providerInstances, base.instanceId);
   const sourceConfig = configOf(source);
+  // shortcut: a base instance's own --settings is replaced by the board's ask rule, upgrade when T3 merges settings files
   const own = sourceConfig.launchArgs?.trim() ?? "";
   const launchArgs = [own, input.extraArgs ?? ""].filter((part) => part !== "").join(" ");
   const environment =
