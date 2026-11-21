@@ -2442,7 +2442,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     return !child.runtimeRequests.some(
       (request) =>
-        request.kind === "user_input" &&
         request.status === "pending" &&
         messageId === `message:delegated-task-question:${threadId}:${request.id}`,
     );
