@@ -855,7 +855,9 @@ export function antigravityWindowLimitsModel(
 ): boolean {
   // A hub can prefix model ids, such as "ag/gemini-3.1-pro".
   const base = model?.slice(model.lastIndexOf("/") + 1);
-  return base === undefined || window.id.startsWith("gemini") === base.startsWith("gemini");
+  // An alias such as "fast" may route to either quota, so both hold it back.
+  if (base === undefined || !/^(gemini|claude|gpt)/.test(base)) return true;
+  return window.id.startsWith("gemini") === base.startsWith("gemini");
 }
 
 /** The hub accounts that serve a model: those that list it, else every account of the driver. */
@@ -960,7 +962,8 @@ export function collectProviderUsageLimits(
     credits,
   } of native) {
     const key = resolveKey(nativeReport(provider));
-    const hubCredits = sources
+    // Only a hub this instance reaches may redeem a credit for its thread.
+    const hubCredits = shownHubs
       .flatMap((source) => source.accounts.map((account) => ({ source, account })))
       .filter(
         ({ account }) =>

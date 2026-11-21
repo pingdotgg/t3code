@@ -490,7 +490,11 @@ export const makeCliproxyApi = Effect.gen(function* () {
       apiCall(hub, account, provider.header(account, platform, architecture), url, data);
     const [models, reading] = yield* Effect.all(
       [
-        routedModels(hub, account).pipe(Effect.option),
+        // Optional, so a slow lookup must not hold back the quota reading past the refresh budget.
+        routedModels(hub, account).pipe(
+          Effect.timeoutOption("2 seconds"),
+          Effect.orElseSucceed(() => Option.none()),
+        ),
         provider.read({ account, call, checkedAt }).pipe(
           Effect.provideService(Digest.Digest, digest),
           Effect.orElseSucceed(() => ({

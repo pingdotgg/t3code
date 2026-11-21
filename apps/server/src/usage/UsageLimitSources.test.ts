@@ -405,6 +405,12 @@ it.each([
     model: "ag/gemini-3.1-pro-high",
     expected: at(24),
   },
+  {
+    name: "an alias of unknown family is held back by every Antigravity quota",
+    accounts: [{ driver: "antigravity", models: ["fast"], windows: [spent("gemini-5h", 24)] }],
+    model: "fast",
+    expected: at(24),
+  },
 ])("hub pool reset: $name", ({ accounts, model, expected }) => {
   expect(
     UsageLimitSources.hubPoolResetAt(
