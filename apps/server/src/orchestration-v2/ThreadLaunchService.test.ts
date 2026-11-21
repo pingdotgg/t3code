@@ -3222,6 +3222,43 @@ it.effect("starts the agent of a new worktree thread only after its branch is re
   }),
 );
 
+it.effect("names a new worktree thread's branch while its worktree is being created", () =>
+  Effect.gen(function* () {
+    const branchNameStarted = yield* Deferred.make<void>();
+    const renamedTo = yield* Deferred.make<string>();
+    const harness = makeHarness({
+      generateBranchName: () =>
+        Deferred.succeed(branchNameStarted, undefined).pipe(
+          Effect.as({ branch: "generated-branch" }),
+        ),
+      createWorktree: (input) =>
+        Deferred.await(branchNameStarted).pipe(
+          Effect.as({
+            worktree: {
+              path: "/repo-worktrees/feature",
+              refName: input.newRefName,
+              headSha: "abc",
+            },
+          } as never),
+        ),
+      renameBranch: (input) =>
+        Deferred.succeed(renamedTo, input.newBranch).pipe(Effect.as({ branch: input.newBranch })),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch(
+        launchInput({
+          command: "launch:name-during-checkout",
+          thread: "thread:name-during-checkout",
+          message: "Start",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      assert.equal(yield* Deferred.await(renamedTo), "generated-branch");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("tells the thread when its worktree branch could not be renamed", () =>
   Effect.gen(function* () {
     const harness = makeHarness({
