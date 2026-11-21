@@ -428,7 +428,8 @@ export function FoldedMessageHeader(props: {
       >
         {props.label}
       </span>
-      <span className="min-w-0 flex-1 truncate">{props.summary}</span>
+      {/* Mentioned macOS paths can be NFD; compose them like the chips in the body. */}
+      <span className="min-w-0 flex-1 truncate">{props.summary.normalize("NFC")}</span>
       <ChevronDownIcon
         className={cn(
           "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -600,9 +601,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     plainText
       .split(/\r?\n/)
       .find((line) => line.trim().length > 0)
-      ?.trim()
-      // Mentioned macOS paths can be NFD; compose them like the chips in the body.
-      .normalize("NFC") ?? "";
+      ?.trim() ?? "";
   const mediaCopyRecords = mediaOnly
     ? resolvedContext.records.flatMap((record) => {
         const known = asKnownContextRecord(record);

@@ -189,4 +189,11 @@ describe("fileLinkLabel", () => {
   ])("labels %o", (file, label) => {
     expect(fileLinkLabel(file, new Map())).toBe(label);
   });
+
+  it("composes an NFD parent-folder suffix", () => {
+    const path = "/repo/\u1109\u1175\u110b\u1161\u11ab/a.txt";
+    expect(
+      fileLinkLabel({ path }, buildFileLinkParentSuffixByPath([path, "/repo/other/a.txt"])),
+    ).toBe("a.txt · repo/\uc2dc\uc548");
+  });
 });

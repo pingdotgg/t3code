@@ -184,14 +184,17 @@ export function fileLinkLabel(
   parentSuffixByPath: ReadonlyMap<string, string>,
 ): string {
   const suffix = parentSuffixByPath.get(file.path.replaceAll("\\", "/"));
-  return [
-    // macOS stores many names in NFD; compose them for display only.
-    fileBasename(file.path).normalize("NFC"),
-    suffix,
-    file.line
-      ? `L${file.line}${file.endLine ? `–${file.endLine}` : file.column ? `:C${file.column}` : ""}`
-      : undefined,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  return (
+    [
+      fileBasename(file.path),
+      suffix,
+      file.line
+        ? `L${file.line}${file.endLine ? `–${file.endLine}` : file.column ? `:C${file.column}` : ""}`
+        : undefined,
+    ]
+      .filter(Boolean)
+      .join(" · ")
+      // macOS stores many names in NFD; compose them for display only.
+      .normalize("NFC")
+  );
 }
