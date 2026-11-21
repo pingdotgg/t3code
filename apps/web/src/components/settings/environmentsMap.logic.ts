@@ -612,14 +612,24 @@ export type FleetLinkOffer =
       /**
        * `code-less`: the client mints the pairing code on the target with its own session there.
        * `pairing-code`: the user brings one from the target.
+       * `through-link`: a machine that links to the target at full access gets the code there.
        */
-      readonly path: "code-less" | "pairing-code";
+      readonly path: "code-less" | "pairing-code" | "through-link";
       /** The pair is already linked, so linking again renews it. */
       readonly renews: boolean;
       readonly target:
         | { readonly kind: "machine"; readonly environmentId: EnvironmentId }
         /** A machine the client has no entry for: only an address another host uses. */
-        | { readonly kind: "address"; readonly address: string | null };
+        | {
+            readonly kind: "address";
+            readonly address: string | null;
+            /** The linked machine itself, and the one that can get a pairing code from it. */
+            readonly through?: {
+              readonly viaEnvironmentId: EnvironmentId;
+              readonly environmentId: EnvironmentId;
+              readonly label: string;
+            };
+          };
     };
 
 export function fleetLinkOffer(
@@ -645,10 +655,39 @@ export function fleetLinkOffer(
   );
   const base = { kind: "link", sourceEnvironmentId: source.environmentId, renews } as const;
   if (target.kind === "target") {
+    // Only a full-access link may mint a code there, and only a session that manages access on
+    // the machine holding that link may ask it to.
+    const via = graph.edges.find(
+      (edge): edge is FleetLinkEdge =>
+        edge.kind === "link" &&
+        edge.to === target.id &&
+        edge.from !== source.id &&
+        edge.link.access === "full-access" &&
+        edge.health.kind === "reachable" &&
+        graph.nodes.some(
+          (node) =>
+            node.id === edge.from &&
+            node.kind === "environment" &&
+            node.phase === "connected" &&
+            node.canWriteAccess,
+        ),
+    );
     return {
       ...base,
-      path: "pairing-code",
-      target: { kind: "address", address: target.address },
+      path: via === undefined ? "pairing-code" : "through-link",
+      target: {
+        kind: "address",
+        address: target.address,
+        ...(via === undefined
+          ? {}
+          : {
+              through: {
+                viaEnvironmentId: via.sourceEnvironmentId,
+                environmentId: target.environmentId,
+                label: target.label,
+              },
+            }),
+      },
     };
   }
   return {
