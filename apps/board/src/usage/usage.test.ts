@@ -107,32 +107,32 @@ describe("describeUsage", () => {
   });
 
   it("Given limits marked unavailable, when described, then the dash carries the reason", () => {
-    const [codex] = describeUsage(
+    const [claude] = describeUsage(
       [
         provider({
           usageLimits: {
             checkedAt: at(0),
             windows: [],
-            unavailable: { reason: "probeFailed", message: "Codex is not signed in." },
+            unavailable: { reason: "probeFailed", message: "Claude Code is not signed in." },
           },
         }),
       ],
       NOW,
     );
 
-    expect(codex?.segments).toEqual([
-      { key: "unavailable", text: UNAVAILABLE_DASH, title: "Codex is not signed in." },
+    expect(claude?.segments).toEqual([
+      { key: "unavailable", text: UNAVAILABLE_DASH, title: "Claude Code is not signed in." },
     ]);
   });
 
   it("Given a signed-out provider with no limits, when described, then it shows a dash with the reason", () => {
     const [signedOut] = describeUsage(
-      [provider({ auth: { status: "unauthenticated" }, message: "Run codex login." })],
+      [provider({ auth: { status: "unauthenticated" }, message: "Run claude auth login." })],
       NOW,
     );
 
     expect(signedOut?.segments).toEqual([
-      { key: "signed-out", text: UNAVAILABLE_DASH, title: "Run codex login." },
+      { key: "signed-out", text: UNAVAILABLE_DASH, title: "Run claude auth login." },
     ]);
   });
 
@@ -142,14 +142,14 @@ describe("describeUsage", () => {
     ).toEqual([]);
   });
 
-  it("Given Codex listed before Claude, when described, then Claude Code comes first", () => {
+  it("Given another driver's provider beside Claude Code, when described, then only Claude Code has a section", () => {
     const limits = { checkedAt: at(0), windows: [window({ id: "w", usedPercent: 1 })] };
 
     const described = describeUsage(
       [
         provider({
-          instanceId: ProviderInstanceId.make("codex"),
-          driver: ProviderDriverKind.make("codex"),
+          instanceId: ProviderInstanceId.make("cursor"),
+          driver: ProviderDriverKind.make("cursor"),
           usageLimits: limits,
         }),
         provider({ usageLimits: limits }),
@@ -157,6 +157,6 @@ describe("describeUsage", () => {
       NOW,
     );
 
-    expect(described.map((entry) => entry.driver)).toEqual(["claudeAgent", "codex"]);
+    expect(described.map((entry) => entry.driver)).toEqual(["claudeAgent"]);
   });
 });

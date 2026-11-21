@@ -105,13 +105,13 @@ describe("launching an orchestrator", () => {
         failures: [
           {
             message:
-              '{"type":"error","status":400,"error":{"message":"The \'gpt-nope\' model is not supported when using Codex with a ChatGPT account."}}',
+              "There is an issue with the selected model (gpt-nope). It may not exist or you may not have access to it.",
           },
         ],
       },
     ]);
     await expect(launchOrchestrator(ports, target, SELECTION)).rejects.toThrow(
-      "The 'gpt-nope' model is not supported when using Codex with a ChatGPT account.",
+      "There is an issue with the selected model (gpt-nope). It may not exist or you may not have access to it.",
     );
     expect(boardJson(store)?.orchestratorThreadId).toBeNull();
     expect(discarded).toEqual(["thread-1"]);

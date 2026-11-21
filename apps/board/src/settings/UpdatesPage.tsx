@@ -121,9 +121,7 @@ export function UpdatesPage({
         }
       >
         {providers.length === 0 && (
-          <p className="px-3 py-2.5 text-faint">
-            The engine lists no Claude Code or Codex instance.
-          </p>
+          <p className="px-3 py-2.5 text-faint">The engine lists no Claude Code instance.</p>
         )}
         {providers.map((row) => (
           <UpdateItemRow
@@ -136,7 +134,7 @@ export function UpdatesPage({
         ))}
         <SettingsRow
           title="Check for provider updates"
-          description="T3 looks up the latest Claude Code and Codex releases. This setting belongs to the engine."
+          description="T3 looks up the latest Claude Code releases. This setting belongs to the engine."
           control={
             <Switch
               label="Check for provider updates"

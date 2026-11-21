@@ -60,7 +60,6 @@ describe("the role registry", () => {
   it("Given an instance that offers every model, when the roles resolve, then each keeps its own model on that instance", () => {
     const resolved = resolveRoles(ROLES, {
       instanceId: "claudeAgent",
-      driver: "claudeAgent",
       offered: ROLES.map((role) => role.model.slug),
     });
     expect(resolved.find((role) => role.name === "security-reviewer")).toMatchObject({
@@ -72,7 +71,6 @@ describe("the role registry", () => {
   it("Given an instance without claude-haiku-5-5, when the roles resolve, then only sonic falls back and says why", () => {
     const resolved = resolveRoles(ROLES, {
       instanceId: "claudeAgent",
-      driver: "claudeAgent",
       offered: ["claude-opus-5-5", "claude-sonnet-5-5"],
     });
     const fallen = resolved.filter((role) => role.fallback !== null);
@@ -82,14 +80,5 @@ describe("the role registry", () => {
       fallback:
         "claude-haiku-5-5 is not offered by claudeAgent, so it uses the orchestrator's model",
     });
-  });
-
-  it("Given a Codex orchestrator, when the roles resolve, then every child inherits its model", () => {
-    const resolved = resolveRoles(ROLES, { instanceId: "codex", driver: "codex", offered: [] });
-    expect(
-      resolved.every(
-        (role) => role.target.providerInstanceId === "codex" && role.target.model === undefined,
-      ),
-    ).toBe(true);
   });
 });

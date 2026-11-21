@@ -37,7 +37,7 @@ export function ProviderPicker({
   const effort = effortOf(instances, value);
 
   if (instances.length === 0) {
-    return <p className="text-muted">The engine reports no Claude Code or Codex instance.</p>;
+    return <p className="text-muted">The engine reports no Claude Code instance.</p>;
   }
 
   return (

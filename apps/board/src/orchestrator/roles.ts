@@ -98,15 +98,13 @@ export interface ResolvedRole extends Role {
 
 export interface OrchestratorModel {
   readonly instanceId: string;
-  readonly driver: string;
   /** The slugs the orchestrator's instance offers. */
   readonly offered: ReadonlyArray<string>;
 }
 
 /**
- * Each role keeps its Claude model when the orchestrator's instance offers it. A Codex
- * orchestrator's children inherit its model, and a Claude model the instance does not offer
- * falls back to the orchestrator's model. Every target names the picked instance.
+ * Each role keeps its Claude model when the orchestrator's instance offers it. A Claude model the
+ * instance does not offer falls back to the orchestrator's model. Every target names the picked instance.
  */
 export function resolveRoles(
   roles: ReadonlyArray<Role>,
@@ -114,9 +112,6 @@ export function resolveRoles(
 ): ReadonlyArray<ResolvedRole> {
   return roles.map((role): ResolvedRole => {
     const inherited = { providerInstanceId: orchestrator.instanceId };
-    if (orchestrator.driver !== "claudeAgent") {
-      return { ...role, target: inherited, fallback: null };
-    }
     if (!orchestrator.offered.includes(role.model.slug)) {
       return {
         ...role,

@@ -148,7 +148,6 @@ These rules are always on. Save on waste and never on the hard steps, because to
 - When a child fails, or reports it is unsure, re-run that step once on the next tier up: Haiku, then Sonnet, then Opus, at `medium`. Keep the role and change the `target`'s `model` to the next tier's model and its `effort` to `medium`. Never retry on the same tier.
 - Never cut planning, a lane the board's template requires, security review on a trust boundary, live lanes, receipts, or the stop after two fix rounds.
 - Batch small work, and give one `reviewer` every lane on a diff of a few files. Hand over file paths, not pasted text. Ask children for short reports, because every report stays in your context. Send a short follow-up to a child that already holds the context. Never poll.
-- Every child of a Codex orchestrator inherits its model, so lean work lowers `effort` instead of switching models.
 - Your board facts carry one line for each usage window of your provider. When a window passes 50, 80, or 95 percent, the board sends one message that starts `Usage notice:` with that line. Above 80 percent, run lean: use only the cheapest roles, and keep at most two agents running at once, builders and reviewers together. Post a `question` item before you start a third agent, and wait for the answer. Above 95 percent, finish the work in flight, and post a `question` item before you start any new agent.
 
 ## Docs

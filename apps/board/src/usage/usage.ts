@@ -88,15 +88,9 @@ function segmentsFor(provider: ServerProvider, nowMs: number): ReadonlyArray<Usa
 }
 
 /**
- * One section per installed provider that reports limits, or is signed out and so shows a dash.
- * A signed-in provider with no limits at all, such as one that cannot report them, has no section.
+ * One section per installed Claude Code instance that reports limits, or is signed out and so shows a dash.
+ * A signed-in instance with no limits at all, such as one that cannot report them, has no section.
  */
-const DRIVER_ORDER = ["claudeAgent", "codex"];
-const driverRank = (driver: string) => {
-  const index = DRIVER_ORDER.indexOf(driver);
-  return index < 0 ? DRIVER_ORDER.length : index;
-};
-
 export function describeUsage(
   providers: ReadonlyArray<ServerProvider>,
   nowMs: number,
@@ -104,11 +98,11 @@ export function describeUsage(
   return providers
     .filter(
       (provider) =>
+        provider.driver === "claudeAgent" &&
         provider.enabled &&
         provider.installed &&
         (provider.usageLimits !== undefined || provider.auth.status === "unauthenticated"),
     )
-    .toSorted((left, right) => driverRank(left.driver) - driverRank(right.driver))
     .map((provider) => ({
       instanceId: provider.instanceId,
       driver: provider.driver,

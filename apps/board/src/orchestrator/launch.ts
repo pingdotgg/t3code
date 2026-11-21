@@ -1,6 +1,4 @@
 import type { ProviderOptionSelection } from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import { BOARDS_DIR, type Board } from "../domain/board";
 import type { ReviewTemplate } from "../domain/reviewTemplate";
@@ -10,6 +8,7 @@ import { renderFacts } from "./brief";
 import { type OrchestratorModel, ROLES, roleFiles } from "./roles";
 
 export interface OrchestratorSelection extends OrchestratorModel {
+  readonly driver: string;
   readonly model: string;
   /** The model's options, such as its effort. */
   readonly options: ReadonlyArray<ProviderOptionSelection>;
@@ -51,10 +50,6 @@ export type LaunchSignal =
 
 const ENDED_BADLY = ["failed", "cancelled", "interrupted", "rolled_back"];
 
-const decodeJsonFailure = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ error: Schema.Struct({ message: Schema.String }) })),
-);
-
 /**
  * A launch has started when the orchestrator has produced text or finished a run. It has failed
  * when a run ended badly, which is how the engine reports a model the instance does not offer.
@@ -62,15 +57,7 @@ const decodeJsonFailure = Schema.decodeUnknownOption(
 export function readLaunchSignal(projection: LaunchProjection): LaunchSignal {
   const failed = projection.runs.find((run) => ENDED_BADLY.includes(run.status));
   if (failed !== undefined) {
-    const reported = projection.failures.at(-1)?.message;
-    // The engine reports a Codex failure as a JSON document, with the reason under `error.message`.
-    const message =
-      reported === undefined
-        ? `The first run ${failed.status}.`
-        : Option.match(decodeJsonFailure(reported), {
-            onNone: () => reported,
-            onSome: (document) => document.error.message,
-          });
+    const message = projection.failures.at(-1)?.message ?? `The first run ${failed.status}.`;
     return { state: "failed", message };
   }
   const started =

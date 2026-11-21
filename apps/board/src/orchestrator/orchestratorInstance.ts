@@ -58,17 +58,8 @@ const claudeTrackerArgs = `--settings ${quote(
  * The launch arguments that give a session standing instructions the provider re-sends after every
  * compaction. Claude Code also loses its built-in subagent tool, whose children T3 creates outside the registry.
  */
-function standingArgs(driver: string, instructions: string): string | null {
-  switch (driver) {
-    case "claudeAgent":
-      return `--append-system-prompt ${quote(instructions)} --disallowedTools ${quote("Task,Agent")} ${claudeTrackerArgs}`;
-    case "codex":
-      // Codex reads the value as TOML, and a JSON string is a valid TOML basic string.
-      return `-c ${quote(`developer_instructions=${JSON.stringify(instructions)}`)}`;
-    default:
-      return null;
-  }
-}
+const standingArgs = (instructions: string) =>
+  `--append-system-prompt ${quote(instructions)} --disallowedTools ${quote("Task,Agent")} ${claudeTrackerArgs}`;
 
 export interface OrchestratorInstancePlan {
   readonly instanceId: string;
@@ -114,7 +105,7 @@ function withPluginDir(
 
 /**
  * Copies the picked instance's binary, home, environment, and launch arguments into one board
- * instance, with `extraArgs` after them. A Claude copy also loads the pstack-t3 folder. The write
+ * instance, with `extraArgs` after them, and loads the pstack-t3 folder. The write
  * is an upsert, so two boards that start together cannot fail on each other's create.
  */
 function planCopy(input: {
@@ -122,7 +113,7 @@ function planCopy(input: {
   readonly base: { readonly instanceId: string; readonly driver: string };
   readonly instanceId: string;
   readonly label: string;
-  readonly extraArgs: string | null;
+  readonly extraArgs: string;
   readonly pluginDir: string;
 }): OrchestratorInstancePlan {
   const { providerInstances, base, instanceId } = input;
@@ -130,11 +121,8 @@ function planCopy(input: {
   const sourceConfig = configOf(source);
   // shortcut: a base instance's own --settings is replaced by the board's ask rule, upgrade when T3 merges settings files
   const own = sourceConfig.launchArgs?.trim() ?? "";
-  const launchArgs = [own, input.extraArgs ?? ""].filter((part) => part !== "").join(" ");
-  const environment =
-    base.driver === "claudeAgent"
-      ? withPluginDir(source?.environment, input.pluginDir)
-      : source?.environment;
+  const launchArgs = [own, input.extraArgs].filter((part) => part !== "").join(" ");
+  const environment = withPluginDir(source?.environment, input.pluginDir);
 
   const existing = instanceAt(providerInstances, instanceId);
   if (
@@ -165,10 +153,7 @@ export function planOrchestratorInstance(input: {
   readonly rules: string;
   readonly pluginDir: string;
 }): OrchestratorInstancePlan {
-  const args = standingArgs(input.base.driver, standingInstructions(input.rules));
-  if (args === null) {
-    throw new Error(`The board has no orchestrator rules for ${input.base.driver}.`);
-  }
+  const args = standingArgs(standingInstructions(input.rules));
   return planCopy({
     ...input,
     instanceId: orchestratorInstanceId(input.base.instanceId),
@@ -177,18 +162,12 @@ export function planOrchestratorInstance(input: {
   });
 }
 
-/**
- * The instance every child runs on. A Claude child gets the pstack-t3 skills but never the
- * orchestrator's rules. A Codex child runs on the picked instance as it is.
- */
+/** The instance every child runs on: the pstack-t3 skills, and never the orchestrator's rules. */
 export function planAgentsInstance(input: {
   readonly providerInstances: ServerSettings["providerInstances"];
   readonly base: { readonly instanceId: string; readonly driver: string };
   readonly pluginDir: string;
 }): OrchestratorInstancePlan {
-  if (input.base.driver !== "claudeAgent") {
-    return { instanceId: input.base.instanceId, mutation: null };
-  }
   return planCopy({
     ...input,
     instanceId: agentsInstanceId(input.base.instanceId),

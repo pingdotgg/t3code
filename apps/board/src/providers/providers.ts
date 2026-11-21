@@ -31,14 +31,7 @@ export interface PickableModel {
 /** Where a new orchestrator starts: Claude Code on this model at this effort. */
 export const DEFAULT_ORCHESTRATOR = { model: "claude-opus-5-5", effort: "medium" } as const;
 
-/**
- * Codex runs T3's tracker write tools with no way to ask first: its per-tool approval needs a
- * server entry that only the engine can write. So the board runs no orchestrator on it.
- */
-export const CODEX_TRACKER_WRITES =
-  "Codex cannot ask before it changes an issue tracker, so boards run on Claude Code";
-
-/** A Claude Code or Codex instance the engine reports, as the picker lists it. */
+/** A Claude Code instance the engine reports, as the picker lists it. */
 export interface PickableInstance {
   readonly instanceId: string;
   readonly driver: string;
@@ -77,11 +70,7 @@ function effortControl(model: ServerProvider["models"][number]): EffortControl |
   };
 }
 
-const DRIVER_NAME = new Map([
-  ["claudeAgent", "Claude Code"],
-  ["codex", "Codex"],
-]);
-const DRIVER_ORDER = [...DRIVER_NAME.keys()];
+const CLAUDE_CODE = "Claude Code";
 
 const SIGN_IN = {
   authenticated: "signed-in",
@@ -89,17 +78,13 @@ const SIGN_IN = {
   unknown: "unknown",
 } as const satisfies Record<ServerProvider["auth"]["status"], SignInState>;
 
-/** The enabled Claude Code and Codex instances, Claude Code first, with each one's sign-in state and models. */
+/** The enabled Claude Code instances with each one's sign-in state and models. */
 export function pickableInstances(
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<PickableInstance> {
   return providers
-    .filter((provider) => provider.enabled && DRIVER_NAME.has(provider.driver))
-    .toSorted(
-      (left, right) =>
-        DRIVER_ORDER.indexOf(left.driver) - DRIVER_ORDER.indexOf(right.driver) ||
-        left.instanceId.localeCompare(right.instanceId),
-    )
+    .filter((provider) => provider.enabled && provider.driver === "claudeAgent")
+    .toSorted((left, right) => left.instanceId.localeCompare(right.instanceId))
     .map((provider) => {
       const models = provider.models.filter((model) => model.isLegacy !== true);
       return {
@@ -107,16 +92,12 @@ export function pickableInstances(
         driver: provider.driver,
         name:
           provider.instanceId === defaultInstanceIdForDriver(provider.driver)
-            ? (DRIVER_NAME.get(provider.driver) ?? provider.driver)
+            ? CLAUDE_CODE
             : (provider.displayName ?? provider.instanceId),
         signIn: SIGN_IN[provider.auth.status],
         account: provider.auth.email ?? provider.auth.label ?? null,
         canSignIn: provider.setup?.canAuthenticate === true,
-        unavailable: !provider.installed
-          ? "Not installed on the machine that runs T3"
-          : provider.driver === "codex"
-            ? CODEX_TRACKER_WRITES
-            : null,
+        unavailable: provider.installed ? null : "Not installed on the machine that runs T3",
         message: provider.message ?? null,
         offered: provider.models.map((model) => model.slug),
         models: models.map((model) => ({
@@ -148,8 +129,7 @@ const instanceIsSignedIn = (instance: PickableInstance) =>
  * with the reason shown under the picker.
  */
 export function defaultPick(instances: ReadonlyArray<PickableInstance>): DefaultPick {
-  const claude = instances.filter((instance) => instance.driver === "claudeAgent");
-  const preferred = claude.find(
+  const preferred = instances.find(
     (instance) =>
       instanceIsSignedIn(instance) &&
       instance.models.some((model) => model.slug === DEFAULT_ORCHESTRATOR.model),
@@ -165,14 +145,11 @@ export function defaultPick(instances: ReadonlyArray<PickableInstance>): Default
     };
   }
   const fallback = instances.find(instanceIsSignedIn) ?? instances.find(canStart) ?? instances[0];
-  const lead = claude[0];
-  const why =
-    lead === undefined
-      ? "The engine has no Claude Code instance."
-      : claude.some(instanceIsSignedIn)
-        ? `Claude Code does not offer ${DEFAULT_ORCHESTRATOR.model}.`
-        : `Claude Code is ${lead.unavailable === null ? "signed out" : "not installed"}.`;
-  if (fallback === undefined) return { value: NO_PICK, reason: null };
+  const lead = instances[0];
+  if (fallback === undefined || lead === undefined) return { value: NO_PICK, reason: null };
+  const why = instances.some(instanceIsSignedIn)
+    ? `Claude Code does not offer ${DEFAULT_ORCHESTRATOR.model}.`
+    : `Claude Code is ${lead.unavailable === null ? "signed out" : "not installed"}.`;
   return {
     value: { instanceId: fallback.instanceId, model: fallback.defaultModel ?? "", effort: "" },
     reason: `${why} Starting on ${fallback.name} instead.`,

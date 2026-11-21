@@ -136,11 +136,11 @@ describe("counting active runs", () => {
         thread("running", "claudeAgent"),
         thread("waiting", "claudeAgent"),
         thread("idle", "claudeAgent"),
-        thread("completed", "codex"),
-        thread("idle", "codex", "running"),
-        thread("failed", "codex"),
+        thread("completed", "claudeAlt"),
+        thread("idle", "claudeAlt", "running"),
+        thread("failed", "claudeAlt"),
       ]),
-    ).toEqual({ total: 3, byInstance: { claudeAgent: 2, codex: 1 } });
+    ).toEqual({ total: 3, byInstance: { claudeAgent: 2, claudeAlt: 1 } });
   });
 });
 
@@ -151,26 +151,26 @@ describe("reading a provider's offer", () => {
 
   it("Given a provider that cannot update itself, when read, then it offers the command only", () => {
     const manual = provider({
-      instanceId: "codex",
-      driver: "codex",
+      instanceId: "claudeAlt",
+      driver: "claudeAgent",
       advisory: {
         status: "behind_latest",
         current: "0.8.0",
         latest: "0.9.1",
-        command: "npm i -g codex",
+        command: "npm i -g @anthropic-ai/claude-code",
       },
     });
-    expect(providerItem(manual, "Codex", 0)).toMatchObject({
+    expect(providerItem(manual, "Claude Code", 0)).toMatchObject({
       offer: { version: "0.9.1", canUpdate: false },
-      command: "npm i -g codex",
+      command: "npm i -g @anthropic-ai/claude-code",
       status: "behind",
     });
   });
 
   it("Given a current, disabled, or broken-latest provider, when read, then nothing is offered", () => {
     const current = provider({
-      instanceId: "codex",
-      driver: "codex",
+      instanceId: "claudeAlt",
+      driver: "claudeAgent",
       advisory: { status: "current", current: "0.9.1", latest: "0.9.1" },
     });
     const disabled = provider({

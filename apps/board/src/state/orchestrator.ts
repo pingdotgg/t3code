@@ -24,7 +24,6 @@ import {
 } from "../orchestrator/launch";
 import { planAgentsInstance, planOrchestratorInstance } from "../orchestrator/orchestratorInstance";
 import { resolveRoles, ROLES } from "../orchestrator/roles";
-import { CODEX_TRACKER_WRITES } from "../providers/providers";
 import type { ValidBoard } from "../store/boardFiles";
 import { readingsFor } from "../usage/usageNotice";
 import { boardEngine, localState, newId, projectBoardsAtom } from "./boards";
@@ -89,7 +88,6 @@ export async function startBoardOrchestrator(
   listed: ValidBoard,
   selection: OrchestratorSelection,
 ): Promise<ValidBoard> {
-  if (selection.driver === "codex") throw new Error(CODEX_TRACKER_WRITES);
   const { environmentId } = project;
   const { files, threads, run } = boardEngine(registry, environmentId);
   const ports: LaunchPorts = {
