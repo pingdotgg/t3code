@@ -6,6 +6,7 @@ export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
+export const T3_MCP_BEARER_FILE_ENV = "T3_MCP_BEARER_TOKEN_FILE";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
@@ -22,6 +23,7 @@ import { Type } from "typebox";
 
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
+const TOKEN_FILE_ENV = ${JSON.stringify(T3_MCP_BEARER_FILE_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
@@ -170,11 +172,35 @@ function isMcpToolError(result: unknown): boolean {
   );
 }
 
-function createMcpClient(endpoint: string, token: string) {
+function createMcpClient(endpoint: string, initialToken: string, tokenFile: string | undefined) {
   let nextId = 1;
   let sessionId: string | undefined;
+  let currentToken = initialToken;
+  let authGeneration = 0;
+  let needsReconnect = false;
+  let connectInFlight: { readonly generation: number; readonly promise: Promise<void> } | undefined;
 
-  const headers = (): Record<string, string> => {
+  const setToken = (nextToken: string) => {
+    if (nextToken === currentToken) return;
+    currentToken = nextToken;
+    process.env[TOKEN_ENV] = nextToken;
+    authGeneration += 1;
+    sessionId = undefined;
+    connectInFlight = undefined;
+    needsReconnect = true;
+  };
+
+  const syncToken = async () => {
+    if (tokenFile === undefined) return;
+    try {
+      const next = (await NodeFSP.readFile(tokenFile, "utf8")).trim();
+      if (next.length > 0 && next !== currentToken) setToken(next);
+    } catch {
+      // Missing or transient file read keeps the current in-memory bearer.
+    }
+  };
+
+  const headers = (token: string, sid: string | undefined): Record<string, string> => {
     const next: Record<string, string> = {
       accept: "application/json, text/event-stream",
       authorization: token.startsWith("Bearer ") ? token : \`Bearer \${token}\`,
@@ -184,20 +210,24 @@ function createMcpClient(endpoint: string, token: string) {
       // header; initialize itself does not require it.
       "mcp-protocol-version": PROTOCOL,
     };
-    if (sessionId !== undefined) next["mcp-session-id"] = sessionId;
+    if (sid !== undefined) next["mcp-session-id"] = sid;
     return next;
   };
 
   const request = async (method: string, params?: unknown, signal?: AbortSignal) => {
     const id = nextId++;
+    const reqGeneration = authGeneration;
+    const reqToken = currentToken;
+    const reqSessionId = sessionId;
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: headers(),
+      headers: headers(reqToken, reqSessionId),
       body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
       signal,
     });
+    await syncToken();
     const nextSession = response.headers.get("mcp-session-id");
-    if (nextSession) sessionId = nextSession;
+    if (nextSession && reqGeneration === authGeneration) sessionId = nextSession;
     const body = await response.text();
     if (!response.ok) {
       throw new Error(\`MCP \${method} failed (\${response.status}): \${body.slice(0, 400)}\`);
@@ -213,14 +243,19 @@ function createMcpClient(endpoint: string, token: string) {
   const notify = async (method: string, params?: unknown, signal?: AbortSignal) => {
     await fetch(endpoint, {
       method: "POST",
-      headers: headers(),
+      headers: headers(currentToken, sessionId),
       body: JSON.stringify({ jsonrpc: "2.0", method, params }),
       signal,
     });
   };
 
-  return {
-    async connect(signal?: AbortSignal) {
+  const connect = async (signal?: AbortSignal) => {
+    await syncToken();
+    const targetGeneration = authGeneration;
+    if (connectInFlight?.generation === targetGeneration) {
+      return connectInFlight.promise;
+    }
+    const promise = (async () => {
       await request(
         "initialize",
         {
@@ -230,8 +265,24 @@ function createMcpClient(endpoint: string, token: string) {
         },
         signal,
       );
-      await notify("notifications/initialized", {}, signal).catch(() => undefined);
-    },
+      if (targetGeneration === authGeneration) {
+        await notify("notifications/initialized", {}, signal).catch(() => undefined);
+      }
+      if (targetGeneration === authGeneration) {
+        needsReconnect = false;
+      }
+    })().finally(() => {
+      if (connectInFlight?.promise === promise) {
+        connectInFlight = undefined;
+      }
+    });
+    connectInFlight = { generation: targetGeneration, promise };
+    return promise;
+  };
+
+  return {
+    connect,
+    syncToken,
     async listTools(signal?: AbortSignal) {
       const tools: McpTool[] = [];
       let cursor: string | undefined;
@@ -247,6 +298,21 @@ function createMcpClient(endpoint: string, token: string) {
       return tools;
     },
     async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal) {
+      const pinnedGeneration = authGeneration;
+      await syncToken();
+      if (authGeneration !== pinnedGeneration) {
+        throw new Error("MCP credentials rotated while the tool call was waiting to send.");
+      }
+      while (needsReconnect) {
+        if (authGeneration !== pinnedGeneration) {
+          throw new Error("MCP credentials rotated while the tool call was waiting to send.");
+        }
+        await connect(signal);
+        await syncToken();
+      }
+      if (authGeneration !== pinnedGeneration) {
+        throw new Error("MCP credentials rotated while the tool call was waiting to send.");
+      }
       return request("tools/call", { name, arguments: args }, signal);
     },
   };
@@ -411,7 +477,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     (isDeferred(name) || active.includes("mcp__t3-code__" + name));
   let catalog: ReadonlyArray<McpTool> = [];
 
-  const client = createMcpClient(endpoint, token);
+  const client = createMcpClient(endpoint, token, env(TOKEN_FILE_ENV));
   let started: Promise<void> | undefined;
 
   const registerTools = () => {
@@ -517,6 +583,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   pi.on("session_tree", (_event, ctx) => reconcileDiscovery(ctx));
   pi.on("model_select", (_event, ctx) => reconcileDiscovery(ctx));
   pi.on("session_start", async (_event, ctx) => {
+    await client.syncToken();
     reconcileDiscovery(ctx);
     try {
       await ensureStarted();
@@ -527,7 +594,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   });
 
   // Keep guidance in the system prompt so leading slash commands still expand.
-  pi.on("before_agent_start", (event, ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
+    await client.syncToken();
     reconcileDiscovery(ctx);
     const instructions = ORCHESTRATION_INSTRUCTIONS + "\\n\\n" + PULL_REQUEST_LINKING_INSTRUCTIONS;
     const sections = event.systemPromptOptions?.sections;

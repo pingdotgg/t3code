@@ -1,4 +1,10 @@
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderInstanceId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
 /**
@@ -11,7 +17,11 @@ export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
+  /** Distinct per-token identifier so run rotations can keep a stable owner `providerSessionId`. */
+  readonly credentialId?: string | undefined;
   readonly providerInstanceId: ProviderInstanceId;
+  readonly runId?: RunId | undefined;
+  readonly attemptId?: RunAttemptId | undefined;
   readonly endpoint: string;
   readonly authorizationHeader: string;
   /** Omit preview_* instructions when the user withholds agent browser access. */
@@ -21,6 +31,10 @@ export interface McpProviderSessionConfig {
   /** True while a delegated task this thread started will wake it with its result. */
   readonly hasPendingWake?: Effect.Effect<boolean>;
 }
+
+export const mcpCredentialIdOf = (
+  config: Pick<McpProviderSessionConfig, "credentialId" | "providerSessionId">,
+): string => config.credentialId ?? config.providerSessionId;
 
 export function withAgentDeviceEnvironment(
   base: NodeJS.ProcessEnv,

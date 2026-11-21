@@ -174,6 +174,184 @@ describe("Pi MCP tool results", () => {
     assert.deepEqual(output.content, [{ type: "text", text: '{"count":2}' }]);
     assert.deepEqual(output.structuredContent, result);
   });
+
+  it.each([
+    {
+      scenario: "rotate-and-coalesce" as const,
+      description:
+        "rotates the MCP bearer token from the token file on turn start and reconnects before the next tool call",
+    },
+    {
+      scenario: "ignore-stale-session-id" as const,
+      description: "ignores a late generation-1 mcp-session-id header after token rotation",
+    },
+    {
+      scenario: "reject-waiting-on-rotation" as const,
+      description:
+        "rejects a waiting tool call if the MCP bearer token rotates during its first read or connect",
+    },
+  ])("$description", async ({ scenario }) => {
+    if (scenario === "rotate-and-coalesce") {
+      const bridge = await loadMcpBridge();
+      const startTurn = () =>
+        bridge.handlers.get("before_agent_start")!(
+          { systemPrompt: "" },
+          { ui: { notify: assert.fail } },
+        );
+      const tool = bridge.tools[0]!;
+      await tool.execute("call-1", {});
+      assert.equal(bridge.transports.at(-1)?.authorization, "Bearer fixture-token");
+
+      bridge.setBearerTokenFile("rotated-run-2-token");
+      await startTurn();
+
+      const requestCountBefore = bridge.requests.length;
+      await tool.execute("call-2", {});
+      const afterMethods = bridge.requests.slice(requestCountBefore).map((req) => req.method);
+      assert.deepEqual(afterMethods, ["initialize", "notifications/initialized", "tools/call"]);
+      assert.deepEqual(
+        bridge.transports.slice(requestCountBefore).map((t) => t.authorization),
+        ["Bearer rotated-run-2-token", "Bearer rotated-run-2-token", "Bearer rotated-run-2-token"],
+      );
+
+      // Concurrent calls after a rotation coalesce into a single initialize handshake.
+      bridge.setBearerTokenFile("rotated-run-3-token");
+      await startTurn();
+      const concurrentStart = bridge.requests.length;
+      await Promise.all([tool.execute("call-3a", {}), tool.execute("call-3b", {})]);
+      const concurrentMethods = bridge.requests.slice(concurrentStart).map((req) => req.method);
+      assert.equal(concurrentMethods.filter((method) => method === "initialize").length, 1);
+      assert.equal(concurrentMethods.filter((method) => method === "tools/call").length, 2);
+      return;
+    }
+
+    if (scenario === "ignore-stale-session-id") {
+      const slowStarted = Promise.withResolvers<void>();
+      const releaseSlow = Promise.withResolvers<void>();
+      const seen: Array<{ readonly method: string; readonly auth: string; readonly sid?: string }> =
+        [];
+      const bridge = await loadMcpBridge({
+        fetchOverride: async (_url, transport, request, defaultResponse) => {
+          seen.push({
+            method: request.method,
+            auth: transport.headers.authorization!,
+            ...(transport.headers["mcp-session-id"] === undefined
+              ? {}
+              : { sid: transport.headers["mcp-session-id"] }),
+          });
+          if (
+            request.method === "tools/call" &&
+            transport.headers.authorization === "Bearer fixture-token"
+          ) {
+            slowStarted.resolve();
+            await releaseSlow.promise;
+            return new Response(
+              JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { content: [] } }),
+              { headers: { "content-type": "application/json", "mcp-session-id": "stale-sid-1" } },
+            );
+          }
+          const response = await defaultResponse();
+          if (request.method === "initialize") {
+            return new Response(await response.text(), {
+              headers: {
+                "content-type": "application/json",
+                "mcp-session-id":
+                  transport.headers.authorization === "Bearer fixture-token"
+                    ? "stale-sid-1"
+                    : "fresh-sid-2",
+              },
+            });
+          }
+          return response;
+        },
+      });
+      const tool = bridge.tools[0]!;
+      const inFlight = tool.execute("late-1", {});
+      await slowStarted.promise;
+      bridge.setBearerTokenFile("run-2-token");
+      releaseSlow.resolve();
+      await inFlight;
+      await bridge.handlers.get("before_agent_start")!(
+        { systemPrompt: "" },
+        { ui: { notify: assert.fail } },
+      );
+
+      const beforeGen2 = seen.length;
+      await tool.execute("fresh-2", {});
+      assert.deepEqual(seen.slice(beforeGen2), [
+        { method: "initialize", auth: "Bearer run-2-token" },
+        { method: "notifications/initialized", auth: "Bearer run-2-token", sid: "fresh-sid-2" },
+        { method: "tools/call", auth: "Bearer run-2-token", sid: "fresh-sid-2" },
+      ]);
+      return;
+    }
+
+    const firstReadStarted = Promise.withResolvers<void>();
+    const releaseFirstRead = Promise.withResolvers<void>();
+    let interceptFirstRead = false;
+    const initStarted = Promise.withResolvers<void>();
+    const releaseInit = Promise.withResolvers<void>();
+    const postedCalls: Array<{ readonly auth: string; readonly params: unknown }> = [];
+    const bridge = await loadMcpBridge({
+      readTokenFileOverride: async (readCurrent) => {
+        if (interceptFirstRead) {
+          interceptFirstRead = false;
+          firstReadStarted.resolve();
+          await releaseFirstRead.promise;
+        }
+        return readCurrent();
+      },
+      fetchOverride: async (_url, transport, request, defaultResponse) => {
+        if (
+          request.method === "initialize" &&
+          transport.headers.authorization === "Bearer run-2-token"
+        ) {
+          initStarted.resolve();
+          await releaseInit.promise;
+        }
+        if (request.method === "tools/call") {
+          postedCalls.push({ auth: transport.headers.authorization!, params: request.params });
+        }
+        return defaultResponse();
+      },
+    });
+    const tool = bridge.tools[0]!;
+    const startTurn = () =>
+      bridge.handlers.get("before_agent_start")!(
+        { systemPrompt: "" },
+        { ui: { notify: assert.fail } },
+      );
+
+    // 1. Run A's call starts before Run B's turn; Run B renames the token file while Run A reads it.
+    interceptFirstRead = true;
+    const waitingFirstRead = tool.execute("late-from-run-a", { stale: true });
+    await firstReadStarted.promise;
+    bridge.setBearerTokenFile("run-2-token");
+    releaseFirstRead.resolve();
+    let firstReadError: unknown;
+    try {
+      await waitingFirstRead;
+    } catch (caught) {
+      firstReadError = caught;
+    }
+    assert.include(String(firstReadError), "rotated");
+    assert.deepEqual(postedCalls, []);
+
+    // 2. Run B's turn starts and syncs run-2-token, then token rotates to run-3-token during connect.
+    await startTurn();
+    const waitingGen2 = tool.execute("waiting-gen2", { stale: true });
+    await initStarted.promise;
+    bridge.setBearerTokenFile("run-3-token");
+    releaseInit.resolve();
+    let error: unknown;
+    try {
+      await waitingGen2;
+    } catch (caught) {
+      error = caught;
+    }
+    assert.include(String(error), "rotated");
+    assert.deepEqual(postedCalls, []);
+  });
 });
 
 describe("Pi MCP tool exposure", () => {

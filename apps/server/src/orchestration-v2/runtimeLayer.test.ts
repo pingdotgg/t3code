@@ -37,6 +37,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RunAttemptId,
   RunId,
   ScheduledTaskId,
   ThreadId,
@@ -11906,6 +11907,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
         threadId,
         commandId: CommandId.make("runtime-layer-owed-output-submit"),
         json: '{"head":"abc"}',
+        callerRunId: asked.id,
       });
       assert.equal(accepted.runId, asked.id);
       const after = yield* orchestrator.getThreadProjection(threadId);
@@ -12074,11 +12076,416 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           threadId,
           commandId: CommandId.make("runtime-layer-stopped-output-submit"),
           json: "{}",
+          callerRunId: run.id,
         })
         .pipe(Effect.flip);
-      assert.include(String((rejected as { cause?: unknown }).cause), "was stopped");
+      assert.equal(rejected._tag, "ThreadManagementRunOutputRejectedError");
+      assert.include(rejected.message, "was stopped");
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.isUndefined(after.runs[0]?.output);
+    }),
+  );
+
+  const setupOutputThread = (slug: string) =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const projectId = ProjectId.make(`runtime-layer-${slug}-project`);
+      const threadId = ThreadId.make(`runtime-layer-${slug}-thread`);
+      yield* projects.create({
+        commandId: CommandId.make(`runtime-layer-${slug}-project-create`),
+        projectId,
+        title: `Project ${slug}`,
+        workspaceRoot: `/tmp/runtime-layer-${slug}`,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`runtime-layer-${slug}-create`),
+        threadId,
+        projectId,
+        title: `Thread ${slug}`,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const send = (key: string, outputSchema?: { readonly type: "object" }) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-${slug}-${key}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-${slug}-${key}`),
+          text: key,
+          attachments: [],
+          modelSelection,
+          ...(outputSchema === undefined ? {} : { outputSchema }),
+          dispatchMode: { type: "start_immediately" },
+        });
+      return { orchestrator, eventSink, threadManagement, threadId, send };
+    });
+
+  it.effect.each([
+    {
+      scenario: "stopped-run-or-stale-attempt" as const,
+      description:
+        "turns down a late submission from a stopped run or stale attempt once the next run is active",
+    },
+    {
+      scenario: "owed-run-and-wake" as const,
+      description:
+        "accepts an owed run's own caller or its wake's caller while rejecting an earlier stopped run",
+    },
+    {
+      scenario: "completed-before-dispatch" as const,
+      description:
+        "accepts a bound caller's own output when the run completes just before orchestrator dispatch",
+    },
+  ])("$description", ({ scenario }) =>
+    Effect.gen(function* () {
+      if (scenario === "stopped-run-or-stale-attempt") {
+        const { orchestrator, eventSink, threadManagement, threadId, send } =
+          yield* setupOutputThread("late-stopped-run");
+
+        // Run A starts with a schema, then is stopped while its submission is in flight.
+        yield* send("run-a", { type: "object" });
+        const runA = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-a-interrupted`),
+              type: "run.updated",
+              threadId,
+              runId: runA.id,
+              occurredAt: runA.requestedAt,
+              payload: { ...runA, status: "interrupted", completedAt: runA.requestedAt },
+            },
+          ],
+        });
+
+        // Run B starts with a compatible schema and attempt 2 active.
+        yield* send("run-b", { type: "object" });
+        const runB = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id !== runA.id,
+        )!;
+        const attempt1 = RunAttemptId.make(`${runB.id}:attempt:1`);
+        const attempt2 = RunAttemptId.make(`${runB.id}:attempt:2`);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-b-attempt-2`),
+              type: "run.updated",
+              threadId,
+              runId: runB.id,
+              occurredAt: runB.requestedAt,
+              payload: { ...runB, activeAttemptId: attempt2 },
+            },
+          ],
+        });
+
+        // A caller that names no run cannot be told from a stopped run's late call.
+        const anonymous = yield* threadManagement
+          .submitRunOutput({
+            threadId,
+            commandId: CommandId.make("runtime-layer-anonymous-run-output"),
+            json: '{"from":"anonymous"}',
+          })
+          .pipe(Effect.flip);
+        assert.equal(anonymous._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(anonymous.message, "runId");
+
+        const lateFromA = yield* threadManagement
+          .submitRunOutput({
+            threadId,
+            commandId: CommandId.make("runtime-layer-late-run-output-from-a"),
+            json: '{"from":"run-a"}',
+            callerRunId: runA.id,
+          })
+          .pipe(Effect.flip);
+        assert.equal(lateFromA._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(lateFromA.message, "no longer active");
+
+        const lateFromAttempt1 = yield* threadManagement
+          .submitRunOutput({
+            threadId,
+            commandId: CommandId.make("runtime-layer-late-run-output-from-attempt-1"),
+            json: '{"from":"attempt-1"}',
+            callerRunId: runB.id,
+            callerAttemptId: attempt1,
+          })
+          .pipe(Effect.flip);
+        assert.equal(lateFromAttempt1._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(lateFromAttempt1.message, "no longer active");
+
+        const mid = yield* orchestrator.getThreadProjection(threadId);
+        assert.isUndefined(mid.runs.find((run) => run.id === runB.id)?.output);
+
+        const acceptedB = yield* threadManagement.submitRunOutput({
+          threadId,
+          commandId: CommandId.make("runtime-layer-late-run-output-from-b"),
+          json: '{"from":"run-b"}',
+          callerRunId: runB.id,
+          callerAttemptId: attempt2,
+        });
+        assert.equal(acceptedB.runId, runB.id);
+        const afterB = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(afterB.runs.find((run) => run.id === runB.id)?.output?.value, {
+          from: "run-b",
+        });
+
+        // A continuation of stopped run A rejects A's delayed unbound submission and accepts C's own runId.
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-b-completed`),
+              type: "run.updated",
+              threadId,
+              runId: runB.id,
+              occurredAt: runB.requestedAt,
+              payload: {
+                ...afterB.runs.find((run) => run.id === runB.id)!,
+                status: "completed",
+                completedAt: runB.requestedAt,
+              },
+            },
+          ],
+        });
+        yield* send("run-c", { type: "object" });
+        const runC = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id !== runA.id && run.id !== runB.id,
+        )!;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-c-continues-a`),
+              type: "run.updated",
+              threadId,
+              runId: runC.id,
+              occurredAt: runC.requestedAt,
+              payload: {
+                ...runC,
+                manualContinuationOfRunId: runA.id,
+              },
+            },
+          ],
+        });
+        const lateFromStoppedAncestor = yield* threadManagement
+          .submitRunOutput({
+            threadId,
+            commandId: CommandId.make("runtime-layer-run-output-from-stopped-ancestor"),
+            json: '{"from":"late-ancestor"}',
+            callerRunId: runA.id,
+          })
+          .pipe(Effect.flip);
+        assert.equal(lateFromStoppedAncestor._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(lateFromStoppedAncestor.message, "no longer active");
+        assert.isUndefined(
+          (yield* orchestrator.getThreadProjection(threadId)).runs.find((run) => run.id === runC.id)
+            ?.output,
+        );
+        const acceptedViaContinuation = yield* threadManagement.submitRunOutput({
+          threadId,
+          commandId: CommandId.make("runtime-layer-run-output-via-continuation"),
+          json: '{"from":"continued"}',
+          callerRunId: runC.id,
+        });
+        assert.equal(acceptedViaContinuation.runId, runC.id);
+        const afterC = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(afterC.runs.find((run) => run.id === runC.id)?.output?.value, {
+          from: "continued",
+        });
+
+        // A plain turn with no schema preserves the plain-turn guidance even for stale/unbound MCP callers.
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-c-completed`),
+              type: "run.updated",
+              threadId,
+              runId: runC.id,
+              occurredAt: runC.requestedAt,
+              payload: {
+                ...afterC.runs.find((run) => run.id === runC.id)!,
+                status: "completed",
+                completedAt: runC.requestedAt,
+              },
+            },
+          ],
+        });
+        yield* send("run-plain");
+        const plainFromStale = yield* threadManagement
+          .submitRunOutput({
+            threadId,
+            commandId: CommandId.make("runtime-layer-plain-run-output-stale"),
+            json: "{}",
+            callerRunId: runA.id,
+          })
+          .pipe(Effect.flip);
+        assert.equal(plainFromStale._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(plainFromStale.message, "not asked for a result");
+        const plainFromUnbound = yield* threadManagement
+          .submitRunOutput({
+            threadId,
+            commandId: CommandId.make("runtime-layer-plain-run-output-unbound"),
+            json: "{}",
+          })
+          .pipe(Effect.flip);
+        assert.equal(plainFromUnbound._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(plainFromUnbound.message, "not asked for a result");
+        return;
+      }
+
+      if (scenario === "owed-run-and-wake") {
+        const { orchestrator, eventSink, threadManagement, threadId, send } =
+          yield* setupOutputThread("owed-wake-output");
+
+        yield* send("run-a", { type: "object" });
+        const runA = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-a-interrupted`),
+              type: "run.updated",
+              threadId,
+              runId: runA.id,
+              occurredAt: runA.requestedAt,
+              payload: { ...runA, status: "interrupted", completedAt: runA.requestedAt },
+            },
+          ],
+        });
+
+        yield* send("run-c", { type: "object" });
+        const runC = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id !== runA.id,
+        )!;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-c-completed`),
+              type: "run.updated",
+              threadId,
+              runId: runC.id,
+              occurredAt: runC.requestedAt,
+              payload: { ...runC, status: "completed", completedAt: runC.requestedAt },
+            },
+          ],
+        });
+        yield* send("run-d-wake");
+        const runD = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id !== runA.id && run.id !== runC.id,
+        )!;
+        const staleAOnWake = yield* threadManagement
+          .submitRunOutput({
+            threadId,
+            commandId: CommandId.make("runtime-layer-late-run-output-from-a-during-wake"),
+            json: '{"from":"stale-run-a"}',
+            callerRunId: runA.id,
+          })
+          .pipe(Effect.flip);
+        assert.equal(staleAOnWake._tag, "ThreadManagementRunOutputRejectedError");
+
+        const acceptedFromC = yield* threadManagement.submitRunOutput({
+          threadId,
+          commandId: CommandId.make("runtime-layer-late-run-output-from-c"),
+          json: '{"from":"run-c"}',
+          callerRunId: runC.id,
+        });
+        assert.equal(acceptedFromC.runId, runC.id);
+        const afterC = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(afterC.runs.find((run) => run.id === runC.id)?.output?.value, {
+          from: "run-c",
+        });
+
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-d-completed`),
+              type: "run.updated",
+              threadId,
+              runId: runD.id,
+              occurredAt: runD.requestedAt,
+              payload: { ...runD, status: "completed", completedAt: runD.requestedAt },
+            },
+          ],
+        });
+        yield* send("run-e", { type: "object" });
+        const runE = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => ![runA.id, runC.id, runD.id].includes(run.id),
+        )!;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-e-completed`),
+              type: "run.updated",
+              threadId,
+              runId: runE.id,
+              occurredAt: runE.requestedAt,
+              payload: { ...runE, status: "completed", completedAt: runE.requestedAt },
+            },
+          ],
+        });
+        yield* send("run-f-wake");
+        const runF = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => ![runA.id, runC.id, runD.id, runE.id].includes(run.id),
+        )!;
+        const acceptedFromF = yield* threadManagement.submitRunOutput({
+          threadId,
+          commandId: CommandId.make("runtime-layer-late-run-output-from-f"),
+          json: '{"from":"run-f"}',
+          callerRunId: runF.id,
+        });
+        assert.equal(acceptedFromF.runId, runE.id);
+        const afterF = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(afterF.runs.find((run) => run.id === runE.id)?.output?.value, {
+          from: "run-f",
+        });
+        return;
+      }
+
+      const { orchestrator, eventSink, threadId, send } = yield* setupOutputThread(
+        "completed-before-dispatch",
+      );
+      yield* send("run-own", { type: "object" });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const attempt = RunAttemptId.make(`${run.id}:attempt:1`);
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}-run-own-completed`),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: run.requestedAt,
+            payload: {
+              ...run,
+              activeAttemptId: attempt,
+              status: "completed",
+              completedAt: run.requestedAt,
+            },
+          },
+        ],
+      });
+
+      // Simulate the race where the run completes after service validation, with no active run.
+      yield* orchestrator.dispatch({
+        type: "run.output.submit",
+        commandId: CommandId.make("runtime-layer-completed-before-dispatch-submit"),
+        threadId,
+        runId: run.id,
+        callerRunId: run.id,
+        callerAttemptId: attempt,
+        value: { answer: "landed-on-completion-race" },
+      });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(after.runs[0]?.output?.value, {
+        answer: "landed-on-completion-race",
+      });
     }),
   );
 });

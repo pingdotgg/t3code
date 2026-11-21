@@ -467,7 +467,11 @@ with no `output`.
 Stores the calling thread's result on its running turn, once it fits the schema
 that turn was sent with. A turn that was asked for nothing answers for the
 newest turn that was asked and has not answered yet, which is how an agent that
-ended its turn to wait gives its result after it is woken. A rejection names what did not fit, so the agent can
+ended its turn to wait gives its result after it is woken. The call names its run: a typed turn's MCP
+credential carries its run and attempt, and where a provider session cannot
+take a new credential the agent passes the `runId` its instructions give. A
+late call from a stopped or superseded turn is rejected instead of landing on
+the next one. A rejection names what did not fit, so the agent can
 correct it and call again; a later accepted submission replaces an earlier one.
 
 ### `t3_thread_wait`

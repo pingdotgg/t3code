@@ -254,4 +254,341 @@ describe("AcpMcpOverAcpBridge", () => {
       expect(failure.message).toContain("exceeds 8 MiB");
     }),
   );
+
+  it.effect.each([
+    {
+      scenario: "reinitialize-and-stale-headers" as const,
+      description:
+        "re-initializes stateful MCP on setAuthorization and ignores stale in-flight session headers",
+    },
+    {
+      scenario: "init-race-and-waiting-rejection" as const,
+      description:
+        "reconnects cleanly when auth rotates during initial initialize and rejects waiting calls from the prior generation",
+    },
+    {
+      scenario: "error-and-malformed-initialize" as const,
+      description:
+        "fails reconnect when initialize returns an error or malformed envelope without sending notifications/initialized",
+    },
+  ])("$description", ({ scenario }) =>
+    Effect.gen(function* () {
+      if (scenario === "reinitialize-and-stale-headers") {
+        const seen: Array<{
+          readonly authorization: string | null;
+          readonly sessionId: string | null;
+          readonly method: unknown;
+        }> = [];
+        const slowCallStarted = Promise.withResolvers<void>();
+        const releaseSlowCall = Promise.withResolvers<void>();
+        let sessionCounter = 0;
+        const sessionAuth = new Map<string, string>();
+        const bridge = yield* makeAcpMcpOverAcpBridge({
+          endpoint: "http://127.0.0.1:1/mcp",
+          authorization: "Bearer run-1-token",
+          allocateConnectionId: Effect.succeed("connection-1"),
+          fetchImplementation: async (_url, init) => {
+            const headers = new Headers(init?.headers);
+            const auth = headers.get("authorization");
+            const incomingSid = headers.get("mcp-session-id");
+            const body = JSON.parse(String(init?.body)) as {
+              readonly id?: unknown;
+              readonly method?: unknown;
+              readonly params?: { readonly name?: string };
+            };
+            seen.push({ authorization: auth, sessionId: incomingSid, method: body.method });
+            if (body.method === "initialize") {
+              const sid = `session-${++sessionCounter}`;
+              sessionAuth.set(sid, auth ?? "");
+              return new Response(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: {} },
+                }),
+                { headers: { "content-type": "application/json", "mcp-session-id": sid } },
+              );
+            }
+            // Stateful MCP 2025-06-18 rejects non-initialize requests without a valid session id.
+            if (incomingSid === null || sessionAuth.get(incomingSid) !== auth) {
+              return new Response("Mcp-Session-Id does not exist", { status: 400 });
+            }
+            if (body.method === "notifications/initialized") {
+              return new Response(null, { status: 202 });
+            }
+            if (body.params?.name === "slow_call") {
+              slowCallStarted.resolve();
+              await releaseSlowCall.promise;
+            }
+            return new Response(
+              JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [] } }),
+              { headers: { "content-type": "application/json", "mcp-session-id": incomingSid } },
+            );
+          },
+        });
+
+        const { connectionId } = yield* bridge.connect({ serverId: "t3-code" });
+        yield* bridge.message({
+          connectionId,
+          method: "initialize",
+          params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "acp" } },
+        });
+        const inFlight = yield* bridge
+          .message({ connectionId, method: "tools/call", params: { name: "slow_call" } })
+          .pipe(Effect.forkChild);
+        yield* Effect.promise(() => slowCallStarted.promise);
+
+        // Rotate auth while generation-1 call is in flight, then let generation-1 finish.
+        bridge.setAuthorization("Bearer run-2-token");
+        releaseSlowCall.resolve();
+        yield* Fiber.join(inFlight);
+
+        // Generation-2 call must transparently re-initialize with run-2-token, not reuse session-1.
+        expect(
+          yield* bridge.message({
+            connectionId,
+            method: "tools/call",
+            params: { name: "t3_submit_output" },
+          }),
+        ).toEqual({ content: [] });
+
+        expect(seen).toEqual([
+          { authorization: "Bearer run-1-token", sessionId: null, method: "initialize" },
+          { authorization: "Bearer run-1-token", sessionId: "session-1", method: "tools/call" },
+          { authorization: "Bearer run-2-token", sessionId: null, method: "initialize" },
+          {
+            authorization: "Bearer run-2-token",
+            sessionId: "session-2",
+            method: "notifications/initialized",
+          },
+          { authorization: "Bearer run-2-token", sessionId: "session-2", method: "tools/call" },
+        ]);
+        return;
+      }
+
+      if (scenario === "init-race-and-waiting-rejection") {
+        const seen: Array<{
+          readonly authorization: string | null;
+          readonly sessionId: string | null;
+          readonly method: string;
+        }> = [];
+        const initStarted = Promise.withResolvers<void>();
+        const releaseInit = Promise.withResolvers<void>();
+        const reconnect3Started = Promise.withResolvers<void>();
+        const releaseReconnect3 = Promise.withResolvers<void>();
+        let nextSessionOrdinal = 0;
+        const activeSessionByAuth = new Map<string, string>();
+        const bridge = yield* makeAcpMcpOverAcpBridge({
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorization: "Bearer run-1-token",
+          allocateConnectionId: Effect.succeed("conn-init-race"),
+          fetchImplementation: async (_input, init) => {
+            const headers = new Headers(init?.headers);
+            const auth = headers.get("authorization") ?? "";
+            const incomingSid = headers.get("mcp-session-id");
+            const body = JSON.parse(String(init?.body)) as {
+              id?: number;
+              method: string;
+              params?: { name?: string };
+            };
+            seen.push({ authorization: auth, sessionId: incomingSid, method: body.method });
+            if (body.method === "initialize") {
+              if (auth === "Bearer run-1-token") {
+                initStarted.resolve();
+                await releaseInit.promise;
+              }
+              if (auth === "Bearer run-3-token") {
+                reconnect3Started.resolve();
+                await releaseReconnect3.promise;
+              }
+              const sid = `session-${++nextSessionOrdinal}`;
+              activeSessionByAuth.set(auth, sid);
+              return new Response(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  result: { protocolVersion: "2025-06-18", capabilities: {} },
+                }),
+                { headers: { "content-type": "application/json", "mcp-session-id": sid } },
+              );
+            }
+            const expectedSid = activeSessionByAuth.get(auth);
+            if (!incomingSid || incomingSid !== expectedSid) {
+              return new Response("Mcp-Session-Id does not exist", { status: 400 });
+            }
+            if (body.method === "notifications/initialized") {
+              return new Response(null, { status: 202 });
+            }
+            return new Response(
+              JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [] } }),
+              { headers: { "content-type": "application/json", "mcp-session-id": incomingSid } },
+            );
+          },
+        });
+
+        // 1. Auth rotates while initial initialize is still in flight; subsequent call must reconnect.
+        const { connectionId } = yield* bridge.connect({ serverId: "t3-code" });
+        const initFiber = yield* bridge
+          .message({
+            connectionId,
+            method: "initialize",
+            params: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              clientInfo: { name: "acp" },
+            },
+          })
+          .pipe(Effect.forkChild);
+        yield* Effect.promise(() => initStarted.promise);
+        bridge.setAuthorization("Bearer run-2-token");
+        releaseInit.resolve();
+        yield* Fiber.join(initFiber);
+
+        expect(
+          yield* bridge.message({
+            connectionId,
+            method: "tools/call",
+            params: { name: "after_init_race" },
+          }),
+        ).toEqual({ content: [] });
+
+        // 2. A gen-3 call waiting on reconnect while auth rotates to gen-4 is rejected before posting.
+        bridge.setAuthorization("Bearer run-3-token");
+        const waitingGen3 = yield* bridge
+          .message({ connectionId, method: "tools/call", params: { name: "t3_submit_output" } })
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* Effect.promise(() => reconnect3Started.promise);
+        bridge.setAuthorization("Bearer run-4-token");
+        releaseReconnect3.resolve();
+        const rejected = yield* Fiber.join(waitingGen3);
+        expect(rejected.message).toContain("rotated");
+        // Verify run-4-token never received the stale waiting gen-3 t3_submit_output call.
+        expect(seen.filter((entry) => entry.authorization === "Bearer run-4-token")).toEqual([]);
+        return;
+      }
+
+      const methods: Array<string> = [];
+      let nextInitMode: "ok" | "error" | "malformed" = "ok";
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorization: "Bearer run-1-token",
+        allocateConnectionId: Effect.succeed("conn-init-err"),
+        fetchImplementation: async (_input, init) => {
+          const body = JSON.parse(String(init?.body)) as { id?: number; method: string };
+          methods.push(body.method);
+          if (body.method === "initialize") {
+            const mode = nextInitMode;
+            nextInitMode = "ok";
+            if (mode === "error") {
+              return new Response(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  error: { code: -32000, message: "initialize rejected" },
+                }),
+                { headers: { "content-type": "application/json" } },
+              );
+            }
+            if (mode === "malformed") {
+              return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id }), {
+                headers: { "content-type": "application/json" },
+              });
+            }
+            return new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: body.id,
+                result: { protocolVersion: "2025-06-18", capabilities: {} },
+              }),
+              { headers: { "content-type": "application/json", "mcp-session-id": "sid-ok" } },
+            );
+          }
+          if (body.method === "notifications/initialized") {
+            return new Response(null, { status: 202 });
+          }
+          return new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [] } }),
+            { headers: { "content-type": "application/json", "mcp-session-id": "sid-ok" } },
+          );
+        },
+      });
+      const { connectionId } = yield* bridge.connect({ serverId: "t3-code" });
+      yield* bridge.message({
+        connectionId,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "acp" } },
+      });
+      bridge.setAuthorization("Bearer run-2-token");
+      nextInitMode = "error";
+      const failedError = yield* bridge
+        .message({ connectionId, method: "tools/call", params: { name: "t3_submit_output" } })
+        .pipe(Effect.flip);
+      expect(failedError.message).toContain("initialize rejected");
+      nextInitMode = "malformed";
+      const failedMalformed = yield* bridge
+        .message({ connectionId, method: "tools/call", params: { name: "t3_submit_output" } })
+        .pipe(Effect.flip);
+      expect(failedMalformed.message).toContain("valid initialize response");
+      expect(methods).toEqual(["initialize", "initialize", "initialize"]);
+      // Next call still retries reconnect because needsReconnect stayed true.
+      expect(
+        yield* bridge.message({
+          connectionId,
+          method: "tools/call",
+          params: { name: "t3_submit_output" },
+        }),
+      ).toEqual({ content: [] });
+      expect(methods).toEqual([
+        "initialize",
+        "initialize",
+        "initialize",
+        "initialize",
+        "notifications/initialized",
+        "tools/call",
+      ]);
+
+      // An agent-issued initialize with an error or malformed response does not clear needsReconnect.
+      bridge.setAuthorization("Bearer run-3-token");
+      nextInitMode = "error";
+      const explicitError = yield* bridge
+        .message({
+          connectionId,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "acp" },
+          },
+        })
+        .pipe(Effect.flip);
+      expect(explicitError.message).toContain("initialize rejected");
+      nextInitMode = "malformed";
+      const explicitMalformed = yield* bridge
+        .message({
+          connectionId,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "acp" },
+          },
+        })
+        .pipe(Effect.flip);
+      expect(explicitMalformed._tag).toBe("AcpMcpOverAcpError");
+      expect(explicitMalformed.message).toContain("valid initialize response");
+      const methodsBeforeRecovery = methods.length;
+      expect(
+        yield* bridge.message({
+          connectionId,
+          method: "tools/call",
+          params: { name: "t3_submit_output" },
+        }),
+      ).toEqual({ content: [] });
+      expect(methods.slice(methodsBeforeRecovery)).toEqual([
+        "initialize",
+        "notifications/initialized",
+        "tools/call",
+      ]);
+    }),
+  );
 });

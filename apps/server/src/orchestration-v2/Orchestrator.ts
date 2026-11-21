@@ -227,6 +227,18 @@ const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
 );
 
+export class RunOutputDispatchRejectionError extends Schema.TaggedError<RunOutputDispatchRejectionError>()(
+  "RunOutputDispatchRejectionError",
+  {
+    reason: Schema.Literals(["stale_caller", "stopped", "inactive"]),
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
   {
@@ -12208,15 +12220,58 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Run ${command.runId} is ${run.status} and takes no result.`,
+        cause: new RunOutputDispatchRejectionError({
+          reason: "inactive",
+          detail: `Run ${command.runId} is ${run.status} and takes no result.`,
+        }),
       });
+    }
+    if (command.callerRunId !== undefined || command.callerAttemptId !== undefined) {
+      const active = projection.runs
+        .filter(isActiveRun)
+        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+      const matchesRun = (candidate: OrchestrationV2Run | undefined) =>
+        candidate !== undefined &&
+        (command.callerRunId === undefined || candidate.id === command.callerRunId) &&
+        (command.callerAttemptId === undefined ||
+          candidate.activeAttemptId === command.callerAttemptId);
+      const callerAllowed =
+        (active !== undefined && matchesRun(active)) || (owes && matchesRun(run));
+      if (!callerAllowed) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: new RunOutputDispatchRejectionError({
+            reason: "stale_caller",
+            detail: `Caller run ${command.callerRunId ?? "unknown"} is no longer active on thread ${command.threadId}.`,
+          }),
+        });
+      }
+      if (
+        active !== undefined &&
+        active.id !== run.id &&
+        matchesRun(active) &&
+        (yield* stopReachedRun(command, command.threadId, active.id))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: new RunOutputDispatchRejectionError({
+            reason: "stopped",
+            detail: `Run ${active.id} was stopped and takes no result.`,
+          }),
+        });
+      }
     }
     // A stopped run stays active until its provider settles; what it submits then is not kept.
     if (yield* stopReachedRun(command, command.threadId, run.id)) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Run ${command.runId} was stopped and takes no result.`,
+        cause: new RunOutputDispatchRejectionError({
+          reason: "stopped",
+          detail: `Run ${command.runId} was stopped and takes no result.`,
+        }),
       });
     }
     const now = yield* DateTime.now;

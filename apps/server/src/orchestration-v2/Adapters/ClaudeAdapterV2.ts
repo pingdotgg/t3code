@@ -715,6 +715,9 @@ export interface ClaudeAgentSdkQuerySession {
   readonly setPermissionMode: (
     mode: PermissionMode,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  readonly setMcpServers?: (
+    mcpServers: NonNullable<ClaudeAgentSdkQueryOptions["mcpServers"]>,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly renameSession: (title: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly stopTask: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly backgroundTasks: (
@@ -1890,6 +1893,43 @@ export const layerQueryRunner: Layer.Layer<
               }),
             ),
           ),
+        setMcpServers: Effect.fn("ClaudeAdapterV2.setMcpServers")(function* (servers) {
+          // Errors and mcp_status can echo headers; log only server names.
+          const failed = yield* Effect.tryPromise({
+            try: () => queryRuntime.setMcpServers(servers),
+            catch: (cause) => queryRunnerError(cause, "setMcpServers"),
+          }).pipe(
+            Effect.map((result) => Object.keys(result.errors)),
+            Effect.timeoutOrElse({
+              duration: CLAUDE_MCP_REGISTRATION_TIMEOUT,
+              orElse: () =>
+                Effect.logWarning("orchestration-v2.claude-mcp-registration-timeout", {
+                  threadId: input.threadId,
+                  providerSessionId: input.providerSessionId,
+                  phase: "setMcpServers",
+                }).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      queryRunnerError(
+                        new ClaudeMcpRegistrationTimeoutError({ phase: "setMcpServers" }),
+                        "setMcpServers",
+                      ),
+                    ),
+                  ),
+                ),
+            }),
+          );
+          if (failed.length > 0) {
+            yield* Effect.logWarning("orchestration-v2.claude-mcp-servers-unavailable", {
+              threadId: input.threadId,
+              servers: failed,
+            });
+            return yield* queryRunnerError(
+              new Error(`Claude rejected MCP server update for: ${failed.join(", ")}`),
+              "setMcpServers",
+            );
+          }
+        }),
         renameSession: (title) =>
           Effect.tryPromise({
             try: () =>
@@ -3708,6 +3748,36 @@ export function claudeEffectiveQueryPolicyKey(
   });
 }
 
+function claudeEffectiveQueryPolicyKeyWithoutMcpAuth(
+  queryPolicy: ClaudeRuntimeQueryPolicy,
+  mcpOverrides: {
+    readonly allowedTools?: ReadonlyArray<string>;
+    readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  },
+  workspace?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["workspace"],
+): string {
+  const sanitizedServers =
+    mcpOverrides.mcpServers === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(mcpOverrides.mcpServers).map(([name, server]) => {
+            if (name === "t3-code" && server.type === "http" && server.headers !== undefined) {
+              const { Authorization: _authorization, ...restHeaders } = server.headers;
+              return [name, { ...server, headers: restHeaders }];
+            }
+            return [name, server];
+          }),
+        );
+  return claudeEffectiveQueryPolicyKey(
+    queryPolicy,
+    {
+      ...mcpOverrides,
+      ...(sanitizedServers === undefined ? {} : { mcpServers: sanitizedServers }),
+    },
+    workspace,
+  );
+}
+
 type ClaudeToolItemType = Extract<
   OrchestrationV2TurnItem["type"],
   "command_execution" | "file_change" | "dynamic_tool" | "web_search"
@@ -5299,7 +5369,9 @@ interface ClaudeLiveQueryContext {
   readonly settingsCwd: string | null;
   readonly launchArgSettings: ClaudeSdkSettings | undefined;
   readonly query: ClaudeAgentSdkQuerySession;
-  readonly queryPolicyKey: string;
+  queryPolicyKey: string;
+  readonly queryPolicyKeyWithoutMcpAuth: string;
+  mcpAuthorization: string | undefined;
   selection: CompiledClaudeModelSelection;
   readonly closed: Deferred.Deferred<void, never>;
   lastTurn: ActiveClaudeTurnContext | null;
@@ -13123,8 +13195,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             mcpOverrides,
             turnInput.runtimePolicy.workspace,
           );
+          const queryPolicyKeyWithoutMcpAuth = claudeEffectiveQueryPolicyKeyWithoutMcpAuth(
+            queryPolicy,
+            mcpOverrides,
+            turnInput.runtimePolicy.workspace,
+          );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
+          const canUpdateMcpLive = (candidate: ClaudeLiveQueryContext) =>
+            candidate.queryPolicyKey !== queryPolicyKey &&
+            candidate.queryPolicyKeyWithoutMcpAuth === queryPolicyKeyWithoutMcpAuth &&
+            mcpOverrides.mcpServers !== undefined &&
+            candidate.query.setMcpServers !== undefined;
+          const syncMcpServersLive = Effect.fnUntraced(function* (
+            candidate: ClaudeLiveQueryContext,
+          ) {
+            if (
+              mcpOverrides.mcpServers === undefined ||
+              candidate.query.setMcpServers === undefined
+            )
+              return;
+            yield* candidate.query.setMcpServers(mcpOverrides.mcpServers);
+            candidate.mcpAuthorization = mcpSession?.authorizationHeader;
+            if (candidate.queryPolicyKeyWithoutMcpAuth === queryPolicyKeyWithoutMcpAuth) {
+              candidate.queryPolicyKey = queryPolicyKey;
+            }
+          });
           // Continuations drain existing output without prompting; retain the live process regardless of selection.
           if (
             existing !== null &&
@@ -13132,12 +13228,41 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !existing.stopping &&
             isClaudeProviderContinuationTurn(turnInput)
           ) {
+            // Refuse to run on a stale credential, keeping the process and its buffered wake for retry.
+            if (existing.mcpAuthorization !== mcpSession?.authorizationHeader) {
+              const rotationBlocked = () =>
+                new ProviderAdapter.ProviderAdapterMcpRotationBlockedError({
+                  driver: CLAUDE_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  providerThreadId: turnInput.providerThread.id,
+                  detail: "Cannot refresh MCP credentials on a retained Claude continuation query.",
+                });
+              if (
+                mcpOverrides.mcpServers === undefined ||
+                existing.query.setMcpServers === undefined
+              ) {
+                return yield* rotationBlocked();
+              }
+              yield* syncMcpServersLive(existing).pipe(
+                Effect.catchCauseIf(
+                  (cause) => !Cause.hasInterruptsOnly(cause),
+                  () =>
+                    Effect.logWarning("orchestration-v2.claude-live-mcp-refresh-failed", {
+                      threadId: turnInput.threadId,
+                      reason: "continuation",
+                    }).pipe(Effect.andThen(Effect.fail(rotationBlocked()))),
+                ),
+              );
+            }
             return existing;
           }
+          const policyCompatible =
+            existing !== null &&
+            (existing.queryPolicyKey === queryPolicyKey || canUpdateMcpLive(existing));
           const reuseLaunchSettings =
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
-            existing.queryPolicyKey === queryPolicyKey &&
+            policyCompatible &&
             !existing.stopping;
           const readLaunchSettings = readClaudeLaunchArgSettings({
             settings: adapterOptions.settings,
@@ -13158,7 +13283,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !turnInput.resume &&
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
-            existing.queryPolicyKey === queryPolicyKey &&
+            policyCompatible &&
             !existing.stopping &&
             existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
             canApplyClaudeSelectionLive(existing.selection, compiledSelection) &&
@@ -13171,28 +13296,44 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !turnInput.resume &&
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
-            existing.queryPolicyKey === queryPolicyKey &&
+            policyCompatible &&
             !existing.stopping &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {
-            // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
-            // Auto/default may reflect a policy restriction that forbids restoring bypass.
-            if (existing.permissionMode === "plan" && existing.openedPermissionMode !== "plan") {
-              existing.permissionMode = yield* existing.query
-                .setPermissionMode(existing.openedPermissionMode)
-                .pipe(
-                  Effect.as(existing.openedPermissionMode),
-                  Effect.catchTags({
-                    ClaudeAgentSdkQueryRunnerError: (error) =>
-                      existing.openedPermissionMode === "bypassPermissions"
-                        ? existing.query
-                            .setPermissionMode("default")
-                            .pipe(Effect.as("default" as const))
-                        : Effect.fail(error),
-                  }),
-                );
+            const mcpRefreshed = canUpdateMcpLive(existing)
+              ? yield* syncMcpServersLive(existing).pipe(
+                  Effect.as(true),
+                  Effect.catchCauseIf(
+                    (cause) => !Cause.hasInterruptsOnly(cause),
+                    () =>
+                      // SDK errors can echo MCP headers; log only the failure category.
+                      Effect.logWarning("orchestration-v2.claude-live-mcp-refresh-failed", {
+                        threadId: turnInput.threadId,
+                        reason: "failed",
+                      }).pipe(Effect.as(false)),
+                  ),
+                )
+              : true;
+            if (mcpRefreshed) {
+              // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
+              // Auto/default may reflect a policy restriction that forbids restoring bypass.
+              if (existing.permissionMode === "plan" && existing.openedPermissionMode !== "plan") {
+                existing.permissionMode = yield* existing.query
+                  .setPermissionMode(existing.openedPermissionMode)
+                  .pipe(
+                    Effect.as(existing.openedPermissionMode),
+                    Effect.catchTags({
+                      ClaudeAgentSdkQueryRunnerError: (error) =>
+                        existing.openedPermissionMode === "bypassPermissions"
+                          ? existing.query
+                              .setPermissionMode("default")
+                              .pipe(Effect.as("default" as const))
+                          : Effect.fail(error),
+                    }),
+                  );
+              }
+              return existing;
             }
-            return existing;
           }
 
           // Replacing this thread's process kills its background work, even with a new native identity.
@@ -13347,6 +13488,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             launchArgSettings,
             query: querySession,
             queryPolicyKey,
+            queryPolicyKeyWithoutMcpAuth,
+            mcpAuthorization: mcpSession?.authorizationHeader,
             selection: compiledSelection,
             closed,
             lastTurn: null,
@@ -14367,6 +14510,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
+          mcpCredentialRotation: "live",
           getModelContextWindow: (selection) => claudeContextWindow(selection) ?? undefined,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           backgroundTasksEndWithProcess: true,

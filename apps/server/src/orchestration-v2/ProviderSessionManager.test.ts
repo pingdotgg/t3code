@@ -7,6 +7,7 @@ import {
   EnvironmentId,
   MessageId,
   type ModelSelection,
+  NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2PromptSuggestion,
@@ -20,6 +21,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
+  RunAttemptId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -479,6 +481,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly mcpConfigs?: Ref.Ref<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >;
+    readonly mcpCredentialRotation?: "live" | "reload" | "none";
     readonly beforeOpen?: (input: {
       readonly providerSessionId: ProviderSessionId;
       readonly initialProviderItemIdentityVersion?: 2;
@@ -567,6 +570,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           instanceId: ProviderInstanceId.make("codex"),
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
+          ...(options.mcpCredentialRotation === undefined
+            ? {}
+            : { mcpCredentialRotation: options.mcpCredentialRotation }),
           ...(options.normalizeThreadLoadModelSelection === undefined
             ? {}
             : { normalizeThreadLoadModelSelection: options.normalizeThreadLoadModelSelection }),
@@ -658,6 +664,7 @@ function layerTest(input: {
   readonly mcpConfigs?: Ref.Ref<
     ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
   >;
+  readonly mcpCredentialRotation?: "live" | "reload" | "none";
   readonly beforeOpen?: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly initialProviderItemIdentityVersion?: 2;
@@ -714,6 +721,9 @@ function layerTest(input: {
         ? {}
         : { extensionStatuses: input.extensionStatuses }),
       ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+      ...(input.mcpCredentialRotation === undefined
+        ? {}
+        : { mcpCredentialRotation: input.mcpCredentialRotation }),
       ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
@@ -3277,6 +3287,970 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
     });
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs })));
+  }),
+);
+
+it.effect.each([
+  {
+    scenario: "live" as const,
+    description:
+      "ProviderSessionManagerV2 rotates run-scoped MCP credentials per turn for live-update runtimes and revokes all on close",
+  },
+  {
+    scenario: "none" as const,
+    description:
+      "ProviderSessionManagerV2 keeps a non-rotatable runtime's credential, unbound, for a second typed run",
+  },
+  {
+    scenario: "reload-blocked" as const,
+    description:
+      "ProviderSessionManagerV2 keeps the loaded token, unbound, instead of reloading while background work is active",
+  },
+  {
+    scenario: "reload-when-required" as const,
+    description:
+      "ProviderSessionManagerV2 reloads a shared runtime thread on MCP rotation only when run-scoped MCP is required",
+  },
+])("$description", ({ scenario }) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    if (scenario === "live") {
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-live-rotate");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+
+        const run1 = RunId.make("run-live-1");
+        const attempt1 = RunAttemptId.make("attempt-live-1");
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run1,
+          attemptId: attempt1,
+          requireRunScopedMcp: true,
+        });
+        const config1 = yield* mcpSessions.read(threadId);
+        assert.isDefined(config1);
+        const token1 = config1!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
+        assert.equal((yield* registry.resolve(token1))?.thread.attemptId, attempt1);
+
+        // Plain turns skip rotation to avoid unnecessary reconnect churn.
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-live-plain"),
+          attemptId: RunAttemptId.make("attempt-live-plain"),
+          requireRunScopedMcp: false,
+        });
+        assert.equal(
+          (yield* mcpSessions.read(threadId))?.authorizationHeader,
+          config1!.authorizationHeader,
+        );
+
+        const run2 = RunId.make("run-live-2");
+        const attempt2 = RunAttemptId.make("attempt-live-2");
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run2,
+          attemptId: attempt2,
+          requireRunScopedMcp: true,
+        });
+        const config2 = yield* mcpSessions.read(threadId);
+        assert.isDefined(config2);
+        const token2 = config2!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.notEqual(token2, token1);
+        assert.equal(config2!.providerSessionId, config1!.providerSessionId);
+        assert.notEqual(config2!.credentialId, config1!.credentialId);
+        // Prior run token stays resolvable with its original run identity so late calls get a clean rejection.
+        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
+        assert.equal((yield* registry.resolve(token2))?.thread.runId, run2);
+        assert.equal((yield* registry.resolve(token2))?.thread.attemptId, attempt2);
+        assert.equal(
+          (yield* registry.resolve(token2))?.thread.providerSessionId,
+          config1!.providerSessionId,
+        );
+
+        yield* manager.close(providerSessionId);
+        assert.isUndefined(yield* registry.resolve(token1));
+        assert.isUndefined(yield* registry.resolve(token2));
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            mcpCredentialRotation: "live",
+          }),
+        ),
+      );
+      return;
+    }
+
+    if (scenario === "none") {
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-no-rotation");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const run1 = RunId.make("run-none-1");
+        const run2 = RunId.make("run-none-2");
+        const run3 = RunId.make("run-none-3");
+        const run4 = RunId.make("run-none-4");
+        const rootNode1 = NodeId.make("node-none-1");
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "run.created",
+              threadId,
+              runId: run1,
+              nodeId: rootNode1,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: {
+                id: run1,
+                threadId,
+                ordinal: 1,
+                providerInstanceId: modelSelection.instanceId,
+                modelSelection,
+                providerThreadId: providerThread.id,
+                userMessageId: MessageId.make("msg-none-1"),
+                rootNodeId: rootNode1,
+                activeAttemptId: RunAttemptId.make("attempt-none-1"),
+                status: "completed",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: now,
+                checkpointId: null,
+                contextHandoffId: null,
+                outputSchema: { type: "object" },
+              },
+            },
+          ],
+        });
+
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run1,
+          attemptId: RunAttemptId.make("attempt-none-1"),
+          requireRunScopedMcp: true,
+        });
+        const config1 = yield* mcpSessions.read(threadId);
+        assert.isDefined(config1);
+        const token1 = config1!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
+
+        // Re-opening the same run/attempt after toggling browser access syncs preview while keeping run1 bound.
+        yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run1,
+          attemptId: RunAttemptId.make("attempt-none-1"),
+          requireRunScopedMcp: true,
+        });
+        assert.isFalse((yield* registry.resolve(token1))?.capabilities.has("preview") ?? true);
+        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
+        assert.isFalse((yield* mcpSessions.read(threadId))?.browserToolsAvailable);
+        yield* settings.updateSettings({ enableAgentBrowserAccess: true });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run1,
+          attemptId: RunAttemptId.make("attempt-none-1"),
+          requireRunScopedMcp: true,
+        });
+        assert.isTrue((yield* registry.resolve(token1))?.capabilities.has("preview") ?? false);
+        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
+        assert.isTrue((yield* mcpSessions.read(threadId))?.browserToolsAvailable);
+
+        // Plain turns and owed wakes for run1 succeed without rotating or mutating token1.
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run2,
+          attemptId: RunAttemptId.make("attempt-none-2"),
+          requireRunScopedMcp: false,
+        });
+        assert.equal(
+          (yield* mcpSessions.read(threadId))?.authorizationHeader,
+          config1!.authorizationHeader,
+        );
+        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
+
+        // A non-rotatable runtime cannot take a token for a second typed run: the turn still runs,
+        // and its token stops answering for run1 so the new run can submit.
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run3,
+          attemptId: RunAttemptId.make("attempt-none-3"),
+          requireRunScopedMcp: true,
+        });
+        const unbound = yield* registry.resolve(token1);
+        assert.isDefined(unbound);
+        assert.isUndefined(unbound!.thread.runId);
+        assert.isUndefined(unbound!.thread.attemptId);
+        assert.isTrue(unbound!.capabilities.has("preview"));
+        const config3 = yield* mcpSessions.read(threadId);
+        assert.equal(config3?.authorizationHeader, config1!.authorizationHeader);
+        assert.isUndefined(config3?.runId);
+        assert.isTrue(config3?.browserToolsAvailable);
+
+        // Disabling browser access drops preview from the retained credential without breaking typed runs.
+        yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run4,
+          attemptId: RunAttemptId.make("attempt-none-4"),
+          requireRunScopedMcp: true,
+        });
+        const narrowed = yield* registry.resolve(token1);
+        assert.isDefined(narrowed);
+        assert.isUndefined(narrowed!.thread.runId);
+        assert.isFalse(narrowed!.capabilities.has("preview"));
+        const config4 = yield* mcpSessions.read(threadId);
+        assert.equal(config4?.authorizationHeader, config1!.authorizationHeader);
+        assert.isFalse(config4?.browserToolsAvailable);
+        assert.isFalse(config4?.capabilities?.has("preview") ?? false);
+
+        // Re-enabling browser access restores preview on the retained credential.
+        yield* settings.updateSettings({ enableAgentBrowserAccess: true });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-none-5"),
+          attemptId: RunAttemptId.make("attempt-none-5"),
+          requireRunScopedMcp: true,
+        });
+        const restored = yield* registry.resolve(token1);
+        assert.isDefined(restored);
+        assert.isUndefined(restored!.thread.runId);
+        assert.isTrue(restored!.capabilities.has("preview"));
+        const config5 = yield* mcpSessions.read(threadId);
+        assert.equal(config5?.authorizationHeader, config1!.authorizationHeader);
+        assert.isTrue(config5?.browserToolsAvailable);
+        assert.isTrue(config5?.capabilities?.has("preview") ?? false);
+
+        // Disabling and re-enabling browser access also syncs on untyped next runs with no owed output.
+        yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-none-6"),
+          attemptId: RunAttemptId.make("attempt-none-6"),
+          requireRunScopedMcp: false,
+        });
+        const narrowedUntyped = yield* registry.resolve(token1);
+        assert.isDefined(narrowedUntyped);
+        assert.isFalse(narrowedUntyped!.capabilities.has("preview"));
+        const config6 = yield* mcpSessions.read(threadId);
+        assert.equal(config6?.authorizationHeader, config1!.authorizationHeader);
+        assert.isFalse(config6?.browserToolsAvailable);
+        assert.isFalse(config6?.capabilities?.has("preview") ?? false);
+
+        yield* settings.updateSettings({ enableAgentBrowserAccess: true });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-none-7"),
+          attemptId: RunAttemptId.make("attempt-none-7"),
+          requireRunScopedMcp: false,
+        });
+        const restoredUntyped = yield* registry.resolve(token1);
+        assert.isDefined(restoredUntyped);
+        assert.isTrue(restoredUntyped!.capabilities.has("preview"));
+        const config7 = yield* mcpSessions.read(threadId);
+        assert.equal(config7?.authorizationHeader, config1!.authorizationHeader);
+        assert.isTrue(config7?.browserToolsAvailable);
+        assert.isTrue(config7?.capabilities?.has("preview") ?? false);
+        yield* manager.close(providerSessionId);
+      });
+
+      const serverSettingsLayer = ServerSettings.layerTest().pipe(Layer.orDie);
+      yield* effect.pipe(
+        Effect.provide(
+          Layer.merge(
+            layerTest({
+              state,
+              idleTimeoutMs: 1_000,
+              mcpCredentialRotation: "none",
+              serverSettingsLayer,
+            }),
+            serverSettingsLayer,
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (scenario === "reload-blocked") {
+      const unloads = yield* Queue.unbounded<string>();
+      const pendingBackgroundWork = yield* Ref.make(true);
+      const sessionBackgroundWorkProbe = yield* Ref.make<Effect.Effect<boolean>>(
+        Effect.succeed(false),
+      );
+      const failUnload = yield* Ref.make(false);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-bg-no-unload");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const run1 = RunId.make("run-bg-1");
+        const run2 = RunId.make("run-bg-2");
+        const attempt1 = RunAttemptId.make("attempt-bg-1");
+        const attempt2 = RunAttemptId.make("attempt-bg-2");
+        const rootNode1 = NodeId.make("node-bg-1");
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "run.created",
+              threadId,
+              runId: run1,
+              nodeId: rootNode1,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: {
+                id: run1,
+                threadId,
+                ordinal: 1,
+                providerInstanceId: modelSelection.instanceId,
+                modelSelection,
+                providerThreadId: providerThread.id,
+                userMessageId: MessageId.make("msg-bg-1"),
+                rootNodeId: rootNode1,
+                activeAttemptId: attempt1,
+                status: "completed",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: now,
+                checkpointId: null,
+                contextHandoffId: null,
+              },
+            },
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run1,
+          attemptId: attempt1,
+          requireRunScopedMcp: true,
+        });
+        const loadedConfig = yield* mcpSessions.read(threadId);
+        assert.isDefined(loadedConfig);
+        const loadedToken = loadedConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        yield* runtime.resumeThread({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run2,
+          attemptId: attempt2,
+          requireRunScopedMcp: true,
+        });
+        const rotatedConfig = yield* mcpSessions.read(threadId);
+        assert.isDefined(rotatedConfig);
+        const rotatedToken = rotatedConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.notEqual(rotatedToken, loadedToken);
+
+        yield* runtime.resumeThread({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        // Background work stayed alive (no unload): the turn runs on the loaded token, now unbound so
+        // its run can submit, and the unused token was revoked.
+        assert.isTrue(Option.isNone(yield* Queue.poll(unloads)));
+        const resolvedLoaded = yield* registry.resolve(loadedToken);
+        assert.isDefined(resolvedLoaded);
+        assert.isUndefined(resolvedLoaded?.thread.runId);
+        assert.isUndefined(resolvedLoaded?.thread.attemptId);
+        assert.isUndefined(yield* registry.resolve(rotatedToken));
+        assert.equal(
+          (yield* mcpSessions.read(threadId))?.authorizationHeader,
+          loadedConfig!.authorizationHeader,
+        );
+
+        // Also cover a thread initially attached to the shared session with an unbound (run-less) bearer:
+        // rolling back on blocked reload must keep that run-less bearer valid for running background work.
+        const unboundThreadId = ThreadId.make("thread-provider-session-manager-bg-unbound");
+        const unboundProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: unboundThreadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: unboundThreadId, now })],
+        });
+        yield* manager.open({
+          threadId: unboundThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const unboundLoadedConfig = yield* mcpSessions.read(unboundThreadId);
+        assert.isDefined(unboundLoadedConfig);
+        assert.isUndefined(unboundLoadedConfig!.runId);
+        const unboundLoadedToken = unboundLoadedConfig!.authorizationHeader.replace(
+          /^Bearer\s+/,
+          "",
+        );
+        yield* runtime.resumeThread({
+          threadId: unboundThreadId,
+          providerThread: unboundProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId: unboundThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-bg-unbound-typed"),
+          attemptId: RunAttemptId.make("attempt-bg-unbound-typed"),
+          requireRunScopedMcp: true,
+        });
+        const unboundRotatedConfig = yield* mcpSessions.read(unboundThreadId);
+        assert.isDefined(unboundRotatedConfig);
+        const unboundRotatedToken = unboundRotatedConfig!.authorizationHeader.replace(
+          /^Bearer\s+/,
+          "",
+        );
+        assert.notEqual(unboundRotatedToken, unboundLoadedToken);
+
+        yield* runtime.resumeThread({
+          threadId: unboundThreadId,
+          providerThread: unboundProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.isTrue(Option.isNone(yield* Queue.poll(unloads)));
+        const resolvedUnboundLoaded = yield* registry.resolve(unboundLoadedToken);
+        assert.isDefined(resolvedUnboundLoaded);
+        assert.isUndefined(resolvedUnboundLoaded?.thread.runId);
+        assert.isUndefined(yield* registry.resolve(unboundRotatedToken));
+        assert.equal(
+          (yield* mcpSessions.read(unboundThreadId))?.authorizationHeader,
+          unboundLoadedConfig!.authorizationHeader,
+        );
+
+        // Enabling browser access (capability widening) before a blocked typed turn keeps the narrower
+        // loaded bearer valid on rollback, whereas disabling browser access (capability removal) revokes it.
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+        const widenedThreadId = ThreadId.make("thread-provider-session-manager-bg-widened");
+        const widenedProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: widenedThreadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: widenedThreadId, now })],
+        });
+        yield* manager.open({
+          threadId: widenedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const narrowLoadedConfig = yield* mcpSessions.read(widenedThreadId);
+        assert.isDefined(narrowLoadedConfig);
+        assert.isFalse(narrowLoadedConfig!.browserToolsAvailable);
+        const narrowLoadedToken = narrowLoadedConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        yield* runtime.resumeThread({
+          threadId: widenedThreadId,
+          providerThread: widenedProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* settings.updateSettings({ enableAgentBrowserAccess: true });
+        yield* manager.open({
+          threadId: widenedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-bg-widened-typed"),
+          attemptId: RunAttemptId.make("attempt-bg-widened-typed"),
+          requireRunScopedMcp: true,
+        });
+        const widerRotatedConfig = yield* mcpSessions.read(widenedThreadId);
+        assert.isDefined(widerRotatedConfig);
+        assert.isTrue(widerRotatedConfig!.browserToolsAvailable);
+        const widerRotatedToken = widerRotatedConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        yield* runtime.resumeThread({
+          threadId: widenedThreadId,
+          providerThread: widenedProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        const resolvedNarrow = yield* registry.resolve(narrowLoadedToken);
+        assert.isDefined(resolvedNarrow);
+        assert.isFalse(resolvedNarrow!.capabilities.has("preview"));
+        assert.isUndefined(yield* registry.resolve(widerRotatedToken));
+        assert.equal(
+          (yield* mcpSessions.read(widenedThreadId))?.authorizationHeader,
+          narrowLoadedConfig!.authorizationHeader,
+        );
+
+        // Capability removal revokes the previously wider bearer immediately and does not restore a dead token.
+        const narrowedThreadId = ThreadId.make("thread-provider-session-manager-bg-narrowed");
+        const narrowedProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: narrowedThreadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: narrowedThreadId, now })],
+        });
+        yield* manager.open({
+          threadId: narrowedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const broadLoadedConfig = yield* mcpSessions.read(narrowedThreadId);
+        assert.isDefined(broadLoadedConfig);
+        assert.isTrue(broadLoadedConfig!.browserToolsAvailable);
+        const broadLoadedToken = broadLoadedConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        yield* runtime.resumeThread({
+          threadId: narrowedThreadId,
+          providerThread: narrowedProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+        yield* manager.open({
+          threadId: narrowedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-bg-narrowed-typed"),
+          attemptId: RunAttemptId.make("attempt-bg-narrowed-typed"),
+          requireRunScopedMcp: true,
+        });
+        const narrowedRotatedConfig = yield* mcpSessions.read(narrowedThreadId);
+        assert.isDefined(narrowedRotatedConfig);
+        const narrowedRotatedToken = narrowedRotatedConfig!.authorizationHeader.replace(
+          /^Bearer\s+/,
+          "",
+        );
+        const narrowedFailed = yield* runtime
+          .resumeThread({
+            threadId: narrowedThreadId,
+            providerThread: narrowedProviderThread,
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.flip);
+        assert.equal(narrowedFailed._tag, "ProviderAdapterMcpRotationBlockedError");
+        assert.isUndefined(yield* registry.resolve(broadLoadedToken));
+        assert.isUndefined(yield* registry.resolve(narrowedRotatedToken));
+        assert.isUndefined(yield* mcpSessions.read(narrowedThreadId));
+
+        // Once background work finishes, the next ordinary (non-typed) turn recovers a working
+        // MCP credential with browser access still disabled and reloads the thread cleanly.
+        yield* Ref.set(pendingBackgroundWork, false);
+        const nextPlainRun = RunId.make("run-bg-narrowed-next-plain");
+        yield* manager.open({
+          threadId: narrowedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: nextPlainRun,
+          attemptId: RunAttemptId.make("attempt-bg-narrowed-next-plain"),
+          requireRunScopedMcp: false,
+        });
+        yield* runtime.resumeThread({
+          threadId: narrowedThreadId,
+          providerThread: narrowedProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.isTrue(Option.isSome(yield* Queue.poll(unloads)));
+        const recoveredConfig = yield* mcpSessions.read(narrowedThreadId);
+        assert.isDefined(recoveredConfig);
+        assert.isFalse(recoveredConfig!.browserToolsAvailable);
+        const recoveredToken = recoveredConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        const resolvedRecovered = yield* registry.resolve(recoveredToken);
+        assert.isDefined(resolvedRecovered);
+        assert.isFalse(resolvedRecovered!.capabilities.has("preview"));
+        assert.equal(resolvedRecovered!.thread.runId, nextPlainRun);
+        assert.equal(recoveredConfig!.providerSessionId, broadLoadedConfig!.providerSessionId);
+        assert.notEqual(recoveredConfig!.credentialId, broadLoadedConfig!.credentialId);
+
+        // Also cover run-less open recovery after a cleared capability-removal rollback.
+        yield* mcpSessions.clear(narrowedThreadId);
+        yield* manager.open({
+          threadId: narrowedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const runlessRecovered = yield* mcpSessions.read(narrowedThreadId);
+        assert.isDefined(runlessRecovered);
+        assert.equal(runlessRecovered!.providerSessionId, broadLoadedConfig!.providerSessionId);
+        assert.isFalse(runlessRecovered!.browserToolsAvailable);
+
+        // A failed unload may leave the thread loaded, where a resume ignores new config: keep the old credential.
+        const unloadFailedThreadId = ThreadId.make("thread-provider-session-manager-unload-failed");
+        const unloadFailedProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: unloadFailedThreadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: unloadFailedThreadId, now }),
+          ],
+        });
+        yield* manager.open({
+          threadId: unloadFailedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const beforeFailedUnload = yield* mcpSessions.read(unloadFailedThreadId);
+        yield* runtime.resumeThread({
+          threadId: unloadFailedThreadId,
+          providerThread: unloadFailedProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId: unloadFailedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-unload-failed-typed"),
+          attemptId: RunAttemptId.make("attempt-unload-failed-typed"),
+          requireRunScopedMcp: true,
+        });
+        const stagedToken = (yield* mcpSessions.read(
+          unloadFailedThreadId,
+        ))!.authorizationHeader.replace(/^Bearer\s+/, "");
+        yield* Ref.set(failUnload, true);
+        yield* runtime.resumeThread({
+          threadId: unloadFailedThreadId,
+          providerThread: unloadFailedProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.isUndefined(yield* registry.resolve(stagedToken));
+        assert.equal(
+          (yield* mcpSessions.read(unloadFailedThreadId))?.authorizationHeader,
+          beforeFailedUnload!.authorizationHeader,
+        );
+
+        // Once background work finishes, reloading a thread whose loaded credential became unbound
+        // during keepLoaded retires that old unbound credential.
+        yield* Ref.set(failUnload, false);
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-bg-3-retire"),
+          attemptId: RunAttemptId.make("attempt-bg-3-retire"),
+          requireRunScopedMcp: true,
+        });
+        yield* runtime.resumeThread({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.isTrue(Option.isSome(yield* Queue.poll(unloads)));
+        assert.isUndefined(yield* registry.resolve(loadedToken));
+
+        // If a newer credential is published while the background-work probe awaits, the fallback
+        // skips releasing and overwriting it.
+        const probeRaceThreadId = ThreadId.make("thread-provider-session-manager-probe-race");
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: probeRaceThreadId, now }),
+          ],
+        });
+        const raceRun1 = RunId.make("run-probe-race-1");
+        yield* manager.open({
+          threadId: probeRaceThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: raceRun1,
+          attemptId: RunAttemptId.make("attempt-probe-race-1"),
+          requireRunScopedMcp: true,
+        });
+        const originalRaceConfig = yield* mcpSessions.read(probeRaceThreadId);
+        assert.isDefined(originalRaceConfig);
+        const originalRaceToken = originalRaceConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        const probeStarted = yield* Deferred.make<void>();
+        const releaseProbe = yield* Deferred.make<boolean>();
+        yield* Ref.set(
+          sessionBackgroundWorkProbe,
+          Deferred.succeed(probeStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseProbe)),
+          ),
+        );
+        const racingOpen = yield* manager
+          .open({
+            threadId: probeRaceThreadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+            runId: RunId.make("run-probe-race-2"),
+            attemptId: RunAttemptId.make("attempt-probe-race-2"),
+            requireRunScopedMcp: true,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(probeStarted);
+        const newerIssued = yield* registry.issue({
+          threadId: probeRaceThreadId,
+          providerInstanceId: modelSelection.instanceId,
+          providerSessionId: originalRaceConfig!.providerSessionId,
+          runId: RunId.make("run-probe-race-3"),
+          attemptId: RunAttemptId.make("attempt-probe-race-3"),
+        });
+        yield* mcpSessions.set(newerIssued.config);
+        yield* Deferred.succeed(releaseProbe, true);
+        yield* Fiber.join(racingOpen);
+        const afterRace = yield* mcpSessions.read(probeRaceThreadId);
+        assert.equal(afterRace?.authorizationHeader, newerIssued.config.authorizationHeader);
+        assert.isUndefined(afterRace?.runId);
+        // The older credential was not released or written back; the newer one became unbound for run 2.
+        assert.equal((yield* registry.resolve(originalRaceToken))?.thread.runId, raceRun1);
+        const newerToken = newerIssued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+        const resolvedNewer = yield* registry.resolve(newerToken);
+        assert.isDefined(resolvedNewer);
+        assert.isUndefined(resolvedNewer!.thread.runId);
+        // Narrowing on a non-rotating turn strips preview from older retained thread tokens too,
+        // while re-enabling restores it only on the active credential.
+        yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+        yield* manager.open({
+          threadId: probeRaceThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-probe-race-4"),
+          attemptId: RunAttemptId.make("attempt-probe-race-4"),
+          requireRunScopedMcp: true,
+        });
+        assert.isFalse((yield* registry.resolve(newerToken))?.capabilities.has("preview") ?? true);
+        assert.isFalse(
+          (yield* registry.resolve(originalRaceToken))?.capabilities.has("preview") ?? true,
+        );
+        yield* settings.updateSettings({ enableAgentBrowserAccess: true });
+        yield* manager.open({
+          threadId: probeRaceThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-probe-race-5"),
+          attemptId: RunAttemptId.make("attempt-probe-race-5"),
+          requireRunScopedMcp: true,
+        });
+        assert.isTrue((yield* registry.resolve(newerToken))?.capabilities.has("preview") ?? false);
+        assert.isFalse(
+          (yield* registry.resolve(originalRaceToken))?.capabilities.has("preview") ?? true,
+        );
+
+        yield* manager.close(providerSessionId);
+      });
+
+      const serverSettingsLayer = ServerSettings.layerTest().pipe(Layer.orDie);
+      yield* effect.pipe(
+        Effect.provide(
+          Layer.merge(
+            layerTest({
+              state,
+              idleTimeoutMs: 1_000,
+              unloads,
+              hasPendingBackgroundWork: Ref.get(sessionBackgroundWorkProbe).pipe(Effect.flatten),
+              hasPendingBackgroundWorkForThread: Ref.get(pendingBackgroundWork),
+              beforeUnload: Ref.get(failUnload).pipe(
+                Effect.flatMap((fail) => (fail ? Effect.die("unload failed") : Effect.void)),
+              ),
+              serverSettingsLayer,
+            }),
+            serverSettingsLayer,
+          ),
+        ),
+      );
+      return;
+    }
+
+    const unloads = yield* Queue.unbounded<string>();
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-shared-rotate");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+
+      const run1 = RunId.make("run-shared-1");
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+        runId: run1,
+        attemptId: RunAttemptId.make("attempt-shared-1"),
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+      yield* runtime.resumeThread({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+      });
+      const token1 = (yield* mcpSessions.read(threadId))?.authorizationHeader;
+      assert.isDefined(token1);
+      assert.equal((yield* Ref.get(state)).resumeCount, 1);
+      assert.isTrue(Option.isNone(yield* Queue.poll(unloads)));
+
+      // Plain turn on a shared runtime without live MCP updates keeps the loaded credential.
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("run-shared-2"),
+        attemptId: RunAttemptId.make("attempt-shared-2"),
+        requireRunScopedMcp: false,
+      });
+      assert.equal((yield* mcpSessions.read(threadId))?.authorizationHeader, token1);
+      assert.isTrue(Option.isNone(yield* Queue.poll(unloads)));
+
+      // Typed-output turn rotates the credential and reloads the thread via unloadThread + resumeThread.
+      const run3 = RunId.make("run-shared-3");
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+        runId: run3,
+        attemptId: RunAttemptId.make("attempt-shared-3"),
+        requireRunScopedMcp: true,
+      });
+      const token3 = (yield* mcpSessions.read(threadId))?.authorizationHeader;
+      assert.isDefined(token3);
+      assert.notEqual(token3, token1);
+      yield* runtime.resumeThread({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.deepEqual([...(yield* Queue.takeAll(unloads))], ["unload:native-thread"]);
+      assert.equal((yield* Ref.get(state)).resumeCount, 2);
+      yield* manager.close(providerSessionId);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 1_000,
+          unloads,
+        }),
+      ),
+    );
   }),
 );
 

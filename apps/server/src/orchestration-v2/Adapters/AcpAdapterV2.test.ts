@@ -1376,6 +1376,7 @@ describe("AcpAdapterV2", () => {
       const promptRuntimes: Array<number> = [];
       const promptTexts: Array<string> = [];
       const watchedSessions: Array<string> = [];
+      const restartedActivationCalls: Array<string> = [];
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
@@ -1403,20 +1404,69 @@ describe("AcpAdapterV2", () => {
           makeRuntime: makeMockRuntime({
             childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             mockAgentPath: yield* bundledMockAgentPath,
-            wrapRuntime: (runtime, runtimeOrdinal) => ({
-              ...runtime,
-              cancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
-              prompt: (payload) =>
-                Effect.sync(() => {
-                  promptRuntimes.push(runtimeOrdinal);
-                  promptTexts.push(
-                    payload.prompt
-                      .flatMap((block) => (block.type === "text" ? [block.text] : []))
-                      .join("\n"),
-                  );
-                  return { stopReason: "end_turn" as const };
-                }),
-            }),
+            wrapRuntime: (runtime, runtimeOrdinal) => {
+              const resumeOnlyCapabilities = (
+                init: Effect.Success<ReturnType<typeof runtime.initialize>>,
+              ) => ({
+                ...init,
+                agentCapabilities: {
+                  ...init.agentCapabilities,
+                  loadSession: false,
+                  sessionCapabilities: {
+                    ...init.agentCapabilities?.sessionCapabilities,
+                    resume: {},
+                  },
+                },
+              });
+              return {
+                ...runtime,
+                ...(runtimeOrdinal === 2
+                  ? {
+                      initialize: () =>
+                        runtime.initialize().pipe(
+                          Effect.map((init) => {
+                            restartedActivationCalls.push("initialize");
+                            return resumeOnlyCapabilities(init);
+                          }),
+                        ),
+                      loadSession: () =>
+                        Effect.sync(() => {
+                          restartedActivationCalls.push("loadSession");
+                        }).pipe(
+                          Effect.andThen(
+                            Effect.fail(
+                              new EffectAcpErrors.AcpRequestError({
+                                code: -32601,
+                                errorMessage: "restarted agent does not support session/load",
+                              }),
+                            ),
+                          ),
+                        ),
+                      resumeSession: (sessionId, activationOptions) =>
+                        Effect.sync(() => {
+                          restartedActivationCalls.push("resumeSession");
+                        }).pipe(
+                          Effect.andThen(runtime.loadSession(sessionId, activationOptions)),
+                          Effect.map((loaded) => ({
+                            ...loaded,
+                            initializeResult: resumeOnlyCapabilities(loaded.initializeResult),
+                          })),
+                        ),
+                    }
+                  : {}),
+                cancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
+                prompt: (payload) =>
+                  Effect.sync(() => {
+                    promptRuntimes.push(runtimeOrdinal);
+                    promptTexts.push(
+                      payload.prompt
+                        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                        .join("\n"),
+                    );
+                    return { stopReason: "end_turn" as const };
+                  }),
+              };
+            },
           }),
         },
       });
@@ -1465,6 +1515,11 @@ describe("AcpAdapterV2", () => {
       const completed = (yield* runTurn(2)).at(-1);
       assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
       assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
+      assert.deepEqual(
+        restartedActivationCalls,
+        ["initialize", "resumeSession"],
+        "restarted runtime negotiates capabilities before choosing loadSession vs resumeSession",
+      );
       // The fresh runtime has no record of what reached the agent, so it sends T3's notes again.
       assert.include(promptTexts[1] ?? "", "<runtime_info>");
       assert.include(promptTexts[1] ?? "", "T3 Code interaction mode: Default");
@@ -6644,6 +6699,165 @@ describe("AcpAdapterV2", () => {
       yield* Deferred.await(responseClosed);
       yield* Fiber.join(turnFiber);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("refreshes ACP session MCP credentials when the thread token rotates between turns", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const instanceId = ProviderInstanceId.make("acp-test-mcp-rotate");
+      const threadId = ThreadId.make("thread-acp-mcp-rotate");
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment-acp-mcp-rotate"),
+        threadId,
+        providerSessionId: "mcp-session-acp-rotate-1",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer acp-run-1-token",
+        browserToolsAvailable: false,
+      });
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+          }),
+        },
+        selfInvocation,
+        clientTerminals: {},
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-mcp-rotate"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment-acp-mcp-rotate"),
+        threadId,
+        providerSessionId: "mcp-session-acp-rotate-2",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer acp-run-2-token",
+        browserToolsAvailable: false,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+
+      const loggedEvents = [...(yield* Queue.takeAll(protocolEvents))];
+      const reloadRequestEvent = loggedEvents.find(
+        (event) =>
+          event.direction === "outgoing" &&
+          (rawProtocolMethod(event) === "session/load" ||
+            rawProtocolMethod(event) === "session/resume"),
+      );
+      assert.isDefined(
+        reloadRequestEvent,
+        `expected session/load or session/resume in ${JSON.stringify(loggedEvents.map((e) => `${e.direction}:${rawProtocolMethod(e)}`))}`,
+      );
+      const loadRequest = Option.getOrThrow(
+        Option.fromNullishOr(rawProtocolRequest(reloadRequestEvent!)),
+      );
+      const mcpServers = (
+        loadRequest.params as {
+          mcpServers?: ReadonlyArray<{
+            name?: string;
+            env?: ReadonlyArray<{ name: string; value: string }>;
+          }>;
+        }
+      ).mcpServers;
+      const t3Server = mcpServers?.find((server) => server.name === "t3-code");
+      assert.isDefined(t3Server);
+      assert.equal(
+        t3Server?.env?.find((entry) => entry.name === "T3_ACP_MCP_AUTHORIZATION")?.value,
+        "Bearer acp-run-2-token",
+      );
+      assert.equal(runtime.mcpCredentialRotation, "reload");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live(
+    "reports mcpCredentialRotation none for non-loadable ACP agents without MCP-over-ACP",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const instanceId = ProviderInstanceId.make("acp-test-mcp-none");
+        const threadId = ThreadId.make("thread-acp-mcp-none");
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                start: () =>
+                  runtime.start().pipe(
+                    Effect.map((started) => ({
+                      ...started,
+                      initializeResult: {
+                        ...started.initializeResult,
+                        agentCapabilities: {
+                          ...started.initializeResult.agentCapabilities,
+                          loadSession: false,
+                          sessionCapabilities: {},
+                          mcpCapabilities: {
+                            ...started.initializeResult.agentCapabilities?.mcpCapabilities,
+                            acp: false,
+                          },
+                        },
+                      },
+                    })),
+                  ),
+              }),
+            }),
+          },
+          selfInvocation,
+          clientTerminals: {},
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-mcp-none"),
+          modelSelection: { instanceId, model: "default" },
+          runtimePolicy,
+        });
+        assert.equal(runtime.mcpCredentialRotation, "none");
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each([

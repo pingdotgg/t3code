@@ -1,9 +1,51 @@
-import { parseGoalCommand } from "@t3tools/contracts";
+import { parseGoalCommand, type RunId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as JsonSchema from "effect/JsonSchema";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
+
+/** Latest completed run on the thread that still owes a typed result, if any. */
+export function latestOwedOutputRun<
+  TRun extends {
+    readonly id: RunId;
+    readonly ordinal: number;
+    readonly status: string;
+    readonly outputSchema?: unknown;
+    readonly output?: unknown;
+  },
+>(runs: ReadonlyArray<TRun>): TRun | undefined {
+  return runs
+    .filter(
+      (candidate) =>
+        candidate.outputSchema !== undefined &&
+        candidate.output === undefined &&
+        candidate.status === "completed",
+    )
+    .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+}
+
+/** Whether a turn needs its MCP credential rotated to match its run/attempt identity. */
+export function runRequiresRunScopedMcp(
+  runs: ReadonlyArray<{
+    readonly id: RunId;
+    readonly ordinal: number;
+    readonly status: string;
+    readonly outputSchema?: unknown;
+    readonly output?: unknown;
+  }>,
+  runId: RunId | undefined,
+  currentCredentialRunId?: RunId,
+): boolean {
+  if (
+    runId !== undefined &&
+    runs.some((candidate) => candidate.id === runId && candidate.outputSchema !== undefined)
+  ) {
+    return true;
+  }
+  const owed = latestOwedOutputRun(runs);
+  return owed !== undefined && currentCredentialRunId !== owed.id;
+}
 
 type OutputSchema = Readonly<Record<string, Schema.Json>>;
 
@@ -46,10 +88,10 @@ export const outputRequestProblem = (
     : outputSchemaProblem(schema);
 
 /** Appended to the turn's prompt: the agent learns the shape and how to hand the result back. */
-export const outputInstructions = (schema: OutputSchema): string =>
+export const outputInstructions = (schema: OutputSchema, runId: RunId): string =>
   [
     "A program reads the result of this turn, not a person.",
-    "When the work is done, call the `t3_submit_output` tool once with `json` set to JSON text matching this JSON Schema:",
+    `When the work is done, call the \`t3_submit_output\` tool once with \`runId\` set to \`${runId}\` and \`json\` set to JSON text matching this JSON Schema:`,
     JSON.stringify(schema),
     "If you could not finish, still submit, with the fields that say so. A rejected submission names what did not fit: correct it and submit again.",
   ].join("\n");

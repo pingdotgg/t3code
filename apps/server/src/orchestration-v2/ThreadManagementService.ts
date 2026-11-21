@@ -38,6 +38,7 @@ import {
   ProviderInstanceId,
   type ProviderSessionId,
   resolveProjectProviderInstanceEnabled,
+  type RunAttemptId,
   RunId,
   type ScheduledTaskId,
   ThreadId,
@@ -73,7 +74,9 @@ import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
-import { checkOutput, outputRequestProblem } from "./runOutput.ts";
+import { checkOutput, latestOwedOutputRun, outputRequestProblem } from "./runOutput.ts";
+
+const isRunOutputDispatchRejectionError = Schema.is(Orchestrator.RunOutputDispatchRejectionError);
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -492,6 +495,8 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly json: string;
+    readonly callerRunId?: RunId;
+    readonly callerAttemptId?: RunAttemptId;
   }) => Effect.Effect<{ readonly runId: RunId }, ThreadManagementFailure>;
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
@@ -1039,19 +1044,31 @@ const make = Effect.gen(function* () {
     // A turn that ended without its result still owes it: the agent may have ended it to wait
     // for something, and answer from the turn that woke it.
     // Only an ended turn can owe one; a queued or running turn asked for one answers for itself.
-    const owed = records.runs
-      .filter(
-        (candidate) =>
-          candidate.outputSchema !== undefined &&
-          candidate.output === undefined &&
-          candidate.status === "completed",
-      )
-      .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+    const owed = latestOwedOutputRun(records.runs);
     const run = active?.outputSchema !== undefined ? active : owed;
+    // Check whether a result is expected before caller identity so plain turns keep their message.
     if (active === undefined || run?.outputSchema === undefined) {
       return yield* new ThreadManagementRunOutputRejectedError({
         threadId: input.threadId,
         problem: "This turn was not asked for a result. Reply in your message instead.",
+      });
+    }
+    // Without it a stopped run's late call cannot be told from the active run's.
+    if (input.callerRunId === undefined) {
+      return yield* new ThreadManagementRunOutputRejectedError({
+        threadId: input.threadId,
+        problem: "Pass `runId` as this turn's instructions gave it.",
+      });
+    }
+    const callerRunId = input.callerRunId;
+    const matchesRun = (candidate: OrchestrationV2Run) =>
+      candidate.id === callerRunId &&
+      (input.callerAttemptId === undefined || candidate.activeAttemptId === input.callerAttemptId);
+    // Accept the active run, or the un-stopped completed run whose own owed output is targeted.
+    if (!matchesRun(active) && !(run.id !== active.id && matchesRun(run))) {
+      return yield* new ThreadManagementRunOutputRejectedError({
+        threadId: input.threadId,
+        problem: "This output was submitted for a turn that is no longer active.",
       });
     }
     const checked = yield* checkOutput(run.outputSchema, input.json);
@@ -1067,8 +1084,25 @@ const make = Effect.gen(function* () {
       commandId: input.commandId,
       threadId: input.threadId,
       runId: run.id,
+      callerRunId,
+      ...(input.callerAttemptId === undefined ? {} : { callerAttemptId: input.callerAttemptId }),
       value: checked.success,
-    });
+    }).pipe(
+      Effect.catchTags({
+        OrchestratorDispatchError: (error) =>
+          isRunOutputDispatchRejectionError(error.cause)
+            ? Effect.fail(
+                new ThreadManagementRunOutputRejectedError({
+                  threadId: input.threadId,
+                  problem:
+                    error.cause.reason === "stopped"
+                      ? "This turn was stopped and takes no result."
+                      : "This output was submitted for a turn that is no longer active.",
+                }),
+              )
+            : Effect.fail(error),
+      }),
+    );
     return { runId: run.id };
   });
 
