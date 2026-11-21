@@ -51,7 +51,10 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type * as RpcSession from "../rpc/session.ts";
-import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
+import {
+  createOrchestrationEnvironmentAtoms,
+  PartialThreadLinkMetadataError,
+} from "./orchestration.ts";
 import { createReviewEnvironmentAtoms } from "./review.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import { createFilesystemEnvironmentAtoms } from "./filesystem.ts";
@@ -86,6 +89,9 @@ const QUERY_RPC_SESSION = {} as RpcSession.RpcSession;
 class TestQueryError extends Schema.TaggedError<TestQueryError>()("TestQueryError", {
   message: Schema.String,
 }) {}
+
+const isTestQueryError = Schema.is(TestQueryError);
+const isPartialThreadLinkMetadataError = Schema.is(PartialThreadLinkMetadataError);
 
 const OFFLINE_QUERY_FAILURE = new ConnectionTransientError({
   reason: "transport",
@@ -1681,7 +1687,10 @@ describe("environment query lifecycle", () => {
         const calls: Array<ReadonlyArray<ThreadId>> = [];
         const requests =
           yield* Queue.unbounded<
-            Deferred.Deferred<Record<string, { title: string; projectId: ProjectId | null }>>
+            Deferred.Deferred<
+              Record<string, { title: string; projectId: ProjectId | null }>,
+              TestQueryError
+            >
           >();
         const clock = yield* Clock.Clock;
         const rpcSession = {
@@ -1692,10 +1701,10 @@ describe("environment query lifecycle", () => {
             }) =>
               Effect.gen(function* () {
                 calls.push(input.threadIds);
-                const answer =
-                  yield* Deferred.make<
-                    Record<string, { title: string; projectId: ProjectId | null }>
-                  >();
+                const answer = yield* Deferred.make<
+                  Record<string, { title: string; projectId: ProjectId | null }>,
+                  TestQueryError
+                >();
                 yield* Queue.offer(requests, answer);
                 return yield* Deferred.await(answer);
               }),
@@ -1922,10 +1931,92 @@ describe("environment query lifecycle", () => {
         });
         expect(calls).toHaveLength(callsAfterSnapRace);
 
-        // Case C: an older in-flight batch must not overwrite a newer cache entry for the same ID,
-        // while still storing valid entries for other IDs in the older batch.
-        const tOrder = ThreadId.make("order-6");
-        const tOrderOther = ThreadId.make("order-other-7");
+        // Case C: growing streaming prefixes reuse in-flight lookups (fetching only new IDs even
+        // when the earlier prefix unmounts), and failed in-flight lookups are cleared for retry.
+        const tStreamA = ThreadId.make("stream-a-6");
+        const tStreamB = ThreadId.make("stream-b-7");
+        const prefixA = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tStreamA] },
+        });
+        const prefixAB = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tStreamA, tStreamB] },
+        });
+        const callsBeforeStream = calls.length;
+        const releasePrefixA = registry.mount(prefixA);
+        const reqStreamA = yield* Queue.take(requests);
+        expect(calls[callsBeforeStream]).toEqual([tStreamA]);
+        // Streaming moves to [A, B] and unmounts [A] (idleTtlMs: 0): [A, B] awaits A and fetches only B.
+        const releasePrefixAB = registry.mount(prefixAB);
+        yield* Effect.addFinalizer(() => Effect.sync(releasePrefixAB));
+        releasePrefixA();
+        const reqStreamB = yield* Queue.take(requests);
+        expect(calls[callsBeforeStream + 1]).toEqual([tStreamB]);
+        yield* Deferred.succeed(reqStreamB, {
+          [tStreamB]: { title: "Stream B", projectId: null },
+        });
+        yield* Deferred.succeed(reqStreamA, {
+          [tStreamA]: { title: "Stream A", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, prefixAB)).toEqual({
+          [tStreamA]: { title: "Stream A", projectId: null },
+          [tStreamB]: { title: "Stream B", projectId: null },
+        });
+        expect(calls).toHaveLength(callsBeforeStream + 2);
+
+        // Failed in-flight work is removed from the in-flight index so a retry fetches it again.
+        const tFail = ThreadId.make("inflight-fail-8");
+        const tOk = ThreadId.make("inflight-ok-9");
+        const failOnlyAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tFail] },
+        });
+        const failAndOkAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tFail, tOk] },
+        });
+        const callsBeforeFail = calls.length;
+        const releaseFailOnly = registry.mount(failOnlyAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseFailOnly));
+        const reqFail = yield* Queue.take(requests);
+        expect(calls[callsBeforeFail]).toEqual([tFail]);
+        const releaseFailAndOk = registry.mount(failAndOkAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseFailAndOk));
+        const reqOk = yield* Queue.take(requests);
+        expect(calls[callsBeforeFail + 1]).toEqual([tOk]);
+        yield* Deferred.fail(reqFail, new TestQueryError({ message: "inflight failed" }));
+        yield* Deferred.succeed(reqOk, { [tOk]: { title: "Inflight OK", projectId: null } });
+
+        const failOnlyExit = yield* Effect.exit(readEnvironmentQuery(registry, failOnlyAtom));
+        expect(Exit.isFailure(failOnlyExit)).toBe(true);
+        const failAndOkExit = yield* Effect.exit(readEnvironmentQuery(registry, failAndOkAtom));
+        expect(Exit.isFailure(failAndOkExit)).toBe(true);
+        if (Exit.isFailure(failAndOkExit)) {
+          const partial = Option.getOrUndefined(Cause.findErrorOption(failAndOkExit.cause));
+          expect(isPartialThreadLinkMetadataError(partial)).toBe(true);
+          if (isPartialThreadLinkMetadataError(partial)) {
+            expect(partial.metadata).toEqual({
+              [tOk]: { title: "Inflight OK", projectId: null },
+            });
+            expect(partial.failedThreadIds).toEqual([tFail]);
+          }
+        }
+        registry.refresh(failOnlyAtom);
+        const retryFail = yield* Queue.take(requests);
+        expect(calls[callsBeforeFail + 2]).toEqual([tFail]);
+        yield* Deferred.succeed(retryFail, {
+          [tFail]: { title: "Recovered Fail", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, failOnlyAtom)).toEqual({
+          [tFail]: { title: "Recovered Fail", projectId: null },
+        });
+
+        // Case D: if a shell snapshot arrives during the batch delay, an older batch and a newer
+        // batch both observe the new generation; observedSeq keeps the older response from
+        // overwriting the newer cache entry while still caching other IDs from the older batch.
+        const tOrder = ThreadId.make("order-10");
+        const tOrderOther = ThreadId.make("order-other-11");
         const olderAtom = orchestration.threadLinkMetadata({
           environmentId: QUERY_ENVIRONMENT.environmentId,
           input: { threadIds: [tOrder, tOrderOther] },
@@ -1934,8 +2025,19 @@ describe("environment query lifecycle", () => {
           environmentId: QUERY_ENVIRONMENT.environmentId,
           input: { threadIds: [tOrder] },
         });
+        const orderGuardChecked = yield* Deferred.make<void>();
+        let watchOrderGuard = false;
         const releaseOlder = registry.mount(olderAtom);
-        yield* Effect.addFinalizer(() => Effect.sync(releaseOlder));
+        releaseOlder();
+        // Bump generation 2 -> 3 before batch 1's yieldNow delay runs: batch 1 observes gen 3
+        // while inFlight still holds gen 2, so newerAtom creates a gen-3 flight for tOrder.
+        registry.set(shellState, {
+          removedAt: new Map(),
+          get generation() {
+            if (watchOrderGuard) Deferred.doneUnsafe(orderGuardChecked, Exit.void);
+            return 3;
+          },
+        });
         const olderReq = yield* Queue.take(requests);
         const releaseNewer = registry.mount(newerAtom);
         yield* Effect.addFinalizer(() => Effect.sync(releaseNewer));
@@ -1946,14 +2048,14 @@ describe("environment query lifecycle", () => {
         expect(yield* readEnvironmentQuery(registry, newerAtom)).toEqual({
           [tOrder]: { title: "Newer Title", projectId: null },
         });
+        watchOrderGuard = true;
         yield* Deferred.succeed(olderReq, {
           [tOrder]: { title: "Older Title", projectId: null },
           [tOrderOther]: { title: "Other Valid", projectId: null },
         });
-        expect(yield* readEnvironmentQuery(registry, olderAtom)).toEqual({
-          [tOrder]: { title: "Older Title", projectId: null },
-          [tOrderOther]: { title: "Other Valid", projectId: null },
-        });
+        yield* Deferred.await(orderGuardChecked);
+        yield* Effect.yieldNow;
+        watchOrderGuard = false;
         const callsAfterOrderRace = calls.length;
         const verifyOrderCache = orchestration.threadLinkMetadata({
           environmentId: QUERY_ENVIRONMENT.environmentId,
@@ -2108,49 +2210,102 @@ describe("environment query lifecycle", () => {
         // Total dispatched chunks: 1 from gen 1 (chunk 2 skipped) + 2 from gen 2.
         expect(dispatchedChunks.map((chunk) => chunk.length)).toEqual([500, 500, 2]);
 
-        // 2. Chunk 1 succeeds for callerA while chunk 2 fails for callerB: callerA succeeds and
-        // caches its IDs; callerB fails and its IDs stay uncached and retryable.
-        const chunk1Ids = Array.from({ length: 500 }, (_, index) => ThreadId.make(`iso-${index}`));
-        const chunk2Id = ThreadId.make("iso-500");
+        // 2. Shared batch across chunk 1 and chunk 2: callerA (499 IDs), callerB (spanning chunk 1
+        // miss + chunk 1 hit + chunk 2 failure), and callerC (chunk 2 only) enter the same batch.
+        // Chunk 1 (500 IDs ending with iso-499) proves callerA and callerB shared the batch and
+        // only chunk 1 dispatched before its reply is released.
+        const callerAIds = Array.from({ length: 499 }, (_, index) => ThreadId.make(`iso-${index}`));
+        const iso498 = ThreadId.make("iso-498");
+        const iso499 = ThreadId.make("iso-499");
+        const iso500 = ThreadId.make("iso-500");
+        const iso501 = ThreadId.make("iso-501");
         const callerA = orchestration.threadLinkMetadata({
           environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: { threadIds: chunk1Ids },
+          input: { threadIds: callerAIds },
         });
         const callerB = orchestration.threadLinkMetadata({
           environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: { threadIds: [chunk2Id] },
+          input: { threadIds: [iso498, iso499, iso500] },
         });
+        const callerC = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [iso501] },
+        });
+        const callsBeforeIso = dispatchedChunks.length;
         const releaseA = registry.mount(callerA);
         const releaseB = registry.mount(callerB);
+        const releaseC = registry.mount(callerC);
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             releaseA();
             releaseB();
+            releaseC();
           }),
         );
         const isoChunk1 = yield* Queue.take(chunkRequests);
+        expect(dispatchedChunks).toHaveLength(callsBeforeIso + 1);
+        expect(dispatchedChunks[callsBeforeIso]).toHaveLength(500);
+        expect(dispatchedChunks[callsBeforeIso]?.at(-1)).toBe(iso499);
         yield* Deferred.succeed(isoChunk1, {
           "iso-0": { title: "Chunk 1 OK", projectId: null },
+          [iso499]: { title: "Spanning OK", projectId: null },
         });
         expect(yield* readEnvironmentQuery(registry, callerA)).toEqual({
           "iso-0": { title: "Chunk 1 OK", projectId: null },
         });
         const isoChunk2 = yield* Queue.take(chunkRequests);
+        expect(dispatchedChunks).toHaveLength(callsBeforeIso + 2);
+        expect(dispatchedChunks[callsBeforeIso + 1]).toEqual([iso500, iso501]);
         yield* Deferred.fail(isoChunk2, new TestQueryError({ message: "chunk 2 failed" }));
+
+        // Spanning callerB receives chunk 1's succeeded metadata and keeps only iso500 failed.
         const callerBExit = yield* Effect.exit(readEnvironmentQuery(registry, callerB));
         expect(Exit.isFailure(callerBExit)).toBe(true);
+        if (Exit.isFailure(callerBExit)) {
+          const partial = Option.getOrUndefined(Cause.findErrorOption(callerBExit.cause));
+          expect(isPartialThreadLinkMetadataError(partial)).toBe(true);
+          if (isPartialThreadLinkMetadataError(partial)) {
+            expect(partial.metadata).toEqual({
+              [iso499]: { title: "Spanning OK", projectId: null },
+            });
+            expect(partial.failedThreadIds).toEqual([iso500]);
+          }
+        }
+        expect(AsyncResult.getOrElse(registry.get(callerB), () => null)).toEqual({
+          [iso499]: { title: "Spanning OK", projectId: null },
+        });
 
-        // Retrying callerB fetches chunk2Id (not cached as a miss) and succeeds.
+        // Chunk-2-only callerC fails with the underlying error (not a partial error).
+        const callerCExit = yield* Effect.exit(readEnvironmentQuery(registry, callerC));
+        expect(Exit.isFailure(callerCExit)).toBe(true);
+        if (Exit.isFailure(callerCExit)) {
+          const err = Option.getOrUndefined(Cause.findErrorOption(callerCExit.cause));
+          expect(isTestQueryError(err)).toBe(true);
+        }
+
+        // Retrying callerB hits cache for iso498 (miss) and iso499 (hit) and fetches only iso500.
         const callsBeforeRetry = dispatchedChunks.length;
         registry.refresh(callerB);
-        const retryChunk2 = yield* Queue.take(chunkRequests);
+        const retryB = yield* Queue.take(chunkRequests);
         expect(dispatchedChunks).toHaveLength(callsBeforeRetry + 1);
-        expect(dispatchedChunks[callsBeforeRetry]).toEqual([chunk2Id]);
-        yield* Deferred.succeed(retryChunk2, {
-          [chunk2Id]: { title: "Chunk 2 Retried", projectId: null },
+        expect(dispatchedChunks[callsBeforeRetry]).toEqual([iso500]);
+        yield* Deferred.succeed(retryB, {
+          [iso500]: { title: "Chunk 2 Retried", projectId: null },
         });
         expect(yield* readEnvironmentQuery(registry, callerB)).toEqual({
-          [chunk2Id]: { title: "Chunk 2 Retried", projectId: null },
+          [iso499]: { title: "Spanning OK", projectId: null },
+          [iso500]: { title: "Chunk 2 Retried", projectId: null },
+        });
+
+        // Retrying callerC fetches iso501 (not cached as a miss) and succeeds.
+        registry.refresh(callerC);
+        const retryC = yield* Queue.take(chunkRequests);
+        expect(dispatchedChunks[callsBeforeRetry + 1]).toEqual([iso501]);
+        yield* Deferred.succeed(retryC, {
+          [iso501]: { title: "Caller C Retried", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(registry, callerC)).toEqual({
+          [iso501]: { title: "Caller C Retried", projectId: null },
         });
       }),
   );

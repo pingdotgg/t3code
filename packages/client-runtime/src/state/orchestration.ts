@@ -2,18 +2,21 @@ import { msg } from "gt-i18n";
 import { translatableMessage } from "../errors/translatable.ts";
 import {
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2ThreadLinkMetadata,
+  ThreadId,
   type EnvironmentId,
-  type ThreadId,
-  type OrchestrationV2ThreadLinkMetadata,
   type OrchestrationGetTurnDiffResult,
   type OrchestrationV2GetTurnItemInput,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Request from "effect/Request";
 import * as RequestResolver from "effect/RequestResolver";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { HttpClient } from "effect/http";
@@ -53,6 +56,16 @@ type ThreadLinkMetadataError =
   | Effect.Error<ReturnType<typeof fetchThreadLinkMetadataChunk>>
   | EnvironmentRpcUnavailableError;
 
+/** Raised when at least one chunk or cached entry succeeded while another chunk failed. */
+export class PartialThreadLinkMetadataError extends Schema.TaggedError<PartialThreadLinkMetadataError>()(
+  "PartialThreadLinkMetadataError",
+  {
+    metadata: Schema.Record(ThreadId, OrchestrationV2ThreadLinkMetadata),
+    failedThreadIds: Schema.Array(ThreadId),
+    cause: Schema.Unknown,
+  },
+) {}
+
 interface CachedThreadLinkMetadata {
   readonly value: OrchestrationV2ThreadLinkMetadata | null;
   readonly expiresAt: number;
@@ -61,15 +74,25 @@ interface CachedThreadLinkMetadata {
   readonly observedSeq: number;
 }
 
+interface InFlightThreadLinkMetadata {
+  readonly threadId: ThreadId;
+  readonly shellGeneration: number;
+  readonly removedAtSeq: number;
+  readonly deferred: Deferred.Deferred<
+    OrchestrationV2ThreadLinkMetadata | null,
+    ThreadLinkMetadataError
+  >;
+}
+
 class ThreadLinkMetadataRequest extends Request.Class<
   {
-    readonly threadIds: ReadonlyArray<ThreadId>;
+    readonly flights: ReadonlyArray<InFlightThreadLinkMetadata>;
     readonly session: RpcSession.RpcSession;
     readonly supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"];
     readonly registry: AtomRegistry.AtomRegistry;
   },
-  ReadonlyMap<ThreadId, OrchestrationV2ThreadLinkMetadata>,
-  ThreadLinkMetadataError
+  void,
+  never
 > {}
 
 const metadataMapToRecord = (
@@ -174,16 +197,62 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       return `${generation}:${latest}`;
     });
   };
-  // Keyed by session so a reconnect never serves the previous session's answers.
+  // Keyed by session so a reconnect never serves or joins the previous session's lookups.
   const threadLinkMetadataCache = new WeakMap<
     RpcSession.RpcSession,
     Map<ThreadId, CachedThreadLinkMetadata>
+  >();
+  const inFlightThreadLinkMetadata = new WeakMap<
+    RpcSession.RpcSession,
+    Map<ThreadId, InFlightThreadLinkMetadata>
   >();
   let nextObservationSeq = 0;
   const readShellVersion = (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
     if (shellState === undefined) return { generation: 0, removedAt: undefined };
     const { generation, removedAt } = registry.get(shellState(environmentId));
     return { generation, removedAt };
+  };
+  const clearInFlight = (session: RpcSession.RpcSession, flight: InFlightThreadLinkMetadata) => {
+    const flights = inFlightThreadLinkMetadata.get(session);
+    if (flights?.get(flight.threadId) === flight) {
+      flights.delete(flight.threadId);
+    }
+  };
+  const settleFlight = (
+    session: RpcSession.RpcSession,
+    flight: InFlightThreadLinkMetadata,
+    exit: Exit.Exit<OrchestrationV2ThreadLinkMetadata | null, ThreadLinkMetadataError>,
+  ) => {
+    clearInFlight(session, flight);
+    Deferred.doneUnsafe(flight.deferred, exit);
+  };
+  const getOrCreateInFlight = (
+    session: RpcSession.RpcSession,
+    threadId: ThreadId,
+    shellGeneration: number,
+    removedAtSeq: number,
+  ): { readonly flight: InFlightThreadLinkMetadata; readonly created: boolean } => {
+    let flights = inFlightThreadLinkMetadata.get(session);
+    if (flights === undefined) {
+      flights = new Map();
+      inFlightThreadLinkMetadata.set(session, flights);
+    }
+    const existing = flights.get(threadId);
+    if (
+      existing !== undefined &&
+      existing.shellGeneration === shellGeneration &&
+      existing.removedAtSeq === removedAtSeq
+    ) {
+      return { flight: existing, created: false };
+    }
+    const created: InFlightThreadLinkMetadata = {
+      threadId,
+      shellGeneration,
+      removedAtSeq,
+      deferred: Deferred.makeUnsafe(),
+    };
+    flights.set(threadId, created);
+    return { flight: created, created: true };
   };
   const getCachedThreadLinkMetadata = (
     session: RpcSession.RpcSession,
@@ -236,88 +305,103 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       if (first === undefined) return;
       const { session, supervisor, registry } = first.request;
       const environmentId = supervisor.target.environmentId;
-      const uniqueIds = [...new Set(entries.flatMap((entry) => entry.request.threadIds))];
-      const batchGeneration = readShellVersion(registry, environmentId).generation;
-      const pending = new Set(entries);
-      const checkedIds = new Set<ThreadId>();
-      const fetched = new Map<ThreadId, OrchestrationV2ThreadLinkMetadata>();
-      const failPending = (exit: Exit.Exit<never, ThreadLinkMetadataError>) => {
-        for (const entry of pending) {
-          entry.completeUnsafe(exit);
-        }
-        pending.clear();
-      };
-
-      for (
-        let offset = 0;
-        offset < uniqueIds.length && pending.size > 0;
-        offset += THREAD_LINK_METADATA_CHUNK_SIZE
-      ) {
-        const sessionExit = yield* Effect.exit(assertSessionActive(supervisor, session));
-        if (Exit.isFailure(sessionExit)) {
-          failPending(Exit.failCause(sessionExit.cause));
-          return;
-        }
-        const before = readShellVersion(registry, environmentId);
-        // Stop before dispatching another chunk once a shell snapshot supersedes this batch.
-        if (before.generation !== batchGeneration) {
-          failPending(
-            Exit.fail(
-              new EnvironmentRpcUnavailableError({
-                environmentId,
-                ...translatableMessage(msg("The environment has no session.")),
-              }),
-            ),
-          );
-          return;
-        }
-        const chunk = uniqueIds.slice(offset, offset + THREAD_LINK_METADATA_CHUNK_SIZE);
-        const observedSeq = ++nextObservationSeq;
-        const chunkExit = yield* Effect.exit(
-          fetchThreadLinkMetadataChunk(supervisor, session, chunk),
-        );
-        if (Exit.isFailure(chunkExit)) {
-          const failedChunkIds = new Set(chunk);
-          for (const entry of pending) {
-            if (entry.request.threadIds.some((id) => failedChunkIds.has(id))) {
-              entry.completeUnsafe(chunkExit);
-              pending.delete(entry);
-            }
+      const flightsById = new Map<ThreadId, Array<InFlightThreadLinkMetadata>>();
+      for (const entry of entries) {
+        for (const flight of entry.request.flights) {
+          let list = flightsById.get(flight.threadId);
+          if (list === undefined) {
+            list = [];
+            flightsById.set(flight.threadId, list);
           }
-          continue;
-        }
-        const now = yield* Clock.currentTimeMillis;
-        const after = readShellVersion(registry, environmentId);
-        // A removal or snapshot that landed while the chunk was in flight makes its answer stale.
-        if (before.generation === after.generation) {
-          for (const threadId of chunk) {
-            const removedAtSeq = before.removedAt?.get(threadId) ?? -1;
-            if ((after.removedAt?.get(threadId) ?? -1) !== removedAtSeq) continue;
-            rememberThreadLinkMetadata(session, threadId, {
-              value: chunkExit.value.get(threadId) ?? null,
-              expiresAt: now + THREAD_LINK_METADATA_STALE_TIME_MS,
-              shellGeneration: before.generation,
-              removedAtSeq,
-              observedSeq,
-            });
-          }
-        }
-        for (const threadId of chunk) {
-          checkedIds.add(threadId);
-          const value = chunkExit.value.get(threadId);
-          if (value !== undefined) fetched.set(threadId, value);
-        }
-        for (const entry of pending) {
-          if (!entry.request.threadIds.every((id) => checkedIds.has(id))) continue;
-          const subset = new Map<ThreadId, OrchestrationV2ThreadLinkMetadata>();
-          for (const threadId of entry.request.threadIds) {
-            const value = fetched.get(threadId);
-            if (value !== undefined) subset.set(threadId, value);
-          }
-          entry.completeUnsafe(Exit.succeed(subset));
-          pending.delete(entry);
+          list.push(flight);
         }
       }
+      const uniqueIds = [...flightsById.keys()];
+      const batchGeneration = readShellVersion(registry, environmentId).generation;
+      let nextOffset = 0;
+
+      const settleIds = (
+        ids: ReadonlyArray<ThreadId>,
+        exitFor: (
+          threadId: ThreadId,
+        ) => Exit.Exit<OrchestrationV2ThreadLinkMetadata | null, ThreadLinkMetadataError>,
+      ) => {
+        for (const threadId of ids) {
+          const flights = flightsById.get(threadId);
+          if (flights === undefined) continue;
+          const exit = exitFor(threadId);
+          for (const flight of flights) {
+            settleFlight(session, flight, exit);
+          }
+        }
+      };
+
+      const failRemaining = (exit: Exit.Exit<never, ThreadLinkMetadataError>) => {
+        settleIds(uniqueIds.slice(nextOffset), () => exit);
+        nextOffset = uniqueIds.length;
+      };
+
+      yield* Effect.gen(function* () {
+        for (let offset = 0; offset < uniqueIds.length; offset += THREAD_LINK_METADATA_CHUNK_SIZE) {
+          const sessionExit = yield* Effect.exit(assertSessionActive(supervisor, session));
+          if (Exit.isFailure(sessionExit)) {
+            failRemaining(Exit.failCause(sessionExit.cause));
+            return;
+          }
+          const before = readShellVersion(registry, environmentId);
+          // Stop before dispatching another chunk once a shell snapshot supersedes this batch.
+          if (before.generation !== batchGeneration) {
+            failRemaining(
+              Exit.fail(
+                new EnvironmentRpcUnavailableError({
+                  environmentId,
+                  ...translatableMessage(msg("The environment has no session.")),
+                }),
+              ),
+            );
+            return;
+          }
+          const chunk = uniqueIds.slice(offset, offset + THREAD_LINK_METADATA_CHUNK_SIZE);
+          const observedSeq = ++nextObservationSeq;
+          const chunkExit = yield* Effect.exit(
+            fetchThreadLinkMetadataChunk(supervisor, session, chunk),
+          );
+          if (Exit.isFailure(chunkExit)) {
+            settleIds(chunk, () => Exit.failCause(chunkExit.cause));
+            nextOffset = offset + chunk.length;
+            continue;
+          }
+          const now = yield* Clock.currentTimeMillis;
+          const after = readShellVersion(registry, environmentId);
+          // A removal or snapshot that landed while the chunk was in flight makes its answer stale.
+          if (before.generation === after.generation) {
+            for (const threadId of chunk) {
+              const removedAtSeq = before.removedAt?.get(threadId) ?? -1;
+              if ((after.removedAt?.get(threadId) ?? -1) !== removedAtSeq) continue;
+              rememberThreadLinkMetadata(session, threadId, {
+                value: chunkExit.value.get(threadId) ?? null,
+                expiresAt: now + THREAD_LINK_METADATA_STALE_TIME_MS,
+                shellGeneration: before.generation,
+                removedAtSeq,
+                observedSeq,
+              });
+            }
+          }
+          settleIds(chunk, (threadId) => Exit.succeed(chunkExit.value.get(threadId) ?? null));
+          nextOffset = offset + chunk.length;
+        }
+      }).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            if (Exit.isFailure(exit) && nextOffset < uniqueIds.length) {
+              failRemaining(Exit.failCause(exit.cause as Cause.Cause<ThreadLinkMetadataError>));
+            }
+            for (const entry of entries) {
+              entry.completeUnsafe(Exit.void);
+            }
+          }),
+        ),
+      );
     }),
   });
   return {
@@ -352,46 +436,99 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         }
         const session = sessionOption.value;
         const registry = yield* AtomRegistry.AtomRegistry;
+        const environmentId = supervisor.target.environmentId;
         const now = yield* Clock.currentTimeMillis;
-        const { generation, removedAt } = readShellVersion(
-          registry,
-          supervisor.target.environmentId,
-        );
+        const { generation, removedAt } = readShellVersion(registry, environmentId);
         const resolved = new Map<ThreadId, OrchestrationV2ThreadLinkMetadata>();
-        const uncached: Array<ThreadId> = [];
-        const seenUncached = new Set<ThreadId>();
-        for (const threadId of input.threadIds) {
-          const cached = getCachedThreadLinkMetadata(
-            session,
-            threadId,
-            now,
-            generation,
-            removedAt?.get(threadId) ?? -1,
-          );
-          if (cached !== undefined) {
-            if (cached.value !== null) resolved.set(threadId, cached.value);
-          } else if (!seenUncached.has(threadId)) {
-            seenUncached.add(threadId);
-            uncached.push(threadId);
-          }
-        }
-        if (uncached.length === 0) return metadataMapToRecord(resolved);
+        const awaiting: Array<InFlightThreadLinkMetadata> = [];
+        let succeededCount = 0;
+
+        // Register in-flight entries and enqueue them uninterruptibly so no entry is ever orphaned.
+        yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            const toFetch: Array<InFlightThreadLinkMetadata> = [];
+            const seen = new Set<ThreadId>();
+            for (const threadId of input.threadIds) {
+              if (seen.has(threadId)) continue;
+              seen.add(threadId);
+              const removedAtSeq = removedAt?.get(threadId) ?? -1;
+              const cached = getCachedThreadLinkMetadata(
+                session,
+                threadId,
+                now,
+                generation,
+                removedAtSeq,
+              );
+              if (cached !== undefined) {
+                succeededCount++;
+                if (cached.value !== null) resolved.set(threadId, cached.value);
+                continue;
+              }
+              const { flight, created } = getOrCreateInFlight(
+                session,
+                threadId,
+                generation,
+                removedAtSeq,
+              );
+              awaiting.push(flight);
+              if (created) toFetch.push(flight);
+            }
+            if (toFetch.length === 0) return;
+            yield* Effect.request(
+              new ThreadLinkMetadataRequest({
+                flights: toFetch,
+                session,
+                supervisor,
+                registry,
+              }),
+              threadLinkMetadataResolver,
+            ).pipe(
+              Effect.onExit((exit) =>
+                Effect.sync(() => {
+                  if (Exit.isFailure(exit)) {
+                    for (const flight of toFetch) {
+                      settleFlight(session, flight, Exit.failCause(exit.cause));
+                    }
+                  }
+                }),
+              ),
+              Effect.ignoreCause,
+              Effect.forkDetach({ startImmediately: true }),
+            );
+          }),
+        );
+
+        if (awaiting.length === 0) return metadataMapToRecord(resolved);
         if (Option.isNone(previous) && resolved.size > 0) {
           yield* emit(metadataMapToRecord(resolved));
         }
-        const fetched = yield* Effect.request(
-          new ThreadLinkMetadataRequest({
-            threadIds: uncached,
-            session,
-            supervisor,
-            registry,
-          }),
-          threadLinkMetadataResolver,
-        );
-        for (const [threadId, value] of fetched) {
-          resolved.set(threadId, value);
+        const failedThreadIds: Array<ThreadId> = [];
+        let firstFailureCause: Cause.Cause<ThreadLinkMetadataError> | undefined;
+        for (const flight of awaiting) {
+          const exit = yield* Effect.exit(Deferred.await(flight.deferred));
+          if (Exit.isSuccess(exit)) {
+            succeededCount++;
+            if (exit.value !== null) resolved.set(flight.threadId, exit.value);
+          } else {
+            failedThreadIds.push(flight.threadId);
+            firstFailureCause ??= exit.cause;
+          }
         }
-        return metadataMapToRecord(resolved);
+        const metadata = metadataMapToRecord(resolved);
+        if (failedThreadIds.length === 0) return metadata;
+        yield* assertSessionActive(supervisor, session);
+        if (
+          succeededCount === 0 ||
+          readShellVersion(registry, environmentId).generation !== generation
+        ) {
+          return yield* Effect.failCause(firstFailureCause!);
+        }
+        yield* emit(metadata);
+        return yield* new PartialThreadLinkMetadataError({
+          metadata,
+          failedThreadIds,
+          cause: Cause.squash(firstFailureCause!),
+        });
       }),
     }),
     threadTranscript: createEnvironmentCommand(runtime, {

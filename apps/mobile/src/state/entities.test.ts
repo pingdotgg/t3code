@@ -1,3 +1,4 @@
+import { PartialThreadLinkMetadataError } from "@t3tools/client-runtime/state/orchestration";
 import { EnvironmentId, ProjectId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import * as Cause from "effect/Cause";
@@ -8,7 +9,7 @@ import { expect, it, vi } from "vite-plus/test";
 type MockShell = { title: string; projectId: ProjectId; updatedAt?: number };
 type MockMetadataResult = AsyncResult.AsyncResult<
   Record<string, { title: string; projectId: ProjectId | null }>,
-  string
+  string | PartialThreadLinkMetadataError
 >;
 
 const state = vi.hoisted(() => ({
@@ -407,6 +408,7 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
   const projectRemote = ProjectId.make("proj-remote");
   const olderId = ThreadId.make("older-thread");
   const streamedNewId = ThreadId.make("streamed-new");
+  const overlapShellId = ThreadId.make("overlap-shell");
   const archId = ThreadId.make("arch-1");
   const deletedId = ThreadId.make("deleted-1");
 
@@ -415,6 +417,11 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
     { environmentId: remoteEnv, threadId: streamedNewId },
   ]);
   setShell(localEnv, olderId, { title: "Local Live", projectId: projectLocal, updatedAt: 1 });
+  setShell(localEnv, overlapShellId, {
+    title: "Overlap Initial",
+    projectId: projectLocal,
+    updatedAt: 1,
+  });
   setShell(remoteEnv, olderId, { title: "Remote Same ID", projectId: projectRemote, updatedAt: 1 });
   setShell(remoteEnv, streamedNewId, {
     title: "Remote Streamed",
@@ -475,101 +482,176 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
     expect(titleUpdates).toBe(1);
     expect(iconUpdates).toBe(0);
 
-    // While the post-archive batch is Initial, olderId must stay local (not remote),
-    // archived chips must not flicker, and confirmed-deleted links must stay plain text.
-    setShell(localEnv, olderId, null);
-    const pendingAfterArchive = useMessageThreadLinks(markdown, localEnv);
-    expect(pendingAfterArchive.markdown).toBe(
-      `[Local Renamed](t3-thread://v1/${olderId}) [Archived One](t3-thread://v2/${localEnv}/${archId}) del`,
+    // Mount an overlapping key [olderId, overlapShellId] while olderId is still in the shell.
+    const overlapMarkdown = `[v1](t3-thread://v1/${olderId}) [x](t3-thread://v2/${localEnv}/${overlapShellId})`;
+    expect(useMessageThreadLinks(overlapMarkdown, localEnv).markdown).toBe(
+      `[Local Renamed](t3-thread://v1/${olderId}) [Overlap Initial](t3-thread://v2/${localEnv}/${overlapShellId})`,
     );
-    const v1Link = { environmentId: null, threadId: olderId };
-    expect(
-      resolveThreadLink(registry.get.bind(registry), v1Link, localEnv, pendingAfterArchive),
-    ).toEqual({ environmentId: localEnv, threadId: olderId });
-    expect(pendingAfterArchive.resolve(v1Link, registry.get.bind(registry))).toEqual({
-      environmentId: localEnv,
-      threadId: olderId,
-    });
-    const pendingIcons = useThreadChipIcons(localEnv, pendingAfterArchive.markdown, {
-      sourceRefKeys: pendingAfterArchive.refKeys,
-    });
-    expect(pendingIcons.get(`t3-thread://v1/${olderId}`)).toBe("https://favicon.test/local-repo");
-    expect(pendingIcons.get(`t3-thread://v2/${localEnv}/${archId}`)).toBe(
-      "https://favicon.test/local-repo",
-    );
-
-    // If streaming adds another link before the post-archive lookup settles, the new key carries
-    // olderId's confirmed local target forward while keeping the newly added ref unconfirmed.
-    const streamedMarkdown = `${markdown} [new](t3-thread://v1/${streamedNewId})`;
-    const streamedPending = useMessageThreadLinks(streamedMarkdown, localEnv);
-    expect(streamedPending.markdown).toContain(`[Local Renamed](t3-thread://v1/${olderId})`);
-    expect(streamedPending.markdown).toContain(`[Thread](t3-thread://v1/${streamedNewId})`);
-    expect(
-      resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, streamedPending),
-    ).toEqual({ ref: { environmentId: localEnv, threadId: olderId }, title: "Local Renamed" });
-    expect(
-      resolveThreadLinkTarget(
-        registry.get.bind(registry),
-        { environmentId: null, threadId: streamedNewId },
-        localEnv,
-        streamedPending,
-      ),
-    ).toEqual({
-      ref: { environmentId: remoteEnv, threadId: streamedNewId },
-      title: "Remote Streamed",
-    });
-
-    // A settled Failure refresh—even with previousSuccess—must clear stale chip icons.
-    const priorSuccess = AsyncResult.success({
-      [archId]: { title: "Archived One", projectId: projectLocal },
-    });
-    setMetadata(localEnv, [archId, deletedId, olderId], priorSuccess);
-    expect(
-      useThreadChipIcons(localEnv, pendingAfterArchive.markdown, {
+    const overlapTitlesAtom = state.lastAtom!;
+    const unsubOverlap = registry.subscribe(overlapTitlesAtom, () => {});
+    try {
+      // While the post-archive batch is Initial, olderId must stay local (not remote),
+      // archived chips must not flicker, and confirmed-deleted links must stay plain text.
+      setShell(localEnv, olderId, null);
+      const pendingAfterArchive = useMessageThreadLinks(markdown, localEnv);
+      expect(pendingAfterArchive.markdown).toBe(
+        `[Local Renamed](t3-thread://v1/${olderId}) [Archived One](t3-thread://v2/${localEnv}/${archId}) del`,
+      );
+      const v1Link = { environmentId: null, threadId: olderId };
+      expect(
+        resolveThreadLink(registry.get.bind(registry), v1Link, localEnv, pendingAfterArchive),
+      ).toEqual({ environmentId: localEnv, threadId: olderId });
+      expect(pendingAfterArchive.resolve(v1Link, registry.get.bind(registry))).toEqual({
+        environmentId: localEnv,
+        threadId: olderId,
+      });
+      const pendingIcons = useThreadChipIcons(localEnv, pendingAfterArchive.markdown, {
         sourceRefKeys: pendingAfterArchive.refKeys,
-      }).get(`t3-thread://v2/${localEnv}/${archId}`),
-    ).toBe("https://favicon.test/local-repo");
+      });
+      expect(pendingIcons.get(`t3-thread://v1/${olderId}`)).toBe("https://favicon.test/local-repo");
+      expect(pendingIcons.get(`t3-thread://v2/${localEnv}/${archId}`)).toBe(
+        "https://favicon.test/local-repo",
+      );
 
-    // A settled Failure—even with previousSuccess—clears confirmed local status (letting the
-    // surviving remote v1 match win on tap, copy, and icon) and clears stale archived icons.
-    setMetadata(
-      localEnv,
-      [archId, deletedId, olderId],
-      AsyncResult.failure(Cause.fail("offline"), {
-        previousSuccess: Option.some(priorSuccess),
-      }),
-    );
-    const failedLinks = useMessageThreadLinks(markdown, localEnv);
-    expect(failedLinks.markdown).toBe(
-      `[Thread](t3-thread://v1/${olderId}) [Thread](t3-thread://v2/${localEnv}/${archId}) [Thread](t3-thread://v2/${localEnv}/${deletedId})`,
-    );
-    expect(
-      resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, failedLinks),
-    ).toEqual({
-      ref: { environmentId: remoteEnv, threadId: olderId },
-      title: "Remote Same ID",
-    });
-    expect(failedLinks.resolve(v1Link, registry.get.bind(registry))).toEqual({
-      environmentId: remoteEnv,
-      threadId: olderId,
-    });
-    expect(failedLinks.titleFor({ environmentId: localEnv, threadId: olderId })).toBeNull();
-    // After a settled failure clears confirmation, a new streaming key no longer keeps local olderId.
-    const afterFailureStreamed = useMessageThreadLinks(
-      `${markdown} [later](t3-thread://v2/${localEnv}/later-1)`,
-      localEnv,
-    );
-    expect(
-      resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, afterFailureStreamed),
-    ).toEqual({
-      ref: { environmentId: remoteEnv, threadId: olderId },
-      title: "Remote Same ID",
-    });
-    const failedIcons = useThreadChipIcons(localEnv, failedLinks.markdown, {
-      sourceRefKeys: failedLinks.refKeys,
-    });
-    expect(failedIcons.get(`t3-thread://v1/${olderId}`)).toBe("https://favicon.test/remote-repo");
-    expect(failedIcons.has(`t3-thread://v2/${localEnv}/${archId}`)).toBe(false);
+      // If streaming adds another link before the post-archive lookup settles, the new key carries
+      // olderId's confirmed local target forward while keeping the newly added ref unconfirmed.
+      const streamedMarkdown = `${markdown} [new](t3-thread://v1/${streamedNewId})`;
+      const streamedPending = useMessageThreadLinks(streamedMarkdown, localEnv);
+      expect(streamedPending.markdown).toContain(`[Local Renamed](t3-thread://v1/${olderId})`);
+      expect(streamedPending.markdown).toContain(`[Thread](t3-thread://v1/${streamedNewId})`);
+      expect(
+        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, streamedPending),
+      ).toEqual({ ref: { environmentId: localEnv, threadId: olderId }, title: "Local Renamed" });
+      expect(
+        resolveThreadLinkTarget(
+          registry.get.bind(registry),
+          { environmentId: null, threadId: streamedNewId },
+          localEnv,
+          streamedPending,
+        ),
+      ).toEqual({
+        ref: { environmentId: remoteEnv, threadId: streamedNewId },
+        title: "Remote Streamed",
+      });
+
+      // A settled miss clears shared confirmation for olderId. Re-evaluating an overlapping key
+      // whose own metadata lookup is still pending keeps displaying its previous title locally
+      // without restoring confirmation for a fresh key.
+      const priorSuccess = AsyncResult.success({
+        [archId]: { title: "Archived One", projectId: projectLocal },
+      });
+      setMetadata(localEnv, [archId, deletedId, olderId], priorSuccess);
+      expect(
+        useThreadChipIcons(localEnv, pendingAfterArchive.markdown, {
+          sourceRefKeys: pendingAfterArchive.refKeys,
+        }).get(`t3-thread://v2/${localEnv}/${archId}`),
+      ).toBe("https://favicon.test/local-repo");
+
+      // Re-evaluate overlapMarkdown (its [olderId] query is still Initial) by renaming overlapShellId.
+      setShell(localEnv, overlapShellId, {
+        title: "Overlap Renamed",
+        projectId: projectLocal,
+        updatedAt: 2,
+      });
+      expect(useMessageThreadLinks(overlapMarkdown, localEnv).markdown).toBe(
+        `[Local Renamed](t3-thread://v1/${olderId}) [Overlap Renamed](t3-thread://v2/${localEnv}/${overlapShellId})`,
+      );
+      const freshAfterMiss = useMessageThreadLinks(
+        `[v1](t3-thread://v1/${olderId}) [c](t3-thread://v2/${localEnv}/fresh-c)`,
+        localEnv,
+      );
+      expect(
+        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, freshAfterMiss),
+      ).toEqual({
+        ref: { environmentId: remoteEnv, threadId: olderId },
+        title: "Remote Same ID",
+      });
+
+      // A partial batch failure applies succeeded titles/icons (archId) and confirmed misses
+      // (deletedId) while keeping failed IDs (olderId) unconfirmed and non-deleted.
+      setMetadata(
+        localEnv,
+        [archId, deletedId, olderId],
+        AsyncResult.failure(
+          Cause.fail(
+            new PartialThreadLinkMetadataError({
+              metadata: {
+                [archId]: { title: "Archived One", projectId: projectLocal },
+              },
+              failedThreadIds: [olderId],
+              cause: "chunk 2 failed",
+            }),
+          ),
+        ),
+      );
+      const partialLinks = useMessageThreadLinks(markdown, localEnv);
+      expect(partialLinks.markdown).toBe(
+        `[Thread](t3-thread://v1/${olderId}) [Archived One](t3-thread://v2/${localEnv}/${archId}) del`,
+      );
+      expect(
+        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, partialLinks),
+      ).toEqual({
+        ref: { environmentId: remoteEnv, threadId: olderId },
+        title: "Remote Same ID",
+      });
+      const partialIcons = useThreadChipIcons(localEnv, partialLinks.markdown, {
+        sourceRefKeys: partialLinks.refKeys,
+      });
+      expect(partialIcons.get(`t3-thread://v2/${localEnv}/${archId}`)).toBe(
+        "https://favicon.test/local-repo",
+      );
+      expect(partialIcons.get(`t3-thread://v1/${olderId}`)).toBe(
+        "https://favicon.test/remote-repo",
+      );
+
+      // A settled total Failure—even with previousSuccess—clears confirmed local status (letting
+      // the surviving remote v1 match win on tap, copy, and icon) and clears stale archived icons.
+      setMetadata(
+        localEnv,
+        [archId, deletedId, olderId],
+        AsyncResult.failure(Cause.fail("offline"), {
+          previousSuccess: Option.some(priorSuccess),
+        }),
+      );
+      const failedLinks = useMessageThreadLinks(markdown, localEnv);
+      expect(failedLinks.markdown).toBe(
+        `[Thread](t3-thread://v1/${olderId}) [Thread](t3-thread://v2/${localEnv}/${archId}) [Thread](t3-thread://v2/${localEnv}/${deletedId})`,
+      );
+      expect(
+        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, failedLinks),
+      ).toEqual({
+        ref: { environmentId: remoteEnv, threadId: olderId },
+        title: "Remote Same ID",
+      });
+      expect(failedLinks.resolve(v1Link, registry.get.bind(registry))).toEqual({
+        environmentId: remoteEnv,
+        threadId: olderId,
+      });
+      expect(failedLinks.titleFor({ environmentId: localEnv, threadId: olderId })).toBeNull();
+      // After a settled failure clears confirmation, a new streaming key no longer keeps local olderId.
+      const afterFailureStreamed = useMessageThreadLinks(
+        `${markdown} [later](t3-thread://v2/${localEnv}/later-1)`,
+        localEnv,
+      );
+      expect(
+        resolveThreadLinkTarget(
+          registry.get.bind(registry),
+          v1Link,
+          localEnv,
+          afterFailureStreamed,
+        ),
+      ).toEqual({
+        ref: { environmentId: remoteEnv, threadId: olderId },
+        title: "Remote Same ID",
+      });
+      const failedIcons = useThreadChipIcons(localEnv, failedLinks.markdown, {
+        sourceRefKeys: failedLinks.refKeys,
+      });
+      expect(failedIcons.get(`t3-thread://v1/${olderId}`)).toBe("https://favicon.test/remote-repo");
+      expect(failedIcons.has(`t3-thread://v2/${localEnv}/${archId}`)).toBe(false);
+    } finally {
+      unsubOverlap();
+    }
   } finally {
     unsubTitles();
     unsubIcons();

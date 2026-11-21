@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { PartialThreadLinkMetadataError } from "@t3tools/client-runtime/state/orchestration";
 import { deriveReportedModelSelection } from "@t3tools/client-runtime/state/thread-execution";
 
 import { appAtomRegistry } from "./atom-registry";
@@ -12,6 +13,7 @@ import {
   EnvironmentId,
   ThreadId,
   type ComposerContextRecord,
+  type OrchestrationV2ThreadLinkMetadata,
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ServerConfig,
@@ -26,6 +28,7 @@ import {
   type ThreadLink,
 } from "@t3tools/shared/threadLinks";
 import { relabelThreadLinks } from "@t3tools/shared/threadLinksCopy";
+import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
@@ -79,10 +82,66 @@ function mapsEqual<K, V>(
   return true;
 }
 
-function readMetadataEntry(result: ThreadLinkMetadataResult | undefined, threadId: ThreadId) {
-  if (result === undefined || !AsyncResult.isSuccess(result)) return undefined;
-  if (!Object.hasOwn(result.value, threadId)) return undefined;
-  return result.value[threadId];
+const isPartialThreadLinkMetadataError = Schema.is(PartialThreadLinkMetadataError);
+
+interface ParsedThreadLinkMetadata {
+  readonly result: ThreadLinkMetadataResult;
+  readonly partial: PartialThreadLinkMetadataError | undefined;
+  readonly failedIds: ReadonlySet<ThreadId> | undefined;
+}
+
+type ThreadLinkMetadataOutcome =
+  | {
+      readonly kind: "found";
+      readonly entry: OrchestrationV2ThreadLinkMetadata;
+      readonly settled: boolean;
+    }
+  | { readonly kind: "miss" }
+  | { readonly kind: "failed" }
+  | { readonly kind: "pending" };
+
+function parseThreadLinkMetadata(result: ThreadLinkMetadataResult): ParsedThreadLinkMetadata {
+  if (AsyncResult.isFailure(result) && !result.waiting) {
+    const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+    if (isPartialThreadLinkMetadataError(error)) {
+      return { result, partial: error, failedIds: new Set(error.failedThreadIds) };
+    }
+  }
+  return { result, partial: undefined, failedIds: undefined };
+}
+
+function readMetadataOutcome(
+  parsed: ParsedThreadLinkMetadata | undefined,
+  threadId: ThreadId,
+): ThreadLinkMetadataOutcome {
+  if (parsed === undefined) return { kind: "pending" };
+  const { result, partial, failedIds } = parsed;
+  if (AsyncResult.isSuccess(result)) {
+    if (Object.hasOwn(result.value, threadId)) {
+      const entry = result.value[threadId];
+      if (entry !== undefined) return { kind: "found", entry, settled: !result.waiting };
+    }
+    return result.waiting ? { kind: "pending" } : { kind: "miss" };
+  }
+  if (AsyncResult.isFailure(result) && !result.waiting) {
+    if (partial !== undefined) {
+      if (Object.hasOwn(partial.metadata, threadId)) {
+        const entry = partial.metadata[threadId];
+        if (entry !== undefined) return { kind: "found", entry, settled: true };
+      }
+      return failedIds?.has(threadId) ? { kind: "failed" } : { kind: "miss" };
+    }
+    return { kind: "failed" };
+  }
+  return { kind: "pending" };
+}
+
+function readFoundMetadataEntry(
+  parsed: ParsedThreadLinkMetadata | undefined,
+  threadId: ThreadId,
+): OrchestrationV2ThreadLinkMetadata | undefined {
+  const outcome = readMetadataOutcome(parsed, threadId);
+  return outcome.kind === "found" ? outcome.entry : undefined;
 }
 
 function isIndexedLink(
@@ -121,26 +180,6 @@ function rememberConfirmedTitle(titles: Map<string, string>, refKey: string, tit
   }
 }
 
-function resolveTitleForEntry(
-  metadata: ThreadLinkMetadataResult | undefined,
-  entry: { readonly title: string } | undefined,
-  previous: ReadonlyMap<string, ThreadLinkTitle> | undefined,
-  previousTitle: ThreadLinkTitle | undefined,
-  confirmedTitle: string | undefined,
-): ThreadLinkTitle | null {
-  if (metadata !== undefined && AsyncResult.isSuccess(metadata)) {
-    if (entry !== undefined) return entry.title;
-    if (!metadata.waiting) return null;
-  }
-  // A settled failure cannot confirm the local target still exists; fall back to the
-  // non-string sentinel so legacy links can fall through to a unique remote match.
-  if (metadata !== undefined && AsyncResult.isFailure(metadata) && !metadata.waiting) {
-    return FALLBACK_THREAD_TITLE;
-  }
-  if (previous !== undefined) return previousTitle ?? null;
-  return confirmedTitle ?? FALLBACK_THREAD_TITLE;
-}
-
 function resolveThreadLinkWith(
   link: ThreadLink,
   messageEnvironmentId: EnvironmentId,
@@ -176,15 +215,17 @@ function readBatchedThreadLinkMetadata(
       ids.add(ref.threadId);
     }
   }
-  const metadataByEnv = new Map<EnvironmentId, ThreadLinkMetadataResult>();
+  const metadataByEnv = new Map<EnvironmentId, ParsedThreadLinkMetadata>();
   for (const [environmentId, ids] of missingByEnv) {
     metadataByEnv.set(
       environmentId,
-      read(
-        orchestrationEnvironment.threadLinkMetadata({
-          environmentId,
-          input: { threadIds: [...ids].sort() },
-        }),
+      parseThreadLinkMetadata(
+        read(
+          orchestrationEnvironment.threadLinkMetadata({
+            environmentId,
+            input: { threadIds: [...ids].sort() },
+          }),
+        ),
       ),
     );
   }
@@ -223,25 +264,27 @@ const threadLinkTitlesAtom = Atom.family((key: string) => {
         rememberConfirmedTitle(confirmedTitles, refKey, shell.title);
         continue;
       }
-      const metadata = metadataByEnv.get(ref.environmentId);
-      const entry = readMetadataEntry(metadata, ref.threadId);
-      const title = resolveTitleForEntry(
-        metadata,
-        entry,
-        previous,
-        previous?.get(refKey),
-        confirmedTitles.get(refKey),
-      );
-      if (typeof title === "string") {
-        rememberConfirmedTitle(confirmedTitles, refKey, title);
-      } else if (
-        metadata !== undefined &&
-        !metadata.waiting &&
-        (AsyncResult.isSuccess(metadata) || AsyncResult.isFailure(metadata))
-      ) {
-        confirmedTitles.delete(refKey);
+      const outcome = readMetadataOutcome(metadataByEnv.get(ref.environmentId), ref.threadId);
+      if (outcome.kind === "found") {
+        titles.set(refKey, outcome.entry.title);
+        if (outcome.settled) rememberConfirmedTitle(confirmedTitles, refKey, outcome.entry.title);
+        continue;
       }
-      if (title !== null) titles.set(refKey, title);
+      if (outcome.kind === "miss") {
+        confirmedTitles.delete(refKey);
+        continue;
+      }
+      if (outcome.kind === "failed") {
+        confirmedTitles.delete(refKey);
+        titles.set(refKey, FALLBACK_THREAD_TITLE);
+        continue;
+      }
+      // Pending: display this key's previous title without writing it back as shared confirmation.
+      const pendingTitle =
+        previous !== undefined
+          ? (previous.get(refKey) ?? null)
+          : (confirmedTitles.get(refKey) ?? FALLBACK_THREAD_TITLE);
+      if (pendingTitle !== null) titles.set(refKey, pendingTitle);
     }
     return mapsEqual(previous, titles) ? previous : titles;
   }).pipe(Atom.withLabel(`mobile-thread-link-titles:${key}`));
@@ -295,13 +338,9 @@ const threadChipIconsAtom = Atom.family((key: string) => {
         knownShell !== undefined
           ? knownShell
           : get(environmentThreadShells.quietThreadShellAtom(ref));
-      const metadataResult = metadataByEnv.get(ref.environmentId);
-      const metadataEntry = readMetadataEntry(metadataResult, ref.threadId);
-      const pending =
-        shell === null &&
-        metadataEntry === undefined &&
-        metadataResult !== undefined &&
-        (AsyncResult.isInitial(metadataResult) || metadataResult.waiting);
+      const outcome = readMetadataOutcome(metadataByEnv.get(ref.environmentId), ref.threadId);
+      const metadataEntry = outcome.kind === "found" ? outcome.entry : undefined;
+      const pending = shell === null && outcome.kind === "pending";
       const cached = iconCache.get(refKey);
       if (cached !== undefined) return { uri: cached, pending };
       const metadata = shell ?? metadataEntry;
@@ -539,7 +578,7 @@ export function resolveThreadLinkTarget(
       const shell = shells.get(threadKey(candidate));
       if (shell !== null && shell !== undefined) return true;
       return (
-        readMetadataEntry(metadataByEnv.get(candidate.environmentId), candidate.threadId) !==
+        readFoundMetadataEntry(metadataByEnv.get(candidate.environmentId), candidate.threadId) !==
         undefined
       );
     },
@@ -551,7 +590,7 @@ export function resolveThreadLinkTarget(
   const title =
     knownShell !== undefined
       ? (knownShell?.title ??
-        readMetadataEntry(metadataByEnv.get(ref.environmentId), ref.threadId)?.title ??
+        readFoundMetadataEntry(metadataByEnv.get(ref.environmentId), ref.threadId)?.title ??
         null)
       : (read(environmentThreadShells.quietThreadShellAtom(ref))?.title ?? null);
   return { ref, title };
