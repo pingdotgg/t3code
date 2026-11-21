@@ -115,6 +115,20 @@ from this tree.
   - Provider install and update: `provider.install.*` and `server.updateProvider`. Orbit
     installs and updates provider CLIs; see [Provider CLIs](#provider-clis). The T3 server
     does not mount them either.
+  - Server self-update (Nick, 2026-11-21): `server.getNpmRelease`, `server.updateServer`,
+    `server.updateServerWithProgress` and `server.commitDesktopUpdate`. They fetch T3's own
+    releases. Orbit releases the Conn Server in containers; on Macs the Conn desktop build
+    carries it.
+  - The ACP registry: its 11 `server.*AcpRegistry*` methods. Orbit tools install agent CLIs,
+    and the Conn Server runs ACP agents such as Antigravity without the registry.
+  - ChatGPT profile and handoff (`provider.chatgpt.*`) and `provider.consumeResetCredit`.
+    They need provider account tokens, which the server never holds.
+  - T3 cloud: `cloud.getRelayClientStatus`, `cloud.installRelayClient` and
+    `guestShare.create`. Conn links through the Orbit Gateway.
+  - `server.prepareTriage` (a bug report about T3 itself), `server.checkOtlpEndpoint` (the
+    server sends no telemetry), `server.checkSecretSource` (the server never reads secret
+    references), and storage cleanup (`server.getStorageCleanupReport`,
+    `server.runStorageCleanup`).
 
   The Diagnostics panel, the Usage page and the key menu's test-login group may later be
   removed from Conn itself.
