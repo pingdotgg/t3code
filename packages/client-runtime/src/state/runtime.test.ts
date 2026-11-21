@@ -268,6 +268,8 @@ it.effect("keeps complete review metadata visible while a refresh is held", () =
 
 it.effect("does not re-read a file patch read while its preview was revalidating", () =>
   Effect.gen(function* () {
+    let now = 0;
+    using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
     const previewStarted = yield* Deferred.make<void>();
     const releasePreview = yield* Deferred.make<void>();
     let previewReads = 0;
@@ -339,6 +341,13 @@ it.effect("does not re-read a file patch read while its preview was revalidating
     yield* readEnvironmentQuery(registry, preview);
     yield* readEnvironmentQuery(registry, patch);
     expect(patchReads).toBe(1);
+
+    // A revalidation requested after the patch was read still refreshes it.
+    now = 1;
+    registry.refresh(preview);
+    yield* readEnvironmentQuery(registry, preview);
+    yield* readEnvironmentQuery(registry, patch);
+    expect(patchReads).toBe(2);
   }),
 );
 
