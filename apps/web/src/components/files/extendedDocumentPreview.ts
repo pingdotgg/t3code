@@ -736,7 +736,10 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         (!hidden() && (word === "par" || word === "line"))
       )
         html += "<br>";
-      else {
+      // Writers usually end the paragraph before these breaks; a second break would add a blank line.
+      else if (!hidden() && (word === "sect" || word === "column")) {
+        if (html && !html.endsWith("<br>")) html += "<br>";
+      } else {
         const character = RTF_CHARACTERS.get(word!);
         if (character) emit(character);
       }
