@@ -1,4 +1,3 @@
-import type { PromptLinkRepository } from "@t3tools/shared/promptLinks";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -89,9 +88,6 @@ export function latestThreadEnvironmentIds<Id extends string>(
     (latest.get(right) ?? "").localeCompare(latest.get(left) ?? ""),
   );
 }
-
-export const promptLinkRepositoryName = (repository: PromptLinkRepository) =>
-  `${repository.owner}/${repository.name}`;
 
 /**
  * Advances a parsed link at each navigation state; `resolve` is the link to apply. The first

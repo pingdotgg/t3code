@@ -20,10 +20,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type {
-  LinkedPrompt,
-  PromptLinkPullRequest,
-  PromptLinkRepository,
+import {
+  type LinkedPrompt,
+  type PromptLinkPullRequest,
+  type PromptLinkRepository,
+  promptLinkRepositoryCloneUrl,
+  promptLinkRepositoryName,
 } from "@t3tools/shared/promptLinks";
 import { parseNewThreadLink } from "@t3tools/shared/promptLinksCopy";
 import { Atom, type AsyncResult } from "effect/reactivity";
@@ -49,7 +51,6 @@ import { applyLinkedPromptToThreadDraft, showPromptLinkNotice } from "./prompt-l
 import {
   latestThreadEnvironmentIds,
   promptLinkNotice,
-  promptLinkRepositoryName,
   promptLinkScratchEnvironmentId,
   promptLinkSearchFromParams,
   stepPendingPromptLink,
@@ -348,7 +349,7 @@ function cloneRepository(repository: PromptLinkRepository, request: LinkedDraftR
   dispatchFromNewTask(
     StackActions.push("AddProjectDestination", {
       environmentId,
-      remoteUrl: `https://github.com/${name}.git`,
+      remoteUrl: promptLinkRepositoryCloneUrl(repository),
       repositoryTitle: name,
       repositoryName: repository.name,
       ...(prompt ? { prompt: prompt.text } : {}),
