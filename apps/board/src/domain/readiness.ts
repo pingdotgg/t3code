@@ -21,6 +21,12 @@ export type CheckStatus =
 export interface CheckRun {
   readonly name: string;
   readonly status: CheckStatus;
+  /** What the host says about the check, such as how long it took, or null. */
+  readonly description: string | null;
+  /** The check's page on the host, or null. */
+  readonly url: string | null;
+  /** Whether branch protection requires the check. */
+  readonly required: boolean;
   /** Stands for checks the host could not list, so it is neither passing nor running. */
   readonly placeholder: boolean;
   /** When the board first saw the check running, or null when it is not running. The host gives no start time. */

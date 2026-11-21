@@ -18,7 +18,7 @@ import type { FamilyRow, TicketView } from "./boardModel";
 import { threadFamilies } from "./family";
 import { buildLive, sameRef, ticketPrRef, trackRunning } from "./prLive";
 
-const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime);
+export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime);
 const summaryOf = createLinkedPullRequestSummaryAtomFamily(connectionAtomRuntime);
 
 /** How often a pull request's checks are read again. T3 reads a head with checks still running this often. */
@@ -154,6 +154,8 @@ export function usePrContext(): PrContextValue {
 export interface TicketPr {
   /** Null when the ticket has no pull request the board can name. */
   readonly ref: PullRequestRef | null;
+  /** Names the ref for the atoms keyed by it, such as `prLiveAtom`. */
+  readonly key: string | null;
   /** Null until the host or the engine has answered. */
   readonly live: PrLive | null;
   readonly now: number;
@@ -171,7 +173,7 @@ export function useTicketPr(view: TicketView | null): TicketPr {
   const key =
     ref === null ? null : JSON.stringify([project.environmentId, orchestratorThreadId, ref]);
   const live = useAtomValue(key === null ? NO_PR : prLiveAtom(key));
-  return { ref, live, now: useAtomValue(clockAtom) };
+  return { ref, key, live, now: useAtomValue(clockAtom) };
 }
 
 const REVIEW_ROLES: ReadonlySet<string> = new Set(

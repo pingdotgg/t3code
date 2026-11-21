@@ -4,24 +4,8 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 
 import { filesViewAtom } from "../state/filesView";
+import { ago } from "../ui/ago";
 import { CommitFiles } from "./CommitFiles";
-
-const UNITS = [
-  ["year", 365 * 86_400_000],
-  ["month", 30 * 86_400_000],
-  ["day", 86_400_000],
-  ["hour", 3_600_000],
-  ["minute", 60_000],
-] as const;
-const AGO = new Intl.RelativeTimeFormat("en", { numeric: "auto", style: "short" });
-
-function ago(iso: string): string {
-  const elapsed = Date.now() - new Date(iso).getTime();
-  for (const [unit, size] of UNITS) {
-    if (elapsed >= size) return AGO.format(-Math.floor(elapsed / size), unit);
-  }
-  return "now";
-}
 
 /** One commit of the branch: its subject, and when opened its date and changed files, as Orca's commit rows open. */
 export function CommitRow({

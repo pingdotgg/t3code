@@ -208,6 +208,16 @@ A merge approval card shows the same six, each with the orchestrator's claim fro
 
 The chip marks `board:pr-event` when a pull request's live state changes and `board:pr-painted` after the commit that shows a new reading.
 
+The right sidebar's **Checks** tab is fourth, after **Source Control**. It shows one ticket's pull request, laid out like Orca's checks view. It follows the root chosen in the explorer. The ticket picker over it names another ticket, and choosing a root again clears that pick. A pick belongs to the board it was made on.
+
+The header holds the number, which opens the pull request, the state badge, the title, the update time, **Refresh**, and a menu with **Open pull request** and **Copy link**. Under it a split button runs `pullRequests.runAction`. The button is **Mark ready for review** or **Update branch**, whichever T3 allows first. **Convert to draft** is in the dropdown. Each action shows the reason when it is off, such as `Checking mergeability` or `Base comparison unknown`. A merge is not offered, because it goes through the For-you approval.
+
+The checks group is headed by a count per kind, such as `3 failing`, `1 running`, `8 passing`, and it folds. Each row has the status icon, the name, a **Required** badge, GitHub's description, and a link that opens the run in the browser tab. A pending check also shows `Running for` the time the board has watched it. T3 reports no start time, duration, or steps, so opening a row shows only the description and the link. The peek drawer and the merge approval card draw their checks with the same rows. The tab's icon has a dot that is green, red, or amber with the checks.
+
+The comments section reads `pullRequests.activity` and lists comments and review threads as cards, with a bot badge, reactions, and **All**, **Humans**, and **Bots** filters. Comment bodies are other people's text, so their images show only their alt text.
+
+The header and comments are read when the tab is first shown. `board:checks-open` marks the tab coming into view. `board:checks-painted` marks the frame that draws the check rows after the checks read answers, once for each time the tab comes into view.
+
 ## Browser
 
 The sidebar's **Browser** row shows the browser as a tab of the main view, beside **Board** and the file tabs, the way Orca opens its browser in its main area. Each page is a tab with a globe, a close button, and the page's title, and the plus at the end of the strip opens a blank one. The tab strip is `src/files/MainTabStrip.tsx`, and `MainTabs.tsx` covers the canvas with the active tab. Which tab shows is `filesViewAtom`'s `active` file or its `surface`, never both. The right sidebar, `src/browser/PanelHost.tsx`, is the app's one right-side host, which the top bar's button shows and hides. Its tab strip, `PanelTabs.tsx`, draws icon tabs with an underline under the active one, the way Orca's right sidebar does. It holds the orchestrator's chat first, which opens when a board does, and **Explorer** after it. Every tab stays mounted behind the others, so the chat keeps its scroll, draft, and stream while another tab shows. `BoardScreen` draws the chat into the sidebar's slot with a portal, because the chat needs the board's artifacts and pull request context. A drag handle or the arrow keys on the sidebar's left edge set its width.

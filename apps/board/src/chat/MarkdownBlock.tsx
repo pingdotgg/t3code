@@ -115,6 +115,12 @@ const components: Components = {
   code: MarkdownCode,
 };
 
+const UNTRUSTED_COMPONENTS: Components = {
+  ...components,
+  img: ({ alt }) => <span>{alt}</span>,
+  source: () => null,
+};
+
 // A path the engine's machine holds, such as `C:\work\a.png`, reads as a scheme to the default
 // transform, which would blank it before the link is classified.
 function urlTransform(href: string): string {
@@ -157,10 +163,12 @@ export const MarkdownBlock = memo(function MarkdownBlock({
   text,
   streaming,
   index,
+  untrusted = false,
 }: {
   text: string;
   streaming: boolean;
   index: number;
+  untrusted?: boolean;
 }) {
   const value = useMemo(() => ({ text, streaming }), [text, streaming]);
   const body = (
@@ -168,7 +176,7 @@ export const MarkdownBlock = memo(function MarkdownBlock({
       <Markdown
         remarkPlugins={mayContainMath(text) ? REMARK_PLUGINS_WITH_MATH : REMARK_PLUGINS}
         rehypePlugins={REHYPE_PLUGINS}
-        components={components}
+        components={untrusted ? UNTRUSTED_COMPONENTS : components}
         urlTransform={urlTransform}
       >
         {text}

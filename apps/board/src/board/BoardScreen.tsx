@@ -6,8 +6,9 @@ import { createPortal } from "react-dom";
 
 import { ArtifactsProvider } from "../artifacts/ArtifactsContext";
 import { useBoardArtifacts } from "../artifacts/useBoardArtifacts";
-import { chatSlotAtom } from "../browser/panel";
+import { chatSlotAtom, checksSlotAtom } from "../browser/panel";
 import { OrchestratorPanel } from "../chat/OrchestratorPanel";
+import { ChecksPanel } from "../checks/ChecksPanel";
 import { MainTabs } from "../files/MainTabs";
 import { mergeTicketKey } from "../domain/readiness";
 import { frameOrderAtom, peekAtom } from "../state/boardUi";
@@ -64,6 +65,7 @@ export function BoardScreen({
     };
   }, [project, board.orchestratorThreadId, family, tickets, forYou.views]);
   const chatSlot = useAtomValue(chatSlotAtom);
+  const checksSlot = useAtomValue(checksSlotAtom);
   const peek = useAtomValue(peekAtom);
   const focused = useAtomValue(focusedCardAtom);
   const focusedId =
@@ -147,6 +149,7 @@ export function BoardScreen({
           </MainTabs>
           {chatSlot !== null &&
             createPortal(<OrchestratorPanel project={project} listed={listed} />, chatSlot)}
+          {checksSlot !== null && createPortal(<ChecksPanel />, checksSlot)}
         </div>
       </PrProvider>
     </ArtifactsProvider>
