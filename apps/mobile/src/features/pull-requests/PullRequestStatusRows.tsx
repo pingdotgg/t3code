@@ -71,7 +71,7 @@ export function PullRequestStatusMenu(props: RowProps) {
         { term, status: status.label },
       )}
       disabled={!actions.length}
-      className="min-h-8 flex-row items-center gap-1.5 active:opacity-70"
+      className="min-h-[44px] flex-row items-center gap-1.5 active:opacity-70 android:min-h-[48px]"
     >
       <SymbolView name={status.icon} size={14} tintColorClassName={status.tint} />
       <Text className={`text-xs font-t3-medium ${status.text}`}>{status.label}</Text>
