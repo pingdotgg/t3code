@@ -1664,7 +1664,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Files.**
 
-- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.test.ts`, `apps/board/src/orchestrator/launch.ts`, `apps/board/src/orchestrator/roles.ts`, `apps/board/src/orchestrator/roles.test.ts`, `apps/board/roles/task.md`, `apps/board/roles/reviewer.md`, `apps/board/roles/sonic.md`, `apps/board/src/domain/board.ts`, `apps/board/src/store/localState.ts`, `apps/board/src/state/orchestrator.ts`, `apps/board/src/settings/SettingsNav.tsx`, and `apps/board/src/board/OrchestratorCard.tsx`.
+- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.test.ts`, `apps/board/src/orchestrator/launch.ts`, `apps/board/src/orchestrator/roles.ts`, `apps/board/src/orchestrator/roles.test.ts`, `apps/board/roles/task.md`, `apps/board/roles/reviewer.md`, `apps/board/roles/sonic.md`, `apps/board/src/domain/board.ts`, `apps/board/src/store/localState.ts`, `apps/board/src/state/orchestrator.ts`, `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, and `apps/board/src/board/ForYouCard.tsx`.
 - [ ] Create `apps/board/src/domain/reviewTemplate.ts`, `apps/board/src/domain/reviewTemplate.test.ts`, `apps/board/src/usage/usageNotice.ts`, `apps/board/src/usage/usageNotice.test.ts`, and `apps/board/src/settings/ReviewsPage.tsx`.
 - [ ] Delete `apps/board/roles/thermo-nuclear-review-subagent.md` and `apps/board/roles/thermo-nuclear-code-quality-review-subagent.md`.
 - [ ] In `13kparkin/pstack-t3`, edit `skills/pstack-t3/SKILL.md`, then re-vendor `apps/board/pstack/` with `apps/board/scripts/vendor-pstack.mjs`.
@@ -1692,6 +1692,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
   - [ ] A Codex orchestrator's children all inherit its model, so lean work lowers `effort` instead of switching models.
 - [ ] Send the orchestrator the usage numbers T3 already reports. The launch facts carry one line per usage window of the orchestrator's provider, such as `Claude weekly 82%, resets Fri`. When a window crosses 50, 80, or 95 percent, the board sends one message with that line. Above 80 percent the orchestrator runs lean: only the cheapest roles, and it asks the operator before starting more than two agents at once. Above 95 percent it finishes the work in flight and asks the operator before it starts any new agent.
 - [ ] In `usageNotice.ts`, keep the pure pieces: the usage line a window renders, and the crossings between two readings of the windows.
+- [ ] For-you card bodies render through C2's markdown in its untrusted mode, the one M1 uses for PR comments, so the tables, lists, and Mermaid graphs the orchestrator writes for a decision show as they do in chat. A body can quote issue text from a tracker, so images show as their alt text. `brief.md` tells the orchestrator to give each question the context the operator needs to decide, such as a short table of the options.
 
 **You see.**
 
@@ -1709,7 +1710,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Lane 4. Launch a board and record its launch facts. Then send the orchestrator the 80 percent message from the unit fixture, and give it a goal with five tickets. Save `r2-usage.txt`. Pass when the facts' usage lines match the board's usage bar, and after the message the orchestrator starts only the cheapest roles and asks before starting more than two agents.
 - [ ] Lane 5. Create a template named "Security only" with `simplify` as its author check and `security-audit` as its lane, and pick it on a board. Run a small goal. Save `r2-custom.png` and `r2-custom.txt`. Pass when only those two skills run on the ticket.
 - [ ] Lane 6. Give a docs-only goal on the system template. Save `r2-docs.txt`. Pass when the security and test lanes are skipped with their reasons.
-- [ ] Lane 7. Give a goal that still has findings after two fix rounds. Save `r2-escalate.png`. Pass when a For-you question asks the operator and no third fix round starts.
+- [ ] Lane 7. Give a goal that still has findings after two fix rounds. Save `r2-escalate.png`. Pass when a For-you question asks the operator, its body's table renders as a table, and no third fix round starts.
 - [ ] Lane 8. Run the same three-ticket goal twice in fresh sessions, once with trunk's role models and once at head. Save `r2-models.txt` with each run's tokens per role from the engine's turn usage, its review verdicts, and its fix rounds. Pass when head uses fewer tokens with the same verdicts and no extra fix round, and any escalation re-ran its step exactly one tier up.
 - [ ] Lane 9. Open Settings, then Reviews, and restart the app. Save `r2-templates.png`. Pass when the system template has no edit or delete, the editor lists the skills the instance reports, and the custom template and the board's pick are still there after the restart.
 - [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `r2-checks.txt`. Pass when all three exit 0.
