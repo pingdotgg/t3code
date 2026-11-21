@@ -293,6 +293,16 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.applyPlaceholder()
   }
 
+  // JS picks the direction by word majority, set only when every paragraph agrees. First-strong
+  // would lay out an Arabic line that opens with an English word left to right.
+  fun setWritingDirection(direction: String) {
+    editor.textDirection = when (direction) {
+      "rtl" -> View.TEXT_DIRECTION_RTL
+      "ltr" -> View.TEXT_DIRECTION_LTR
+      else -> View.TEXT_DIRECTION_INHERIT
+    }
+  }
+
   fun setFontSize(fontSize: Float) {
     editor.textSize = fontSize
     applyLineHeight()

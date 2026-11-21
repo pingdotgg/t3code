@@ -2,6 +2,7 @@ import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
+import { composerLineDirections, type ComposerLineDirection } from "../lib/composerTextDirection";
 import { useComposerModelTokens } from "./useComposerModelTokens";
 import { requireNativeView } from "expo";
 import { useGT } from "gt-react-native";
@@ -90,6 +91,8 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly clipboardFragment: string;
   readonly themeJson: string;
   readonly placeholder: string;
+  // One per paragraph; empty keeps native first-strong, which reads "Plantur، سيروم" as LTR.
+  readonly writingDirections: ReadonlyArray<ComposerLineDirection>;
   readonly fontFamily: string;
   readonly fontSize: number;
   readonly lineHeight: number;
@@ -353,6 +356,7 @@ export function ComposerEditor({
       clipboardFragment={props.clipboardFragment ?? ""}
       themeJson={themeJson}
       placeholder={props.placeholder ?? ""}
+      writingDirections={composerLineDirections(props.value)}
       fontFamily={
         typeof resolvedTextStyle.fontFamily === "string" ? resolvedTextStyle.fontFamily : fontFamily
       }
