@@ -20,6 +20,7 @@ import {
   ThreadMediaVisibleContext,
 } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
+import { ThreadFeedTouchView } from "../../native/ThreadFeedTouchView";
 import {
   enrichedContextLinkCustomization,
   enrichedThreadLinkCustomization,
@@ -4379,9 +4380,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         {/* In a split, rows only re-wrap in the render that hands the list its new width. A native
             column resize would re-wrap them first, and the list would place the taller or shorter
             rows at their old offsets until their measurements came back. */}
-        <View
-          className="flex-1"
-          style={splitLayout && viewportWidth > 0 ? { width: viewportWidth } : undefined}
+        <ThreadFeedTouchView
+          style={{ flex: 1, width: splitLayout && viewportWidth > 0 ? viewportWidth : undefined }}
         >
           {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
           <KeyboardAwareLegendList
@@ -4391,6 +4391,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // RN 0.81+ drops inset-area touches (facebook/react-native#54123), making blank post-send space unscrollable.
             applyWorkaroundForContentInsetHitTestBug
             {...(Platform.OS === "ios" ? { ScrollViewComponent: ThreadFeedScrollView } : {})}
+            // Android's active feed overscroll effect intercepts DOWN before a Markdown scroller sees it.
+            overScrollMode="never"
             contentInsetAdjustmentBehavior="never"
             automaticallyAdjustsScrollIndicatorInsets={usesNativeAutomaticInsets}
             scrollIndicatorInsets={{ top: anchorTopInset, bottom: 0 }}
@@ -4492,7 +4494,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               paddingRight: contentHorizontalPadding + contentRightInset,
             }}
           />
-        </View>
+        </ThreadFeedTouchView>
         {presentedFeed.length === 0 &&
         !props.worktreeSetup &&
         props.activeWorkStartedAt === null &&
