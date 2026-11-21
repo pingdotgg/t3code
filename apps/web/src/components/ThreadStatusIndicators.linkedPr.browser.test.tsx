@@ -11,6 +11,7 @@ const environmentId = EnvironmentId.make("environment-test");
 vi.mock(import("../state/entities"), async (original) => ({
   ...(await original()),
   useProject: () => null,
+  useHasServerConfig: () => true,
   useServerConfigs: (() =>
     new Map([
       [environmentId, { environment: { capabilities: { threadPullRequests: true } } }],
