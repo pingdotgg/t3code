@@ -2007,7 +2007,12 @@ export const layerWithOptions = (
       );
 
       const scheduleThreadUnload = Effect.fn("ProviderSessionManager.scheduleThreadUnload")(
-        function* (providerSessionId: ProviderSessionId, providerThreadId: ProviderThreadId) {
+        function* (
+          providerSessionId: ProviderSessionId,
+          providerThreadId: ProviderThreadId,
+          /** Arms only if this record is still current, so a reschedule cannot time a newer hold. */
+          expected?: IdleThreadUnload,
+        ) {
           const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
           if (entry === undefined || hasBusyTurn(entry, providerThreadId)) return;
           const tracked = Array.from(entry.idleThreadUnloads).find(
@@ -2015,6 +2020,7 @@ export const layerWithOptions = (
           );
           if (tracked === undefined) return;
           const [threadId, pending] = tracked;
+          if (expected !== undefined && pending !== expected) return;
           const generation = pending.generation + 1;
           const delayMs = yield* idleThreadUnloadDelay(entry.runtime, pending.providerThread);
           const fiber = yield* Effect.sleep(Duration.millis(delayMs)).pipe(
@@ -2036,7 +2042,7 @@ export const layerWithOptions = (
           const pending = entry?.idleThreadUnloads.get(threadId);
           if (entry === undefined || pending === undefined || pending.fiber === null) return;
           if (!(yield* unloadsPromptly(entry.runtime, pending.providerThread))) return;
-          yield* scheduleThreadUnload(providerSessionId, pending.providerThread.id);
+          yield* scheduleThreadUnload(providerSessionId, pending.providerThread.id, pending);
         },
       );
 
