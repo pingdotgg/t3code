@@ -2854,6 +2854,100 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
+  it.effect("streams a child that launched and started while the parent was disconnected", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        { type: "runtime_exit", status: "success" },
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {
+          [SESSION]: { type: "running" },
+          [CHILD]: { type: "running" },
+        }),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+        reply("message.list", {
+          data: [
+            {
+              id: "msg_parent_gap",
+              time: { created: 2, streamed: 2, completed: 2 },
+              type: "assistant",
+              agent: "build",
+              model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+              content: [
+                {
+                  type: "tool",
+                  id: "call-background",
+                  name: "subagent",
+                  executed: true,
+                  state: {
+                    status: "completed",
+                    input: { description: "Sleep", prompt: "sleep", background: true },
+                    content: [{ type: "text", text: "The subagent is working in the background." }],
+                    metadata: { sessionID: CHILD, status: "running" },
+                  },
+                  time: { created: 2, ran: 2, completed: 2 },
+                },
+              ],
+              finish: "stop",
+            },
+            {
+              id: `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`,
+              time: { created: 1 },
+              type: "user",
+              text: "hi",
+            },
+          ],
+          cursor: {},
+        }),
+        out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+        reply("session.update", null),
+        out("permission.list", { sessionID: SESSION }),
+        replyData("permission.list", []),
+        out("session.form.list", { sessionID: SESSION }),
+        replyData("session.form.list", []),
+        out("permission.list", { sessionID: CHILD }),
+        replyData("permission.list", []),
+        out("session.form.list", { sessionID: CHILD }),
+        replyData("session.form.list", []),
+        event("session.text.ended", {
+          sessionID: CHILD,
+          assistantMessageID: "msg_child_gap",
+          ordinal: 0,
+          text: "GAP_OK",
+        }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report", "GAP_OK"),
+      ]);
+      const childTexts: Array<string> = [];
+      const done = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.tap((e) =>
+          Effect.gen(function* () {
+            if (
+              e.type === "turn_item.updated" &&
+              e.turnItem.type === "assistant_message" &&
+              e.turnItem.threadId !== threadId
+            ) {
+              childTexts.push(e.turnItem.text);
+            }
+            if (e.type === "subagent.updated" && e.subagent.status === "completed") {
+              yield* Deferred.succeed(done, undefined);
+            }
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(done);
+      assert.include(childTexts, "GAP_OK");
+    }),
+  );
+
   const MIDDLE = "ses_middle0000000000000000000";
   const DEEP = "ses_grandchild00000000000000";
   const toolOf = (session: string, id: string) => ({

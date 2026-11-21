@@ -3889,13 +3889,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const start = before !== undefined ? before : promptId;
       const oldestSteer = pendingSteers?.values().next().value;
-      const read = yield* OpenCode2Client.paginate(
+      const history = OpenCode2Client.paginate(
         { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 50 },
         client.message.list,
       ).pipe(
         Stream.takeUntil((message) =>
           start !== undefined ? message.id === start : message.id === oldestSteer,
         ),
+      );
+      // An unread steer is not in history yet, so a steer anchor reads one page at most.
+      const read = yield* (start === undefined ? history.pipe(Stream.take(50)) : history).pipe(
         Stream.runCollect,
         Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }),
       );
@@ -4098,6 +4101,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return;
       }
       const active = { ...(yield* client.session.active()) };
+      const attachedBefore = new Set(
+        [...threads.values()].filter((state) => state.subagent !== undefined),
+      );
       for (const sessionId of busy) if (!(sessionId in active)) busy.delete(sessionId);
       for (const state of threads.values()) {
         if (state.unsettled && !(state.sessionId in active)) state.unsettledStarted = true;
@@ -4138,6 +4144,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* endExecution(state, turn, terminal);
           }),
         );
+      }
+      // A child the parent's backfill found running started in the gap; its start is not replayed.
+      for (const state of threads.values()) {
+        if (state.subagent === undefined || state.active !== undefined) continue;
+        if (attachedBefore.has(state) || !(state.sessionId in active)) continue;
+        yield* lock.withPermit(startChildTurn(state));
       }
       for (const state of threads.values()) {
         yield* lock
