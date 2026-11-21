@@ -877,12 +877,18 @@ const layerBase: Layer.Layer<
               effect.request.type === "subagent-threads.cascade" &&
               effect.request.operation !== "thread.delete"
             ) {
-              yield* commandReceipts.insertIfAbsent({
+              const reserved = yield* commandReceipts.insertIfAbsent({
                 ...receipt,
                 commandId: effect.commandId,
                 threadId: effect.threadId,
                 commandType: effect.request.operation,
               });
+              if (!reserved) {
+                return yield* new CommandReceiptStore.CommandReceiptStoreWriteError({
+                  commandId: effect.commandId,
+                  cause: "Generated side-chat cascade command ID is already in use.",
+                });
+              }
             }
           }
           const cancelledEffectIds =

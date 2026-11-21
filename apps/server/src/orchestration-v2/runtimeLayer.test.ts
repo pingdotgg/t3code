@@ -14331,13 +14331,21 @@ describe("subagent lifecycle cascade", () => {
     }).pipe(Effect.provide(layerTest)),
   );
   it.effect.each([
-    { source: parent, delivery: "reply" },
-    { source: parent, delivery: "worker" },
-    { source: app, delivery: "reply" },
-    { source: app, delivery: "worker" },
+    { source: parent, delivery: "reply", operation: "archive", collision: null },
+    { source: parent, delivery: "worker", operation: "archive", collision: null },
+    { source: app, delivery: "reply", operation: "archive", collision: null },
+    { source: app, delivery: "worker", operation: "archive", collision: null },
+    { source: parent, delivery: "reply", operation: "archive", collision: "accepted" },
+    { source: parent, delivery: "worker", operation: "archive", collision: "accepted" },
+    { source: parent, delivery: "reply", operation: "archive", collision: "rejected" },
+    { source: parent, delivery: "worker", operation: "archive", collision: "rejected" },
+    { source: parent, delivery: "reply", operation: "unarchive", collision: "accepted" },
+    { source: parent, delivery: "worker", operation: "unarchive", collision: "accepted" },
+    { source: parent, delivery: "reply", operation: "unarchive", collision: "rejected" },
+    { source: parent, delivery: "worker", operation: "unarchive", collision: "rejected" },
   ] as const)(
-    "cascades side-chat descendants from $source through $delivery",
-    ({ source, delivery }) =>
+    "cascades side-chat descendants from $source through $delivery: $operation, collision $collision",
+    ({ source, delivery, operation, collision }) =>
       Effect.gen(function* () {
         const f = yield* fixture;
         const side = ThreadId.make("side");
@@ -14354,10 +14362,48 @@ describe("subagent lifecycle cascade", () => {
           });
         }
         yield* f.run("archive", independent);
-        const apply = (operation: "archive" | "unarchive") =>
-          delivery === "reply"
-            ? f.run(operation)
-            : f.commit(operation).pipe(Effect.andThen(f.drain));
+        const apply = Effect.fn("test.applySideChatLifecycle")(function* (
+          operation: "archive" | "unarchive",
+        ) {
+          if (delivery === "reply") yield* f.run(operation);
+          else {
+            yield* f.commit(operation);
+            yield* f.drain;
+          }
+        });
+        if (collision !== null) {
+          if (operation === "unarchive") yield* apply("archive");
+          const before = yield* f.archived(parent, side, child, independent);
+          const commandId = CommandId.make(`${operation}:${parent}`);
+          const existing = {
+            commandId: CommandId.make(`${commandId}:side-chat:${side}`),
+            threadId: ThreadId.make("fork"),
+            commandType: "thread.archive",
+            acceptedAt: f.now,
+            resultSequence: 0,
+            status: collision,
+            error: collision === "rejected" ? "Earlier rejected command." : null,
+          };
+          yield* Effect.flatMap(Receipts.CommandReceiptStoreV2, (r) => r.upsert(existing));
+          const events = yield* EventSink.EventSinkV2;
+          const sequence = yield* events.latestSequence();
+          const result = yield* apply(operation).pipe(Effect.flip);
+          assert.equal(result._tag, "OrchestratorDispatchError");
+          yield* f.drain;
+          assert.equal(yield* f.archived(parent, side, child, independent), before);
+          assert.deepEqual(Option.getOrThrow(yield* receipt(existing.commandId)), existing);
+          assert.isTrue(Option.isNone(yield* receipt(commandId)));
+          assert.equal(yield* events.latestSequence(), sequence);
+          assert.isTrue(
+            Option.isNone(yield* f.outbox.get(`effect:${commandId}:subagent-threads.cascade`)),
+          );
+          assert.isTrue(
+            Option.isNone(
+              yield* f.outbox.get(`effect:${existing.commandId}:subagent-threads.cascade`),
+            ),
+          );
+          return;
+        }
         yield* apply("archive");
         assert.equal(yield* f.archived(side, child, independent), "111");
         yield* f.drain;
