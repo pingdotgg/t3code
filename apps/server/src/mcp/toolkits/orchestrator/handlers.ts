@@ -41,7 +41,7 @@ const handlers = {
       return yield* service.cancelTask(scope, input);
     }),
   ),
-  t3_workflow_stop: McpToolAccess.writesThreads(
+  t3_workflow_stop: McpToolAccess.stopsThreads(
     (input) => [input.threadId],
     (input) =>
       Effect.gen(function* () {
@@ -229,7 +229,7 @@ const handlers = {
       return { environmentId, removed };
     }),
   ),
-  t3_thread_interrupt: McpToolAccess.writesThreads(
+  t3_thread_interrupt: McpToolAccess.stopsThreads(
     (input) => [input.threadId],
     (input) =>
       Effect.gen(function* () {
