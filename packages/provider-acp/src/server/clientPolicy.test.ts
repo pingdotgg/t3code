@@ -117,6 +117,50 @@ describe("acpPermissionDisposition", () => {
     );
   });
 
+  // regression: #38806 Antigravity routes T3's own MCP calls through generic permission requests.
+  it("auto-accept-edits allows T3's own MCP tools and approval-required still asks", () => {
+    const t3McpRequest: EffectAcpSchema.RequestPermissionRequest = {
+      ...permissionRequest("other"),
+      toolCall: {
+        kind: "other",
+        title: "Run mcp_t3-code_preview_status?",
+        toolCallId: "permission-tool-call",
+      },
+    };
+    assert.equal(
+      acpPermissionDisposition({ runtimeMode: "auto-accept-edits", cwd }, t3McpRequest),
+      "allow",
+    );
+    assert.equal(
+      acpPermissionDisposition({ runtimeMode: "approval-required", cwd }, t3McpRequest),
+      "ask",
+    );
+    assert.equal(
+      acpPermissionDisposition(
+        { runtimeMode: "auto-accept-edits", cwd, sandboxPolicy: { type: "readOnly" } },
+        t3McpRequest,
+      ),
+      "deny",
+    );
+    // A bare tool name, "t3-code" only in arguments, or another server's metadata does not establish T3 origin.
+    for (const toolCall of [
+      { ...t3McpRequest.toolCall, title: "preview_status" },
+      { ...t3McpRequest.toolCall, title: 'html_render: {"text":"t3-code"}' },
+      {
+        ...t3McpRequest.toolCall,
+        _meta: { serverId: "other-server", toolName: "preview_status" },
+      },
+    ]) {
+      assert.equal(
+        acpPermissionDisposition(
+          { runtimeMode: "auto-accept-edits", cwd },
+          { ...t3McpRequest, toolCall },
+        ),
+        "ask",
+      );
+    }
+  });
+
   it("auto-allows read-kind permission requests under on-request approval", () => {
     for (const runtimePolicy of [
       { ...policy, approvalPolicy: "on-request" },
