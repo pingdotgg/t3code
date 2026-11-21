@@ -199,42 +199,49 @@ it.effect.each(["settle of a pinned thread", "wake of an awake thread"] as const
     }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each(["same-value manual wake", "user message", "changed rules"] as const)(
-  "issue automation refuses a decision made before a %s",
-  (change) =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const threadId = ThreadId.make(`thread:automation-guard:${change}`);
-      yield* createThread(threadId);
-      const expectedRevision = yield* projections.getIssueAutomationRevision(threadId);
-      if (change === "same-value manual wake") {
-        yield* orchestrator.dispatch({
-          type: "thread.unsnooze",
-          commandId: CommandId.make(`manual-wake:${change}`),
-          threadId,
-          reason: "user",
-        });
-      } else if (change === "user message") {
-        yield* queueUserMessage(threadId, `manual-work:${change}`);
-      }
-      const error = yield* orchestrator
-        .dispatch({
-          type: "thread.issue-automation.apply",
-          commandId: CommandId.make(`stale:${change}`),
-          threadId,
-          action: "settle",
-          expectedRevision,
-          rulesFingerprint: change === "changed rules" ? "stale rules" : automationFingerprint([]),
-        })
-        .pipe(Effect.flip);
-      assert.equal(error._tag, "OrchestratorDispatchError");
-      assert.equal(
-        error._tag === "OrchestratorDispatchError" && error.cause,
-        ISSUE_AUTOMATION_STALE,
-      );
-      assert.isNull((yield* projections.getThread(threadId)).settledAt);
-    }).pipe(Effect.provide(layerTest)),
+it.effect.each([
+  "same-value manual wake",
+  "user message",
+  "switch to auto-settle Never",
+  "changed rules",
+] as const)("issue automation refuses a decision made before a %s", (change) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make(`thread:automation-guard:${change}`);
+    yield* createThread(threadId);
+    const expectedRevision = yield* projections.getIssueAutomationRevision(threadId);
+    if (change === "same-value manual wake") {
+      yield* orchestrator.dispatch({
+        type: "thread.unsnooze",
+        commandId: CommandId.make(`manual-wake:${change}`),
+        threadId,
+        reason: "user",
+      });
+    } else if (change === "user message") {
+      yield* queueUserMessage(threadId, `manual-work:${change}`);
+    } else if (change === "switch to auto-settle Never") {
+      yield* orchestrator.dispatch({
+        type: "thread.auto-settle.set",
+        commandId: CommandId.make(`auto-settle-off:${change}`),
+        threadId,
+        enabled: false,
+      });
+    }
+    const error = yield* orchestrator
+      .dispatch({
+        type: "thread.issue-automation.apply",
+        commandId: CommandId.make(`stale:${change}`),
+        threadId,
+        action: "settle",
+        expectedRevision,
+        rulesFingerprint: change === "changed rules" ? "stale rules" : automationFingerprint([]),
+      })
+      .pipe(Effect.flip);
+    assert.equal(error._tag, "OrchestratorDispatchError");
+    assert.equal(error._tag === "OrchestratorDispatchError" && error.cause, ISSUE_AUTOMATION_STALE);
+    assert.isNull((yield* projections.getThread(threadId)).settledAt);
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("issue automation waits for queued work, then applies under a new command id", () =>
