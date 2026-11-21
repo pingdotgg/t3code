@@ -5,13 +5,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
-vi.mock("electron", () => ({
-  nativeImage: {
-    createFromBuffer: () => ({
-      isEmpty: () => false,
-      getSize: () => ({ width: 800, height: 600 }),
-    }),
-  },
+vi.mock("./LinuxCaptureResize.ts", () => ({
+  resizeLinuxCaptureInRenderer: async (png: Buffer) => png,
 }));
 import { captureNiriWindow, checkNiriCaptureSupport, niriSocketPath } from "./NiriSnapShot.ts";
 import { captureLinuxWindow, getLinuxCaptureSupport } from "./LinuxSnapShot.ts";
