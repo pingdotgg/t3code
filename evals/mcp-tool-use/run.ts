@@ -56,6 +56,9 @@ import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
+import { BotToolkit } from "../../apps/server/src/mcp/toolkits/bot/tools.ts";
+import { WorkflowToolkit } from "../../apps/server/src/mcp/toolkits/workflow/tools.ts";
+import { withBotInstructions } from "../../apps/server/src/bots/botInstructions.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { FeedbackToolkit } from "../../apps/server/src/mcp/toolkits/feedback/tools.ts";
 import {
@@ -378,6 +381,8 @@ export const McpToolUseCase = Schema.Struct({
     shellMocks: Schema.optional(
       Schema.Array(Schema.Struct({ match: Schema.String, output: Schema.String })),
     ),
+    /** The thread is a Bot (`home` for Home): T3 lists Bot tools and adds Bot instructions to each turn. */
+    bot: Schema.optional(Schema.Literals(["home", "project"])),
     /** The thread is a side chat's first turn: T3 puts the parent's digest ahead of `prompt`. */
     sideChat: Schema.optional(
       Schema.Struct({ parentThreadId: Schema.String, digest: Schema.Array(Schema.String) }),
@@ -512,6 +517,8 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   DeviceToolkit,
   HtmlToolkit,
   MessageToolkit,
+  BotToolkit,
+  WorkflowToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -571,6 +578,11 @@ const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff
 const hiddenWhileFeedbackOff = enabledWhen(McpInvocationContext.hiddenWhileFeedbackOff);
 // T3 lists PR and CI tools only to a thread whose project is on a forge it reads.
 const hiddenWithoutForge = enabledWhen(McpInvocationContext.hiddenWithoutForge);
+// T3 lists these only to a Bot thread (Home among them).
+const botOnly = new Set([
+  ...enabledWhen(McpInvocationContext.hiddenFromNonBots),
+  ...enabledWhen(McpInvocationContext.hiddenFromThreadsExceptBots),
+]);
 /**
  * `tools` is T3 as shipped. `raw` takes away T3's PR, CI and issue tools and their instructions,
  * so the agent works the forge with CLIs alone, to measure what the tools save.
@@ -587,6 +599,7 @@ const forArm = (value: string, arm: Arm | undefined) =>
   arm === "raw" ? value.replace(`\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`, "") : value;
 const visibleT3Tools = (options: {
   readonly subagent?: boolean;
+  readonly bot?: boolean;
   readonly links?: boolean;
   readonly forge?: boolean;
   readonly agentFeedback?: Contracts.AgentFeedbackMode;
@@ -595,6 +608,7 @@ const visibleT3Tools = (options: {
   t3Tools.filter(
     (tool) =>
       !(options.arm === "raw" && forgeToolNames.has(tool.name)) &&
+      (options.bot === true || !botOnly.has(tool.name)) &&
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
       ((options.agentFeedback ?? "off") !== "off" || !hiddenWhileFeedbackOff.has(tool.name)) &&
       (options.forge !== false || !hiddenWithoutForge.has(tool.name)) &&
@@ -718,6 +732,7 @@ export const buildBase = (
     readonly model: Model;
     readonly keepUserInstructions: boolean;
     readonly subagent?: boolean;
+    readonly bot?: boolean;
     readonly links?: boolean;
     readonly forge?: boolean;
     /** A native subagent starts from its task: T3 appends nothing to its system prompt. */
@@ -821,6 +836,7 @@ const buildCodexBase = (
     readonly keepUserInstructions: boolean;
     readonly effort?: string | undefined;
     readonly subagent?: boolean;
+    readonly bot?: boolean;
     readonly links?: boolean;
     readonly forge?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
@@ -1261,8 +1277,15 @@ export const buildMessages = (sample: Sample) => {
     testCase.promptContext === undefined
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+  const botText =
+    testCase.setup.bot === undefined
+      ? userText
+      : withBotInstructions(
+          ThreadId.make(testCase.setup.bot === "home" ? "home:eval" : "eval-bot"),
+          userText,
+        );
   const prompt =
-    sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
+    sideChatContext === undefined ? botText : withInlineContext(sideChatContext, botText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
@@ -3301,6 +3324,7 @@ const main = Effect.gen(function* () {
     browserAccess: boolean,
     links: boolean,
     forge: boolean,
+    bot: boolean,
     agentFeedback: Contracts.AgentFeedbackMode = "off",
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
@@ -3311,6 +3335,7 @@ const main = Effect.gen(function* () {
               keepUserInstructions,
               effort: flags.effort,
               subagent: role === "delegated-child",
+              bot,
               links,
               forge,
               deviceAccess,
@@ -3327,6 +3352,7 @@ const main = Effect.gen(function* () {
               keepUserInstructions,
               subagent: role === "delegated-child",
               nativeSubagent: role === "native-subagent",
+              bot,
               links,
               forge,
               deviceAccess,
@@ -3343,14 +3369,15 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}:${setup.world?.agentFeedback ?? "off"}`;
-  const base = yield* buildFor("top", true, true, false, true);
-  const bases = new Map<string, Base>([["top:true:true:false:true:off", base]]);
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}:${setup.bot !== undefined}:${setup.world?.agentFeedback ?? "off"}`;
+  const base = yield* buildFor("top", true, true, false, true, false);
+  const bases = new Map<string, Base>([["top:true:true:false:true:false:off", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links, forge, feedback] = key.split(":") as [
+    const [role = "top", device, browser, links, forge, bot, feedback] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
+      string,
       string,
       string,
       string,
@@ -3365,6 +3392,7 @@ const main = Effect.gen(function* () {
         browser === "true",
         links === "true",
         forge === "true",
+        bot === "true",
         feedback as Contracts.AgentFeedbackMode,
       ),
     );
