@@ -82,6 +82,7 @@ const Models = Schema.Struct({
     Schema.String,
     Schema.Struct({
       modelProvider: Schema.optional(Schema.String),
+      isInternal: Schema.optional(Schema.Boolean),
       quotaInfo: Schema.optional(Quota),
       weeklyQuotaInfo: Schema.optional(Quota),
     }),
@@ -285,9 +286,10 @@ function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
 }
 
 /** Older accounts expose model quotas without a window length. Do not invent a reset cadence. */
-function modelWindows(models: typeof Models.Type) {
+function modelWindows(models: typeof Models.Type, onlyGemini = false) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   for (const [modelId, model] of Object.entries(models.models)) {
+    if (model.isInternal) continue;
     const family =
       model.modelProvider === "MODEL_PROVIDER_GOOGLE" || modelId.startsWith("gemini-")
         ? "Gemini"
@@ -296,7 +298,7 @@ function modelWindows(models: typeof Models.Type) {
           : model.modelProvider === "MODEL_PROVIDER_OPENAI" || modelId.startsWith("gpt-")
             ? "GPT"
             : undefined;
-    if (!family) continue;
+    if (!family || (onlyGemini && family !== "Gemini")) continue;
     for (const [suffix, quota] of [
       ["quota", model.quotaInfo],
       ["weekly", model.weeklyQuotaInfo],
@@ -311,7 +313,13 @@ function modelWindows(models: typeof Models.Type) {
       );
       if (!window) continue;
       const previous = windows.get(window.id);
-      if (!previous || window.usedPercent > previous.usedPercent) windows.set(window.id, window);
+      if (
+        !previous ||
+        window.usedPercent > previous.usedPercent ||
+        (window.usedPercent === previous.usedPercent && !previous.resetsAt && window.resetsAt)
+      ) {
+        windows.set(window.id, window);
+      }
     }
   }
   return [...windows.values()];
@@ -468,11 +476,18 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       return [...windows.values()];
     });
     const summary = yield* fetchWindows("retrieveUserQuotaSummary", antigravitySummaryWindows);
-    const windows = summary.length
-      ? summary
-      : yield* fetchWindows("fetchAvailableModels", (response) =>
-          decodeModels(response).pipe(Effect.map(modelWindows)),
-        );
+    const hasGeminiSummary = summary.some((window) => window.id.startsWith("gemini-"));
+    // Summary endpoints on some hosts/versions return only 3p-* buckets and omit Gemini.
+    const windows =
+      summary.length > 0 && hasGeminiSummary
+        ? summary
+        : yield* fetchWindows("fetchAvailableModels", (response) =>
+            decodeModels(response).pipe(
+              Effect.map((models) => modelWindows(models, summary.length > 0)),
+            ),
+          ).pipe(
+            Effect.map((fallback) => (summary.length > 0 ? [...summary, ...fallback] : fallback)),
+          );
     if (windows.length === 0) {
       return makeUnavailableUsageLimits({
         checkedAt,
