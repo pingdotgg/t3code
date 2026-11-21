@@ -537,6 +537,17 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
           toolCallIds: ["call_alive", "call_killed"],
         }),
       ).toEqual(["call_alive"]);
+
+      // An unreadable swarm board leaves the other records' verdicts alone.
+      yield* writeJson([ROOT, ".system_generated", "swarm", "board.jsonl"], { agent: "x" });
+      yield* writeJson([ROOT, ".system_generated", "swarm", "members.json"], { members: 1 });
+      expect(
+        yield* readAntigravityChildrenAtWork({
+          profileDirectory: profile,
+          rootSessionId: ROOT,
+          toolCallIds: ["call_alive", "call_killed"],
+        }),
+      ).toEqual(["call_alive"]);
     }),
   );
 

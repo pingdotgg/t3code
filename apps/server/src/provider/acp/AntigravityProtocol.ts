@@ -532,6 +532,12 @@ const ANTIGRAVITY_SUBAGENT_TITLES = new Set([
   "Run invoke_subagent",
 ]);
 
+// agy 1.5.13 `swarm` add starts a worker that runs detached, like an `invoke_subagent` child.
+const isAntigravitySwarmWorkerLaunch = (toolCall: AcpToolCallState) =>
+  toolCall.title === "Run swarm" &&
+  Predicate.isObject(toolCall.data.rawInput) &&
+  toolCall.data.rawInput.action === "add";
+
 /** The ACP agent reports subagent calls as ordinary tools without child IDs or models. */
 export function classifyAntigravitySubagentToolCall(
   toolCall: AcpToolCallState,
@@ -540,7 +546,7 @@ export function classifyAntigravitySubagentToolCall(
   if (
     (toolCall.kind !== undefined && toolCall.kind !== "other") ||
     toolCall.title === undefined ||
-    !ANTIGRAVITY_SUBAGENT_TITLES.has(toolCall.title)
+    !(ANTIGRAVITY_SUBAGENT_TITLES.has(toolCall.title) || isAntigravitySwarmWorkerLaunch(toolCall))
   )
     return undefined;
   const update = Predicate.isObject(rawPayload) ? rawPayload.update : undefined;
