@@ -1,5 +1,5 @@
 import { resolveEventKeys } from "@t3tools/shared/keybindingMatching";
-import { isMacPlatform } from "../../lib/utils";
+import { isMacPlatform, isWindowsPlatform } from "../../lib/utils";
 import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
@@ -367,7 +367,10 @@ function isTerminalPasteShortcut(
     return event.shiftKey && !event.ctrlKey && !event.metaKey;
   }
   if (!keys.has("v")) return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
+  if (isMacPlatform(platform)) return event.metaKey;
+  // Windows terminals paste on Ctrl+V; Linux keeps it for the shell's quoted insert.
+  if (isWindowsPlatform(platform)) return event.ctrlKey && !event.altKey && !event.metaKey;
+  return event.ctrlKey && event.shiftKey;
 }
 
 // X11/Wayland expects middle-click paste; macOS and Windows use it for autoscroll.
