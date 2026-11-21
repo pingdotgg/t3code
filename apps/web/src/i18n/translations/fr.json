@@ -7885,14 +7885,20 @@
     " avec l’accès à la dictée pour continuer."
   ],
   "1d33877ef8ea3559": "Réessayer de charger la clé API",
-  "be805c1729dc0726": [
+  "2b5b356019c6857b": [
     "Mettez à jour ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " pour utiliser la dictée OpenRouter."
+    " pour utiliser la dictée ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "."
   ],
   "d7acad5dde4c1d1b": "Recherche d’une clé API…",
   "8257030da7a4ad4e": "Modèle",
@@ -11557,7 +11563,7 @@
   "0d88a0c771d98284": "Parlez dans n’importe quelle langue et obtenez du texte en anglais.",
   "f4a8700049fc9dcc": "Filtrage du silence",
   "69558ed7b83d671e": "Apple Speech gère lui-même les silences.",
-  "f22b17f6731c14c0": "OpenAI gère lui-même le silence.",
+  "d3738e7527dd797e": "{name} gère lui-même le silence.",
   "75a3001ae4561b97": "Ignore le silence et le bruit de fond avant la transcription.",
   "adde9666f7fb8c5d": "Supprimer les mots de remplissage",
   "95ac70c5da02c46a": "Indisponible avec Apple Speech.",
@@ -11786,7 +11792,7 @@
   "fea2dc36585c4a20": "Hôtes d’appareils Simlock (alpha)",
   "9d834d178130180e": "bêta alpha simlock callstack simulateur émulateur ios android pool bail passerelle",
   "bcb520297a9ae143": "bêta rapide worktree extraction clone apfs copie sur écriture cache macos vitesse",
-  "4c83ac419da342bd": "envoyer microphone audio dictée destination parole voix stt transcription environnement machine consentement confidentialité cloud OpenAI Grok OpenRouter",
+  "e9c9a5c3f486473a": "envoyer microphone audio dictée destination parole voix stt transcription environnement machine consentement confidentialité cloud OpenAI Grok OpenRouter ElevenLabs Scribe",
   "f9c000e92379d027": "micro entrée audio appareil ordre priorité préféré",
   "22811f405e0b4b28": "parole voix clavier raccourci maintenir basculer auto",
   "e27bccf50397d9fe": "parole voix traduire anglais détection auto",

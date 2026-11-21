@@ -7892,14 +7892,20 @@
     " with dictation access to continue."
   ],
   "1d33877ef8ea3559": "Retry loading API key",
-  "be805c1729dc0726": [
+  "2b5b356019c6857b": [
     "Update ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " to use OpenRouter dictation."
+    " to use ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " dictation."
   ],
   "d7acad5dde4c1d1b": "Checking for an API key…",
   "8257030da7a4ad4e": "Model",
@@ -11567,7 +11573,7 @@
   "0d88a0c771d98284": "Speak any language and get English text.",
   "f4a8700049fc9dcc": "Silence filtering",
   "69558ed7b83d671e": "Apple Speech handles silence itself.",
-  "f22b17f6731c14c0": "OpenAI handles silence itself.",
+  "d3738e7527dd797e": "{name} handles silence itself.",
   "75a3001ae4561b97": "Skip silence and background noise before transcribing.",
   "adde9666f7fb8c5d": "Remove filler words",
   "95ac70c5da02c46a": "Not available with Apple Speech.",
@@ -11796,7 +11802,7 @@
   "fea2dc36585c4a20": "Simlock device hosts (alpha)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
   "bcb520297a9ae143": "beta fast worktree checkout clone apfs copy-on-write cache macos speed",
-  "4c83ac419da342bd": "send microphone audio dictation destination speech voice stt transcription environment machine consent privacy cloud OpenAI Grok OpenRouter",
+  "e9c9a5c3f486473a": "send microphone audio dictation destination speech voice stt transcription environment machine consent privacy cloud OpenAI Grok OpenRouter ElevenLabs Scribe",
   "f9c000e92379d027": "mic input audio device order priority preferred",
   "22811f405e0b4b28": "speech voice keyboard hotkey hold toggle auto",
   "e27bccf50397d9fe": "speech voice translate english auto detect",

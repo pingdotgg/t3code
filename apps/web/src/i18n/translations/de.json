@@ -7885,14 +7885,20 @@
     ", um fortzufahren."
   ],
   "1d33877ef8ea3559": "Laden des API-Schlüssels wiederholen",
-  "be805c1729dc0726": [
+  "2b5b356019c6857b": [
     "Aktualisiere ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ", um OpenRouter-Diktat zu nutzen."
+    ", um ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "-Diktat zu nutzen."
   ],
   "d7acad5dde4c1d1b": "Es wird nach einem API-Schlüssel gesucht…",
   "8257030da7a4ad4e": "Modell",
@@ -11558,7 +11564,7 @@
   "0d88a0c771d98284": "Sprich in beliebiger Sprache und erhalte englischen Text.",
   "f4a8700049fc9dcc": "Stillefilter",
   "69558ed7b83d671e": "Apple Speech verarbeitet Stille selbst.",
-  "f22b17f6731c14c0": "OpenAI handhabt Stille selbst.",
+  "d3738e7527dd797e": "{name} handhabt Stille selbst.",
   "75a3001ae4561b97": "Stille und Hintergrundgeräusche vor dem Transkribieren überspringen.",
   "adde9666f7fb8c5d": "Füllwörter entfernen",
   "95ac70c5da02c46a": "Mit Apple Speech nicht verfügbar.",
@@ -11788,7 +11794,7 @@
   "fea2dc36585c4a20": "Simlock-Geräte-Hosts (Alpha)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
   "bcb520297a9ae143": "beta schneller worktree checkout klonen apfs copy-on-write cache macos geschwindigkeit",
-  "4c83ac419da342bd": "mikrofon audio senden diktat ziel sprache spracheingabe stt transkription umgebung rechner einwilligung datenschutz cloud OpenAI Grok OpenRouter",
+  "e9c9a5c3f486473a": "mikrofon audio senden diktat ziel sprache spracheingabe stt transkription umgebung rechner einwilligung datenschutz cloud OpenAI Grok OpenRouter ElevenLabs Scribe",
   "f9c000e92379d027": "mikrofon eingabe audio gerät reihenfolge priorität bevorzugt",
   "22811f405e0b4b28": "sprache spracheingabe tastatur hotkey halten umschalten auto",
   "e27bccf50397d9fe": "sprache spracheingabe übersetzen englisch automatisch erkennen",

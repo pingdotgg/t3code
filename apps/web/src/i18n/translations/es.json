@@ -7884,14 +7884,20 @@
     " con acceso al dictado para continuar."
   ],
   "1d33877ef8ea3559": "Reintentar la carga de la clave de API",
-  "be805c1729dc0726": [
+  "2b5b356019c6857b": [
     "Actualiza ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " para usar el dictado con OpenRouter."
+    " para usar el dictado con ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "."
   ],
   "d7acad5dde4c1d1b": "Buscando una clave de API…",
   "8257030da7a4ad4e": "Modelo",
@@ -11552,7 +11558,7 @@
   "0d88a0c771d98284": "Habla en cualquier idioma y obtén texto en inglés.",
   "f4a8700049fc9dcc": "Filtrado de silencios",
   "69558ed7b83d671e": "Apple Speech gestiona el silencio por sí mismo.",
-  "f22b17f6731c14c0": "OpenAI gestiona los silencios por sí mismo.",
+  "d3738e7527dd797e": "{name} gestiona los silencios por sí mismo.",
   "75a3001ae4561b97": "Omite los silencios y el ruido de fondo antes de transcribir.",
   "adde9666f7fb8c5d": "Quitar muletillas",
   "95ac70c5da02c46a": "No disponible con Apple Speech.",
@@ -11781,7 +11787,7 @@
   "fea2dc36585c4a20": "Hosts de dispositivos Simlock (alfa)",
   "9d834d178130180e": "beta alfa simlock callstack simulador emulador ios android grupo préstamo gateway",
   "bcb520297a9ae143": "beta worktree rápido checkout clonar apfs copy-on-write caché macos velocidad",
-  "4c83ac419da342bd": "enviar audio del micrófono dictado destino voz habla stt transcripción entorno máquina consentimiento privacidad nube OpenAI Grok OpenRouter",
+  "e9c9a5c3f486473a": "enviar audio del micrófono dictado destino voz habla stt transcripción entorno máquina consentimiento privacidad nube OpenAI Grok OpenRouter ElevenLabs Scribe",
   "f9c000e92379d027": "micrófono entrada audio dispositivo orden prioridad preferido",
   "22811f405e0b4b28": "voz habla teclado atajo mantener alternar automático",
   "e27bccf50397d9fe": "voz habla traducir inglés detectar automáticamente",
