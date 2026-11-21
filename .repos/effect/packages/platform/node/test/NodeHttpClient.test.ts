@@ -651,6 +651,63 @@ it.live("returns a stream body encoding failure", () =>
     Layer.provideMerge(NodeHttpServer.layer(Http.createServer, { port: 0 }))
   ))))
 
+it.live("redacts a transport error URL with the redacted names of the request", () =>
+  Effect.gen(function*() {
+    const error = yield* Effect.gen(function*() {
+      const error = yield* HttpClient.get("http://test/path?token=token-secret").pipe(Effect.flip)
+      assert.strictEqual(error.message, "Transport error (GET http://test/path?token=REDACTED)")
+      return error
+    }).pipe(Effect.provideService(UrlParams.CurrentRedactedNames, ["token"]))
+
+    assert.strictEqual(error.reason._tag, "TransportError")
+    assert.strictEqual(error.message, "Transport error (GET http://test/path?token=REDACTED)")
+    assert.notInclude(JSON.stringify(error), "token-secret")
+  }).pipe(Effect.provide(NodeClient.layerNodeHttpOptions({
+    socketPath: join(tmpdir(), `effect-missing-${process.pid}.sock`)
+  }))))
+
+it.live.each([
+  { name: "node:http", layer: NodeClient.layerNodeHttp },
+  { name: "undici", layer: NodeClient.layerUndici }
+])(
+  "redacts a response body error URL with the redacted names of the request ($name)",
+  ({ layer }) =>
+    Effect.gen(function*() {
+      // Sends part of the body and keeps the connection open, so the test can
+      // drop it after the client has returned the response.
+      const sockets: Array<Net.Socket> = []
+      const server = yield* Effect.acquireRelease(
+        Effect.callback<Http.Server>((resume) => {
+          const server = Http.createServer((_, response) => {
+            sockets.push(response.socket!)
+            response.writeHead(200, { "content-length": "100" })
+            response.write("partial")
+          })
+          server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)))
+        }),
+        (server) =>
+          Effect.callback<void>((resume) => {
+            server.closeAllConnections()
+            server.close(() => resume(Effect.void))
+          })
+      )
+      const url = `http://127.0.0.1:${(server.address() as Net.AddressInfo).port}/?token=`
+      const message = `Decode error (200 GET ${url}REDACTED)`
+
+      const error = yield* Effect.gen(function*() {
+        const response = yield* HttpClient.get(`${url}token-secret`)
+        for (const socket of sockets) socket.destroy()
+        const error = yield* Effect.flip(response.text)
+        assert.strictEqual(error.message, message)
+        return error
+      }).pipe(Effect.provideService(UrlParams.CurrentRedactedNames, ["token"]))
+
+      assert.strictEqual(error.reason._tag, "DecodeError")
+      assert.strictEqual(error.message, message)
+      assert.notInclude(JSON.stringify(error), "token-secret")
+    }).pipe(Effect.provide(layer))
+)
+
 // Answers upgrade requests by hand, sending bytes in the same write as the
 // response head, like a Docker Engine attach endpoint.
 const makeUpgradeServer = (onClose?: () => void) => {

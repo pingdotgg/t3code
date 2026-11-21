@@ -49,6 +49,16 @@ describe("AtomRpc", () => {
     expect<Atom.Success<typeof mutation>>().type.toBe<number | string>()
   })
 
+  it("mutation accepts only the payload of the selected RPC", () => {
+    const A = Rpc.make("A", { payload: { id: Schema.String } })
+    const B = Rpc.make("B", { payload: { name: Schema.String } })
+    const client = hole<AtomRpc.AtomRpcClient<unknown, "Client", typeof A | typeof B>>()
+    const registry = AtomRegistry.make()
+
+    expect(registry.set).type.toBeCallableWith(client.mutation("A"), { payload: { id: "a" } })
+    expect(registry.set).type.not.toBeCallableWith(client.mutation("A"), { payload: { name: "b" } })
+  })
+
   it("accepts any reactivity keys when no keys are declared", () => {
     const GetUser = Rpc.make("GetUser", { payload: { id: Schema.Number } })
     const client = hole<AtomRpc.AtomRpcClient<unknown, "Client", typeof GetUser>>()

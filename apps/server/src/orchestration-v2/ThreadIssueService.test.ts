@@ -4,6 +4,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadIssueService from "./ThreadIssueService.ts";
 
@@ -30,6 +31,7 @@ describe("ThreadIssueService", () => {
         ThreadIssueService.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
+              SqlitePersistence.layerMemory,
               Layer.mock(Orchestrator.OrchestratorV2)({
                 getThreadShell: (threadId) =>
                   Effect.fail(new Orchestrator.OrchestratorProjectionError({ threadId })),

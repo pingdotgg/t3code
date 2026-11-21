@@ -51,6 +51,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as TerminalManager from "./Manager.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { makePrepareTerminalLaunch } from "../workspace/restoreMissingWorktree.ts";
+import { layerNoTaskFolders } from "../orchestration-v2/ProviderTurnStartService.testkit.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -533,6 +534,7 @@ it.layer(
               Layer.mock(ProjectService.ProjectService)({
                 getById: () => Effect.succeedSome({ workspaceRoot: baseDir } as never),
               }),
+              layerNoTaskFolders,
               Layer.mock(GitWorkflowService.GitWorkflowService)({
                 pruneWorktrees: () => Effect.void,
                 listLocalBranchNames: () => Effect.succeed(["feature"]),
@@ -991,6 +993,48 @@ it.layer(
           true,
         ]);
       }),
+  );
+
+  it.effect("reports whether any terminal session for a thread has an active subprocess", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager(5, {
+        processTable: Effect.succeed([
+          { pid: 9000, ppid: 1, name: "zsh" },
+          { pid: 100, ppid: 9000, name: "zsh" },
+          { pid: 9001, ppid: 1, name: "zsh" },
+          { pid: 200, ppid: 9001, name: "node" },
+        ]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput({ terminalId: "idle", threadId: "thread-idle" }));
+      yield* manager.open(openInput({ terminalId: "dev-server", threadId: "thread-active" }));
+
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-none" })).toBe(false);
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-idle" })).toBe(false);
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-active" })).toBe(true);
+    }),
+  );
+
+  it.effect.each([
+    ["linux", ["SIGHUP", "SIGTERM"]],
+    ["win32", ["SIGTERM"]],
+  ] as const)("closing a %s terminal hangs up the shell's jobs", ([platform, signals]) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5).pipe(
+        Effect.provide(layerWithHostPlatform(platform)),
+      );
+      yield* manager.open(openInput());
+      const shell = ptyAdapter.processes[0]!;
+      const terminated = yield* Deferred.make<void>();
+      shell.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(terminated, Effect.void);
+      };
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(terminated);
+
+      expect(shell.killSignals).toEqual(signals);
+      shell.emitExit({ exitCode: 0, signal: 0 });
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("keeps a terminal whose shell was replaced by exec open on settlement", () =>
@@ -1558,7 +1602,7 @@ it.layer(
     }),
   );
 
-  it.effect("strips replayable CSI and DCS traffic while preserving setters", () =>
+  it.effect("strips replayable CSI, DCS and OSC traffic while preserving setters", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       yield* manager.open(openInput());
@@ -1574,7 +1618,13 @@ it.layer(
       // BEL is DCS payload, not a terminator: only ST ends the string.
       process.emitData("\u001bP$qm\u0007hidden\u001b\\\u001bP+q544e\u0007hidden\u001b\\");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
+      // Ghostty sets a colour beside a query, skips an LF, an empty field and a last index with no
+      // colour in an OSC, and runs an OSC that CAN ends or that the next ESC cuts short.
+      process.emitData("\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b]\n4;1;?;;2;?;3\u0018\u001b]4;3;?");
       process.emitData("\u001b]0;x\u001b\u001b[?2026$p");
+      // A long setter split across chunks is kept whole.
+      process.emitData(`\u001b[${"0".repeat(5000)}`);
+      process.emitData("31mX");
       process.emitData("done\n");
 
       yield* manager.close({ threadId: "thread-1" });
@@ -1582,7 +1632,9 @@ it.layer(
       const reopened = yield* manager.open(openInput());
       expect(
         reopened.history.startsWith(
-          'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u\u001b]0;x\u001bdone\n',
+          'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u' +
+            "\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b\\\u001b]4;3;?\u001b]0;x\u001b" +
+            `\u001b[${"0".repeat(5000)}31mXdone\n`,
         ),
       ).toBe(true);
     }),
@@ -2573,6 +2625,7 @@ it.layer(
         env: {
           PORT: "5173",
           T3CODE_PORT: "3773",
+          T3CODE_THREAD_ID: "server-thread",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
           TEST_TERMINAL_KEEP: "keep-me",
           TMUX: "/tmp/tmux-1000/default,1234,0",
@@ -2582,13 +2635,20 @@ it.layer(
         },
       });
       yield* manager.open(openInput());
-      yield* manager.open(openInput({ terminalId: "explicit", env: { TMUX_PANE: "%9" } }));
+      yield* manager.open(
+        openInput({
+          terminalId: "explicit",
+          env: { TMUX_PANE: "%9", T3CODE_THREAD_ID: "client-thread" },
+        }),
+      );
       const spawnInput = ptyAdapter.spawnInputs[0];
       expect(spawnInput).toBeDefined();
       if (!spawnInput) return;
 
       expect(spawnInput.env.PORT).toBeUndefined();
       expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
+      expect(spawnInput.env.T3CODE_THREAD_ID).toBe("thread-1");
+      expect(ptyAdapter.spawnInputs[1]?.env.T3CODE_THREAD_ID).toBe("thread-1");
       expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
       expect(spawnInput.env.TMUX).toBeUndefined();
@@ -2782,7 +2842,10 @@ it.layer(
       yield* TestClock.adjust("1 second");
       yield* Fiber.join(shutdown);
 
-      expect(process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      const platform = yield* HostProcess.Platform;
+      expect(process.killSignals).toEqual(
+        platform === "win32" ? ["SIGTERM", "SIGKILL"] : ["SIGHUP", "SIGTERM", "SIGKILL"],
+      );
       expect(process.exitListenerCount).toBe(0);
     }).pipe(Effect.provide(TestClock.layer())),
   );
