@@ -607,10 +607,19 @@ const reportOutcome = (state: string | undefined) =>
 const subagentOutput = (text: string) =>
   /^<subagent\b[^>]*>\n?([\s\S]*?)\n?<\/subagent>$/.exec(text.trim())?.[1] ?? text;
 
-// OpenCode keeps "completed" in a report's metadata and says "running" only in its tag
-// when the child goes idle with its own background work still running.
+// When the child goes idle with its own background work still running, OpenCode keeps "completed"
+// in the report's metadata, says "running" only in the tag's state attribute (the description
+// attribute after it is not escaped) and appends the list of that work to the body.
 const reportsRunningWork = (text: string) =>
-  /^<(?:subagent|background-result)\b[^>]*?\sstate="running"/.test(text.trimStart());
+  /^<subagent\s[^>]*?\sstate="([^"]*)"/.exec(text.trimStart())?.[1] === "running";
+
+const STILL_RUNNING = "\n\nBackground work still running:\n";
+// OpenCode's report body for a run that ended without text.
+const NO_TEXT = "Subagent completed without a text response.";
+const withoutRunningWork = (output: string) => {
+  const at = output.lastIndexOf(STILL_RUNNING);
+  return at === -1 ? output : output.slice(0, at);
+};
 
 const isContinuation = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
   turnInput.message.createdBy === "agent" && turnInput.message.creationSource === "provider";
@@ -2236,6 +2245,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* emitSubagent(call);
     });
 
+    // OpenCode reports a busy period only when it wrote a new answer. A child whose work ended in a
+    // quiet one never reports again, nor do the idle subagents above it that were waiting on it.
+    const releaseQuiet = Effect.fnUntraced(function* (state: ThreadState) {
+      for (
+        let current: ThreadState = state;
+        current.subagent !== undefined;
+        current = current.subagent.call.state
+      ) {
+        if (current.active !== undefined || busy.has(current.sessionId) || hasBackground(current))
+          return;
+        const kept = callsAttachedTo(current).filter((call) => call.reported !== undefined);
+        if (kept.length === 0) return;
+        for (const call of kept) yield* settleCall(call, "completed", call.reported);
+      }
+    });
+
     const startChildTurn = Effect.fnUntraced(function* (child: ThreadState) {
       const subagent = child.subagent;
       if (subagent === undefined || child.active !== undefined) return;
@@ -2445,16 +2470,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* settleCall(attached, terminal.status, terminal.failure.message);
           }
         } else if (
+          terminal.status === "completed" &&
           turn.startedSteps === 0 &&
           turn.answer === undefined &&
-          !turn.missedEvents &&
-          !hasBackground(state)
+          !turn.missedEvents
         ) {
-          // OpenCode reports a busy period only when it wrote a new answer, so no later report comes.
-          for (const attached of callsAttachedTo(state)) {
-            if (attached.reported !== undefined)
-              yield* settleCall(attached, "completed", attached.reported);
-          }
+          yield* releaseQuiet(state);
         }
         return;
       }
@@ -3240,10 +3261,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const childId = stringField(payload.metadata, "childID");
       if (stringField(payload.metadata, "source") !== "subagent" || childId === undefined) return;
       strays.delete(childId);
-      const open = [...state.calls.values()].filter(
+      const outcome = reportOutcome(stringField(payload.metadata, "state"));
+      const stopped = state.stoppedChildren.has(childId);
+      const running = outcome === "completed" && !stopped && reportsRunningWork(payload.text);
+      const output = subagentOutput(payload.text);
+      const answer = running ? withoutRunningWork(output) : output;
+      const reporting = [...state.calls.values()].filter(
         (candidate) => candidate.child?.sessionId === childId,
       );
-      const output = subagentOutput(payload.text);
+      // Calls an earlier running report kept wait for the child's work, not for one of its runs.
+      const kept = reporting.filter((candidate) => candidate.reported !== undefined);
+      const open = reporting.filter((candidate) => candidate.reported === undefined);
+      const answered = (candidate: SubagentCall) =>
+        candidate.answer === answer || (candidate.answer === undefined && answer === NO_TEXT);
       const started = open
         .flatMap((candidate) =>
           candidate.run === undefined ? [] : [{ call: candidate, run: candidate.run }],
@@ -3252,9 +3282,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // The report names only the child, and reports arrive in order. So it belongs to the oldest
       // open run, unless that run ended with a different text: then its own report is lost.
       const next = started.find(
-        (candidate) => candidate.call.answer === undefined || candidate.call.answer === output,
+        (candidate) => candidate.call.answer === undefined || answered(candidate.call),
       );
-      const written = next?.call.answer === output ? next.run : undefined;
+      const written = next !== undefined && answered(next.call) ? next.run : undefined;
       const call = written === undefined ? open[0] : next?.call;
       const calls =
         call?.run === undefined
@@ -3263,20 +3293,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const lost = started.flatMap((candidate) =>
         written !== undefined && candidate.run < written ? [candidate.call] : [],
       );
-      const outcome = reportOutcome(stringField(payload.metadata, "state"));
-      const running = outcome === "completed" && reportsRunningWork(payload.text);
+      const named = call ?? kept[0];
       state.reports.set(inboxId, {
         inboxId,
         childId,
         text: payload.text,
         report: {
           kind: "subagent",
-          label: call?.title ?? stringField(payload.metadata, "description"),
-          childThreadId: call?.child?.subagent?.appThread.id,
+          label: named?.title ?? stringField(payload.metadata, "description"),
+          childThreadId: named?.child?.subagent?.appThread.id,
           outcome: running ? "updated" : outcome,
         },
       });
-      const status = state.stoppedChildren.has(childId)
+      const status = stopped
         ? "interrupted"
         : outcome === "failed"
           ? "failed"
@@ -3285,9 +3314,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             : "completed";
       for (const each of lost) yield* settleCall(each, "completed", each.answer);
       for (const each of calls) {
-        if (running && status === "completed" && each.background) each.reported = output;
+        if (running && each.background) each.reported = answer;
         else yield* settleCall(each, status, output);
       }
+      // Any other report means the child went idle with nothing left running.
+      if (!running) for (const each of kept) yield* settleCall(each, status, output);
     });
 
     const holderOf = (sessionId: string) => {
@@ -3825,23 +3856,53 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           .withPermit(recoverImages(state).pipe(Effect.timeout(INVENTORY_TIMEOUT)))
           .pipe(Effect.ignore({ log: true }));
       }
+      // OpenCode's own jobs below a kept call (shells, Code Mode scripts, subagents, images); a
+      // failed read counts as work.
+      const jobsBelow = new Map<string, number | undefined>();
+      if (
+        compareSemverVersions(connection.version, "2.2.6") >= 0 &&
+        connection.runningJobs !== undefined
+      ) {
+        for (const state of background) {
+          for (const call of runningCalls(state)) {
+            const child = call.child?.sessionId;
+            if (call.reported === undefined || child === undefined || jobsBelow.has(child))
+              continue;
+            const jobs = yield* connection
+              .runningJobs(child)
+              .pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.option);
+            jobsBelow.set(child, Option.getOrUndefined(jobs));
+          }
+        }
+      }
       yield* lock.withPermit(
         Effect.gen(function* () {
           for (const state of background) {
+            const kept: Array<SubagentCall> = [];
             for (const call of runningCalls(state)) {
               const child = call.child?.sessionId;
-              if (call.reported !== undefined && call.child !== undefined) {
-                // Its child already reported; only work still running below it keeps the call.
-                const below = sessionsOf(call.child);
-                const working =
-                  below.some((session) => session.sessionId in active) ||
-                  [...shells.values()].some(
-                    (shell) => shell.running && below.includes(shell.state),
-                  );
-                if (!working) yield* settleCall(call, "completed", call.reported);
-              } else if (child === undefined || !(child in active)) {
+              if (call.reported !== undefined && call.child !== undefined) kept.push(call);
+              else if (child === undefined || !(child in active)) {
                 yield* settleCall(call, "interrupted", LOST_BACKGROUND);
               }
+            }
+            // Its child already reported; only work still running below it keeps a kept call.
+            // Deepest first, so the calls below one are settled before it is checked.
+            const deepestFirst = kept.toSorted(
+              (left, right) =>
+                callsAbove(right.state.sessionId).length - callsAbove(left.state.sessionId).length,
+            );
+            for (const call of deepestFirst) {
+              if (call.child === undefined || !isOrchestrationV2WorkActive(call.status)) continue;
+              const below = sessionsOf(call.child);
+              const jobs = jobsBelow.has(call.child.sessionId)
+                ? jobsBelow.get(call.child.sessionId)
+                : 0;
+              const working =
+                jobs === undefined ||
+                jobs > 0 ||
+                below.some((session) => session.sessionId in active || owesWork(session));
+              if (!working) yield* settleCall(call, "completed", call.reported);
             }
             const sessions = sessionsOf(state);
             for (const session of sessions) {

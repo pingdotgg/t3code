@@ -1751,20 +1751,35 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       returnedRunning(tool.id),
     ];
   };
-  const childReport = (inboxID: string, text: string, description = "Sleep", tag = "completed") =>
-    event("session.inbox.enqueued", {
-      inboxID,
-      sessionID: SESSION,
-      item: {
-        type: "synthetic",
-        payload: {
-          text: `<subagent sessionID="${CHILD}" state="${tag}" description="${description}">\n${text}\n</subagent>`,
-          description,
-          metadata: { source: "subagent", childID: CHILD, agent: "General", state: "completed" },
+  const childReport = (
+    inboxID: string,
+    text: string,
+    description = "Sleep",
+    tag = "completed",
+    label?: string,
+  ) =>
+    event(
+      "session.inbox.enqueued",
+      {
+        inboxID,
+        sessionID: SESSION,
+        item: {
+          type: "synthetic",
+          payload: {
+            text: `<subagent sessionID="${CHILD}" state="${tag}" description="${description}">\n${text}\n</subagent>`,
+            description,
+            metadata: {
+              source: "subagent",
+              childID: CHILD,
+              agent: "General",
+              state: tag === "running" ? "completed" : tag,
+            },
+          },
+          delivery: "steer",
         },
-        delivery: "steer",
       },
-    });
+      label,
+    );
   const watchCalls = (
     runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
     thread: OrchestrationV2ProviderThread,
@@ -1773,6 +1788,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const calls = new Map<string, { status: string; result: string | null }>();
       const callsById = new Map<string, { status: string; result: string | null }>();
       const childTurns = new Map<string, string>();
+      const attached = new Set<string>();
       const callsAtChildTurnStart = new Map<
         string,
         Record<string, { status: string; result: string | null }>
@@ -1795,6 +1811,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 status: event.subagent.status,
                 result: event.subagent.result,
               });
+              if (event.subagent.childThreadId !== null) attached.add(event.subagent.title);
             }
             if (event.type === "provider_thread.updated" && event.providerThread.id === thread.id) {
               state.roster = event.providerThread.pendingBackgroundTasks;
@@ -1828,7 +1845,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             yield* until(check);
           });
         });
-      return { calls, callsById, callsAtChildTurnStart, childTurns, state, until };
+      return { calls, callsById, callsAtChildTurnStart, childTurns, attached, state, until };
     });
   const launchedAndRunning = [
     ...backgroundLaunch(CHILD),
@@ -2162,6 +2179,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       model: { id: "big-pickle", providerID: "opencode", variant: "default" },
       started: 1,
     });
+  const settled = (status: string | undefined) => status !== undefined && status !== "running";
   const STARTED = "TESTS_STARTED\n\nBackground work still running:\n- shell (sh_tests): npm test";
   // The child goes idle with its own work running, and OpenCode reports it as running.
   const reportedRunning = [
@@ -2229,12 +2247,284 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           () =>
             watch.calls.get("Sleep")?.status === "completed" && watch.state.roster?.length === 0,
         );
-        assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result: STARTED });
+        assert.deepEqual(watch.calls.get("Sleep"), {
+          status: "completed",
+          result: "TESTS_STARTED",
+        });
       }),
   );
 
+  it.effect("waits for a cancelled report after a kept subagent's turn is interrupted", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["cancelled"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          ...reportedRunning,
+          event("session.execution.started", { sessionID: CHILD }),
+          event("session.execution.interrupted", { sessionID: CHILD }),
+          childReport("msg_report_2", "Stopped", "Sleep", "cancelled", "cancelled"),
+        ],
+        { replayGate: gate },
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      assert.isTrue(yield* Effect.promise(() => gate.waitForReached("cancelled")));
+      yield* watch.until(() => watch.childTurns.get(`${CHILD}:turn:2`) === "interrupted");
+      assert.deepEqual(watch.calls.get("Sleep"), { status: "running", result: null });
+      gate.release("cancelled");
+      yield* watch.until(() => watch.calls.get("Sleep")?.status !== "running");
+      assert.deepEqual(watch.calls.get("Sleep"), { status: "cancelled", result: "Stopped" });
+    }),
+  );
+
+  it.effect("settles a call that joined a kept subagent with the subagent's last report", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        childSaid("TESTS_STARTED"),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report_1", STARTED, "Sleep", "running"),
+        ...callAgain({ background: true }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.started", { sessionID: CHILD }),
+        childStep(2),
+        childSaid("ALSO_DONE", 2),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport(
+          "msg_report_2",
+          "ALSO_DONE\n\nBackground work still running:\n- shell (sh_tests): npm test",
+          "Again",
+          "running",
+        ),
+        event("session.execution.started", { sessionID: CHILD }),
+        childStep(3),
+        childSaid("TESTS_PASSED", 3),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report_3", "TESTS_PASSED", "Again"),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          ["Sleep", "Again"].every((title) => settled(watch.calls.get(title)?.status)) &&
+          watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(Object.fromEntries(watch.calls), {
+        Sleep: { status: "completed", result: "TESTS_PASSED" },
+        Again: { status: "completed", result: "TESTS_PASSED" },
+      });
+    }),
+  );
+
+  it.effect("settles a call whose Stop never reached its child at the child's running report", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { status: 500, body: {} }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+        childReport("msg_report_1", STARTED, "Sleep", "running"),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => watch.attached.has("Sleep"));
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* watch.until(() => settled(watch.calls.get("Sleep")?.status));
+      assert.equal(watch.calls.get("Sleep")?.status, "interrupted");
+    }),
+  );
+
+  it.effect("settles a completed report whose description quotes a running state", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        childSaid("DONE"),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report_1", "DONE", 'Review state="running" fix'),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () => settled(watch.calls.get("Sleep")?.status) && watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result: "DONE" });
+    }),
+  );
+
+  it.effect("matches a report of a run that wrote no text to that run", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        ...callAgain({ background: true }),
+        childSaid("FIRST_OK"),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        ...callAgain({ background: true }, { id: "call-later", writesRules: false }),
+        event("session.execution.started", { sessionID: CHILD }),
+        childStep(2),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report_2", "Subagent completed without a text response.", "Again"),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          ["call-background", "call-again", "call-later"].every(
+            (id) => watch.callsById.get(id)?.status === "completed",
+          ) && watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(Object.fromEntries(watch.callsById), {
+        "call-background": { status: "completed", result: "FIRST_OK" },
+        "call-again": { status: "completed", result: "FIRST_OK" },
+        "call-later": {
+          status: "completed",
+          result: "Subagent completed without a text response.",
+        },
+      });
+    }),
+  );
+
+  const GRAND = "ses_f1485c529ffeGrandchild00000";
+  const grand = { sessionID: CHILD, assistantMessageID: "msg_child_grand", id: "call-grand" };
+  const running = (body: string) =>
+    `${body}\n\nBackground work still running:\n- shell (sh_tests): npm test`;
+  // The child and its own background subagent both report while the grandchild's work runs.
+  const keptChain = [
+    ...launchedAndRunning,
+    event("session.tool.input.started", { ...grand, name: "subagent" }),
+    event("session.tool.called", {
+      ...grand,
+      name: "subagent",
+      input: { description: "Grand", prompt: "test", background: true },
+      executed: false,
+    }),
+    event("session.created", { ...childCreated(GRAND), parentID: CHILD, title: "Grand" }),
+    event("session.tool.progress", { ...grand, metadata: { sessionID: GRAND, status: "running" } }),
+    event("session.tool.success", {
+      ...grand,
+      content: [{ type: "text", text: "The subagent is working in the background." }],
+      metadata: { sessionID: GRAND, status: "running" },
+      executed: true,
+    }),
+    event("session.execution.started", { sessionID: GRAND }),
+    childSaid("CHILD_STARTED"),
+    event("session.execution.succeeded", { sessionID: CHILD }),
+    event("session.execution.succeeded", { sessionID: SESSION }),
+    childReport("msg_report_1", running("CHILD_STARTED"), "Sleep", "running"),
+    event("session.text.ended", {
+      sessionID: GRAND,
+      assistantMessageID: "msg_grand_1",
+      ordinal: 0,
+      text: "GRAND_STARTED",
+    }),
+    event("session.execution.succeeded", { sessionID: GRAND }),
+    event("session.inbox.enqueued", {
+      inboxID: "msg_grand_report",
+      sessionID: CHILD,
+      item: {
+        type: "synthetic",
+        payload: {
+          text: `<subagent sessionID="${GRAND}" state="running" description="Grand">\n${running("GRAND_STARTED")}\n</subagent>`,
+          description: "Grand",
+          metadata: { source: "subagent", childID: GRAND, agent: "General", state: "completed" },
+        },
+        delivery: "steer",
+      },
+    }),
+    event("session.execution.started", { sessionID: CHILD }),
+    childStep(2),
+    childSaid("CHILD_WAITING", 2),
+    event("session.execution.succeeded", { sessionID: CHILD }),
+    childReport("msg_report_2", running("CHILD_WAITING"), "Sleep", "running"),
+  ];
+  const settledChain = (replay: ReadonlyArray<ProviderReplayEntry>) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(replay);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          ["Sleep", "Grand"].every((title) => watch.calls.get(title)?.status === "completed") &&
+          watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(Object.fromEntries(watch.calls), {
+        Sleep: { status: "completed", result: "CHILD_STARTED" },
+        Grand: { status: "completed", result: "GRAND_STARTED" },
+      });
+    });
+
+  it.effect("releases kept subagents up a chain when the deepest one's work ends quietly", () =>
+    settledChain([
+      ...keptChain,
+      event("session.execution.started", { sessionID: GRAND }),
+      event("session.execution.succeeded", { sessionID: GRAND }),
+    ]),
+  );
+
+  it.effect("after a reconnect, settles a chain of kept subagents whose work all ended", () =>
+    settledChain([
+      ...keptChain,
+      { type: "runtime_exit", status: "success" } as const,
+      out("event.subscribe"),
+      out("session.active"),
+      replyData("session.active", {}),
+    ]),
+  );
+
   it.effect.each([
-    { name: "nothing runs below it", active: {}, result: STARTED },
+    {
+      name: "a Code Mode script still runs below it",
+      jobs: [{ kind: "codemode", status: "running" }],
+    },
+    {
+      name: "only finished jobs remain below it",
+      jobs: [{ kind: "codemode", status: "completed" }],
+    },
+  ])("after a reconnect, keeps a kept subagent only while $name", ({ jobs }) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          ...reportedRunning,
+          { type: "runtime_exit", status: "success" } as const,
+          out("event.subscribe"),
+          out("rpc.call", "<any>"),
+          out("rpc.call", "<any>"),
+          reply("rpc.call", { output: null }),
+          reply("rpc.call", { output: null }),
+          out("job.list", { sessionID: SESSION, kind: "shell", descendants: "true" }),
+          reply("job.list", { data: [] }),
+          out("job.list", { sessionID: CHILD, kind: "shell", descendants: "true" }),
+          reply("job.list", { data: [] }),
+          out("session.active"),
+          replyData("session.active", {}),
+          out("job.list", { sessionID: CHILD, descendants: "true" }),
+          reply("job.list", {
+            data: jobs.map((job) => ({ ...job, id: "job_1", sessionID: CHILD })),
+          }),
+          // The reconnect has finished before this arrives; only a call it kept takes it.
+          childReport("msg_report_2", "TESTS_PASSED"),
+        ],
+        { version: "2.2.6" },
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => settled(watch.calls.get("Sleep")?.status));
+      assert.deepEqual(watch.calls.get("Sleep"), {
+        status: "completed",
+        result: jobs[0]!.status === "running" ? "TESTS_PASSED" : "TESTS_STARTED",
+      });
+    }),
+  );
+
+  it.effect.each([
+    { name: "nothing runs below it", active: {}, result: "TESTS_STARTED" },
     {
       name: "its child runs again",
       active: { [CHILD]: { type: "running" } },
