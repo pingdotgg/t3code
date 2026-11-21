@@ -288,6 +288,13 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
       "office:scripts",
       "draw:object",
       "draw:object-ole",
+      "text:table-of-content-source",
+      "text:illustration-index-source",
+      "text:table-index-source",
+      "text:object-index-source",
+      "text:user-index-source",
+      "text:alphabetical-index-source",
+      "text:bibliography-source",
     ].includes(node.name)
   )
     return "";
