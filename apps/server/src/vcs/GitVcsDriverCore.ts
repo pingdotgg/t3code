@@ -543,6 +543,9 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
     /^[ \t]*![ \t]+\[rejected\][^\n]*\((?:non-fast-forward|fetch first)\)[\s\S]*^error: failed to push some refs/im,
     "push_rejected_non_fast_forward",
   ],
+  [/: No space left on device$/im, "disk_full"],
+  // After authentication_failed, which owns SSH's "Permission denied (publickey)".
+  [/^(?:fatal|error): .*: Permission denied$/im, "permission_denied"],
 ];
 
 // Reasons the user can act on get a sentence in place of the generic detail.
@@ -553,13 +556,16 @@ const GIT_FAILURE_REASON_DETAILS: Partial<Record<GitCommandFailureReason, string
     "The remote has commits this branch doesn't have. Pull or rebase, then push again.",
   config_locked:
     "Another Git process kept the repository's config locked. Wait for it to finish, then retry.",
+  disk_full: "The disk is full. Free up space, then retry.",
+  permission_denied:
+    "Git was denied access to a file or folder it needed. Check that the location is writable, then retry.",
 };
 
-function gitFailureDetail(reason: GitCommandFailureReason | null): string {
-  return (
-    (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ??
-    "Git command exited with a non-zero status."
-  );
+function gitFailureDetail(
+  reason: GitCommandFailureReason | null,
+  fallback = "Git command exited with a non-zero status.",
+): string {
+  return (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ?? fallback;
 }
 
 // Existing non-commit objects share the missing-ref fatal diagnostic; Git
@@ -1294,7 +1300,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
             ...(reason === null ? {} : { reason }),
-            detail: options.fallbackErrorDetail ?? gitFailureDetail(reason),
+            detail: gitFailureDetail(reason, options.fallbackErrorDetail),
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
