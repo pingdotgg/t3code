@@ -16,6 +16,7 @@ mod shell;
 mod sidebar;
 mod superhero;
 mod theme;
+mod vibrancy;
 
 use app::ConnApp;
 use conn_theme::Tokens;
@@ -56,6 +57,7 @@ fn main() {
         gpui_kit::init(cx);
         fonts::register(cx);
         colour_space::install(cx);
+        vibrancy::install(cx);
         let theme = live::initial_theme();
         let tokens = Tokens::derive(&theme);
         theme::apply_kit_theme(&tokens, cx);
@@ -90,7 +92,8 @@ fn main() {
                         px(MACOS_TRAFFIC_LIGHT_Y_PX),
                     )),
                 }),
-                window_background: WindowBackgroundAppearance::Blurred,
+                // Transparent: `vibrancy.rs` adds Conn's untouched under-window material behind it.
+                window_background: WindowBackgroundAppearance::Transparent,
                 app_owns_titlebar_drag: true,
                 window_min_size: Some(size(px(MIN_WINDOW_WIDTH_PX), px(MIN_WINDOW_HEIGHT_PX))),
                 app_id: Some("conn".into()),
