@@ -1087,9 +1087,22 @@ describe("question answer paths", () => {
           ext: "odp",
           parts: {
             "content.xml":
-              "<office:document><draw:page><draw:frame><draw:text-box><text:p>\n  First\n\t  slide </text:p></draw:text-box></draw:frame></draw:page><draw:page><text:p>Second</text:p></draw:page></office:document>",
+              "<office:document>" +
+              "<draw:page><draw:frame><draw:text-box><text:p>\n  First\n\t  slide </text:p></draw:text-box></draw:frame>" +
+              "<svg:title>Overview</svg:title>" +
+              "<presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>" +
+              "<draw:page><text:p>Second</text:p><presentation:notes><draw:g><draw:page-thumbnail>" +
+              "<svg:title>Slide preview</svg:title><svg:desc>Thumbnail metadata</svg:desc>" +
+              "</draw:page-thumbnail></draw:g></presentation:notes></draw:page>" +
+              "<draw:page><text:p>Third</text:p><presentation:notes><draw:frame><draw:text-box>" +
+              '<table:table><table:table-column/><table:table-row><table:table-cell office:value-type="float" office:value="42"/></table:table-row></table:table>' +
+              "</draw:text-box></draw:frame></presentation:notes></draw:page></office:document>",
           },
-          expected: ["## Slide 1\nFirst slide\n\n## Slide 2\nSecond"],
+          expected: [
+            "## Slide 1\nFirst slide\nOverview\nNotes:\nSpeaker only\n\n## Slide 2\nSecond\n\n## Slide 3\nThird\n\nNotes:\n42",
+          ],
+          occurrences: { text: "\nNotes:", count: 2 },
+          absent: ["Slide preview", "Thumbnail metadata"],
         },
         {
           ext: "ods",
