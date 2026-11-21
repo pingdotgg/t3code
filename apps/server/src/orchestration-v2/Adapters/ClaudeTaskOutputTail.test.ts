@@ -298,6 +298,41 @@ describe("tailClaudeTaskOutput", () => {
       assert.equal(existsCount, 2);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect(
+    "skips the task-file probe when stop completes during the session-directory check",
+    () =>
+      Effect.gen(function* () {
+        const baseFs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* baseFs.makeTempDirectoryScoped({ prefix: "claude-task-output-" });
+        const stop = yield* Deferred.make<void>();
+        const probes: Array<string> = [];
+        const fakeFs: FileSystem.FileSystem = {
+          ...baseFs,
+          readDirectory: (target, options) =>
+            target === root ? Effect.succeed(["project-0"]) : baseFs.readDirectory(target, options),
+          exists: (target) =>
+            Effect.suspend(() => {
+              probes.push(target);
+              // The session directory exists; stop lands while that check is in flight.
+              return target === path.join(root, "project-0", SESSION_ID)
+                ? Deferred.succeed(stop, undefined).pipe(Effect.as(true))
+                : Effect.succeed(false);
+            }),
+        };
+
+        yield* tailClaudeTaskOutput({
+          root,
+          sessionId: SESSION_ID,
+          taskId: TASK_ID,
+          stop,
+          onChunk: () => Effect.void,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, fakeFs));
+
+        assert.deepEqual(probes, [path.join(root, "project-0", SESSION_ID)]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("claudeTaskOutputRoot", () => {

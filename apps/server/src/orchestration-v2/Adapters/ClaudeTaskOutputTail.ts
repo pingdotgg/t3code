@@ -75,6 +75,7 @@ const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
       input.projectCache.set(input.sessionId, project);
       return { kind: "found" as const, file: candidate };
     }
+    if (yield* shouldAbort()) return { kind: "aborted" as const };
     if (yield* exists(path.join(input.root, project, input.sessionId))) {
       if (rememberSessionDir) input.projectCache.set(input.sessionId, project);
       return { kind: "session_exists" as const };
@@ -87,7 +88,7 @@ const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
   if (cachedProject !== undefined) {
     const result = yield* probeKnownProject(cachedProject, false);
     if (result.kind === "found") return Option.some(result.file);
-    if (result.kind === "session_exists") return Option.none<string>();
+    if (result.kind === "session_exists" || result.kind === "aborted") return Option.none<string>();
     input.projectCache.delete(input.sessionId);
   }
 
@@ -98,7 +99,8 @@ const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
       if (yield* shouldAbort()) return Option.none<string>();
       const result = yield* probeKnownProject(directSlug, true);
       if (result.kind === "found") return Option.some(result.file);
-      if (result.kind === "session_exists") return Option.none<string>();
+      if (result.kind === "session_exists" || result.kind === "aborted")
+        return Option.none<string>();
     }
     if (!input.realSlugRef.resolved) {
       input.realSlugRef.resolved = true;
@@ -115,7 +117,8 @@ const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
       if (yield* shouldAbort()) return Option.none<string>();
       const result = yield* probeKnownProject(realSlug, true);
       if (result.kind === "found") return Option.some(result.file);
-      if (result.kind === "session_exists") return Option.none<string>();
+      if (result.kind === "session_exists" || result.kind === "aborted")
+        return Option.none<string>();
     }
   }
 
@@ -127,6 +130,7 @@ const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
     if (yield* shouldAbort()) return Option.none<string>();
     // Unrelated project dirs and regular files fail in one stat before probing tasks/<id>.output.
     if (!(yield* exists(path.join(input.root, project, input.sessionId)))) continue;
+    if (yield* shouldAbort()) return Option.none<string>();
     const candidate = taskOutputFile(path, input.root, project, input.sessionId, input.taskId);
     if (yield* exists(candidate)) {
       input.projectCache.set(input.sessionId, project);
