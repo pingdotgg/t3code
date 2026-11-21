@@ -45,6 +45,7 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
         { environment: { capabilities: { pullRequests: true, issues: state.issuesSupported } } },
       ],
     ])) as never,
+  useHasServerConfig: () => true,
   useProjects: (() => state.projects) as never,
   useQuietThreadShell: ((ref: unknown) =>
     ref === null ? null : { branch: null, pullRequests: state.pullRequests }) as never,
