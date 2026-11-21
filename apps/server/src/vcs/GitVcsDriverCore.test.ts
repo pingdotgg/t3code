@@ -881,9 +881,19 @@ it.effect("resolves a branch's base once while its refs and branch config are un
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
       const spawnedArgs: Array<ReadonlyArray<string>> = [];
+      let failRemoteLookup = false;
       const spawner = ChildProcessSpawner.make((command) => {
-        if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args.map(String));
-        return delegate.spawn(command);
+        if (!ChildProcess.isStandardCommand(command)) return delegate.spawn(command);
+        spawnedArgs.push(command.args.map(String));
+        return failRemoteLookup && command.args[0] === "remote"
+          ? Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "ChildProcess",
+                method: "spawn",
+              }),
+            )
+          : delegate.spawn(command);
       });
       const driver = yield* makeGitVcsDriverCore().pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -927,6 +937,23 @@ it.effect("resolves a branch's base once while its refs and branch config are un
         "main",
       ]);
       yield* driver.statusDetailsLocal(cwd);
+      assert.equal(lookups(), 1);
+
+      // A fallback forced by a failed remote lookup is resolved again once git recovers.
+      yield* git(cwd, [
+        "config",
+        "--file",
+        includedConfig,
+        "--unset",
+        "branch.feature/x.t3-merge-base",
+      ]);
+      yield* git(cwd, ["config", "--unset", "branch.feature/x.t3-merge-base-ref"]);
+      failRemoteLookup = true;
+      yield* driver.getReviewDiffPreview({ cwd });
+      failRemoteLookup = false;
+      lookups();
+      yield* driver.getReviewDiffPreview({ cwd });
+      yield* driver.getReviewDiffPreview({ cwd });
       assert.equal(lookups(), 1);
     }),
   ).pipe(Effect.provide(layerTest)),

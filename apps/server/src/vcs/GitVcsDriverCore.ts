@@ -2257,7 +2257,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     refName: string,
     options?: { readonly allowRemoteOfCurrent?: boolean },
-    trace?: { dependsOnRemoteOfCurrent: boolean },
+    trace?: { dependsOnRemoteOfCurrent: boolean; degraded: boolean },
   ) {
     const configuredBaseRef = yield* readConfigValue(cwd, `branch.${refName}.t3-merge-base-ref`);
     if (
@@ -2291,8 +2291,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       if (trackedBase !== null) return trackedBase;
     }
 
-    const primaryRemoteName = yield* resolvePrimaryRemoteName(cwd).pipe(
-      Effect.orElseSucceed(() => null),
+    const primaryRemoteName = yield* findPrimaryRemoteName(cwd).pipe(
+      Effect.orElseSucceed(() => {
+        if (trace) trace.degraded = true;
+        return null;
+      }),
     );
     const candidates = [
       Effect.succeed(configuredBaseBranch),
@@ -2419,14 +2422,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   );
   const baseBranchCache = yield* Cache.makeWith(
     Effect.fnUntraced(function* (key: BaseBranchCacheKey) {
-      const trace = { dependsOnRemoteOfCurrent: false };
+      const trace = { dependsOnRemoteOfCurrent: false, degraded: false };
       const base = yield* findBaseBranchForNoUpstream(
         key.cwd,
         key.refName,
         { allowRemoteOfCurrent: key.allowRemoteOfCurrent },
         trace,
       );
-      return { base, dependsOnRemoteOfCurrent: trace.dependsOnRemoteOfCurrent };
+      return { base, ...trace };
     }),
     {
       capacity: 2_048,
@@ -2460,11 +2463,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         inputsStamp,
       };
       const allowRemoteOfCurrent = options?.allowRemoteOfCurrent === true;
-      const entry = yield* Cache.get(
-        baseBranchCache,
-        new BaseBranchCacheKey({ ...key, allowRemoteOfCurrent }),
-      );
-      if (!entry.dependsOnRemoteOfCurrent) {
+      const cacheKey = new BaseBranchCacheKey({ ...key, allowRemoteOfCurrent });
+      const entry = yield* Cache.get(baseBranchCache, cacheKey);
+      // A fallback forced by a failed remote lookup must not outlive the failure.
+      if (entry.degraded) {
+        yield* Cache.invalidate(baseBranchCache, cacheKey);
+      } else if (!entry.dependsOnRemoteOfCurrent) {
         yield* Cache.set(
           baseBranchCache,
           new BaseBranchCacheKey({ ...key, allowRemoteOfCurrent: !allowRemoteOfCurrent }),
