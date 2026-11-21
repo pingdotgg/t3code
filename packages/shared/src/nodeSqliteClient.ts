@@ -214,6 +214,8 @@ try {
     allowExtension: workerData.allowExtension,
   });
   next.exec("PRAGMA busy_timeout = 5000;");
+  // Callers set pragmas only on the writer, so a reader would sort and build temp tables in files.
+  next.exec("PRAGMA temp_store = MEMORY;");
   // Reads the header, so a file that is not a database fails here rather than on first use.
   const mode = String(next.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase();
   // Without WAL a reader's shared lock blocks the writer's commits, so refuse.
