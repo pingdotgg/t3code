@@ -550,27 +550,30 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --pane-cut-center: 0 100%;
 }
 
-:is(
-  [data-pane-cut="end-notch"],
-  [data-pane-cut="start-after-notch"],
-  [data-pane-cut="end-before-notch"]
-) {
-  &::before {
-    content: none;
-  }
-
-  & > span {
-    position: sticky;
-    flex: none;
-    container-type: scroll-state;
-  }
-
-  & > span > span {
-    display: block;
-  }
+/* Plain lists, not :is(): a pseudo-element subject under :is() is tried on every
+   element, and an :is() ancestor keeps Blink's ancestor filter from rejecting spans. */
+[data-pane-cut="end-notch"]::before,
+[data-pane-cut="start-after-notch"]::before,
+[data-pane-cut="end-before-notch"]::before {
+  content: none;
 }
 
-:is([data-pane-cut="end-notch"], [data-pane-cut="end-before-notch"]) > span {
+[data-pane-cut="end-notch"] > span,
+[data-pane-cut="start-after-notch"] > span,
+[data-pane-cut="end-before-notch"] > span {
+  position: sticky;
+  flex: none;
+  container-type: scroll-state;
+}
+
+[data-pane-cut="end-notch"] > span > span,
+[data-pane-cut="start-after-notch"] > span > span,
+[data-pane-cut="end-before-notch"] > span > span {
+  display: block;
+}
+
+[data-pane-cut="end-notch"] > span,
+[data-pane-cut="end-before-notch"] > span {
   right: 0;
 }
 
@@ -582,7 +585,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   visibility: hidden;
 }
 
-:is([data-pane-cut="start-after-notch"], [data-pane-cut="end-before-notch"]) > span > span {
+[data-pane-cut="start-after-notch"] > span > span,
+[data-pane-cut="end-before-notch"] > span > span {
   opacity: 0;
   transition: opacity var(--panel-animation-duration, 150ms) ease-out;
 }
@@ -646,7 +650,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       [data-slot="sidebar"][data-variant="inset"]
       ~ [data-slot="sidebar-inset"]
       [data-layout-pane-id][data-pane-notched]
-      > :is([data-pane-cut="start-after-notch"], [data-pane-cut="end-before-notch"]) {
+      > [data-pane-cut="start-after-notch"],
+    .black-chrome
+      [data-slot="sidebar"][data-variant="inset"]
+      ~ [data-slot="sidebar-inset"]
+      [data-layout-pane-id][data-pane-notched]
+      > [data-pane-cut="end-before-notch"] {
       display: none;
     }
   }
@@ -1179,12 +1188,25 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --well-fill: var(--raised-fill);
   --well-rim: var(--raised-rim);
   --well-shadow: var(--raised-shadow);
+}
 
-  &:is(:hover, [data-pressed]):not([data-popup-open]) {
-    --well-fill: var(--raised-hover-fill);
-    --well-rim: var(--raised-hover-rim);
-    --well-shadow: var(--raised-hover-shadow);
-  }
+/* Not nested above: a state under a selector list compiles to one :is() that every
+   element tries. The preview's repeated class keeps that :is()'s specificity. */
+:root:is(:not([data-surface-style]), [data-surface-style="gradient-rim"])
+  :where(
+    [data-slot="select-trigger"],
+    [data-slot="combobox-trigger"],
+    [data-settings-picker]
+  ).surface-well:not([data-surface-preview] *):is(:hover, [data-pressed]):not([data-popup-open]),
+[data-surface-preview="gradient-rim"]
+  :where(
+    [data-slot="select-trigger"],
+    [data-slot="combobox-trigger"],
+    [data-settings-picker]
+  ).surface-well.surface-well.surface-well:is(:hover, [data-pressed]):not([data-popup-open]) {
+  --well-fill: var(--raised-hover-fill);
+  --well-rim: var(--raised-hover-rim);
+  --well-shadow: var(--raised-hover-shadow);
 }
 
 :where([data-slot="checkbox"], [data-slot="radio"])[data-unchecked]:not([aria-invalid="true"]) {
@@ -1922,9 +1944,8 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --bp-sidebar-shift: calc(var(--sidebar-width) * -1);
 }
 
-[data-panel-animations="true"]
-  > [data-chrome-art-layer="dev"]
-  :is([data-bp-sidebar], [data-bp-at="pane-left"]) {
+[data-panel-animations="true"] > [data-chrome-art-layer="dev"] [data-bp-sidebar],
+[data-panel-animations="true"] > [data-chrome-art-layer="dev"] [data-bp-at="pane-left"] {
   transition: translate var(--panel-animation-duration) ease-out;
 }
 
@@ -2307,7 +2328,9 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     }
   }
 
-  :is(html[data-theme-id="t3-chat"], html[data-theme-id="ocean"], html[data-theme-id="iris"]) {
+  html[data-theme-id="t3-chat"],
+  html[data-theme-id="ocean"],
+  html[data-theme-id="iris"] {
     --stage-night-top: color-mix(in oklch, var(--stage-art-top) 38%, var(--stage-night-base-top));
     --stage-night-mid: color-mix(in oklch, var(--stage-art-mid) 38%, var(--stage-night-base-mid));
     --stage-night-bottom: color-mix(
@@ -2329,13 +2352,11 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     --stage-night-line: color-mix(in oklch, var(--stage-art-line) 82%, oklch(1 0 0));
   }
 
-  :is(
-    html[data-theme-id="t3-chat"],
-    html[data-theme-id="grove"],
-    html[data-theme-id="ocean"],
-    html[data-theme-id="ember"],
-    html[data-theme-id="iris"]
-  ) {
+  html[data-theme-id="t3-chat"],
+  html[data-theme-id="grove"],
+  html[data-theme-id="ocean"],
+  html[data-theme-id="ember"],
+  html[data-theme-id="iris"] {
     --stage-art-celeste-highlight: var(--stage-art-highlight);
     --stage-art-celeste-secondary: var(--stage-art-secondary);
     --stage-art-violet-highlight: var(--stage-art-highlight);
@@ -3190,8 +3211,10 @@ html[data-theme-id]:not([data-theme-id=""]) {
 /* Raised controls sit one step above the surface they are on: the page's surface
    role (dark, above), or the overlay inside menus, popovers and dialogs (below). */
 html[data-theme-id]:not([data-theme-id=""]),
-html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"]
-  :is(.surface-popover, .surface-palette, .surface-dialog, .surface-tooltip) {
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"] .surface-popover,
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"] .surface-palette,
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"] .surface-dialog,
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"] .surface-tooltip {
   --raised-fill: linear-gradient(
     color-mix(in srgb, var(--raised-base) 94%, white),
     color-mix(in srgb, var(--raised-base) 94%, white)
@@ -3239,23 +3262,81 @@ html[data-theme-id]:not([data-theme-id=""]) {
   }
 }
 
-html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"]
-  :is(.surface-popover, .surface-palette, .surface-dialog, .surface-tooltip) {
-  @variant dark {
-    --raised-base: var(--popover);
-    --contrast-muted-foreground: var(--overlay-muted-foreground);
-    --contrast-dim-foreground: var(--overlay-dim-foreground);
-    --contrast-placeholder: var(--overlay-placeholder);
-    --contrast-secondary-label: var(--overlay-secondary-label);
-    --contrast-icon-muted: var(--overlay-icon-muted);
+/* One rule per surface: a variant under a selector list compiles to one :is() that
+   every element tries. */
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"] {
+  & .surface-popover {
+    @variant dark {
+      --raised-base: var(--popover);
+      --contrast-muted-foreground: var(--overlay-muted-foreground);
+      --contrast-dim-foreground: var(--overlay-dim-foreground);
+      --contrast-placeholder: var(--overlay-placeholder);
+      --contrast-secondary-label: var(--overlay-secondary-label);
+      --contrast-icon-muted: var(--overlay-icon-muted);
+    }
+  }
+
+  & .surface-palette {
+    @variant dark {
+      --raised-base: var(--popover);
+      --contrast-muted-foreground: var(--overlay-muted-foreground);
+      --contrast-dim-foreground: var(--overlay-dim-foreground);
+      --contrast-placeholder: var(--overlay-placeholder);
+      --contrast-secondary-label: var(--overlay-secondary-label);
+      --contrast-icon-muted: var(--overlay-icon-muted);
+    }
+  }
+
+  & .surface-dialog {
+    @variant dark {
+      --raised-base: var(--popover);
+      --contrast-muted-foreground: var(--overlay-muted-foreground);
+      --contrast-dim-foreground: var(--overlay-dim-foreground);
+      --contrast-placeholder: var(--overlay-placeholder);
+      --contrast-secondary-label: var(--overlay-secondary-label);
+      --contrast-icon-muted: var(--overlay-icon-muted);
+    }
+  }
+
+  & .surface-tooltip {
+    @variant dark {
+      --raised-base: var(--popover);
+      --contrast-muted-foreground: var(--overlay-muted-foreground);
+      --contrast-dim-foreground: var(--overlay-dim-foreground);
+      --contrast-placeholder: var(--overlay-placeholder);
+      --contrast-secondary-label: var(--overlay-secondary-label);
+      --contrast-icon-muted: var(--overlay-icon-muted);
+    }
   }
 }
 
 /* --primary and --destructive are fills in named themes; their text keeps the
-   hue at a readable lightness. Re-resolved where a subtree redefines --primary. */
+   hue at a readable lightness. Re-resolved where a subtree redefines --primary.
+   One rule per subject: a variant under a selector list compiles to one :is() that
+   every element tries. The root repeats [data-theme-id] to keep the list's specificity. */
 html[data-theme-id]:not([data-theme-id=""]) {
-  &,
-  & [data-chrome-scope],
+  &[data-theme-id] {
+    @variant light {
+      --primary-text: oklch(from var(--primary) min(l, 0.55) c h);
+      --destructive-text: oklch(from var(--destructive) min(l, 0.55) c h);
+    }
+    @variant dark {
+      --primary-text: oklch(from var(--primary) max(l, 0.76) c h);
+      --destructive-text: oklch(from var(--destructive) max(l, 0.76) c h);
+    }
+  }
+
+  & [data-chrome-scope] {
+    @variant light {
+      --primary-text: oklch(from var(--primary) min(l, 0.55) c h);
+      --destructive-text: oklch(from var(--destructive) min(l, 0.55) c h);
+    }
+    @variant dark {
+      --primary-text: oklch(from var(--primary) max(l, 0.76) c h);
+      --destructive-text: oklch(from var(--destructive) max(l, 0.76) c h);
+    }
+  }
+
   & [data-app-sidebar] {
     @variant light {
       --primary-text: oklch(from var(--primary) min(l, 0.55) c h);
@@ -3484,7 +3565,10 @@ html[data-theme-id] [data-mobile="true"] [data-app-sidebar] {
    leans toward the sidebar text to keep the default's contrast. */
 html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome)
   [data-app-sidebar]
-  :is(.bg-sidebar-row-active, .surface-sidebar-row-selected) {
+  .bg-sidebar-row-active,
+html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome)
+  [data-app-sidebar]
+  .surface-sidebar-row-selected {
   --secondary-label: color-mix(
     in oklab,
     var(--app-theme-secondary-label) 40%,
@@ -3622,14 +3706,25 @@ html:root[data-theme-id="t3-code-classic"] .surface-dialog {
   }
 }
 
-html:root[data-theme-id="t3-code-classic"] :is(.surface-popover, .surface-palette) {
+html:root[data-theme-id="t3-code-classic"] .surface-popover,
+html:root[data-theme-id="t3-code-classic"] .surface-palette {
   background: var(
     --style-overlay-background,
     color-mix(in srgb, var(--popover) 83.6%, transparent)
   );
   border-color: var(--style-border, color-mix(in srgb, var(--foreground) 10%, transparent));
   backdrop-filter: var(--style-backdrop, blur(12px) saturate(1.14));
+}
 
+/* One rule per surface: a variant under a selector list compiles to one :is() that
+   every element tries. */
+html:root[data-theme-id="t3-code-classic"] .surface-popover {
+  @variant dark {
+    backdrop-filter: var(--style-backdrop, blur(16px) saturate(1.08));
+  }
+}
+
+html:root[data-theme-id="t3-code-classic"] .surface-palette {
   @variant dark {
     backdrop-filter: var(--style-backdrop, blur(16px) saturate(1.08));
   }
@@ -3657,8 +3752,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome:is(
     [data-surface-style="aqua-blue"]
   )
   [data-chrome-scope],
-html:root[data-theme-id="t3-code-classic"]
-  :is([data-surface-preview="aqua-gloss-full"], [data-surface-preview="aqua-blue"]) {
+html:root[data-theme-id="t3-code-classic"] [data-surface-preview="aqua-gloss-full"],
+html:root[data-theme-id="t3-code-classic"] [data-surface-preview="aqua-blue"] {
   --lit-fill: linear-gradient(
     var(--primary),
     color-mix(in srgb, var(--primary) 92%, black) 50%,
@@ -4758,7 +4853,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --tree-row-selected-rim: var(--sidebar-row-selected-rim) !important;
 }
 
-:is([data-slot="checkbox-indicator"], [data-slot="radio-indicator"]) {
+[data-slot="checkbox-indicator"],
+[data-slot="radio-indicator"] {
   border: var(--checked-indicator-border, 0px) solid transparent;
 }
 
@@ -4854,9 +4950,13 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --command-footer-shadow: none;
 }
 
+/* The repeated class keeps the specificity of the :is() this replaced. */
 :where(:root[data-surface-style="flat"], [data-surface-preview="flat"])
   [data-slot="toggle-group"]:is([data-variant="segmented"], [data-variant="segmented-slide"])
-  > :is([data-slot="toggle"][data-variant="segmented"][data-pressed], .surface-raised) {
+  > [data-slot="toggle"][data-variant="segmented"][data-pressed],
+:where(:root[data-surface-style="flat"], [data-surface-preview="flat"])
+  [data-slot="toggle-group"]:is([data-variant="segmented"], [data-variant="segmented-slide"])
+  > .surface-raised.surface-raised.surface-raised {
   background: color-mix(in srgb, var(--flat-high) 88%, var(--foreground));
 }
 
@@ -5029,7 +5129,9 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 }
 
 :root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
-  :is(.chat-markdown-codeblock, .chat-markdown-table-container) {
+  .chat-markdown-codeblock,
+:root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
+  .chat-markdown-table-container {
   --well-fill: var(--style-container-fill);
 }
 
@@ -5046,7 +5148,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 /* Aqua's gloss stays on controls. Pane tabs and the composer body keep the default style's
    calm faces, so the split does not run across the app's structure. */
 :root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"]) > body,
-:is([data-surface-preview="aqua-gloss-full"], [data-surface-preview="aqua-blue"]),
+[data-surface-preview="aqua-gloss-full"],
+[data-surface-preview="aqua-blue"],
 :root.black-chrome:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
   [data-chrome-scope] {
   --pane-tab-fill: transparent;
@@ -5109,7 +5212,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --sidebar-row-selected-rim: transparent !important;
 }
 
-:root[data-surface-style="gradient-rim-everywhere"] :is(.surface-card, .surface-card-settings) {
+:root[data-surface-style="gradient-rim-everywhere"] .surface-card,
+:root[data-surface-style="gradient-rim-everywhere"] .surface-card-settings {
   border: 1px solid transparent;
 }
 
@@ -5738,20 +5842,15 @@ body {
   color: var(--info-foreground);
 }
 
+/* One selector, not a list: the build wraps a list holding :has() in one :is() that
+   every element tries. */
 .chat-markdown
   a:not(
     .chat-markdown-file-link,
     :has([data-slot="context-chip-label"]),
     [data-response-card],
     [data-markdown-image-link]
-  ):hover,
-.chat-markdown
-  a:not(
-    .chat-markdown-file-link,
-    :has([data-slot="context-chip-label"]),
-    [data-response-card],
-    [data-markdown-image-link]
-  ):focus-visible {
+  ):is(:hover, :focus-visible) {
   background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
   background-position: left bottom;
   background-repeat: repeat-x;
@@ -5963,7 +6062,8 @@ body {
 }
 
 /* Bound prose at word boundaries without splitting identifiers to fit the lane. */
-.chat-markdown-table-container :is(th, td) {
+.chat-markdown-table-container th,
+.chat-markdown-table-container td {
   @apply text-body text-foreground;
   padding: 0.5rem 0.75rem;
   text-align: start;
@@ -5984,7 +6084,8 @@ body {
   border-bottom: 1px solid var(--hairline);
 }
 
-.chat-markdown-table-container :is(th, td):not(:last-child) {
+.chat-markdown-table-container th:not(:last-child),
+.chat-markdown-table-container td:not(:last-child) {
   border-inline-end: 1px solid var(--hairline);
 }
 
@@ -5996,7 +6097,8 @@ body {
   --table-header-fill: var(--flat-high);
   --hairline: var(--flat-hairline);
 
-  & :is(th, td):not(:last-child) {
+  & th:not(:last-child),
+  & td:not(:last-child) {
     border-inline-end-width: 0;
   }
 
@@ -6118,10 +6220,11 @@ body {
   --bubble-inline-code: var(--bubble-well-fill);
 }
 
-:root
-  .surface-bubble
-  .user-message-markdown
-  :is(.chat-markdown-table-container, .chat-markdown-codeblock, pre) {
+/* :where(pre) lets Blink bucket the rule by tag; the :is() after it keeps the class weight
+   pre had inside one :is() with the classes. */
+:root .surface-bubble .user-message-markdown .chat-markdown-table-container,
+:root .surface-bubble .user-message-markdown .chat-markdown-codeblock,
+:root .surface-bubble .user-message-markdown :where(pre):is(pre, .chat-markdown-codeblock) {
   --well-fill: var(--bubble-well-fill);
   --well-rim: var(--bubble-well-rim);
   --style-code-fill: var(--bubble-well-fill);
@@ -6141,8 +6244,10 @@ body {
   --contrast-foreground: var(--bubble-markdown-foreground);
 }
 
-/* Formula cells keep their natural width and scroll with the table. */
-.chat-markdown-table-container :is(th, td):has([data-markdown-math]) {
+/* Formula cells keep their natural width and scroll with the table. One rule per cell,
+   kept apart: the build merges equal neighbors into a list and wraps a list holding
+   :has() in one :is() that every element tries. */
+.chat-markdown-table-container th:has([data-markdown-math]) {
   max-width: none;
 }
 
@@ -6153,6 +6258,10 @@ body {
   opacity: 1;
   --app-scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
   --app-scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
+}
+
+.chat-markdown-table-container td:has([data-markdown-math]) {
+  max-width: none;
 }
 
 :root {
@@ -6349,14 +6458,21 @@ body {
 /* Past one line the actions drop to the bottom corner, so the text keeps their column clear
    (the first line's width is unchanged); a float can't follow the last line there. */
 .composer-prompt-body[data-composer-multiline]
-  :is([data-composer-empty="false"] [data-testid="composer-editor"], [data-composer-placeholder]) {
+  :is([data-composer-empty="false"] [data-testid="composer-editor"]),
+.composer-prompt-body[data-composer-multiline]
+  [data-composer-placeholder][data-composer-placeholder] {
   padding-inline-end: calc(
     var(--composer-actions-width, 100px) + var(--composer-actions-gap) + var(--spacing)
   );
+}
 
-  &::before {
-    display: none;
-  }
+/* Separate from the rule above: a nested pseudo-element under a selector list compiles to
+   one :is() that every element tries. The repeated attribute keeps the list's specificity. */
+.composer-prompt-body[data-composer-multiline]
+  :is([data-composer-empty="false"] [data-testid="composer-editor"])::before,
+.composer-prompt-body[data-composer-multiline]
+  [data-composer-placeholder][data-composer-placeholder]::before {
+  display: none;
 }
 
 .composer-prompt-body[data-composer-overflow]
@@ -6586,8 +6702,11 @@ body {
    it, and at its end stops there instead of carrying the strip along (pen
    ZlxmK). Anywhere else in a pane the swipe scrolls the strip. Only real
    scrollers: on a clipping wrapper (overflow hidden) "contain" would stop
-   every swipe from reaching the strip. */
-[data-layout-strip] [data-layout-pane-id] :is(pre, .overflow-x-auto, .overflow-x-scroll) {
+   every swipe from reaching the strip. :where(pre) lets Blink bucket the rule by tag;
+   the :is() after it keeps the class weight pre had inside one :is() with the classes. */
+[data-layout-strip] [data-layout-pane-id] :where(pre):is(pre, .overflow-x-auto),
+[data-layout-strip] [data-layout-pane-id] .overflow-x-auto,
+[data-layout-strip] [data-layout-pane-id] .overflow-x-scroll {
   overscroll-behavior-x: contain;
 }
 
@@ -6731,7 +6850,8 @@ body {
     }
     /* The joined first tab's side runs straight down the pane's edge, so the
        pane's corner under it gives way (data-pane-join-start, PaneTabs.tsx). */
-    & :is([data-pane-bar-corner="start"], [data-pane-cut="start-notch"]) {
+    & [data-pane-bar-corner="start"],
+    & [data-pane-cut="start-notch"] {
       transition: opacity var(--panel-animation-duration, 150ms) ease-out;
     }
     & [data-pane-join-start] [data-pane-bar-corner="start"],
@@ -6789,18 +6909,21 @@ body {
 
     /* The shape draws the active tab. Its label reads as active once the
        shape has landed under it ([data-joined], PaneTabs.tsx), and the tab
-       it left reads as a plain one from then on. */
+       it left reads as a plain one from then on. The repeated attribute keeps
+       the specificity of the :is() these two selectors replaced. */
     &
       [data-pane-notch=""]
       [data-layout-tab-strip]
-      :is(.surface-pane-tab:not([data-hidden-terminal-chip]), [data-active-tab="true"]) {
+      .surface-pane-tab:not([data-hidden-terminal-chip]),
+    &
+      [data-pane-notch=""]
+      [data-layout-tab-strip]
+      [data-active-tab="true"][data-active-tab="true"] {
       background: none;
       box-shadow: none;
     }
-    &
-      [data-pane-notch=""]
-      [data-layout-tab-strip]
-      :is(.surface-pane-tab, [data-active-tab="true"]):not([data-joined]) {
+    & [data-pane-notch=""] [data-layout-tab-strip] .surface-pane-tab:not([data-joined]),
+    & [data-pane-notch=""] [data-layout-tab-strip] [data-active-tab="true"]:not([data-joined]) {
       color: var(--pane-bar-muted);
     }
     & [data-pane-notch=""] [data-layout-tab-strip] [data-joined] {
@@ -6813,17 +6936,15 @@ body {
 
     /* A hovered tab shows the joined tab's outline, without its ears, in a
        faint pane fill, under the joined shape so it never dents it. */
-    &
-      [data-pane-notch=""]:not([data-pane-notch-unfocused])
-      [data-layout-tab-strip]
-      :is([data-layout-pane-tab], [data-tab-key]):not([data-joined]):is(
-        :hover,
-        .group\/tab:hover > *
-      ) {
-      position: relative;
-      background: none;
+    & [data-pane-notch=""]:not([data-pane-notch-unfocused]) [data-layout-tab-strip] {
+      & [data-layout-pane-tab]:not([data-joined]):is(:hover, .group\/tab:hover > *),
+      & [data-tab-key]:not([data-joined]):is(:hover, .group\/tab:hover > *) {
+        position: relative;
+        background: none;
+      }
 
-      &::before {
+      & [data-layout-pane-tab]:not([data-joined]):is(:hover, .group\/tab:hover > *)::before,
+      & [data-tab-key]:not([data-joined]):is(:hover, .group\/tab:hover > *)::before {
         content: "";
         position: absolute;
         z-index: -2;
@@ -6911,7 +7032,8 @@ body {
       /* A cap: corner, side and ear. The end cap is the start one mirrored. */
       /* Their own layers: a slide begun on a press keeps moving while the
          switch's render holds the main thread. */
-      & :is([data-jc], [data-jm]) {
+      & [data-jc],
+      & [data-jm] {
         will-change: translate, scale;
       }
 
@@ -7012,7 +7134,9 @@ body {
         background: var(--pane-join-rim) 0 0 / var(--pane-join-rim-size) no-repeat;
       }
 
-      & :is([data-jr], [data-jer], [data-jt]),
+      & [data-jr],
+      & [data-jer],
+      & [data-jt],
       & [data-jm]::after {
         transition: opacity var(--panel-animation-duration, 150ms) ease-out;
       }
@@ -7069,13 +7193,16 @@ body {
       }
 
       /* The body's own fill ends inside the foot. */
-      & [data-pane-join] :is([data-jf], [data-jm]) {
+      & [data-pane-join] [data-jf],
+      & [data-pane-join] [data-jm] {
         height: calc(100% - 2px);
       }
     }
 
     & [data-pane-notch-unfocused] [data-pane-join] {
-      & :is([data-jr], [data-jer], [data-jt]),
+      & [data-jr],
+      & [data-jer],
+      & [data-jt],
       & [data-jm]::after {
         opacity: 0.45;
       }
