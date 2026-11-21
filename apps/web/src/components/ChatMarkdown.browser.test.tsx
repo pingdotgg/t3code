@@ -296,20 +296,30 @@ it("sizes a raw HTML image by width and height written with px units", async () 
   expect({ width, height }).toEqual({ width: 14, height: 7 });
 });
 
-it("reuses a remounted streaming reply's existing blocks without replaying their fade", async () => {
+it("fades a streaming reply's blocks in once, not again when it remounts", async () => {
   setup();
+  const isFading = (element: Element) =>
+    element.getAnimations().some((animation) => animation instanceof CSSTransition);
   const message = (
-    <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\nStill growing"} isStreaming />
+    <ChatMarkdown
+      cwd="/tmp/project"
+      text={"Finished block\n\nStill growing"}
+      isStreaming
+      streamingId="remounted-reply"
+    />
   );
   {
     await using first = await render(
-      <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\n"} isStreaming />,
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"Finished block\n\n"}
+        isStreaming
+        streamingId="remounted-reply"
+      />,
     );
+    expect(isFading(first.getByText("Finished block").element())).toBe(true);
     await first.rerender(message);
-    const appended = first.getByText("Still growing").element();
-    expect(appended.getAnimations().some((animation) => animation instanceof CSSTransition)).toBe(
-      true,
-    );
+    expect(isFading(first.getByText("Still growing").element())).toBe(true);
   }
   await using screen = await render(message);
   expect(getComputedStyle(screen.getByText("Still growing").element()).opacity).toBe("1");
