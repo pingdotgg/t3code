@@ -22,7 +22,7 @@ import {
   isThreadEnvironmentLocked,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
-  threadErrorIsServerRuntime,
+  resolveThreadErrorBanner,
 } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
@@ -1642,38 +1642,58 @@ describe("prepareRevertedMessageAttachments", () => {
   });
 });
 
-describe("threadErrorIsServerRuntime", () => {
-  it("is true for a server thread's runtime error, and for a local copy of that same error", () => {
-    expect(
-      threadErrorIsServerRuntime({
-        isServerThread: true,
-        localServerError: null,
-        runtimeError: "E",
-      }),
-    ).toBe(true);
-    expect(
-      threadErrorIsServerRuntime({
-        isServerThread: true,
-        localServerError: "E",
-        runtimeError: "E",
-      }),
-    ).toBe(true);
-  });
+describe("resolveThreadErrorBanner", () => {
+  const base = {
+    isServerThread: true,
+    localServerError: null,
+    localDraftError: null,
+    runtimeError: null,
+    runtimeErrorSource: null,
+  };
 
-  it("is false for a local error that differs from the runtime error, and for draft threads", () => {
-    expect(
-      threadErrorIsServerRuntime({
-        isServerThread: true,
-        localServerError: "E2",
-        runtimeError: "E",
-      }),
-    ).toBe(false);
-    expect(
-      threadErrorIsServerRuntime({
+  it.each([
+    {
+      name: "server runtime error",
+      input: { ...base, runtimeError: "Turn failed", runtimeErrorSource: "item-1" },
+      expected: {
+        threadError: "Turn failed",
+        sessionDismissal: { error: "Turn failed", source: "item-1" },
+      },
+    },
+    {
+      name: "local copy of the runtime error",
+      input: {
+        ...base,
+        localServerError: "Turn failed",
+        runtimeError: "Turn failed",
+        runtimeErrorSource: "item-1",
+      },
+      expected: {
+        threadError: "Turn failed",
+        sessionDismissal: { error: "Turn failed", source: "item-1" },
+      },
+    },
+    {
+      name: "local server error over a different runtime error",
+      input: {
+        ...base,
+        localServerError: "Upload failed",
+        runtimeError: "Turn failed",
+        runtimeErrorSource: "item-1",
+      },
+      expected: { threadError: "Upload failed", sessionDismissal: null },
+    },
+    {
+      name: "draft error",
+      input: {
+        ...base,
         isServerThread: false,
-        localServerError: null,
-        runtimeError: "E",
-      }),
-    ).toBe(false);
+        localDraftError: "Worktree failed",
+        runtimeError: "Turn failed",
+      },
+      expected: { threadError: "Worktree failed", sessionDismissal: null },
+    },
+  ])("$name", ({ input, expected }) => {
+    expect(resolveThreadErrorBanner(input)).toEqual(expected);
   });
 });
