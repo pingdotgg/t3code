@@ -854,59 +854,82 @@ fn render_inline_spans(
 }
 
 fn build_styled_text(spans: &[InlineSpan], tokens: &Tokens) -> StyledText {
+    // Runs, not highlights: inline code switches font family (SF Mono), which a highlight
+    // cannot. Every run therefore carries its own font and color.
+    let prose = super::color::prose_foreground(tokens);
     let mut text = String::new();
-    let mut runs: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+    let mut runs: Vec<gpui_kit::TextRun> = Vec::new();
     for span in spans {
         let start = text.len();
         if span.style.code {
-            // Thin padding spaces inside the inline-code chip background.
-            text.push(' ');
+            // Thin padding inside the inline-code chip background.
+            text.push('\u{2009}');
             text.push_str(&span.text);
-            text.push(' ');
+            text.push('\u{2009}');
         } else {
             text.push_str(&span.text);
         }
-        let end = text.len();
-        if start == end {
+        let len = text.len() - start;
+        if len == 0 {
             continue;
         }
-        let mut style = HighlightStyle::default();
-        let mut styled = false;
-        if span.style.bold {
-            style.font_weight = Some(FontWeight::BOLD);
-            styled = true;
-        }
-        if span.style.italic {
-            style.font_style = Some(FontStyle::Italic);
-            styled = true;
-        }
-        if span.style.strikethrough {
-            style.strikethrough = Some(gpui_kit::StrikethroughStyle {
+        let family = if span.style.code {
+            MONO_FONT_FAMILY
+        } else {
+            ".SystemUIFont"
+        };
+        let font = gpui_kit::Font {
+            family: family.into(),
+            features: gpui_kit::FontFeatures::default(),
+            fallbacks: None,
+            weight: if span.style.bold {
+                FontWeight::BOLD
+            } else {
+                FontWeight::NORMAL
+            },
+            style: if span.style.italic {
+                FontStyle::Italic
+            } else {
+                FontStyle::Normal
+            },
+        };
+        let (color, background_color, underline) = if span.style.code {
+            // Conn: `.chat-markdown :not(pre) > code` = foreground 10% chip, foreground text.
+            (
+                hsla(tokens.foreground),
+                Some(hsla(tokens.foreground.with_alpha(0.10))),
+                None,
+            )
+        } else if span.link.is_some() {
+            (
+                hsla(tokens.info_foreground),
+                None,
+                Some(UnderlineStyle {
+                    thickness: px(1.0),
+                    color: Some(hsla(tokens.info_foreground)),
+                    wavy: false,
+                }),
+            )
+        } else {
+            (prose, None, None)
+        };
+        let strikethrough = span
+            .style
+            .strikethrough
+            .then(|| gpui_kit::StrikethroughStyle {
                 thickness: px(1.0),
                 color: Some(hsla(tokens.muted_foreground)),
             });
-            styled = true;
-        }
-        if span.style.code {
-            // Conn: `.chat-markdown :not(pre) > code` = foreground 10% chip, foreground text.
-            style.background_color = Some(hsla(tokens.foreground.with_alpha(0.10)));
-            style.color = Some(hsla(tokens.foreground));
-            styled = true;
-        }
-        if span.link.is_some() {
-            style.color = Some(hsla(tokens.info_foreground));
-            style.underline = Some(UnderlineStyle {
-                thickness: px(1.0),
-                color: Some(hsla(tokens.info_foreground)),
-                wavy: false,
-            });
-            styled = true;
-        }
-        if styled {
-            runs.push((start..end, style));
-        }
+        runs.push(gpui_kit::TextRun {
+            len,
+            font,
+            color,
+            background_color,
+            underline,
+            strikethrough,
+        });
     }
-    StyledText::new(SharedString::from(text)).with_highlights(runs)
+    StyledText::new(SharedString::from(text)).with_runs(runs)
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ mod automation;
 mod colour_space;
 mod commands;
 mod fixture;
+mod fonts;
 mod header;
 mod icons;
 mod live;
@@ -53,6 +54,7 @@ fn main() {
     let application = gpui_kit::application().with_assets(superhero::AppAssets);
     application.run(|cx| {
         gpui_kit::init(cx);
+        fonts::register(cx);
         colour_space::install(cx);
         let theme = live::initial_theme();
         let tokens = Tokens::derive(&theme);
