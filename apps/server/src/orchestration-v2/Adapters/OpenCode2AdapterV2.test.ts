@@ -7798,6 +7798,142 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
 
+  it.effect("keeps a held wake's early report off a later wake's call to the same subagent", () =>
+    Effect.gen(function* () {
+      const CHILD_B = "ses_f1485c529ffeBBBBBBBBBBBBBB";
+      const toolB = { sessionID: SESSION, assistantMessageID: "msg_wake_a", id: "call-b" };
+      const toolC = { sessionID: SESSION, assistantMessageID: "msg_wake_c", id: "call-c" };
+      const report = (inboxID: string, child: string, text: string) =>
+        event("session.inbox.enqueued", {
+          inboxID,
+          sessionID: SESSION,
+          item: {
+            type: "synthetic",
+            payload: {
+              text: `<subagent sessionID="${child}" state="completed" description="Sleep">\n${text}\n</subagent>`,
+              description: "Sleep",
+              metadata: {
+                source: "subagent",
+                childID: child,
+                agent: "General",
+                state: "completed",
+              },
+            },
+            delivery: "steer",
+          },
+        });
+      const gate = makeProviderReplayGate(["second-run-ends"]);
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const bothOffered = yield* Deferred.make<void>();
+      // Wake A launches B, whose first run reports before T3 starts wake A's turn. Wake C runs
+      // B again and a user turn takes C over; wake A's turn comes after it.
+      const { runtime, thread } = yield* resumed(
+        [
+          ...backgroundLaunch(CHILD),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          report("msg_report_a", CHILD, "A_OK"),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_a" }),
+          event("session.tool.input.started", { ...toolB, name: "subagent" }),
+          event("session.tool.called", {
+            ...toolB,
+            name: "subagent",
+            input: { description: "Sleep", prompt: "sleep", background: true },
+            executed: false,
+          }),
+          event("session.created", { ...childCreated(CHILD_B), sessionID: CHILD_B }),
+          event("session.tool.progress", {
+            ...toolB,
+            metadata: { sessionID: CHILD_B, status: "running" },
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.started", { sessionID: CHILD_B }),
+          event("session.execution.succeeded", { sessionID: CHILD_B }),
+          report("msg_report_b1", CHILD_B, "B_FIRST"),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_b1" }),
+          event("session.tool.input.started", { ...toolC, name: "subagent" }),
+          event("session.tool.called", {
+            ...toolC,
+            name: "subagent",
+            input: { description: "Again", prompt: "again", sessionID: CHILD_B, background: true },
+            executed: false,
+          }),
+          event("session.tool.progress", {
+            ...toolC,
+            metadata: { sessionID: CHILD_B, status: "running" },
+          }),
+          event("session.execution.started", { sessionID: CHILD_B }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("session.update", { sessionID: CHILD_B, permissions: "<any>" }),
+          reply("session.update", null),
+          event("session.execution.succeeded", { sessionID: CHILD_B }, "second-run-ends"),
+          report("msg_report_b2", CHILD_B, "B_SECOND"),
+        ],
+        { replayGate: gate },
+      ).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) =>
+            Effect.suspend(() =>
+              offers.push(request) === 2
+                ? Deferred.succeed(bothOffered, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          take: Effect.never,
+        }),
+      );
+      const calls = new Map<string, { status: string; result: string | null }>();
+      const settled = new Map([
+        ["call-b", yield* Deferred.make<void>()],
+        ["call-c", yield* Deferred.make<void>()],
+      ]);
+      const userTurnEnded = yield* Deferred.make<void>();
+      let terminals = 0;
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            if (event.type === "subagent.updated") {
+              const id = event.subagent.nativeTaskRef?.nativeId ?? "";
+              calls.set(id, { status: event.subagent.status, result: event.subagent.result });
+              const done = settled.get(id);
+              if (done !== undefined && event.subagent.status !== "running")
+                yield* Deferred.succeed(done, undefined);
+            }
+            if (event.type === "turn.terminal" && ++terminals === 2)
+              yield* Deferred.succeed(userTurnEnded, undefined);
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(bothOffered);
+      yield* runtime.startTurn({
+        ...withLineage(thread),
+        runId: RunId.make("run:opencode2-adapter:user"),
+        runOrdinal: 2,
+        providerTurnOrdinal: 2,
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:user"),
+        message: { ...turnInput(thread).message, messageId: MessageId.make("message:user") },
+      });
+      yield* Deferred.await(userTurnEnded);
+      yield* runtime.startTurn({
+        ...continuationTurn(thread, offers[0]!, "wake-a"),
+        runOrdinal: 3,
+        providerTurnOrdinal: 3,
+      });
+      yield* Deferred.await(settled.get("call-b")!);
+      assert.deepEqual(calls.get("call-b"), { status: "completed", result: "B_FIRST" });
+      assert.equal(calls.get("call-c")?.status, "running");
+      gate.release("second-run-ends");
+      yield* Deferred.await(settled.get("call-c")!);
+      assert.deepEqual(calls.get("call-c"), { status: "completed", result: "B_SECOND" });
+    }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
+  );
+
   it.effect(
     "reverts a report's continuation at its report after a Stop dropped another client's prompt",
     () =>

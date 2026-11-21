@@ -4521,13 +4521,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const replay = Effect.fnUntraced(function* (wake: Wake) {
       wake.dropped = true;
       replaying = wake;
+      const allCalls = () => [...threads.values()].flatMap((state) => [...state.calls.values()]);
+      const earlier = new Set(allCalls());
       yield* Effect.forEach(wake.events, (event) => route(event, sessionOfEvent(event), true), {
         discard: true,
       }).pipe(Effect.ensuring(Effect.sync(() => (replaying = undefined))));
       for (const [childId, report] of wake.reported) {
-        const calls = [...threads.values()]
-          .flatMap((state) => [...state.calls.values()])
-          .filter((candidate) => candidate.child?.sessionId === childId);
+        const calls = allCalls().filter(
+          (candidate) => !earlier.has(candidate) && candidate.child?.sessionId === childId,
+        );
         for (const call of calls) yield* settleCall(call, report.status, report.output);
       }
     });
