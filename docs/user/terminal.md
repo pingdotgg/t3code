@@ -49,6 +49,19 @@ Jump to latest in the context menu returns to the current output.
 On iPhone and iPad, long-press the terminal to paste or to choose Select Text.
 Select Text shows the visible output, where you can copy text or tap a link.
 
+## Copy on select
+
+On web and desktop, turn on **Settings → General → Copy on select** to copy text
+as soon as you finish selecting it with the mouse, in the terminal or in chat. It
+is off by default. **Copy on select toast** controls the confirmation shown after
+each copy.
+
+Only a new selection copies: clicking an existing selection leaves the clipboard
+alone, and a double- or triple-click copies once. Text in message fields and
+other editable areas is never copied this way. Without clipboard access, such as
+in a browser on an insecure remote connection, nothing is copied and no
+confirmation appears; terminal input is unaffected.
+
 ## fish
 
 T3 Code starts fish with `no-query-term`, avoiding startup waits for terminal
