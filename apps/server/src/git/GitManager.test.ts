@@ -1247,6 +1247,33 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("an unpublished branch PR lookup reads each remote setting once", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/local-only"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "local.txt"), "local\n");
+      yield* runGit(repoDir, ["add", "local.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Local work"]);
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({ gitCommands });
+
+      expect(
+        yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/local-only" }),
+      ).toBeNull();
+      const count = (args: string) => gitCommands.filter((command) => command === args).length;
+      expect({
+        remoteLists: count("remote"),
+        branchRemoteReads: count("config --get branch.feature/local-only.remote"),
+        originUrlReads: count("config --get-all remote.origin.url"),
+      }).toEqual({ remoteLists: 1, branchRemoteReads: 1, originUrlReads: 1 });
+      expect(gitCommands.length).toBeLessThanOrEqual(9);
+    }),
+  );
+
   it.effect("branch PR lookup uses a saved tracked branch without changing checkout", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
