@@ -790,6 +790,60 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }),
   );
 
+  it.live.skipIf(windowsHost)("keeps Claude reset credits when a later read is rate limited", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixtures = yield* makeTildeProviderFixtures();
+      yield* fs.writeFileString(
+        path.join(fixtures.claudeHomePath, ".credentials.json"),
+        '{"claudeAiOauth":{"accessToken":"fake-token"}}',
+      );
+      let rateLimited = false;
+      const client = HttpClient.make((request) =>
+        Effect.succeed(
+          request.url.endsWith("/api/oauth/usage")
+            ? HttpClientResponse.fromWeb(
+                request,
+                rateLimited
+                  ? Response.json({}, { status: 429, headers: { "retry-after": "60" } })
+                  : Response.json({
+                      cedar_ember: {
+                        eligible: true,
+                        next_grant_id: "grant_a",
+                        grants: [{ id: "grant_a", resets_left: 1, usable_now: true }],
+                      },
+                    }),
+              )
+            : HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" })),
+        ),
+      );
+      const instanceId = ProviderInstanceId.make("claude_reset_429");
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      const instance = yield* registry.getInstance(instanceId);
+      const before = yield* instance!.snapshot.refresh;
+      expect(before.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
+
+      rateLimited = true;
+      const after = yield* instance!.snapshot.refresh;
+      expect(after.usageLimits?.windows.length).toBeGreaterThan(0);
+      expect(after.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
+  );
+
   const makeClaudeCacheFixture = Effect.fnUntraced(function* (
     state: "ready" | "signed-out" | "usage-failed",
   ) {
