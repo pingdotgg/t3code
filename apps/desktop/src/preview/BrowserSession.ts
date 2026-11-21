@@ -1,6 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { Certificate, Session, WebContents } from "electron";
-import { BrowserWindow, session } from "electron";
+import { BrowserWindow, session, systemPreferences } from "electron";
 import { msg } from "gt-i18n";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -139,6 +139,54 @@ interface CertificateTrust {
   revocations: number;
 }
 
+type MediaDevice = "camera" | "microphone";
+
+const mediaDeviceFor = (mediaType: string | undefined): MediaDevice | null =>
+  mediaType === "video" ? "camera" : mediaType === "audio" ? "microphone" : null;
+
+// Whole sentences per device set, so each language can phrase them its own way.
+const mediaRequestMessage = (devices: ReadonlyArray<MediaDevice>, origin: string): string =>
+  devices.length === 2
+    ? m(msg("{origin} wants to use your camera and microphone"), { origin })
+    : devices[0] === "microphone"
+      ? m(msg("{origin} wants to use your microphone"), { origin })
+      : m(msg("{origin} wants to use your camera"), { origin });
+
+const mediaBlockedMessage = (devices: ReadonlyArray<MediaDevice>): string =>
+  devices.length === 2
+    ? m(msg("macOS blocked T3 Code from using your camera and microphone"))
+    : devices[0] === "microphone"
+      ? m(msg("macOS blocked T3 Code from using your microphone"))
+      : m(msg("macOS blocked T3 Code from using your camera"));
+
+/**
+ * macOS gates capture devices per app and lists an app under Privacy & Security
+ * only after it asks, so ask the OS once the user allowed the page.
+ */
+const ensureSystemMediaAccess = async (
+  platform: NodeJS.Platform,
+  devices: ReadonlyArray<MediaDevice>,
+): Promise<boolean> => {
+  if (platform !== "darwin") return true;
+  const statuses = devices.map((device) => systemPreferences.getMediaAccessStatus(device));
+  if (statuses.some((status) => status !== "granted" && status !== "not-determined")) return false;
+  const results = await Promise.all(
+    devices.map((device, index) =>
+      statuses[index] === "granted"
+        ? true
+        : systemPreferences.askForMediaAccess(device).catch(() => false),
+    ),
+  );
+  return results.every(Boolean);
+};
+
+/** The camera and microphone answers given in one preview Session. */
+interface MediaConsent {
+  readonly decisions: Map<string, boolean>;
+  /** Bumped by each reset, so an answer to an older prompt cannot restore a decision. */
+  resets: number;
+}
+
 export class BrowserSessionPartitionDerivationError extends Schema.TaggedError<BrowserSessionPartitionDerivationError>()(
   "BrowserSessionPartitionDerivationError",
   {
@@ -268,6 +316,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   // One prompt at a time, so a page cannot stack dialogs by looping a deep link.
   let permissionPromptOpen = false;
+  let mediaRecoveryOpen = false;
   /** Settles with `undefined` when the user gave no answer: another prompt was open or the dialog failed. */
   const promptPermission = (
     requester: WebContents | null,
@@ -278,21 +327,26 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     },
     callback: (answer: boolean | undefined) => void,
   ): void => {
-    if (permissionPromptOpen) {
+    if (permissionPromptOpen || requester?.isDestroyed()) {
       callback(undefined);
       return;
     }
     permissionPromptOpen = true;
+    const dismiss = new AbortController();
+    const abandon = () => dismiss.abort();
+    requester?.once("destroyed", abandon);
     const settle = (answer: boolean | undefined) =>
       Effect.sync(() => {
         permissionPromptOpen = false;
-        callback(answer);
+        requester?.off("destroyed", abandon);
+        callback(dismiss.signal.aborted || requester?.isDestroyed() ? undefined : answer);
       });
     runFork(
       electronDialog
         .showMessageBox(
           {
             type: "question",
+            signal: dismiss.signal,
             buttons: [...prompt.buttons],
             // Default to deny so an Enter typed into the page cannot accept a prompt it raised.
             defaultId: 1,
@@ -574,6 +628,15 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     }
   });
 
+  /** Camera and microphone answers by Session; clearing a profile's cookies forgets them too. */
+  const mediaConsentBySession = new WeakMap<Session, MediaConsent>();
+  const forgetMediaDecisions = (browserSession: Session): void => {
+    const consent = mediaConsentBySession.get(browserSession);
+    if (consent === undefined) return;
+    consent.resets += 1;
+    consent.decisions.clear();
+  };
+
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 
   const getPartition = Effect.fn("BrowserSession.getPartition")(function* (
@@ -651,6 +714,104 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               },
             );
           };
+          // Camera and microphone ask once per origin and device, like clipboard reads.
+          const mediaConsent: MediaConsent = { decisions: new Map(), resets: 0 };
+          mediaConsentBySession.set(browserSession, mediaConsent);
+          const mediaDecisions = mediaConsent.decisions;
+          const mediaKey = (origin: string, device: MediaDevice) => `${device} ${origin}`;
+          const confirmMedia = (
+            requester: WebContents,
+            rawUrl: string | undefined,
+            mediaTypes: ReadonlyArray<string> | undefined,
+            callback: (granted: boolean) => void,
+          ): void => {
+            const origin = permissionOrigin(rawUrl);
+            const devices = [
+              ...new Set((mediaTypes ?? []).map(mediaDeviceFor).filter((d) => d !== null)),
+            ];
+            if (origin === null || devices.length === 0) {
+              callback(false);
+              return;
+            }
+            // A reset while a prompt or the macOS check is pending must not grant or remember.
+            const resets = mediaConsent.resets;
+            const isStale = () =>
+              mediaConsent.resets !== resets || requester?.isDestroyed() === true;
+            const finish = (granted: boolean) => {
+              if (!granted || isStale()) {
+                callback(false);
+                return;
+              }
+              void ensureSystemMediaAccess(platform, devices).then(
+                (systemGranted) => {
+                  if (isStale()) {
+                    callback(false);
+                    return;
+                  }
+                  if (!systemGranted && !mediaRecoveryOpen) {
+                    mediaRecoveryOpen = true;
+                    runFork(
+                      electronDialog
+                        .showMessageBox(
+                          {
+                            type: "info",
+                            buttons: [m(msg("OK"))],
+                            message: mediaBlockedMessage(devices),
+                            detail: m(
+                              msg(
+                                "Allow T3 Code in System Settings › Privacy & Security, then restart T3 Code.",
+                              ),
+                            ),
+                          },
+                          previewHostWindow(requester),
+                        )
+                        .pipe(
+                          Effect.ignore,
+                          Effect.ensuring(
+                            Effect.sync(() => {
+                              mediaRecoveryOpen = false;
+                            }),
+                          ),
+                        ),
+                    );
+                  }
+                  callback(systemGranted);
+                },
+                () => callback(false),
+              );
+            };
+            const remembered = devices.map((device) =>
+              mediaDecisions.get(mediaKey(origin, device)),
+            );
+            if (remembered.some((answer) => answer === false)) {
+              callback(false);
+              return;
+            }
+            if (remembered.every((answer) => answer === true)) {
+              finish(true);
+              return;
+            }
+            const undecided = devices.filter(
+              (device) => !mediaDecisions.has(mediaKey(origin, device)),
+            );
+            promptPermission(
+              requester,
+              {
+                buttons: [
+                  m(msg("Allow", { $context: "button, grants a site permission" })),
+                  m(msg("Block", { $context: "button, denies a site permission" })),
+                ],
+                message: mediaRequestMessage(undecided, truncateForPrompt(origin)),
+              },
+              (answer) => {
+                if (answer !== undefined && !isStale()) {
+                  for (const device of undecided)
+                    mediaDecisions.set(mediaKey(origin, device), answer);
+                }
+                finish(answer === true);
+              },
+            );
+          };
           // Rewriting Electron's native User-Agent makes Turnstile fail integrity checks with error 600010.
           browserSession.setPermissionRequestHandler(
             (webContents, permission, callback, details) => {
@@ -671,14 +832,40 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 );
                 return;
               }
+              if (permission === "media") {
+                confirmMedia(
+                  webContents,
+                  ("securityOrigin" in details ? details.securityOrigin : undefined) ??
+                    details.requestingUrl,
+                  "mediaTypes" in details ? details.mediaTypes : undefined,
+                  callback,
+                );
+                return;
+              }
               callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
             },
           );
-          browserSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
-            permission === "clipboard-read" || permission === "geolocation"
-              ? permissionDecisions[permission].get(permissionOrigin(requestingOrigin) ?? "") ===
-                true
-              : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
+          browserSession.setPermissionCheckHandler(
+            (_webContents, permission, requestingOrigin, details) => {
+              if (permission === "clipboard-read" || permission === "geolocation") {
+                return (
+                  permissionDecisions[permission].get(permissionOrigin(requestingOrigin) ?? "") ===
+                  true
+                );
+              }
+              if (permission === "media") {
+                const origin = permissionOrigin(requestingOrigin);
+                const device = mediaDeviceFor(details?.mediaType);
+                return (
+                  origin !== null &&
+                  device !== null &&
+                  mediaDecisions.get(mediaKey(origin, device)) === true &&
+                  (platform !== "darwin" ||
+                    systemPreferences.getMediaAccessStatus(device) === "granted")
+                );
+              }
+              return ALLOWED_PREVIEW_PERMISSIONS.has(permission);
+            },
           );
           browserSession.webRequest.onBeforeSendHeaders(
             { urls: TEAMS_URL_PATTERNS },
@@ -727,8 +914,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     getSession,
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
+      const selected = selectSessions(sessions, partitions);
+      for (const [, browserSession] of selected) forgetMediaDecisions(browserSession);
       yield* Effect.forEach(
-        selectSessions(sessions, partitions),
+        selected,
         ([partition, browserSession]) =>
           Effect.gen(function* () {
             const cleared = yield* Effect.tryPromise({
@@ -758,7 +947,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     cookiesCleared: Effect.fn("BrowserSession.cookiesCleared")(function* (browserSession) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       for (const [partition, candidate] of sessions) {
-        if (candidate === browserSession) yield* revokeCertificates(partition, browserSession);
+        if (candidate !== browserSession) continue;
+        forgetMediaDecisions(browserSession);
+        yield* revokeCertificates(partition, browserSession);
       }
     }),
     clearCache: Effect.fn("BrowserSession.clearCache")(function* (partitions?) {
