@@ -14,7 +14,7 @@ const REFERENCE_B = "op://Scenario/GitHub/second";
 declare global {
   interface Window {
     secretCheckGate?: {
-      readonly count: () => number;
+      readonly reached: (count: number) => Promise<void>;
       readonly finishFirst: () => Promise<void>;
     };
   }
@@ -61,6 +61,7 @@ test(
     await browser.addInitScript(() => {
       type Frame = { readonly _tag?: string; readonly tag?: string; readonly id?: string | number };
       const checks: Array<() => Promise<void>> = [];
+      const waiting: Array<{ readonly count: number; readonly resolve: () => void }> = [];
       const send = WebSocket.prototype.send;
       WebSocket.prototype.send = function (this: WebSocket, data) {
         if (typeof data !== "string") return send.call(this, data);
@@ -89,9 +90,13 @@ test(
               send.call(this, JSON.stringify(Array.isArray(parsed) ? [check] : check));
             }),
         );
+        for (const waiter of waiting) if (waiter.count === checks.length) waiter.resolve();
       };
       window.secretCheckGate = {
-        count: () => checks.length,
+        reached: (count) =>
+          checks.length >= count
+            ? Promise.resolve()
+            : new Promise((resolve) => waiting.push({ count, resolve })),
         finishFirst: () => checks[0]!(),
       };
     });
@@ -100,17 +105,12 @@ test(
     await screen.getByRole("button", "Toggle GitHub details", { exact: true }).tap();
     const input = screen.getByRole("textbox", "GitHub token reference", { exact: true });
     const check = screen.getByRole("button", "Check GitHub token", { exact: true });
-    const waitForCheck = (count: number) =>
-      browser.evaluate(async (count) => {
-        for (let frame = 0; frame < 120; frame++) {
-          if (window.secretCheckGate?.count() === count) return true;
-          await new Promise<number>((resolve) => requestAnimationFrame(resolve));
-        }
-        return false;
-      }, count);
     const startCheck = async (count: number) => {
       await check.tap();
-      if (!(await waitForCheck(count))) throw new Error("The check did not reach the transport");
+      await browser.evaluate(async (count) => {
+        await window.secretCheckGate!.reached(count);
+        return null;
+      }, count);
     };
     const commit = async (reference: string) => {
       await input.fill(reference);
@@ -124,6 +124,7 @@ test(
     await startCheck(3);
     const pending = await browser.evaluate(async () => {
       await window.secretCheckGate!.finishFirst();
+      // Nothing follows a stale reply on the fix, so give its RPC and React update time to land.
       for (let frame = 0; frame < 10; frame++) {
         await new Promise<number>((resolve) => requestAnimationFrame(resolve));
       }
