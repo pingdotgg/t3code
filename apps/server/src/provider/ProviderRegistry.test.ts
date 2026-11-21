@@ -349,6 +349,93 @@ function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   });
 }
 
+const makeCodexAccountProbe = Effect.fn("makeCodexAccountProbe")(function* (
+  replies: ReadonlyArray<"ready" | "signedOut" | "hang" | { code: number; message: string }>,
+  firstReplyGate?: Deferred.Deferred<void>,
+) {
+  const output = yield* Queue.unbounded<Uint8Array>();
+  const started = yield* Deferred.make<void>();
+  const hanging = yield* Deferred.make<void>();
+  let reads = 0;
+  let spawns = 0;
+  let releases = 0;
+  const spawner = ChildProcessSpawner.make((command) => {
+    if (command._tag === "StandardCommand" && command.args.includes("--version")) {
+      return Effect.succeed(mockHandle({ stdout: "codex-cli 1.0.0", stderr: "", code: 0 }));
+    }
+    return Effect.gen(function* () {
+      spawns += 1;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          releases += 1;
+        }),
+      );
+      const answer = Effect.fn("answerCodexProbe")(function* (line: string) {
+        const { id, method } = JSON.parse(line) as { id?: number; method: string };
+        if (id === undefined) return;
+        let response: { result: unknown } | { error: { code: number; message: string } };
+        if (method === "account/read") {
+          const reply = replies[reads++];
+          if (reads === 1 && firstReplyGate) {
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(firstReplyGate);
+          }
+          assert.isDefined(reply, "Unexpected extra account read");
+          if (reply === "hang") {
+            yield* Deferred.succeed(hanging, undefined);
+            return;
+          }
+          response =
+            typeof reply === "object"
+              ? { error: reply }
+              : {
+                  result: {
+                    account: reply === "signedOut" ? null : { type: "apiKey" },
+                    requiresOpenaiAuth: true,
+                  },
+                };
+        } else {
+          const results: Record<string, unknown> = {
+            initialize: {
+              userAgent: "codex/1.0.0",
+              codexHome: "/unused-probe-home",
+              platformFamily: "unix",
+              platformOs: "linux",
+            },
+            "model/list": { data: [], nextCursor: null },
+            "skills/list": { data: [] },
+            "config/read": { config: {}, origins: {} },
+          };
+          response = { result: results[method] ?? {} };
+        }
+        yield* Queue.offer(output, encoder.encode(`${JSON.stringify({ id, ...response })}\n`));
+      });
+      const decoder = new TextDecoder();
+      let buffered = "";
+      return ChildProcessSpawner.makeHandle({
+        ...mockHandle({ stdout: "", stderr: "", code: 0 }),
+        exitCode: Effect.never,
+        isRunning: Effect.succeed(true),
+        stdin: Sink.forEach((chunk: Uint8Array) => {
+          buffered += decoder.decode(chunk, { stream: true });
+          const lines = buffered.split("\n");
+          buffered = lines.pop() ?? "";
+          return Effect.forEach(lines.filter(Boolean), answer, { discard: true });
+        }),
+        stdout: Stream.fromQueue(output),
+      });
+    });
+  });
+  return {
+    run: checkCodexProviderStatus(defaultCodexSettings).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
+    started,
+    hanging,
+    counts: () => ({ reads, spawns, releases }),
+  };
+});
+
 function layerMockSpawner(
   handler: (args: ReadonlyArray<string>) => {
     stdout: string;
@@ -632,6 +719,77 @@ it.layer(
             input: { hint: "Describe the issue (optional)" },
           },
         ]);
+      }),
+    );
+
+    it.effect("retries only transient Codex account routing errors once", () =>
+      Effect.gen(function* () {
+        for (const message of [
+          "workspace routing discovery failed",
+          "workspace routing discovery timed out",
+        ]) {
+          const error = { code: -32603, message };
+          const recovered = yield* makeCodexAccountProbe([error, "ready"]);
+          const ready = yield* recovered.run;
+          assert.strictEqual(ready.status, "ready", message);
+          assert.strictEqual(ready.auth.status, "authenticated");
+          assert.deepStrictEqual(recovered.counts(), { reads: 2, spawns: 1, releases: 1 });
+
+          const persistent = yield* makeCodexAccountProbe([error, error]);
+          const failed = yield* persistent.run;
+          assert.strictEqual(failed.status, "error");
+          assert.strictEqual(failed.auth.status, "unknown");
+          assert.strictEqual(failed.message, `Codex app-server provider probe failed: ${message}.`);
+          assert.deepStrictEqual(persistent.counts(), { reads: 2, spawns: 1, releases: 1 });
+        }
+        for (const error of [
+          { code: 401, message: "Unauthorized" },
+          { code: 401, message: "workspace routing discovery failed" },
+          { code: -32602, message: "Invalid params" },
+          { code: -32603, message: "Internal error" },
+        ]) {
+          const fixture = yield* makeCodexAccountProbe([error]);
+          const status = yield* fixture.run;
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(
+            status.message,
+            `Codex app-server provider probe failed: ${error.message}.`,
+          );
+          assert.deepStrictEqual(fixture.counts(), { reads: 1, spawns: 1, releases: 1 });
+        }
+        for (const reply of ["ready", "signedOut"] as const) {
+          const fixture = yield* makeCodexAccountProbe([reply]);
+          const status = yield* fixture.run;
+          assert.strictEqual(status.status, reply === "ready" ? "ready" : "error");
+          assert.strictEqual(
+            status.auth.status,
+            reply === "ready" ? "authenticated" : "unauthenticated",
+          );
+          assert.deepStrictEqual(fixture.counts(), { reads: 1, spawns: 1, releases: 1 });
+        }
+      }),
+    );
+
+    it.effect("bounds a stalled account retry by the original probe deadline", () =>
+      Effect.gen(function* () {
+        const gate = yield* Deferred.make<void>();
+        const fixture = yield* makeCodexAccountProbe(
+          [{ code: -32603, message: "workspace routing discovery timed out" }, "hang"],
+          gate,
+        );
+        const fiber = yield* fixture.run.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.started);
+        yield* TestClock.adjust("15 seconds");
+        yield* Deferred.succeed(gate, undefined);
+        yield* Deferred.await(fixture.hanging);
+        yield* TestClock.adjust("5 seconds");
+        const status = yield* Fiber.join(fiber);
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(
+          status.message,
+          "Timed out while checking Codex app-server provider status.",
+        );
+        assert.deepStrictEqual(fixture.counts(), { reads: 2, spawns: 1, releases: 1 });
       }),
     );
 
