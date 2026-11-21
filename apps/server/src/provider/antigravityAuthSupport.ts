@@ -39,6 +39,13 @@ const maxStdoutLineBytes = 16 * 1024 * 1024;
 const authPrefixBytes = new TextEncoder().encode(ANTIGRAVITY_AUTH_STDOUT_PREFIX);
 const decodeUrl = Schema.decodeUnknownEffect(Schema.URLFromString);
 const decodeBrowserHelperUrl = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.String));
+const decodeStoredSignInEmail = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      id_token_email: Schema.optional(Schema.String),
+    }),
+  ),
+);
 const ProfileSettingsFile = Schema.Struct({
   auth: Schema.Struct({ type: Schema.String }),
   gcp: Schema.optional(
@@ -541,6 +548,23 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     yield* copyAntigravityUserConfigFiles({ profileDirectory: geminiHome, userHome });
   }
   return profile;
+});
+
+/** Reads the signed-in Google email from the instance's 1.5.x profile token file, if present. */
+export const readAntigravityStoredEmail = Effect.fn("readAntigravityStoredEmail")(function* (
+  profileDirectory: string,
+): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tokenPath = path.join(profileDirectory, "antigravity-acp", "antigravity-oauth-token");
+  return yield* fs.readFileString(tokenPath).pipe(
+    Effect.flatMap(decodeStoredSignInEmail),
+    Effect.map((stored) => {
+      const email = stored.id_token_email?.trim();
+      return email && email.length > 0 ? email : undefined;
+    }),
+    Effect.orElseSucceed(() => undefined),
+  );
 });
 
 export function buildAntigravityAcpSpawnInput(input: {
