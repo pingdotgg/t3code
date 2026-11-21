@@ -323,9 +323,17 @@ export const afterForwarding = <P, A, E, R, E2, R2>(
     forwarded,
   );
 
-const fullAccessRequired =
-  "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.";
 const changesEnvironment = "change projects or environment settings";
+
+/** An outside client is held by its own approval, not a thread, so its refusal names that. */
+const fullAccessRequired = ({ scope: { client }, limits }: Caller) => {
+  if (client === undefined)
+    return "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.";
+  const below = `below the full access needed to ${changesEnvironment}.`;
+  return client.access !== "full-access"
+    ? `This MCP client (${client.label}) was approved with ${client.access} access, ${below} To allow it, reconnect this client and approve it with Full access, or make the change from a T3 thread running with full access.`
+    : `This MCP client (${client.label}) is limited to ${limits.runtimeMode}/${limits.interactionMode} on this request, ${below}`;
+};
 
 /** Recheck after waits before writing; caller modes may have changed. */
 export const writesEnvironment = <P, A, E, R>(
@@ -348,7 +356,7 @@ export const writesEnvironment = <P, A, E, R>(
         : assertNotLinked(caller, changesEnvironment),
     ),
     Effect.tap((caller) =>
-      assertFullAccessNamingLink(caller, fullAccessRequired, changesEnvironment),
+      assertFullAccessNamingLink(caller, fullAccessRequired(caller), changesEnvironment),
     ),
   );
   return declare(
@@ -356,7 +364,7 @@ export const writesEnvironment = <P, A, E, R>(
     // Linked work never reaches a link at all; that is checked as the call goes.
     () =>
       orchestratingCaller.pipe(
-        Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
+        Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired(caller))),
       ),
   );
 };
