@@ -166,6 +166,8 @@ export class GitManager extends Context.Service<
         readonly refresh?: boolean;
         readonly freshGitState?: boolean;
         readonly confirmTerminal?: boolean;
+        /** Also accept a pull request merged inside a fork when the host searched upstream. */
+        readonly includeHeadRepository?: boolean;
       },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     /** Whether T3 checked this pull request out onto the branch, which ties it to later threads. */
@@ -2046,6 +2048,31 @@ export const make = Effect.gen(function* () {
     return null;
   });
 
+  // A host that targets another repository (gh's upstream) misses a pull request merged
+  // inside the branch's own repository. Kept out of status so it cannot hide Create PR upstream.
+  const findMergedPrInHeadRepository = Effect.fn("findMergedPrInHeadRepository")(function* (
+    cwd: string,
+    headContext: BranchHeadContext,
+  ) {
+    if (!headContext.isCrossRepository || headContext.headRepositoryNameWithOwner === null) {
+      return null;
+    }
+    const provider = yield* sourceControlProvider(cwd);
+    if (provider.createsChangeRequestsIn === undefined) return null;
+    const sameRepository = { ...headContext, isCrossRepository: false };
+    const pullRequests = yield* provider.listChangeRequests({
+      cwd,
+      headSelector: headContext.headBranch,
+      state: "all",
+      limit: 20,
+      repository: headContext.headRepositoryNameWithOwner,
+    });
+    const merged = pullRequests
+      .map(toPullRequestInfo)
+      .filter((pr) => pr.state === "merged" && matchesBranchHeadContext(pr, sameRepository));
+    return Arr.sort(merged, pullRequestUpdatedAtDescOrder)[0] ?? null;
+  });
+
   const findLatestPrForHeadContext = Effect.fn("findLatestPrForHeadContext")(function* (
     cwd: string,
     headContext: BranchHeadContext,
@@ -2079,7 +2106,6 @@ export const make = Effect.gen(function* () {
         parsedByNumber.set(pr.number, pr);
       }
     }
-
     const parsed = Arr.sort(parsedByNumber.values(), pullRequestUpdatedAtDescOrder);
 
     const latestOpenPr = parsed.find((pr) => pr.state === "open");
@@ -2922,7 +2948,11 @@ export const make = Effect.gen(function* () {
   const lookupBranchPullRequest = Effect.fn("lookupBranchPullRequest")(function* (
     cacheCwd: string,
     branch: string,
-    options: { readonly refresh: boolean; readonly freshGitState: boolean },
+    options: {
+      readonly refresh: boolean;
+      readonly freshGitState: boolean;
+      readonly includeHeadRepository?: boolean | undefined;
+    },
   ) {
     const remember = <E>(key: string, read: Effect.Effect<string | null, E>) =>
       rememberPrLookupGitState(cacheCwd, key, options.freshGitState, read);
@@ -3064,7 +3094,11 @@ export const make = Effect.gen(function* () {
         });
       }
     }
-    const { latest } = cached;
+    const latest =
+      cached.latest ??
+      (options.includeHeadRepository === true
+        ? yield* findMergedPrInHeadRepository(cacheCwd, cached.headContext)
+        : null);
     if (latest === null) return null;
     if (
       (branch === defaultBranch ||
@@ -3094,6 +3128,7 @@ export const make = Effect.gen(function* () {
     const pullRequest = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh,
       freshGitState,
+      includeHeadRepository: options?.includeHeadRepository,
     });
     if (
       pullRequest === null ||
@@ -3121,6 +3156,7 @@ export const make = Effect.gen(function* () {
     const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh: false,
       freshGitState: true,
+      includeHeadRepository: options?.includeHeadRepository,
     });
     settledPrLookupByBranchKey.delete(settledKey);
     if (confirmed !== null && confirmed.state !== "open") {
