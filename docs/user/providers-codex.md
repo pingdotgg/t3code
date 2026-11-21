@@ -2,6 +2,17 @@
 
 Use your ChatGPT plan or an existing Codex CLI login to code in T3 Code.
 
+## Reuse Codex Git instructions
+
+When Codex is your source control writer, T3 Code uses the commit and pull request
+instructions saved in the Codex desktop app's **Settings → Git** alongside
+repository guidance. Custom T3 Code instructions and the **Conventional Commits**
+style take precedence.
+
+The settings must be on the machine running the T3 Code server, in the selected
+Codex instance's home directory. Changes apply to the next generation without a
+restart. Other providers keep their own settings.
+
 ## Connect with ChatGPT
 
 Connect during onboarding or in **Settings → Providers**. For a remote machine,
