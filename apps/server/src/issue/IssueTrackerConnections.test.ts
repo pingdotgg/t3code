@@ -104,17 +104,25 @@ describe("IssueTrackerConnections", () => {
       yield* Effect.flip(connections.connect({ tracker: LINEAR, token: "bad", addAccount: true }));
       expect(secrets.size).toBe(2);
 
-      // A removal that arrives while a replacement key is being checked waits for it, and
-      // unbinds only that account's projects.
+      // A binding or removal that arrives while a replacement key is being checked waits for
+      // it, and the removal unbinds only that account's projects.
       const replacing = yield* connections
         .connect({ tracker: LINEAR, accountId, token: "slow" })
         .pipe(Effect.forkChild({ startImmediately: true }));
       yield* Deferred.await(probing);
+      const binding = yield* connections
+        .bindProject({
+          projectId: "late" as ProjectId,
+          binding: { tracker: LINEAR, accountId, scope: "ENG" },
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      expect((yield* connections.list).accountBindings).not.toHaveProperty("late");
       const removing = yield* connections
         .connect({ tracker: LINEAR, accountId, token: null })
         .pipe(Effect.forkChild({ startImmediately: true }));
       yield* Deferred.succeed(released, undefined);
       yield* Fiber.join(replacing);
+      yield* Fiber.join(binding);
       yield* Fiber.join(removing);
       expect([...secrets.keys()]).toEqual(["issue-tracker-bGluZWFy-token"]);
       const after = yield* connections.list;
