@@ -110,19 +110,22 @@ export function resolveChatCanvasModel({
           bottom: findBar.bottom,
         }
       : findBar;
-  const logicalPreview =
+  const initialPreviewWidth =
     rtl && preview && preview.position !== null && container.width > 0 && container.height > 0
+      ? resolvePreviewMiniPlayerFrame({ ...preview, container }).width
+      : null;
+  const mirrorPreview = (width: number) =>
+    preview && preview.position !== null
       ? {
           ...preview,
           position: {
-            x: mirrorX(
-              preview.position.x,
-              resolvePreviewMiniPlayerFrame({ ...preview, container }).width,
-            ),
+            x: mirrorX(preview.position.x, width),
             y: preview.position.y,
           },
         }
       : preview;
+  const logicalPreview =
+    initialPreviewWidth !== null ? mirrorPreview(initialPreviewWidth) : preview;
   const detailsCardTopInset = findBar?.bottom ?? 0;
   const lane = { padding: measurements.padding, minChatWidth: measurements.minChatWidth };
   // The preview avoids where an open inline card would sit, whether or not a
@@ -156,7 +159,7 @@ export function resolveChatCanvasModel({
             Math.min(detailsCardMeasured.fullContentHeight, logicalPreferredDetailsCard.height),
         }
       : null;
-  const logicalLayout = resolveChatCanvasLayout({
+  let logicalLayout = resolveChatCanvasLayout({
     container,
     preview: logicalPreview,
     padding: measurements.padding,
@@ -166,6 +169,22 @@ export function resolveChatCanvasModel({
     detailsCard,
     findBar: logicalFindBar,
   });
+  if (
+    initialPreviewWidth !== null &&
+    logicalLayout.frame !== null &&
+    logicalLayout.frame.width !== initialPreviewWidth
+  ) {
+    logicalLayout = resolveChatCanvasLayout({
+      container,
+      preview: mirrorPreview(logicalLayout.frame.width),
+      padding: measurements.padding,
+      maxChatWidth: measurements.maxChatWidth,
+      minChatWidth: measurements.minChatWidth,
+      composerHeight: measurements.composerHeight,
+      detailsCard,
+      findBar: logicalFindBar,
+    });
+  }
   const logicalDetailsCardPlacement = resolveThreadDetailsCardLayout({
     container,
     narrowestWidth: measurements.narrowestWidth ?? measurements.width,

@@ -124,6 +124,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-controls-top: 0px;
   --workspace-controls-left: calc(var(--safe-area-inline-start) + 0.75rem);
   --workspace-controls-right: calc(var(--safe-area-inline-end) + 0.75rem);
+  --workspace-header-end-inset: 6rem;
   --workspace-native-controls-inset: 0px;
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
@@ -188,6 +189,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 :dir(rtl) [data-macos-traffic-lights="true"] {
   --workspace-controls-left: calc(var(--safe-area-inline-start) + 0.75rem);
   --workspace-controls-right: var(--desktop-window-controls-inset, 90px);
+  --workspace-header-end-inset: calc(
+    6rem + max(0px, var(--desktop-window-controls-inset, 90px) - 0.75rem)
+  );
 }
 
 /* The font tokens are declared outside the inline theme so utilities reference
