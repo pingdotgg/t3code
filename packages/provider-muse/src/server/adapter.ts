@@ -412,7 +412,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         params: Record<string, unknown>,
         command = true,
         commandId?: string,
-      ): Effect.Effect<Record<string, unknown>, ProviderAdapter.ProviderAdapterProtocolError> =>
+      ) =>
         Effect.tryPromise({
           try: () =>
             command
