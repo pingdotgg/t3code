@@ -931,7 +931,12 @@ export default function DiffPanel({
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
     if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
+    const store = useDiffPanelStore.getState();
+    // A base ref belongs to the repository shown, including the one a plain folder falls back to.
+    if (gitRepositoryPath === null && gitRepository !== null) {
+      store.selectGitRepository(routeThreadRef, gitRepository.repositoryPath);
+    }
+    store.selectBranchBaseRef(routeThreadRef, baseRef);
   };
   const selectGitRepository = (value: string) => {
     const nextPath = value === THREAD_FOLDER ? null : value;
