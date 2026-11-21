@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, and O1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, R2, A1, O1, X1, and Y1.
 
 ## How to read this
 
@@ -10,7 +10,7 @@ One box is one unit of work. Every box names the evidence that checks it. A nest
 
 The program runs `skill://poteto-mode/playbooks/autopilot-stack.md`. The operator granted standing merge approval. Wherever this plan says the operator lands a PR, the root merges it bottom-up with a merge commit once its verdict is clean, retargets the next PR to `main`, and keeps every remote branch.
 
-Speed comes last, by the operator's call. Each PR still runs its perf probe and records the numbers, which checks its perf boxes. A missed perf rule never blocks a merge. O1, the last PR, fixes every recorded miss.
+Speed comes last, by the operator's call. Each PR still runs its perf probe and records the numbers, which checks its perf boxes. A missed perf rule never blocks a merge. O1 fixes every miss recorded before it. X1 and Y1 come after O1, by the operator's call, so each fixes its own misses the way O1 does before it merges.
 
 The board is a UI over T3's engine. Every feature drives a capability T3 already has, and a PR that needs one T3 lacks stops and reports it instead of building engine logic in the board. Screens take their layout and components from Orca, drawn in the board's T3 dark tokens. The board reaches T3 through `@t3tools/contracts` and `@t3tools/client-runtime/<subpath>`, and from C2 on also through `@t3tools/shared/<subpath>`. It never imports from `apps/*` or `packages/*/src`, so a T3 web component is copied as a pattern, never imported.
 
@@ -38,9 +38,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. O1 after B12.
-- [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 also owns the separate `13kparkin/pstack-t3` repo.
-- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, and L1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. R2 after L1. A1 after L1. O1 after B12, R2, and A1. X1 after O1. Y1 after O1.
+- [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 and R2 also edit the separate `13kparkin/pstack-t3` repo.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, L1, R2, A1, X1, and Y1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -48,15 +48,17 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Resolve the repository forge once. Use `gh` against `13kparkin/t3code`, which is the configured forge for this fork. Record that choice in the decision trail.
 - [ ] Open the PR ready, never draft, with the configured forge's create command, per `skill://poteto-mode/playbooks/opening-a-pr.md`. A stack child targets its parent branch.
 - [ ] Run lint and typecheck once before the PR-facing push, as `vp lint apps/board` and `vp run --filter @agent-board/app typecheck`. From S1 on, also run `node standards/check-added-diagnostics.mjs`. Push with hooks on.
-- [ ] Run `skill://unslop` before each commit and `skill://no-comments` before review.
+- [ ] Before the code-ready push, run the author checks in `skill://review-loop`, with the PR's plan section as the ticket.
+- [ ] A docs-only PR, such as a plan change, runs `skill://unslop` on its changed sections instead, and applies what it finds.
 - [ ] Triage every Bugbot and security-reviewer comment per `skill://poteto-mode/references/bugbot-triage.md`.
 - [ ] Rebase onto current trunk before the code-ready report and babysit. Keep that merge base in fix rounds. Rebase again only at merge prep, on a `git merge-tree` conflict with trunk, or on a CI failure that comes from a change on trunk.
 - [ ] Run `node apps/board/scripts/check-engine-untouched.mjs` before every push. A non-zero exit blocks the push.
 
 ### Verdict and merge, for every PR
 
-- [ ] At the code-ready head SHA and at each later push that changes the patch, run the swarm per `skill://swarm`. One gates lane. The ten live lanes from the PR's **Verify, live** block. The perf lane from its **Verify, perf** block. Two or more audit lanes, each with its own focus, that read the diff and the receipts and distrust the PR body. The root audits the receipts in the merge-ready report before the verdict.
-- [ ] Clean only when every lane is `PASS`. Findings go back to the owner, including a defect that a lane filed as a note. A new head gets a fresh swarm and a fresh verdict, except for results that stay valid under the patch-id rule in `skill://poteto-mode/playbooks/shipping.md`.
+- [ ] At the code-ready head SHA and at each later push that changes the patch, run the swarm per `skill://swarm`. One gates lane. The ten live lanes from the PR's **Verify, live** block. The perf lane from its **Verify, perf** block. The reviewer lanes from `skill://review-loop`, which read the diff and the receipts and distrust the PR body.
+- [ ] The root audits the receipts in the merge-ready report before the verdict.
+- [ ] Clean only when every lane is `PASS`. Findings and fix rounds follow `skill://review-loop`: a finding needs a concrete failing case, the owner applies the smallest fix, the same lanes run again at the new head, and after two fix rounds the root asks the operator. A new head gets a fresh swarm and a fresh verdict, except for results that stay valid under the patch-id rule in `skill://poteto-mode/playbooks/shipping.md`.
 - [ ] Append a clean PR to the linear stack per `skill://poteto-mode/playbooks/autopilot-stack.md` step 7. A rebase voids verdicts above the changed head, and the patch-id rule in `skill://poteto-mode/playbooks/shipping.md` decides which verdicts survive. The operator lands the stack bottom-up.
 
 ### Boot recipe, for every live lane
@@ -1537,32 +1539,31 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends M1 to the base-branch stack and the operator lands it bottom-up.
 
-## Start work from Linear and GitHub issues (L1)
+## Add Linear and GitHub issues to a board as work (L1)
 
 **Depends on.** M1.
 
 **Files.**
 
 - [ ] Create `apps/board/src/settings/IntegrationsPage.tsx`.
-- [ ] Create `apps/board/src/issues/IssuePicker.tsx` and `apps/board/src/issues/IssueChip.tsx`.
+- [ ] Create `apps/board/src/issues/IssuePicker.tsx`, `apps/board/src/issues/AddFromIssue.tsx`, and `apps/board/src/issues/IssueChip.tsx`.
 - [ ] Create `apps/board/src/issues/issueLinks.ts` and `apps/board/src/issues/issueLinks.test.ts`.
-- [ ] Edit `apps/board/src/board/CreateBoard.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and `apps/board/src/orchestrator/brief.ts`.
+- [ ] Edit `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and `apps/board/src/orchestrator/brief.ts`.
 
 **Build.**
 
 - [ ] Add an Integrations page to the settings screen in W1's Orca layout. Connect Linear with a personal API key through `issueTrackers.connect`, which T3 probes and keeps as an engine secret. Show each tracker from `issueTrackers.list`, disconnect with a null token, and bind each project to a Linear team through `issueTrackers.bindProject`. Copy the flow from T3 web's `apps/web/src/components/settings/IntegrationsSettings.tsx` and `IssueTrackerSettings.tsx`, read only.
-- [ ] Give the new-board dialog a **Create From** row like Orca's Create worktree dialog in `/home/kyle/personalDev/main/artifacts/agent-board-prototype/refs/orca-create-worktree.png`, with Prompt, GitHub, Linear, Branch, and Name tabs and a search box. The Linear and GitHub tabs search through `issues.list` and `issues.candidates`, and the Branch tab lists bases from `vcs.listRefs`. Copy issue rows and search from T3 web's `apps/web/src/components/issue/`, read only.
-- [ ] Picking an issue fills the board's name and goal, and the orchestrator's first message carries the issue's description and comments from `issues.detail` and `issues.comments`.
+- [ ] A board is a goal the orchestrator organizes, so issues come in as work on an existing board, never as the seed of a new one. Add **Add from tracker** to the orchestrator card. It opens a picker with GitHub and Linear tabs and a search box, laid out like the issue picker in Orca's Create worktree dialog. The tabs search through `issues.list`. Copy issue rows and search from T3 web's `apps/web/src/components/issue/`, read only.
+- [ ] Picking an issue sends the orchestrator a ticket request that carries the issue's description and comments from `issues.detail` and `issues.comments`.
 - [ ] Add an optional `issue` field, holding the tracker and the key, to the ticket schema in `domain/ticket.ts`, and tell the orchestrator in `brief.md` to set it when a ticket maps to an issue, such as a Linear child issue.
 - [ ] In `IssueChip.tsx`, show a linked ticket's issue key, state, and assignee from `issues.detail` on its frame, open the issue in B11's panel on click, and list its linked threads from `issues.linkedThreads`.
 - [ ] Route every tracker write through the operator. `brief.md` tells the orchestrator to ask for a create, a state change, or a comment as a For-you item of a new `tracker_write` kind that states the exact change. **Approve** makes that change through `issues.create`, `issues.setState`, or `issues.comment` and messages the orchestrator the result, and **Hold** changes nothing.
 - [ ] Gate the agents' own tracker tools, per `apps/board/docs/issue-tools-probe.md`. Every agent in a T3 thread has T3's eight issue tools, named `mcp__t3-code__*` in Claude threads and `mcp__t3_code__*` in Codex threads, and T3 runs `create_issue`, `comment_on_issue`, and `set_issue_state` with no approval in every runtime mode. For Claude threads, write a permission rule that asks for those three tools into the project's and each ticket worktree's `.claude/settings.local.json`, so each call waits as an engine approval card in B8's For-you lane. For Codex threads, gate the three `mcp__t3_code__` writes and Codex's own `mcp__codex_apps__linear_*` writes through Codex's approval settings, or turn tracker writes off for Codex orchestrators and say why in the dialog. The operator's `omp-kit` Linear rule never fires on an MCP tool, so it is no fallback. Reads stay free.
-- [ ] Add **Add from Linear** to the orchestrator card. It opens the same picker and sends the picked issue to the orchestrator as a new ticket request.
 - [ ] In `issueLinks.ts`, keep the pure pieces, which find issue keys in text, join tickets to issues, and turn an approved `tracker_write` item into the T3 call's input.
 
 **You see.**
 
-- [ ] Settings connects Linear, the new-board dialog starts a board from a Linear or GitHub issue like Orca's dialog, ticket frames show their issue's state, and every write to the tracker waits for the operator's approval.
+- [ ] Settings connects Linear, **Add from tracker** brings a Linear or GitHub issue onto a board as a ticket, ticket frames show their issue's state, and every write to the tracker waits for the operator's approval.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -1570,15 +1571,15 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Linear lanes read the operator's workspace with a key the operator enters at lane time, and never write to it. Write lanes use a scratch Linear workspace key the operator provides, or the shared lane repo from the boot recipe.
 
-- [ ] Lane 1. Regression lane against trunk. Trunk's dialog has no Create From row, so record that fact. Connect Linear at head. Save `l1-connect.png`. Pass when `issueTrackers.list` shows Linear connected and the key appears in no board file or log.
+- [ ] Lane 1. Regression lane against trunk. Trunk's orchestrator card has no **Add from tracker**, so record that fact. Connect Linear at head. Save `l1-connect.png`. Pass when `issueTrackers.list` shows Linear connected and the key appears in no board file or log.
 - [ ] Lane 2. Bind the project to a team. Save `l1-bind.png`. Pass when `issues.list` returns that team's issues.
 - [ ] Lane 3. Search the Linear tab. Save `l1-search.png`. Pass when the results match Linear's own search for the same text.
-- [ ] Lane 4. Create a board from an issue. Save `l1-from-issue.png`. Pass when the orchestrator's first message holds the issue's description and comments.
+- [ ] Lane 4. Add a Linear issue to an existing board with **Add from tracker**. Save `l1-from-issue.png`. Pass when the orchestrator's new ticket carries the issue's description and comments and links the issue.
 - [ ] Lane 5. Load a `tickets.json` whose tickets link child issues. Save `l1-ticket-chip.png`. Pass when each frame shows the key, state, and assignee Linear reports.
-- [ ] Lane 6. Search the GitHub tab on the shared lane repo after opening three lane issues there. Save `l1-github.png`. Pass when all three are listed and one starts a board.
+- [ ] Lane 6. Search the GitHub tab on the shared lane repo after opening three lane issues there. Save `l1-github.png`. Pass when all three are listed and adding one creates a linked ticket.
 - [ ] Lane 7. Have a real Claude orchestrator change an issue's state in the scratch tracker twice, once through a `tracker_write` item and once by calling `set_issue_state` itself, then have a Codex orchestrator call it once. Save `l1-write.png`. Pass when every call waits for the operator with the exact change shown, **Hold** leaves the issue unchanged, and **Approve** changes it.
-- [ ] Lane 8. Use **Add from Linear** on an existing board. Save `l1-add.png`. Pass when the orchestrator adds a ticket linked to that issue.
-- [ ] Lane 9. Run the Windows app and open the new-board dialog on the Linear tab. Save `l1-windows.png` from a full-window capture. Pass when it matches the layout of Orca's dialog in the reference screenshot.
+- [ ] Lane 8. Add a second issue to the same board. Save `l1-add.png`. Pass when the orchestrator files it as its own ticket next to the first, linked to that issue.
+- [ ] Lane 9. Run the Windows app and open **Add from tracker** on the Linear tab. Save `l1-windows.png` from a full-window capture. Pass when it matches the layout of the issue picker in Orca's dialog.
 - [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `l1-checks.txt`. Pass when all three exit 0.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
@@ -1657,9 +1658,132 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B12 to the base-branch stack and the operator lands it bottom-up.
 
+## Run reviews from review templates on the board's orchestrator (R2)
+
+**Depends on.** L1.
+
+**Files.**
+
+- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.test.ts`, `apps/board/src/orchestrator/launch.ts`, `apps/board/src/orchestrator/roles.ts`, `apps/board/src/orchestrator/roles.test.ts`, `apps/board/roles/task.md`, `apps/board/roles/reviewer.md`, `apps/board/src/domain/board.ts`, `apps/board/src/store/localState.ts`, `apps/board/src/settings/SettingsNav.tsx`, and `apps/board/src/board/OrchestratorCard.tsx`.
+- [ ] Create `apps/board/src/domain/reviewTemplate.ts`, `apps/board/src/domain/reviewTemplate.test.ts`, and `apps/board/src/settings/ReviewsPage.tsx`.
+- [ ] Delete `apps/board/roles/thermo-nuclear-review-subagent.md` and `apps/board/roles/thermo-nuclear-code-quality-review-subagent.md`.
+- [ ] In `13kparkin/pstack-t3`, edit `skills/pstack-t3/SKILL.md`, then re-vendor `apps/board/pstack/` with `apps/board/scripts/vendor-pstack.mjs`.
+
+**Build.**
+
+- [ ] A review template has a name, the author-check skills the builder runs before it reports code-ready, and the reviewer-lane skills the orchestrator runs after. Every template runs with the `review-loop` skill's mechanics: its finding bar, fix rounds with `git diff --shortstat`, and a For-you question to the operator after two fix rounds with findings left.
+- [ ] There is one system template, "Review loop", and it is the only one. It is the `review-loop` skill as written. Its author checks are `simplify`, `no-comments`, `unslop`, and `pre-pr-reviewer`. Its lanes are `ponytail-review`, `test-evidence-review`, `security-audit` in guidance mode, and receipts, each with the skill's runs-when rule. It cannot be edited or deleted, and every board starts on it.
+- [ ] Settings gets a Reviews page that lists the templates. New template opens an editor with a name field and the skills the board's Claude instance reports, the same list the slash menu uses. The operator marks each picked skill as an author check or a reviewer lane. Duplicate on the system template starts a custom template from its skills. Custom templates save in `localState.ts` under `reviewTemplates`, and their lanes run on every ticket.
+- [ ] The orchestrator card has a Review menu that picks the board's template. `board.json` stores the pick as `reviewTemplate`, and no value means the system template. The launch facts name the template and its skills. A pick during a run sends the orchestrator one message naming the new template, and it applies from the next ticket.
+- [ ] In `reviewTemplate.ts`, keep the pure pieces: the system template, the template schema, and the facts text a template renders.
+- [ ] `brief.md` tells the orchestrator to run the board's review template on every ticket. The builder runs the author checks before it reports code-ready. The orchestrator then starts each reviewer lane that applies as its own child, collects the findings, sends the real ones back to the builder, and runs the lanes again after each fix round. The ticket's PR body comes from the `pr-description` skill.
+- [ ] `roles/reviewer.md` runs one lane per child, with the skill the orchestrator names in the task.
+- [ ] Delete the two thermo-nuclear roles and their `roles.ts` entries. `ponytail-review` covers bugs, broken callers, and code that should not exist, and the thermo-nuclear code-quality checklist pushes for restructuring that grows code.
+- [ ] In the `pstack-t3` adapter, map every skill step that says to start a subagent, a scout, a task, or a reviewer to `delegate_task` with the matching registry role. This covers user skills such as `pre-pr-reviewer` and `no-comments`.
+- [ ] The skills come from where they already load on the board's Claude instances: `pstack-t3` for `no-comments`, `unslop`, and `swarm`, `~/.claude/skills` for `review-loop`, `simplify`, `pre-pr-reviewer`, `test-evidence-review`, `security-audit`, and `pr-description`, and the user-scope ponytail plugin for `ponytail-review`. Nothing is vendored twice.
+
+**You see.**
+
+- [ ] The operator picks a review template for each board, or builds one from review skills. Every ticket goes through the board's template, and the orchestrator stops and asks after two fix rounds.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `roles.test.ts` asserts the literal registry without the two thermo-nuclear roles. `reviewTemplate.test.ts` asserts the system template's literal facts text, and decodes a fixed local-state file with one custom template into its literal value. Run `vp test run src/orchestrator/roles.test.ts src/domain/reviewTemplate.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Every lane uses a real Claude orchestrator on the shared lane repo.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk's orchestrator hands a code-ready ticket to merge approval with no review lanes, so record that. Run a small goal at head on the system template. Save `r2-author-checks.txt`. Pass when the builder's transcript shows `simplify`, `no-comments`, `unslop`, and `pre-pr-reviewer` before code-ready.
+- [ ] Lane 2. Save `r2-lanes.txt` from the same goal. Pass when each applicable reviewer lane starts as its own `delegate_task` child with the `reviewer` role, every skill loads with no refused Skill call, and no Claude built-in subagent call appears.
+- [ ] Lane 3. Give a goal whose builder brief plants one real bug, a comment rendered without the markdown sanitizer. Save `r2-fix-round.txt`. Pass when a lane names it with `file:line`, the builder fixes it, the re-run lanes pass, and the fix round reports its `git diff --shortstat` and adds no guard, fallback, wrapper, or test its finding did not require.
+- [ ] Lane 4. Give a goal whose builder brief asks for three tests of made-up edge cases. Save `r2-tests.txt`. Pass when `test-evidence-review` flags all three and the fix round deletes them.
+- [ ] Lane 5. Create a template named "Security only" with `simplify` as its author check and `security-audit` as its lane, and pick it on a board. Run a small goal. Save `r2-custom.png` and `r2-custom.txt`. Pass when only those two skills run on the ticket.
+- [ ] Lane 6. Give a docs-only goal on the system template. Save `r2-docs.txt`. Pass when the security and test lanes are skipped with their reasons.
+- [ ] Lane 7. Give a goal that still has findings after two fix rounds. Save `r2-escalate.png`. Pass when a For-you question asks the operator and no third fix round starts.
+- [ ] Lane 8. Save `r2-pr-body.txt` from a merged lane PR. Pass when its body has every `pr-description` section that applies and a Mermaid graph.
+- [ ] Lane 9. Open Settings, then Reviews, and restart the app. Save `r2-templates.png`. Pass when the system template has no edit or delete, the editor lists the skills the instance reports, and the custom template and the board's pick are still there after the restart.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `r2-checks.txt`. Pass when all three exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from a builder's code-ready report to a clean verdict on a one-file ticket.
+- [ ] Probe. Log `board:review-start` and `board:review-clean` on five one-file tickets.
+- [ ] Baseline. Trunk runs no review. Record the head times.
+- [ ] Rule. The median stays under 15 minutes, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 5 and lane 9 screenshots into `apps/board/docs/media/r2-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/r2-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends R2 to the base-branch stack and the operator lands it bottom-up.
+
+## Add docs to a board as work (A1)
+
+**Depends on.** L1.
+
+**Files.**
+
+- [ ] Edit `apps/board/src/chat/Composer.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/board/Viewport.tsx`, and `apps/board/src/orchestrator/brief.md`.
+- [ ] Create `apps/board/src/chat/attachments.ts` and `apps/board/src/chat/attachments.test.ts`.
+
+**Build.**
+
+- [ ] A board's work is its tickets and its docs. The operator adds docs by attaching files in the orchestrator chat, with an attach button or by dropping files onto the composer or the board. The composer sends them as T3 chat attachments, images and other files alike, the way T3 web's `apps/web/src/components/chat/ChatComposer.tsx` does, read only. T3's own limits apply: 100 files per message, 50 MiB per file, 10 MiB per image, and 80 MiB of images per message.
+- [ ] Dropping files onto the board sends one orchestrator message, "Add these docs to the board's work", with the files attached.
+- [ ] The orchestrator card lists the board's docs by name, from the attachments in its thread. It shows one row per doc and a count.
+- [ ] `brief.md` tells the orchestrator to read every attached doc before it plans, to cite the doc a ticket comes from, and to organize docs into tickets the same way it does issues.
+- [ ] In `attachments.ts`, keep the pure pieces: turn dropped files into T3 attachment inputs, and check them against T3's limits before sending.
+
+**You see.**
+
+- [ ] The operator drops a spec onto a board, the orchestrator card lists it, and the orchestrator files tickets that cite it.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `attachments.test.ts` turns a fixed markdown file and a fixed PNG into literal attachment inputs, and rejects a file over T3's 50 MiB limit with T3's own message. Run `vp test run src/chat/attachments.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Every lane uses a real Claude orchestrator.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk's composer sends no attachments, so record that fact. Attach a markdown spec with the button at head. Save `a1-attach.png`. Pass when the message carries the file and the orchestrator quotes a line from it.
+- [ ] Lane 2. Drop a PDF onto the board. Save `a1-drop.png`. Pass when one orchestrator message carries it and the orchestrator card lists it.
+- [ ] Lane 3. Attach a screenshot image. Save `a1-image.png`. Pass when the orchestrator describes what the image shows.
+- [ ] Lane 4. Give a board a goal and a two-page spec. Save `a1-tickets.txt`. Pass when the orchestrator's tickets each cite the spec.
+- [ ] Lane 5. Add one Linear issue and one doc to the same board. Save `a1-mixed.png`. Pass when both turn into tickets on the board.
+- [ ] Lane 6. Reopen the board. Save `a1-reopen.png`. Pass when the orchestrator card still lists every doc.
+- [ ] Lane 7. Attach a file over 50 MiB. Save `a1-limit.png`. Pass when the board shows T3's limit message and sends nothing.
+- [ ] Lane 8. Start a child agent on a ticket that cites a doc. Save `a1-child.txt`. Pass when the child reads the doc by its path.
+- [ ] Lane 9. Run the Windows app and drop a file from Windows Explorer onto the board. Save `a1-windows.png` from a full-window capture. Pass when it attaches the same way as in lane 2.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `a1-checks.txt`. Pass when all three exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from dropping a 1 MiB file to its chip showing in the composer.
+- [ ] Probe. Log `board:attach-drop` and `board:attach-shown` ten times.
+- [ ] Baseline. Trunk has no attachments. Record the head times.
+- [ ] Rule. The median stays under 200 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 2, 4, and 6 screenshots into `apps/board/docs/media/a1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/a1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends A1 to the base-branch stack and the operator lands it bottom-up.
+
 ## Meet every recorded speed budget (O1)
 
-**Depends on.** B12.
+**Depends on.** B12, R2, and A1.
 
 **Files.**
 
@@ -1708,6 +1832,138 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Bugbot triage done.
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends O1 to the base-branch stack and the operator lands it bottom-up.
+
+## Send tickets to a Warp factory and work with them from the board (X1)
+
+**Depends on.** O1.
+
+**Files.**
+
+- [ ] Create `apps/board/electron/warp.ts` and `apps/board/electron/warp.test.ts`.
+- [ ] Create `apps/board/src/warp/WarpCard.tsx`, `apps/board/src/warp/SendToWarp.tsx`, `apps/board/src/warp/WarpBadge.tsx`, and `apps/board/src/warp/WarpTaskTab.tsx`.
+- [ ] Create `apps/board/src/warp/warpTasks.ts` and `apps/board/src/warp/warpTasks.test.ts`.
+- [ ] Edit L1's `apps/board/src/settings/IntegrationsPage.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/files/MainTabs.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and the IPC, preload, and bridge files that carry Warp calls.
+
+**Build.**
+
+- [ ] Call the Warp Platform API at `https://app.warp.dev/api/v1` from the main process in `electron/warp.ts`, with `fetch` and no SDK. Warp is the one outside service the board calls itself, because T3 has no Warp support. Take paths and fields from Warp's OpenAPI spec at `https://docs.warp.dev/openapi.json`, and record the spec's date in the client. The API key lives in the board's `safeStorage` token store. It never reaches the renderer, the engine, an agent, chat, or a log, and no agent gets Factory MCP, because a Warp key has no read-only or per-factory scope.
+- [ ] Add a **Warp** card to L1's Integrations page in Orca's card style, copied from `src/renderer/src/components/integrations/task-trackers/linear-integration-card.tsx` and `linear-api-key-dialog.tsx` in Orca's source. Connect takes the key, lists the account's factories from `GET /factory`, and Disconnect deletes the key.
+- [ ] Add **Send to Warp** to the ticket frame's menu and the orchestrator card. It opens a dialog with a factory picker searched through `GET /factory?search=`, and a title and prompt filled from the ticket's goal, with L1's linked issue as `ticket_ref` (for example `linear:XEO-123`) and `ticket_url`. Send calls `POST /factory/{uid}/runs` and stores the factory, task, and run IDs in an optional `warp` field on the ticket.
+- [ ] Let the orchestrator propose a send. `brief.md` tells it to ask with a For-you item of a new `warp_send` kind that names the factory and the exact prompt. **Approve** dispatches it, **Hold** sends nothing. Nothing is ever dispatched without the operator.
+- [ ] In `WarpBadge.tsx`, show a sent ticket's task state from `GET /factory/{uid}/tasks/{task_uid}` on its frame. Poll every 10 s while the board is visible, and stop while it is hidden. A pull request the task opens shows as B10's PR chip, so checks and merge readiness work as they do for a local ticket.
+- [ ] In `WarpTaskTab.tsx`, open a main-view tab per Warp task. It shows the conversation from `GET /agent/runs/{runId}/conversation` through C2's markdown, a reply box that calls `POST /agent/runs/{runId}/followups`, **Interrupt** through `POST /agent/runs/{runId}/interrupt`, **Stop** through `POST /factory/{uid}/tasks/{task_uid}/cancel`, and **Open in Warp**, which opens the run's session link in B11's panel.
+- [ ] Turn the factory inbox from `GET /factory-inbox` into For-you cards for this board's tasks, such as a foreman's plan-review question. Answering sends a follow-up and marks the notification read through `POST /factory-inbox/notifications/read`.
+- [ ] In `warpTasks.ts`, keep the pure pieces: map task and run states to the frame's badge, build the dispatch body from a ticket, and turn inbox notifications into For-you items.
+
+**You see.**
+
+- [ ] Settings connects Warp, any ticket can go to a Warp factory after the operator approves, and the board shows the task's state, conversation, questions, and pull request, with reply, interrupt, and stop.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `warpTasks.test.ts` maps fixed task and run states to literal badges, builds a literal `POST /factory/{uid}/runs` body from a fixed ticket with a Linear issue, and turns fixed inbox notifications into literal For-you items. `electron/warp.test.ts` runs the client against a local HTTP server and checks the bearer header, the error text for a rejected key and for missing credits, and that no error message contains the key. Run `vp test run src/warp/warpTasks.test.ts electron/warp.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. The operator creates one test factory in Warp's web app connected only to `13kparkin/agent-board-lanes`, and enters the key into the board's Warp card when the lane asks. Lanes share one small dispatched task to keep credit use low.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk has no Warp card, so record that fact. Connect Warp at head. Save `x1-connect.png`. Pass when the card lists the factories `GET /factory` returns and the key appears in no board file, log, or renderer storage.
+- [ ] Lane 2. Have a real Claude orchestrator propose a `warp_send`. Hold it, then approve it. Save `x1-send.png`. Pass when Hold leaves `GET /factory/{uid}/tasks` unchanged and Approve creates exactly one task carrying the ticket's `ticket_ref`.
+- [ ] Lane 3. Watch the sent ticket. Save `x1-status.png`. Pass when its badge follows the task through at least two states that match the API, with no reload.
+- [ ] Lane 4. Reply in the Warp tab. Save `x1-reply.png`. Pass when the follow-up appears in the run's conversation from the API and the foreman responds to it.
+- [ ] Lane 5. Answer a foreman question from its For-you card. Save `x1-needs-you.png`. Pass when the card matches the inbox item, the answer reaches the conversation, and the notification reads as read.
+- [ ] Lane 6. Let the task open its pull request on the lane repo. Save `x1-pr.png`. Pass when the PR chip and its checks match `gh pr view`.
+- [ ] Lane 7. Stop the task. Save `x1-stop.txt`. Pass when the API reports it stopped and the badge shows it.
+- [ ] Lane 8. Enter a revoked key. Save `x1-bad-key.png`. Pass when the card says the key was rejected and nothing is dispatched.
+- [ ] Lane 9. Run the Windows app with a Warp tab open beside the board. Save `x1-windows.png` from a full-window capture. Pass when the tab fits beside the board and the Warp card matches Orca's integration cards.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `x1-checks.txt`. Pass when all three exit 0.
+- [ ] Cleanup. Stop the test task, close its pull request and delete its branches on the lane repo, disconnect Warp in the board, and tell the operator to revoke the key.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from opening a Warp tab to its conversation's first paint, minus the network time the main process logs.
+- [ ] Probe. Log `board:warp-open`, `board:warp-response`, and `board:warp-painted` ten times on a conversation of 200 messages.
+- [ ] Baseline. Trunk has no Warp tab. Record the head times.
+- [ ] Rule. The median, minus network time, stays under 200 ms. A miss is fixed in this PR, because O1 runs before it.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 2, 4, and 5 screenshots into `apps/board/docs/media/x1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/x1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends X1 to the base-branch stack and the operator lands it bottom-up.
+
+## Run Orca-style bots on T3's scheduled tasks (Y1)
+
+**Depends on.** O1.
+
+**Files.**
+
+- [ ] Create `apps/board/src/bots/BotsScreen.tsx`, `apps/board/src/bots/NewBotDialog.tsx`, `apps/board/src/bots/BotHomeChat.tsx`, `apps/board/src/bots/BotSettings.tsx`, `apps/board/src/bots/BotTriggers.tsx`, and `apps/board/src/bots/BotAvatar.tsx`.
+- [ ] Create `apps/board/src/bots/botModel.ts` and `apps/board/src/bots/botModel.test.ts`.
+- [ ] Create `apps/board/electron/botHome.ts` and `apps/board/electron/botHome.test.ts`.
+- [ ] Edit `apps/board/src/sidebar/Sidebar.tsx`, `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/orchestratorInstance.ts`, and the IPC, preload, and bridge files that carry bot home calls.
+
+**Build.**
+
+- [ ] Port the bot screens from Orca's source at `/home/kyle/personalDev/main/artifacts/orca-src`, read only: `src/renderer/src/components/bots/BotFirstScreen.tsx`, `BotCreateButton.tsx`, `NewBotDialog.tsx`, `BotHomeChat.tsx`, `BotChatsPanel.tsx`, `BotChatTreeWorkerRow.tsx`, `BotNeedsYouSection.tsx`, `BotActivityPanel.tsx`, and `BotAvatar.tsx`, the mascots in `src/renderer/src/assets/bot-mascot-cutouts/`, and `src/renderer/src/components/settings/bots/BotsSettingsPane.tsx`, `BotSoulEditor.tsx`, and `BotMemoryList.tsx`. Keep Orca's MIT notice with the copied mascots. Rewire every call to T3's contracts.
+- [ ] Add **Bots** to the left sidebar. The Bots screen lists each bot with its avatar, its home chat, the chats its triggers started, its workers, and what it needs from the operator, as Orca's does.
+- [ ] A bot is a T3 thread on the board's agents instance, with a home folder at `~/.agent-board/bots/<slug>/` in WSL holding `SOUL.md` and `MEMORY.md`. `electron/botHome.ts` creates and reads that folder through the WSL shell, as `electron/pstack.ts` does. The bot's appended prompt tells it to read `SOUL.md` first and keep `MEMORY.md` current. Port that prompt from Orca's bot preamble in `src/main/bots/`, with every Orca CLI command replaced by its T3 equivalent, `delegate_task`, T3's issue tools, or `gh`.
+- [ ] The new-bot dialog takes a name, an avatar, a model through C1's picker, the project it works in, and a template from Orca's `src/shared/bots/bot-template-catalog/`. Offer only the templates whose tools exist on T3, and drop the Slack, Google, and Composio ones.
+- [ ] Run triggers through T3's scheduled tasks with `scheduledTasks.subscribe`, `upsert`, `setEnabled`, `delete`, `runNow`, `rotateWebhookToken`, and `listWebhookDeliveries`. Offer every N minutes, a time of day on chosen weekdays, once, and webhook. Home-chat runs use `threadMode: continue`, and per-event runs use `new_thread`.
+- [ ] Offer two webhook presets. GitHub signs with `x-hub-signature-256`, hex, prefix `sha256=`, with filters for events such as an opened pull request or a failed check. Linear signs with `linear-signature`, hex, no prefix, with filters on type and action. Show the webhook URL once with a copy button, because T3 returns it only on creation, and show the delivery log. Show T3 Connect's reachability beside every webhook trigger, and when it is unreachable, say that outside services can't reach the hook.
+- [ ] Let people ask a bot the way Orca's **How to ask** line shows, within T3's filter operators `equals`, `notEquals`, and `startsWith`. On GitHub, a comment that starts with `@<bot>` or the label `bot:<bot>` starts it. On Linear, the label `bot:<bot>` starts it. A mention in the middle of a comment does not, because T3 has no contains filter.
+- [ ] Copy Orca's **Who can ask**. Every webhook trigger carries a sender filter that defaults to the operator's own GitHub login or Linear user. Adding a person adds a copy of the trigger with their filter, because all of a T3 task's filters must match. A delivery from anyone else never starts the bot, because a request runs on the operator's machine and sign-ins.
+- [ ] A bot hands code work to children through `delegate_task`. They show under the bot as Orca's worker rows and as cards on their board.
+- [ ] A bot's approvals and questions arrive in B8's For-you lane with the bot's avatar. Tracker writes follow L1's `tracker_write` rule and K2's approval rule, so a bot never writes to a tracker without the operator, including its replies where it was asked, which wait as Orca's **Ask for approval** mode does.
+- [ ] Out of scope, with the reason shown in the Bots screen's help: Slack triggers, because Orca's event service for Slack, Linear, and GitHub is hosted by Orca and is not in its source; Google and Composio connectors; the mobile app; bot groups.
+- [ ] In `botModel.ts`, keep the pure pieces: turn a bot's triggers into `scheduledTasks.upsert` inputs, hold the two webhook presets, and join scheduled tasks and threads into bot rows.
+
+**You see.**
+
+- [ ] A Bots screen like Orca's, where a bot with its own soul and memory chats with the operator, runs on a schedule or a GitHub or Linear webhook, hands code work to workers, and asks the operator before any tracker write.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `botModel.test.ts` turns a fixed bot with an interval trigger, a weekday trigger, and a GitHub webhook trigger into literal `scheduledTasks.upsert` inputs, checks both webhook presets literally, and joins fixed scheduled tasks and threads into literal bot rows. `electron/botHome.test.ts` checks the slug for two bots with the same name and the files a new bot's folder gets. Run `vp test run src/bots/botModel.test.ts electron/botHome.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Webhook lanes use the lane repo only, and never create a webhook in the operator's Linear workspace.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk has no Bots screen, so record that fact. Create a bot from a template at head. Save `y1-create.png`. Pass when its thread exists on the agents instance, its folder holds `SOUL.md` and `MEMORY.md`, and the screen matches Orca's ported layout.
+- [ ] Lane 2. Tell the bot a fact in its home chat, start a fresh session, and ask for it. Save `y1-memory.txt`. Pass when `MEMORY.md` holds the fact and the bot answers from it.
+- [ ] Lane 3. Add a once trigger two minutes ahead. Save `y1-once.png`. Pass when the run lands in the home chat on time and reads succeeded.
+- [ ] Lane 4. Add a two-minute interval trigger, let it run twice, then turn it off. Save `y1-interval.txt`. Pass when it ran twice and not again after it was turned off.
+- [ ] Lane 5. Add a GitHub webhook trigger, add that hook to the lane repo with its secret, and comment `@<bot>` on a lane pull request. Save `y1-github-hook.png`. Pass when the delivery is verified and matched, the bot runs in a new chat and asks to reply on the pull request, **Approve** posts the reply, a delivery with a wrong signature is rejected, and the same comment from a sender who is not on **Who can ask** starts nothing. When T3 Connect is unreachable, send the same signed deliveries to the engine's local hook URL and record the public path NOT RUN with the blocker.
+- [ ] Lane 6. Send a delivery in Linear's format, signed with the trigger's secret, to the engine's hook URL. Save `y1-linear-hook.txt`. Pass when it is verified and matched, and a wrong signature is rejected.
+- [ ] Lane 7. Ask the bot to fix a small thing in the lane repo. Save `y1-worker.png`. Pass when it starts a child through `delegate_task`, the worker row and card appear, and the child's pull request opens on the lane repo.
+- [ ] Lane 8. Have the bot ask to comment on a lane issue. Save `y1-needs-you.png`. Pass when the For-you card carries the bot's avatar and the exact change, **Hold** leaves the issue unchanged, and **Approve** posts the comment.
+- [ ] Lane 9. Run the Windows app on the Bots screen. Save `y1-windows.png` from a full-window capture. Pass when the layout matches the Orca source it was ported from.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `y1-checks.txt`. Pass when all three exit 0.
+- [ ] Cleanup. Delete the test bots, their scheduled tasks and folders, the lane repo webhook, and the lane pull requests, issues, and branches.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from opening the Bots screen with 20 bots and 200 chats to its first paint.
+- [ ] Probe. Log `board:bots-open` and `board:bots-painted` ten times.
+- [ ] Baseline. Trunk has no Bots screen. Record the head times.
+- [ ] Rule. The median stays under 200 ms. A miss is fixed in this PR, because O1 runs before it.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 5, and 8 screenshots into `apps/board/docs/media/y1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/y1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends Y1 to the base-branch stack and the operator lands it bottom-up.
 
 ## Close the program
 
@@ -1780,7 +2036,7 @@ These stay unproven until B3 runs.
 - The board builds against upstream `main`, which can move ahead of the newest T3 release. Today both are `0.1.10`, and nightly is `0.1.11`. If a merge from upstream raises the protocol the client needs past the latest release, even an updated service is too old. Merge upstream at release tags when that happens.
 - The orchestrator can write a malformed store file. B5, B7, B8, and B9 parse every file at the boundary, keep the last valid state, and show a banner.
 - T3 cannot limit a child's tools. Read-only roles such as `scout`, `reviewer`, and `security-reviewer` stay read-only only because their role file says so. B12 lane 7 reads the reviewer child's thread and fails when it shows an edit.
-- Lanes in B3, B6, B8, and B12 use the operator's Claude Code and Codex subscriptions, which costs usage. Run them once per head.
+- Lanes in B3, B6, B8, B12, X1, and Y1 use the operator's Claude Code and Codex subscriptions, which costs usage. X1's lanes also spend Warp credits. Run them once per head.
 - Lanes never touch `~/.t3`. Each lane uses its own `--base-dir`.
 - GitHub Actions are off by default on a fork. The operator enables them for `13kparkin/t3code` before B0's lane 10.
 - Auto-compaction in `~/.claude/settings.json` was switched from `false` to `true` with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` set to `60`. Every Claude Code session on this machine now compacts at 60% of its auto-compact window.
