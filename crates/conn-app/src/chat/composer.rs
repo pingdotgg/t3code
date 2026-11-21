@@ -87,6 +87,7 @@ pub(crate) enum ComposerEvent {
     ModelSelected {
         instance_id: String,
         model: String,
+        options: Option<serde_json::Map<String, serde_json::Value>>,
     },
     RuntimeModeSelected(String),
     InteractionModeSelected(String),
@@ -112,7 +113,9 @@ pub(crate) struct Composer {
     selected_instance_id: Option<String>,
     selected_driver: Option<String>,
     selected_model: String,
+    selected_options: Option<serde_json::Map<String, serde_json::Value>>,
     model_picker_open: bool,
+    effort_menu_open: bool,
     picker_provider_filter: Option<String>,
     picker_highlighted_index: usize,
     active_trigger: Option<ComposerTrigger>,
@@ -216,7 +219,9 @@ impl Composer {
             selected_instance_id: None,
             selected_driver: None,
             selected_model: "Default model".to_owned(),
+            selected_options: None,
             model_picker_open: false,
+            effort_menu_open: false,
             picker_provider_filter: None,
             picker_highlighted_index: 0,
             active_trigger: None,
@@ -299,23 +304,26 @@ impl Composer {
         cx.notify();
     }
 
-    /// Updates the active provider/model displayed in the composer footer.
+    /// Updates the active provider/model and options displayed in the composer footer.
     pub(crate) fn set_model_selection(
         &mut self,
         instance_id: Option<String>,
         driver: Option<String>,
         model: String,
+        options: Option<serde_json::Map<String, serde_json::Value>>,
         cx: &mut Context<'_, Self>,
     ) {
         let changed = self.selected_instance_id != instance_id
             || self.selected_driver != driver
-            || self.selected_model != model;
+            || self.selected_model != model
+            || self.selected_options != options;
         if !changed {
             return;
         }
         self.selected_instance_id = instance_id;
         self.selected_driver = driver;
         self.selected_model = model;
+        self.selected_options = options;
         cx.notify();
     }
 
@@ -387,6 +395,10 @@ impl Composer {
         let mut changed = false;
         if self.model_picker_open {
             self.model_picker_open = false;
+            changed = true;
+        }
+        if self.effort_menu_open {
+            self.effort_menu_open = false;
             changed = true;
         }
         if self.runtime_menu_open {
@@ -546,8 +558,35 @@ impl Composer {
         }
         self.selected_instance_id = Some(instance_id.clone());
         self.selected_model = model.clone();
+        self.selected_options = None;
         self.model_picker_open = false;
-        cx.emit(ComposerEvent::ModelSelected { instance_id, model });
+        self.effort_menu_open = false;
+        cx.emit(ComposerEvent::ModelSelected {
+            instance_id,
+            model,
+            options: None,
+        });
+        cx.notify();
+    }
+
+    fn pick_effort(&mut self, option_id: String, value: String, cx: &mut Context<'_, Self>) {
+        let Some(opt) = self
+            .catalog
+            .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
+        else {
+            return;
+        };
+        let instance_id = opt.instance_id.clone();
+        let model = opt.slug.clone();
+        let mut opts = self.selected_options.clone().unwrap_or_default();
+        opts.insert(option_id, serde_json::Value::String(value));
+        self.selected_options = Some(opts.clone());
+        self.effort_menu_open = false;
+        cx.emit(ComposerEvent::ModelSelected {
+            instance_id,
+            model,
+            options: Some(opts),
+        });
         cx.notify();
     }
 
@@ -1015,6 +1054,107 @@ impl Render for Composer {
                     .child(model_label),
             );
 
+        let effort_picker: Option<AnyElement> = self
+            .catalog
+            .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
+            .and_then(|m| m.reasoning.as_ref())
+            .map(|reasoning| {
+                let current_id = self
+                    .selected_options
+                    .as_ref()
+                    .and_then(|opts| opts.get(&reasoning.option_id))
+                    .and_then(serde_json::Value::as_str)
+                    .or(reasoning.default_value.as_deref())
+                    .unwrap_or_default();
+                let current_label = reasoning
+                    .choices
+                    .iter()
+                    .find(|(id, _)| id == current_id)
+                    .map_or("Effort", |(_, label)| label.as_str());
+                let mut slot = div().relative().child(
+                    div()
+                        .id("chat-composer-effort-picker")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(4.0))
+                        .h(px(FOOTER_CONTROL_HEIGHT_PX))
+                        .px(px(8.0))
+                        .rounded(px(8.0))
+                        .cursor_pointer()
+                        .text_size(px(13.0))
+                        .line_height(px(20.0))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(if self.effort_menu_open { fg } else { muted })
+                        .when(self.effort_menu_open, |s| s.bg(highlight_bg))
+                        .hover(move |s| s.bg(highlight_bg).text_color(fg))
+                        .on_click(cx.listener(|composer, _, _, cx| {
+                            composer.effort_menu_open = !composer.effort_menu_open;
+                            if composer.effort_menu_open {
+                                composer.model_picker_open = false;
+                                composer.runtime_menu_open = false;
+                            }
+                            cx.notify();
+                        }))
+                        .conn_tooltip(reasoning.label.clone(), &tokens)
+                        .child(icons::icon(
+                            "superhero/thinking.svg",
+                            13.0,
+                            if self.effort_menu_open { fg } else { muted },
+                        ))
+                        .child(current_label.to_owned()),
+                );
+                if self.effort_menu_open {
+                    let pop_fg = hsla(tokens.popover_foreground);
+                    let mut menu = div()
+                        .id("chat-composer-effort-menu")
+                        .absolute()
+                        .bottom_full()
+                        .right_0()
+                        .mb(px(4.0))
+                        .w(px(164.0))
+                        .rounded(px(8.0))
+                        .bg(hsla(tokens.popover))
+                        .border_1()
+                        .border_color(hsla(tokens.shell_inner_border))
+                        .shadow_md()
+                        .p(px(4.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0));
+                    for (choice_id, choice_label) in &reasoning.choices {
+                        let active = choice_id == current_id;
+                        let opt_id = reasoning.option_id.clone();
+                        let val = choice_id.clone();
+                        menu = menu.child(
+                            div()
+                                .id(SharedString::from(format!("composer-effort-{choice_id}")))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(6.0))
+                                .h(px(26.0))
+                                .px(px(8.0))
+                                .rounded(px(5.0))
+                                .cursor_pointer()
+                                .text_size(px(12.0))
+                                .line_height(px(16.0))
+                                .text_color(if active { pop_fg } else { muted })
+                                .hover(move |s| s.bg(highlight_bg).text_color(pop_fg))
+                                .on_click(cx.listener(move |composer, _, _, cx| {
+                                    composer.pick_effort(opt_id.clone(), val.clone(), cx);
+                                }))
+                                .child(div().flex_1().child(choice_label.clone()))
+                                .when(active, |el| {
+                                    el.child(icons::icon("superhero/check.svg", 12.0, pop_fg))
+                                }),
+                        );
+                    }
+                    slot = slot.child(deferred(menu).with_priority(3));
+                }
+                slot.into_any_element()
+            });
+
         let attach_btn = div()
             .id("chat-composer-attach")
             .flex()
@@ -1162,8 +1302,9 @@ impl Render for Composer {
                             .flex()
                             .flex_row()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(px(6.0))
                             .child(model_trigger)
+                            .when_some(effort_picker, |el, picker| el.child(picker))
                             .child(mic_btn)
                             .child(action_btn),
                     ),
@@ -1175,6 +1316,7 @@ impl Render for Composer {
             .w_full()
             .capture_action(cx.listener(|composer, _: &Escape, _window, cx| {
                 if composer.model_picker_open
+                    || composer.effort_menu_open
                     || composer.runtime_menu_open
                     || composer.active_trigger.is_some()
                 {

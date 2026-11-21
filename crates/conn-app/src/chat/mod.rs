@@ -61,6 +61,7 @@ pub(crate) enum ChatEvent {
     ModelSelected {
         instance_id: String,
         model: String,
+        options: Option<serde_json::Map<String, serde_json::Value>>,
     },
     /// Open the right panel's Diff tab (e.g. clicking a turn's changed-files summary card).
     OpenDiff,
@@ -132,10 +133,15 @@ impl ChatView {
                     cx.notify();
                 }
                 ComposerEvent::Stop => cx.emit(ChatEvent::Stop),
-                ComposerEvent::ModelSelected { instance_id, model } => {
+                ComposerEvent::ModelSelected {
+                    instance_id,
+                    model,
+                    options,
+                } => {
                     cx.emit(ChatEvent::ModelSelected {
                         instance_id: instance_id.clone(),
                         model: model.clone(),
+                        options: options.clone(),
                     });
                 }
                 ComposerEvent::RuntimeModeSelected(mode) => {
@@ -259,14 +265,20 @@ impl ChatView {
             .replace(&format!("{root}/"), "")
     }
 
-    pub(crate) fn set_model_label(&mut self, label: String, cx: &mut Context<'_, Self>) {
-        if self.model_label == label {
-            return;
+    pub(crate) fn set_model_selection(
+        &mut self,
+        instance_id: Option<String>,
+        model: String,
+        options: Option<serde_json::Map<String, serde_json::Value>>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.composer.update(cx, |c, cx| {
+            c.set_model_selection(instance_id, None, model.clone(), options, cx);
+        });
+        if self.model_label != model {
+            self.model_label = model;
+            cx.notify();
         }
-        self.composer
-            .update(cx, |c, cx| c.set_model_label(label.clone(), cx));
-        self.model_label = label;
-        cx.notify();
     }
 
     /// Updates the composer's bottom `BranchToolbar` context strip.

@@ -105,17 +105,30 @@ pub(crate) fn respond_approval(
     }))
 }
 
-/// `thread.model-selection.set`: switch the thread to `model` on provider `instance_id`.
+/// `thread.model-selection.set`: switch the thread to `model` on provider `instance_id`,
+/// optionally passing provider/model `options` (such as `{ "effort": "high" }`).
 pub(crate) fn set_model_selection(
     thread_id: &str,
     instance_id: &str,
     model: &str,
+    options: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Result<OrchestrationV2Command, serde_json::Error> {
+    let mut selection = serde_json::Map::new();
+    selection.insert("instanceId".to_owned(), json!(instance_id));
+    selection.insert("model".to_owned(), json!(model));
+    if let Some(opts) = options
+        && !opts.is_empty()
+    {
+        selection.insert(
+            "options".to_owned(),
+            serde_json::Value::Object(opts.clone()),
+        );
+    }
     conn_contract::from_json(json!({
         "type": "thread.model-selection.set",
         "commandId": new_id("cmd"),
         "threadId": thread_id,
-        "modelSelection": { "instanceId": instance_id, "model": model },
+        "modelSelection": serde_json::Value::Object(selection),
     }))
 }
 
@@ -227,8 +240,14 @@ mod tests {
         );
         assert!(stop_thread("t1").is_ok(), "thread.stop decodes");
         assert!(
-            set_model_selection("t1", "claudeAgent", "haiku").is_ok(),
+            set_model_selection("t1", "claudeAgent", "haiku", None).is_ok(),
             "thread.model-selection.set decodes"
+        );
+        let mut opts = serde_json::Map::new();
+        opts.insert("effort".to_owned(), json!("high"));
+        assert!(
+            set_model_selection("t1", "claudeAgent", "sonnet", Some(&opts)).is_ok(),
+            "thread.model-selection.set with effort option decodes"
         );
         assert!(
             respond_approval("t1", "r1", "accept").is_ok(),

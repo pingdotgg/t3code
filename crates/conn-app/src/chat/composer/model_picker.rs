@@ -6,6 +6,7 @@
 
 use conn_contract::{
     ServerConfig, ServerProviderState, ServerProvidersItemItem, ServerProvidersItemItemModelsItem,
+    ServerProvidersItemItemModelsItemCapabilitiesOptionDescriptorsItem as OptionDescriptor,
 };
 use conn_theme::Tokens;
 use gpui_kit::component::input::{Input, InputState};
@@ -35,6 +36,15 @@ const LIST_MAX_HEIGHT_PX: f32 = 280.0;
 pub(super) const ICON_SEARCH: &str = "superhero/search.svg";
 pub(super) const ICON_CHECK: &str = "superhero/check.svg";
 
+/// Reasoning/effort select descriptor advertised by a model in `server.getConfig`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReasoningOptionDescriptor {
+    pub(crate) option_id: String,
+    pub(crate) label: String,
+    pub(crate) choices: Vec<(String, String)>,
+    pub(crate) default_value: Option<String>,
+}
+
 /// One selectable model belonging to a provider instance.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ModelOption {
@@ -48,6 +58,7 @@ pub(crate) struct ModelOption {
     pub(crate) is_default: bool,
     pub(crate) is_legacy: bool,
     pub(crate) is_new: bool,
+    pub(crate) reasoning: Option<ReasoningOptionDescriptor>,
 }
 
 impl ModelOption {
@@ -188,6 +199,43 @@ fn model_option_from_contract(
     display_name: &str,
     model: &ServerProvidersItemItemModelsItem,
 ) -> ModelOption {
+    let reasoning = model
+        .capabilities
+        .as_ref()
+        .and_then(|caps| caps.option_descriptors.as_deref())
+        .and_then(|descriptors| {
+            descriptors.iter().find_map(|desc| match desc {
+                OptionDescriptor::Select(sel)
+                    if (sel.role.is_some()
+                        || sel.id.contains("effort")
+                        || sel.id.contains("reasoning")
+                        || sel.id.contains("thought"))
+                        && !sel.options.is_empty() =>
+                {
+                    let default_value = sel
+                        .current_value
+                        .clone()
+                        .or_else(|| {
+                            sel.options
+                                .iter()
+                                .find(|o| o.is_default == Some(true))
+                                .map(|o| o.id.clone())
+                        })
+                        .or_else(|| sel.options.first().map(|o| o.id.clone()));
+                    Some(ReasoningOptionDescriptor {
+                        option_id: sel.id.clone(),
+                        label: sel.label.clone(),
+                        choices: sel
+                            .options
+                            .iter()
+                            .map(|o| (o.id.clone(), o.label.clone()))
+                            .collect(),
+                        default_value,
+                    })
+                }
+                _ => None,
+            })
+        });
     ModelOption {
         instance_id: provider.instance_id.clone(),
         driver: provider.driver.clone(),
@@ -199,6 +247,7 @@ fn model_option_from_contract(
         is_default: model.is_default.unwrap_or(false),
         is_legacy: model.is_legacy.unwrap_or(false),
         is_new: model.badge.is_some(),
+        reasoning,
     }
 }
 

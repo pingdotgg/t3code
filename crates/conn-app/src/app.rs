@@ -140,8 +140,12 @@ impl ConnApp {
                 crate::chat::ChatEvent::Approval { entry_id, decision } => {
                     app.respond_approval(entry_id, decision, cx);
                 }
-                crate::chat::ChatEvent::ModelSelected { instance_id, model } => {
-                    app.select_model(instance_id, model, cx);
+                crate::chat::ChatEvent::ModelSelected {
+                    instance_id,
+                    model,
+                    options,
+                } => {
+                    app.select_model(instance_id, model, options.as_ref(), cx);
                 }
                 crate::chat::ChatEvent::OpenDiff => {
                     app.select_right_panel_tab(RightPanelTab::Diff, cx);
@@ -460,6 +464,14 @@ impl ConnApp {
             panel.set_context(project_id, panel_root, thread_id, cx);
             panel.set_surface(&surface, cx);
         });
+        let model_instance = shell_thread.map(|t| t.provider_instance_id.clone());
+        let model_options = shell_thread
+            .map(|t| conn_contract::to_json(&t.model_selection))
+            .and_then(|v| {
+                v.get("options")
+                    .and_then(serde_json::Value::as_object)
+                    .cloned()
+            });
         let branch = shell_thread.and_then(|t| t.branch.clone());
         let worktree_active = shell_thread.is_some_and(|t| t.worktree_path.is_some());
         let runtime_mode = shell_thread
@@ -475,7 +487,7 @@ impl ConnApp {
             chat.set_thread(thread, title, cx);
             chat.set_thread_context(branch, worktree_active, runtime_mode, interaction_mode, cx);
             if let Some(model) = model {
-                chat.set_model_label(model, cx);
+                chat.set_model_selection(model_instance, model, model_options, cx);
             }
         });
     }
@@ -736,11 +748,13 @@ impl ConnApp {
         .detach();
     }
 
-    /// Switches the selected thread's model (`thread.model-selection.set`).
+    /// Switches the selected thread's model and optional effort/provider options
+    /// (`thread.model-selection.set`).
     pub(crate) fn select_model(
         &mut self,
         instance_id: &str,
         model: &str,
+        options: Option<&serde_json::Map<String, serde_json::Value>>,
         cx: &mut Context<'_, Self>,
     ) {
         let (Some(connection), Some(thread_id)) = (
@@ -749,13 +763,14 @@ impl ConnApp {
         ) else {
             return;
         };
-        let command = match crate::commands::set_model_selection(&thread_id, instance_id, model) {
-            Ok(command) => command,
-            Err(e) => {
-                eprintln!("model: could not build thread.model-selection.set: {e}");
-                return;
-            }
-        };
+        let command =
+            match crate::commands::set_model_selection(&thread_id, instance_id, model, options) {
+                Ok(command) => command,
+                Err(e) => {
+                    eprintln!("model: could not build thread.model-selection.set: {e}");
+                    return;
+                }
+            };
         cx.spawn(async move |_, _| {
             if let Err(e) = connection.dispatch_command(command).await {
                 eprintln!("model: dispatchCommand failed: {e}");
