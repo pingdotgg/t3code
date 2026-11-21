@@ -1025,7 +1025,8 @@ function nextQueuedRun(
 }
 
 // Delegated completions, monitor notifications and unpinned scheduled deliveries never choose a
-// model, so a queued one runs on the thread's current pick rather than the one frozen at queue time.
+// model. Auto-routed messages pick an instance at dispatch time too: a failover can move the
+// thread while they wait, so they follow its current pick rather than the one frozen at queue time.
 function followsCurrentConversation(
   message:
     | Pick<
@@ -1045,12 +1046,19 @@ function followsCurrentConversation(
   );
 }
 
+function queuedRunFollowsCurrent(
+  projection: Pick<OrchestrationV2ThreadProjection, "messages">,
+  run: OrchestrationV2Run,
+): boolean {
+  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  return followsCurrentConversation(message) || isAutoModelSelection(run.modelSelection);
+}
+
 function queuedRunModelSelection(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
   run: OrchestrationV2Run,
 ): ModelSelection {
-  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  return followsCurrentConversation(message)
+  return queuedRunFollowsCurrent(projection, run)
     ? projection.thread.modelSelection
     : run.modelSelection;
 }
@@ -1061,10 +1069,7 @@ function queueTailModelSelection(
 ): ModelSelection {
   return (
     queuedRunsInDeliveryOrder(projection).findLast(
-      (run) =>
-        !followsCurrentConversation(
-          projection.messages.find((message) => message.id === run.userMessageId),
-        ),
+      (run) => !queuedRunFollowsCurrent(projection, run),
     )?.modelSelection ?? projection.thread.modelSelection
   );
 }
@@ -3552,6 +3557,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         left.afterRunOrdinal - right.afterRunOrdinal || left.item.ordinal - right.item.ordinal,
     );
     for (const { run, message, steer, afterRunOrdinal } of placed) {
+      const storedSelection = steer?.modelSelection ?? run.modelSelection;
+      const modelSelection = isAutoModelSelection(storedSelection)
+        ? projection.thread.modelSelection
+        : storedSelection;
       yield* dispatchWithReceiptEffect({
         type: "message.dispatch",
         commandId: CommandId.make(`command:unread-steer:${run.id}:${message.id}`),
@@ -3559,7 +3568,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         messageId: message.id,
         steerFollowUpOfRunId: run.id,
         steerFollowUpAfterRunOrdinal: afterRunOrdinal,
-        modelSelection: steer?.modelSelection ?? run.modelSelection,
+        modelSelection,
         text: message.text,
         ...(message.context ? { context: message.context } : {}),
         attachments: message.attachments,
