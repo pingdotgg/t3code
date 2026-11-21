@@ -2,8 +2,6 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -83,36 +81,34 @@ const resolveWatchTarget = Effect.fn("watchDirectoryReplacements.resolveWatchTar
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const link = yield* fs.readLink(entry).pipe(Effect.option);
-  if (Option.isNone(link)) return entry;
+  if (Option.isNone(yield* fs.readLink(entry).pipe(Effect.option))) return entry;
 
-  const resolved = yield* realPath(entry).pipe(Effect.option);
-  if (Option.isSome(resolved)) return resolved.value;
-
-  // Keep the raw prefix through native realpath so symlinks before `..` still take effect.
-  const rawTarget = path.isAbsolute(link.value)
-    ? link.value
-    : `${path.dirname(entry)}${path.sep}${link.value}`;
-  const suffix = [path.basename(rawTarget)];
-  let unresolved = entry;
-  for (let prefix = path.dirname(rawTarget); ; prefix = path.dirname(prefix)) {
-    const resolvedPrefix = yield* realPath(prefix).pipe(Effect.option);
-    if (Option.isSome(resolvedPrefix)) {
-      unresolved = path.join(resolvedPrefix.value, ...suffix);
-      break;
+  let candidate = entry;
+  for (let hops = 0; hops <= 40; hops++) {
+    // Keep the raw prefix through native realpath so symlinks before `..` still take effect.
+    const suffix: Array<string> = [];
+    let prefix = candidate;
+    let resolved = yield* realPath(prefix).pipe(Effect.option);
+    while (Option.isNone(resolved)) {
+      const parent = path.dirname(prefix);
+      if (parent === prefix) return entry;
+      suffix.unshift(path.basename(prefix));
+      prefix = parent;
+      resolved = yield* realPath(prefix).pipe(Effect.option);
     }
-    if (prefix === path.dirname(prefix)) break;
-    suffix.unshift(path.basename(prefix));
-  }
-  return yield* resolveSymlinkTarget(unresolved).pipe(Effect.orElseSucceed(() => unresolved));
-});
 
-const containsPath = (directory: string, child: string) => {
-  const relative = NodePath.relative(directory, child);
-  return (
-    relative !== ".." && !relative.startsWith(`..${NodePath.sep}`) && !NodePath.isAbsolute(relative)
-  );
-};
+    const [first, ...rest] = suffix;
+    if (first === undefined) return resolved.value;
+    // The first unresolved component can itself be a dangling symlink.
+    const link = yield* fs.readLink(path.join(resolved.value, first)).pipe(Effect.option);
+    if (Option.isNone(link)) return path.join(resolved.value, ...suffix);
+    const destination = path.isAbsolute(link.value)
+      ? link.value
+      : `${resolved.value}${path.sep}${link.value}`;
+    candidate = [destination, ...rest].join(path.sep);
+  }
+  return entry;
+});
 
 /** Watch replacements of a configured directory and nearby ancestors of its symlink target. */
 export const watchDirectoryPath = (directory: string, watchChild: Stream.Stream<void>) => {
@@ -126,26 +122,32 @@ export const watchDirectoryPath = (directory: string, watchChild: Stream.Stream<
 
         const parent = NodePath.dirname(target);
         const grandparent = NodePath.dirname(parent);
-        const watchRoot = NodePath.dirname(grandparent);
-        const home = yield* HostProcess.HomeDirectory;
-        const boundaries = yield* Effect.forEach([home, NodePath.dirname(entry)], (directory) =>
-          realPath(directory).pipe(Effect.orElseSucceed(() => directory)),
-        );
-        const entries = [target, parent];
-        // On macOS a broad directory watch receives events from its entire subtree.
-        if (
-          watchRoot !== NodePath.dirname(watchRoot) &&
-          boundaries.every((boundary) => !containsPath(watchRoot, boundary))
-        ) {
-          entries.push(grandparent);
-        }
-
         let watch = watchChild;
-        for (const current of entries) {
+        for (const current of [target, parent]) {
           if (current === NodePath.dirname(current)) break;
           watch = watchDirectoryReplacements((ready) => watchDirectoryEntry(current, ready), watch);
         }
-        return watch;
+        if (grandparent === NodePath.dirname(grandparent)) return watch;
+
+        // A watch above the grandparent could receive events from an entire home subtree on macOS.
+        const fs = yield* FileSystem.FileSystem;
+        const identity = fs.stat(grandparent).pipe(
+          Effect.map(
+            (info) =>
+              `${info.dev}:${info.ino.valueOrUndefined}:${info.birthtime.valueOrUndefined?.getTime()}`,
+          ),
+          Effect.orElseSucceed(() => null),
+        );
+        return watchDirectoryReplacements(
+          (ready) =>
+            Stream.tick("1 second").pipe(
+              Stream.mapEffect(() => identity),
+              Stream.changes,
+              Stream.tap(() => Deferred.succeed(ready, undefined)),
+              Stream.drop(1),
+            ),
+          watch,
+        );
       }),
     ),
   );
