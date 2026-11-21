@@ -9675,6 +9675,8 @@
   "ec53702aae463f49": "Webhooks werden nicht mehr zurückgehalten",
   "ef6f413836ef83bb": "T3 Connect hält Webhook-Anfragen bis zu 24 Stunden zurück, solange diese Umgebung offline ist.",
   "805fc4acf3323143": "Anfragen an eine Offline-Umgebung schlagen jetzt fehl. Bereits zurückgehaltene Anfragen werden trotzdem zugestellt.",
+  "ac74760038213b4d": "T3 Connect wird eingeschaltet…",
+  "92c8ab0de54049da": "T3 Connect wird ausgeschaltet…",
   "6c576ef0c1ad7c76": "Melde dich an, um diese Umgebung über T3 Connect für deine anderen Geräte verfügbar zu machen.",
   "2faecab811917795": "Diese Umgebung wurde aus T3 Connect entfernt. Schalte es ein, um sie erneut zu verknüpfen.",
   "ae3971c4379c262f": "T3 Connect ist aktiv, aber andere Geräte erreichen diese Umgebung nicht.",

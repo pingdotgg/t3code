@@ -9671,6 +9671,8 @@
   "ec53702aae463f49": "Los webhooks ya no se retienen",
   "ef6f413836ef83bb": "T3 Connect guarda las solicitudes de webhook hasta 24 horas mientras este entorno está sin conexión.",
   "805fc4acf3323143": "Las solicitudes a un entorno sin conexión ahora fallan. Lo que ya esté retenido se sigue entregando.",
+  "ac74760038213b4d": "Activando T3 Connect…",
+  "92c8ab0de54049da": "Desactivando T3 Connect…",
   "6c576ef0c1ad7c76": "Inicia sesión para que este entorno esté disponible en tus otros dispositivos a través de T3 Connect.",
   "2faecab811917795": "Este entorno se quitó de T3 Connect. Actívalo para volver a vincularlo.",
   "ae3971c4379c262f": "T3 Connect está activado, pero otros dispositivos no pueden llegar a este entorno.",

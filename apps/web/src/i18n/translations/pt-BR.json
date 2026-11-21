@@ -9673,6 +9673,8 @@
   "ec53702aae463f49": "Webhooks não são mais retidos",
   "ef6f413836ef83bb": "O T3 Connect guarda as requisições de webhook por até 24 horas enquanto este ambiente está offline.",
   "805fc4acf3323143": "As requisições a um ambiente offline agora falham. O que já foi retido ainda é entregue.",
+  "ac74760038213b4d": "Ativando o T3 Connect…",
+  "92c8ab0de54049da": "Desativando o T3 Connect…",
   "6c576ef0c1ad7c76": "Entre para disponibilizar este ambiente aos seus outros dispositivos pelo T3 Connect.",
   "2faecab811917795": "Este ambiente foi removido do T3 Connect. Ative-o para vinculá-lo novamente.",
   "ae3971c4379c262f": "O T3 Connect está ativado, mas outros dispositivos não conseguem acessar este ambiente.",

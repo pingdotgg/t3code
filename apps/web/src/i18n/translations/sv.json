@@ -9681,6 +9681,8 @@
   "ec53702aae463f49": "Webhooks hålls inte längre kvar",
   "ef6f413836ef83bb": "T3 Connect behåller webhook-begäranden i upp till 24 timmar medan miljön är offline.",
   "805fc4acf3323143": "Begäranden till en miljö som är offline misslyckas nu. Det som redan hålls kvar levereras ändå.",
+  "ac74760038213b4d": "Slår på T3 Connect…",
+  "92c8ab0de54049da": "Stänger av T3 Connect…",
   "6c576ef0c1ad7c76": "Logga in för att göra miljön tillgänglig för dina andra enheter via T3 Connect.",
   "2faecab811917795": "Miljön togs bort från T3 Connect. Slå på den för att länka den igen.",
   "ae3971c4379c262f": "T3 Connect är på, men andra enheter kan inte nå den här miljön.",
