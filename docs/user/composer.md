@@ -271,6 +271,7 @@ the provider, Resume sends that request again.
 
 Sending a new message also resumes the queue, unless it steers a turn that is already
 running. You can edit or remove held messages without starting them.
+A `/compact` cut by a restart runs again, and messages queued behind it send when it finishes.
 
 The pencil on a queued message opens it in the composer for editing. The original message
 stays in the queue until you save, and it is highlighted while you edit. The message's
