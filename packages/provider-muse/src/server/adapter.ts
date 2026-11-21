@@ -56,6 +56,7 @@ import {
   MuseTodoList,
   MuseRetryScheduled,
   MuseTurnCompleted,
+  MuseTurnForegroundCompleted,
   MuseTurnStartResult,
   MuseUserInput,
   museApprovalChoices,
@@ -233,6 +234,7 @@ interface ActiveTurn {
   nextOrdinal: number;
   flushScheduled: boolean;
   interruptRequested: boolean;
+  admission: "starting" | "queued" | "started";
   compact: boolean;
 }
 
@@ -368,6 +370,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const pending = new Map<RuntimeRequestId, PendingRequest>();
       const seenTerminals = new Set<string>();
       const observedChildren = new Map<string, ActiveTurn>();
+      const settlingTurns = new Map<string, ActiveTurn>();
       const childrenByItemId = new Map<string, ChildContext>();
       const agentTitles = new Map<string, string>();
       const finishedBackground: Array<BackgroundWorkReport> = [];
@@ -1027,9 +1030,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         disposition: "reusable" | "broken" = "reusable",
         quota?: { readonly resetsAtMs: number },
       ) {
-        if (active !== turn || seenTerminals.has(turn.nativeId)) return;
+        const foreground = active === turn && settlingTurns.get(turn.nativeId) === turn;
+        const background = active !== turn && settlingTurns.get(turn.nativeId) === turn;
+        if (!background && (active !== turn || seenTerminals.has(turn.nativeId))) return;
+        if (background) settlingTurns.delete(turn.nativeId);
         seenTerminals.add(turn.nativeId);
-        const completedAt = yield* DateTime.now;
+        const completedAt = turn.providerTurn.completedAt ?? (yield* DateTime.now);
         for (const item of turn.items.values()) {
           if (
             (item.kind === "subagent" || item.kind === "workflow") &&
@@ -1045,23 +1051,36 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         // A failed turn has its own failure row; its retry rows only record that retrying stopped.
         yield* settleRetries(turn, status === "completed" ? "completed" : "interrupted");
         for (const entry of pending.values())
-          if (entry.request.providerTurnId !== null) yield* resolvePending(entry, "cancelled");
-        turn.providerTurn = { ...turn.providerTurn, status, completedAt };
-        lastProviderTurn = turn.providerTurn;
+          if (entry.request.providerTurnId === turn.providerTurn.id)
+            yield* resolvePending(entry, "cancelled");
+        const { usagePending: _usagePending, ...settledTurn } = turn.providerTurn;
+        turn.providerTurn = {
+          ...settledTurn,
+          ...(foreground ? { usagePending: true as const } : {}),
+          ...(background && lastProviderTurn?.id === turn.providerTurn.id
+            ? { tokenUsage: lastProviderTurn.tokenUsage }
+            : {}),
+          status,
+          completedAt,
+        };
+        if (!background || lastProviderTurn?.id === turn.providerTurn.id)
+          lastProviderTurn = turn.providerTurn;
         yield* emit({
           type: "provider_turn.updated",
           driver: MUSE_PROVIDER,
           threadId: turn.input.threadId,
           providerTurn: turn.providerTurn,
         });
-        yield* updateThread({
-          status: disposition === "broken" ? "error" : "idle",
-          ...(!turn.compact && status === "completed"
-            ? { nativeConversationHeadRef: nativeRef(turn.nativeId) }
-            : {}),
-        });
-        yield* updateSession(disposition === "broken" ? "error" : "ready", detail ?? null);
-        active = undefined;
+        if (!background) {
+          yield* updateThread({
+            status: disposition === "broken" ? "error" : "idle",
+            ...(!turn.compact && status === "completed"
+              ? { nativeConversationHeadRef: nativeRef(turn.nativeId) }
+              : {}),
+          });
+          yield* updateSession(disposition === "broken" ? "error" : "ready", detail ?? null);
+          active = undefined;
+        }
         if (status === "failed") {
           const usageLimited =
             disposition === "reusable" && (quota !== undefined || isMuseUsageLimitFailure(detail));
@@ -1096,18 +1115,19 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               failure,
             },
           });
-          yield* emit({
-            type: "turn.terminal",
-            driver: MUSE_PROVIDER,
-            providerThreadId: turn.providerTurn.providerThreadId,
-            providerTurnId: turn.providerTurn.id,
-            runOrdinal: turn.input.runOrdinal,
-            status,
-            failure,
-            failureItemOrdinal: base.ordinal,
-            threadDisposition: disposition,
-          });
-        } else {
+          if (!background)
+            yield* emit({
+              type: "turn.terminal",
+              driver: MUSE_PROVIDER,
+              providerThreadId: turn.providerTurn.providerThreadId,
+              providerTurnId: turn.providerTurn.id,
+              runOrdinal: turn.input.runOrdinal,
+              status,
+              failure,
+              failureItemOrdinal: base.ordinal,
+              threadDisposition: disposition,
+            });
+        } else if (!background) {
           yield* emit({
             type: "turn.terminal",
             driver: MUSE_PROVIDER,
@@ -1119,6 +1139,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             threadDisposition: disposition,
           });
         }
+        if (background)
+          yield* emit({
+            type: "background_work.updated",
+            driver: MUSE_PROVIDER,
+            providerTurnId: turn.providerTurn.id,
+            pending: false,
+          });
         yield* Deferred.succeed(turn.done, undefined);
       });
       const failHost = Effect.fnUntraced(function* (cause: unknown) {
@@ -1142,6 +1169,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           yield* updateThread({ status: "error" });
           yield* updateSession("error", detail);
         }
+        for (const settling of settlingTurns.values())
+          yield* finish(settling, "failed", detail, "broken");
         yield* settleObservedChildren("failed");
         if (turn) yield* Queue.fail(events, protocolError(detail, cause));
         yield* Effect.tryPromise({
@@ -1438,7 +1467,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           method === "turn/started" &&
           typeof params.turnId === "string" &&
           params.turnId !== active?.nativeId &&
-          params.turnId !== wake?.nativeId
+          params.turnId !== wake?.nativeId &&
+          !settlingTurns.has(params.turnId)
         ) {
           if (active && !active.compact) active.joined.add(params.turnId);
           else if (!active && !wake) {
@@ -1473,7 +1503,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             return;
           }
         }
-        const turn = active;
+        const ownerTurnId = typeof params.turnId === "string" ? params.turnId : itemEvent?.turnId;
+        const turn = (ownerTurnId ? settlingTurns.get(ownerTurnId) : undefined) ?? active;
         if (!turn) return;
         if (typeof params.turnId === "string" && !owns(turn, params.turnId) && !turn.compact)
           return;
@@ -1537,6 +1568,28 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             }
             break;
           }
+          case "turn/foregroundCompleted": {
+            if (turn.compact || active !== turn) return;
+            const result = yield* decode(MuseTurnForegroundCompleted, params);
+            if (result.turnId !== turn.nativeId) return;
+            // Foreground completion ends the visible run; reminders still own the native turn.
+            settlingTurns.set(turn.nativeId, turn);
+            yield* emit({
+              type: "background_work.updated",
+              driver: MUSE_PROVIDER,
+              providerTurnId: turn.providerTurn.id,
+              pending: true,
+            });
+            yield* finish(turn, "completed");
+            break;
+          }
+          case "turn/started":
+            if (params.turnId === turn.nativeId) turn.admission = "started";
+            break;
+          case "turn/unqueued":
+            if (params.turnId === turn.nativeId)
+              yield* finish(turn, turn.interruptRequested ? "interrupted" : "cancelled");
+            break;
           case "turn/completed": {
             if (turn.compact) return;
             const result = yield* decode(MuseTurnCompleted, params);
@@ -1595,7 +1648,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 ? {
                     tokenUsage: {
                       ...turn.providerTurn.tokenUsage,
-                      usedTokens: contextUsage.usedTokens,
+                      ...contextUsage,
                       inputTokens: usage.usage.inputTokens,
                       outputTokens: usage.usage.outputTokens,
                       cachedInputTokens: usage.usage.cacheReadTokens ?? usage.usage.cachedTokens,
@@ -1623,6 +1676,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 reasoningTokens: (previous?.reasoningTokens ?? 0) + usage.usage.reasoningTokens,
               },
             };
+            if (lastProviderTurn?.id === turn.providerTurn.id) lastProviderTurn = turn.providerTurn;
             yield* emit({
               type: "provider_turn.updated",
               driver: MUSE_PROVIDER,
@@ -1889,6 +1943,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           closed = true;
           hostEpoch++;
           if (active) yield* finish(active, "cancelled", "Muse session closed", "broken");
+          for (const settling of settlingTurns.values())
+            yield* finish(settling, "cancelled", "Muse session closed", "broken");
           yield* settleObservedChildren("cancelled");
           yield* Queue.shutdown(inbox);
           yield* Queue.shutdown(events);
@@ -2137,6 +2193,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           nextOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
           flushScheduled: false,
           interruptRequested: false,
+          admission: compact || continuation ? "started" : "starting",
           compact,
         };
         yield* Effect.gen(function* () {
@@ -2214,6 +2271,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               );
               return yield* protocolError("Muse admitted the turn under an unexpected identity");
             }
+            yield* eventPermit.withPermits(1)(
+              Effect.sync(() => {
+                // turn/started may arrive before the admission response.
+                if (turn.admission !== "started")
+                  turn.admission = result.disposition === "queued" ? "queued" : "started";
+              }),
+            );
           }
         }).pipe(
           Effect.onError((cause) => {
@@ -2281,7 +2345,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         backgroundTasksEndWithProcess: true,
         // A running workflow or a held Muse turn keeps the host: idle release must wait.
         hasPendingBackgroundWork: Effect.sync(
-          () => observedChildren.size > 0 || wake !== undefined,
+          () => observedChildren.size > 0 || settlingTurns.size > 0 || wake !== undefined,
         ),
         ensureThread: (args) =>
           register(args).pipe(
@@ -2367,6 +2431,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             if (
               !turn &&
               args.requestRuntimeRestart === true &&
+              settlingTurns.size === 0 &&
               observedChildren.size === 0 &&
               wake === undefined
             )
@@ -2390,6 +2455,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                   broken = true;
                   wake = undefined;
                   yield* finish(turn, "interrupted", undefined, "broken");
+                  for (const settling of settlingTurns.values())
+                    yield* finish(settling, "interrupted", undefined, "broken");
                   yield* settleObservedChildren("interrupted");
                   yield* updateSession("stopped");
                   yield* Queue.end(events);
@@ -2397,10 +2464,25 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               );
               return;
             }
-            // Muse runs a joined turn first, so Stop must end it too.
-            for (const joined of turn.joined)
-              yield* request("turn/interrupt", { turnId: joined }).pipe(Effect.ignore);
-            yield* request("turn/interrupt", { turnId: turn.nativeId });
+            if (turn.admission === "queued") {
+              yield* request("turn/unqueue", { turnId: turn.nativeId }).pipe(
+                Effect.catch((error) => {
+                  // An unqueue loses to launch; interrupt only this exact turn, never its predecessor.
+                  if (active !== turn) return Effect.void;
+                  if (
+                    turn.admission === "started" ||
+                    (error.payload instanceof MspError && error.payload.kind === "commandRejected")
+                  )
+                    return request("turn/interrupt", { turnId: turn.nativeId }).pipe(Effect.asVoid);
+                  return Effect.fail(error);
+                }),
+              );
+            } else {
+              // Muse runs a joined turn first, so Stop must end it too.
+              for (const joined of turn.joined)
+                yield* request("turn/interrupt", { turnId: joined }).pipe(Effect.ignore);
+              yield* request("turn/interrupt", { turnId: turn.nativeId });
+            }
             yield* Deferred.await(turn.done).pipe(
               Effect.timeout(options.requestTimeoutMs ?? 30_000),
               Effect.mapError((cause) => protocolError("Muse did not confirm interruption", cause)),
