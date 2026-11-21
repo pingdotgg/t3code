@@ -10,7 +10,10 @@ import {
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 
-import { expandAssistantCitationsForProvider } from "./assistantCitations.ts";
+import {
+  assistantCitationProviderDataRanges,
+  expandAssistantCitationsForProvider,
+} from "./assistantCitations.ts";
 import { replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
 
 const CONTEXT_PROTOCOL = "t3-context:";
@@ -225,6 +228,7 @@ export function replaceComposerContextReferences(
 
 const CONTEXT_ENVELOPE_TAG = "t3_context";
 const CONTEXT_ENTRY_TAG = "context";
+const ENVELOPE_OPEN = `\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n`;
 
 function kindDisplayName(kind: ComposerContextKind): string {
   const spaced = kind.replace(/-/g, " ");
@@ -424,12 +428,68 @@ export function projectComposerContextForProvider(input: {
     entries.push(entry);
   }
   if (entries.length === 0) return body;
-  return `${body}\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
+  return `${body}${ENVELOPE_OPEN}${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
 }
 
 const ENVELOPE_CLOSE = `</${CONTEXT_ENVELOPE_TAG}>`;
-const PROVIDER_MARKER = /\[([A-Z][^[\]:;\n]*): ([^[\];\n]*); ref=([^[\]\s]+)\]/g;
-const MARKER_ENVELOPE_PREFIX = `\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n<${CONTEXT_ENTRY_TAG} kind="`;
+const PROVIDER_MARKER = /\[([A-Z][^[\]:;\n]*): ((?:&lt;|[^\];\n])*); ref=([^[\]\s]+)\]/g;
+const PROVIDER_ENTRY =
+  /<context kind="([^"]+)" id="([^"]+)"(?: unavailable="true"\/>|>\n[\s\S]*?\n<\/context>)/g;
+
+/** Recognize projected context by its entries and matching markers; a typed tag alone is text. */
+export function composerContextProviderDataRanges(text: string) {
+  const ranges = assistantCitationProviderDataRanges(text);
+  for (
+    let start = text.indexOf(ENVELOPE_OPEN);
+    start !== -1;
+    start = text.indexOf(ENVELOPE_OPEN, start + 1)
+  ) {
+    const bodyStart = start + ENVELOPE_OPEN.length;
+    const close = text.indexOf(`\n${ENVELOPE_CLOSE}`, bodyStart);
+    if (close === -1) continue;
+    const body = text.slice(bodyStart, close);
+    // An unfinished typed envelope must not absorb the generated one after it.
+    if (body.includes(ENVELOPE_OPEN)) continue;
+    const entries = [...body.matchAll(PROVIDER_ENTRY)];
+    if (entries.length === 0 || entries.map(([entry]) => entry).join("\n") !== body) continue;
+    const matchesEntry = (marker: RegExpExecArray, entry: RegExpExecArray) =>
+      marker[1] === kindDisplayName(entry[1]!) && escapeAttribute(marker[3]!) === entry[2];
+    // A duplicate ref projects one entry for markers of several kinds; all are generated.
+    const markersByEnd = new Map<number, RegExpExecArray>();
+    for (const marker of providerMarkerCandidates(text.slice(0, start))) {
+      if (!entries.some((entry) => escapeAttribute(marker[3]!) === entry[2])) continue;
+      const end = marker.index + marker[0].length;
+      const current = markersByEnd.get(end);
+      const kindMatches = (candidate: RegExpExecArray) =>
+        entries.some((entry) => matchesEntry(candidate, entry));
+      if (!current || kindMatches(marker) || !kindMatches(current)) markersByEnd.set(end, marker);
+    }
+    const matchingMarkers = [...markersByEnd.values()];
+    if (!entries.every((entry) => matchingMarkers.some((marker) => matchesEntry(marker, entry))))
+      continue;
+    ranges.push(
+      ...matchingMarkers.map((marker) => ({
+        start: marker.index,
+        end: marker.index + marker[0].length,
+      })),
+      { start, end: close + 1 + ENVELOPE_CLOSE.length },
+    );
+  }
+  return ranges;
+}
+
+// Labels may contain "[", so a marker-like prefix can swallow a real marker; try every start.
+function providerMarkerCandidates(text: string) {
+  const pattern = new RegExp(PROVIDER_MARKER.source, "g");
+  const candidates: RegExpExecArray[] = [];
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    candidates.push(match);
+    pattern.lastIndex = match.index + 1;
+  }
+  return candidates;
+}
+
+const MARKER_ENVELOPE_PREFIX = `${ENVELOPE_OPEN}<${CONTEXT_ENTRY_TAG} kind="`;
 
 /**
  * Readable form of a single-reference `projectComposerContextForProvider` output, as question
