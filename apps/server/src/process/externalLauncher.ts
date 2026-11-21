@@ -6,6 +6,7 @@ import {
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherEditorSpawnError,
+  ExternalLauncherRevealTargetError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherUnsupportedTargetError,
@@ -40,6 +41,7 @@ export {
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherEditorSpawnError,
+  ExternalLauncherRevealTargetError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherUnsupportedTargetError,
@@ -594,7 +596,8 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (input.reveal === true) {
-    return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
+    const revealTarget = yield* resolveRevealTarget(target, platform);
+    return yield* resolveFileManagerRevealLaunch(revealTarget, platform, env, command);
   }
 
   if (platform === "win32") {
@@ -620,6 +623,55 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   };
 });
 
+// Explorer opens a default folder for a missing /select target, so reveal fails instead.
+// Windows resolves `..` lexically and drops trailing dots and spaces, and on WSL a Linux name may
+// hold `\` or `:` or be a reserved device name, so Windows could open a different item.
+const WINDOWS_AMBIGUOUS_SEGMENT =
+  /[\\:]|[. ]$|^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i;
+
+const resolveRevealTarget = Effect.fn("externalLauncher.resolveRevealTarget")(function* (
+  target: string,
+  platform: NodeJS.Platform,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path =
+    platform === "win32"
+      ? yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32))
+      : yield* Path.Path;
+  const revealTarget = platform === "win32" ? path.normalize(target) : target;
+  // Relative paths resolve against the server's cwd here but the file manager's own cwd there.
+  if (!path.isAbsolute(revealTarget)) {
+    return yield* new ExternalLauncherRevealTargetError({
+      editor: "file-manager",
+      target,
+      reason: "relative",
+    });
+  }
+  const exists = yield* fileSystem.exists(revealTarget).pipe(Effect.orElseSucceed(() => false));
+  if (!exists) {
+    return yield* new ExternalLauncherRevealTargetError({
+      editor: "file-manager",
+      target,
+      reason: "missing",
+    });
+  }
+  return revealTarget;
+});
+
+// `path` must use the target's own separator, so a WSL name holding `\` stays one segment.
+function rejectWindowsAmbiguousName(target: string, path: Path.Path) {
+  const segments = target.slice(path.parse(target).root.length).split(path.sep);
+  return segments.some((segment) => WINDOWS_AMBIGUOUS_SEGMENT.test(segment))
+    ? Effect.fail(
+        new ExternalLauncherRevealTargetError({
+          editor: "file-manager",
+          target,
+          reason: "windows-name",
+        }),
+      )
+    : Effect.void;
+}
+
 // Replacement managers can register under Directory, Drive, or Folder. Explorer
 // needs its /select argument passed verbatim through PowerShell because Node's
 // argument quoting changes how Explorer parses it.
@@ -627,7 +679,12 @@ function buildFileManagerRevealPowerShellSource(target: string, parent: string):
   const literal = escapePowerShellStringLiteral(target);
   const folderClass = /^[a-z]:\\$/i.test(parent) ? "Drive" : "Directory";
   // Explorer's ordinary open/explore handlers may also be explicit defaults.
-  return String.raw`$ProgressPreference = 'SilentlyContinue'; $folderVerb = '${folderClass}', 'Folder' | ForEach-Object { $key = "Registry::HKEY_CLASSES_ROOT\$_\shell"; $verb = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).'(default)'; if ($verb -and $verb -ne 'none') { $handler = Get-ItemProperty -LiteralPath "$key\$verb\command" -ErrorAction SilentlyContinue; if ($handler.DelegateExecute -ne '{11dbb47c-a525-400b-9e80-a54615a090c0}' -and $handler.'(default)' -notmatch '^\s*"?(?:[^"]*[\\/])?explorer\.exe(?:["\s]|$)') { $verb } } }; if ($folderVerb) { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
+  return String.raw`$ProgressPreference = 'SilentlyContinue'; $folderVerb = '${folderClass}', 'Folder' | ForEach-Object { $key = "Registry::HKEY_CLASSES_ROOT\$_\shell"; $verb = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).'(default)'; if ($verb -and $verb -ne 'none') { $handler = Get-ItemProperty -LiteralPath "$key\$verb\command" -ErrorAction SilentlyContinue; if ($handler.DelegateExecute -ne '{11dbb47c-a525-400b-9e80-a54615a090c0}' -and $handler.'(default)' -notmatch '^\s*"?(?:[^"]*[\\/])?explorer\.exe(?:["\s]|$)') { $verb } } }; if ($folderVerb -and ${testFolderPowerShellSource(parent)}) { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
+}
+
+// Invoke-Item runs a file, so Windows itself must agree the parent is a folder.
+function testFolderPowerShellSource(folder: string): string {
+  return `(Test-Path -LiteralPath ${escapePowerShellStringLiteral(folder)} -PathType Container)`;
 }
 
 function powerShellFileManagerLaunch(
@@ -654,7 +711,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   command: string,
 ): Effect.fn.Return<
   EditorLaunch,
-  never,
+  ExternalLauncherUnsupportedEditorError | ExternalLauncherRevealTargetError,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
   if (platform === "darwin") {
@@ -664,6 +721,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   if (platform === "win32") {
     const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
     const windowsTarget = normalizeWindowsFileManagerPath(target);
+    yield* rejectWindowsAmbiguousName(windowsTarget, path);
     return {
       ...powerShellFileManagerLaunch(
         target,
@@ -683,30 +741,40 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
       // WSL names may contain quotes that Explorer's /select cannot encode.
       // Open the parent through the shell so replacement managers still apply.
       const path = yield* Path.Path;
+      // Windows resolves `..` lexically where Linux follows symlinks, so check what Windows opens.
+      const windowsTarget = path.normalize(target);
+      yield* rejectWindowsAmbiguousName(windowsTarget, path);
+      if (
+        windowsTarget !== target &&
+        !(yield* (yield* FileSystem.FileSystem)
+          .exists(windowsTarget)
+          .pipe(Effect.orElseSucceed(() => false)))
+      ) {
+        return yield* new ExternalLauncherRevealTargetError({
+          editor: "file-manager",
+          target,
+          reason: "missing",
+        });
+      }
       // .NET path parsing rejects characters that are legal in WSL filenames.
       const [explorerTarget, parent] = yield* Effect.all(
         [
-          resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME),
-          resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME),
+          resolveWslFileManagerPath(windowsTarget, env.WSL_DISTRO_NAME),
+          resolveWslFileManagerPath(path.dirname(windowsTarget), env.WSL_DISTRO_NAME),
         ],
         { concurrency: "unbounded" },
       );
       const source = explorerTarget.includes('"')
-        ? `Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)}`
+        ? `if ${testFolderPowerShellSource(parent)} { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} }`
         : buildFileManagerRevealPowerShellSource(explorerTarget, parent);
-      return powerShellFileManagerLaunch(target, source, WSL_POWERSHELL_COMMAND);
+      return powerShellFileManagerLaunch(windowsTarget, source, WSL_POWERSHELL_COMMAND);
     }
     if (hasGraphicalLinuxSession(env) && (yield* isUsableFileManagerCommand("xdg-open", env))) {
       const path = yield* Path.Path;
       return { editor: "file-manager", target, command: "xdg-open", args: [path.dirname(target)] };
     }
-    const path = yield* Path.Path;
-    return {
-      editor: "file-manager",
-      target,
-      command: "explorer.exe",
-      args: [yield* resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME)],
-    };
+    // Without PowerShell nothing on the Windows side can confirm the parent is a folder.
+    return yield* new ExternalLauncherUnsupportedEditorError({ editor: "file-manager" });
   }
 
   const path = yield* Path.Path;

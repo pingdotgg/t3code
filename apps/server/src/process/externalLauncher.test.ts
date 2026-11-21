@@ -65,6 +65,7 @@ const layerTest = (input: {
   readonly onSpawn?: (command: ChildProcess.StandardCommand) => void;
   readonly onUnref?: () => void;
   readonly spawnResult?: (command: ChildProcess.StandardCommand) => MockSpawnResult | undefined;
+  readonly existingPaths?: ReadonlyArray<string>;
 }) => {
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -92,6 +93,17 @@ const layerTest = (input: {
           NodeServices.layer,
           layerSpawner,
           input.path ? Layer.succeed(Path.Path, input.path) : Layer.empty,
+          // Windows paths cannot exist on a POSIX host's filesystem.
+          Layer.effect(
+            FileSystem.FileSystem,
+            Effect.map(FileSystem.FileSystem, (fileSystem) => ({
+              ...fileSystem,
+              exists: (path: string) =>
+                input.existingPaths?.includes(path)
+                  ? Effect.succeed(true)
+                  : fileSystem.exists(path),
+            })),
+          ).pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
     ),
@@ -527,43 +539,31 @@ it.live.skipIf(!windowsHost)("opens Windows folders through the default shell ha
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// `file` is a temp file; Windows always has C:\Windows, whose parent is a drive root.
 for (const [replacement, verb, handler, target, expected] of [
-  ["none", "none", "", "C:/repo/file.txt", 'explorer.exe /select,"C:\\repo\\file.txt"'],
-  ["Directory", "openindopus", "dopusrt.exe", "C:/repo/file.txt", "shell:C:\\repo"],
-  ["Folder", "openindopus", "dopusrt.exe", "C:/repo/file.txt", "shell:C:\\repo"],
-  [
-    "Folder",
-    "open",
-    '"C:\\Windows\\explorer.exe"',
-    "C:/repo/file.txt",
-    'explorer.exe /select,"C:\\repo\\file.txt"',
-  ],
-  [
-    "Folder",
-    "open",
-    "ExplorerDelegate",
-    "C:/repo/file.txt",
-    'explorer.exe /select,"C:\\repo\\file.txt"',
-  ],
-  [
-    "Drive",
-    "openindopus",
-    "dopusrt.exe",
-    "C:/repo/file.txt",
-    'explorer.exe /select,"C:\\repo\\file.txt"',
-  ],
-  ["Drive", "openindopus", "dopusrt.exe", "C:/file.txt", "shell:C:\\"],
+  ["none", "none", "", "file", 'explorer.exe /select,"{file}"'],
+  ["Directory", "openindopus", "dopusrt.exe", "file", "shell:{dir}"],
+  ["Folder", "openindopus", "dopusrt.exe", "file", "shell:{dir}"],
+  ["Folder", "open", '"C:\\Windows\\explorer.exe"', "file", 'explorer.exe /select,"{file}"'],
+  ["Folder", "open", "ExplorerDelegate", "file", 'explorer.exe /select,"{file}"'],
+  ["Drive", "openindopus", "dopusrt.exe", "file", 'explorer.exe /select,"{file}"'],
+  ["Drive", "openindopus", "dopusrt.exe", "C:\\Windows", "shell:C:\\"],
 ] as const) {
   it.live.skipIf(!windowsHost)(
     `reveals ${target} with ${replacement}/${verb} handled by ${handler}`,
     () =>
       Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-" });
+        const file = path.join(dir, "file.txt");
+        yield* fileSystem.writeFileString(file, "");
         let spawned: ChildProcess.StandardCommand | undefined;
         yield* Effect.gen(function* () {
           const launcher = yield* ExternalLauncher.ExternalLauncher;
           yield* launcher.launchEditor({
             editor: "file-manager",
-            cwd: target,
+            cwd: target === "file" ? file : target,
             reveal: true,
           });
         }).pipe(
@@ -587,7 +587,7 @@ for (const [replacement, verb, handler, target, expected] of [
             Buffer.from(stubs + source, "utf16le").toString("base64"),
           ]),
         );
-        assert.equal(output.trim(), expected);
+        assert.equal(output.trim(), expected.replace("{file}", file).replace("{dir}", dir));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
@@ -605,6 +605,12 @@ it.effect.skipIf(windowsHost)(
         yield* fileSystem.chmod(filePath, 0o755);
       }
 
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-" });
+      const mediaDir = path.join(workspace, "workspace [draft]", "author's ‘$media");
+      yield* fileSystem.makeDirectory(mediaDir, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(mediaDir, "clip|draft.mp4"), "");
+      const unc = `\\\\wsl.localhost\\Ubuntu-24.04${workspace.replaceAll("/", "\\")}`;
+
       let spawned: ChildProcess.StandardCommand | undefined;
       const result = yield* Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
@@ -612,7 +618,8 @@ it.effect.skipIf(windowsHost)(
         const editors = yield* launcher.resolveAvailableEditors();
         yield* launcher.launchEditor({
           editor: "file-manager",
-          cwd: "/home/t3/workspace [draft]/author's ‘$media/clip|draft.mp4",
+          // Windows resolves `..` lexically, so the launch gets the normalized path.
+          cwd: `${mediaDir}/../${path.basename(mediaDir)}/clip|draft.mp4`,
           reveal: true,
         });
         return { kind, editors };
@@ -642,12 +649,86 @@ it.effect.skipIf(windowsHost)(
       assert.include(decodedCommand, "'Directory', 'Folder'");
       assert.include(
         decodedCommand,
-        "Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s ‘‘$media'",
+        `(Test-Path -LiteralPath '${unc}\\workspace [draft]\\author''s ‘‘$media' -PathType Container)) { Invoke-Item -LiteralPath '${unc}\\workspace [draft]\\author''s ‘‘$media'`,
       );
       assert.include(
         decodedCommand,
-        "'\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s ‘‘$media\\clip|draft.mp4'",
+        `'${unc}\\workspace [draft]\\author''s ‘‘$media\\clip|draft.mp4'`,
       );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)(
+  "refuses to reveal a missing, relative, or Windows-ambiguous path",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      for (const name of ["explorer.exe", "powershell.exe"]) {
+        const filePath = path.join(binDir, name);
+        yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+        yield* fileSystem.chmod(filePath, 0o755);
+      }
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-" });
+      const payload = path.join(workspace, "payload.bat");
+      yield* fileSystem.writeFileString(payload, "");
+      // Windows resolves `link/..` lexically to the payload's folder; the kernel would follow the link.
+      yield* fileSystem.makeDirectory(path.join(workspace, "real", "sub"), { recursive: true });
+      yield* fileSystem.symlink(path.join(workspace, "real", "sub"), path.join(workspace, "link"));
+      // Windows reads each of these folder names as a different item: payload.bat or a device.
+      const lookalikes = [
+        "real\\payload.bat",
+        "x\\..\\payload.bat",
+        "payload.bat.",
+        "payload.bat ",
+        "payload.bat:x",
+        "NUL.txt",
+        "com1",
+      ];
+      for (const folder of ["real/payload.bat", ...lookalikes]) {
+        yield* fileSystem.makeDirectory(path.join(workspace, folder), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(workspace, folder, "leaf"), "");
+      }
+      const cases = [
+        { cwd: path.join(workspace, "deleted.csv"), reason: "missing" },
+        { cwd: "relative/leaf", reason: "relative" },
+        { cwd: `${payload}/x"y`, reason: "missing" },
+        { cwd: `${workspace}/link/../payload.bat/leaf`, reason: "missing" },
+        ...lookalikes.map((folder) => ({
+          cwd: path.join(workspace, folder, "leaf"),
+          reason: "windows-name",
+        })),
+      ];
+
+      const spawned: ChildProcess.StandardCommand[] = [];
+      const errors = yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        return yield* Effect.forEach(cases, ({ cwd }) =>
+          launcher.launchEditor({ editor: "file-manager", cwd, reveal: true }).pipe(Effect.flip),
+        );
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: {
+              PATH: binDir,
+              DISPLAY: ":0",
+              WSL_DISTRO_NAME: "Ubuntu-24.04",
+              WSL_INTEROP: "/run/WSL/1_interop",
+            },
+            onSpawn: (command) => spawned.push(command),
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        errors.map((error) =>
+          error._tag === "ExternalLauncherRevealTargetError" ? error.reason : error._tag,
+        ),
+        cases.map(({ reason }) => reason),
+      );
+      assert.deepEqual(spawned, []);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -687,6 +768,7 @@ it.effect.each([
         layerTest({
           platform: "win32",
           env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: "C:\\Windows" },
+          existingPaths: ["C:\\Users\\t3\\my project\\a,b.ts"],
           onSpawn: (command) => spawned.push(command),
           spawnResult: (command) => (command.command.endsWith("reg.exe") ? registry : undefined),
         }),
@@ -731,7 +813,10 @@ for (const wsl of [false, true]) {
           yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
           yield* fileSystem.chmod(filePath, 0o755);
         }
-        const target = "/workspace/media/a 'quoted' \"clip\" #100% ? é\\name.mp4";
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-" });
+        yield* fileSystem.makeDirectory(path.join(workspace, "media"));
+        const target = path.join(workspace, "media", "a 'quoted' \"clip\" #100% ? é\\name.mp4");
+        yield* fileSystem.writeFileString(target, "");
         const spawnedCommands: ChildProcess.StandardCommand[] = [];
         yield* Effect.gen(function* () {
           const launcher = yield* ExternalLauncher.ExternalLauncher;
@@ -767,7 +852,7 @@ for (const wsl of [false, true]) {
           "/org/freedesktop/FileManager1",
           "--method",
           "org.freedesktop.FileManager1.ShowItems",
-          "[\"file:///workspace/media/a%20'quoted'%20%22clip%22%20%23100%25%20%3F%20%C3%A9%5Cname.mp4\"]",
+          `["file://${workspace}/media/a%20'quoted'%20%22clip%22%20%23100%25%20%3F%20%C3%A9%5Cname.mp4"]`,
           "",
         ]);
         assert.deepEqual(
@@ -777,6 +862,52 @@ for (const wsl of [false, true]) {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
+
+it.effect.skipIf(windowsHost)("keeps symlink semantics for the WSLg xdg-open reveal", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    for (const name of ["xdg-open", "xdg-mime", "explorer.exe"]) {
+      const filePath = path.join(binDir, name);
+      yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(filePath, 0o755);
+    }
+    const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-" });
+    yield* fileSystem.makeDirectory(path.join(workspace, "real", "sub"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(workspace, "real", "file.txt"), "");
+    yield* fileSystem.symlink(path.join(workspace, "real", "sub"), path.join(workspace, "link"));
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({
+        editor: "file-manager",
+        cwd: `${workspace}/link/../file.txt`,
+        reveal: true,
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: {
+            PATH: binDir,
+            WAYLAND_DISPLAY: "wayland-1",
+            WSL_DISTRO_NAME: "Ubuntu-24.04",
+            WSL_INTEROP: "/run/WSL/1_interop",
+          },
+          onSpawn: (command) => spawned.push(command),
+          spawnResult: (command) =>
+            command.command === "xdg-mime" ? { stdout: "org.gnome.Nautilus.desktop\n" } : undefined,
+        }),
+      ),
+    );
+
+    assert.deepEqual(
+      spawned.filter((command) => command.command === "xdg-open").map((command) => command.args),
+      [[`${workspace}/link/..`]],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 for (const cwd of ["/workspace with spaces/", "/workspace with spaces/file.ts:12:4"]) {
   it.effect.skipIf(windowsHost)(
