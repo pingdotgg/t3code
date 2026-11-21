@@ -25,6 +25,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderRetry,
@@ -99,6 +100,7 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
+import { PROPOSED_PLAN_BLOCK_INSTRUCTIONS, splitProposedPlanBlock } from "../ProposedPlanBlock.ts";
 import {
   openCodeCodeModeHtmlRenders,
   openCodeCommandFailed,
@@ -181,7 +183,7 @@ const OpenCode2ProviderCapabilities = {
   planning: {
     emitsPlanUpdated: true,
     emitsTodoList: true,
-    emitsProposedPlan: false,
+    emitsProposedPlan: true,
     supportsStructuredQuestions: true,
     planDeltasHaveItemIds: false,
   },
@@ -273,6 +275,16 @@ interface ActiveTurn {
   unsent: boolean;
   readonly steers: Set<string>;
   readonly settledInbox: Set<string>;
+  readonly planMode: boolean;
+  readonly proposedPlans: Map<
+    string,
+    {
+      readonly id: PlanId;
+      markdown: string;
+      readonly startedAt: DateTime.Utc;
+      outcome: "streaming" | "completed" | "abandoned";
+    }
+  >;
   // Reconnects replay finished tools, so each nested html_render takes a page only once.
   readonly takenPages: Set<string>;
   heldEnd: TurnTerminal | undefined;
@@ -392,6 +404,7 @@ interface ThreadState {
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
   instructions: string | undefined;
+  latestProposedPlan: OrchestrationV2PlanArtifact | null;
 }
 
 type TurnTerminal =
@@ -955,6 +968,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       externalPrompts: new Map(),
       mcp: undefined,
       instructions: undefined,
+      latestProposedPlan: null,
     });
 
     const rootOf = (state: ThreadState): ThreadState => {
@@ -1201,6 +1215,73 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         },
       });
 
+    // Untraced: runs on every streamed text delta of a plan turn, inside the event's span.
+    const emitProposedPlan = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      nativeId: string,
+      markdown: string,
+      outcome: "streaming" | "completed" | "abandoned",
+    ) {
+      const nativeItemId = `${nativeId}:proposed_plan`;
+      let entry = turn.proposedPlans.get(nativeId);
+      // Prose after a closed plan re-splits the same block; resending the full plan adds nothing.
+      if (entry?.markdown === markdown && entry.outcome === outcome) return;
+      const updatedAt = yield* DateTime.now;
+      if (entry === undefined) {
+        entry = {
+          id: yield* idAllocator.allocate
+            .plan({
+              threadId: turn.input.threadId,
+              ...(turn.input.runId === null ? {} : { runId: turn.input.runId }),
+              driver,
+            })
+            .pipe(Effect.orDie),
+          markdown,
+          startedAt: updatedAt,
+          outcome,
+        };
+        turn.proposedPlans.set(nativeId, entry);
+      }
+      entry.markdown = markdown;
+      entry.outcome = outcome;
+      const plan: OrchestrationV2PlanArtifact = {
+        id: entry.id,
+        threadId: turn.input.threadId,
+        runId: turn.input.runId,
+        nodeId: idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId }),
+        kind: "proposed_plan",
+        status: outcome === "abandoned" ? "superseded" : "active",
+        markdown,
+      };
+      const previous = state.latestProposedPlan;
+      if (outcome !== "abandoned") {
+        if (previous !== null && previous.id !== plan.id) {
+          yield* emit({
+            type: "plan.updated",
+            driver,
+            plan: { ...previous, status: "superseded" },
+          });
+        }
+        state.latestProposedPlan = plan;
+      }
+      const status = outcome === "streaming" ? "running" : "completed";
+      const completedAt = status === "completed" ? updatedAt : null;
+      yield* emitNode(state, turn, nativeItemId, "plan", status, entry.startedAt, completedAt);
+      yield* emit({ type: "plan.updated", driver, plan });
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          ...itemBase(state, turn, nativeItemId, status, entry.startedAt, completedAt, updatedAt),
+          type: "proposed_plan",
+          planId: entry.id,
+          markdown,
+          streaming: status !== "completed",
+        },
+      });
+    });
+
     const emitText = Effect.fnUntraced(function* (
       state: ThreadState,
       turn: ActiveTurn,
@@ -1212,6 +1293,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       kind: "text" | "reasoning",
       update: (current: string) => string,
       completed = "text" in data,
+      terminal?: TurnTerminal["status"],
       phase?: "final_answer",
     ) {
       const nativeId = `${data.assistantMessageID}:${kind}:${data.ordinal}`;
@@ -1230,6 +1312,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         turn.answer = entry.text;
         turn.closingText = entry;
       }
+      const split = kind === "text" && turn.planMode ? splitProposedPlanBlock(entry.text) : null;
+      if (split?.plan != null) {
+        yield* emitProposedPlan(
+          state,
+          turn,
+          nativeId,
+          split.plan,
+          split.planComplete || terminal === "completed"
+            ? "completed"
+            : terminal === undefined
+              ? "streaming"
+              : "abandoned",
+        );
+      }
+      if (split !== null && split.prose.trim().length === 0) return;
+      const text = split?.prose ?? entry.text;
       const status = completed ? "completed" : "running";
       const completedAt = completed ? updatedAt : null;
       const nodeKind = kind === "text" ? "assistant_message" : "reasoning";
@@ -1255,7 +1353,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         runId: turn.input.runId,
         nodeId: base.nodeId,
         role: "assistant",
-        text: entry.text,
+        text,
         attachments: [],
         streaming: !completed,
         createdAt: entry.startedAt,
@@ -1269,7 +1367,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ...base,
           type: "assistant_message",
           messageId,
-          text: entry.text,
+          text,
           streaming: !completed,
           ...(phase === undefined ? {} : { phase }),
         },
@@ -1288,7 +1386,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (answer !== undefined) {
         const nativeId = `${answer.block.assistantMessageID}:text:${answer.block.ordinal}`;
         turn.texts.set(nativeId, answer);
-        yield* emitText(state, turn, answer.block, "text", (text) => text, true, "final_answer");
+        yield* emitText(
+          state,
+          turn,
+          answer.block,
+          "text",
+          (text) => text,
+          true,
+          undefined,
+          "final_answer",
+        );
         turn.closingText = undefined;
       }
       const now = yield* DateTime.now;
@@ -1653,7 +1760,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const makeTurn = (
       owner: TurnOwner,
       providerTurn: OrchestrationV2ProviderTurn,
-      options: { readonly scope: string; readonly awaitingStart: boolean },
+      options: {
+        readonly scope: string;
+        readonly awaitingStart: boolean;
+        readonly planMode?: boolean;
+      },
     ): ActiveTurn => ({
       input: owner,
       providerTurn,
@@ -1679,6 +1790,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       unsent: false,
       steers: new Set(),
       settledInbox: new Set(),
+      planMode: options.planMode ?? false,
+      proposedPlans: new Map(),
       takenPages: new Set(),
       heldEnd: undefined,
       awaitingStart: options.awaitingStart,
@@ -2352,7 +2465,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const completedAt = yield* DateTime.now;
       for (const open of turn.texts.values()) {
-        yield* emitText(state, turn, open.block, open.kind, (text) => text, true);
+        yield* emitText(state, turn, open.block, open.kind, (text) => text, true, terminal.status);
+      }
+      for (const [nativeId, plan] of Array.from(turn.proposedPlans)) {
+        if (plan.outcome !== "streaming") continue;
+        yield* emitProposedPlan(
+          state,
+          turn,
+          nativeId,
+          plan.markdown,
+          terminal.status === "completed" ? "completed" : "abandoned",
+        );
       }
       for (const id of turn.tools.keys()) {
         if ([...state.imageJobs.values()].some((job) => job.turn === turn && job.toolId === id))
@@ -4438,6 +4561,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         mcpAvailable
           ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."
           : undefined,
+        agentFor(turnInput) === "plan" ? PROPOSED_PLAN_BLOCK_INSTRUCTIONS : undefined,
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");
@@ -4480,7 +4604,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         startedAt,
         completedAt: null,
       };
-      const turn = makeTurn(turnInput, providerTurn, { scope: "", awaitingStart });
+      const turn = makeTurn(turnInput, providerTurn, {
+        scope: "",
+        awaitingStart,
+        planMode: agentFor(turnInput) === "plan",
+      });
       if (streamFailure !== undefined) {
         return yield* new ProviderAdapter.ProviderAdapterEventStreamError({
           driver,
