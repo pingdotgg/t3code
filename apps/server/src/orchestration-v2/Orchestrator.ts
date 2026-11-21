@@ -1921,6 +1921,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const cascade = yield* EffectOutbox.SubagentCascade;
     if (cascade?.path.at(-1) === threadId) return [];
+    if (operation === "thread.unarchive" && sideChat && !sideChat.archiveCommandId) return [];
     if ((yield* projectionStore.getSubagentChildThreads(threadId)).length === 0) return [];
     const cutoff = cascade?.source?.cutoff;
     // The generated receipt would hide the side chat's newer choice from the cascade worker.
@@ -1936,6 +1937,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       type: "subagent-threads.cascade",
       operation,
       limit,
+      ...(operation === "thread.delete" && sideChat === undefined
+        ? { directDelete: true as const }
+        : {}),
       ...(sideChat === undefined ? {} : { sideChat: { ...sideChat, cutoff } }),
     } as const;
     const id = `effect:${commandId}:subagent-threads.cascade`;

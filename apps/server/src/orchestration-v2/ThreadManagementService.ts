@@ -558,6 +558,7 @@ export interface ThreadManagementServiceShape {
     readonly commandId: CommandId;
     readonly operation: "thread.archive" | "thread.unarchive" | "thread.delete";
     readonly sideChat?: EffectOutbox.EmbeddedSideChatCascade | undefined;
+    readonly directDelete?: true | undefined;
   }) => Effect.Effect<
     void,
     Orchestrator.OrchestratorV2Error | CommandReceiptStore.CommandReceiptStoreV2Error
@@ -870,6 +871,7 @@ const make = Effect.gen(function* () {
           threadId,
           operation: request.operation,
           sideChat: request.sideChat,
+          directDelete: request.directDelete,
         }).pipe(
           Effect.catch((cause) =>
             Effect.logWarning("Subagent lifecycle cascade left to the effect worker", {
@@ -1841,7 +1843,7 @@ const make = Effect.gen(function* () {
       if (input.operation === "thread.unarchive" && sideChat && !sideChat.archiveCommandId) return;
       const parentThreadId =
         sideChat?.parentThreadId ??
-        (input.operation === "thread.delete"
+        (input.operation === "thread.delete" && !input.directDelete
           ? yield* legacySideChatDeletionParent(input.commandId, input.threadId)
           : undefined);
       const receipt =

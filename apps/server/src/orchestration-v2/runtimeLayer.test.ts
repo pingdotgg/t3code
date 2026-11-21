@@ -14559,12 +14559,26 @@ describe("subagent lifecycle cascade", () => {
         yield* f.drain;
         yield* TestClock.adjust("8 days");
         yield* f.outbox.pruneSettled;
+        const occupied = {
+          commandId: CommandId.make("unarchive:parent:side-chat:side"),
+          threadId: ThreadId.make("fork"),
+          commandType: "thread.archive",
+          acceptedAt: f.now,
+          resultSequence: 0,
+          status: "accepted",
+          error: null,
+        } as const;
+        if (useParentDerivedId) {
+          yield* Effect.flatMap(Receipts.CommandReceiptStoreV2, (r) => r.upsert(occupied));
+        }
         if (delivery === "reply") yield* f.run("unarchive");
         else {
           yield* f.commit("unarchive");
           yield* f.drain;
         }
         assert.equal(yield* f.archived(parent, side, child), "001");
+        if (useParentDerivedId)
+          assert.deepEqual(Option.getOrThrow(yield* receipt(occupied.commandId)), occupied);
       }).pipe(Effect.provide(layerTest)),
   );
 
@@ -14620,22 +14634,73 @@ describe("subagent lifecycle cascade", () => {
       }).pipe(Effect.provide(Layer.merge(layerTest, SqlitePersistence.layerMemory))),
   );
 
-  it.effect("recovers a direct side-chat deletion with a parent-derived command ID", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture;
-      const { side, child } = yield* f.movedSideChat();
-      yield* f.markUsed(parent);
-      const kept = yield* f.threads.dispatch({
-        type: "thread.delete",
-        commandId: CommandId.make("delete:parent"),
-        threadId: parent,
-        onlyIfUnused: true,
-      });
-      assert.isEmpty(kept.storedEvents);
-      yield* f.commit("delete", side, "delete:parent:side-chat:side");
-      yield* f.drain;
-      assert.equal(yield* f.state("deletedAt", parent, side, child), "011");
-    }).pipe(Effect.provide(layerTest)),
+  it.effect.each(["retained legacy event", "pruned fresh event"] as const)(
+    "recovers a direct side-chat deletion with a parent-derived ID and %s",
+    (history) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const { side, child } = yield* f.movedSideChat();
+        yield* f.markUsed(parent);
+        const kept = yield* f.threads.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("delete:parent"),
+          threadId: parent,
+          onlyIfUnused: true,
+        });
+        assert.isEmpty(kept.storedEvents);
+
+        if (history === "pruned fresh event") {
+          const store = yield* ProjectionStore.ProjectionStoreV2;
+          yield* f.markUsed(side);
+          const runId = RunId.make("side:queued");
+          yield* store.apply({
+            id: EventId.make("side:queued"),
+            type: "run.created",
+            threadId: side,
+            runId,
+            occurredAt: f.now,
+            payload: {
+              id: runId,
+              threadId: side,
+              ordinal: 1,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make(`use:${side}`),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "queued",
+              requestedAt: f.now,
+              startedAt: null,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+        }
+        const commandId = CommandId.make("delete:parent:side-chat:side");
+        const deleted = yield* f.commit("delete", side, commandId);
+        if (history === "pruned fresh event") {
+          assert.equal(deleted.storedEvents.at(-1)?.event.type, "run.updated");
+          const sql = yield* SqlClient.SqlClient;
+          const pruned = yield* sql`
+            DELETE FROM orchestration_events
+            WHERE command_id = ${commandId}
+              AND stream_id = ${side}
+              AND event_type = 'thread.deleted'
+            RETURNING sequence
+          `;
+          assert.lengthOf(pruned, 1);
+          yield* f.drain;
+        } else {
+          yield* f.threads.cascadeSubagentLifecycle({
+            threadId: side,
+            commandId,
+            operation: "thread.delete",
+          });
+        }
+        assert.equal(yield* f.state("deletedAt", parent, side, child), "011");
+      }).pipe(Effect.provide(Layer.merge(layerTest, SqlitePersistence.layerMemory))),
   );
 
   it.effect("rolls back a nested side-chat deletion with an occupied recovery effect ID", () =>
