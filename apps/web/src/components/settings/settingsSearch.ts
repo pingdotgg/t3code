@@ -502,6 +502,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("beta boring sidebar folder rows multiline branch pull request details")],
   },
   {
+    id: "boring-sidebar-flush-rows",
+    title: "Align threads with project icon",
+    to: "/settings/labs",
+    targetId: "boring-sidebar",
+    searchTerms: ["sidebar folder indent indentation flush left align spacing margin compact"],
+  },
+  {
     id: "tool-call-visibility",
     title: msg("Tool calls in chat"),
     to: "/settings/chat",
