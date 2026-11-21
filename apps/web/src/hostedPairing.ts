@@ -46,6 +46,12 @@ export function isHostedStaticApp(url?: URL): boolean {
     return true;
   }
 
+  // A standalone server serves this page on its hosted URL too, so the origin alone does not
+  // mean a static deploy; only a configured hosted channel does.
+  if (IS_STANDALONE_BUILD) {
+    return false;
+  }
+
   if (url === undefined && (typeof window === "undefined" || window.location === undefined)) {
     return false;
   }

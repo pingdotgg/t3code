@@ -184,7 +184,9 @@ Connect, T3 Chat, and the license text keep their names.
 
 - **Web:** host the fork's static app at an HTTPS origin you control. Set
   `T3CODE_HOSTED_APP_URL` (also read as `VITE_HOSTED_APP_URL`) in the build and server only when
-  you host it. With no hosted app, clients use direct pairing and native thread links. Leave
+  you host it. With no hosted app, clients use direct pairing and native thread links. The URL
+  may also be the fork's own server: a standalone page on it runs as a server-served client unless
+  the build sets `VITE_HOSTED_APP_CHANNEL`, which marks a static hosted deploy. Leave
   relay, Clerk, and browser tracing values unset for direct-only use.
 - **Desktop:** build and sign the fork's app under an identity you control. The app takes its
   bundle id from `T3CODE_MOBILE_BUNDLE_ID`, shared with mobile, and names its files after

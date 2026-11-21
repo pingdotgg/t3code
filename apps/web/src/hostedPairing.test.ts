@@ -53,4 +53,22 @@ describe("hostedPairing", () => {
       hostedPairing.buildHostedPairingUrl({ host: "https://backend.example.com", token: "t" }),
     ).toBeNull();
   });
+
+  it.each([
+    { standalone: "1", channel: "", expected: false },
+    { standalone: "", channel: "", expected: true },
+    { standalone: "1", channel: "latest", expected: true },
+  ])(
+    "treats the hosted origin as static only outside standalone or with a channel (standalone=$standalone, channel=$channel)",
+    async ({ standalone, channel, expected }) => {
+      vi.stubEnv("VITE_T3CODE_STANDALONE", standalone);
+      vi.stubEnv("VITE_HOSTED_APP_URL", "https://code.fork.example");
+      vi.stubEnv("VITE_HOSTED_APP_CHANNEL", channel);
+      vi.resetModules();
+      const hostedPairing = await import("./hostedPairing");
+
+      expect(hostedPairing.isHostedStaticApp(new URL("https://code.fork.example/"))).toBe(expected);
+      expect(hostedPairing.configuredHostedAppUrl()).toBe("https://code.fork.example");
+    },
+  );
 });
