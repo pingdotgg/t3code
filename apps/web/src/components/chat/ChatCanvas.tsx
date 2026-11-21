@@ -7,20 +7,23 @@ import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore
 import { observeResize } from "../../lib/observeResize";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
+const PANELS = '[data-slot="sidebar-gap"], [data-preview-panel-mode="inline"]';
+
+// The document's running animations are few; querying the app for its panels on every
+// canvas resize walked every element. Both list transitions in tree order.
 function panelWidthTransitions(element: HTMLElement) {
-  const panels = element
-    .closest("[data-panel-animations]")
-    ?.querySelectorAll('[data-slot="sidebar-gap"], [data-preview-panel-mode="inline"]');
-  return Array.from(panels ?? []).flatMap((panel) =>
-    panel
-      .getAnimations()
-      .filter(
-        (animation): animation is CSSTransition =>
-          animation instanceof CSSTransition &&
-          animation.transitionProperty === "width" &&
-          animation.playState === "running",
-      ),
-  );
+  const root = element.closest("[data-panel-animations]");
+  if (!root) return [];
+  return document.getAnimations().filter((animation): animation is CSSTransition => {
+    if (
+      !(animation instanceof CSSTransition) ||
+      animation.transitionProperty !== "width" ||
+      animation.playState !== "running"
+    )
+      return false;
+    const target = animation.effect instanceof KeyframeEffect ? animation.effect.target : null;
+    return target !== null && target !== root && root.contains(target) && target.matches(PANELS);
+  });
 }
 
 // Sample only the layout panels; seeking unrelated transitions can change their lifecycle.
