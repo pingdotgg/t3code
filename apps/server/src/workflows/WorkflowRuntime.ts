@@ -519,8 +519,13 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     waitFor: Effect.fn("Workflows.waitFor")(function* (...input) {
       // A reload replaces the engine, and a wait on the old one would never hear of the run again.
       while (true) {
+        // Noted before the engine is read, so a reload that lands in between is still heard of.
+        const { revision } = yield* SubscriptionRef.get(state);
         const live = yield* current;
-        const reloaded = SubscriptionRef.changes(state).pipe(Stream.drop(1), Stream.runHead);
+        const reloaded = SubscriptionRef.changes(state).pipe(
+          Stream.filter((at) => at.revision !== revision),
+          Stream.runHead,
+        );
         const waited = yield* live
           .waitFor(...input)
           .pipe(Effect.asSome, Effect.raceFirst(Effect.as(reloaded, Option.none())));
