@@ -290,7 +290,7 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
       }
       problem =
         misfit === undefined
-          ? "the agent did not return a result: it ended its turn without submitting a result"
+          ? "the agent did not return a result: its turn ended with none accepted"
           : `the agent's result did not fit: ${misfit}`;
       if (correction >= CORRECTIONS) break;
       // Back to the same thread: it has the context and only owes the result.
@@ -302,7 +302,7 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
         start(
           `${round}/correct/${correction}`,
           misfit === undefined
-            ? "Your turn ended without a submitted result. Do not redo the work: call `t3_submit_output` now with the result of what you did."
+            ? "Your turn ended without an accepted result. Do not redo the work: call `t3_submit_output` now with the result of what you did."
             : `The result you submitted does not fit: ${misfit}\nDo not redo the work: call \`t3_submit_output\` again with a corrected result.`,
           threadOf(turn),
         ),
