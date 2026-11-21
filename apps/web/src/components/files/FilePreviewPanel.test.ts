@@ -158,6 +158,17 @@ describe("document preview contents", () => {
       "A\tB\u2003C\u2002D\u2005E\u200dF\u200cG\u200bH\u200eI\u200fJ",
     ],
     ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
+    ["a tracked replacement", String.raw`{\rtf1 aaa{\deleted bbb}{\revised BBB}ccc}`, "aaaBBBccc"],
+    [
+      "text after a deletion reset",
+      String.raw`{\rtf1 A\deleted old\deleted0 B\deleted old\plain C}`,
+      "ABC",
+    ],
+    [
+      "text around a deleted Unicode span",
+      String.raw`{\rtf1 A{\deleted\uc1\u945\deleted0 old}B}`,
+      "AB",
+    ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
     if (result.type !== "document") throw new Error("Expected document");
@@ -237,6 +248,27 @@ Third}`;
     );
   });
 
+  it("starts a new line at rich text section and column breaks", () => {
+    const result = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi\sectd\cols2\pard North quota: 120\column South quota: 240\page East quota: 360\sect\sectd\pard West quota: 480\par}`,
+      ),
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages.map((page) => page.html)).toEqual([
+      "<p>North quota: 120<br>South quota: 240</p>",
+      "<p>East quota: 360<br>West quota: 480<br></p>",
+    ]);
+    const written = openRtf(
+      bytes(String.raw`{\rtf1\ansi First\par\sect\sectd Second\par\column Third\page\sect Fourth}`),
+    );
+    if (written.type !== "document") throw new Error("Expected document");
+    expect(written.pages.map((page) => page.html)).toEqual([
+      "<p>First<br>Second<br>Third</p>",
+      "<p>Fourth</p>",
+    ]);
+  });
+
   it("decodes declared rich text code pages for raw bytes and escaped byte runs", () => {
     const input = new TextEncoder().encode(
       String.raw`{\rtf1\ansi\ansicpg1251 A \'c0\par\ansicpg932\'82\'a0}`,
@@ -245,6 +277,11 @@ Third}`;
     const result = openRtf(input.buffer);
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toBe("<p>А А<br>あ</p>");
+    for (const header of [String.raw`\mac`, String.raw`\mac\ansicpg10000`]) {
+      const mac = openRtf(bytes(String.raw`{\rtf1` + header + String.raw` Caf\'8e Cr\'8fme}`));
+      if (mac.type !== "document") throw new Error("Expected document");
+      expect(mac.pages[0]!.html).toBe("<p>Café Crème</p>");
+    }
     expect(() => openRtf(bytes(String.raw`{\rtf1\ansicpg99999 text}`))).toThrow(
       expect.objectContaining({ code: "rtf-code-page" }),
     );

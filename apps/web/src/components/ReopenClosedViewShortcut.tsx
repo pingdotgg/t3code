@@ -33,6 +33,7 @@ import {
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "../rightPanelStore";
+import { serverEnvironment } from "../state/server";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readProject, readThreadShell } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
@@ -54,6 +55,7 @@ const PREVIEW_FORWARDED_COMMANDS = [
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  "rightPanel.new",
   "rightPanel.close",
   "preview.focusUrl",
   "preview.zoomIn",
@@ -116,8 +118,11 @@ export function ReopenClosedViewShortcut() {
         ownerExists: readThreadShell(ref) !== null || drafts.getDraftThreadByRef(ref) !== null,
         sideChatExists:
           entry.kind !== "panel-tab" ||
-          entry.surface.kind !== "side-chat" ||
-          readThreadShell(scopeThreadRef(ref.environmentId, entry.surface.threadId)) !== null,
+          entry.surface.kind !== "thread" ||
+          readThreadShell(scopeThreadRef(ref.environmentId, entry.surface.threadId)) !== null ||
+          // The shell leaves idle subagents out, so one it does not list may still exist.
+          appAtomRegistry.get(serverEnvironment.configValueAtom(ref.environmentId))
+            ?.shellThreadFamilies === true,
         shellLive:
           appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live",
         panel,
@@ -211,6 +216,7 @@ export function ReopenClosedViewShortcut() {
       context: {
         previewFocus: true,
         previewOpen: true,
+        rightPanelOpen: true,
         terminalFocus: false,
         terminalOpen,
         editableFocus: false,

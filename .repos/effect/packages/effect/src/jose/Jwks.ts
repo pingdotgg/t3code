@@ -22,6 +22,7 @@ import * as Effect from "../Effect.ts"
 import * as Exit from "../Exit.ts"
 import * as HttpClient from "../http/HttpClient.ts"
 import * as Layer from "../Layer.ts"
+import * as Predicate from "../Predicate.ts"
 import * as Schema from "../Schema.ts"
 import type * as Scope from "../Scope.ts"
 import * as Stream from "../Stream.ts"
@@ -228,6 +229,17 @@ export interface RemoteOptions {
    * Maximum number of keys in the set. Defaults to 64.
    */
   readonly maxKeys?: number | undefined
+  /**
+   * Keeps only the raw keys it returns `true` for, before the set is decoded.
+   *
+   * **Details**
+   *
+   * It sees each member of `keys` as the endpoint sent it, with members such
+   * as `x5c` or a provider's own `endorsements` that decoding drops. Keys
+   * that are not JSON objects are dropped without a call. `maxKeys` counts
+   * the set before filtering, so a filter cannot raise the limit.
+   */
+  readonly filter?: ((jwk: { readonly [key: string]: unknown }) => boolean) | undefined
 }
 
 interface Snapshot {
@@ -302,6 +314,7 @@ export const makeRemote = Effect.fnUntraced(function*(
   const timeout = yield* positiveMillis("timeout", options.timeout ?? "5 seconds")
   const maxResponseBytes = yield* positiveInteger("maxResponseBytes", options.maxResponseBytes ?? 131072)
   const maxKeys = yield* positiveInteger("maxKeys", options.maxKeys ?? 64)
+  const filter = options.filter
 
   const client = HttpClient.withScope(yield* HttpClient.HttpClient)
   const scope = yield* Effect.scope
@@ -337,12 +350,18 @@ export const makeRemote = Effect.fnUntraced(function*(
       body.set(chunk, length)
       return Effect.succeed(length + chunk.length)
     })
-    const keySet = yield* Schema.decodeUnknownEffect(KeySet)(parseJsonObject(body.subarray(0, length))).pipe(
-      Effect.mapError((cause) => unavailable("The key set document is invalid", cause))
-    )
-    if (keySet.keys.length > maxKeys) {
+    const document = parseJsonObject(body.subarray(0, length))
+    const rawKeys = document?.keys
+    if (Array.isArray(rawKeys) && rawKeys.length > maxKeys) {
       return yield* unavailable(`The key set has more than ${maxKeys} keys`)
     }
+    const filtered = filter === undefined || !Array.isArray(rawKeys) ? document : {
+      ...document,
+      keys: rawKeys.filter((jwk) => Predicate.isObject(jwk) && filter(jwk))
+    }
+    const keySet = yield* Schema.decodeUnknownEffect(KeySet)(filtered).pipe(
+      Effect.mapError((cause) => unavailable("The key set document is invalid", cause))
+    )
     return { keys: supportedKeys(keySet), expiresAt: (yield* Clock.currentTimeMillis) + timeToLive }
   }).pipe(
     Effect.scoped,
