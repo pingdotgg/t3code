@@ -12,6 +12,7 @@ import type {
   ProjectWriteFileResult,
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isNetworkPath } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
@@ -613,26 +614,59 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    yield* Effect.tryPromise({
-      // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
-      try: () =>
-        NodeFSP.writeFile(realTargetPath, contents, {
-          flag:
-            NodeFS.constants.O_WRONLY |
-            NodeFS.constants.O_CREAT |
-            NodeFS.constants.O_TRUNC |
-            (NodeFS.constants.O_NOFOLLOW ?? 0),
-        }),
-      catch: (cause) =>
-        new WorkspaceFileSystemOperationError({
-          workspaceRoot: input.cwd,
-          relativePath: input.relativePath,
-          resolvedPath: realTargetPath,
-          operationPath: realTargetPath,
-          operation: "write-file",
-          cause,
-        }),
+    const writeError = (cause: unknown) =>
+      new WorkspaceFileSystemOperationError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: realTargetPath,
+        operationPath: realTargetPath,
+        operation: "write-file",
+        cause,
+      });
+    const staged = yield* Effect.tryPromise({
+      try: async () => {
+        // Checks write access without truncating; a symlink swapped in here is not followed on POSIX.
+        const existing = await NodeFSP.open(
+          realTargetPath,
+          NodeFS.constants.O_WRONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+        ).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+          throw error;
+        });
+        if (!existing) return {};
+        try {
+          const mode = (await existing.stat()).mode & 0o777;
+          const canStage = await NodeFSP.access(
+            path.dirname(realTargetPath),
+            NodeFS.constants.W_OK,
+          ).then(
+            () => true,
+            () => false,
+          );
+          if (canStage) return { mode };
+          // Staging needs a writable directory; a writable file in a read-only one is saved in place.
+          await existing.truncate(0);
+          await existing.writeFile(contents);
+          return undefined;
+        } finally {
+          await existing.close();
+        }
+      },
+      catch: writeError,
     });
+    if (staged) {
+      yield* writeFileStringAtomically({
+        filePath: realTargetPath,
+        contents,
+        ...staged,
+        // The target was checked as resolved; a link swapped in since is replaced, not followed.
+        followSymlinks: false,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(writeError),
+      );
+    }
     // Editor autosave overwrites existing files, which leaves the indexed paths unchanged, and
     // fff's watcher applies the new contents on its own. A forced rescan re-walks the whole
     // workspace, and the save would wait for it.

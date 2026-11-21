@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
 import * as ServerConfig from "../config.ts";
 import { makeFakeWslHost } from "../testUtils/fakeWsl.ts";
@@ -621,6 +622,144 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("writeFile", () => {
+    it.effect.each([
+      { existing: false, failure: "write" },
+      { existing: true, failure: "write" },
+      { existing: true, failure: "rename" },
+      { existing: true, failure: "cleanup" },
+    ] as const)(
+      "handles $failure failure without losing destination contents (existing: $existing)",
+      ({ existing, failure }) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const target = path.join(yield* fs.realPath(cwd), "report.md");
+          const original = "original contents\n";
+          if (existing) yield* writeTextFile(cwd, "report.md", original);
+          const cause = new Error("Save failed");
+          const failing = (operation: string) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: operation,
+                cause,
+              }),
+            );
+          const service = yield* WorkspaceFileSystem.make.pipe(
+            Effect.provide(layerKnownWorkspacesTest),
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              open: (file, options) =>
+                fs.open(file, options).pipe(
+                  // The real handle keeps its methods on its prototype, so it is extended, not spread.
+                  Effect.map((handle): FileSystem.File =>
+                    failure === "write"
+                      ? Object.create(handle, {
+                          writeAll: {
+                            value: (data: Uint8Array) =>
+                              handle
+                                .writeAll(data.slice(0, 4))
+                                .pipe(Effect.andThen(failing("writeAll"))),
+                          },
+                        })
+                      : handle,
+                  ),
+                ),
+              rename: (from, to) =>
+                failure === "rename" ? failing("rename") : fs.rename(from, to),
+              remove: (file, options) =>
+                failure === "cleanup" ? failing("remove") : fs.remove(file, options),
+            }),
+          );
+
+          if (failure === "cleanup") {
+            expect(
+              yield* service.writeFile({
+                cwd,
+                relativePath: "report.md",
+                contents: "replacement\n",
+              }),
+            ).toEqual({ relativePath: "report.md" });
+            expect(yield* fs.readFileString(target)).toBe("replacement\n");
+            return;
+          }
+
+          const error = yield* service
+            .writeFile({ cwd, relativePath: "report.md", contents: "replacement contents\n" })
+            .pipe(Effect.flip);
+
+          expect(error).toMatchObject({
+            _tag: "WorkspaceFileSystemOperationError",
+            operation: "write-file",
+            operationPath: target,
+          });
+          if (existing) expect(yield* fs.readFileString(target)).toBe(original);
+          else expect(yield* fs.exists(target)).toBe(false);
+          expect(yield* fs.readDirectory(cwd)).toEqual(existing ? ["report.md"] : []);
+        }),
+    );
+
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+      "saves a writable file inside a read-only directory",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "docs/report.md", "original\n");
+          const docs = path.join(cwd, "docs");
+          yield* fs.chmod(path.join(docs, "report.md"), 0o600);
+          yield* Effect.acquireRelease(fs.chmod(docs, 0o500), () =>
+            fs.chmod(docs, 0o700).pipe(Effect.ignore),
+          );
+
+          yield* workspaceFileSystem.writeFile({
+            cwd,
+            relativePath: "docs/report.md",
+            contents: "edited\n",
+          });
+
+          expect(yield* fs.readFileString(path.join(docs, "report.md"))).toBe("edited\n");
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "replaces a symlink swapped in after the target check instead of writing through it",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const outside = path.join(yield* makeTempDir, "outside.txt");
+          yield* fs.writeFileString(outside, "outside\n");
+          yield* writeTextFile(cwd, "report.md", "original\n");
+          const target = path.join(yield* fs.realPath(cwd), "report.md");
+          let swapped = false;
+          const swap = Effect.suspend(() => {
+            if (swapped) return Effect.void;
+            swapped = true;
+            return fs.remove(target).pipe(Effect.andThen(fs.symlink(outside, target)));
+          });
+          const service = yield* WorkspaceFileSystem.make.pipe(
+            Effect.provide(layerKnownWorkspacesTest),
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              readLink: (file) => swap.pipe(Effect.andThen(fs.readLink(file))),
+              makeTempDirectory: (options) =>
+                swap.pipe(Effect.andThen(fs.makeTempDirectory(options))),
+            }),
+          );
+
+          yield* service.writeFile({ cwd, relativePath: "report.md", contents: "edited\n" });
+
+          expect(yield* fs.readFileString(outside)).toBe("outside\n");
+          expect(yield* fs.readFileString(target)).toBe("edited\n");
+        }),
+    );
+
     it.effect("rejects writes outside a known workspace", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -687,6 +826,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "src/main.ts", "export {};\n");
+        const target = path.join(cwd, "src/main.ts");
+        if (HostProcess.Platform.defaultValue() !== "win32") yield* fileSystem.chmod(target, 0o750);
 
         yield* workspaceFileSystem.writeFile({
           cwd,
@@ -697,6 +838,9 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).toBe(
           "export const edited = true;\n",
         );
+        if (HostProcess.Platform.defaultValue() !== "win32") {
+          expect((yield* fileSystem.stat(target)).mode & 0o777).toBe(0o750);
+        }
 
         yield* writeTextFile(cwd, "report.txt", "ordinary file");
         for (const relativePath of whitespaceFilePaths) {
