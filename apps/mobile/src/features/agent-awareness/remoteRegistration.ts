@@ -171,7 +171,8 @@ function mergeAgentAwarenessRegistrationPreferences(
 }
 
 function readRelayConfig(): { readonly url: string } | null {
-  const relayUrl = resolveCloudPublicConfig().relay.url;
+  const { url, backgroundUrl } = resolveCloudPublicConfig().relay;
+  const relayUrl = backgroundUrl ?? url;
   if (!relayUrl) {
     return null;
   }
