@@ -50,6 +50,7 @@ function makeHarness(options?: {
             remoteUrl: input.remoteUrl ?? "",
             cloneUrl: input.remoteUrl ?? "",
             repository: null,
+            httpsFallbackUrl: Effect.succeed(null),
           }),
         cloneRepository:
           options?.clone ??
@@ -218,6 +219,8 @@ describe("ProjectCloneTracker", () => {
 
   it.effect("hands git the credential-bearing URL while snapshots carry the redacted one", () => {
     const cloneUrls: Array<string> = [];
+    const fallbacks: Array<Effect.Effect<string | null> | undefined> = [];
+    const resolveFallback = Effect.succeed("http://gitlab.internal:9999/octocat/t3code.git");
     const harness = makeHarness({
       clone: (input) =>
         Effect.sync(() => {
@@ -234,10 +237,12 @@ describe("ProjectCloneTracker", () => {
               remoteUrl: "https://github.com/octocat/t3code.git",
               cloneUrl: "https://user:s3cret@github.com/octocat/t3code.git",
               repository: null,
+              httpsFallbackUrl: resolveFallback,
             }),
-          cloneRepository: (input) =>
+          cloneRepository: (input, options) =>
             Effect.sync(() => {
               cloneUrls.push(input.remoteUrl ?? "");
+              fallbacks.push(options?.httpsFallbackUrl);
               return { cwd: input.destinationPath, remoteUrl: "", repository: null };
             }),
           discardClone: () => Effect.void,
@@ -250,6 +255,8 @@ describe("ProjectCloneTracker", () => {
       yield* Effect.yieldNow;
       expect(result.remoteUrl).toBe("https://github.com/octocat/t3code.git");
       expect(cloneUrls).toEqual(["https://user:s3cret@github.com/octocat/t3code.git"]);
+      // The clone is handed only the URL, so the fallback resolved with it has to travel too.
+      expect(fallbacks[0]).toBe(resolveFallback);
     }).pipe(Effect.provide(layer));
   });
 

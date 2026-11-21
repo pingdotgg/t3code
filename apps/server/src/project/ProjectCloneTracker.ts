@@ -86,6 +86,7 @@ interface TrackedClone {
   readonly input: {
     /** What git is given; may carry credentials and never leaves the server. */
     readonly cloneUrl: string;
+    readonly httpsFallbackUrl: Effect.Effect<string | null>;
     readonly destinationPath: string;
     readonly repository: SourceControlRepositoryInfo | null;
     readonly protocol: SourceControlCloneProtocol;
@@ -229,6 +230,7 @@ export const make = Effect.gen(function* () {
         onProgress: (update) =>
           Queue.offer(pulses, undefined).pipe(Effect.andThen(progress(projectId, update))),
         timeoutMs: null,
+        httpsFallbackUrl: tracked.input.httpsFallbackUrl,
       },
     );
   }, Effect.scoped);
@@ -311,6 +313,7 @@ export const make = Effect.gen(function* () {
           hooks,
           input: {
             cloneUrl: prepared.cloneUrl,
+            httpsFallbackUrl: prepared.httpsFallbackUrl,
             destinationPath: prepared.destinationPath,
             repository: prepared.repository,
             protocol: input.protocol ?? "auto",

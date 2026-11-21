@@ -36,7 +36,11 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { cloneUrlForProtocol, cloneUrlProtocol } from "@t3tools/shared/cloneUrl";
+import {
+  cloneUrlForProtocol,
+  cloneUrlProtocol,
+  cloneUrlRepositoryPath,
+} from "@t3tools/shared/cloneUrl";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 const isGitCommandError = Schema.is(GitCommandError);
@@ -68,12 +72,19 @@ export interface SourceControlPreparedClone {
   readonly remoteUrl: string;
   readonly cloneUrl: string;
   readonly repository: SourceControlRepositoryInfo | null;
+  /**
+   * Where a refused SSH clone is retried, or null when it must not be. Run only after a refusal:
+   * it may ask the forge, which a clone that SSH accepts never needs.
+   */
+  readonly httpsFallbackUrl: Effect.Effect<string | null>;
 }
 
 export interface SourceControlCloneOptions {
   readonly onProgress?: (line: GitCloneProgressLine) => Effect.Effect<void>;
   /** Overrides the default clone budget; `null` disables the deadline. */
   readonly timeoutMs?: number | null;
+  /** The fallback of an earlier `prepareClone`, for a clone that is given only its `cloneUrl`. */
+  readonly httpsFallbackUrl?: Effect.Effect<string | null>;
 }
 
 // Older/mobile synchronous RPCs need deadlines; tracked clones use progress and Cancel instead.
@@ -175,11 +186,19 @@ function publishPushFailureDetail(input: {
  */
 function httpsFallbackUrl(
   input: SourceControlCloneRepositoryInput,
-  prepared: SourceControlPreparedClone,
+  cloneUrl: string,
+  repository: SourceControlRepositoryInfo | null,
 ): string | null {
-  if (input.protocol === "ssh" || cloneUrlProtocol(prepared.cloneUrl) !== "ssh") return null;
-  if (prepared.repository?.sshUrl === prepared.cloneUrl) return prepared.repository.url;
-  return cloneUrlForProtocol(prepared.cloneUrl, "https");
+  if (input.protocol === "ssh" || cloneUrlProtocol(cloneUrl) !== "ssh") return null;
+  if (repository?.sshUrl === cloneUrl) return repository.url;
+  return cloneUrlForProtocol(cloneUrl, "https");
+}
+
+/** A forge's default host can hold another repository at the same path. */
+function namesRepository(forge: SourceControlRepositoryInfo, remoteUrl: string): boolean {
+  const key = (url: string) => cloneUrlRepositoryPath(url)?.toLowerCase() ?? null;
+  const wanted = key(remoteUrl);
+  return wanted !== null && (key(forge.url) === wanted || key(forge.sshUrl) === wanted);
 }
 
 const isSshRejection = (error: SourceControlRepositoryError) =>
@@ -297,6 +316,25 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * A clone URL rewritten from another machine's remote loses the forge's scheme and port, so this
+   * host's forge login is asked for the real ones. Null without a login that knows the repository.
+   */
+  const forgeRepository = Effect.fn("SourceControlRepositoryService.forgeRepository")(function* (
+    input: SourceControlCloneRepositoryInput,
+    httpsUrl: string,
+    cwd: string,
+  ) {
+    if (!input.provider || input.provider === "unknown") return null;
+    // Every forge reads the host from an HTTP(S) URL; none reads it from an SCP-style remote.
+    const forge = yield* lookupRepository({
+      provider: input.provider,
+      repository: httpsUrl,
+      cwd,
+    }).pipe(Effect.orElseSucceed(() => null));
+    return forge && namesRepository(forge, httpsUrl) ? forge : null;
+  });
+
   const prepareClone = Effect.fn("SourceControlRepositoryService.prepareClone")(function* (
     input: SourceControlCloneRepositoryInput,
   ) {
@@ -314,6 +352,16 @@ export const make = Effect.gen(function* () {
       });
       remoteUrl = selectRemoteUrl(repository, input.protocol);
       provider = input.provider;
+    } else if (
+      remoteUrl &&
+      input.protocol === "https" &&
+      cloneUrlProtocol(remoteUrl) === "https" &&
+      // The forge's URL would drop credentials the caller put in this one.
+      redactRemoteUrl(remoteUrl) === remoteUrl
+    ) {
+      remoteUrl =
+        (yield* forgeRepository(input, remoteUrl, preparedDestination.parentPath))?.url ??
+        remoteUrl;
     }
 
     if (!remoteUrl) {
@@ -329,6 +377,14 @@ export const make = Effect.gen(function* () {
       remoteUrl: redactRemoteUrl(remoteUrl),
       cloneUrl: remoteUrl,
       repository,
+      httpsFallbackUrl: Effect.suspend(() => {
+        const rewritten = httpsFallbackUrl(input, remoteUrl, repository);
+        return rewritten === null || repository !== null
+          ? Effect.succeed(rewritten)
+          : forgeRepository(input, rewritten, preparedDestination.parentPath).pipe(
+              Effect.map((forge) => forge?.url ?? rewritten),
+            );
+      }),
     } satisfies SourceControlPreparedClone;
   });
 
@@ -447,7 +503,7 @@ export const make = Effect.gen(function* () {
     options?: SourceControlCloneOptions,
   ) {
     const prepared = yield* prepareClone(input);
-    const httpsUrl = httpsFallbackUrl(input, prepared);
+    const httpsFallback = options?.httpsFallbackUrl ?? prepared.httpsFallbackUrl;
     const remoteUrl = yield* runClone(
       input,
       prepared.destinationPath,
@@ -455,22 +511,25 @@ export const make = Effect.gen(function* () {
       options,
     ).pipe(
       Effect.as(prepared.remoteUrl),
-      // @effect-diagnostics-next-line catchConditionalRefailToCatchIf:off - The condition also narrows httpsUrl for the fallback closure.
-      Effect.catch((sshError) =>
-        httpsUrl === null || !isSshRejection(sshError)
-          ? Effect.fail(sshError)
-          : runClone(input, prepared.destinationPath, httpsUrl, options).pipe(
-              Effect.as(redactRemoteUrl(httpsUrl)),
-              Effect.mapError(
-                (httpsError) =>
-                  new SourceControlRepositoryError({
-                    operation: "cloneRepository",
-                    provider: sshError.provider,
-                    detail: `${sshError.detail} Cloning over HTTPS instead also failed: ${httpsError.detail}`,
-                    cause: httpsError.cause,
-                  }),
-              ),
-            ),
+      Effect.catchIf(isSshRejection, (sshError) =>
+        httpsFallback.pipe(
+          Effect.flatMap((httpsUrl) =>
+            httpsUrl === null
+              ? Effect.fail(sshError)
+              : runClone(input, prepared.destinationPath, httpsUrl, options).pipe(
+                  Effect.as(redactRemoteUrl(httpsUrl)),
+                  Effect.mapError(
+                    (httpsError) =>
+                      new SourceControlRepositoryError({
+                        operation: "cloneRepository",
+                        provider: sshError.provider,
+                        detail: `${sshError.detail} Cloning over HTTPS instead also failed: ${httpsError.detail}`,
+                        cause: httpsError.cause,
+                      }),
+                  ),
+                ),
+          ),
+        ),
       ),
     );
 
