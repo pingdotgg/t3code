@@ -120,6 +120,7 @@ beforeEach(() => {
   for (const command of Object.values(commands)) {
     command.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   }
+  commands.settle.mockResolvedValue({ _tag: "Success", value: { sequence: 1 } });
   router.navigate.mockClear();
   router.state.location.href = "/";
   router.state.matches[0]!.params = {};
@@ -317,6 +318,35 @@ describe("settle and snooze Undo", () => {
       input: { threadId: target.threadId, snoozedUntil },
     });
   });
+
+  // Whether the queued settle reached the server is known only when Undo runs.
+  it.each([
+    ["cancels it before it syncs", { sequence: 0, cancelledPendingSync: true }, 0],
+    ["finds it delivered", { sequence: 3 }, 1],
+  ] as const)(
+    "restores a queued settle only as far as needed when Undo %s",
+    async (_, undone, restorations) => {
+      const snoozedUntil = "2030-01-01T09:00:00.000Z";
+      threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";
+      threadShell.snoozedUntil = snoozedUntil;
+      commands.unsettle.mockResolvedValue({ _tag: "Success", value: undone });
+      await useThreadActions().settleThread(target);
+      expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Settled", count: 1 });
+      await currentUndo()();
+      expect(commands.unsettle).toHaveBeenCalledExactlyOnceWith({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, reason: "user", restoreUnsettledAt: null },
+      });
+      expect(commands.pin).toHaveBeenCalledTimes(restorations);
+      expect(commands.snooze).toHaveBeenCalledOnce();
+      if (restorations > 0) {
+        expect(commands.snooze).toHaveBeenCalledWith({
+          environmentId: target.environmentId,
+          input: { threadId: target.threadId, snoozedUntil },
+        });
+      }
+    },
+  );
 
   it("puts a manually ordered thread back in its active position", async () => {
     threadShell.activeOrderKey = "b5";

@@ -54,6 +54,19 @@ it("checks the command's environment instead of borrowing the primary grant", as
   expect(state.run).toHaveBeenCalledWith(target(first));
 });
 
+it("checks a caller's permission instead of the live grant on every call", async () => {
+  const remembered = new Set<string>([second]);
+  const mutate = useOrchestrationCommand(command, { reportFailure: false }, (environmentId) =>
+    remembered.has(environmentId),
+  );
+  expect(await mutate(target(second))).toMatchObject({ _tag: "Success", value: "receipt" });
+  remembered.clear();
+  const denied = await mutate(target(second));
+  assert(denied._tag === "Failure");
+  expect(Cause.squash(denied.cause)).toBeInstanceOf(EnvironmentAuthorizationError);
+  expect(state.run).toHaveBeenCalledOnce();
+});
+
 it("does not dispatch a later mutation after access changes while awaiting a receipt", async () => {
   state.allowed.add(second);
   let finish: (() => void) | undefined;

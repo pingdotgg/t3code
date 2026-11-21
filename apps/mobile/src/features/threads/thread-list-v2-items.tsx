@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -57,7 +58,7 @@ import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, useThreadTriageScope } from "../../state/session";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   pendingDraftBranchNeedsRefs,
@@ -323,6 +324,8 @@ type ThreadListV2ShelfHeaderProps = {
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
 };
+
+const TRIAGE_MENU_ACTION_IDS = new Set(["settle", "snooze", "unsettle", "unsnooze"]);
 
 const SHELF_COPY = {
   working: {
@@ -884,31 +887,37 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     label: statusEntry.label === null ? null : m(statusEntry.label),
   };
   const recede = shouldRecedeThreadRow({ status, selected });
+  const pendingSync = useAtomValue(threadEnvironment.pendingSyncAtom(thread.environmentId)).has(
+    thread.id,
+  );
   const isRegeneratingTitle = thread.titleRegeneration != null;
   // List items keep marked text so they stay the same objects across a language switch.
-  const timeLabel = props.timeLabel && m(props.timeLabel);
+  const listTimeLabel = props.timeLabel && m(props.timeLabel);
+  const timeLabel = pendingSync ? gt("Waiting to sync") : listTimeLabel;
   const snoozeWakeLabelText =
     props.snoozeWakeLabelText === undefined ? undefined : m(props.snoozeWakeLabelText);
-  const rowAccessibilityLabel = threadListV2RowAccessibilityLabel(
-    {
-      title: thread.title,
-      variant,
-      woke: showsWoke,
-      // Working and waiting rows show only an icon and a duration, so name them for speech.
-      statusLabel:
-        statusLabel &&
-        (statusLabel.label ??
-          (status === "waiting"
-            ? gt("Waiting", { $context: "thread status" })
-            : gt("Working", { $context: "thread status" }))),
-      timeLabel,
-      snoozeWakeLabel: snoozedRow ? snoozeWakeLabelText : undefined,
-      providerNameLabel,
-      hasQueuedMessages: props.hasQueuedMessages === true,
-      regeneratingTitle: isRegeneratingTitle,
-    },
-    m,
-  );
+  // The helper names the row's meta line; a row waiting to sync is named as such after it.
+  const rowAccessibilityLabel =
+    threadListV2RowAccessibilityLabel(
+      {
+        title: thread.title,
+        variant,
+        woke: showsWoke,
+        // Working and waiting rows show only an icon and a duration, so name them for speech.
+        statusLabel:
+          statusLabel &&
+          (statusLabel.label ??
+            (status === "waiting"
+              ? gt("Waiting", { $context: "thread status" })
+              : gt("Working", { $context: "thread status" }))),
+        timeLabel: listTimeLabel,
+        snoozeWakeLabel: snoozedRow ? snoozeWakeLabelText : undefined,
+        providerNameLabel,
+        hasQueuedMessages: props.hasQueuedMessages === true,
+        regeneratingTitle: isRegeneratingTitle,
+      },
+      m,
+    ) + (pendingSync ? `, ${gt("waiting to sync")}` : "");
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const markThreadUnread = useAtomCommand(threadEnvironment.markUnread, { reportFailure: false });
@@ -931,6 +940,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  // Before the session loads, only settle, snooze and their undo are offered: they can queue.
+  const triageOnly = useThreadTriageScope(thread.environmentId) && !canOperateThread;
+  const triageAllows = (action: string) => TRIAGE_MENU_ACTION_IDS.has(action);
   const canShareWithGuest = useCanShareWithGuest(thread.environmentId);
   const navigation = useNavigation();
   const handleRegenerateTitle = useCallback(
@@ -1357,11 +1369,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : null,
     [gt, handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
-  const swipeAccessibilityHint = !canOperateThread
-    ? gt("Opens the thread")
-    : secondaryAction === null
-      ? primaryAction.swipeHint
-      : primaryAction.swipeSnoozeHint;
+  const swipeAccessibilityHint =
+    !canOperateThread && !(triageOnly && triageAllows(swipeActions.primary))
+      ? gt("Opens the thread")
+      : secondaryAction === null
+        ? primaryAction.swipeHint
+        : primaryAction.swipeSnoozeHint;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const cardContent = (
@@ -1747,15 +1760,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             )}
             style={{ fontFamily: MONO_FONT }}
           >
-            {snoozedRow && snoozeWakeLabelText !== undefined ? snoozeWakeLabelText : timeLabel}
+            {!pendingSync && snoozedRow && snoozeWakeLabelText !== undefined
+              ? snoozeWakeLabelText
+              : timeLabel}
           </Text>
         </View>
       </RowPressable>
     );
 
-  if (!canOperateThread)
+  if (!canOperateThread && !(triageOnly && triageAllows(swipeActions.primary)))
     return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
-
   return (
     <View collapsable={false}>
       {customSnoozeOpen && (
@@ -1783,7 +1797,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         {(close) => (
           <Menu
             accessibilityLabel={rowAccessibilityLabel}
-            actions={menuActions}
+            actions={
+              triageOnly
+                ? menuActions.filter((action) => triageAllows(action.id ?? ""))
+                : menuActions
+            }
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress
           >

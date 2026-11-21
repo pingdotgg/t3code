@@ -95,6 +95,8 @@ export function buildDraftActionMenuItems(
 
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
+  /** Settle, snooze and their undo can queue before the environment's session loads. */
+  readonly canTriage?: boolean;
   readonly canFind?: boolean;
   /** False where no inline title editor is rendered, such as sidebar search results. */
   readonly canRename?: boolean;
@@ -139,6 +141,16 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-thread",
     "copy-thread-id",
   ].includes(action);
+}
+
+export function isThreadTriageAction(action: string): boolean {
+  return (
+    action === "settle" ||
+    action === "unsettle" ||
+    action === "snooze" ||
+    action === "unsnooze" ||
+    action.startsWith("snooze:")
+  );
 }
 
 export function buildThreadActionMenuItems(
@@ -311,7 +323,8 @@ export function buildThreadActionMenuItems(
   return state.canOperate
     ? items
     : items.map((item) =>
-        threadActionRequiresOperate(item.id)
+        threadActionRequiresOperate(item.id) &&
+        !(state.canTriage === true && isThreadTriageAction(item.id))
           ? {
               ...item,
               disabled: true,

@@ -11943,11 +11943,14 @@
   "37ffec8201f153c1": "실패",
   "984b361806ce8d25": "깨어남",
   "c6e8abc00ae470d2": "완료",
+  "353b08f4363dbb2c": "Pending",
   "f31a95961de19433": "이슈 {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, other {연결된 이슈 {count}개}}",
   "8cf699ae75fd8067": "고정됨",
   "be451f475c514b37": "깨어남 알림 닫기",
   "e9ced65134f2f36c": "지금 스레드 깨우기",
+  "374dac09151d4578": "Pending",
+  "a8f30f631e2b010e": "Waiting to sync with its environment",
   "aca5896600bf173e": "현재 다른 브랜치를 체크아웃한 상태입니다.",
   "f665b5be60d8c144": [
     {

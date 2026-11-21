@@ -11947,11 +11947,14 @@
   "37ffec8201f153c1": "失敗",
   "984b361806ce8d25": "再開",
   "c6e8abc00ae470d2": "完了",
+  "353b08f4363dbb2c": "Pending",
   "f31a95961de19433": "課題 {key}: {title}、{state}",
   "2dd9d295c882ef65": "{count, plural, other {{count} 件のリンクされた課題}}",
   "8cf699ae75fd8067": "ピン留め済み",
   "be451f475c514b37": "再開の通知を閉じる",
   "e9ced65134f2f36c": "スレッドを今すぐ再開",
+  "374dac09151d4578": "Pending",
+  "a8f30f631e2b010e": "Waiting to sync with its environment",
   "aca5896600bf173e": "現在、別のブランチをチェックアウトしています。",
   "f665b5be60d8c144": [
     {
