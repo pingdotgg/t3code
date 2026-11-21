@@ -442,7 +442,13 @@ export const make = Effect.gen(function* () {
       return {
         exitCode: ChildProcessSpawner.ExitCode(0),
         stdout: body.text,
-        stderr: `HTTP/1.1 ${status}\n${response.headers.link ? `link: ${response.headers.link}\n` : ""}`,
+        stderr: [
+          `HTTP/1.1 ${status}\n`,
+          ...["link", "x-total-count"].flatMap((name) => {
+            const value = response.headers[name];
+            return value ? [`${name}: ${value}\n`] : [];
+          }),
+        ].join(""),
         stdoutTruncated: false,
         stderrTruncated: false,
       };

@@ -188,7 +188,10 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
         Effect.map((rows) => rows ?? []),
       );
 
-    /** One page of a listing, and whether Forgejo's `Link` header announced another. */
+    /**
+     * One page of a listing, and whether another follows. Some endpoints (labels, timelines) send
+     * `X-Total-Count` but no `Link`, and a server may cap pages below `PAGE_SIZE`.
+     */
     const readPage = <A>(
       target: Target,
       operation: string,
@@ -211,7 +214,13 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
           }
           const rows = decoded.success ?? [];
           const links = /^link:\s*(.*)$/im.exec(result.stderr)?.[1];
-          const more = rows.length > 0 && (links === undefined || /rel="?next"?/i.test(links));
+          const total = /^x-total-count:\s*(\d+)/im.exec(result.stderr)?.[1];
+          const more =
+            links !== undefined
+              ? /rel="?next"?/i.test(links)
+              : total !== undefined
+                ? rows.length > 0 && page * rows.length < Number(total)
+                : rows.length >= PAGE_SIZE;
           return Effect.succeed({ rows, nextCursor: more ? String(page + 1) : null });
         }),
       );
@@ -617,7 +626,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
         Effect.all(
           [
             readPage(input, "listCandidates", `${repoPath(input.scope)}/labels`, 1, ForgejoLabel),
-            readPage(input, "listCandidates", `${repoPath(input.scope)}/assignees`, 1, ForgejoUser),
+            readArray(input, "listCandidates", `${repoPath(input.scope)}/assignees`, ForgejoUser),
           ],
           { concurrency: 2 },
         ).pipe(
@@ -627,11 +636,11 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
               color: label.color ?? null,
               description: label.description ?? null,
             })),
-            assignees: assignees.rows.flatMap((user) => {
+            assignees: assignees.flatMap((user) => {
               const actor = forgejoActor(user);
               return actor === null ? [] : [{ ...actor, id: actor.login }];
             }),
-            truncated: labels.nextCursor !== null || assignees.nextCursor !== null,
+            truncated: labels.nextCursor !== null,
           })),
         ),
     };

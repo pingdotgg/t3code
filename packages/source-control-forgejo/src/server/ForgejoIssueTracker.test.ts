@@ -87,6 +87,7 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
           },
           { id: 4, type: "milestone", user: { login: "theo" }, created_at: "2026-07-02T02:00:00Z" },
         ]),
+        stderr: 'link: <https://forgejo.test:3000/api/v1/x?page=2>; rel="next"\n',
       };
     case "repos/acme/web/issues/42/reactions":
       return { stdout: encode([{ content: "eyes", user: { login: "theo" } }]) };
@@ -156,6 +157,37 @@ function tracker(
 }
 
 describe("ForgejoIssueTracker", () => {
+  it.effect("only reports issue candidates truncated when labels have another page", () =>
+    Effect.gen(function* () {
+      let labelLinks: string | undefined;
+      const api = yield* tracker(({ path }) => {
+        switch (path.split("?")[0]) {
+          case "repos/acme/web/assignees":
+            return { stdout: encode([{ login: "theo" }]) };
+          case "repos/acme/web/labels":
+            return {
+              stdout: encode(ISSUE.labels),
+              ...(labelLinks === undefined ? {} : { stderr: labelLinks }),
+            };
+          default:
+            throw new Error(`unexpected path ${path}`);
+        }
+      });
+      const target = { cwd: "/w", host: "forgejo.test:3000", scope: "acme/web" };
+      const complete = yield* api.listCandidates!(target);
+      expect(complete).toEqual({
+        labels: [{ name: "bug", color: "d73a4a", description: null }],
+        assignees: [{ id: "theo", login: "theo", name: null, avatarUrl: null }],
+        truncated: false,
+      });
+
+      labelLinks =
+        'Link: <https://forgejo.test:3000/api/v1/repos/acme/web/labels?page=2>; rel="next"';
+      const partial = yield* api.listCandidates!(target);
+      expect(partial.truncated).toBe(true);
+    }),
+  );
+
   it.effect("joins the issue, timeline and conversation into the neutral issue shape", () =>
     Effect.gen(function* () {
       const hosts = new Set<string | undefined>();
@@ -259,7 +291,8 @@ describe("ForgejoIssueTracker", () => {
           return input.path.endsWith("page=1")
             ? {
                 stdout: encode([{ id: 3, name: "bug" }]),
-                stderr: 'link: <https://forgejo.test:3000/api/v1/x?page=2>; rel="next"\n',
+                // A server capping pages below the limit, as labels answer: a total and no `Link`.
+                stderr: "x-total-count: 2\n",
               }
             : { stdout: encode([{ id: 9, name: "urgent" }]), stderr: "link: \n" };
         }
@@ -359,8 +392,8 @@ describe("ForgejoIssueTracker", () => {
         "repos/acme/web/issues?type=issues&state=open&sort=latest&assigned_by=theo&limit=50&page=1",
       ]);
       expect(page.items.map((item) => item.key)).toEqual(["42"]);
-      // No `Link` header at all means the server may still have more; a full page carries on.
-      expect(page.nextCursor).toBe("3");
+      // Without a `Link` header, only a full page implies another.
+      expect(page.nextCursor).toBeNull();
     }),
   );
 });
