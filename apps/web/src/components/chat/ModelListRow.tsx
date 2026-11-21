@@ -41,6 +41,12 @@ export const ModelListRow = memo(function ModelListRow(props: {
     name: props.name,
     subProvider: props.subProvider,
   };
+  const displayName = getDisplayModelName(model);
+  const identity = [
+    ...new Set([displayName, props.subProvider, props.providerDisplayName, props.slug]),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const row = (
     <ComboboxItem
@@ -68,39 +74,43 @@ export const ModelListRow = memo(function ModelListRow(props: {
         indicatorBackground="var(--popover)"
         badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
       />
-      <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
-        <div
-          className="min-w-0 truncate text-sm font-normal leading-snug"
-          // Names the row in full on hover only when it is cut off.
-          onPointerEnter={(event) => {
-            const name = event.currentTarget;
-            name.title = name.scrollWidth > name.clientWidth ? getDisplayModelName(model) : "";
-          }}
+      <Tooltip
+        // A disabled row's reason tooltip names the model instead.
+        disabled={Boolean(props.disabledReason)}
+      >
+        <TooltipTrigger
+          tabIndex={-1}
+          render={<div className="flex min-w-0 flex-1 items-center gap-2 text-left" />}
         >
-          {getDisplayModelName(model)}
-          {/* The logo is decorative, so name the provider for screen readers. */}
-          <span className="sr-only">, {props.providerDisplayName}</span>
-        </div>
-        {props.isSelected ? <CheckIcon className="size-3.5 shrink-0" aria-hidden="true" /> : null}
-        {props.subProvider ? (
-          <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
-            {props.subProvider}
-          </span>
-        ) : null}
-        {props.showNewBadge ? (
-          <span
-            className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
-            aria-label={gt("New model")}
-          >
-            {gt("New", { $context: "badge on a newly added model" })}
-          </span>
-        ) : null}
-        {props.unavailable ? (
-          <Badge variant="outline" size="sm">
-            <T context="badge on a model that cannot be selected">Unavailable</T>
-          </Badge>
-        ) : null}
-      </div>
+          <div className="min-w-0 truncate text-sm font-normal leading-snug">
+            {displayName}
+            {/* The logo is decorative, so name the provider for screen readers. */}
+            <span className="sr-only">, {props.providerDisplayName}</span>
+          </div>
+          {props.isSelected ? <CheckIcon className="size-3.5 shrink-0" aria-hidden="true" /> : null}
+          {props.subProvider ? (
+            <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
+              {props.subProvider}
+            </span>
+          ) : null}
+          {props.showNewBadge ? (
+            <span
+              className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
+              aria-label={gt("New model")}
+            >
+              {gt("New", { $context: "badge on a newly added model" })}
+            </span>
+          ) : null}
+          {props.unavailable ? (
+            <Badge variant="outline" size="sm">
+              <T context="badge on a model that cannot be selected">Unavailable</T>
+            </Badge>
+          ) : null}
+        </TooltipTrigger>
+        <TooltipPopup side="top" align="start">
+          {identity}
+        </TooltipPopup>
+      </Tooltip>
 
       <div className="flex shrink-0 items-center gap-1.5">
         <Tooltip>
@@ -147,7 +157,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
     <Tooltip>
       <TooltipTrigger render={row} />
       <TooltipPopup side="left" align="center">
-        {props.disabledReason}
+        <div>{props.disabledReason}</div>
+        <div className="text-muted-foreground">{identity}</div>
       </TooltipPopup>
     </Tooltip>
   );
