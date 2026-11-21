@@ -33,7 +33,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -425,6 +425,7 @@ export function AppSidebarLayout({
   showSidebar?: boolean;
 }) {
   const gt = useGT();
+  const sidebarPosition = useClientSettings((settings) => settings.sidebarPosition);
   const sidebarArea = workspaceAreaProps("sidebar", 0, gt("Threads"));
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
@@ -468,16 +469,27 @@ export function AppSidebarLayout({
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
       <SidebarProvider
-        className="h-dvh! min-h-0!"
+        className={cn(
+          "h-dvh! min-h-0! [--workspace-sidebar-right-inset:0px]",
+          showSidebar &&
+            sidebarPosition === "right" &&
+            "md:data-[sidebar-state=expanded]:[--workspace-sidebar-right-inset:var(--sidebar-width)]",
+        )}
+        data-sidebar-position={sidebarPosition}
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
+        side={sidebarPosition}
         storageKey="chat_thread_sidebar_open"
         style={sidebarProviderStyle}
       >
         {showSidebar ? (
           <>
-            <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+            <SidebarBrandWidthProbe
+              isElectron={isElectron}
+              side={sidebarPosition}
+              onWidthChange={setBrandWidth}
+            />
             <Sidebar
-              side="left"
+              side={sidebarPosition}
               collapsible="offcanvas"
               data-app-sidebar=""
               {...sidebarArea}

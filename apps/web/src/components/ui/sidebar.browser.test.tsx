@@ -15,10 +15,14 @@ function CollapseFromInside() {
   );
 }
 
-function Harness(props: { readonly onResize?: (width: number) => void }) {
+function Harness(props: {
+  readonly onResize?: (width: number) => void;
+  readonly side?: "left" | "right";
+}) {
   return (
-    <SidebarProvider defaultOpen>
+    <SidebarProvider defaultOpen side={props.side ?? "left"}>
       <Sidebar
+        side={props.side ?? "left"}
         collapsible="offcanvas"
         resizable={{
           minWidth: 200,
@@ -47,32 +51,50 @@ describe("Sidebar", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
-  it("abandons a rail drag when the sidebar collapses mid-drag", async () => {
-    await page.viewport(1280, 800);
-    const onResize = vi.fn();
-    await using screen = await render(<Harness onResize={onResize} />, {
-      router: false /* no routes involved */,
-    });
-    const rail = screen.container.querySelector<HTMLElement>('[data-sidebar="rail"]')!;
-    const { left, top } = rail.getBoundingClientRect();
-    const pointer = { bubbles: true, cancelable: true, pointerId: 1, button: 0, clientY: top + 10 };
-    const dragTo = (clientX: number) => {
-      rail.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: left }));
-      rail.dispatchEvent(new PointerEvent("pointermove", { ...pointer, clientX }));
-    };
-    // A completed drag commits, so the abandoned one below is a real drag too.
-    dragTo(left + 40);
-    rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + 40 }));
-    expect(onResize).toHaveBeenCalledTimes(1);
+  it.each(["left", "right"] as const)(
+    "abandons a %s rail drag when the sidebar collapses mid-drag",
+    async (side) => {
+      await page.viewport(1280, 800);
+      const onResize = vi.fn();
+      await using screen = await render(<Harness side={side} onResize={onResize} />, {
+        router: false /* no routes involved */,
+      });
+      const rail = screen.container.querySelector<HTMLElement>('[data-sidebar="rail"]')!;
+      const { left, top } = rail.getBoundingClientRect();
+      const pointer = {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        button: 0,
+        clientY: top + 10,
+      };
+      const dragTo = (clientX: number) => {
+        rail.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: left }));
+        rail.dispatchEvent(new PointerEvent("pointermove", { ...pointer, clientX }));
+      };
+      // A completed drag commits, so the abandoned one below is a real drag too.
+      const direction = side === "left" ? 1 : -1;
+      const initialWidth = screen.container
+        .querySelector<HTMLElement>('[data-slot="sidebar-container"]')!
+        .getBoundingClientRect().width;
+      dragTo(left + direction * 40);
+      rail.dispatchEvent(
+        new PointerEvent("pointerup", { ...pointer, clientX: left + direction * 40 }),
+      );
+      expect(onResize).toHaveBeenCalledWith(initialWidth + 40);
+      expect(onResize).toHaveBeenCalledTimes(1);
 
-    dragTo(left + 80);
-    await userEvent.click(
-      screen.container.querySelector<HTMLElement>('[data-slot="sidebar-trigger"]')!,
-    );
-    rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + 80 }));
+      dragTo(left + direction * 80);
+      await userEvent.click(
+        screen.container.querySelector<HTMLElement>('[data-slot="sidebar-trigger"]')!,
+      );
+      rail.dispatchEvent(
+        new PointerEvent("pointerup", { ...pointer, clientX: left + direction * 80 }),
+      );
 
-    expect(onResize).toHaveBeenCalledTimes(1);
-  });
+      expect(onResize).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 it("restores collapsed and expanded desktop state after remounting", async () => {

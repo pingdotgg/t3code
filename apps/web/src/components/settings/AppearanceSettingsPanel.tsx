@@ -169,6 +169,43 @@ export function AppearanceSettingsPanel() {
 
       <SettingsSection id="appearance-interface" title={gt("Interface")}>
         <SettingsRow
+          {...searchableSetting("sidebar-position")}
+          description={gt("Choose which side of the window shows the main sidebar.")}
+          resetAction={
+            settings.sidebarPosition !== DEFAULT_UNIFIED_SETTINGS.sidebarPosition ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset sidebar position to default")}
+                onClick={() =>
+                  updateSettings({ sidebarPosition: DEFAULT_UNIFIED_SETTINGS.sidebarPosition })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarPosition}
+              onValueChange={(value) => {
+                if (value === "left" || value === "right")
+                  updateSettings({ sidebarPosition: value });
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-44"
+                aria-label={gt("Sidebar position")}
+              >
+                <SelectValue>
+                  {settings.sidebarPosition === "left" ? gt("Left") : gt("Right")}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="left">{gt("Left")}</SelectItem>
+                <SelectItem value="right">{gt("Right")}</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
           {...searchableSetting("setting-appearance-contrast")}
           description={gt("Adjust the contrast of colors and borders across the interface.")}
           resetAction={

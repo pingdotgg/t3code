@@ -362,6 +362,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "sidebar-position",
+    title: msg("Sidebar position"),
+    to: "/settings/appearance",
+  },
+  {
     id: "chat-width",
     title: msg("Chat width"),
     to: "/settings/appearance",
