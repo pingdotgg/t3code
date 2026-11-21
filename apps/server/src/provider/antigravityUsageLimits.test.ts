@@ -62,6 +62,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     /** Per-host quota summaries; hosts not listed fall back to `summary`. */
     summaryByHost?: Record<string, unknown>;
     models?: unknown;
+    modelsStatus?: number;
     summaryStatus?: number;
     /** Per-host summary statuses; hosts not listed fall back to `summaryStatus`. */
     summaryStatusByHost?: Record<string, number>;
@@ -127,7 +128,9 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
           ? Response.json(options.summaryByHost?.[url.host] ?? options.summary ?? summary, {
               status: options.summaryStatusByHost?.[url.host] ?? options.summaryStatus ?? 200,
             })
-          : Response.json(options.models ?? { models: {} }),
+          : Response.json(options.models ?? { models: {} }, {
+              status: options.modelsStatus ?? 200,
+            }),
       );
     }).pipe(
       Effect.tap(() =>
@@ -650,6 +653,28 @@ describe("Antigravity subscription limits", () => {
           windowDurationMins: 300,
         },
       ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("explains why when Google refuses both quota calls for a signed-in account", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { probe, tokenPath } = yield* fixture({
+        missingToken: true,
+        summaryStatus: 403,
+        modelsStatus: 403,
+      });
+      yield* fs.writeFileString(
+        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+        JSON.stringify({
+          token: { access_token: "access-token", expiry: "2099-01-01T00:00:00Z" },
+        }),
+      );
+      const limits = yield* probe;
+      expect(limits.windows).toEqual([]);
+      // Google answers 403 for accounts the CLI routes to AICode; say so rather than a generic failure.
+      expect(limits.unavailable?.message).toMatch(/Google/);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
