@@ -42,13 +42,15 @@ const definitionsOverride = Config.String("T3CODE_WORKFLOWS").pipe(Config.option
 
 // An editor saves in several writes, and a save from here is followed by its own file event.
 const RELOAD_SETTLE = "300 millis";
+// How often a change held back by unfinished runs is tried again, so it goes in once they end.
+const HELD_RETRY = "15 seconds";
 // A folder that could not be listed is looked at again, since no file event may follow.
 const LIST_RETRY = "30 seconds";
 // A leading dot is how a file is kept out: a draft being checked, an editor's swap file.
 // One name in the folder, never a path: the name is also the key a save and a removal go by.
 const DEFINITION_FILE = /^[A-Za-z0-9_][\w.-]*\.(ts|mts|js|mjs)$/;
 const NAMING =
-  "Name the file with letters, digits, dashes and dots, ending in .ts: for example release.ts.";
+  "Name the file with letters, digits, dashes, underscores and dots, ending in .ts: for example release.ts.";
 
 export class WorkflowDefinitionsLoadError extends Schema.TaggedError<WorkflowDefinitionsLoadError>()(
   "WorkflowDefinitionsLoadError",
@@ -569,6 +571,17 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     Effect.catchCause((cause) =>
       Effect.logWarning("Workflow definitions are not watched for changes", Cause.pretty(cause)),
     ),
+    Effect.forkIn(outer),
+  );
+
+  yield* Effect.sleep(HELD_RETRY).pipe(
+    Effect.andThen(
+      Effect.suspend(() => (held.size > 0 ? lock.withPermits(1)(reload()) : Effect.void)),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Reloading workflow definitions failed", Cause.pretty(cause)),
+    ),
+    Effect.forever,
     Effect.forkIn(outer),
   );
 

@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
@@ -409,5 +410,42 @@ it.live("a file without imports or exports loads again after it changes", () =>
       { concurrency: "unbounded" },
     );
     assert.equal(stdout.trim(), "[1,1]", stderr);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a change held back by a run goes in once that run ends, with no further edit", () =>
+  Effect.gen(function* () {
+    // The folder's changes are told by hand, so the test does not hang on a watcher starting.
+    const changed = yield* Queue.unbounded<FileSystem.WatchEvent>();
+    const { fileSystem, at, runtime } = yield* setup((fileSystem) => ({
+      ...fileSystem,
+      watch: () => Stream.fromQueue(changed),
+    }));
+    yield* Effect.gen(function* () {
+      const workflows = yield* Workflows.Workflows;
+      const definitions = yield* WorkflowRuntime.WorkflowDefinitions;
+      const held = yield* workflows.start("hold", {}, { idempotencyKey: "h" });
+      yield* workflows.waitFor(held.runId, (run) => run.status === "waiting");
+      const problem = (wanted: boolean) =>
+        workflows.watch.pipe(
+          Stream.filter((snapshot) => (snapshot.definition?.problem != null) === wanted),
+          Stream.runHead,
+        );
+      yield* fileSystem.writeFileString(at("hold.ts"), greet("hello"));
+      yield* Queue.offer(changed, { _tag: "Update", path: at("hold.ts") });
+      yield* problem(true);
+      yield* workflows.signal({ runId: held.runId, wait: "go" }, "go on", { id: "s1" });
+      yield* workflows.waitFor(held.runId, (run) => run.status === "completed");
+      // Nothing is told of the folder now: the held change goes in on its own.
+      yield* problem(false);
+      assert.deepStrictEqual(
+        (yield* definitions.read).files.map((file) => file.workflows),
+        [["greet@1"]],
+      );
+    }).pipe(
+      Effect.provide(runtime),
+      Effect.scoped,
+      Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))),
+    );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
