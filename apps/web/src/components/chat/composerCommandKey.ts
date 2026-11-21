@@ -271,7 +271,7 @@ export function composerCommandKeyHandler(input: {
       isAcceptPromptSuggestionKey({
         event,
         keybindings,
-        context: { ...getShortcutContext(event.target), draftThreadRoute: routeKind === "draft" },
+        context: getShortcutContext(event.target),
       })
     ) {
       // The typing guard must see this draft, so an approval that lands next is not answered with it.
