@@ -14,11 +14,31 @@ index 8a3462b185b078a260483635e6d774e2ece6e269..105778c145ab63a26444179215c643a7
                  await nsisUtil_1.UninstallerReader.exec(installerPath, uninstallerPath);
              }
 diff --git a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
+index 7d08e55f5ddf70e51ebd965803d001561bca6d71..4977fcfc35ba32e039f1211ca0ed05ccd20f38f1 100644
 --- a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
 +++ b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
-@@ -103,6 +103,9 @@
- !macroend
-
+@@ -63,7 +63,8 @@
+ 
+ !macro FIND_PROCESS _FILE _RETURN
+   ${if} $IsPowerShellAvailable == 0
+-    nsExec::Exec `"$PowerShellPath" -NoProfile -NonInteractive -C "if ((Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')}).Count -gt 0) { exit 0 } else { exit 1 }"`
++    # @() keeps .Count defined for one process on PowerShell 5.1 (electron-builder#10454); skip our own PID
++    nsExec::Exec `"$PowerShellPath" -NoProfile -NonInteractive -C "if (@(Get-CimInstance -ClassName Win32_Process | ? {$$_.ProcessId -ne $pid -and $$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')}).Count -gt 0) { exit 0 } else { exit 1 }"`
+     Pop ${_RETURN}
+   ${else}
+     !ifdef INSTALL_MODE_PER_ALL_USERS
+@@ -91,7 +92,7 @@
+   ${endIf}
+ 
+   ${if} $IsPowerShellAvailable == 0
+-    nsExec::Exec `"$PowerShellPath" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')} | % { Stop-Process -Id $$_.ProcessId $0 }"`
++    nsExec::Exec `"$PowerShellPath" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | ? {$$_.ProcessId -ne $pid -and $$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')} | % { Stop-Process -Id $$_.ProcessId $0 }"`
+   ${else}
+     !ifdef INSTALL_MODE_PER_ALL_USERS
+       nsExec::Exec `taskkill /IM "${_FILE}" /FI "PID ne $pid"`
+@@ -103,6 +104,9 @@
+ !macroend 
+ 
  !macro _CHECK_APP_RUNNING
 +  Var /GLOBAL appRunningMessage
 +  Var /GLOBAL appClosingMessage
@@ -26,8 +46,8 @@ diff --git a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh b/template
    ${GetProcessInfo} 0 $pid $1 $2 $3 $4
    ${if} $3 != "${APP_EXECUTABLE_FILENAME}"
      ${if} ${isUpdated}
-@@ -112,17 +115,23 @@
-
+@@ -112,17 +116,23 @@
+ 
      !insertmacro FIND_PROCESS "${APP_EXECUTABLE_FILENAME}" $R0
      ${if} $R0 == 0
 +      StrCpy $appRunningMessage "$(appRunning)"
@@ -44,15 +64,15 @@ diff --git a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh b/template
 -      MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "$(appRunning)" /SD IDOK IDOK doStopProcess
 +      MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "$appRunningMessage" /SD IDOK IDOK doStopProcess
        Quit
-
+ 
        doStopProcess:
-
+ 
 -      DetailPrint "$(appClosing)"
 +      DetailPrint "$appClosingMessage"
-
+ 
        !insertmacro KILL_PROCESS "${APP_EXECUTABLE_FILENAME}" 0
        # to ensure that files are not "in-use"
-@@ -153,7 +162,7 @@
+@@ -153,7 +163,7 @@
          # App likely running with elevated permissions.
          # Ask user to close it manually
          ${if} $R1 > 1
