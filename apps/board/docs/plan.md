@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, O1, X1, and Y1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, R2, O1, X1, and Y1.
 
 ## How to read this
 
@@ -38,8 +38,8 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. O1 after B12. X1 after O1. Y1 after O1.
-- [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 also owns the separate `13kparkin/pstack-t3` repo.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. R2 after L1. O1 after B12 and R2. X1 after O1. Y1 after O1.
+- [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 and R2 also edit the separate `13kparkin/pstack-t3` repo.
 - [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, L1, X1, and Y1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
@@ -48,8 +48,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Resolve the repository forge once. Use `gh` against `13kparkin/t3code`, which is the configured forge for this fork. Record that choice in the decision trail.
 - [ ] Open the PR ready, never draft, with the configured forge's create command, per `skill://poteto-mode/playbooks/opening-a-pr.md`. A stack child targets its parent branch.
 - [ ] Run lint and typecheck once before the PR-facing push, as `vp lint apps/board` and `vp run --filter @agent-board/app typecheck`. From S1 on, also run `node standards/check-added-diagnostics.mjs`. Push with hooks on.
-- [ ] Run `skill://unslop` before each commit and `skill://no-comments` before review.
-- [ ] Run `skill://pre-pr-reviewer` on the diff before the code-ready push, with the PR's plan section as its ticket. It covers standards, tests, scope against the section, `skill://simplify`, dead code, defensive code, security, and regressions, and fixes its blockers in the owner's worktree.
+- [ ] Before the code-ready push, run the author checks in `skill://review-loop`, with the PR's plan section as the ticket.
 - [ ] A docs-only PR, such as a plan change, runs `skill://unslop` on its changed sections instead, and applies what it finds.
 - [ ] Triage every Bugbot and security-reviewer comment per `skill://poteto-mode/references/bugbot-triage.md`.
 - [ ] Rebase onto current trunk before the code-ready report and babysit. Keep that merge base in fix rounds. Rebase again only at merge prep, on a `git merge-tree` conflict with trunk, or on a CI failure that comes from a change on trunk.
@@ -57,13 +56,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 
 ### Verdict and merge, for every PR
 
-- [ ] At the code-ready head SHA and at each later push that changes the patch, run the swarm per `skill://swarm`. One gates lane. The ten live lanes from the PR's **Verify, live** block. The perf lane from its **Verify, perf** block. At least these read-only audit lanes, which read the diff and the receipts and distrust the PR body:
-  - [ ] A bugs and breaking-change lane on `thermo-nuclear-review-subagent`.
-  - [ ] A `skill://ponytail-review` lane for correctness, load, missing tests, and code that should not exist.
-  - [ ] A security lane following `skill://security-audit` in guidance mode, for any diff that renders third-party content, handles a key or token, or writes outside the board. It reports only findings with a crossed trust boundary and a concrete result.
-  - [ ] A receipts lane that checks every lane's evidence against its Pass condition.
+- [ ] At the code-ready head SHA and at each later push that changes the patch, run the swarm per `skill://swarm`. One gates lane. The ten live lanes from the PR's **Verify, live** block. The perf lane from its **Verify, perf** block. The reviewer lanes from `skill://review-loop`, which read the diff and the receipts and distrust the PR body.
 - [ ] The root audits the receipts in the merge-ready report before the verdict.
-- [ ] Clean only when every lane is `PASS`. Findings go back to the owner, including a defect that a lane filed as a note. The owner fixes every finding, and the same review lanes run again at the new head, until every lane is `PASS`. A new head gets a fresh swarm and a fresh verdict, except for results that stay valid under the patch-id rule in `skill://poteto-mode/playbooks/shipping.md`.
+- [ ] Clean only when every lane is `PASS`. Findings and fix rounds follow `skill://review-loop`: a finding needs a concrete failing case, the owner applies the smallest fix, the same lanes run again at the new head, and after two fix rounds the root asks the operator. A new head gets a fresh swarm and a fresh verdict, except for results that stay valid under the patch-id rule in `skill://poteto-mode/playbooks/shipping.md`.
 - [ ] Append a clean PR to the linear stack per `skill://poteto-mode/playbooks/autopilot-stack.md` step 7. A rebase voids verdicts above the changed head, and the patch-id rule in `skill://poteto-mode/playbooks/shipping.md` decides which verdicts survive. The operator lands the stack bottom-up.
 
 ### Boot recipe, for every live lane
@@ -1664,9 +1659,64 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B12 to the base-branch stack and the operator lands it bottom-up.
 
+## Run the review loop from the board's orchestrator (R2)
+
+**Depends on.** L1.
+
+**Files.**
+
+- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.test.ts`, `apps/board/src/orchestrator/roles.ts`, `apps/board/src/orchestrator/roles.test.ts`, `apps/board/roles/task.md`, and `apps/board/roles/reviewer.md`.
+- [ ] Delete `apps/board/roles/thermo-nuclear-review-subagent.md` and `apps/board/roles/thermo-nuclear-code-quality-review-subagent.md`.
+- [ ] In `13kparkin/pstack-t3`, edit `skills/pstack-t3/SKILL.md`, then re-vendor `apps/board/pstack/` with `apps/board/scripts/vendor-pstack.mjs`.
+
+**Build.**
+
+- [ ] `brief.md` tells the orchestrator to run `skill://review-loop` on every ticket. The builder runs its author checks before it reports code-ready. The orchestrator then starts each reviewer lane that applies as its own child, collects the findings, sends the real ones back to the builder, and runs the lanes again after each fix round. After two fix rounds with findings left, it asks the operator with a For-you question. The ticket's PR body comes from `skill://pr-description`.
+- [ ] `roles/reviewer.md` runs one lane per child: `ponytail-review`, `test-evidence-review`, `security-audit` in guidance mode, or receipts. The orchestrator names the lane in the task.
+- [ ] Delete the two thermo-nuclear roles and their `roles.ts` entries. `ponytail-review` covers bugs, broken callers, and code that should not exist, and the thermo-nuclear code-quality checklist pushes for restructuring that grows code.
+- [ ] In the `pstack-t3` adapter, map every skill step that says to start a subagent, a scout, a task, or a reviewer to `delegate_task` with the matching registry role. This covers user skills such as `pre-pr-reviewer` and `no-comments`.
+- [ ] The skills come from where they already load on the board's Claude instances: `pstack-t3` for `no-comments`, `unslop`, and `swarm`, `~/.claude/skills` for `review-loop`, `simplify`, `pre-pr-reviewer`, `test-evidence-review`, `security-audit`, and `pr-description`, and the user-scope ponytail plugin for `ponytail-review`. Nothing is vendored twice.
+
+**You see.**
+
+- [ ] Every ticket on the board goes through the same review loop as this program's PRs, and the orchestrator stops and asks after two fix rounds.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `roles.test.ts` asserts the literal registry without the two thermo-nuclear roles, and `brief.test.ts` asserts that the brief names `review-loop` and `pr-description`. Run `vp test run src/orchestrator/roles.test.ts src/orchestrator/brief.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Every lane uses a real Claude orchestrator on the shared lane repo.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk's orchestrator hands a code-ready ticket to merge approval with no review lanes, so record that. Run a small goal at head. Save `r2-author-checks.txt`. Pass when the builder's transcript shows `simplify`, `no-comments`, `unslop`, and `pre-pr-reviewer` before code-ready.
+- [ ] Lane 2. Save `r2-lanes.txt` from the same goal. Pass when each applicable reviewer lane starts as its own `delegate_task` child with the `reviewer` role, and no Claude built-in subagent call appears.
+- [ ] Lane 3. Give a goal whose builder brief plants one real bug, a comment rendered without the markdown sanitizer. Save `r2-fix-round.txt`. Pass when a lane names it with `file:line`, the builder fixes it, and the re-run lanes pass.
+- [ ] Lane 4. Give a goal whose builder brief asks for three tests of made-up edge cases. Save `r2-tests.txt`. Pass when `test-evidence-review` flags all three and the fix round deletes them.
+- [ ] Lane 5. Save `r2-shortstat.txt`. Pass when every fix round reports its `git diff --shortstat`, and no fix round adds a guard, fallback, wrapper, or test that its finding did not require.
+- [ ] Lane 6. Give a docs-only goal. Save `r2-docs.txt`. Pass when the security and test lanes are skipped with their reasons.
+- [ ] Lane 7. Give a goal that still has findings after two fix rounds. Save `r2-escalate.png`. Pass when a For-you question asks the operator and no third fix round starts.
+- [ ] Lane 8. Save `r2-pr-body.txt` from a merged lane PR. Pass when its body has every `pr-description` section that applies and a Mermaid graph.
+- [ ] Lane 9. Save `r2-skills.txt`. Pass when every skill the loop names loads in the orchestrator and in one child with no disk search and no refused Skill call.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `r2-checks.txt`. Pass when all three exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from a builder's code-ready report to a clean verdict on a one-file ticket.
+- [ ] Probe. Log `board:review-start` and `board:review-clean` on five one-file tickets.
+- [ ] Baseline. Trunk runs no review. Record the head times.
+- [ ] Rule. The median stays under 15 minutes, recorded for O1.
+
+**Review gate.** None. R2 is not review-gated.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends R2 to the base-branch stack and the operator lands it bottom-up.
+
 ## Meet every recorded speed budget (O1)
 
-**Depends on.** B12.
+**Depends on.** B12 and R2.
 
 **Files.**
 
