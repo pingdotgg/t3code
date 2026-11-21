@@ -1858,7 +1858,7 @@ export default function ThreadTerminalDrawer({
       {resizeHandle}
 
       {!hasTerminalSidebar && (
-        <div className="pointer-events-none absolute right-2 top-2 z-20">
+        <div className="pointer-events-none relative z-20 flex shrink-0 justify-end bg-(--terminal-background) px-2 pt-2 pb-1">
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
             <TerminalActionButton
               disabled={!canOperateTerminal}

@@ -20,6 +20,7 @@ import { extractTerminalLinks } from "../terminal-links";
 import { expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../test/render";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
+import "~/index.css";
 
 const fixture = vi.hoisted(() => ({
   statusByThreadId: new Map<string, "starting" | "running" | "exited">(),
@@ -216,11 +217,13 @@ vi.mock("../hooks/useSettings", async () => {
 function Drawer(props: {
   threadRef: ScopedThreadRef;
   cwd?: string;
+  mode?: "drawer" | "panel";
   onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
   keybindings?: ResolvedKeybindingsConfig;
 }) {
   return (
     <ThreadTerminalDrawer
+      mode={props.mode ?? "drawer"}
       threadRef={props.threadRef}
       threadId={props.threadRef.threadId}
       cwd={props.cwd ?? "/repo"}
@@ -269,6 +272,22 @@ function setup(originalStatus: "starting" | "exited" = "exited") {
   useTerminalUiStateStore.setState(useTerminalUiStateStore.getInitialState());
   return { original, other };
 }
+
+it.each(["drawer", "panel"] as const)(
+  "keeps terminal controls above the full-width %s",
+  async (mode) => {
+    const { other } = setup();
+    await using screen = await render(
+      <div style={{ width: 360, height: 240 }}>
+        <Drawer threadRef={other} mode={mode} onCloseTerminal={() => {}} />
+      </div>,
+    );
+    const viewport = screen.container.querySelector("div[tabindex='-1']")!.getBoundingClientRect();
+    const action = screen.getByRole("button", { name: "New Terminal" }).element();
+    expect(action.getBoundingClientRect().bottom).toBeLessThanOrEqual(viewport.top);
+    expect(viewport.width).toBe(360);
+  },
+);
 
 it("drops input until the shell runs instead of failing a write for every key", async () => {
   const { original } = setup("starting");
