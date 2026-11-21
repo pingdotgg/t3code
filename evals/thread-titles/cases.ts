@@ -167,6 +167,29 @@ export const threadTitleEvaluationCases = [
     rubric:
       'Use the user\'s "Owner: what it does (model effort)" shape with all three parts, even past the default 8-word, 40-character limit. A bare short title fails.',
   },
+  {
+    id: "attachment-only-subject",
+    source: "https://github.com/pingdotgg/t3code/issues/38614",
+    request: "Find what is missing from an attached requirements spec.",
+    previousTitle: "Review attached spec",
+    messages: [
+      {
+        role: "user",
+        text: "What is missing from this spec?",
+        attachments: [
+          {
+            type: "file",
+            id: "requirements-pdf",
+            name: "requirements.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 15_156,
+          },
+        ],
+      },
+    ],
+    rubric:
+      "Name a gap review of the requirements spec. The subject is only in the attachment, and only its metadata reaches the model, so a run that errors instead of titling fails.",
+  },
 ] satisfies ReadonlyArray<{
   id: string;
   source: string;

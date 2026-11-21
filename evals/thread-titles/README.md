@@ -1,6 +1,6 @@
 # Thread titles
 
-Generates thread titles for real thread shapes with the server's Codex title generator, then sets each new title against the old one for a blind review.
+Generates thread titles for real thread shapes with the server's Codex or Grok title generator, then sets each new title against the old one for a blind review.
 
 ## Run
 
@@ -8,9 +8,10 @@ Generates thread titles for real thread shapes with the server's Codex title gen
 cd evals
 pnpm thread-titles --model <codex model> --out runs/titles
 pnpm thread-titles --model <codex model> --out runs/titles-new --baseline runs/titles/results.json
+pnpm thread-titles --provider grok --model grok-build --out runs/titles-grok
 ```
 
-- It uses your local Codex login, like the server does.
+- It uses your local Codex login, like the server does. `--provider grok` uses the Grok title generator and your local Grok login instead.
 - `--case <id>` limits the run to one case. Repeat the flag for multiple cases.
 - `--initial` titles from the first message only, as a new thread does.
 - A run writes `results.json` (titles and latency), `review.json` (titles A and B in random order, with a rubric), and `answer-key.json`. Score `review.json` before you open `answer-key.json`.
