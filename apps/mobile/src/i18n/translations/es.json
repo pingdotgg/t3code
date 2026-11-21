@@ -4216,6 +4216,14 @@
       "v": "v"
     }
   ],
+  "15f32e12fd49533f": "No se pudo continuar con el inicio de sesión. Vuelve a intentarlo.",
+  "54789628a737f557": "Iniciar sesión en {server}",
+  "f8fde2e549c61546": "Dirección de la página que abrió tu navegador",
+  "d9f6244b252d11f6": "Terminar de iniciar sesión",
+  "8aecbd38f1facf71": "Aprueba el acceso en tu navegador. Después abrirá una página que puede no cargar: copia la dirección de esa página y pégala aquí.",
+  "6e5bcc452add4f9b": "Abre el inicio de sesión. Mantén pulsado para copiar.",
+  "83be7aade7ff6360": "Sesión iniciada",
+  "ec21b232e0eacd4a": "Iniciar sesión",
   "12ba9fa1445f92a2": "Trabajo del subagente",
   "eaa6c91a05d95ce7": "Actualizar",
   "4740c38b2edd194d": "Solo lectura. Estos subagentes no pueden recibir mensajes.",
@@ -4818,6 +4826,7 @@
   "bff5692f10fc10b0": "Mantén pulsado para copiar.",
   "7f0f9b1ee42892db": "La salida ya no está disponible.",
   "a1984c617f973156": "{preview}, falló la llamada a la herramienta",
+  "38574c0d1e49b278": "{preview}, sesión iniciada",
   "fd0d04d5a6627f70": "Abre el hilo de este agente. Mantén pulsado para copiar.",
   "7ba47e54094ba298": "Toca dos veces para ocultar los detalles completos. Mantén pulsado para copiar.",
   "1862ffb47bf6736c": "Toca dos veces para mostrar los detalles completos. Mantén pulsado para copiar.",

@@ -4217,6 +4217,14 @@
       "v": "v"
     }
   ],
+  "15f32e12fd49533f": "Não foi possível continuar o login. Tente novamente.",
+  "54789628a737f557": "Entrar em {server}",
+  "f8fde2e549c61546": "Endereço da página que o navegador abriu",
+  "d9f6244b252d11f6": "Concluir login",
+  "8aecbd38f1facf71": "Aprove o acesso no navegador. Depois ele abre uma página que pode não carregar: copie o endereço dessa página e cole aqui.",
+  "6e5bcc452add4f9b": "Abre o login. Mantenha pressionado para copiar.",
+  "83be7aade7ff6360": "Conectado",
+  "ec21b232e0eacd4a": "Entrar",
   "12ba9fa1445f92a2": "Trabalho de subagentes",
   "eaa6c91a05d95ce7": "Atualizar",
   "4740c38b2edd194d": "Somente leitura. Estes subagentes não aceitam mensagens.",
@@ -4819,6 +4827,7 @@
   "bff5692f10fc10b0": "Mantenha pressionado para copiar.",
   "7f0f9b1ee42892db": "A saída não está mais disponível.",
   "a1984c617f973156": "{preview}, a chamada de ferramenta falhou",
+  "38574c0d1e49b278": "{preview}, conectado",
   "fd0d04d5a6627f70": "Abre a thread deste agente. Mantenha pressionado para copiar.",
   "7ba47e54094ba298": "Toque duas vezes para ocultar os detalhes completos. Mantenha pressionado para copiar.",
   "1862ffb47bf6736c": "Toque duas vezes para mostrar os detalhes completos. Mantenha pressionado para copiar.",
