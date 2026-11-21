@@ -33,6 +33,7 @@ import {
 } from "./scopedSettings";
 import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
 import {
+  mixedSettingSummary,
   SettingInheritance,
   type SettingInheritanceState,
   type SettingOverridingProject,
@@ -521,7 +522,11 @@ export function SettingsRow({
           : {})}
       />
     ) : null;
-  const renderedStatus = status;
+  const renderedStatus =
+    status ??
+    (mixedOverride === undefined && mixed && context && settingKeys.length === 1
+      ? mixedSettingSummary(context.targets, settingKeys[0]!)
+      : null);
 
   return (
     <div
