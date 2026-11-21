@@ -307,6 +307,10 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
 
   // Trackers and hosts count requests, and nothing here is in that much of a hurry.
   const lookedAt = new Map<string, number>();
+  // Said once per engine: the same item is in every look until newer ones push it out.
+  const turnedDown = new Set<string>();
+  const millisOf = (at: string) =>
+    Option.match(DateTime.make(at), { onNone: () => undefined, onSome: DateTime.toEpochMillis });
   /**
    * Start a run for each issue or pull request opened since the trigger last looked. The first
    * look only notes the time, so a workflow never starts on everything that was already there.
@@ -343,36 +347,47 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
                 limit: LOOK_AT_MOST,
                 query: trigger.query,
               });
+        const sinceMillis = millisOf(since) ?? at;
         yield* found.pipe(
           Effect.flatMap(
             Effect.fnUntraced(function* (entries: ReadonlyArray<Issue | PullRequest>) {
-              // From the mark on, not after it: two items can share a moment, and the key below
-              // makes the one already started the same run again.
+              // From the mark on, not after it: two items can share a moment. As times, since a
+              // host writes them in its own format and the mark is ours.
               const fresh = entries
-                .filter((entry) => entry.createdAt >= since)
-                .toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+                .flatMap((entry) => {
+                  const created = millisOf(entry.createdAt);
+                  return created === undefined || created < sinceMillis ? [] : [{ entry, created }];
+                })
+                .toSorted((a, b) => a.created - b.created);
               if (entries.length >= LOOK_AT_MOST && fresh.length === entries.length) {
                 yield* Effect.logWarning(
                   "More new items than one look reads; older ones among them start no run",
                   { trigger: id, read: entries.length },
                 );
               }
-              for (const entry of fresh) {
+              for (const { entry, created } of fresh) {
                 // The key is the address, so an issue seen twice is still one run. One the
                 // workflow turns down is passed over, so it does not hold back the ones after it.
-                yield* start(definition.name, entry, {
-                  idempotencyKey: `trigger:${id}:${entry.url}`,
-                }).pipe(
-                  Effect.catchTags({
-                    WorkflowInputError: (error) =>
-                      Effect.logWarning("A workflow turned down an item it was started on", {
-                        trigger: id,
-                        item: entry.url,
-                        error,
-                      }),
-                  }),
-                );
-                yield* store.triggerSet(id, entry.createdAt);
+                const key = `trigger:${id}:${entry.url}`;
+                if (
+                  !turnedDown.has(key) &&
+                  (yield* store.runByKey(definition.name, key)) === undefined
+                ) {
+                  yield* start(definition.name, entry, { idempotencyKey: key }).pipe(
+                    Effect.catchTags({
+                      WorkflowInputError: (error) =>
+                        Effect.andThen(
+                          Effect.sync(() => turnedDown.add(key)),
+                          Effect.logWarning("A workflow turned down an item it was started on", {
+                            trigger: id,
+                            item: entry.url,
+                            error,
+                          }),
+                        ),
+                    }),
+                  );
+                }
+                yield* store.triggerSet(id, DateTime.formatIso(DateTime.makeUnsafe(created)));
               }
             }),
           ),

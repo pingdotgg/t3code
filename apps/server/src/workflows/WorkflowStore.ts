@@ -299,9 +299,8 @@ export const make = Effect.gen(function* () {
     changes,
     runStarted: Effect.fn("WorkflowStore.runStarted")(function* (run) {
       const at = yield* now;
-      yield* write(
-        run.runId,
-        sql`
+      // A start under a key that already has its run changes nothing, and tells nobody.
+      const inserted = yield* sql`
           INSERT INTO workflow_runs (
             run_id, workflow, version, engine_tag, idempotency_key, title, status, input_json,
             parent_run_id, parent_wait, started_at, updated_at
@@ -312,8 +311,9 @@ export const make = Effect.gen(function* () {
             ${at}, ${at}
           )
           ON CONFLICT DO NOTHING
-        `,
-      );
+          RETURNING run_id
+        `.pipe(Effect.orDie);
+      if (inserted.length > 0) yield* PubSub.publish(changes, run.runId);
     }),
     runStatus: Effect.fn("WorkflowStore.runStatus")(function* (runId, status, detail) {
       const at = yield* now;
