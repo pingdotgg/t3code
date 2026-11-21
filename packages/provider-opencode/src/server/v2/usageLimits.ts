@@ -61,6 +61,9 @@ const Providers = Schema.Struct({
   ),
 });
 
+const ErrorBody = Schema.Struct({ message: Schema.String });
+const probeFailedMessage = "OpenCode could not read workspace usage.";
+
 const resetTime = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 const budgetPercent = (spent: number, limit: number) =>
   limit <= 0 ? 100 : clampPercent((spent / limit) * 100);
@@ -81,9 +84,17 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         response.headers["content-type"]?.split(";")[0]?.trim() === "text/html")
     )
       return undefined;
-    const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(ResponseBody)),
-    );
+    // OpenCode names the upstream cause, such as an expired Console login, in its error body.
+    if (response.status < 200 || response.status >= 300)
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "probeFailed",
+        message: yield* HttpClientResponse.schemaBodyJson(ErrorBody)(response).pipe(
+          Effect.map((error) => error.message.trim() || probeFailedMessage),
+          Effect.orElseSucceed(() => probeFailedMessage),
+        ),
+      });
+    const body = yield* HttpClientResponse.schemaBodyJson(ResponseBody)(response);
     if (body.data === null)
       return makeUnavailableUsageLimits({
         checkedAt,
@@ -91,6 +102,17 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         message: "No OpenCode Console workspace is signed in.",
       });
     const { go, budgets, workspace } = body.data;
+    const usageURL = URL.parse(workspace.usageURL);
+    const externalUsage =
+      usageURL?.protocol === "http:" || usageURL?.protocol === "https:"
+        ? { externalUsage: { label: workspace.name?.trim() || workspace.id, url: usageURL.href } }
+        : {};
+    // A Zen-only workspace has neither a Go subscription nor spend limits.
+    if (!go && budgets.length === 0)
+      return {
+        ...makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
+        ...externalUsage,
+      };
     const consoleProviders = budgets.some(
       (budget) => budget.coverage === "all" && budget.per === "set",
     )
@@ -168,20 +190,14 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         });
       }
     }
-    const usageURL = URL.parse(workspace.usageURL);
-    return {
-      ...makeUsageLimits({ checkedAt, windows }),
-      ...(usageURL?.protocol === "http:" || usageURL?.protocol === "https:"
-        ? { externalUsage: { label: workspace.name?.trim() || workspace.id, url: usageURL.href } }
-        : {}),
-    };
+    return { ...makeUsageLimits({ checkedAt, windows }), ...externalUsage };
   }).pipe(
     Effect.timeout("5 seconds"),
     Effect.orElseSucceed(() =>
       makeUnavailableUsageLimits({
         checkedAt,
         reason: "probeFailed",
-        message: "OpenCode could not read workspace usage.",
+        message: probeFailedMessage,
       }),
     ),
   );

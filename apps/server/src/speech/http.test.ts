@@ -12,9 +12,11 @@ import {
   CloudSpeechError,
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   SPEECH_MAX_OPTIONS_BYTES,
+  TextGenerationError,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  type EnvironmentSpeechModel,
   EnvironmentVoiceHttpApi,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -79,7 +81,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
           status: Effect.succeed({ supported: false as const, reason: "test" }),
           prepareModel: Effect.void,
           models: () => Effect.succeed({ models: [] }),
-          downloadModel: () => Effect.succeed({ models: [] }),
+          downloadModel: () => Effect.succeed({ models: [], cancelled: false }),
           linkModels: () => Effect.succeed({ models: [] }),
           selectModel: () => Effect.succeed({ models: [] }),
           cancelDownload: () => Effect.succeed({ models: [] }),
@@ -161,33 +163,30 @@ effectIt.effect(
           return Effect.fail(new CloudSpeechError({ provider, reason: "rejected-key" }));
         },
       });
+      const linkedModel: EnvironmentSpeechModel = {
+        id: "fixture/model",
+        name: "Fixture",
+        description: "",
+        size: 1,
+        languages: ["en"],
+        accuracy: 0,
+        speed: 0,
+        recommended: false,
+        supportsStreaming: false,
+        supportsLanguageDetection: false,
+        supportsTranslation: false,
+        active: true,
+        state: "installed",
+        linkedFrom: "/home/someone/models/fixture.gguf",
+      };
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
           Layer.provide(principal(AuthOrchestrationOperateScope, AuthSettingsWriteScope)),
           Layer.provide(
             Layer.mock(SpeechService.SpeechService)({
-              models: () =>
-                Effect.succeed({
-                  models: [
-                    {
-                      id: "fixture/model",
-                      name: "Fixture",
-                      description: "",
-                      size: 1,
-                      languages: ["en"],
-                      accuracy: 0,
-                      speed: 0,
-                      recommended: false,
-                      supportsStreaming: false,
-                      supportsLanguageDetection: false,
-                      supportsTranslation: false,
-                      active: true,
-                      state: "installed",
-                      linkedFrom: "/home/someone/models/fixture.gguf",
-                    },
-                  ],
-                }),
+              models: () => Effect.succeed({ models: [linkedModel] }),
+              downloadModel: () => Effect.succeed({ models: [linkedModel], cancelled: true }),
             }),
           ),
           Layer.provide(cloud),
@@ -269,7 +268,23 @@ effectIt.effect(
         handler(new Request("http://localhost/api/voice/models"), context),
       );
       expect(yield* Effect.promise(() => listed.text())).not.toContain("/home/someone");
-    }).pipe(Effect.scoped),
+      const downloaded = yield* Effect.promise(() =>
+        handler(
+          new Request("http://localhost/api/voice/models/download", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ modelId: linkedModel.id }),
+          }),
+          context,
+        ),
+      );
+      expect(downloaded.status).toBe(200);
+      const { linkedFrom: _, ...publicModel } = linkedModel;
+      expect(yield* Effect.promise(() => downloaded.json())).toEqual({
+        models: [publicModel],
+        cancelled: true,
+      });
+    }),
 );
 
 effectIt.effect.each([
@@ -361,5 +376,64 @@ effectIt.effect.each([
         code: "invalid_request",
         reason,
       });
-    }).pipe(Effect.scoped),
+    }),
+);
+
+effectIt.effect("tells the client why transcript cleanup failed", () =>
+  Effect.gen(function* () {
+    const detail = "OpenCode returned invalid structured output.";
+    const failingCleanup = Layer.mergeAll(
+      dependencies,
+      Layer.succeed(
+        TextGeneration.TextGeneration,
+        TextGeneration.TextGeneration.of({
+          generateCommitMessage: () => Effect.die("not used"),
+          generatePrContent: () => Effect.die("not used"),
+          generateBranchName: () => Effect.die("not used"),
+          generateThreadTitle: () => Effect.die("not used"),
+          generateReviewGuide: () => Effect.die("not used"),
+          generateTranscriptionPostProcessing: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generateTranscriptionPostProcessing",
+                detail,
+              }),
+            ),
+        }),
+      ),
+    );
+    const { handler, dispose } = HttpRouter.toWebHandler(
+      HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
+        Layer.provide(speechHttpApiLayer),
+        Layer.provide(principal(AuthOrchestrationOperateScope)),
+        Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+        Layer.provide(failingCleanup),
+        // Cleanup makes a real temporary directory; the HTTP services only carry a no-op filesystem.
+        Layer.provide(NodeServices.layer),
+        Layer.provide(HttpServer.layerServices),
+      ),
+      { disableLogger: true },
+    );
+    yield* Effect.addFinalizer(() => Effect.promise(dispose));
+    const context = yield* Layer.build(Layer.mergeAll(failingCleanup, NodeServices.layer));
+    const response = yield* Effect.promise(() =>
+      handler(
+        new Request("http://localhost/api/voice/post-process", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            options: {
+              speechCustomWords: [],
+              speechPostProcessingPrompt: { mode: "default", customInstructions: "" },
+            },
+            transcript: "um so hello world",
+            draft: { text: "", selection: { start: 0, end: 0 } },
+          }),
+        }),
+        context,
+      ),
+    );
+    expect(response.ok).toBe(false);
+    expect(yield* Effect.promise(() => response.text())).toContain(detail);
+  }),
 );
