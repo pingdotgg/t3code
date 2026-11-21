@@ -139,18 +139,22 @@ export const CursorDriver: ProviderDriver<
       ...(processEnv.CURSOR_API_KEY ? { apiKey: processEnv.CURSOR_API_KEY } : {}),
       store: credentials.store,
       credentialBinding: credentials.binding,
-      onChanged: (signedIn): Effect.Effect<void, ProviderSetupError> =>
+      onChanged: (signedIn): Effect.Effect<void | string, ProviderSetupError> =>
         snapshot.refresh.pipe(
           Effect.flatMap((provider) =>
             !signedIn || provider.auth.status === "authenticated"
               ? Effect.void
-              : Effect.fail(
-                  new ProviderSetupError({
-                    instanceId,
-                    operation: "start",
-                    detail: provider.message ?? "Could not verify the Cursor sign-in. Try again.",
-                  }),
-                ),
+              : provider.auth.status === "unknown"
+                ? Effect.succeed(
+                    "Cursor sign-in was saved, but account access could not be verified. Refresh provider status to retry the connection check.",
+                  )
+                : Effect.fail(
+                    new ProviderSetupError({
+                      instanceId,
+                      operation: "start",
+                      detail: provider.message ?? "Could not verify the Cursor sign-in. Try again.",
+                    }),
+                  ),
           ),
         ),
     });
