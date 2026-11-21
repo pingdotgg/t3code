@@ -312,7 +312,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
         path={path}
         environmentId={actions.environmentId}
         cwd={actions.cwd}
-        label={basenameOfPath(path)}
+        label={basenameOfPath(path).normalize("NFC")}
         theme={resolvedThemeFromDocument()}
       />
     </ContextChip>
@@ -321,7 +321,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <Tooltip>
         <TooltipTrigger render={chip} />
-        <TooltipPopup side="top">
+        <TooltipPopup side="top" className="pointer-events-auto">
           <WorkspaceEntryTooltip
             path={path}
             environmentId={actions.environmentId}
