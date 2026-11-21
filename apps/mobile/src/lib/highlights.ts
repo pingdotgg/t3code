@@ -1,3 +1,4 @@
+import type { CommandHighlightLanguage } from "@t3tools/client-runtime/work-log/command-label";
 import {
   embeddedScripts,
   withEmbeddedScripts,
@@ -90,7 +91,7 @@ export function tokenizeCode(code: string, language: string): TokenizedCode {
 /** Shell commands also color the scripts they embed, such as heredocs and `python -c`. */
 export function highlightCommand(
   code: string,
-  language: "shellscript" | "powershell",
+  language: CommandHighlightLanguage,
   scheme: HighlightScheme,
 ): HighlightedLines {
   const tokenize = (text: string, lang: string) => {

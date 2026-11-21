@@ -1413,6 +1413,7 @@ function windowsShellScriptIndex(shell: string, tokens: ReadonlyArray<string>): 
 }
 
 const POWERSHELL_PROGRAMS = new Set(["powershell", "pwsh"]);
+const COMMON_POWERSHELL_CMDLETS = new Set(["foreach-object", "get-childitem", "write-output"]);
 
 const POWERSHELL_VERBS = new Set(
   `Add Approve Assert Backup Block Build Checkpoint Clear Close Compare Complete Compress Confirm Connect Convert ConvertFrom ConvertTo Copy Debug Deny Deploy Disable Disconnect Dismount Edit Enable Enter Exit Expand Export Find ForEach Format Get Grant Group Hide Import Initialize Install Invoke Join Limit Lock Measure Merge Mount Move New Open Optimize Out Ping Pop Protect Publish Push Read Receive Redo Register Remove Rename Repair Request Reset Resize Resolve Restart Restore Resume Revoke Save Search Select Send Set Show Skip Sort Split Start Step Stop Submit Suspend Switch Sync Tee Test Trace Unblock Undo Uninstall Unlock Unprotect Unpublish Unregister Update Use Wait Watch Where Write`.split(
@@ -1421,24 +1422,43 @@ const POWERSHELL_VERBS = new Set(
 );
 
 function isPowerShellCmdlet(word: string): boolean {
+  if (COMMON_POWERSHELL_CMDLETS.has(word.toLowerCase())) return true;
   const cmdlet = /^([A-Z][a-z]+(?:[A-Z][a-z]+)?)-[A-Z][A-Za-z]*$/u.exec(word);
   return cmdlet !== null && POWERSHELL_VERBS.has(cmdlet[1]!);
 }
 
-export function commandHighlightLanguage(command: string): "powershell" | "shellscript" {
-  const program = /^(?:&\s*)?(?:"([^"]*)"|'([^']*)'|(\S+))/u.exec(command.trim());
-  const name = (program?.[1] ?? program?.[2] ?? program?.[3] ?? "")
-    .split(/[\\/]/u)
-    .at(-1)
-    ?.toLowerCase()
-    .replace(/\.exe$/u, "");
-  if (name && POWERSHELL_PROGRAMS.has(name)) return "powershell";
-  return isPowerShellScript(command) ? "powershell" : "shellscript";
+function isBatchStatement(statement: string): boolean {
+  return (
+    /^@echo\s+(?:on|off)(?:\s|$)/iu.test(statement) ||
+    /^@?(?:setlocal|endlocal)(?:\s|$)/iu.test(statement) ||
+    /^@?dir\s+\/b(?:\s|$)/iu.test(statement) ||
+    /^@?echo\s+(?:%[a-z_][a-z0-9_]*%|"%[a-z_][a-z0-9_]*%")(?:\s|$)/iu.test(statement)
+  );
 }
 
-function isPowerShellScript(command: string): boolean {
-  let rest: string | null = command.trim();
-  if (/^&\s*\S/u.test(rest)) return true;
+export type CommandHighlightLanguage = "powershell" | "bat" | "shellscript";
+
+export function commandHighlightLanguage(command: string): CommandHighlightLanguage {
+  const trimmed = command.trim();
+  if (/^&\s*\S/u.test(trimmed)) return "powershell";
+
+  const [token = "", doubleQuoted, singleQuoted, bare] =
+    /^(?:"([^"]*)"|'([^']*)'|(\S+))/u.exec(trimmed) ?? [];
+  const executable = (doubleQuoted ?? singleQuoted ?? bare)?.split(/[\\/]/u).at(-1)?.toLowerCase();
+  const name = executable?.replace(/\.exe$/u, "");
+  if (name && POWERSHELL_PROGRAMS.has(name)) return "powershell";
+  if (
+    executable === "cmd.exe" ||
+    (executable === "cmd" &&
+      /^\s+(?:\/[adqsuefv](?::(?:on|off))?\s+)*\/[ck](?=\s|"|$)/iu.test(
+        trimmed.slice(token.length),
+      ))
+  ) {
+    return "bat";
+  }
+  if (name && SHELL_PROGRAMS.has(name)) return "shellscript";
+
+  let rest: string | null = trimmed;
   for (let segment = 0; rest && segment < MAX_COMMAND_SEGMENTS; segment += 1) {
     const { firstCommand, remainingCommand } = splitFirstShellCommand(rest);
     const statement = firstCommand.trim();
@@ -1447,9 +1467,10 @@ function isPowerShellScript(command: string): boolean {
       /^\$[A-Za-z_]\w*\s+=/u.test(statement) ||
       isPowerShellCmdlet(statement.match(/^\S+/u)?.[0] ?? "")
     ) {
-      return true;
+      return "powershell";
     }
+    if (isBatchStatement(statement)) return "bat";
     rest = remainingCommand;
   }
-  return false;
+  return "shellscript";
 }
