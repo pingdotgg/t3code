@@ -2965,11 +2965,11 @@ export const make = Effect.gen(function* () {
       remoteNameOverride: string | undefined,
       fresh: boolean,
     ) {
-      // Fresh confirmations after a provider call must re-read git to catch external remote changes.
+      // Reads after a provider call must re-read git to catch external remote changes.
       const canReuseMemo = (
         shared: SharedPrLookupGitReads | null,
       ): shared is SharedPrLookupGitReads =>
-        isActivePrLookupGitReads(shared, cwd) && !(fresh && shared.queriedProvider);
+        isActivePrLookupGitReads(shared, cwd) && !shared.queriedProvider;
       const readConfig = (key: string) =>
         Effect.flatMap(prLookupGitReads, (shared) =>
           rememberPrLookupGitState(

@@ -1961,7 +1961,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           countMatching((cmd) => cmd === "config --get branch.feature/fork-no-upstream.remote"),
         ).toBe(1);
         expect(countMatching((cmd) => cmd === "config --get-all remote.origin.url")).toBe(1);
-        expect(countMatching((cmd) => cmd === "config --get-all remote.fork.url")).toBe(1);
+        // Fork URL is cold in the TTL map, so post-provider identity re-reads it to catch repoints.
+        expect(countMatching((cmd) => cmd === "config --get-all remote.fork.url")).toBe(2);
 
         // Published refresh lookup re-reads remote URLs after querying the provider so external
         // remote repoints during the network call are still caught.
@@ -2057,6 +2058,94 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(raced?.number).toBe(512);
         expect(raced?.repositoryKey).toBe("github.com/new-owner/new-repository");
         expect(gitCommands).toContain("config --get-all remote.origin.url");
+      }),
+  );
+
+  it.effect(
+    "default branch PR lookup re-reads origin URL after a provider query to catch mid-query repoints",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originalRemoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originalRemoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "git@github.com:old-owner/old-repository.git",
+          originalRemoteDir,
+        );
+        yield* runGit(repoDir, ["checkout", "-b", "feature/mid-provider-repoint"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "repoint.txt"), "change\n");
+        yield* runGit(repoDir, ["add", "repoint.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Repoint test"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/mid-provider-repoint"]);
+
+        const replacementRemoteDir = yield* createBareRemote();
+        const providerReached = yield* Deferred.make<void>();
+        const providerRelease = yield* Deferred.make<void>();
+        const { service: github } = createFakeSourceControlProvider({
+          prListSequence: [
+            [
+              {
+                number: 511,
+                title: "Old repo PR",
+                url: "https://github.com/old-owner/old-repository/pull/511",
+                baseRefName: "main",
+                headRefName: "feature/mid-provider-repoint",
+                state: "open",
+                headRepositoryNameWithOwner: "old-owner/old-repository",
+                headRepositoryOwnerLogin: "old-owner",
+              },
+            ],
+            [
+              {
+                number: 513,
+                title: "New repo PR",
+                url: "https://github.com/new-owner/new-repository/pull/513",
+                baseRefName: "main",
+                headRefName: "feature/mid-provider-repoint",
+                state: "open",
+                headRepositoryNameWithOwner: "new-owner/new-repository",
+                headRepositoryOwnerLogin: "new-owner",
+              },
+            ],
+          ],
+        });
+        let providerCallCount = 0;
+        const { manager } = yield* makeManager({
+          sourceControlProvider: {
+            ...github,
+            listChangeRequests: (input) =>
+              Effect.gen(function* () {
+                providerCallCount += 1;
+                if (providerCallCount === 1) {
+                  yield* Deferred.succeed(providerReached, undefined);
+                  yield* Deferred.await(providerRelease);
+                }
+                return yield* github.listChangeRequests(input);
+              }),
+          },
+        });
+
+        const inFlight = yield* Effect.forkChild(
+          manager.branchPullRequest({ cwd: repoDir, branch: "feature/mid-provider-repoint" }),
+        );
+        yield* Deferred.await(providerReached);
+
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "git@github.com:new-owner/new-repository.git",
+          replacementRemoteDir,
+        );
+        yield* Deferred.succeed(providerRelease, undefined);
+
+        const raced = yield* Fiber.join(inFlight);
+        expect(providerCallCount).toBe(2);
+        expect(raced?.number).toBe(513);
+        expect(raced?.repositoryKey).toBe("github.com/new-owner/new-repository");
       }),
   );
 
