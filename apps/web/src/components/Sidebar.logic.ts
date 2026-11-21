@@ -4,6 +4,7 @@ import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/mod
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
+import * as Equal from "effect/Equal";
 import * as React from "react";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
@@ -40,6 +41,7 @@ import {
   type ThreadSortInput,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { SidebarThreadSummary, Thread } from "../types";
+import type { SidebarProviderEntry } from "./sidebar/SidebarThreadRow";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { THREAD_STATUS_TEXT } from "@t3tools/client-runtime/state/thread-activity-announcement";
@@ -1495,4 +1497,28 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
+}
+
+export function sameSidebarProviderEntries(
+  left: ReadonlyMap<string, SidebarProviderEntry>,
+  right: ReadonlyMap<string, SidebarProviderEntry>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [instanceId, entry] of right) {
+    const other = left.get(instanceId);
+    if (
+      other === undefined ||
+      other.driverKind !== entry.driverKind ||
+      other.enabled !== entry.enabled ||
+      other.displayName !== entry.displayName ||
+      other.accentColor !== entry.accentColor ||
+      other.acpRegistryAgentId !== entry.acpRegistryAgentId ||
+      other.acpRegistryIconUrl !== entry.acpRegistryIconUrl ||
+      // Each provider push decodes a fresh models array, usually with the same content.
+      !Equal.equals(other.models, entry.models)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
