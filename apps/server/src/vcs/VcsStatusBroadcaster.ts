@@ -146,8 +146,6 @@ interface CachedRemoteStatus extends CachedValue<VcsStatusRemoteResult | null> {
 
 interface CachedLocalStatus extends CachedValue<VcsStatusLocalResult> {
   readonly includesBranchChanges: boolean;
-  /** Refs and working tree read before this status, set only by remote polls. */
-  readonly snapshot: string | null;
 }
 
 interface CachedVcsStatus {
@@ -412,14 +410,13 @@ export const make = Effect.gen(function* () {
       cwd: string,
       read: { readonly local: VcsStatusLocalResult; readonly includesBranchChanges: boolean },
       observation: number,
-      options?: { publish?: boolean; snapshot?: string | null },
+      options?: { publish?: boolean },
     ) {
       const { local, includesBranchChanges } = read;
-      const nextLocal: CachedLocalStatus = {
+      const nextLocal = {
         fingerprint: fingerprintStatusPart(local),
         value: local,
         includesBranchChanges,
-        snapshot: options?.snapshot ?? null,
       };
       const [localChanged, remoteCleared] = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
@@ -526,7 +523,7 @@ export const make = Effect.gen(function* () {
   }, Effect.scoped);
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
-    function* (cwd: string, options?: { readonly snapshot?: string | null }) {
+    function* (cwd: string) {
       const requestedAt = (localRefreshRequests.get(cwd) ?? 0) + 1;
       localRefreshRequests.set(cwd, requestedAt);
       return yield* localRefreshLocks.withLock(
@@ -545,10 +542,7 @@ export const make = Effect.gen(function* () {
           const observation = ++branchObservation;
           const read = yield* readLocalStatus(cwd);
           localRefreshResults.set(cwd, { startedAt, ...read });
-          return yield* updateCachedLocalStatus(cwd, read, observation, {
-            publish: true,
-            snapshot: options?.snapshot ?? null,
-          });
+          return yield* updateCachedLocalStatus(cwd, read, observation, { publish: true });
         }),
       );
     },
@@ -674,7 +668,8 @@ export const make = Effect.gen(function* () {
     options?: {
       readonly refreshUpstream?: boolean;
       readonly policyCwds?: ReadonlyArray<string>;
-      readonly alwaysRefreshLocal?: boolean;
+      /** Snapshot at this caller's last complete local read; skips re-reads while it holds. */
+      readonly refsAtLocalRead?: Ref.Ref<string | null>;
     },
   ) {
     return yield* withRemoteWriteLock(
@@ -686,21 +681,23 @@ export const make = Effect.gen(function* () {
             ? null
             : yield* maybeAutoPull(cwd, remoteRead, options?.policyCwds ?? [cwd]);
         if (pulled !== null) return pulled.remote;
-        // Working-tree edits move no ref, so both must match the snapshot taken before the cached read.
-        const refs = yield* workflow.readRefSnapshot(cwd);
-        const workingTree = refs === null ? null : yield* workflow.readWorkingTreeSnapshot(cwd);
-        const snapshot = workingTree === null ? null : `${refs}\0${workingTree}`;
-        const local = (yield* getCachedStatus(cwd))?.local ?? null;
-        const localIsFresh =
-          !options?.alwaysRefreshLocal &&
-          snapshot !== null &&
-          local !== null &&
-          local.snapshot === snapshot &&
-          ((local.includesBranchChanges && local.value.branchChanges !== undefined) ||
-            !wantsBranchChanges(cwd));
-        if (!localIsFresh) {
-          // Base refs and merge bases can move without changing divergence counts.
-          yield* refreshLocalStatusCore(cwd, { snapshot });
+        // Base refs and merge bases can move without changing divergence counts.
+        const refsAtLocalRead = options?.refsAtLocalRead;
+        if (refsAtLocalRead === undefined) {
+          yield* refreshLocalStatusCore(cwd);
+        } else {
+          // Working-tree edits move no ref, so they are part of the snapshot too.
+          const refs = yield* workflow.readRefSnapshot(cwd);
+          const workingTree = refs === null ? null : yield* workflow.readWorkingTreeSnapshot(cwd);
+          const snapshot = workingTree === null ? null : `${refs}\0${workingTree}`;
+          if (snapshot === null || snapshot !== (yield* Ref.get(refsAtLocalRead))) {
+            yield* Ref.set(refsAtLocalRead, null);
+            const local = yield* refreshLocalStatusCore(cwd);
+            // A read that omitted wanted Changes totals retries on the next poll.
+            if (local.branchChanges !== undefined || !wantsBranchChanges(cwd)) {
+              yield* Ref.set(refsAtLocalRead, snapshot);
+            }
+          }
         }
         return yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
       }),
@@ -792,6 +789,7 @@ export const make = Effect.gen(function* () {
   ) {
     const consecutiveFailuresRef = yield* Ref.make(0);
     const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
+    const refsAtLocalReadRef = yield* Ref.make<string | null>(null);
     const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
       const configuredInterval = yield* automaticFetchInterval;
       const activeInterval = Duration.isZero(configuredInterval)
@@ -821,6 +819,7 @@ export const make = Effect.gen(function* () {
       const exit = yield* refreshRemoteStatus(cwd, {
         refreshUpstream: !Duration.isZero(configuredInterval),
         policyCwds: [...demandCwds.keys()],
+        refsAtLocalRead: refsAtLocalReadRef,
       }).pipe(Effect.exit);
       if (Exit.isSuccess(exit)) {
         yield* Ref.set(needsInitialRefreshRef, false);
@@ -1056,7 +1055,7 @@ export const make = Effect.gen(function* () {
     function* (cwd: string) {
       if (!detailedSubscribers.has(cwd)) return;
       if ((yield* getCachedStatus(cwd))?.remote) {
-        yield* refreshRemoteStatus(cwd, { refreshUpstream: false, alwaysRefreshLocal: true });
+        yield* refreshRemoteStatus(cwd, { refreshUpstream: false });
       } else {
         yield* refreshLocalStatusCore(cwd);
       }

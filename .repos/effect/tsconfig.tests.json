@@ -20,7 +20,10 @@
     "./packages/platform/deno/**",
     // Declares `Reactivity.Keys`, which would make reactivity keys strict for every test in this program.
     // TSTyche still checks it in its own program.
-    "./packages/effect/typetest/reactivity/ReactivityKeys.tst.ts"
+    "./packages/effect/typetest/reactivity/ReactivityKeys.tst.ts",
+    // Compiled by the package's own tsconfig.alchemy.json: the alchemy type
+    // graph loads bun globals that clash with this project's node globals.
+    "./packages/platform/cloudflare/typetest/AlchemyCloudflareCluster.tst.ts"
   ],
   "compilerOptions": {
     "rootDir": ".",
@@ -37,6 +40,8 @@
       "effect/jose": ["./packages/effect/src/jose/index.ts"],
       "effect/schema": ["./packages/effect/src/schema/index.ts"],
       "effect/*": ["./packages/effect/src/*.ts"],
+      "@effect/ai-amazon-bedrock": ["./packages/ai/amazon-bedrock/src/index.ts"],
+      "@effect/ai-amazon-bedrock/*": ["./packages/ai/amazon-bedrock/src/*.ts"],
       "@effect/ai-anthropic": ["./packages/ai/anthropic/src/index.ts"],
       "@effect/ai-anthropic/*": ["./packages/ai/anthropic/src/*.ts"],
       "@effect/ai-cloudflare": ["./packages/ai/cloudflare/src/index.ts"],
@@ -49,6 +54,16 @@
       "@effect/ai-typesafe/*": ["./packages/ai/typesafe/src/*.ts"],
       "@effect/ai-openrouter": ["./packages/ai/openrouter/src/index.ts"],
       "@effect/ai-openrouter/*": ["./packages/ai/openrouter/src/*.ts"],
+      "@effect/chat-slack": ["./packages/chat/slack/src/index.ts"],
+      "@effect/chat-slack/*": ["./packages/chat/slack/src/*.ts"],
+      "@effect/chat-whatsapp": ["./packages/chat/whatsapp/src/index.ts"],
+      "@effect/chat-whatsapp/*": ["./packages/chat/whatsapp/src/*.ts"],
+      "@effect/chat-discord": ["./packages/chat/discord/src/index.ts"],
+      "@effect/chat-discord/*": ["./packages/chat/discord/src/*.ts"],
+      "@effect/chat-teams": ["./packages/chat/teams/src/index.ts"],
+      "@effect/chat-teams/*": ["./packages/chat/teams/src/*.ts"],
+      "@effect/chat-telegram": ["./packages/chat/telegram/src/index.ts"],
+      "@effect/chat-telegram/*": ["./packages/chat/telegram/src/*.ts"],
       "@effect/atom-react": ["./packages/atom/react/src/index.ts"],
       "@effect/atom-react/*": ["./packages/atom/react/src/*.ts"],
       "@effect/atom-vue": ["./packages/atom/vue/src/index.ts"],
@@ -61,6 +76,8 @@
       "@effect/platform-browser/*": ["./packages/platform/browser/src/*.ts"],
       "@effect/platform-bun": ["./packages/platform/bun/src/index.ts"],
       "@effect/platform-bun/*": ["./packages/platform/bun/src/*.ts"],
+      "@effect/platform-cloudflare": ["./packages/platform/cloudflare/src/index.ts"],
+      "@effect/platform-cloudflare/*": ["./packages/platform/cloudflare/src/*.ts"],
       "@effect/platform-node": ["./packages/platform/node/src/index.ts"],
       "@effect/platform-node/*": ["./packages/platform/node/src/*.ts"],
       "@effect/platform-node-shared": ["./packages/platform/node-shared/src/index.ts"],
