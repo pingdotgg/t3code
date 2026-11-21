@@ -84,7 +84,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {canRespond ? (
             <>
-              <span className="inline-flex items-center gap-1 text-warning">
+              <span className="inline-flex items-center gap-1 text-warning-foreground">
                 <ShieldIcon aria-hidden className="size-3 shrink-0" />
                 <T>Waiting for approval</T>
               </span>
@@ -106,7 +106,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
               ) : null}
             </>
           ) : (
-            <span className="text-warning">
+            <span className="text-warning-foreground">
               <T>Provider process is gone. Interrupt or restart the run to respond.</T>
             </span>
           )}
