@@ -101,6 +101,11 @@ interface BranchToolbarBranchSelectorProps {
 
 const WORKTREE_CHANGE_BLOCKED_MESSAGE = msg("Stop the current turn to switch worktrees.");
 
+// Branches a picker is checking out, by environment and checkout. Shared because a draft thread
+// mounts two selectors on one checkout, and the switch's own settle reloads refs for both.
+const pickerCheckouts = new Map<string, string>();
+const pickerCheckoutKey = (environmentId: string, cwd: string) => `${environmentId}\u0000${cwd}`;
+
 export function BranchToolbarBranchSelector({
   forceNewWorktree = false,
   ref,
@@ -444,8 +449,6 @@ export function BranchToolbarBranchSelector({
   // ran itself. Only the claimed worktree's live HEAD confirms the claim; an unconfirmed one
   // falls back to a real checkout, which Git refuses if the branch is checked out elsewhere.
   const latestSelectionIdRef = useRef(0);
-  // The branch this picker is checking out; its own switch reloads the refs, so its status needs no refresh.
-  const pickerCheckoutBranchRef = useRef<string | null>(null);
   const readSelectedRef = async (worktreePath: string, listedRef: VcsRef): Promise<VcsRef> => {
     const result = await readRefs({
       environmentId,
@@ -507,7 +510,8 @@ export function BranchToolbarBranchSelector({
     runBranchAction(async () => {
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(selectedBranchName);
-      pickerCheckoutBranchRef.current = selectedBranchName;
+      const checkoutKey = pickerCheckoutKey(environmentId, selectionTarget.checkoutCwd);
+      pickerCheckouts.set(checkoutKey, selectedBranchName);
       const checkoutResult = await switchRef({
         environmentId,
         input: {
@@ -552,7 +556,7 @@ export function BranchToolbarBranchSelector({
         setOptimisticBranch(applied ? nextBranchName : previousBranch);
         return;
       }
-      pickerCheckoutBranchRef.current = null;
+      pickerCheckouts.delete(checkoutKey);
       setOptimisticBranch(previousBranch);
       if (!isAtomCommandInterrupted(checkoutResult)) {
         toastManager.add(
@@ -578,7 +582,8 @@ export function BranchToolbarBranchSelector({
     runBranchAction(async () => {
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(name);
-      pickerCheckoutBranchRef.current = name;
+      const checkoutKey = pickerCheckoutKey(environmentId, branchCwd);
+      pickerCheckouts.set(checkoutKey, name);
       const createBranchResult = await createRefMutation({
         environmentId,
         input: {
@@ -600,7 +605,7 @@ export function BranchToolbarBranchSelector({
         setOptimisticBranch(applied ? nextBranchName : previousBranch);
         return;
       }
-      pickerCheckoutBranchRef.current = null;
+      pickerCheckouts.delete(checkoutKey);
       setOptimisticBranch(previousBranch);
       if (!isAtomCommandInterrupted(createBranchResult)) {
         toastManager.add(
@@ -633,10 +638,12 @@ export function BranchToolbarBranchSelector({
   // A checkout made outside T3 Code, such as a clone finishing, leaves refs listed before it.
   const statusBranch = branchStatusQuery.data?.refName ?? null;
   const refreshRefsMissingStatusBranch = useEffectEvent((branch: string | null) => {
-    if (branch === null) return;
-    const pickerCheckoutBranch = pickerCheckoutBranchRef.current;
-    pickerCheckoutBranchRef.current = null;
-    if (isInitialBranchesLoadPending || branch === pickerCheckoutBranch) return;
+    if (branch === null || branchCwd === null) return;
+    // Kept until the checkout reports another branch, so every selector on it skips the refresh.
+    const checkoutKey = pickerCheckoutKey(environmentId, branchCwd);
+    if (pickerCheckouts.get(checkoutKey) === branch) return;
+    pickerCheckouts.delete(checkoutKey);
+    if (isInitialBranchesLoadPending) return;
     if (branchByName.get(branch)?.current !== true) refreshStaleRefs();
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reloads refs from the server once per branch live status reports that they do not list as checked out
