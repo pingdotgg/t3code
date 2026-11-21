@@ -43,6 +43,26 @@ export const VoiceWaveform = memo(function VoiceWaveform(props: { level: number 
   );
 });
 
+// Each dictation phase swaps these controls, so one pressed from the keyboard would leave focus
+// on the page; focus moves to the control that takes its place.
+function keepVoiceControlFocus(control: HTMLButtonElement) {
+  return () => {
+    if (document.activeElement !== control) return;
+    const slot =
+      control.closest('[data-slot="voice-input-pill"]')?.parentElement ?? control.parentElement;
+    queueMicrotask(() => {
+      if (document.activeElement !== document.body) return;
+      slot?.querySelector<HTMLElement>("[data-voice-input-control]:not(:disabled)")?.focus();
+    });
+  };
+}
+
+/** Spread on every dictation button. */
+export const voiceInputControl = {
+  ref: keepVoiceControlFocus,
+  "data-voice-input-control": "",
+} as const;
+
 /**
  * The capsule every dictation state renders in. Default matches the composer's send button
  * and insets its pill buttons; compact matches the `xs` buttons in text-field action rows.

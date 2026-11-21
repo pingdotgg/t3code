@@ -5,7 +5,7 @@ import { CircleAlertIcon, XIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { VoiceInputPill } from "./VoiceInputPill";
+import { VoiceInputPill, voiceInputControl } from "./VoiceInputPill";
 
 const VOICE_ERROR_LABELS: Readonly<Record<VoiceInputErrorCode, string>> = {
   "microphone-blocked": msg("Mic blocked"),
@@ -59,6 +59,7 @@ export function VoiceInputErrorPill(props: {
               size={compact ? "icon-xs" : "icon-sm-pill"}
               variant="ghost"
               aria-label={gt("Dismiss voice input error")}
+              {...voiceInputControl}
               onPointerDown={(event) => event.preventDefault()}
               onClick={props.onDismiss}
               className="shrink-0"
@@ -96,6 +97,7 @@ export function VoiceInputErrorPill(props: {
           variant="outline"
           aria-label={action.label}
           disabled={props.disabled}
+          {...voiceInputControl}
           onPointerDown={(event) => event.preventDefault()}
           onClick={() => {
             if (openSettings) {

@@ -4,7 +4,7 @@ import { CheckIcon, MicIcon, XIcon } from "lucide-react";
 import { useEffect, useState, type PointerEvent, type ReactElement } from "react";
 
 import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
-import { VoiceInputPill, VoiceWaveform } from "./VoiceInputPill";
+import { VoiceInputPill, VoiceWaveform, voiceInputControl } from "./VoiceInputPill";
 import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -133,6 +133,7 @@ export function ComposerSpeechButton(props: {
         variant="ghost"
         aria-label={label}
         disabled={props.disabled}
+        {...voiceInputControl}
         onPointerDown={keepFocus}
         onClick={() => {
           if (!props.disabled) props.onStart();
@@ -194,6 +195,7 @@ export function ComposerSpeechRecordingPill(props: {
           size={compact ? "icon-xs" : "icon-sm-pill"}
           variant="ghost"
           aria-label={gt("Cancel voice input")}
+          {...voiceInputControl}
           onPointerDown={keepFocus}
           onClick={props.onCancel}
           className="shrink-0"
@@ -234,6 +236,7 @@ export function ComposerSpeechRecordingPill(props: {
           type="button"
           size={compact ? "xs" : "sm-pill"}
           variant="ghost"
+          {...voiceInputControl}
           onPointerDown={keepFocus}
           onClick={props.onSkipPostProcessing}
           className="shrink-0"
@@ -247,6 +250,7 @@ export function ComposerSpeechRecordingPill(props: {
             size={compact ? "icon-xs" : "icon-sm-pill"}
             aria-label={gt("Finish voice input")}
             disabled={starting}
+            {...voiceInputControl}
             onPointerDown={keepFocus}
             onClick={props.onStop}
             className="shrink-0"
