@@ -2378,6 +2378,101 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
       assert.equal((yield* runtime!.getModeState)?.currentModeId, "default");
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
+
+  // regression: #39917 a restarted runtime loaded the session though agy is resumed
+  it.effect("resumes the session on a runtime that replaced a dead one", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      const activations: Array<string> = [];
+      let terminate: AntigravityAdapterV2RuntimeInput["onTermination"];
+      const instanceId = ProviderInstanceId.make("antigravity-restart-resume-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) => {
+          terminate = input.onTermination;
+          return makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              loadSession: (sessionId, options) =>
+                Effect.sync(() => void activations.push("load")).pipe(
+                  Effect.andThen(runtime.loadSession(sessionId, options)),
+                ),
+              resumeSession: (sessionId, options) =>
+                Effect.sync(() => void activations.push("resume")).pipe(
+                  Effect.andThen(runtime.resumeSession(sessionId, options)),
+                ),
+            })),
+          );
+        },
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const threadId = ThreadId.make("thread-antigravity-restart-resume");
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-restart-resume"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* session.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const runTurn = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* session.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              modelSelection,
+              now: yield* DateTime.now,
+              ordinal,
+            }),
+          );
+          return yield* Stream.fromQueue(events).pipe(
+            Stream.filter((event) => event.type === "turn.terminal"),
+            Stream.runHead,
+          );
+        });
+      yield* runTurn(1);
+      yield* terminate!(
+        new EffectAcpErrors.AcpTransportError({ detail: "agent exited", cause: "exit" }),
+      );
+      yield* runTurn(2);
+      assert.deepEqual(activations, ["resume"]);
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
 });
 
 describe("AntigravityAdapterV2 session system prompt", () => {

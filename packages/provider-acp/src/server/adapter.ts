@@ -466,6 +466,8 @@ export interface AcpAdapterV2Flavor {
    * is not inferred from the setup result.
    */
   readonly modelOptionArrivesLate?: boolean;
+  /** Reopen a session with `session/resume` when the agent offers both it and `session/load`. */
+  readonly preferResumeSession?: boolean;
   readonly getModelContextWindow?: (
     selection: ModelSelection,
     session: AcpSessionRuntime.AcpSessionRuntimeStartResult,
@@ -8025,10 +8027,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           prepareTerminalEnvironment(mcpContext, sessionId);
           yield* Ref.set(loadingSessionId, sessionId);
           const activated = yield* Effect.gen(function* () {
-            return canLoadSession
-              ? yield* runtime.loadSession(sessionId, activationOptions)
-              : canResumeSession
-                ? yield* runtime.resumeSession(sessionId, activationOptions)
+            return canResumeSession && (flavor.preferResumeSession === true || !canLoadSession)
+              ? yield* runtime.resumeSession(sessionId, activationOptions)
+              : canLoadSession
+                ? yield* runtime.loadSession(sessionId, activationOptions)
                 : yield* new ProviderAdapter.ProviderAdapterProtocolError({
                     driver,
                     detail: `ACP driver cannot load or resume session ${sessionId}`,
