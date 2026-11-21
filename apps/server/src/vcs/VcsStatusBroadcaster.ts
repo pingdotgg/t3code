@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest of the ref snapshot already in memory.
+import * as NodeCrypto from "node:crypto";
+
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -20,6 +23,7 @@ import type {
   VcsBranchStatus,
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
+  VcsRefreshStatusResult,
   VcsStatusResult,
   VcsStatusStreamEvent,
   VcsStatusSubscriptionInput,
@@ -231,7 +235,7 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly refreshStatus: (
       cwd: string,
       options?: { readonly localOnly?: boolean },
-    ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    ) => Effect.Effect<VcsRefreshStatusResult, GitManagerServiceError>;
     readonly refreshPullRequestStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
@@ -711,17 +715,17 @@ export const make = Effect.gen(function* () {
           const pulled = refreshUpstream
             ? yield* maybeAutoPull(cwd, remoteRead, [policyCwd])
             : null;
-          if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
+          if (pulled !== null) {
+            return { status: mergeGitStatusParts(pulled.local, pulled.remote), refs: null };
+          }
           yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
           // A fetch, ours or not, can move the base used for local Changes totals.
-          if (
-            refsBeforeLocalRead === null ||
-            (yield* workflow.readRefSnapshot(cwd)) !== refsBeforeLocalRead
-          ) {
+          const refs = refsBeforeLocalRead === null ? null : yield* workflow.readRefSnapshot(cwd);
+          if (refs === null || refs !== refsBeforeLocalRead) {
             yield* refreshLocalStatusCore(cwd);
           }
           const parts = yield* getStatusParts(cwd);
-          return mergeGitStatusParts(parts.local, parts.remote);
+          return { status: mergeGitStatusParts(parts.local, parts.remote), refs };
         }),
       );
     },
@@ -739,7 +743,14 @@ export const make = Effect.gen(function* () {
       const parts = yield* getStatusParts(cwd);
       return mergeGitStatusParts(parts.local, parts.remote);
     }
-    return yield* refreshRemoteAndLocalTotals(cwd, rawCwd, refsBeforeLocalRead);
+    const { status, refs } = yield* refreshRemoteAndLocalTotals(cwd, rawCwd, refsBeforeLocalRead);
+    // Lets the client keep its cached branch list when no ref moved since its last refresh.
+    return refs === null
+      ? status
+      : {
+          ...status,
+          refsDigest: NodeCrypto.createHash("sha256").update(refs).digest("hex").slice(0, 32),
+        };
   }, Effect.scoped);
 
   const refreshAfterCheckout: VcsStatusBroadcaster["Service"]["refreshAfterCheckout"] = Effect.fn(
@@ -947,7 +958,7 @@ export const make = Effect.gen(function* () {
   // A request made during a refresh needs a read that starts after it, so overlapping requests
   // share one follow-up. Keyed by raw cwd because auto-pull policy depends on it.
   // Missing means idle; null means running with no follow-up queued.
-  type SharedRefresh = Deferred.Deferred<VcsStatusResult, GitManagerServiceError>;
+  type SharedRefresh = Deferred.Deferred<VcsRefreshStatusResult, GitManagerServiceError>;
   const queuedRefreshesRef = yield* Ref.make(new Map<string, SharedRefresh | null>());
 
   const runQueuedRefreshes = Effect.fn("VcsStatusBroadcaster.runQueuedRefreshes")(function* (
@@ -974,7 +985,7 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.shareQueuedRefreshStatus",
   )(function* (rawCwd, options) {
     if (options?.localOnly) return yield* refreshStatus(rawCwd, options);
-    const requested = yield* Deferred.make<VcsStatusResult, GitManagerServiceError>();
+    const requested = yield* Deferred.make<VcsRefreshStatusResult, GitManagerServiceError>();
     // Registering and forking together keeps an interrupt from leaving an entry with no worker.
     const shared = yield* Effect.uninterruptible(
       Effect.gen(function* () {
