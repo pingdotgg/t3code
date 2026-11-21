@@ -778,6 +778,7 @@ describe("ChatMarkdown copy", () => {
       ["```bash\nnpm install\n```", "npm install"],
       ["~~~\nnpm install\n~~~", "npm install"],
       ["```bash\nnpm install", "npm install"],
+      ["    npm install", "npm install"],
       ["- Run:\n\n  ```bash\n  npm install\n  ```", "npm install"],
       ["> ```bash\n> npm install\n> ```", "npm install"],
       ["```mermaid\ngraph TD\n```", "graph TD"],
