@@ -19,7 +19,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
-import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
+import { encodeOAuthScope, parseOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -186,6 +186,8 @@ export interface AuthorizationRequest {
   readonly state: Redacted.Redacted<string> | undefined;
   readonly resource: string;
   readonly issuer: string;
+  /** The client requested `orchestration:read` without `orchestration:operate`. */
+  readonly readOnly: boolean;
 }
 
 interface PendingCode {
@@ -413,6 +415,7 @@ const make = Effect.gen(function* () {
     if (!sameResource(urls, request.resource)) {
       return yield* fail("invalid_target", `This server only issues tokens for ${urls.resource}.`);
     }
+    const requestedScopes = request.scope === undefined ? null : parseOAuthScope(request.scope);
     return {
       client,
       redirectUri,
@@ -420,6 +423,10 @@ const make = Effect.gen(function* () {
       state,
       resource: urls.resource,
       issuer: urls.issuer,
+      readOnly:
+        requestedScopes !== null &&
+        requestedScopes.includes(AuthOrchestrationReadScope) &&
+        !requestedScopes.includes(AuthOrchestrationOperateScope),
     } satisfies AuthorizationRequest;
   });
 
@@ -501,6 +508,8 @@ const make = Effect.gen(function* () {
         });
       }
     }
+    // The approver chooses within what the client asked for.
+    if (input.authorization.readOnly) access = "read-only";
     const code = yield* mintCode(input.authorization, access);
     yield* Effect.logInfo("Approved an MCP client sign-in.", {
       client: input.authorization.client.name,

@@ -176,6 +176,7 @@ export const layer = HttpApiBuilder.group(
             ...(oauth.runtimeModeCeiling === undefined
               ? {}
               : { runtimeModeCeiling: oauth.runtimeModeCeiling }),
+            ...(resolved.readOnly ? { requestedAccess: "read-only" as const } : {}),
             ...(session === undefined
               ? {}
               : {

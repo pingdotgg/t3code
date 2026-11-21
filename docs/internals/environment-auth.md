@@ -73,8 +73,10 @@ state. Approval spends a one-time pairing code, or uses a browser session with
 The user grants either read-only access or a runtime-mode ceiling, not a
 scope list: MCP tools are all orchestration, and `orchestration:operate`
 alone would let an agent start a thread in full access and act through it.
+A client whose `scope` asks for `orchestration:read` without
+`orchestration:operate` gets read-only access whatever the user picks.
 The result is an ordinary session with subject `mcp-client`. A read-only
-grant holds `orchestration:read` alone. On `/mcp` it passes only tools
+grant holds `orchestration:read` alone. On `/mcp` it lists and passes only tools
 declared as reads in [McpToolAccess](../../apps/server/src/mcp/McpToolAccess.ts),
 where every tool must declare who may call it to compile. Any other grant adds
 `orchestration:operate` and a signed ceiling. Only `/mcp` accepts these sessions, and for a
