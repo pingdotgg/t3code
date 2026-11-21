@@ -55,7 +55,7 @@ export const tr: Messages = {
     commitPush: "Commit ve push",
     gitTitle: "Commit, push ve PR için tek bir düğme.",
     gitBody:
-      "Her agent sohbeti kendi branch'ine yazar. Değişiklikler hazır olduğunda tek bir düğme, oluşturulmuş başlık, açıklama ve changelog ile GitHub'da PR'ı açar. Terminalde dans etmeye gerek yok.",
+      "Her agent sohbeti kendi branch'ine yazar. Değişiklikler hazır olduğunda tek bir düğme, oluşturulmuş başlık, açıklama ve changelog ile GitHub'da PR'ı açar. Terminalde takla atmaya gerek yok.",
     gitPoints: [
       "Otomatik oluşturulan PR başlıkları ve açıklamaları",
       "Push etmeden önce satır içi diff incelemesi",
