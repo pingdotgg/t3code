@@ -264,6 +264,14 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const latestDefinitions = [...new Set(registered.map(([definition]) => definition.name))].map(
     (name) => latest(name)![0],
   );
+  // A schedule taken out and put back is new again: its first run is one interval away.
+  yield* store.triggersKeep(
+    latestDefinitions.flatMap((definition) =>
+      definition.triggers.flatMap((trigger) =>
+        trigger.kind === "webhook" ? [] : [`${definition.name}/${trigger.id}`],
+      ),
+    ),
+  );
   /** Start what each schedule is due for, once, however long ago that was. */
   const fireSchedules = Effect.gen(function* () {
     const now = yield* localNow;

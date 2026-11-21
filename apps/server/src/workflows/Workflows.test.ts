@@ -713,31 +713,31 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
   // One database file, so a second engine built from it is the server after a restart.
   const agents = fakeAgents();
   const forge = fakeForge();
-  const engine = WorkflowEngine.layer(
-    [
-      triage,
-      land,
-      ...definitions(counts, failures, latch),
-      fix,
-      ...triggered,
-      ...stored,
-      ...family,
-      ...control,
-    ],
-    store,
-  ).pipe(
-    Layer.provide(Layer.succeed(WorkflowAgents, agents.service)),
-    Layer.provide(Layer.succeed(WorkflowForge, forge.service)),
-    Layer.provide(database),
-    Layer.provide(NodeCrypto.layer),
-  );
+  const all = [
+    triage,
+    land,
+    ...definitions(counts, failures, latch),
+    fix,
+    ...triggered,
+    ...stored,
+    ...family,
+    ...control,
+  ];
+  const engineOf = (registered: typeof all) =>
+    WorkflowEngine.layer(registered, store).pipe(
+      Layer.provide(Layer.succeed(WorkflowAgents, agents.service)),
+      Layer.provide(Layer.succeed(WorkflowForge, forge.service)),
+      Layer.provide(database),
+      Layer.provide(NodeCrypto.layer),
+    );
   // The engine polls its message store, backs off between retries and bounds its shutdown, all
   // on the clock, so time runs for as long as a server is up, shutdown included. A test closes
   // `clock` to hold time still until it has seen what it waits for.
   const clock = yield* Latch.make(true);
-  const boot = <A, E>(use: Effect.Effect<A, E, Workflows.Workflows>) =>
+  /** With `registered`, a server whose files define only those. */
+  const boot = <A, E>(use: Effect.Effect<A, E, Workflows.Workflows>, registered = all) =>
     Effect.raceFirst(
-      Effect.scoped(Effect.provide(use, engine)),
+      Effect.scoped(Effect.provide(use, engineOf(registered))),
       Effect.forever(Effect.andThen(clock.await, TestClock.adjust("1 second"))),
     );
   return { counts, failures, latch, boot, agents, forge, clock };
@@ -1851,6 +1851,21 @@ it.effect(
           const done = yield* workflows.waitFor(run!.runId, status("completed"));
           assert.match(String(done.result), /^1970-01-01T01:/);
         }),
+      );
+      yield* TestClock.adjust("3 hours");
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          yield* workflows.sweep;
+          yield* workflows.sweep;
+          assert.equal((yield* nightly(workflows)).length, 2);
+        }),
+      );
+      // Taken out of the file and put back long after it was due: due one interval from then.
+      const others = triggered.filter((definition) => definition.name !== "nightly");
+      yield* boot(
+        Effect.flatMap(Workflows.Workflows, (workflows) => workflows.sweep),
+        others,
       );
       yield* TestClock.adjust("3 hours");
       yield* boot(
