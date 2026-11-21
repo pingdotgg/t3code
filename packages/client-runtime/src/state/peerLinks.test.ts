@@ -1,4 +1,3 @@
-import * as NodeBuffer from "node:buffer";
 import {
   EnvironmentId,
   EventId,
@@ -177,26 +176,29 @@ it.effect.each([
 
 it.effect.each([
   "live update",
+  "live window moves",
   "away update",
   "window moves",
+  "history request fails",
+  "history request waits",
   "history removed",
   "route restart",
 ] as const)("shows the current linked history on reopen (%s)", (change) =>
   Effect.gen(function* () {
-    const recent = messageRow("Recent message", 3);
     const older = messageRow("Earlier message", 2);
     const oldest = messageRow("Oldest message", 1);
-    const latest = messageRow("Latest message", 4);
-    const cursorAt = (sequence: number, row: OrchestrationV2ProjectedTurnItem) =>
-      NodeBuffer.Buffer.from(
-        JSON.stringify({
-          v: 1,
-          seq: sequence,
-          st: row.sourceThreadId,
-          si: row.sourceItemId,
-          p: row.item.ordinal - 1,
-        }),
-      ).toString("base64url");
+    // One new turn pushes the previous boundary past a full 20-turn page.
+    const between =
+      change === "window moves"
+        ? Array.from({ length: 19 }, (_, index) => messageRow(`Turn ${index + 3}`, index + 3))
+        : [];
+    const recent = messageRow("Recent message", between.length + 3);
+    const latest = messageRow("Latest message", between.length + 4);
+    const originalCursor = "original-window";
+    const refreshedCursor = "refreshed-window";
+    const originalNext = "original-next";
+    const refreshedNext = "refreshed-next";
+    const restoredNext = "restored-next";
     const snapshot = (
       snapshotSequence: number,
       title: string,
@@ -210,7 +212,7 @@ it.effect.each([
         turnItems: [row.item],
         visibleTurnItems: [row],
       },
-      historyCursor: cursorAt(snapshotSequence, row),
+      historyCursor: snapshotSequence === 7 ? originalCursor : refreshedCursor,
       hasMoreHistory: true,
     });
     const subscriptions = yield* Queue.unbounded<{
@@ -218,6 +220,7 @@ it.effect.each([
       stopped: Deferred.Deferred<void>;
     }>();
     const requested: string[] = [];
+    const releasePage = yield* Deferred.make<void>();
     const client = {
       [WS_METHODS.peerLinksSubscribeThread]: () =>
         Stream.unwrap(
@@ -230,17 +233,54 @@ it.effect.each([
           }),
         ),
       [WS_METHODS.peerLinksThreadHistoryPage]: ({ cursor }: { cursor: string }) =>
-        Effect.sync((): OrchestrationV2ThreadHistoryPage => {
+        Effect.gen(function* (): Effect.fn.Return<OrchestrationV2ThreadHistoryPage, string> {
           requested.push(cursor);
-          const revision = cursor === cursorAt(7, recent) ? 7 : 8;
-          return change === "history removed" && revision === 8
-            ? { snapshotSequence: 8, items: [oldest], nextCursor: null, hasMoreHistory: false }
-            : {
-                snapshotSequence: revision,
-                items: cursor === cursorAt(8, latest) ? [older, recent] : [older],
-                nextCursor: cursorAt(revision, older),
-                hasMoreHistory: true,
-              };
+          if (cursor === originalCursor) {
+            return {
+              snapshotSequence: 7,
+              items: [older, ...between],
+              nextCursor: originalNext,
+              hasMoreHistory: true,
+            };
+          }
+          if (
+            change === "history request fails" &&
+            cursor === refreshedCursor &&
+            requested.filter((request) => request === cursor).length === 1
+          ) {
+            return yield* Effect.fail("history unavailable");
+          }
+          if (change === "history request waits") yield* Deferred.await(releasePage);
+          if (change === "history removed") {
+            return {
+              snapshotSequence: 8,
+              items: [oldest],
+              nextCursor: null,
+              hasMoreHistory: false,
+            };
+          }
+          if (change === "window moves" && cursor === refreshedCursor) {
+            return {
+              snapshotSequence: 8,
+              items: [...between, recent],
+              nextCursor: refreshedNext,
+              hasMoreHistory: true,
+            };
+          }
+          if (cursor === refreshedNext) {
+            return {
+              snapshotSequence: 8,
+              items: [oldest, older],
+              nextCursor: null,
+              hasMoreHistory: false,
+            };
+          }
+          return {
+            snapshotSequence: 8,
+            items: [older],
+            nextCursor: restoredNext,
+            hasMoreHistory: true,
+          };
         }),
     } as unknown as RpcSession["client"];
     const target = {
@@ -269,12 +309,12 @@ it.effect.each([
       registry.subscribe(links.threadView(target), (result) => {
         if (AsyncResult.isSuccess(result)) Queue.offerUnsafe(views, result.value);
       });
-    const unmount = open();
+    let unmount = open();
     const first = yield* Queue.take(subscriptions);
     yield* Queue.offer(first.items, snapshot(7, "Original"));
     (yield* Queue.take(views)).loadEarlier();
     yield* Queue.take(views); // Loading.
-    expect((yield* Queue.take(views)).thread.historyCursor).toBe(cursorAt(7, older));
+    expect((yield* Queue.take(views)).thread.historyCursor).toBe(originalNext);
 
     if (change === "live update") {
       yield* Queue.offer(first.items, {
@@ -290,33 +330,87 @@ it.effect.each([
       });
       expect((yield* Queue.take(views)).thread.sequence).toBe(8);
     }
+    if (change === "live window moves") {
+      yield* Queue.offer(first.items, {
+        kind: "event",
+        sequence: 8,
+        event: {
+          id: EventId.make("latest-item"),
+          type: "turn-item.updated",
+          threadId: v2ThreadId,
+          occurredAt: v2Now,
+          payload: latest.item,
+        },
+      });
+      expect(
+        (yield* Queue.take(views)).thread.projection?.visibleTurnItems.at(-1)?.sourceItemId,
+      ).toBe(latest.sourceItemId);
+    }
     if (change === "route restart") {
       yield* SubscriptionRef.set(route, 1);
     } else {
       unmount();
       yield* Deferred.await(first.stopped);
-      open();
+      unmount = open();
     }
-    const reopened = yield* Queue.take(subscriptions);
+    let reopened = yield* Queue.take(subscriptions);
     const sequence = change === "route restart" ? 7 : 8;
     const title = change === "route restart" ? "Original" : "Renamed";
-    const moved = change === "window moves";
-    yield* Queue.offer(reopened.items, snapshot(sequence, title, moved ? latest : recent));
-    const resumed = yield* Queue.take(views);
+    const moved = change === "window moves" || change === "live window moves";
     const removed = change === "history removed";
-    const refetched = removed || moved || change === "away update";
+    const refetched =
+      removed ||
+      change === "window moves" ||
+      change === "away update" ||
+      change === "history request fails" ||
+      change === "history request waits";
+    const incoming = snapshot(sequence, title, moved ? latest : recent);
+    yield* Queue.offer(reopened.items, incoming);
+    let resumed = yield* Queue.take(views);
     expect(resumed.thread.projection?.thread.title).toBe(title);
+    if (change === "history request waits") {
+      expect(resumed.history.loading).toBe(true);
+      yield* Queue.offer(reopened.items, {
+        kind: "event",
+        sequence: 9,
+        event: {
+          id: EventId.make("retitle-during-restore"),
+          type: "thread.metadata-updated",
+          threadId: v2ThreadId,
+          occurredAt: v2Now,
+          payload: { ...v2Projection.thread, title: "Renamed again" },
+        },
+      });
+      expect((yield* Queue.take(views)).thread.projection?.thread.title).toBe("Renamed again");
+      yield* Deferred.succeed(releasePage, undefined);
+    }
+    while (resumed.history.loading) resumed = yield* Queue.take(views);
+    if (change === "history request fails") {
+      expect(resumed.history.failed).toBe(true);
+      unmount();
+      yield* Deferred.await(reopened.stopped);
+      open();
+      reopened = yield* Queue.take(subscriptions);
+      yield* Queue.offer(reopened.items, incoming);
+      resumed = yield* Queue.take(views);
+      while (resumed.history.loading) resumed = yield* Queue.take(views);
+    }
     expect(resumed.thread.projection?.visibleTurnItems.map((row) => row.sourceItemId)).toEqual([
-      (removed ? oldest : older).sourceItemId,
+      ...(removed || change === "window moves" ? [oldest.sourceItemId] : []),
+      ...(removed ? [] : [older.sourceItemId]),
+      ...between.map((row) => row.sourceItemId),
       recent.sourceItemId,
       ...(moved ? [latest.sourceItemId] : []),
     ]);
-    expect(resumed.thread.historyCursor).toBe(removed ? null : cursorAt(refetched ? 8 : 7, older));
-    expect(requested).toEqual(
-      refetched
-        ? [cursorAt(7, recent), cursorAt(8, moved ? latest : recent)]
-        : [cursorAt(7, recent)],
+    expect(resumed.thread.historyCursor).toBe(
+      removed || change === "window moves" ? null : refetched ? restoredNext : originalNext,
     );
+    expect(requested).toEqual([
+      originalCursor,
+      ...(refetched ? [refreshedCursor] : []),
+      ...(change === "window moves" ? [refreshedNext] : []),
+      ...(change === "history request fails" ? [refreshedCursor] : []),
+    ]);
   }).pipe(Effect.scoped),
 );
 
