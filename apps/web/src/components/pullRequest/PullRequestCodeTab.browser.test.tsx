@@ -134,6 +134,8 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
   };
 });
 
+import { WorkerPoolManager } from "@pierre/diffs/worker";
+import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
 import { render, stubGlobal } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
 
@@ -677,4 +679,66 @@ it("keeps an unsent reply when the appearance switches between light and dark", 
   setAppearanceMode("light");
 
   await expect.element(reply()).toHaveValue("Unsent");
+});
+
+it("hands panel focus from the loading diff to the diff once the diff workers start", async () => {
+  setup({ paged: false });
+  let start = () => {};
+  const started = new Promise<void>((resolve) => {
+    start = resolve;
+  });
+  using isInitialized = vi
+    .spyOn(WorkerPoolManager.prototype, "isInitialized")
+    .mockReturnValue(false);
+  using initialize = vi.spyOn(WorkerPoolManager.prototype, "initialize").mockReturnValue(started);
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  // A conversation off the diff puts a panel where the loading body was, which could reuse its node.
+  const withOrphan: PullRequestDetailView = {
+    ...detail,
+    reviewThreads: [
+      {
+        id: "thread",
+        path: "gone.ts",
+        line: 1,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          {
+            id: "comment",
+            author: { login: "reviewer", name: null, avatarUrl: null },
+            body: "Rename this.",
+            createdAt: "2026-09-01T00:00:00Z",
+            url: null,
+          },
+        ],
+      },
+    ],
+  };
+  await using screen = await render(
+    <div {...workspaceAreaProps("panel", 4, "Workspace panel")} className="flex flex-1">
+      <PullRequestCodeTab
+        scrollerRef={() => {}}
+        environmentId={EnvironmentId.make("environment")}
+        reference={detail}
+        detail={withOrphan}
+        selectedCommitOid={null}
+        onSelectedCommitChange={() => {}}
+        onRefresh={() => {}}
+      />
+    </div>,
+    { container },
+  );
+  const focus = createWorkspaceFocusController(document);
+  using _focus = { [Symbol.dispose]: focus.dispose };
+  await expect.element(screen.getByText("Loading pull request diff...")).toBeVisible();
+  expect(focus.focus("panel")).toBe(true);
+
+  isInitialized.mockRestore();
+  initialize.mockRestore();
+  start();
+  await vi.waitFor(() =>
+    expect(document.activeElement).toBe(container.querySelector(".diff-render-surface")),
+  );
 });

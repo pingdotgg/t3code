@@ -36,7 +36,14 @@ const browser = await chromium.launch({
   args: ["--no-sandbox"],
 });
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 720 } });
+  const [width, height] = (
+    /name="kit-viewport" content="(\d+)x(\d+)"/.exec(NodeFS.readFileSync(file, "utf8")) ?? [
+      0, 1440, 720,
+    ]
+  )
+    .slice(1)
+    .map(Number);
+  const page = await browser.newPage({ viewport: { width, height } });
   await page.goto(`http://127.0.0.1:${server.address().port}/${NodePath.basename(file)}`);
   const found = await page.evaluate((needle) => {
     // Short, stable selectors: data attributes and aria labels over generated classes.

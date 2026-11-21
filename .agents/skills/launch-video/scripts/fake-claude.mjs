@@ -31,7 +31,7 @@ const readJson = (file, fallback) => {
 const script = readJson(process.env.FAKE_CLAUDE_SCRIPT ?? "", []);
 const played = new Set();
 const fill = (value) => {
-  const vars = readJson(process.env.T3_DEV_REPLAY_VARS ?? "", {});
+  const vars = readJson(process.env.FAKE_CLAUDE_VARS ?? "", {});
   const walk = (v) =>
     typeof v === "string"
       ? v.replace(/<var:([\w-]+)>/g, (m, name) => vars[name] ?? m)

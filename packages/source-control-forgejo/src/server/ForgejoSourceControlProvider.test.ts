@@ -857,10 +857,25 @@ it.effect("gives Forgejo identities the browser URL of the login that serves the
       github,
     );
     const unserved = identity("http://forge.test:3000/team/repo.git");
+    const asked: Array<unknown> = [];
     assert.strictEqual(
-      yield* refine!({ identity: unserved, resolveContext: () => Effect.succeed(null) }),
+      yield* refine!({
+        identity: unserved,
+        resolveContext: ({ context }) => {
+          asked.push(context.provider);
+          return Effect.succeed(null);
+        },
+      }),
       unserved,
     );
+    // Other callers name the host, so the registry caches one verdict per remote.
+    assert.deepStrictEqual(asked, [
+      {
+        kind: SourceControlProviderKind.make("unknown"),
+        name: "forge.test:3000",
+        baseUrl: "https://forge.test:3000",
+      },
+    ]);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

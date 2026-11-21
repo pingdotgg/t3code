@@ -28,6 +28,10 @@ export const PullRequestMarkdownContext = createContext<{
   repository: string | null;
 } | null>(null);
 
+/** The list page panel that links in thread-less markdown open in; the Issues page provides its own. */
+export const PullRequestMarkdownPanelContext =
+  createContext<ScopedThreadRef>(PULL_REQUESTS_PANEL_REF);
+
 function PullRequestHostVideo({
   environmentId,
   cwd,
@@ -81,6 +85,7 @@ function PullRequestBodySegmentView({
 }) {
   const gt = useGT();
   const context = useContext(PullRequestMarkdownContext);
+  const listPanelRef = useContext(PullRequestMarkdownPanelContext);
   const repository = context?.repository ?? undefined;
   if (segment.kind === "table") {
     return (
@@ -122,7 +127,7 @@ function PullRequestBodySegmentView({
         text={segment.kind === "markdown" ? segment.text : `![](<${segment.url}>)`}
         cwd={cwd}
         threadRef={threadRef}
-        pullRequestPanelRef={threadRef ?? PULL_REQUESTS_PANEL_REF}
+        pullRequestPanelRef={threadRef ?? listPanelRef}
         environmentId={environmentId}
         {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
         lineBreaks={lineBreaks}

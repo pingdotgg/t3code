@@ -8,6 +8,7 @@ export const COMPOSER_UNDO_GROUP_DELAY = 1000;
 export type ComposerChangeKind = "insert" | "delete" | "other";
 
 const CLIPBOARD_EDIT_META = "composerClipboardEdit";
+const COMPOSITION_REPLACE_META = "composerCompositionReplace";
 
 /**
  * Tag custom paste/cut dispatches; ProseMirror only tags its built-in paths.
@@ -17,13 +18,18 @@ export function markAsClipboardEdit(tr: Transaction, event: "paste" | "cut"): Tr
   return tr.setMeta(CLIPBOARD_EDIT_META, event);
 }
 
+/** Start a replacement undo group, keeping the IME edits together and prior typing separate. */
+export function markAsCompositionReplace(tr: Transaction): Transaction {
+  return closeHistory(tr).setMeta(COMPOSITION_REPLACE_META, true);
+}
+
 function changeKindOf(tr: Transaction): ComposerChangeKind | null {
   if (!tr.docChanged) return null;
   const uiEvent = tr.getMeta("uiEvent");
   if (uiEvent === "paste" || uiEvent === "drop" || uiEvent === "cut") return "other";
   if (tr.getMeta(CLIPBOARD_EDIT_META) != null) return "other";
   // IME input replaces its own range on each keystroke; it is still typing.
-  if (tr.getMeta("composition") != null) return "insert";
+  if (tr.getMeta("composition") != null || tr.getMeta(COMPOSITION_REPLACE_META)) return "insert";
   let kind: ComposerChangeKind | null = null;
   for (const step of tr.steps) {
     if (!(step instanceof ReplaceStep)) return "other";

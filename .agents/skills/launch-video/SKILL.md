@@ -39,10 +39,21 @@ There are two ways to build one:
      and tool rows. Each turn is `{ match, steps }`: `think`, `text`, `bash` (+ `output`, `ms`),
      `wait`, and `tool` (+ `input`), which calls that T3 MCP tool for real, e.g.
      `delegate_task`. Match generated titles with a `{ match: "title", repeat: true }` turn.
-     `<var:name>` is filled from the JSON file at `T3_DEV_REPLAY_VARS`, for ids that change
+     `<var:name>` is filled from the JSON file at `FAKE_CLAUDE_VARS`, for ids that change
      every run. `fake-claude.log` in the home records the protocol, for debugging.
-   - The free replay agent (`apps/server/scripts/dev-replay-agent.ts`) still works without
-     `claude`, but it shows as an ACP provider.
+   - Data a real flow can't produce cheaply goes into the app's own stores, never into pixels.
+     `insertPeerLinks` writes link rows into a stopped server; `serveDescriptors` makes fake
+     machines answer the reachability probe. The client's saved environments and routes live
+     in IndexedDB (`t3code:connection-runtime` / `catalog` / `document`): write the document
+     from the page after its first load, then reload. Route kinds come from hostnames
+     (`*.localhost` is LAN, `*.ts.net` Tailscale); Chrome's
+     `--host-resolver-rules=MAP *.tail-demo.ts.net 127.0.0.1` makes fake tailnet names work.
+   - Gestures: hold the mouse down, move in steps, and `saveBeat` mid-drag to freeze the
+     app's own drag line and highlight; animate between those beats with `Kit.reveal`.
+   - A capped, scrolling modal freezes at different scroll offsets per beat. Freeze at a
+     viewport tall enough that nothing scrolls, and size `.app` to match.
+   - Without `claude`, turns go to the dev replay agent (`apps/server/scripts/dev-replay-agent.ts`),
+     which shows as an ACP provider.
 4. **Create the story:** `scripts/new.sh ~/launch-videos/<slug>`, then copy the beats in, or
    pass that directory as the staging's `<out>`. Add one `<iframe data-beat>` per beat and
    write `setup()` and `placeCursor()` (see Anatomy).
@@ -130,10 +141,14 @@ seeks every animation (in the story and inside each beat) to each frame's time.
   1440×720 and `.app` scales them 1.0556× into the 1520×760 window, so beat point (x, y) is
   canvas (40 + 1.0556·x, 26 + 1.0556·y).
 - **Targets** are `"<beat> >> <css>"` (or `"* >> <css>"` for every beat). Prefer the app's
-  `data-*` and `aria-label` attributes; `find.mjs` prints them.
+  `data-*` and `aria-label` attributes; `find.mjs` prints them. A trailing `:text(words)`
+  keeps the matches containing those words, e.g. `[role=menuitem]:text(From MacBook)`.
+- **Beat size.** Each beat records the viewport it was frozen at (`kit-viewport` meta).
+  Size `.app` and its iframes to match and scale them to the 1520×760 window
+  (1440×720 → 1.0556, 1600×800 → .95).
 - **`setup()`**: `Kit.beats([[name, at, fade?], ...])` gives each beat one visibility window.
   Then the motion, all at absolute times:
-  `Kit.pop / rise / slide / stagger / type / press / punch / fadeIn` animate elements inside
+  `Kit.pop / rise / slide / stagger / type / press / punch / fadeIn / draw` animate elements inside
   a beat; `Kit.glow(target, at)` draws a ring on the story layer, so app overflow can't
   clip it; `Kit.anim` takes raw keyframes; `Kit.text` makes a static edit (say so at
   handback).
@@ -143,7 +158,8 @@ seeks every animation (in the story and inside each beat) to each frame's time.
   finished. Camera steps centre `on` at screen height `y` (default 420, clear of the captions)
   at scale `s`; repeat a step to hold. Cursor clicks draw a ripple.
 - **Captions** `.cap`: a numbered chip, a bold lead phrase and a muted rest. Short enough to
-  read in two seconds.
+  read in two seconds. Play them with `Kit.captions([[selector, from, to], ...])`, which
+  throws if two overlap; two captions crossfading read as garbled text.
 - **Pacing**: `Kit.timeline([[realSeconds, animFrom, animTo], ...])` maps video time to
   animation time; `animFrom == animTo` holds a frame. It also sets the video length.
 - **Outro** `.outro`: logo, a two-line headline, "Available now in **T3 Code** `<version>`",
