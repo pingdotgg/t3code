@@ -25,6 +25,7 @@ it.effect.each(["t3code", "T3 Code (Alpha)"])(
         appDataDirectory: directory,
         isDevelopment: false,
         platform: "win32",
+        stateDir: path.join(directory, "userdata"),
       });
       assert.equal(yield* fs.readFileString(path.join(destination, "Local State")), state);
       assert.equal(yield* fs.readFileString(path.join(source, "Local State")), state);
@@ -34,12 +35,33 @@ it.effect.each(["t3code", "T3 Code (Alpha)"])(
         appDataDirectory: directory,
         isDevelopment: false,
         platform: "win32",
+        stateDir: path.join(directory, "userdata"),
       });
       assert.equal(
         yield* fs.readFileString(path.join(destination, "Local State")),
         "existing V2 state",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("gives each development T3 home its own Electron profile", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dev-profile-" });
+    const resolveForHome = (stateDir: string) => {
+      const environment = {
+        appDataDirectory: path.join(directory, "appData"),
+        isDevelopment: true,
+        platform: "linux" as const,
+        stateDir,
+      };
+      return resolveUserDataPath(environment);
+    };
+    const worktreeA = yield* resolveForHome(path.join(directory, "worktree-a", ".t3", "userdata"));
+    const worktreeB = yield* resolveForHome(path.join(directory, "worktree-b", ".t3", "userdata"));
+    assert.notEqual(worktreeA, worktreeB);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 const gpuCacheDirectories = [
