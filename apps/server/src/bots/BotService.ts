@@ -489,8 +489,18 @@ const make = Effect.gen(function* () {
       return { botId: input.botId, deleted: false };
     }
     const deleted = yield* repo.deleteBot(input.botId);
-    if (deleted && input.removeHomeDirectory) {
-      yield* withHomeServices(removeBotHomeDirectory(existing.value.homePath));
+    if (deleted) {
+      const cmdUuid = yield* randomUuidV4;
+      yield* projectService
+        .delete({
+          commandId: decodeCommandId(`cmd-${cmdUuid}`),
+          projectId: existing.value.projectId,
+          force: true,
+        })
+        .pipe(Effect.ignore);
+      if (input.removeHomeDirectory) {
+        yield* withHomeServices(removeBotHomeDirectory(existing.value.homePath));
+      }
     }
     return { botId: input.botId, deleted };
   });
@@ -627,11 +637,7 @@ const make = Effect.gen(function* () {
     const fullPrompt = `${header}\nTitle: ${input.title}\n\n${input.prompt}`;
 
     const canReusePrimary =
-      input.usePrimaryChat &&
-      targetBot.chatThreadId !== null &&
-      (callerLimits === undefined ||
-        (runtimeModeRank(targetBot.runtimeMode) <= runtimeModeRank(callerLimits.runtimeMode) &&
-          callerLimits.interactionMode === "default"));
+      input.usePrimaryChat && targetBot.chatThreadId !== null && callerLimits === undefined;
 
     let threadId: ThreadId;
     if (canReusePrimary) {

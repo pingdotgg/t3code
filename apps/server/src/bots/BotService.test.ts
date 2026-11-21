@@ -50,6 +50,7 @@ function makeTestHarness() {
   const sentMessages: Array<SentMessageCall> = [];
   const createdProjects: Array<{ readonly projectId: ProjectId; readonly workspaceRoot: string }> =
     [];
+  const deletedProjects: Array<ProjectId> = [];
   const precheckResponses: Array<{ readonly stdout: string; readonly code: number }> = [];
   let threadCounter = 0;
 
@@ -60,6 +61,11 @@ function makeTestHarness() {
           projectId: input.projectId,
           workspaceRoot: input.workspaceRoot,
         });
+        return {} as never;
+      }),
+    delete: (input) =>
+      Effect.sync(() => {
+        deletedProjects.push(input.projectId);
         return {} as never;
       }),
   });
@@ -139,6 +145,7 @@ function makeTestHarness() {
     launched,
     sentMessages,
     createdProjects,
+    deletedProjects,
     precheckResponses,
   };
 }
@@ -348,14 +355,18 @@ describe("BotService", () => {
       const ordinary = afterResume.routines.find((r) => r.id === createdWhilePaused.id);
       expect(ordinary?.nextRunAt).not.toBeNull();
 
+      yield* bots.openChat({ botId: fullAccessBot.id });
+      const sentBefore = harness.sentMessages.length;
       yield* bots.handoff(
         {
           targetBotId: fullAccessBot.id,
           title: "Restricted handoff",
           prompt: "Inspect diff only.",
+          usePrimaryChat: true,
         },
         { runtimeMode: "approval-required", interactionMode: "plan" },
       );
+      expect(harness.sentMessages.length).toBe(sentBefore);
       expect(harness.launched.at(-1)?.runtimeMode).toBe("approval-required");
 
       const group = yield* bots.createGroup({
@@ -367,6 +378,10 @@ describe("BotService", () => {
         { runtimeMode: "auto-accept-edits", interactionMode: "default" },
       );
       expect(harness.launched.at(-1)?.runtimeMode).toBe("auto-accept-edits");
+
+      const deleted = yield* bots.delete({ botId: fullAccessBot.id });
+      expect(deleted.deleted).toBe(true);
+      expect(harness.deletedProjects).toContain(fullAccessBot.projectId);
     }).pipe(Effect.provide(harness.layer));
   });
 });

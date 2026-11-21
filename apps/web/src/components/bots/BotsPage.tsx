@@ -29,7 +29,7 @@ import {
   Trash2Icon,
   UsersIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
 
@@ -169,9 +169,11 @@ export function BotsPage() {
 
   const [files, setFiles] = useState<ReadonlyArray<BotFileEntry>>([]);
   const [selectedFilePath, setSelectedFilePath] = useState<string>("SOUL.md");
+  const [loadedFileKey, setLoadedFileKey] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState("");
   const [newFilePath, setNewFilePath] = useState("");
   const [savingFile, setSavingFile] = useState(false);
+  const fileReadRequestRef = useRef(0);
 
   const [routines, setRoutines] = useState<ReadonlyArray<BotRoutine>>([]);
   const [routineTitle, setRoutineTitle] = useState("");
@@ -233,18 +235,24 @@ export function BotsPage() {
 
   const loadBotDetails = async (envId: EnvironmentId, bot: Bot) => {
     applyBotSettings(bot);
+    const requestId = ++fileReadRequestRef.current;
+    setSelectedFilePath("SOUL.md");
+    setLoadedFileKey(null);
+    setFileContent("");
     const [filesExit, routinesExit, itemsExit, soulExit] = await Promise.all([
       listFiles({ environmentId: envId, input: { botId: bot.id } }),
       listRoutines({ environmentId: envId, input: { botId: bot.id } }),
       listItems({ environmentId: envId, input: { botId: bot.id } }),
       readFile({ environmentId: envId, input: { botId: bot.id, relativePath: "SOUL.md" } }),
     ]);
+    if (requestId !== fileReadRequestRef.current) return;
     if (filesExit._tag === "Success") setFiles(filesExit.value.files);
     if (routinesExit._tag === "Success") setRoutines(routinesExit.value.routines);
     if (itemsExit._tag === "Success") setItems(itemsExit.value.items);
     if (soulExit._tag === "Success") {
       setSelectedFilePath("SOUL.md");
       setFileContent(soulExit.value.content);
+      setLoadedFileKey(`${bot.id}:SOUL.md`);
     }
   };
 
@@ -308,6 +316,7 @@ export function BotsPage() {
           if (soulExit._tag === "Success") {
             setSelectedFilePath("SOUL.md");
             setFileContent(soulExit.value.content);
+            setLoadedFileKey(`${first.id}:SOUL.md`);
           }
         }
       }
@@ -434,10 +443,15 @@ export function BotsPage() {
 
   const handleSelectFile = async (bot: Bot, relativePath: string) => {
     if (!environmentId) return;
+    const requestId = ++fileReadRequestRef.current;
     setSelectedFilePath(relativePath);
+    setLoadedFileKey(null);
+    setFileContent("");
     const exit = await readFile({ environmentId, input: { botId: bot.id, relativePath } });
+    if (requestId !== fileReadRequestRef.current) return;
     if (exit._tag === "Success") {
       setFileContent(exit.value.content);
+      setLoadedFileKey(`${bot.id}:${relativePath}`);
     }
   };
 
@@ -463,9 +477,11 @@ export function BotsPage() {
       input: { botId: bot.id, relativePath: targetPath, content: "" },
     });
     if (exit._tag === "Success") {
+      fileReadRequestRef.current += 1;
       setNewFilePath("");
       setSelectedFilePath(exit.value.relativePath);
       setFileContent("");
+      setLoadedFileKey(`${bot.id}:${exit.value.relativePath}`);
       const filesExit = await listFiles({ environmentId, input: { botId: bot.id } });
       if (filesExit._tag === "Success") setFiles(filesExit.value.files);
     }
@@ -1356,7 +1372,11 @@ export function BotsPage() {
                       <span className="font-mono text-xs font-medium">{selectedFilePath}</span>
                       <Button
                         size="sm"
-                        disabled={savingFile || !canOperate}
+                        disabled={
+                          savingFile ||
+                          !canOperate ||
+                          loadedFileKey !== `${selectedBot.id}:${selectedFilePath}`
+                        }
                         onClick={() => void handleSaveFile(selectedBot)}
                       >
                         <SaveIcon className="size-3.5" />
