@@ -111,7 +111,10 @@ export function FastBolt(props: { ultra: boolean }) {
       strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="h-3 w-3.75 shrink-0"
+      // Inline size and the icon marker keep the composer control CSS from resizing or shifting it.
+      style={{ width: 15, height: 12 }}
+      className="shrink-0"
+      data-composer-control-icon
     >
       <mask id={maskId}>
         {/* oxlint-disable-next-line shadcn/no-raw-colors -- mask luminance, never painted */}
