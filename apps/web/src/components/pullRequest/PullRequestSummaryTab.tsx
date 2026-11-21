@@ -4,6 +4,7 @@ import { holdLinkedNodeInView } from "./holdLinkedNodeInView";
 import { useAtomValue } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   type EnvironmentId,
   type PullRequestComment,
@@ -74,6 +75,7 @@ import {
   pullRequestConversationItems,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
+  readableFailure,
   visibleBody,
   type PullRequestChatSubject,
   type PullRequestConversationItem,
@@ -103,6 +105,8 @@ import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
+
+const SAVE_FAILURE_HINT = msg("The host refused the change. Refresh and try again.");
 
 function reviewerKey(login: string): string {
   return login.toLowerCase();
@@ -605,6 +609,7 @@ export function PullRequestSummaryTab({
   const [bodyScope, setBodyScope] = useState<{
     readonly url: string;
     readonly body: string;
+    readonly expectedBody: string;
   } | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState<DescriptionDraft | null>(null);
   const descriptionDraftKept = descriptionDraftInForce(
@@ -681,12 +686,23 @@ export function PullRequestSummaryTab({
     const key = detail.url;
     setDescriptionDraft((draft) => startDescriptionSave(draft, detail, body));
     descriptionSavesRunning.current += 1;
-    const result = await update({ environmentId, input: { ...reference, body } });
+    const result = await update({
+      environmentId,
+      input: {
+        ...reference,
+        body,
+        expectedBody: bodyScope?.url === detail.url ? bodyScope.expectedBody : description,
+      },
+    });
     descriptionSavesRunning.current -= 1;
     const saved = result._tag === "Success";
     setDescriptionDraft((draft) => settleDescriptionSave(draft, key, saved));
-    if (!saved) {
-      toastManager.add({ type: "error", title: m(msg("Could not save the description")) });
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: m(msg("Could not save the description")),
+        description: readableFailure(squashAtomCommandFailure(result), m(SAVE_FAILURE_HINT)),
+      });
     }
     if (descriptionSavesRunning.current === 0) onRefresh();
     return saved;
@@ -720,7 +736,11 @@ export function PullRequestSummaryTab({
       });
       setCommentSaving(false);
       if (result._tag === "Failure") {
-        toastManager.add({ type: "error", title: m(msg("Could not save the comment")) });
+        toastManager.add({
+          type: "error",
+          title: m(msg("Could not save the comment")),
+          description: readableFailure(squashAtomCommandFailure(result), m(SAVE_FAILURE_HINT)),
+        });
         return;
       }
       setCommentScope(null);
@@ -1027,7 +1047,9 @@ export function PullRequestSummaryTab({
               {canEditDescription ? (
                 <PullRequestEditButton
                   aria-label={gt("Edit description")}
-                  onClick={() => setBodyScope({ url: detail.url, body: description })}
+                  onClick={() =>
+                    setBodyScope({ url: detail.url, body: description, expectedBody: description })
+                  }
                 />
               ) : null}
             </div>

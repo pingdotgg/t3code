@@ -1044,8 +1044,9 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const [diffHead, setDiffHead] = useState({ scopeKey, sha: detail.data?.headSha ?? null });
   if (diffHead.scopeKey !== scopeKey || (!diffHead.sha && detail.data?.headSha))
     setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
+  const shownHeadSha = result.headSha ?? diffHead.sha;
   const staleDiff = Boolean(
-    !commit && diffHead.sha && detail.data?.headSha && diffHead.sha !== detail.data.headSha,
+    !commit && shownHeadSha && detail.data?.headSha && shownHeadSha !== detail.data.headSha,
   );
   const canCommentOnDiff =
     permissions.canInlineComment &&
@@ -1064,7 +1065,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
         { ...baseData, files: highlightFiles },
         staleDiff || commit ? [] : (activity.data?.reviewThreads ?? []),
         commit ? [] : reviewDraft.draft.comments,
-        diffHead.sha ?? undefined,
+        shownHeadSha ?? undefined,
         messages,
       ),
     [
@@ -1074,7 +1075,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       commit,
       activity.data?.reviewThreads,
       reviewDraft.draft.comments,
-      diffHead.sha,
+      shownHeadSha,
       messages,
     ],
   );
@@ -1087,7 +1088,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const commentOnLine = (rowId = selectedRowId) => {
     const row = data.rows.find((row) => row.id === rowId);
     const file = data.files.find((file) => file.id === row?.fileId);
-    if (!row || !file || !diffHead.sha || !canCommentOnDiff) return;
+    if (!row || !file || !shownHeadSha || !canCommentOnDiff) return;
     const position = reviewPosition(row);
     if (!position) return;
     const oldPath =
@@ -1101,7 +1102,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       path: file.path,
       ...(oldPath ? { oldPath } : {}),
       position,
-      headSha: diffHead.sha,
+      headSha: shownHeadSha,
       code: row.content ?? "",
     });
   };

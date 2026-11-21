@@ -51,7 +51,10 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
       : params.field === "title"
         ? (pr?.title ?? null)
         : (pr?.body ?? null);
-  const [draft, setDraft] = useState<string | null>(null);
+  const [edit, setEdit] = useState<{ body: string; original: string | null } | null>(null);
+  const draft = edit?.body ?? null;
+  const setDraft = (body: string) =>
+    setEdit((current) => ({ body, original: current?.original ?? original }));
   const value = draft ?? original ?? "";
   const completions = usePullRequestCompletions({
     environmentId: params.environmentId,
@@ -109,7 +112,14 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
             ...target,
             input: {
               ...target.input,
-              ...(params.field === "title" ? { title: value.trim() } : { body: value }),
+              ...(params.field === "title"
+                ? { title: value.trim() }
+                : {
+                    body: value,
+                    ...(edit?.original === null || edit?.original === undefined
+                      ? {}
+                      : { expectedBody: edit.original }),
+                  }),
             },
           });
     inFlight.current = false;

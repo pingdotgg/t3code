@@ -132,9 +132,7 @@ export function PullRequestReviewSheet({
                 ...target.input,
                 verdict: verdict.value,
                 body,
-                comments: submitted.comments.map(
-                  ({ id: _id, headSha: _sha, code: _code, ...comment }) => comment,
-                ),
+                comments: submitted.comments.map(({ id: _id, code: _code, ...comment }) => comment),
               },
             })
           : await comment({ ...target, input: { ...target.input, body } });

@@ -214,6 +214,7 @@ export function usePullRequestDiff(
   };
   return {
     ...query,
+    headSha: pages[0]?.result.headSha,
     refresh,
     parsed,
     loadWithheldFile,
