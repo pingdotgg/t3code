@@ -3731,7 +3731,7 @@
   "b725843fd45b74aa": "Credenciais",
   "b239ba3ce2899a3e": "Ou use suas próprias credenciais",
   "f0e6397ab4de588e": "Token",
-  "295392927d5c8a84": "Escolha um ou mais {scope}s do {tracker} para cada projeto. As issues deles aparecem ao lado das do repositório, e os agentes criam novas issues no primeiro.",
+  "ed83b25c71c98a20": "Escolha um ou mais {scope}s do {tracker} para cada projeto. As issues deles aparecem ao lado das do repositório, e os agentes criam novas issues no primeiro, a menos que outro seja pedido.",
   "ce2136b36f87b655": "Conecte este ambiente para alterar as configurações dele.",
   "a90a441fd0e08de7": "Este ambiente",
   "32fb83554cfd85b4": "Modelos de transcrição",
