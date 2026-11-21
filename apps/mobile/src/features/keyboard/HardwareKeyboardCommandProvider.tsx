@@ -53,7 +53,8 @@ export function HardwareKeyboardCommandOverlay() {
 export function HardwareKeyboardCommandProvider({
   children,
   pathname,
-}: PropsWithChildren<{ readonly pathname: string }>) {
+  routeName,
+}: PropsWithChildren<{ readonly pathname: string; readonly routeName: string | undefined }>) {
   const navigation = useNavigation();
   const messages = useMessages();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -178,17 +179,17 @@ export function HardwareKeyboardCommandProvider({
 
       const thread = parseActiveThreadPath(pathname);
       if (!thread) return;
-      if (command === "files" && !/\/files(?:\/|$)/.test(pathname)) {
+      if (command === "files" && routeName !== "ThreadFiles" && routeName !== "ThreadFile") {
         navigation.navigate("ThreadFiles", thread);
       }
-      if (command === "terminal" && !/\/terminal(?:\/|$)/.test(pathname)) {
+      if (command === "terminal" && routeName !== "ThreadTerminal") {
         navigation.navigate("ThreadTerminal", thread);
       }
-      if (command === "review" && !/\/review(?:\/|$)/.test(pathname)) {
+      if (command === "review" && routeName !== "ThreadReview") {
         navigation.navigate("ThreadReview", thread);
       }
     },
-    [copyTarget, navigation, pathname, showCopyFeedback],
+    [copyTarget, navigation, pathname, routeName, showCopyFeedback],
   );
 
   const palette = useMemo(

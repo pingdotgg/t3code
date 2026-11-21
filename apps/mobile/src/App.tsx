@@ -15,7 +15,6 @@ import {
   createPathConfigForStaticNavigation,
   createStaticNavigation,
   getActionFromState,
-  getStateFromPath,
   type NavigationAction,
   type NavigationState,
 } from "@react-navigation/native";
@@ -49,6 +48,7 @@ import {
   useAppearancePreferences,
 } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack, rootPathnameFromState, workspaceLocationFromState } from "./Stack";
+import { getStackStateFromPath } from "./stackLinking";
 import { I18nProvider } from "./i18n/I18nProvider";
 import { DEFAULT_LOCALE } from "./i18n/locales";
 import { appAtomRegistry } from "./state/atom-registry";
@@ -124,9 +124,9 @@ const linkingConfig = {
   screens: createPathConfigForStaticNavigation(RootStack, { initialRouteName: "Home" }) ?? {},
 } as const;
 
-function getAppStateFromPath(path: string, options: Parameters<typeof getStateFromPath>[1]) {
+function getAppStateFromPath(path: string, options: Parameters<typeof getStackStateFromPath>[1]) {
   return pipe(
-    getStateFromPath(path, options),
+    getStackStateFromPath(path, options),
     (state) => restoreDraftLinkState(state, path),
     (state) => restoreSettingsLinkState(state, settingsLinkPage()),
     takeThreadPromptLink,

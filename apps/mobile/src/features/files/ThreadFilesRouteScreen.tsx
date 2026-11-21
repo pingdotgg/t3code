@@ -374,7 +374,7 @@ type ThreadFilesRouteScreenProps = StaticScreenProps<{
 type ThreadFileRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId?: string;
-  readonly path: string[];
+  readonly path: string | string[];
   readonly line?: string;
   readonly cwd?: string;
   readonly projectName?: string;

@@ -27,6 +27,14 @@ describe("showcaseSceneOnScreen", () => {
     expect(showcaseSceneOnScreen("agent-activity", "/threads/env/thread")).toBe("thread");
     expect(showcaseSceneOnScreen(null, "/threads/env/thread/review?x=1")).toBe("review");
   });
+
+  it.each(["terminal", "review"] as const)(
+    "recognizes the %s scene by its thread route",
+    (scene) => {
+      expect(showcaseSceneOnScreen(scene, `/threads/env/thread/${scene}?x=1`)).toBe(scene);
+      expect(showcaseSceneOnScreen(scene, `/threads/env/thread/files/${scene}?x=1`)).toBe("thread");
+    },
+  );
 });
 
 describe("isShowcaseThemeApplied", () => {
