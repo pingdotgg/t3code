@@ -92,6 +92,7 @@ function Surface({
   draft,
   offline,
   onDelete,
+  onClose,
   actions,
 }: {
   readonly environmentId: EnvironmentId;
@@ -105,8 +106,10 @@ function Surface({
   readonly draft?: string;
   /** The environment is away: the draft stays, and nothing is sent until it is back. */
   readonly offline: boolean;
-  /** Take the file away. Absent where that cannot be done. */
-  readonly onDelete?: (() => void) | undefined;
+  /** Take the file away, saying whether it went. Absent where that cannot be done. */
+  readonly onDelete?: (() => Promise<boolean>) | undefined;
+  /** Leave the file for the list. */
+  readonly onClose: () => void;
   /** Where in the page's header the file's status and its actions go. */
   readonly actions: HTMLElement | null;
 }) {
@@ -136,6 +139,10 @@ function Surface({
   const [savingText, setSavingText] = useState<string | null>(null);
   const saving = savingText !== null;
   const [savedOnce, setSavedOnce] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // Set once the file is deleted, so leaving it does not ask about a draft of a file that is gone.
+  const released = useRef(false);
+  const [seenRevision, setSeenRevision] = useState(revision);
   const editorRef = useRef<DefinitionEditor | null>(null);
   const dirty = edited !== null && edited !== baseline;
   const adopt = () => {
@@ -152,10 +159,15 @@ function Surface({
     if (change === "stale") setStaleAt({ source });
     else if (change === "follow") adopt();
   }
+  // Why a saved file did not run is old news once the server loads it cleanly.
+  if (revision !== seenRevision) {
+    setSeenRevision(revision);
+    if (written && onDisk.length === 0) setProblems([]);
+  }
   const { ready: editable, onPostRender } = useEditableAfterHighlight(shown);
 
   const saveNow = async () => {
-    if (!dirty || saving || offline || !canSave || edited === null) return;
+    if (!dirty || saving || deleting || offline || !canSave || edited === null) return;
     // Saving over a change on disk that was already shown is a choice. One that lands while this
     // save is out is not, and stays shown.
     const overwrote = staleAt;
@@ -180,17 +192,28 @@ function Surface({
     event.preventDefault();
     void saveNow();
   };
+  const deleteNow = async () => {
+    if (onDelete === undefined || deleting || saving) return;
+    // Busy from the dialog on, so a save cannot slip in while it asks.
+    setDeleting(true);
+    const gone = await onDelete();
+    setDeleting(false);
+    if (!gone) return;
+    released.current = true;
+    onClose();
+  };
   // Leaving with an unsaved draft, by a link in the app or by closing the tab, asks first.
   useBlocker({
     shouldBlockFn: async () =>
       dirty &&
+      !released.current &&
       !(await (requestConfirmDialog(
         gt("Leave without saving? Your changes to this file are lost."),
         {
           variant: "destructive",
         },
       ) ?? Promise.resolve(false))),
-    enableBeforeUnload: () => dirty,
+    enableBeforeUnload: () => dirty && !released.current,
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the editor draws markers itself and takes them only through its own method
@@ -227,14 +250,19 @@ function Surface({
                 {canSave || offline ? status : gt("Read-only")}
               </span>
               {canSave && onDelete !== undefined ? (
-                <Button size="sm" variant="ghost" disabled={saving || offline} onClick={onDelete}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={saving || deleting || offline}
+                  onClick={() => void deleteNow()}
+                >
                   <T context="verb, delete the workflow file">Delete</T>
                 </Button>
               ) : null}
               {canSave ? (
                 <Button
                   size="sm"
-                  disabled={!dirty || saving || offline}
+                  disabled={!dirty || saving || deleting || offline}
                   onClick={() => void saveNow()}
                 >
                   <T context="verb, save the workflow file">Save</T>
@@ -339,9 +367,12 @@ export default function WorkflowDefinitionEditor({
   });
   const gt = useGT();
   const [naming, setNaming] = useState<string | null>(null);
-  const [refusal, setRefusal] = useState<ReadonlyArray<WorkflowDefinitionProblem>>([]);
-  // The last delete took the file away, though what runs may not have followed yet.
-  const [deleted, setDeleted] = useState(false);
+  // What the last delete said, on the page it belongs to: the file, or the list once it is gone.
+  const [refusal, setRefusal] = useState<{
+    readonly at: string | null;
+    readonly problems: ReadonlyArray<WorkflowDefinitionProblem>;
+    readonly deleted: boolean;
+  } | null>(null);
   // Data already read stays on screen through a failed refresh or a dropped connection.
   if (!query.data) {
     if (away !== null) {
@@ -366,30 +397,42 @@ export default function WorkflowDefinitionEditor({
     );
   }
   const { directory, single, files, problems, revision } = query.data;
+  const open = (next: string | null) => {
+    setRefusal(null);
+    onOpen(next);
+  };
   const begin = () => {
     const wanted = (naming ?? "").trim();
     if (wanted === "") return;
     setNaming(null);
-    onOpen(/\.(ts|mts|js|mjs)$/.test(wanted) ? wanted : `${wanted}.ts`);
+    open(/\.(ts|mts|js|mjs)$/.test(wanted) ? wanted : `${wanted}.ts`);
   };
   const removeFile = async (target: string) => {
     const confirmed = await (requestConfirmDialog(
       gt("Delete {file}? The workflows it defines can no longer be started.", { file: target }),
       { variant: "destructive" },
     ) ?? Promise.resolve(false));
-    if (!confirmed) return;
+    if (!confirmed) return false;
     const result = await remove({ environmentId, input: { name: target } });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        setRefusal([{ message: String(squashAtomCommandFailure(result)) }]);
-        setDeleted(false);
+        setRefusal({
+          at: target,
+          problems: [{ message: String(squashAtomCommandFailure(result)) }],
+          deleted: false,
+        });
       }
-      return;
+      return false;
     }
-    setRefusal(result.value.problems);
-    setDeleted(result.value.changed);
-    if (result.value.changed) onOpen(null);
+    const { changed } = result.value;
+    setRefusal(
+      result.value.problems.length === 0
+        ? null
+        : { at: changed ? null : target, problems: result.value.problems, deleted: changed },
+    );
+    return changed;
   };
+  const refused = refusal !== null && refusal.at === file ? refusal : null;
   const between = (
     <>
       {away === null ? null : (
@@ -405,16 +448,16 @@ export default function WorkflowDefinitionEditor({
           problems={[{ message: query.error }]}
         />
       )}
-      {problems.length + refusal.length === 0 ? null : (
+      {problems.length === 0 && refused === null ? null : (
         <ProblemList
           title={
-            refusal.length > 0
-              ? deleted
+            refused !== null
+              ? refused.deleted
                 ? gt("Deleted, but what runs has not caught up yet.")
                 : gt("Not deleted. Nothing changed on the server.")
               : gt("These files do not fit together. What ran before keeps running.")
           }
-          problems={refusal.length > 0 ? refusal : problems}
+          problems={refused !== null ? refused.problems : problems}
         />
       )}
     </>
@@ -436,7 +479,8 @@ export default function WorkflowDefinitionEditor({
             onDisk={shown?.problems ?? []}
             {...(shown === null ? { draft: NEW_FILE } : {})}
             offline={away !== null}
-            onDelete={single || shown === null ? undefined : () => void removeFile(file)}
+            onDelete={single || shown === null ? undefined : () => removeFile(file)}
+            onClose={() => onOpen(null)}
             actions={actions}
           />
         </DiffWorkerPoolProvider>
@@ -503,7 +547,7 @@ export default function WorkflowDefinitionEditor({
                   <button
                     type="button"
                     className="flex w-full items-center gap-3 px-3 py-2.5 text-start hover:bg-accent/50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    onClick={() => onOpen(candidate.name)}
+                    onClick={() => open(candidate.name)}
                   >
                     <FileCode2Icon className="size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1">
