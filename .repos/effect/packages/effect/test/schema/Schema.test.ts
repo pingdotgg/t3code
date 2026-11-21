@@ -20,6 +20,7 @@ import {
   Order,
   pipe,
   Predicate,
+  Rational,
   Redacted,
   Result,
   Schema,
@@ -46,6 +47,7 @@ import {
   assertTrue,
   throws
 } from "../utils/assert.ts"
+import { withIgnoredProperties } from "../utils/structFields.ts"
 
 const verifyGeneration = true
 
@@ -654,6 +656,15 @@ Missing key
   })
 
   describe("Struct", () => {
+    it("discovers only enumerable own string and symbol field definitions", () => {
+      const key = Symbol("key")
+      const schema = Schema.Struct(withIgnoredProperties({ a: Schema.Number, [key]: Schema.String }))
+      const input = { a: 1, [key]: "value" }
+
+      assert.deepStrictEqual(Schema.decodeUnknownSync(schema)(input), input)
+      assert.deepStrictEqual(Schema.encodeSync(schema)(input), input)
+    })
+
     it("allows duplicate property signatures in the low-level AST constructor", () => {
       const ast = new SchemaAST.Objects(
         [
@@ -1981,6 +1992,33 @@ Expected a value between -2147483648 and 2147483647`
     })
 
     describe("Record checks", () => {
+      it("property counts include only enumerable own string and symbol keys", () => {
+        const key = Symbol("key")
+        const input = withIgnoredProperties({ a: 1, [key]: 2 })
+
+        assert.isTrue(Schema.is(Schema.ObjectKeyword.check(Schema.isMinProperties(2)))(input))
+        assert.isFalse(Schema.is(Schema.ObjectKeyword.check(Schema.isMinProperties(3)))(input))
+        assert.isTrue(Schema.is(Schema.ObjectKeyword.check(Schema.isMaxProperties(2)))(input))
+        assert.isFalse(Schema.is(Schema.ObjectKeyword.check(Schema.isMaxProperties(1)))(input))
+        assert.isTrue(Schema.is(Schema.ObjectKeyword.check(Schema.isBetweenProperties(2, 2)))(input))
+        assert.isFalse(Schema.is(Schema.ObjectKeyword.check(Schema.isBetweenProperties(3, 4)))(input))
+        assert.isTrue(
+          Schema.is(Schema.ObjectKeyword.check(Schema.isBetweenProperties(0, 0)))(withIgnoredProperties({}))
+        )
+      })
+
+      it("isPropertyNames validates only enumerable own string and symbol keys", () => {
+        const key = Symbol("key")
+        const schema = Schema.ObjectKeyword.check(
+          Schema.isPropertyNames(Schema.Union([Schema.Literal("a"), Schema.UniqueSymbol(key)]))
+        )
+
+        assert.isTrue(Schema.is(schema)(withIgnoredProperties({ a: 1, [key]: 2 })))
+        assert.isTrue(Schema.is(schema)(withIgnoredProperties({})))
+        assert.isFalse(Schema.is(schema)({ b: 1 }))
+        assert.isFalse(Schema.is(schema)({ [Symbol("other")]: 1 }))
+      })
+
       it("isMinProperties", async () => {
         const schema = Schema.Record(Schema.String, Schema.Finite).check(Schema.isMinProperties(1))
         const asserts = new TestSchema.Asserts(schema)
@@ -2135,6 +2173,18 @@ Expected a value between -2147483648 and 2147483647`
   })
 
   describe("Transformations", () => {
+    it("number string schemas preserve signed zeros", () => {
+      for (const schema of [Schema.NumberFromString, Schema.FiniteFromString]) {
+        const encode = Schema.encodeSync(schema)
+        const decode = Schema.decodeSync(schema)
+        for (const [value, text] of [[0, "0"], [-0, "-0"]] as const) {
+          const encoded = encode(value)
+          assert.strictEqual(encoded, text)
+          assert.isTrue(Object.is(decode(encoded), value))
+        }
+      }
+    })
+
     it("NumberFromString", async () => {
       const schema = Schema.NumberFromString
       const asserts = new TestSchema.Asserts(schema)
@@ -2280,6 +2330,23 @@ Expected a value between -2147483648 and 2147483647`
         "a",
         `Expected BigDecimal`
       )
+    })
+
+    it("RationalFromString", async () => {
+      const asserts = new TestSchema.Asserts(Schema.RationalFromString)
+      if (verifyGeneration) asserts.arbitrary().verifyGeneration()
+
+      const decoding = asserts.decoding()
+      await decoding.succeed("6/5", Rational.makeUnsafe(6n, 5n))
+      await decoding.succeed("-4/-6", Rational.makeUnsafe(2n, 3n))
+      await decoding.succeed("3", Rational.fromBigInt(3n))
+      await decoding.fail("1/0", "Expected a valid Rational string")
+      await decoding.fail("1.5", "Expected a valid Rational string")
+
+      const encoding = asserts.encoding()
+      await encoding.succeed(Rational.makeUnsafe(6n, 5n), "6/5")
+      await encoding.succeed(Rational.fromBigInt(0n), "0/1")
+      await encoding.fail("6/5", "Expected Rational")
     })
 
     it("TimeZoneNamedFromString", async () => {
@@ -5369,12 +5436,32 @@ Expected a value between -2147483648 and 2147483647`
     await encoding.succeed(encoder.encode("foobar"), "Zm9vYmFy")
   })
 
+  for (
+    const [name, schema] of [
+      ["StringFromBase64", Schema.StringFromBase64],
+      ["StringFromBase64Url", Schema.StringFromBase64Url],
+      ["StringFromHex", Schema.StringFromHex],
+      ["StringFromUriComponent", Schema.StringFromUriComponent]
+    ] as const
+  ) {
+    it(`${name} preserves well-formed strings and rejects unpaired surrogates`, async () => {
+      const asserts = new TestSchema.Asserts(schema)
+      for (const input of ["a\uD800b", "a\uDC00b"]) {
+        await asserts.encoding().fail(input, "Expected a well-formed Unicode string")
+        assert.isTrue(Schema.is(schema)(input))
+      }
+      const text = "😀\uFFFD"
+      assert.strictEqual(Schema.decodeSync(schema)(Schema.encodeSync(schema)(text)), text)
+    })
+  }
+
   it("StringFromBase64", async () => {
     const schema = Schema.StringFromBase64
     const asserts = new TestSchema.Asserts(schema)
 
     const decoding = asserts.decoding()
     await decoding.succeed("Zm9vYmFy", "foobar")
+    await decoding.succeed("77u/cmVwb3J0", "\uFEFFreport")
     await decoding.fail("Zm9vY", "Expected a valid Base64 string")
     await decoding.fail("Zm9vYmF-", "Expected a valid Base64 string")
     await decoding.fail("=Zm9vYmF", "Expected a valid Base64 string")
@@ -5389,6 +5476,7 @@ Expected a value between -2147483648 and 2147483647`
 
     const decoding = asserts.decoding()
     await decoding.succeed("Zm9vYmFy", "foobar")
+    await decoding.succeed("77u_cmVwb3J0", "\uFEFFreport")
     await decoding.fail("Zm9vY", "Expected a valid Base64Url string")
     await decoding.succeed("Pj8-ZD_Dnw", ">?>d?\u00DF")
     await decoding.fail("Pj8/ZD+Dnw", "Expected a valid Base64Url string")
@@ -5404,6 +5492,7 @@ Expected a value between -2147483648 and 2147483647`
 
     const decoding = asserts.decoding()
     await decoding.succeed("67", "g")
+    await decoding.succeed("efbbbf7265706f7274", "\uFEFFreport")
     await decoding.fail("0", "Expected a valid hexadecimal string")
     await decoding.fail("zd4aa", "Expected a valid hexadecimal string")
     await decoding.fail("0\x01", "Expected a valid hexadecimal string")
@@ -5422,6 +5511,7 @@ Expected a value between -2147483648 and 2147483647`
     await decoding.succeed("hello%20world", "hello world")
     await decoding.succeed("hello", "hello")
     await decoding.fail("%ZZ", "Expected a valid URI component")
+    await decoding.succeed("\uD800", "\uD800")
 
     const encoding = asserts.encoding()
     await encoding.succeed("{\"a\":1}", "%7B%22a%22%3A1%7D")
@@ -6006,6 +6096,18 @@ Expected a value between -2147483648 and 2147483647`
     await encoding.succeed(BigDecimal.fromStringUnsafe("123.45"))
   })
 
+  it("Rational", async () => {
+    const asserts = new TestSchema.Asserts(Schema.Rational)
+    if (verifyGeneration) asserts.arbitrary().verifyGeneration()
+
+    await asserts.decoding().succeed(Rational.makeUnsafe(1n, 3n))
+    await asserts.decoding().fail(BigDecimal.fromBigInt(1n), "Expected Rational")
+
+    const json = new TestSchema.Asserts(Schema.toCodecJson(Schema.Rational))
+    await json.decoding().succeed("1/3", Rational.makeUnsafe(1n, 3n))
+    await json.encoding().succeed(Rational.makeUnsafe(1n, 3n), "1/3")
+  })
+
   describe("BigDecimal checks", () => {
     it("isGreaterThanBigDecimal", async () => {
       const schema = Schema.BigDecimal.check(Schema.isGreaterThanBigDecimal(BigDecimal.fromStringUnsafe("1")))
@@ -6443,12 +6545,16 @@ Expected a value between -2147483648 and 2147483647`
       await decoding.succeed("a")
     })
 
-    it("rejects checks on Literal, TemplateLiteral, and Union parts", () => {
+    it("rejects checks on Literal, Enum, TemplateLiteral, and Union parts", () => {
       const check = Schema.makeFilter(() => true)
 
       throws(
         () => Schema.TemplateLiteral([Schema.Literal("a").check(check)]),
         "Invalid TemplateLiteral part Literal"
+      )
+      throws(
+        () => Schema.TemplateLiteral([Schema.Enum({ A: "a" }).check(check)]),
+        "Invalid TemplateLiteral part Enum"
       )
       throws(
         () => Schema.TemplateLiteral([Schema.TemplateLiteral(["a"]).check(check)]),
@@ -6499,6 +6605,19 @@ Expected a value between -2147483648 and 2147483647`
 
       await decoding.fail(
         "a",
+        `Expected a string matching template literal parts`
+      )
+    })
+
+    it(`Enum + "_" + string`, async () => {
+      const schema = Schema.TemplateLiteral([Schema.Enum({ Task: "task", One: 1 }), "_", Schema.String])
+      const asserts = new TestSchema.Asserts(schema)
+
+      const decoding = asserts.decoding()
+      await decoding.succeed("task_build")
+      await decoding.succeed("1_build")
+      await decoding.fail(
+        "needs_build",
         `Expected a string matching template literal parts`
       )
     })
@@ -6923,6 +7042,18 @@ Expected a value between -2147483648 and 2147483647`
 
       const decoding = asserts.decoding()
       await decoding.succeed("h1", ["h", 1])
+    })
+
+    it(`"h" + Enum`, async () => {
+      const schema = Schema.TemplateLiteralParser(["h", Schema.Enum({ Task: "task", One: 1 })])
+      const asserts = new TestSchema.Asserts(schema)
+
+      const decoding = asserts.decoding()
+      await decoding.succeed("htask", ["h", "task"])
+      await decoding.succeed("h1", ["h", 1])
+
+      const encoding = asserts.encoding()
+      await encoding.succeed(["h", 1], "h1")
     })
 
     it(`"c" + (\`a\${string}b\`|"e") + "d"`, async () => {
@@ -9023,6 +9154,15 @@ Expected a value between -2147483648 and 2147483647`
   })
 
   describe("Struct.mapFields", () => {
+    it("discovers only enumerable own string and symbol field definitions", () => {
+      const key = Symbol("key")
+      const schema = Schema.Struct({ a: Schema.Number }).mapFields((fields) =>
+        withIgnoredProperties({ ...fields, [key]: Schema.String })
+      )
+
+      assert.deepStrictEqual(Schema.decodeUnknownSync(schema)({ a: 1, [key]: "value" }), { a: 1, [key]: "value" })
+    })
+
     it("evolve", () => {
       const schema = Schema.Struct({
         a: Schema.String,
@@ -9369,14 +9509,15 @@ Expected a value between -2147483648 and 2147483647`
       await encoding.succeed(new A({ a: 1, b: "b" }), { c: "1", b: "b" })
     })
 
-    it("supports symbol source keys", () => {
+    it("renames only enumerable own string and symbol field definitions", () => {
       const field = Symbol("field")
-      const schema = Schema.Struct({
+      const schema = Schema.Struct(withIgnoredProperties({
+        a: Schema.Number,
         [field]: Schema.String
-      }).pipe(Schema.encodeKeys({ [field]: "field" }))
+      })).pipe(Schema.encodeKeys({ a: "renamed", [field]: "field" }))
 
-      deepStrictEqual(Schema.decodeUnknownSync(schema)({ field: "a" }), { [field]: "a" })
-      deepStrictEqual(Schema.encodeSync(schema)({ [field]: "a" }), { field: "a" })
+      assert.deepStrictEqual(Schema.decodeUnknownSync(schema)({ renamed: 1, field: "a" }), { a: 1, [field]: "a" })
+      assert.deepStrictEqual(Schema.encodeSync(schema)({ a: 1, [field]: "a" }), { renamed: 1, field: "a" })
     })
 
     it("supports symbol destination keys", () => {
@@ -9613,6 +9754,22 @@ pointed message
   })
 
   describe("extendTo", () => {
+    it("preserves existing symbols and derives only enumerable own fields", () => {
+      const existing = Symbol("existing")
+      const added = Symbol("added")
+      const schema = Schema.Struct(withIgnoredProperties({ a: Schema.Number, [existing]: Schema.String })).pipe(
+        Schema.extendTo(withIgnoredProperties({ b: Schema.Number, [added]: Schema.String }), {
+          b: (input) => Option.some(input.a + 1),
+          [added]: (input) => Option.some(input[existing] + "!")
+        })
+      )
+
+      const encoded = { a: 1, [existing]: "value" }
+      const decoded = { a: 1, b: 2, [existing]: "value", [added]: "value!" }
+      assert.deepStrictEqual(Schema.decodeUnknownSync(schema)(encoded), decoded)
+      assert.deepStrictEqual(Schema.encodeSync(schema)(decoded), encoded)
+    })
+
     it("Struct", async () => {
       const schema = Schema.Struct({
         a: Schema.String,

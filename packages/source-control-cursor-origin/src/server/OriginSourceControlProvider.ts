@@ -193,10 +193,11 @@ export const make = Effect.gen(function* () {
         effect.pipe(mapError("getChangeRequest", input.cwd, { reference: input.reference })),
     ),
 
+    createsDraftChangeRequests: true,
     createChangeRequest: Effect.fn("OriginSourceControlProvider.createChangeRequest")(
       function* (input) {
         const repository = input.target?.repository ?? (yield* cli.resolveRepository(input));
-        // Origin creates drafts unless told otherwise; T3 asks for draft explicitly elsewhere.
+        // Origin creates drafts unless told otherwise, so `draft` is always sent.
         yield* cli.api(
           {
             cwd: input.cwd,
@@ -208,7 +209,7 @@ export const make = Effect.gen(function* () {
               body: yield* fs.readFileString(input.bodyFile),
               head: SourceControlProvider.sourceBranch(input),
               base: input.target?.refName ?? input.baseRefName,
-              draft: false,
+              draft: input.draft === true,
             },
           },
           Schema.Unknown,
