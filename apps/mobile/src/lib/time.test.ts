@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
-import { byTimestamp, compareTimestamps, msUntilRelativeTimeChange, relativeTime } from "./time";
+import {
+  byTimestamp,
+  compareTimestamps,
+  formatWorkingDuration,
+  msUntilRelativeTimeChange,
+  relativeTime,
+} from "./time";
 
 const at = "2026-10-19T12:00:00.000Z";
 const timestamp = Date.parse(at);
+
+it.each([
+  [400, "0s"],
+  [59_900, "59s"],
+  [65_900, "1m 05s"],
+  [3_725_900, "1h 2m 5s"],
+])("formats %i ms of work as %s", (elapsedMs, label) => {
+  expect(formatWorkingDuration(elapsedMs)).toBe(label);
+});
 
 describe("timestamp order", () => {
   it("orders host timestamps by instant across offsets and fractional seconds, missing ones first", () => {

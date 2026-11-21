@@ -1,3 +1,4 @@
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../i18n/messages";
@@ -59,4 +60,13 @@ export function msUntilRelativeTimeChange(
   const nextChangeMs = timestamp + (Math.floor(elapsedMs / unitMs) + 1) * unitMs;
   // Far-future timestamps must not overflow setTimeout's signed 32-bit delay.
   return Math.min(nextChangeMs - nowMs, 86_400_000);
+}
+
+export function formatWorkingDuration(elapsedMs: number, resolve: MessageResolver = m): string {
+  const totalSeconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1_000)) : 0;
+  if (totalSeconds < 60) return resolve(msg("{seconds}s", { seconds: totalSeconds }));
+  if (totalSeconds >= 3_600) return formatDuration(totalSeconds * 1_000, resolve);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return resolve(msg("{minutes}m {seconds}s", { minutes, seconds }));
 }
