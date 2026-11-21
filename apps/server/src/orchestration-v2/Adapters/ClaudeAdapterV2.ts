@@ -977,6 +977,10 @@ async function sendClaudeControlRequest(
   return Predicate.isObject(reply) ? reply.response : undefined;
 }
 
+// Older CLIs omit `source`; plugin servers are always named `plugin:<plugin>:<server>`.
+const isClaudePluginMcpServer = (server: { readonly name: string; readonly source?: string }) =>
+  server.source === "plugin" || server.name.startsWith("plugin:");
+
 const decodeClaudeMcpAuthenticateReply = Schema.decodeUnknownEffect(
   Schema.Struct({
     authUrl: Schema.optional(Schema.String),
@@ -8823,8 +8827,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           liveQuery.checkMcpSignIns = statuses.some((status) => status.status === "pending");
           for (const status of statuses) {
-            // Every claude.ai connector the user never connected reports this too.
-            if (status.status !== "needs-auth" || status.scope === "claudeai") continue;
+            // Unconnected claude.ai connectors and plugin-bundled servers report this too.
+            if (
+              status.status !== "needs-auth" ||
+              status.scope === "claudeai" ||
+              isClaudePluginMcpServer(status)
+            ) {
+              continue;
+            }
             const key = `${liveQuery.nativeThreadId}\u0000${status.name}`;
             if (announcedMcpSignIns.has(key)) continue;
             announcedMcpSignIns.add(key);
@@ -13406,8 +13416,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.checkMcpSignIns = (message.mcp_servers ?? []).some(
                       (server) =>
                         (server.status === "pending" || server.status === "needs-auth") &&
-                        // claude.ai connectors the user never connected need a sign-in too.
-                        !server.name.startsWith("claude.ai "),
+                        // Unconnected claude.ai connectors and plugin servers are never announced.
+                        !server.name.startsWith("claude.ai ") &&
+                        !isClaudePluginMcpServer(server),
                     );
                   }
                   if (
