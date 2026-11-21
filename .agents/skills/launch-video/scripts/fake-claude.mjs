@@ -4,6 +4,7 @@
 // Script format: see the launch-video SKILL.md. FAKE_CLAUDE_LOG records every line.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
 
 const VERSION = "2.1.329";
@@ -28,7 +29,19 @@ const readJson = (file, fallback) => {
     return fallback;
   }
 };
-const script = readJson(process.env.FAKE_CLAUDE_SCRIPT ?? "", []);
+// An array of turns, or { turns, servers } where servers are MCP servers that need a sign-in:
+// [{ name, authUrl }]. Sign-in follows the SDK's mcp_authenticate / mcp_oauth_callback_url.
+const loaded = readJson(process.env.FAKE_CLAUDE_SCRIPT ?? "", []);
+const script = Array.isArray(loaded) ? loaded : (loaded.turns ?? []);
+// Sign-ins outlive the process, like the real CLI's stored credentials.
+const signedInFile = `${process.env.FAKE_CLAUDE_SCRIPT}.signed-in.json`;
+const signedIn = new Set(readJson(signedInFile, []));
+const signInServers = new Map(
+  (Array.isArray(loaded) ? [] : (loaded.servers ?? [])).map((server) => [
+    server.name,
+    { ...server, status: signedIn.has(server.name) ? "connected" : "needs-auth" },
+  ]),
+);
 const played = new Set();
 const fill = (value) => {
   const vars = readJson(process.env.FAKE_CLAUDE_VARS ?? "", {});
@@ -47,6 +60,33 @@ const argValue = (name) => {
   const i = process.argv.indexOf(name);
   return i === -1 ? undefined : process.argv[i + 1];
 };
+
+// `-p --json-schema` is T3's text generation (titles, commit messages, branch names). It answers
+// with the first `{ match, json }` turn whose regex matches the schema plus the prompt.
+if (process.argv.includes("-p")) {
+  const schema = argValue("--json-schema") ?? "";
+  let prompt = "";
+  for await (const chunk of process.stdin) prompt += chunk;
+  log("print", { schema, prompt: prompt.slice(0, 2000) });
+  const turn = script.find(
+    (t) => t.json && new RegExp(t.match ?? "", "i").test(`${schema}\n${prompt}`),
+  );
+  if (!turn) {
+    console.error(`fake-claude: no json turn matches ${schema}`);
+    process.exit(1);
+  }
+  console.log(
+    JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: "",
+      structured_output: fill(turn.json),
+      session_id: NodeCrypto.randomUUID(),
+    }),
+  );
+  process.exit(0);
+}
 const sessionId = argValue("--session-id") ?? argValue("--resume") ?? NodeCrypto.randomUUID();
 let model = argValue("--model") ?? "claude-opus-5-5";
 const cwd = process.cwd();
@@ -164,6 +204,11 @@ const streamText = async (text, type = "text") => {
   });
 };
 
+const serverStatuses = () => [
+  ...Object.keys(mcpServers).map((name) => ({ name, status: "connected", scope: "dynamic" })),
+  ...[...signInServers.values()].map(({ name, status }) => ({ name, status, scope: "user" })),
+];
+
 // One MCP tools/call over streamable HTTP against the server T3 registered.
 async function callTool(name, args) {
   const [serverName, server] = Object.entries(mcpServers).find(([, s]) => s.url) ?? [];
@@ -205,9 +250,11 @@ async function callTool(name, args) {
 
 async function playTurn(prompt) {
   let index = script.findIndex(
-    (turn, i) => !played.has(i) && turn.match && new RegExp(turn.match, "i").test(prompt),
+    (turn, i) =>
+      !played.has(i) && !turn.json && turn.match && new RegExp(turn.match, "i").test(prompt),
   );
-  if (index === -1) index = script.findIndex((turn, i) => !played.has(i) && !turn.match);
+  if (index === -1)
+    index = script.findIndex((turn, i) => !played.has(i) && !turn.json && !turn.match);
   const turn = index === -1 ? { steps: [{ text: "Done." }] } : script[index];
   if (index !== -1 && !turn.repeat) played.add(index);
   send({
@@ -217,7 +264,7 @@ async function playTurn(prompt) {
     claude_code_version: VERSION,
     cwd,
     tools: ["Bash", "Read", "Edit"],
-    mcp_servers: Object.keys(mcpServers).map((name) => ({ name, status: "connected" })),
+    mcp_servers: serverStatuses().map(({ name, status }) => ({ name, status })),
     model,
     permissionMode: "bypassPermissions",
     slash_commands: [],
@@ -258,14 +305,35 @@ async function playTurn(prompt) {
     }
     if (step.tool) {
       const id = `toolu_${uuid().replaceAll("-", "").slice(0, 24)}`;
-      const serverName = Object.keys(mcpServers)[0] ?? "t3-code";
+      // `server` names a scripted server whose answer is `output`; otherwise T3's own MCP runs it.
+      const serverName = step.server ?? Object.keys(mcpServers)[0] ?? "t3-code";
       assistant([
         { type: "tool_use", id, name: `mcp__${serverName}__${step.tool}`, input: step.input ?? {} },
       ]);
-      const { text } = await callTool(step.tool, step.input ?? {}).catch((error) => ({
-        text: String(error),
-      }));
+      if (step.server) await sleep(step.ms ?? 900);
+      const { text } = step.server
+        ? { text: step.output ?? "" }
+        : await callTool(step.tool, step.input ?? {}).catch((error) => ({ text: String(error) }));
       toolResult(id, [{ type: "text", text }]);
+    }
+    // Real edits, so checkpoints and diffs show them. Paths are relative to the session's cwd.
+    if (step.edit || step.write) {
+      const id = `toolu_${uuid().replaceAll("-", "").slice(0, 24)}`;
+      const file = NodePath.resolve(cwd, step.edit ?? step.write);
+      const input = step.edit
+        ? { file_path: file, old_string: step.old, new_string: step.new }
+        : { file_path: file, content: step.content };
+      assistant([{ type: "tool_use", id, name: step.edit ? "Edit" : "Write", input }]);
+      await sleep(step.ms ?? 700);
+      if (step.edit) {
+        const before = NodeFS.readFileSync(file, "utf8");
+        if (!before.includes(step.old)) throw new Error(`${step.edit}: old text not found`);
+        NodeFS.writeFileSync(file, before.replace(step.old, step.new));
+      } else {
+        NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+        NodeFS.writeFileSync(file, step.content);
+      }
+      toolResult(id, `The file ${file} has been updated successfully.`);
     }
   }
   send({
@@ -304,6 +372,29 @@ const controlResponse = (request) => {
       return {};
     case "get_usage":
       return { rate_limits_available: false, rate_limits: [] };
+    case "mcp_status":
+      return { mcpServers: serverStatuses() };
+    case "mcp_authenticate": {
+      const server = signInServers.get(request.serverName);
+      if (!server) throw new Error(`no MCP server ${request.serverName}`);
+      if (server.status === "connected") return { requiresUserAction: false };
+      server.state = uuid();
+      const url = new URL(server.authUrl);
+      url.searchParams.set("state", server.state);
+      return { authUrl: url.toString(), requiresUserAction: true };
+    }
+    case "mcp_oauth_callback_url": {
+      const server = signInServers.get(request.serverName);
+      const state = new URL(request.callbackUrl).searchParams.get("state");
+      if (!server || !server.state || state !== server.state)
+        throw new Error("callback is not from this sign-in");
+      server.status = "connected";
+      signedIn.add(server.name);
+      NodeFS.writeFileSync(signedInFile, JSON.stringify([...signedIn]));
+      return {};
+    }
+    case "mcp_reconnect":
+      return {};
     default:
       return {};
   }
@@ -321,14 +412,17 @@ input.on("line", (line) => {
   }
   log("in", message);
   if (message.type === "control_request") {
-    send({
-      type: "control_response",
-      response: {
+    let response;
+    try {
+      response = {
         subtype: "success",
         request_id: message.request_id,
         response: controlResponse(message.request ?? {}),
-      },
-    });
+      };
+    } catch (error) {
+      response = { subtype: "error", request_id: message.request_id, error: String(error) };
+    }
+    send({ type: "control_response", response });
     return;
   }
   if (message.type === "user") {
