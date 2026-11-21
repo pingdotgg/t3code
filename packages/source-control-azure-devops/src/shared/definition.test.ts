@@ -310,3 +310,59 @@ describe("Azure DevOps issue scope", () => {
     ).toBeNull();
   });
 });
+
+describe("Azure DevOps media URLs", () => {
+  const media = (url: string) => definition.mediaUrl?.(new URL(url)) ?? null;
+  const attachments =
+    "_apis/git/repositories/5c9e1b72-3a4f-4d08-b6e1-8f2a7d4c9e10/pullRequests/42/attachments";
+
+  it("fetches every spelling of a pull request attachment from one canonical URL", () => {
+    const fetchUrl = `https://dev.azure.com/acme/0f6a2c1e-7b3d-4e59-9a84-2d61c3b0e7f5/${attachments}/before-after.png`;
+    for (const url of [
+      fetchUrl,
+      `https://dev.azure.com/ACME/0f6a2c1e-7b3d-4e59-9a84-2d61c3b0e7f5/${attachments.toLowerCase()}/before-after.png?download=false`,
+    ]) {
+      expect(media(url), url).toEqual({ fetchUrl, fileName: "before-after.png" });
+    }
+    expect(
+      media(`https://Acme.VisualStudio.com/DefaultCollection/Platform/${attachments}/shot.png`),
+    ).toEqual({
+      fetchUrl: `https://acme.visualstudio.com/Platform/${attachments}/shot.png`,
+      fileName: "shot.png",
+    });
+  });
+
+  it("keeps a file name's reserved characters escaped, since az sends route values as written", () => {
+    expect(
+      media(`https://dev.azure.com/acme/My%20Project/${attachments}/image%20(1)%23%3F.png`),
+    ).toEqual({
+      fetchUrl: `https://dev.azure.com/acme/My%20Project/${attachments}/image%20(1)%23%3F.png`,
+      fileName: "image (1)#?.png",
+    });
+  });
+
+  it("claims nothing but an attachment on Azure DevOps Services", () => {
+    for (const url of [
+      `http://dev.azure.com/acme/platform/${attachments}/shot.png`,
+      `https://dev.azure.com:8443/acme/platform/${attachments}/shot.png`,
+      `https://dev.azure.com/acme/${attachments}/shot.png`,
+      `https://dev.azure.com/-acme/platform/${attachments}/shot.png`,
+      `https://dev.azure.com/acme/platform/${attachments}/`,
+      `https://dev.azure.com/acme/platform/${attachments}/a/b.png`,
+      `https://dev.azure.com/acme/platform/${attachments}/a%2Fb.png`,
+      `https://dev.azure.com/acme/platform/${attachments}/..%2F`,
+      `https://dev.azure.com/acme/platform/${attachments}/.%2F`,
+      `https://dev.azure.com/acme/platform/${attachments}/..%5C`,
+      `https://dev.azure.com/acme/platform/${attachments}/%00.png`,
+      `https://dev.azure.com/acme/plat%2Fform/${attachments}/shot.png`,
+      "https://dev.azure.com/acme/platform/_apis/git/repositories/we%2Fb/pullRequests/42/attachments/shot.png",
+      "https://dev.azure.com/acme/platform/_apis/git/repositories/web/pullRequests/0/attachments/a.png",
+      "https://dev.azure.com/acme/platform/_apis/git/repositories/web/items?path=/a.png",
+      "https://dev.azure.com/acme/platform/_git/web/pullrequest/1",
+      `https://tfs.example.com/collection/platform/${attachments}/shot.png`,
+      `https://a.b.visualstudio.com/platform/${attachments}/shot.png`,
+    ]) {
+      expect(media(url), url).toBeNull();
+    }
+  });
+});
