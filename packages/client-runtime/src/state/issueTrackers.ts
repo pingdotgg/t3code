@@ -1,7 +1,11 @@
 import {
+  MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES,
   WS_METHODS,
+  issueTrackerBindingScopes,
   type IssueTrackerConnection,
   type IssueTrackerConnectionList,
+  type IssueTrackerKind,
+  type IssueTrackerProjectBinding,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
@@ -114,4 +118,44 @@ export function issueTrackerSummary(
           { account: tracker.account, count: linked },
         ),
       );
+}
+
+export function boundIssueTrackerScopes(
+  tracker: IssueTrackerKind,
+  binding: IssueTrackerProjectBinding | undefined,
+): ReadonlyArray<string> {
+  return binding?.tracker === tracker ? issueTrackerBindingScopes(binding) : [];
+}
+
+export function issueTrackerBindingFor(
+  tracker: IssueTrackerKind,
+  current: ReadonlyArray<string>,
+  scopes: ReadonlyArray<string>,
+): IssueTrackerProjectBinding | null {
+  const kept = current.filter((key) => scopes.includes(key));
+  const [scope, ...additionalScopes] = [...kept, ...scopes.filter((key) => !kept.includes(key))];
+  if (scope === undefined) return null;
+  return additionalScopes.length === 0 ? { tracker, scope } : { tracker, scope, additionalScopes };
+}
+
+export function issueTrackerScopeOptions(
+  tracker: IssueTrackerConnection,
+  bound: ReadonlyArray<string>,
+): ReadonlyArray<{ readonly key: string; readonly name: string; readonly addable: boolean }> {
+  const offered = new Set(tracker.scopes.map((scope) => scope.key));
+  const full = bound.length > MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES;
+  return [
+    ...tracker.scopes,
+    ...bound.filter((key) => !offered.has(key)).map((key) => ({ key, name: key })),
+  ].map((scope) => ({ ...scope, addable: !full || bound.includes(scope.key) }));
+}
+
+export function hasIssueTrackerTeams(
+  tracker: IssueTrackerConnection,
+  bindings: IssueTrackerConnectionList["bindings"],
+): boolean {
+  return (
+    tracker.scopes.length > 0 ||
+    Object.values(bindings).some((binding) => binding.tracker === tracker.tracker)
+  );
 }
