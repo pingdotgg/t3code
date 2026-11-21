@@ -2261,6 +2261,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       Effect.catchTags({
         PreviewTabNotFoundError: () => Effect.void,
         PreviewWebContentsNotFoundError: () => Effect.void,
+        PreviewWebviewNotInitializedError: () => Effect.void,
       }),
     );
 
