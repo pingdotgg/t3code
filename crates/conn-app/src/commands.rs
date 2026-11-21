@@ -42,6 +42,47 @@ pub(crate) fn send_message(
     }))
 }
 
+/// A new thread id in the client's format.
+pub(crate) fn new_thread_id() -> String {
+    new_id("thread")
+}
+
+/// `orchestration.launchThread` payload: create `thread_id` in `project_id` and send `text`
+/// as its first message (Conn's composer does the same for a new thread).
+pub(crate) fn launch_thread_payload(
+    thread_id: &str,
+    project_id: &str,
+    text: &str,
+    model_selection: serde_json::Value,
+    runtime_mode: &str,
+    interaction_mode: &str,
+) -> serde_json::Value {
+    let title: String = text
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .take(80)
+        .collect();
+    json!({
+        "commandId": new_id("cmd"),
+        "creationSource": "web",
+        "threadId": thread_id,
+        "projectId": project_id,
+        "title": title,
+        "generateTitle": true,
+        "modelSelection": model_selection,
+        "runtimeMode": runtime_mode,
+        "interactionMode": interaction_mode,
+        "workspaceStrategy": { "type": "root" },
+        "initialMessage": {
+            "messageId": new_id("msg"),
+            "text": text,
+            "attachments": [],
+        },
+    })
+}
+
 /// `thread.stop`: stop the running turn.
 pub(crate) fn stop_thread(thread_id: &str) -> Result<OrchestrationV2Command, serde_json::Error> {
     conn_contract::from_json(json!({
@@ -66,6 +107,21 @@ mod tests {
             "queued dispatch decodes"
         );
         assert!(stop_thread("t1").is_ok(), "thread.stop decodes");
+    }
+
+    #[test]
+    fn launch_payload_decodes_as_contract_input() {
+        let payload = launch_thread_payload(
+            "t1",
+            "p1",
+            "hello\nworld",
+            json!({"instanceId": "claudeAgent", "model": "haiku"}),
+            "full-access",
+            "default",
+        );
+        let decoded: Result<conn_contract::OrchestrationV2ThreadLaunchInput, _> =
+            conn_contract::from_json(payload);
+        assert!(decoded.is_ok(), "launchThread input decodes: {decoded:?}");
     }
 
     #[test]

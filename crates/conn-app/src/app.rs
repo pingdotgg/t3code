@@ -19,7 +19,7 @@ use crate::sidebar::rail::render_workspace_rail;
 use crate::sidebar::thread_list::render_thread_sidebar;
 use crate::theme::{apply_kit_theme, hsla};
 
-actions!(conn_app, [ToggleSidebar, ToggleRightPanel]);
+actions!(conn_app, [ToggleSidebar, ToggleRightPanel, NewThread]);
 
 /// The tabs Conn shows in the right panel's header row.
 const ALL_RIGHT_PANEL_TABS: [RightPanelTab; 4] = [
@@ -36,6 +36,7 @@ pub(crate) fn register_keybindings(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-b", ToggleSidebar, None),
         KeyBinding::new("cmd-alt-b", ToggleRightPanel, None),
+        KeyBinding::new("cmd-n", NewThread, None),
     ]);
 }
 
@@ -55,6 +56,11 @@ pub(crate) struct ConnApp {
     threads: HashMap<String, ThreadState>,
     chat: Entity<crate::chat::ChatView>,
     right_panel: Entity<crate::panels::RightPanel>,
+    /// Thread streams the server ended (for example a thread launched a moment before the
+    /// server knew it). Resubscribed once the shell lists the thread.
+    ended_threads: HashSet<String>,
+    /// A new thread being composed in this project; sent with `orchestration.launchThread`.
+    draft_project: Option<String>,
     command_palette: Option<Entity<crate::palette::CommandPalette>>,
     settings_modal: Option<Entity<crate::settings::SettingsModal>>,
     overlay_subscriptions: Vec<gpui_kit::Subscription>,
@@ -132,6 +138,8 @@ impl ConnApp {
             threads: HashMap::new(),
             chat,
             right_panel,
+            ended_threads: HashSet::new(),
+            draft_project: None,
             command_palette: None,
             settings_modal: None,
             overlay_subscriptions: Vec::new(),
@@ -237,7 +245,11 @@ impl ConnApp {
     fn sync_chat(&self, cx: &mut Context<'_, Self>) {
         let selected = self.layout.selected_thread_id.as_deref();
         let shell_thread = selected.and_then(|id| self.shell.thread(id));
-        let title = shell_thread.map(|t| t.title.clone());
+        let title = if self.draft_project.is_some() {
+            Some("New thread".to_owned())
+        } else {
+            shell_thread.map(|t| t.title.clone())
+        };
         let root = shell_thread.and_then(|t| {
             t.worktree_path.clone().or_else(|| {
                 self.shell
@@ -298,6 +310,9 @@ impl ConnApp {
             ClientEvent::BearerIssued(_) => {}
             ClientEvent::Shell(item) => {
                 let change = self.shell.apply(item);
+                if !change.threads_changed.is_empty() {
+                    self.resubscribe_ended_threads();
+                }
                 if change.snapshot_required
                     && let Some(connection) = &self.connection
                 {
@@ -317,12 +332,38 @@ impl ConnApp {
                     .or_insert_with(|| ThreadState::new(thread_id))
                     .apply(item);
             }
-            ClientEvent::StreamEnded { .. } => {}
+            ClientEvent::StreamEnded { tag, key, error } => {
+                if tag == "orchestration.subscribeThread" && self.threads.contains_key(&key) {
+                    if let Some(error) = error {
+                        eprintln!("thread stream {key} ended: {error}");
+                    }
+                    self.ended_threads.insert(key);
+                    self.resubscribe_ended_threads();
+                }
+            }
+        }
+    }
+
+    /// Resubscribes ended thread streams whose thread the shell now lists.
+    fn resubscribe_ended_threads(&mut self) {
+        let Some(connection) = &self.connection else {
+            return;
+        };
+        let ready: Vec<String> = self
+            .ended_threads
+            .iter()
+            .filter(|id| self.shell.thread(id).is_some())
+            .cloned()
+            .collect();
+        for id in ready {
+            self.ended_threads.remove(&id);
+            connection.subscribe_thread(&id);
         }
     }
 
     /// Selects `thread_id` and subscribes to its timeline once.
     fn open_thread(&mut self, thread_id: String) {
+        self.draft_project = None;
         if let Some(connection) = &self.connection
             && !self.threads.contains_key(&thread_id)
         {
@@ -333,8 +374,78 @@ impl ConnApp {
         self.layout.selected_thread_id = Some(thread_id);
     }
 
+    /// Starts a new thread draft in `project_id` (or the selected thread's project). The
+    /// composer's first send launches it.
+    pub(crate) fn start_new_thread(
+        &mut self,
+        project_id: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let project_id = project_id
+            .or_else(|| self.layout.selected_project_id.clone())
+            .or_else(|| self.shell.projects.first().map(|p| p.id.clone()));
+        let Some(project_id) = project_id else {
+            return;
+        };
+        self.layout.selected_project_id = Some(project_id.clone());
+        self.layout.selected_thread_id = None;
+        self.draft_project = Some(project_id);
+        self.sync_chat(cx);
+        cx.notify();
+    }
+
+    /// Launches the draft thread with `text` as its first message.
+    fn launch_draft(&mut self, project_id: String, text: String, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let template = self.shell.threads_for_project(&project_id).next();
+        let model = self
+            .shell
+            .project(&project_id)
+            .and_then(|p| p.default_model_selection.clone())
+            .or_else(|| template.map(|t| t.model_selection.clone()));
+        let Some(model) = model else {
+            eprintln!("new thread: no model selection for project {project_id}");
+            return;
+        };
+        let runtime = template.map_or_else(
+            || serde_json::json!("full-access"),
+            |t| conn_contract::to_json(&t.runtime_mode),
+        );
+        let interaction = template.map_or_else(
+            || serde_json::json!("default"),
+            |t| conn_contract::to_json(&t.interaction_mode),
+        );
+        let thread_id = crate::commands::new_thread_id();
+        let payload = crate::commands::launch_thread_payload(
+            &thread_id,
+            &project_id,
+            &text,
+            conn_contract::to_json(&model),
+            runtime.as_str().unwrap_or("full-access"),
+            interaction.as_str().unwrap_or("default"),
+        );
+        self.draft_project = None;
+        self.open_thread(thread_id);
+        self.sync_chat(cx);
+        cx.spawn(async move |_, _| {
+            if let Err(e) = connection
+                .call_json("orchestration.launchThread", payload)
+                .await
+            {
+                eprintln!("new thread: launchThread failed: {e}");
+            }
+        })
+        .detach();
+    }
+
     /// Sends `text` to the selected thread over `orchestration.dispatchCommand`.
     pub(crate) fn send_prompt(&mut self, text: String, cx: &mut Context<'_, Self>) {
+        if let Some(project_id) = self.draft_project.clone() {
+            self.launch_draft(project_id, text, cx);
+            return;
+        }
         let (Some(connection), Some(thread_id)) = (
             self.connection.clone(),
             self.layout.selected_thread_id.clone(),
@@ -721,6 +832,9 @@ impl Render for ConnApp {
             }))
             .on_action(cx.listener(|app, _: &ToggleRightPanel, _window, cx| {
                 app.toggle_right_panel(cx);
+            }))
+            .on_action(cx.listener(|app, _: &NewThread, _window, cx| {
+                app.start_new_thread(None, cx);
             }))
             .on_action(
                 cx.listener(|app, _: &crate::palette::OpenCommandPalette, window, cx| {

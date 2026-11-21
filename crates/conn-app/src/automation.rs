@@ -15,6 +15,7 @@
 //! - `{"cmd":"send","text":"..."}` (to the selected thread), `{"cmd":"stop"}`
 //! - `{"cmd":"palette"}`, `{"cmd":"settings"}`: toggle the overlays
 //! - `{"cmd":"browse","url":"..."}`, `{"cmd":"browser-title"}` (CEF builds)
+//! - `{"cmd":"new-thread","project":"hello-rust"}`: open a draft; the next `send` launches it
 //! - `{"cmd":"sidebar"}`, `{"cmd":"panel","tab":"files"}`, `{"cmd":"close-panel"}`
 //! - `{"cmd":"resize","width":1440,"height":900}`
 
@@ -167,6 +168,24 @@ async fn run(
         "browser-title" => app
             .read_with(cx, |app, cx| json!(app.browser_title(cx)))
             .map_err(|e| err(e.into())),
+        "new-thread" => {
+            let project = cmd
+                .get("project")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            app.update(cx, |app, cx| {
+                let project_id = project.and_then(|title| {
+                    app.shell()
+                        .projects
+                        .iter()
+                        .find(|p| p.title == title || p.id == title)
+                        .map(|p| p.id.clone())
+                });
+                app.start_new_thread(project_id, cx);
+                json!("ok")
+            })
+            .map_err(|e| err(e.into()))
+        }
         "sidebar" => app
             .update(cx, |app, cx| {
                 app.toggle_sidebar(cx);
