@@ -897,6 +897,28 @@ it.live.each(["repository", "uppercase", "bare"] as const)(
     ),
 );
 
+it.live("removes a worktree whose ignored environment ships a dangling gitlink file", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, command } = yield* cleanupFixture();
+      // pixi ignores its whole environment; conda's `referencing` ships this test-suite gitlink.
+      yield* fs.makeDirectory(`${worktree}/.pixi`, { recursive: true });
+      yield* fs.writeFileString(`${worktree}/.pixi/.gitignore`, "*\n!config.toml\n");
+      const suite = `${worktree}/.pixi/envs/default/etc/conda/test-files/referencing/1/suite`;
+      yield* fs.makeDirectory(suite, { recursive: true });
+      yield* fs.writeFileString(`${suite}/.git`, "gitdir: ../.git/modules/suite\n");
+      expect(
+        (yield* command(worktree, ["status", "--porcelain", "--untracked-files=all"])).stdout,
+      ).toBe("");
+      const report = yield* service.runNow;
+      expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+        outcome: "removed",
+      });
+      expect(yield* fs.exists(worktree)).toBe(false);
+    }),
+  ),
+);
+
 const submoduleCleanupFixture = () =>
   Effect.gen(function* () {
     const fixture = yield* cleanupFixture();
