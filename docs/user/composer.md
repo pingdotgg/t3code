@@ -453,3 +453,13 @@ Choose **Annotate** and click or tap the model to pin numbered notes. **Send to 
 your draft as one preview annotation with a screenshot. For a workspace model, **Open view**
 in the annotation details reopens the file at the saved camera. When the file changes,
 earlier notes keep their text and are marked as out of date.
+
+### Blender scenes
+
+To open `.blend` workspace files on web or desktop, turn on Blender in **Settings → Integrations**
+for the environment that owns your workspace. T3 Code finds an installed Blender automatically,
+or you can enter its executable path there.
+
+Open the scene in a thread to see it in the same 3D viewer. Blender exports the preview in the
+background and the thread's agent can discover tools to inspect or edit the scene. Ask the agent
+when you want a PNG render. The preview leaves your original `.blend` unchanged.

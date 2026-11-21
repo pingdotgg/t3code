@@ -1686,6 +1686,7 @@ export default function FilePreviewPanel({
               key={JSON.stringify([environmentId, threadRef.threadId, relativePath])}
               thread={threadRef}
               path={relativePath}
+              workspaceRoot={cwd}
               enabled={serverConfig ? serverConfig.settings.blender.enabled : null}
               workspaceMutationId={workspaceMutationId}
             />

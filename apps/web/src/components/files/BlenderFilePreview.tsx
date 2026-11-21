@@ -7,6 +7,7 @@ import {
   type BlenderJob,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -41,11 +42,13 @@ let nextOpenRequest = 0;
 export function BlenderFilePreview({
   thread,
   path,
+  workspaceRoot,
   enabled,
   workspaceMutationId,
 }: {
   readonly thread: ScopedThreadRef;
   readonly path: string;
+  readonly workspaceRoot: string;
   /** The environment's Blender setting, or null while its config loads. */
   readonly enabled: boolean | null;
   readonly workspaceMutationId: string | null;
@@ -87,7 +90,13 @@ export function BlenderFilePreview({
   const openedJob = opened.job;
   // The server's canonical path once it answers; aliases of the file match from then on.
   const sceneInput = openedJob?.input ?? path;
-  const sceneJobs = stream.data?.filter((job) => job.input === sceneInput) ?? [];
+  const windows = isWindowsAbsolutePath(workspaceRoot);
+  const normalize = (input: string) =>
+    windows ? input.replaceAll("\\", "/").toLowerCase() : input;
+  const sceneJobs =
+    stream.data?.filter(
+      (job) => job.input !== undefined && normalize(job.input) === normalize(sceneInput),
+    ) ?? [];
   const liveJob = sceneJobs.find((job) => job.id === openedJob?.id) ?? openedJob;
   // Another open of a newer version replaced this export; follow the scene's newest job.
   const tracked = liveJob?.cancelledBy === "replaced" ? (sceneJobs[0] ?? liveJob) : liveJob;
