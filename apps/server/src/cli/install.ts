@@ -1,3 +1,4 @@
+import { FORK_IDENTITY } from "@lathe/shared/forkIdentity";
 import * as HostProcess from "@lathe/shared/HostProcess";
 import { pathSetupCommand, resolveCommandPath } from "@lathe/shared/shell";
 import * as Console from "effect/Console";
@@ -53,9 +54,10 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   const runtime = yield* standaloneRuntime;
   const windows = platform === "win32";
   if (Option.isNone(runtime)) {
+    const scripts = `https://raw.githubusercontent.com/${FORK_IDENTITY.releaseRepository}/main/scripts`;
     const script = windows
-      ? "irm https://t3.codes/install.ps1 | iex"
-      : "curl -fsSL https://t3.codes/install.sh | sh";
+      ? `irm ${scripts}/install.ps1 | iex`
+      : `curl -fsSL ${scripts}/install.sh | sh`;
     return yield* new CliInstallError({
       reason: `Only the standalone lathe can install itself. Use \`${script}\`, or Settings in the desktop app.`,
     });
