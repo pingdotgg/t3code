@@ -20,7 +20,6 @@
     "build:bundle": "vp pack",
     "build:exe": "node scripts/cli.ts build-exe",
     "start": "node dist/bin.mjs",
-    "typecheck": "effect-tsgo tsrs --noEmit",
     "speech:catalog:sync": "node scripts/sync-speech-catalog.ts",
     "speech:catalog:check": "node scripts/sync-speech-catalog.ts --check",
     "test": "vp test run",
