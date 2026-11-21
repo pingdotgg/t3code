@@ -102,14 +102,14 @@ export function goalCommandStopsActiveRun(
   }
 }
 
-export function resolveMessageDispatchIntent(
+export function resolveMessageDispatch(
   projection: OrchestrationV2ThreadProjection,
   message: Pick<
     Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     "dispatchMode" | "deliveryIntent" | "text" | "attachments"
   >,
 ): MessageDispatchMode {
-  const mode = resolveActiveRunDispatchIntent(
+  const mode = resolveMessageDispatchIntent(
     projection,
     message.dispatchMode,
     message.deliveryIntent,
@@ -121,7 +121,7 @@ export function resolveMessageDispatchIntent(
 }
 
 /** How a message joins active work when it is free to steer. */
-export function resolveActiveRunDispatchIntent(
+export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
   deliveryIntent?: "auto" | "steer" | "restart",

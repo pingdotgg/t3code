@@ -65,30 +65,25 @@ function dispatchProjection(
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
-function resolveDispatch(
-  projection: OrchestrationV2ThreadProjection,
-  dispatchMode: Parameters<typeof CommandPolicy.resolveMessageDispatchIntent>[1]["dispatchMode"],
-  deliveryIntent?: "auto" | "steer" | "restart",
-  text = "next",
-) {
-  return CommandPolicy.resolveMessageDispatchIntent(projection, {
-    dispatchMode,
-    ...(deliveryIntent === undefined ? {} : { deliveryIntent }),
-    text,
-    attachments: [],
-  });
-}
-
 it("resolves automatic message delivery from authoritative provider capabilities", () => {
-  assert.deepEqual(resolveDispatch(dispatchProjection(), { type: "start_immediately" }, "auto"), {
-    type: "start_immediately",
-  });
   assert.deepEqual(
-    resolveDispatch(dispatchProjection(baseCapabilities), { type: "start_immediately" }, "auto"),
+    CommandPolicy.resolveMessageDispatchIntent(
+      dispatchProjection(),
+      { type: "start_immediately" },
+      "auto",
+    ),
+    { type: "start_immediately" },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      dispatchProjection(baseCapabilities),
+      { type: "start_immediately" },
+      "auto",
+    ),
     { type: "steer_active", targetRunId: activeRunId },
   );
   assert.deepEqual(
-    resolveDispatch(
+    CommandPolicy.resolveMessageDispatchIntent(
       dispatchProjection(
         capabilities((current) => ({
           ...current,
@@ -106,7 +101,7 @@ it("resolves automatic message delivery from authoritative provider capabilities
     { type: "queue_after_active" },
   );
   assert.deepEqual(
-    resolveDispatch(
+    CommandPolicy.resolveMessageDispatchIntent(
       dispatchProjection(
         capabilities((current) => ({
           ...current,
@@ -130,7 +125,7 @@ it.each(["preparing", "starting"] as const)(
   (status) => {
     const projection = dispatchProjection(baseCapabilities);
     assert.deepEqual(
-      resolveDispatch(
+      CommandPolicy.resolveMessageDispatchIntent(
         { ...projection, runs: projection.runs.map((run) => ({ ...run, status })) },
         { type: "start_immediately" },
         "auto",
@@ -153,17 +148,22 @@ it.each([
     ...dispatchProjection(baseCapabilities),
     providerTurns,
   } as unknown as OrchestrationV2ThreadProjection;
-  assert.deepEqual(resolveDispatch(projection, { type: "start_immediately" }, "auto"), {
-    type: "queue_after_active",
-  });
-  assert.deepEqual(resolveDispatch(projection, { type: "start_immediately" }, "steer"), {
-    type: "steer_active",
-    targetRunId: activeRunId,
-  });
-  assert.deepEqual(resolveDispatch(projection, { type: "start_immediately" }, "restart"), {
-    type: "restart_active",
-    targetRunId: activeRunId,
-  });
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
+    { type: "queue_after_active" },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "steer"),
+    { type: "steer_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      projection,
+      { type: "start_immediately" },
+      "restart",
+    ),
+    { type: "restart_active", targetRunId: activeRunId },
+  );
 });
 
 // regression: #26695 an interrupt-restart steer cancels Copilot's background agents
@@ -180,23 +180,32 @@ it("queues a steer for a provider that cannot steer either way", () => {
     })),
   );
   for (const deliveryIntent of ["auto", "steer"] as const) {
-    assert.deepEqual(resolveDispatch(projection, { type: "start_immediately" }, deliveryIntent), {
-      type: "queue_after_active",
-    });
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        projection,
+        { type: "start_immediately" },
+        deliveryIntent,
+      ),
+      { type: "queue_after_active" },
+    );
   }
   assert.deepEqual(
-    resolveDispatch(projection, {
+    CommandPolicy.resolveMessageDispatchIntent(projection, {
       type: "steer_active",
       targetRunId: activeRunId,
     }),
     { type: "queue_after_active" },
   );
-  assert.deepEqual(resolveDispatch(projection, { type: "start_immediately" }, "restart"), {
-    type: "restart_active",
-    targetRunId: activeRunId,
-  });
   assert.deepEqual(
-    resolveDispatch(projection, {
+    CommandPolicy.resolveMessageDispatchIntent(
+      projection,
+      { type: "start_immediately" },
+      "restart",
+    ),
+    { type: "restart_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, {
       type: "steer_active",
       targetRunId: RunId.make("command-policy-missing-run"),
     }),
@@ -214,7 +223,11 @@ it("does not steer a Grok follow-up by interrupting its running turn", () => {
   ).capabilities;
   const projection = dispatchProjection(grok);
   for (const deliveryIntent of ["auto", "steer"] as const) {
-    const mode = resolveDispatch(projection, { type: "start_immediately" }, deliveryIntent);
+    const mode = CommandPolicy.resolveMessageDispatchIntent(
+      projection,
+      { type: "start_immediately" },
+      deliveryIntent,
+    );
     assert.isFalse(
       mode.type === "steer_active" && !grok.turns.supportsActiveSteering,
       `${deliveryIntent} follow-up resolved to ${mode.type} by interrupt-restart`,
@@ -230,7 +243,11 @@ it("steers a Grok follow-up into its running turn without restarting it", () => 
     >[0],
     "/home/ada",
   ).capabilities;
-  const mode = resolveDispatch(dispatchProjection(grok), { type: "start_immediately" }, "steer");
+  const mode = CommandPolicy.resolveMessageDispatchIntent(
+    dispatchProjection(grok),
+    { type: "start_immediately" },
+    "steer",
+  );
   assert.strictEqual(mode.type, "steer_active");
   assert.isTrue(grok.turns.supportsActiveSteering);
 });
@@ -248,7 +265,12 @@ it.each([
   const projection = dispatchProjection(baseCapabilities);
   for (const deliveryIntent of ["auto", "steer"] as const) {
     assert.deepEqual(
-      resolveDispatch(projection, { type: "start_immediately" }, deliveryIntent, text),
+      CommandPolicy.resolveMessageDispatch(projection, {
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent,
+        text,
+        attachments: [],
+      }),
       expected,
     );
   }
@@ -261,21 +283,30 @@ it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) =
     messages: [{ id: userMessageId, text, attachments: [] }],
   } as unknown as OrchestrationV2ThreadProjection;
   for (const deliveryIntent of ["auto", "steer"] as const) {
-    assert.deepEqual(resolveDispatch(maintenance, { type: "start_immediately" }, deliveryIntent), {
-      type: "queue_after_active",
-    });
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        maintenance,
+        { type: "start_immediately" },
+        deliveryIntent,
+      ),
+      { type: "queue_after_active" },
+    );
   }
   assert.deepEqual(
-    resolveDispatch(maintenance, {
+    CommandPolicy.resolveMessageDispatchIntent(maintenance, {
       type: "steer_active",
       targetRunId: activeRunId,
     }),
     { type: "queue_after_active" },
   );
-  assert.deepEqual(resolveDispatch(maintenance, { type: "start_immediately" }, "restart"), {
-    type: "restart_active",
-    targetRunId: activeRunId,
-  });
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      maintenance,
+      { type: "start_immediately" },
+      "restart",
+    ),
+    { type: "restart_active", targetRunId: activeRunId },
+  );
 });
 
 const layer = it.layer(CommandPolicy.layer);

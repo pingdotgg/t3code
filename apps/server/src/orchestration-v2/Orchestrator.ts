@@ -127,7 +127,7 @@ import {
   isNativeMaintenanceCommand,
   providerSwitchWaitsForTurn,
   providerTurnCapabilities,
-  resolveActiveRunDispatchIntent,
+  resolveMessageDispatch,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
@@ -7437,8 +7437,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // A goal command keeps the run it was sent at; the goal handling below queues it.
     let dispatchMode =
       goalCommand === null
-        ? resolveMessageDispatchIntent(projection, command)
-        : resolveActiveRunDispatchIntent(projection, command.dispatchMode, command.deliveryIntent);
+        ? resolveMessageDispatch(projection, command)
+        : resolveMessageDispatchIntent(projection, command.dispatchMode, command.deliveryIntent);
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
