@@ -10,7 +10,10 @@ import {
   type WorkflowRunNode,
   type WorkflowRunTone,
 } from "@t3tools/client-runtime/workflows";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, WorkflowRunsSnapshot } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 import { useNavigation } from "@react-navigation/native";
 import { msg, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
@@ -24,7 +27,7 @@ import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { cn } from "../../lib/cn";
 import { useEnvironments } from "../../state/environments";
-import { useEnvironmentQuery } from "../../state/query";
+import { formatEnvironmentQueryError } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 
 const TABS = [
@@ -104,55 +107,29 @@ function RunRow(props: { readonly node: WorkflowRunNode; readonly onOpen: () => 
   );
 }
 
-/** One environment's runs in the picked list. Nothing at all for one that has never had a run. */
+/** One environment's runs in the picked list. */
 function EnvironmentRuns(props: {
   readonly environmentId: EnvironmentId;
   readonly label: string | null;
-  readonly tab: WorkflowListTab | null;
-  readonly onTab: (tab: WorkflowListTab) => void;
+  readonly snapshot: WorkflowRunsSnapshot;
+  readonly tab: WorkflowListTab;
 }) {
   const navigation = useNavigation();
   const gt = useGT();
   const m = useMessages();
   const [showSkipped, setShowSkipped] = useState(false);
-  const live = useEnvironmentQuery(
-    serverEnvironment.workflowsLive({ environmentId: props.environmentId, input: {} }),
-  );
-  const snapshot = live.data;
-  if (snapshot === null) {
-    return live.error === null ? null : (
-      <Text className="px-5 py-3 text-sm text-danger-foreground">{live.error}</Text>
-    );
-  }
-  if (snapshot.runs.length === 0) {
-    return (
-      <EmptyState
-        variant="plain"
-        title={gt("No workflow runs yet")}
-        detail={gt(
-          "A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one on your computer, under Workflows, then Definitions.",
-        )}
-      />
-    );
-  }
+  const { snapshot, tab } = props;
   const visible = listedWorkflowRuns(snapshot.runs, showSkipped);
-  const groups = groupWorkflowRuns(snapshot.workflows, visible.runs, snapshot.questions);
-  const lists = workflowRunLists(groups);
-  const tab = props.tab ?? defaultWorkflowListTab(groups);
-  const listed = lists[tab];
+  const listed = workflowRunLists(
+    groupWorkflowRuns(snapshot.workflows, visible.runs, snapshot.questions),
+  )[tab];
   return (
     <View>
-      <View className="gap-3 px-5 pb-2 pt-3">
-        {props.label === null ? null : (
-          <Text className="font-t3-medium text-xs text-foreground-muted">{props.label}</Text>
-        )}
-        <SegmentedControl
-          options={TABS.map((option) => ({ ...option, label: m(option.label) }))}
-          selected={tab}
-          onSelect={props.onTab}
-          role="tab"
-        />
-      </View>
+      {props.label === null ? null : (
+        <Text className="px-5 pb-1 pt-3 font-t3-medium text-xs text-foreground-muted">
+          {props.label}
+        </Text>
+      )}
       {listed.length === 0 ? (
         <Text className="px-5 py-6 text-center text-sm text-foreground-muted">
           {m(NOTHING[tab])}
@@ -188,12 +165,20 @@ function EnvironmentRuns(props: {
   );
 }
 
+const TAB_ORDER: ReadonlyArray<WorkflowListTab> = ["needs-you", "running", "all"];
+
 /** The Workflows tab: what waits on you first, in every environment this device is connected to. */
 export function WorkflowsScreen() {
   const { environments, isReady } = useEnvironments();
   const [tab, setTab] = useState<WorkflowListTab | null>(null);
   const insets = useSafeAreaInsets();
   const gt = useGT();
+  const m = useMessages();
+  const live = useAtomValue(
+    serverEnvironment.workflowsLiveAcross(
+      JSON.stringify(environments.map((environment) => environment.environmentId)),
+    ),
+  );
   if (isReady && environments.length === 0) {
     return (
       <EmptyState
@@ -203,20 +188,77 @@ export function WorkflowsScreen() {
       />
     );
   }
+  const sections = environments.map((environment) => {
+    const result = live.find((entry) => entry.environmentId === environment.environmentId)?.result;
+    return {
+      environment,
+      snapshot: result === undefined ? null : Option.getOrNull(AsyncResult.value(result)),
+      error: result?._tag === "Failure" ? formatEnvironmentQueryError(result.cause, m) : null,
+    };
+  });
+  const withRuns = sections.flatMap(({ environment, snapshot }) =>
+    snapshot !== null && snapshot.runs.length > 0 ? [{ environment, snapshot }] : [],
+  );
+  const settled = sections.every(({ snapshot, error }) => snapshot !== null || error !== null);
+  // Open on the most pressing list any environment has.
+  const opening =
+    TAB_ORDER.find((candidate) =>
+      withRuns.some(
+        ({ snapshot }) =>
+          defaultWorkflowListTab(
+            groupWorkflowRuns(snapshot.workflows, snapshot.runs, snapshot.questions),
+          ) === candidate,
+      ),
+    ) ?? "all";
+  const shown = tab ?? opening;
   return (
     <ScreenScrollView
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={{ paddingBottom: insets.bottom + 96 }}
     >
-      {environments.map((environment) => (
-        <EnvironmentRuns
-          key={environment.environmentId}
-          environmentId={environment.environmentId}
-          label={environments.length > 1 ? environment.label : null}
-          tab={tab}
-          onTab={setTab}
-        />
-      ))}
+      {sections.flatMap(({ environment, snapshot, error }) =>
+        snapshot === null && error !== null
+          ? [
+              <Text
+                key={`error:${environment.environmentId}`}
+                className="px-5 py-3 text-sm text-danger-foreground"
+              >
+                {environments.length > 1 ? `${environment.label}: ${error}` : error}
+              </Text>,
+            ]
+          : [],
+      )}
+      {withRuns.length === 0 ? (
+        settled ? (
+          <EmptyState
+            variant="plain"
+            title={gt("No workflow runs yet")}
+            detail={gt(
+              "A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one on your computer, under Workflows, then Definitions.",
+            )}
+          />
+        ) : null
+      ) : (
+        <>
+          <View className="px-5 pb-2 pt-3">
+            <SegmentedControl
+              options={TABS.map((option) => ({ ...option, label: m(option.label) }))}
+              selected={shown}
+              onSelect={setTab}
+              role="tab"
+            />
+          </View>
+          {withRuns.map(({ environment, snapshot }) => (
+            <EnvironmentRuns
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              label={environments.length > 1 ? environment.label : null}
+              snapshot={snapshot}
+              tab={shown}
+            />
+          ))}
+        </>
+      )}
     </ScreenScrollView>
   );
 }
