@@ -1,12 +1,17 @@
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "./i18n/messages";
+
 export const CODE_BLOCK_LANGUAGES = [
-  { id: "", label: "Plain text" },
-  { id: "asm", label: "Assembly" },
+  { id: "", label: msg("Plain text") },
+  { id: "asm", label: msg("Assembly") },
   { id: "bash", label: "Bash" },
   { id: "c", label: "C" },
   { id: "cpp", label: "C++" },
   { id: "csharp", label: "C#" },
   { id: "css", label: "CSS" },
   { id: "dart", label: "Dart" },
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- code language name
   { id: "diff", label: "Diff" },
   { id: "dockerfile", label: "Dockerfile" },
   { id: "elixir", label: "Elixir" },
@@ -32,9 +37,13 @@ export const CODE_BLOCK_LANGUAGES = [
   { id: "sql", label: "SQL" },
   { id: "svelte", label: "Svelte" },
   { id: "swift", label: "Swift" },
+  { id: "systemverilog", label: "SystemVerilog" },
   { id: "toml", label: "TOML" },
   { id: "tsx", label: "TSX" },
   { id: "typescript", label: "TypeScript" },
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- code language name
+  { id: "verilog", label: "Verilog" },
+  { id: "vhdl", label: "VHDL" },
   { id: "vue", label: "Vue" },
   { id: "xml", label: "XML" },
   { id: "yaml", label: "YAML" },
@@ -56,6 +65,8 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   s: "asm",
   sh: "bash",
   shell: "bash",
+  sv: "systemverilog",
+  "system-verilog": "systemverilog",
   text: "",
   ts: "typescript",
   txt: "",
@@ -79,6 +90,7 @@ export function codeLanguageEntry(language: string): CodeBlockLanguage | null {
   return CODE_BLOCK_LANGUAGES.find((entry) => entry.id === id.toLowerCase()) ?? null;
 }
 
-export function codeLanguageLabel(language: string): string {
-  return codeLanguageEntry(language)?.label ?? language;
+export function codeLanguageLabel(language: string, resolve: MessageResolver = m): string {
+  const label = codeLanguageEntry(language)?.label;
+  return label === undefined ? language : resolve(label);
 }

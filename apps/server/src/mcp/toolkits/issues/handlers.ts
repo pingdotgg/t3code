@@ -1,5 +1,6 @@
 import {
   threadIssueKeysEqual,
+  type IssueDetail,
   type IssueRef,
   type OrchestrationV2ThreadShell,
   type ProjectId,
@@ -31,6 +32,8 @@ interface ResolvedTarget extends IssueRef {
   readonly host: string;
   readonly url: string | null;
   readonly writable: boolean;
+  /** Present when resolving the URL already read the issue. */
+  readonly issue?: IssueDetail;
 }
 
 /** What the tools report from a thread shell; exported so the shape is testable without a layer. */
@@ -87,13 +90,14 @@ const make = Effect.gen(function* () {
   /** Where a key-only reference is read: the named project's tracker, or the caller's thread's. */
   const requireProjectScope = Effect.fn("IssuesToolkit.requireProjectScope")(function* (
     requested: ProjectId | undefined,
+    key?: string,
   ) {
     // A named project skips the caller's thread, so the capability is checked here too.
     yield* McpInvocationContext.requireMcpCapability("issues");
     const projectId = requested ?? (yield* callerThread())?.projectId;
     if (projectId === undefined) return yield* new IssueProjectRequiredError();
     return yield* issues
-      .projectScope(projectId)
+      .projectScope(projectId, key)
       .pipe(Effect.mapError(() => new IssueProjectNotFoundError({ projectId })));
   });
 
@@ -112,7 +116,7 @@ const make = Effect.gen(function* () {
       return { ...resolved, url: input.url } satisfies ResolvedTarget;
     }
     if (input.key === undefined) return yield* new IssueTargetIncompleteError();
-    const scope = yield* requireProjectScope(input.projectId);
+    const scope = yield* requireProjectScope(input.projectId, input.key);
     return {
       ...scope,
       key: input.key,
@@ -138,6 +142,9 @@ const make = Effect.gen(function* () {
     scope: target.scope,
     key: target.key,
   });
+
+  const readIssue = (target: ResolvedTarget) =>
+    target.issue === undefined ? issues.detail(refOf(target)) : Effect.succeed(target.issue);
 
   /** A link needs the issue's URL, which a key-only reference does not carry; one read fills it. */
   const linkFailure = <E>(cause: Cause.Cause<E>) =>
@@ -189,7 +196,7 @@ const make = Effect.gen(function* () {
     read_issue: McpToolAccess.reads((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
-        const detail = yield* issues.detail(refOf(target));
+        const detail = yield* readIssue(target);
         return {
           ...identityOf(target),
           url: target.url ?? detail.url,
@@ -265,7 +272,7 @@ const make = Effect.gen(function* () {
           projectId: input.projectId ?? thread.projectId,
         });
         // Reading the issue proves it exists and names it for the thread's row.
-        const detail = yield* issues.detail(refOf(target));
+        const detail = yield* readIssue(target);
         const url = target.url ?? detail.url;
         const { alreadyLinked } = yield* threadIssues
           .link({

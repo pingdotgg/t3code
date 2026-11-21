@@ -1,4 +1,7 @@
 import { parse, type ParseError } from "jsonc-parser";
+import { msg } from "gt-react";
+
+import { m } from "./i18n/messages";
 
 import {
   createVividThemeColors,
@@ -139,7 +142,7 @@ export function isVsCodeThemeFile(value: unknown): boolean {
 export function parseThemeImport(source: string): ThemeDefinition {
   const errors: ParseError[] = [];
   const value: unknown = parse(source, errors, { allowTrailingComma: true });
-  if (errors.length > 0) throw new Error("That theme file is not valid JSON.");
+  if (errors.length > 0) throw new Error(m(msg("That theme file is not valid JSON.")));
   return isVsCodeThemeFile(value)
     ? parseVsCodeThemeFile(value)
     : parseThemeFile(JSON.parse(source));
@@ -168,11 +171,11 @@ function resolveName(value: Record<string, unknown>): string {
     const humanized = humanizeThemeName(candidate);
     if (humanized.length > 0) return humanized.slice(0, 48);
   }
-  return "VS Code theme";
+  return m(msg("VS Code theme"));
 }
 
 export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
-  if (!isRecord(value)) throw new Error("Theme files must contain a JSON object.");
+  if (!isRecord(value)) throw new Error(m(msg("Theme files must contain a JSON object.")));
   const colors = isRecord(value.colors) ? value.colors : {};
 
   const pick = (...keys: ReadonlyArray<string>): VsCodeRgba | null => {
@@ -190,7 +193,11 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   const canvasColor = pick("editor.background", "editorPane.background");
   if (!canvasColor) {
     throw new Error(
-      'That VS Code theme has no "editor.background" color, so there is nothing to build a palette from.',
+      m(
+        msg(
+          'That VS Code theme has no "editor.background" color, so there is nothing to build a palette from.',
+        ),
+      ),
     );
   }
   const canvas = { r: canvasColor.r, g: canvasColor.g, b: canvasColor.b };
@@ -473,6 +480,7 @@ export function resolveThemeLabelCollisions(
     return renamed ?? theme;
   });
 
+  const inputIds = new Set(relabelled.map(({ id }) => id));
   const seen = new Set<string>();
   return relabelled.map((theme) => {
     if (!seen.has(theme.id)) {
@@ -480,8 +488,23 @@ export function resolveThemeLabelCollisions(
       return theme;
     }
     for (let suffix = 2; suffix < 100; suffix += 1) {
-      const candidate = rename(theme, `${theme.label} ${suffix}`);
-      if (candidate && !seen.has(candidate.id)) {
+      const suffixText = String(suffix);
+      const base = [...theme.label];
+      let stem = base.join("").trimEnd();
+      let name = `${stem} ${suffixText}`;
+      let id = themeIdFromName(name);
+      while (
+        name.length > 48 ||
+        id.split("-").at(-1) !== suffixText ||
+        id === themeIdFromName(stem)
+      ) {
+        base.pop();
+        stem = base.join("").trimEnd();
+        name = `${stem} ${suffixText}`;
+        id = themeIdFromName(name);
+      }
+      const candidate = rename(theme, name);
+      if (candidate && !inputIds.has(candidate.id) && !seen.has(candidate.id)) {
         seen.add(candidate.id);
         return candidate;
       }

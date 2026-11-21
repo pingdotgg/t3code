@@ -1,9 +1,14 @@
-import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  IssueTrackerKind,
+  ProjectId,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveIssueLinkTarget } from "./issueLinks.ts";
 
-const project = (id: string, repository: string) =>
+const project = (id: string, repository: string, origin?: string) =>
   ({
     id: ProjectId.make(id),
     environmentId: EnvironmentId.make("env"),
@@ -13,6 +18,7 @@ const project = (id: string, repository: string) =>
       displayName: repository,
       owner: repository.split("/")[0],
       name: repository.split("/")[1],
+      ...(origin ? { origin: { canonicalKey: `github.com/${origin}`, displayName: origin } } : {}),
     },
   }) as never;
 
@@ -33,6 +39,14 @@ describe("resolveIssueLinkTarget", () => {
   ])("$name", ({ url, expected }) => {
     const target = resolveIssueLinkTarget({ url, projects });
     expect(target?.ref).toMatchObject({ tracker: "github", host: "github.com", ...expected });
+  });
+
+  it("reads a fork's own issue through the fork, not as a borrowed repository", () => {
+    const target = resolveIssueLinkTarget({
+      url: "https://github.com/me/web/issues/3",
+      projects: [project("p1", "acme/api"), project("fork", "acme/web", "me/web")],
+    });
+    expect(target?.ref).toMatchObject({ projectId: "fork", scope: "me/web", key: "3" });
   });
 
   it("prefers the project bound to the link's own port over one on the bare hostname", () => {
@@ -56,6 +70,63 @@ describe("resolveIssueLinkTarget", () => {
       ],
     });
     expect(target?.ref.projectId).toBe("ported");
+
+    // An Enterprise Server's hostname need not say "github"; its project vouches for it.
+    const custom = resolveIssueLinkTarget({
+      url: "https://code.acme.test/acme/web/issues/7",
+      projects: [enterprise("custom", "code.acme.test")],
+    });
+    expect(custom?.ref).toMatchObject({ projectId: "custom", host: "code.acme.test", key: "7" });
+  });
+
+  it("reads a Linear link through the project bound to its team, else any bound to Linear", () => {
+    const trackers = {
+      trackers: [
+        {
+          tracker: IssueTrackerKind.make("linear"),
+          displayName: "Linear",
+          host: "linear.app",
+          scopeNoun: "team",
+          credential: { label: "Personal API key", helpUrl: null },
+          connected: true,
+          account: "julius",
+          detail: null,
+          workspace: "acme",
+          scopes: [],
+        },
+      ],
+      bindings: {
+        [ProjectId.make("p1")]: { tracker: IssueTrackerKind.make("linear"), scope: "API" },
+        [ProjectId.make("p2")]: {
+          tracker: IssueTrackerKind.make("linear"),
+          scope: "WEB",
+          additionalScopes: ["DOCS"],
+        },
+      },
+    };
+    const resolve = (url: string) => resolveIssueLinkTarget({ url, projects, trackers });
+    expect(resolve("https://linear.app/acme/issue/WEB-17/fix-it")?.ref).toEqual({
+      projectId: "p2",
+      tracker: "linear",
+      host: "linear.app",
+      scope: "WEB",
+      key: "WEB-17",
+    });
+    expect(resolve("https://linear.app/acme/issue/DOCS-4")?.ref).toMatchObject({
+      projectId: "p2",
+      scope: "DOCS",
+    });
+    expect(resolve("https://linear.app/acme/issue/OPS-3")?.ref).toMatchObject({
+      projectId: "p1",
+      scope: "OPS",
+      key: "OPS-3",
+    });
+    expect(resolve("https://linear.app.evil.example/acme/issue/WEB-17")).toBeNull();
+    // Team keys repeat across workspaces; only the connected one's links are its issues.
+    expect(resolve("https://linear.app/othercorp/issue/WEB-17")).toBeNull();
+    expect(
+      resolveIssueLinkTarget({ url: "https://linear.app/acme/issue/WEB-17", projects }),
+    ).toBeNull();
   });
 
   it.each([
