@@ -8,11 +8,15 @@ publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-reqwest.workspace = true
+futures.workspace = true
+# Native roots: the Orbit root CA lives in the macOS system keychain, not in webpki-roots.
+reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+# Orbit Tasks realtime: Reverb (Pusher protocol) over wss, trusting the same keychain roots.
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
 url.workspace = true
 
 [lints]
