@@ -417,6 +417,18 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : null;
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const payload = workEntry.structuredPayload;
+  const mcpSignIn =
+    payload?.type === "system_notice" &&
+    payload.mcpSignIn !== undefined &&
+    payload.providerThreadId !== null ? (
+      <McpSignInAction
+        environmentId={ctx.activeThreadEnvironmentId}
+        threadId={payload.threadId}
+        providerThreadId={payload.providerThreadId}
+        server={payload.mcpSignIn.server}
+        noticeAt={DateTime.toEpochMillis(payload.updatedAt)}
+      />
+    ) : null;
   const skill =
     payload?.type === "dynamic_tool"
       ? claudeSkillInvocation(payload.toolName, payload.input)
@@ -545,7 +557,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <div className="min-w-0 flex-1 overflow-hidden">
           <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
             <span
-              className={cn(answerPreview ? "min-w-0" : "min-w-0 flex-1", "truncate", headingClass)}
+              className={cn(
+                answerPreview || mcpSignIn ? "min-w-0" : "min-w-0 flex-1",
+                "truncate",
+                headingClass,
+              )}
             >
               {isReasoning && !expanded ? (
                 <ChatMarkdown
@@ -586,11 +602,19 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                 {answerPreview}
               </span>
             ) : null}
+            {mcpSignIn}
           </p>
         </div>
       }
       trailing={
         <>
+          {/* First, so revealing it takes label space instead of moving the controls. A label
+              that ends in an action keeps that space reserved, so the action stays put too. */}
+          <TimelineRowTimestamp
+            createdAt={workEntry.createdAt}
+            timestampFormat={timestampFormat}
+            className={mcpSignIn ? "static" : ""}
+          />
           {createdThread ? (
             <button
               type="button"
@@ -608,17 +632,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             >
               <T>Open chat</T>
             </button>
-          ) : null}
-          {payload?.type === "system_notice" &&
-          payload.mcpSignIn !== undefined &&
-          payload.providerThreadId !== null ? (
-            <McpSignInAction
-              environmentId={ctx.activeThreadEnvironmentId}
-              threadId={payload.threadId}
-              providerThreadId={payload.providerThreadId}
-              server={payload.mcpSignIn.server}
-              noticeAt={DateTime.toEpochMillis(payload.updatedAt)}
-            />
           ) : null}
           {notifiedSubagentThreadId ? (
             <InlineButton
@@ -647,7 +660,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               />
             </span>
           ) : null}
-          <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
         </>
       }
     >
