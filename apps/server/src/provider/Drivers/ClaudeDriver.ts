@@ -147,6 +147,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         ? configDir
         : undefined,
     );
+    const resetCreditsReader = yield* ClaudeResetCredits.makeClaudeResetCreditsReader(
+      configDir,
+      accountConfigPath,
+    );
     const stampIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
@@ -285,11 +289,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               catalog,
               scopedLimitNames,
               (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
-                  Effect.provideService(HttpClient.HttpClient, httpClient),
-                  Effect.provideService(FileSystem.FileSystem, fileSystem),
-                  Effect.provideService(Path.Path, path),
-                ),
+                resetCreditsReader
+                  .read(version)
+                  .pipe(
+                    Effect.provideService(HttpClient.HttpClient, httpClient),
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                  ),
             ),
           ),
           Effect.tap((provider) =>
@@ -376,7 +382,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               version,
               grantId,
               requestId,
-            }),
+            }).pipe(Effect.ensuring(resetCreditsReader.invalidate)),
           ClaudeResetCredits.isSettledClaudeResetCreditFailure,
         );
       },
