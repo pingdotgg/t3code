@@ -183,13 +183,21 @@ export const readAntigravityRunningCommands = Effect.fn("readAntigravityRunningC
         if (!hasSteps) return undefined;
         const rows = database
           .prepare(
-            `SELECT metadata, substr(step_payload, 1, ?) AS payload
+            `SELECT
+               CASE WHEN length(metadata) <= ? THEN metadata ELSE NULL END AS metadata,
+               length(metadata) AS metadataBytes,
+               CASE WHEN length(step_payload) <= ? THEN step_payload ELSE NULL END AS payload
              FROM steps
              WHERE step_type = ? AND status IN (${ACTIVE_STEP_STATUSES.join(", ")})
              ORDER BY idx DESC
              LIMIT ?`,
           )
-          .all(MAX_PAYLOAD_BYTES, RUN_COMMAND_STEP_TYPE, MAX_ACTIVE_COMMANDS + 1);
+          .all(
+            MAX_METADATA_BYTES,
+            MAX_PAYLOAD_BYTES,
+            RUN_COMMAND_STEP_TYPE,
+            MAX_ACTIVE_COMMANDS + 1,
+          );
         if (rows.length > MAX_ACTIVE_COMMANDS) return undefined;
         if (rows.length === 0) {
           const hasAnyCommand =
@@ -200,10 +208,10 @@ export const readAntigravityRunningCommands = Effect.fn("readAntigravityRunningC
         }
         const active: Array<ActiveNativeCommand> = [];
         for (const row of rows) {
-          const metadata =
-            row.metadata instanceof Uint8Array
-              ? row.metadata.subarray(0, MAX_METADATA_BYTES)
-              : null;
+          if (typeof row.metadataBytes === "number" && row.metadataBytes > MAX_METADATA_BYTES) {
+            return undefined;
+          }
+          const metadata = row.metadata instanceof Uint8Array ? row.metadata : null;
           const payload = row.payload instanceof Uint8Array ? row.payload : null;
           const decoded = decodeActiveCommand(metadata, payload);
           if (decoded === undefined) return undefined;
