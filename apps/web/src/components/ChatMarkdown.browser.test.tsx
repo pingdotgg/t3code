@@ -317,12 +317,16 @@ it("fades a streaming reply's blocks in once, not again when it remounts", async
         streamingId="remounted-reply"
       />,
     );
-    expect(isFading(first.getByText("Finished block").element())).toBe(true);
+    await vi.waitFor(() =>
+      expect(isFading(first.getByText("Finished block").element())).toBe(true),
+    );
     await first.rerender(message);
-    expect(isFading(first.getByText("Still growing").element())).toBe(true);
+    await vi.waitFor(() => expect(isFading(first.getByText("Still growing").element())).toBe(true));
   }
   await using screen = await render(message);
-  expect(getComputedStyle(screen.getByText("Still growing").element()).opacity).toBe("1");
+  await expect
+    .element(screen.getByText("Still growing"))
+    .toHaveStyle({ opacity: "1", transitionDuration: "0s" });
   expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
 });
 
