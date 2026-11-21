@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -74,22 +75,20 @@ const setup = Effect.fn("setup")(function* (
     ),
     database,
   );
-  const runtime = Layer.effectContext(
-    WorkflowRuntime.make(
-      Effect.succeed(
-        (definitions: ReadonlyArray<WorkflowDefinition>) =>
-          engine?.(definitions) ??
-          WorkflowEngine.layer(definitions).pipe(
-            Layer.provide(Layer.mock(WorkflowAgents)({})),
-            Layer.provide(database),
-            Layer.provide(NodeCrypto.layer),
-          ),
-      ),
-      directory,
-      Effect.succeed(true),
-    ).pipe(Effect.provideService(FileSystem.FileSystem, wrap(fileSystem))),
-  );
-  return { fileSystem, at, runtime };
+  const made = WorkflowRuntime.make(
+    Effect.succeed(
+      (definitions: ReadonlyArray<WorkflowDefinition>) =>
+        engine?.(definitions) ??
+        WorkflowEngine.layer(definitions).pipe(
+          Layer.provide(Layer.mock(WorkflowAgents)({})),
+          Layer.provide(database),
+          Layer.provide(NodeCrypto.layer),
+        ),
+    ),
+    directory,
+    Effect.succeed(true),
+  ).pipe(Effect.provideService(FileSystem.FileSystem, wrap(fileSystem)));
+  return { fileSystem, at, directory, made, runtime: Layer.effectContext(made) };
 });
 
 it.effect(
@@ -384,7 +383,8 @@ it.live("a file without imports or exports loads again after it changes", () =>
     const twice = `
       import * as NodeFS from "node:fs";
       import * as NodeServices from "@effect/platform-node/NodeServices";
-      import * as Effect from "effect/Effect";
+      import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
       import { loadDefinitions } from ${JSON.stringify(new URL("./WorkflowRuntime.ts", import.meta.url).href)};
       const file = process.argv.at(-1);
       const program = Effect.gen(function* () {
@@ -448,4 +448,43 @@ it.effect("a change held back by a run goes in once that run ends, with no furth
       Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "workflows are off until turned on, and a run left waiting when they are turned off goes on once they are on again",
+  () =>
+    Effect.gen(function* () {
+      const { fileSystem, at, directory, made } = yield* setup();
+      // Its top level counts the times it was loaded.
+      yield* fileSystem.writeFileString(
+        at("counted.ts"),
+        "globalThis.t3GatedLoads = (globalThis.t3GatedLoads ?? 0) + 1;\nexport default [];\n",
+      );
+      const loads = () => (globalThis as { t3GatedLoads?: number }).t3GatedLoads ?? 0;
+      yield* Effect.gen(function* () {
+        const { turn, context } = yield* WorkflowRuntime.gate(made, directory);
+        const workflows = Context.get(context, Workflows.Workflows);
+        const definitions = Context.get(context, WorkflowRuntime.WorkflowDefinitions);
+        const start = workflows.start("hold", {}, { idempotencyKey: "h" });
+
+        assert.equal((yield* Effect.flip(start)).message, Workflows.OFF);
+        assert.equal((yield* Effect.flip(workflows.list())).message, Workflows.OFF);
+        assert.deepStrictEqual((yield* definitions.read).files, []);
+        assert.equal(loads(), 0);
+
+        yield* turn(true);
+        assert.equal(loads(), 1);
+        const held = yield* start;
+        yield* workflows.waitFor(held.runId, (run) => run.status === "waiting");
+
+        yield* turn(false);
+        const signal = workflows.signal({ runId: held.runId, wait: "go" }, "go on", { id: "s1" });
+        assert.equal((yield* Effect.flip(signal)).message, Workflows.OFF);
+
+        yield* turn(true);
+        yield* signal;
+        const freed = yield* workflows.waitFor(held.runId, (run) => run.status === "completed");
+        assert.equal(freed.result, "go on");
+      }).pipe(Effect.scoped, Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
