@@ -15,6 +15,7 @@ import {
   type ServerProviderUsageWindow,
   type UsageLimitSourceAccount,
   type UsageLimitSourceSnapshot,
+  type UsageLimitDisplay,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
@@ -754,6 +755,19 @@ export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
 }
 
+// Rounded on its own: 100 - remainingPercent drops a point at .5 ties.
+export function usedPercent(window: ServerProviderUsageWindow): number {
+  return Math.round(Math.max(0, Math.min(100, window.usedPercent)));
+}
+
+/** The percent a limit shows: quota left, or quota used. */
+export function limitPercent(
+  window: ServerProviderUsageWindow,
+  display: UsageLimitDisplay,
+): number {
+  return display === "used" ? usedPercent(window) : remainingPercent(window);
+}
+
 function resetMillis(window: ServerProviderUsageWindow): number | null {
   if (window.resetsAt === undefined) return null;
   const at = Date.parse(window.resetsAt);
@@ -775,6 +789,11 @@ export function paceRemainingPercent(
 ): number | null {
   const elapsed = elapsedShare(window, now);
   return elapsed === null ? null : Math.round((1 - elapsed) * 100);
+}
+
+/** An even-pace left percent as the bar shows it: time left, or time passed. */
+export function shownPercent(left: number, display: UsageLimitDisplay): number {
+  return display === "used" ? 100 - left : left;
 }
 
 export type LimitPace = "ahead" | "on" | "under";

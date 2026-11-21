@@ -61,7 +61,9 @@ function SubscriptionUsage(
     noSessionLimit: "No session limit reported",
     noWeeklyLimit: "No weekly limit reported",
     subscriptionRemaining: "Subscription remaining",
+    subscriptionUsed: "Subscription used",
     percentLeft: "{remaining}% left",
+    percentUsed: "{used}% used",
     windowPercentLeft: "{window} · {remaining}% left",
     notApplicable: "N/A",
     openApp: "Open T3",
@@ -70,8 +72,33 @@ function SubscriptionUsage(
     tapToConnect: "Tap to connect in T3",
     providerAccessibility: "{provider}. {detail}.",
     windowAccessibility: "{provider}, {window}, {remaining} percent remaining. {reset}. {detail}.",
+    windowAccessibilityUsed: "{provider}, {window}, {used} percent used. {reset}. {detail}.",
     moreInApp: {} as Record<string, string>,
   };
+  const used = props.usageLimitDisplay === "used";
+  // Snapshots from before `used` existed fall back to the complement.
+  const usedOf = (window: { remaining: number; used?: number }) =>
+    window.used ?? 100 - window.remaining;
+  const percentLabel = (window: { remaining: number; used?: number }) =>
+    used
+      ? text.percentUsed.replace("{used}", String(usedOf(window)))
+      : text.percentLeft.replace("{remaining}", String(window.remaining));
+  const windowLabel = (
+    provider: string,
+    window: { label: string; remaining: number; used?: number; reset: string },
+    detail: string,
+  ) =>
+    (used
+      ? text.windowAccessibilityUsed.replace("{used}", String(usedOf(window)))
+      : text.windowAccessibility.replace("{remaining}", String(window.remaining))
+    )
+      .replace("{provider}", provider)
+      .replace("{window}", window.label)
+      .replace("{reset}", window.reset)
+      .replace(
+        "{detail}",
+        used && detail === text.subscriptionRemaining ? text.subscriptionUsed : detail,
+      );
   const providers = props.providers ?? [
     // oxlint-disable-next-line t3code/no-untranslated-copy -- widget fallback until the app publishes translated text
     { name: "Codex", detail: "Open T3 to connect", windows: [], expiresAt: 0 },
@@ -132,12 +159,7 @@ function SubscriptionUsage(
             accessibilityElement("ignore"),
             accessibilityLabel(
               tightest
-                ? text.windowAccessibility
-                    .replace("{provider}", provider.name)
-                    .replace("{window}", tightest.label)
-                    .replace("{remaining}", String(tightest.remaining))
-                    .replace("{reset}", tightest.reset)
-                    .replace("{detail}", provider.detail)
+                ? windowLabel(provider.name, tightest, provider.detail)
                 : text.providerAccessibility
                     .replace("{provider}", provider.name)
                     .replace("{detail}", detail),
@@ -165,14 +187,17 @@ function SubscriptionUsage(
               ]}
             >
               {tightest
-                ? text.percentLeft.replace("{remaining}", String(tightest.remaining))
+                ? percentLabel(tightest)
                 : period !== "auto" && !stale && provider.windows.length > 0
                   ? text.notApplicable
                   : text.openApp}
             </Text>
           </HStack>
           {tightest ? (
-            <ProgressView value={tightest.remaining / 100} modifiers={barModifiers} />
+            <ProgressView
+              value={(used ? usedOf(tightest) : tightest.remaining) / 100}
+              modifiers={barModifiers}
+            />
           ) : null}
         </VStack>
       );
@@ -210,14 +235,7 @@ function SubscriptionUsage(
             spacing={dense ? 1 : 2}
             modifiers={[
               accessibilityElement("ignore"),
-              accessibilityLabel(
-                text.windowAccessibility
-                  .replace("{provider}", provider.name)
-                  .replace("{window}", window.label)
-                  .replace("{remaining}", String(window.remaining))
-                  .replace("{reset}", window.reset)
-                  .replace("{detail}", provider.detail),
-              ),
+              accessibilityLabel(windowLabel(provider.name, window, provider.detail)),
             ]}
           >
             <HStack spacing={4}>
@@ -247,10 +265,13 @@ function SubscriptionUsage(
                   ),
                 ]}
               >
-                {text.percentLeft.replace("{remaining}", String(window.remaining))}
+                {percentLabel(window)}
               </Text>
             </HStack>
-            <ProgressView value={window.remaining / 100} modifiers={barModifiers} />
+            <ProgressView
+              value={(used ? usedOf(window) : window.remaining) / 100}
+              modifiers={barModifiers}
+            />
             {!compact ? (
               <Text modifiers={[font({ size: 10 }), foregroundStyle(secondary), lineLimit(1)]}>
                 {window.reset}

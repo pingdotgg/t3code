@@ -1705,9 +1705,12 @@
   "a0b256b49573c479": "보고된 세션 한도 없음",
   "bdb25fc7329e1ea7": "보고된 주간 한도 없음",
   "2a868f5893b8a3d0": "남은 구독량",
+  "4de5fcfb9d79a954": "사용한 구독량",
   "07f5912af296f9ea": "{remaining}% 남음",
+  "d996426072afbeb2": "{used}% 사용됨",
   "f60ed5fcf4fd471c": "{window} · {remaining}% 남음",
   "30106fc3a8643199": "남음",
+  "cb3b0988d4d24449": "사용됨",
   "bd8554c7671b01a1": "해당 없음",
   "8963e62b7e4f94cf": "{app} 열기",
   "b6ce773a43c1b2a9": "사용 가능한 구독 한도가 없습니다.",
@@ -1715,6 +1718,7 @@
   "29519653f14c6817": "{app}에서 탭하여 연결",
   "0a3b9942c9a76f23": "{provider}. {detail}.",
   "5270189c209360dd": "{provider}, {window}, {remaining}퍼센트 남음. {reset}. {detail}.",
+  "d44dbb9c4d5a5c59": "{provider}, {window}, {used}퍼센트 사용됨. {reset}. {detail}.",
   "f7288c2957dc484a": "{count, plural, other {{app}에 {count}개 더 있음}}",
   "67651da8154563a1": "사용 가능한 한도 정보 없음",
   "ebd3a4d6fb5d987b": "{count, plural, other {계정 {count}개 · 통합}}",
@@ -4976,9 +4980,14 @@
   "b16fdf56b16d99c9": "예상대로",
   "90f977e97ae8b6c6": "예상보다 느림",
   "897aceb6c7196649": "계정",
+  "49d4bcb2d2b83296": "구간 {index}, {account}, {used}% 사용됨",
+  "21e4463c7c2ea9b0": "구간 {index}, {account}, {used}% 사용됨, 기간 {elapsed}% 지남",
   "811008ce95331531": "구간 {index}, {account}, {remaining}% 남음",
   "bfb2d0ef476d295b": "구간 {index}, {account}, {remaining}% 남음, 기간 {timeLeft}% 남음",
   "e71c96e5114f7718": "계정 세부 정보 표시",
+  "1aa64ce1ba713045": "구간 {index}, {account}, {used}% 사용됨, {resetsIn}, {credits, plural, other {적립된 초기화 크레딧 {credits}개}}",
+  "7005baacced874ff": "구간 {index}, {account}, {used}% 사용됨, {resetsIn}",
+  "d8f09fa55ee25b77": "구간 {index}, {account}, {used}% 사용됨, {credits, plural, other {적립된 초기화 크레딧 {credits}개}}",
   "27cd137302298f71": "구간 {index}, {account}, {remaining}% 남음, {resetsIn}, {credits, plural, other {적립된 초기화 크레딧 {credits}개}}",
   "288ade531cfcf90c": "구간 {index}, {account}, {remaining}% 남음, {resetsIn}",
   "f78edbddd70ee41d": "구간 {index}, {account}, {remaining}% 남음, {credits, plural, other {적립된 초기화 크레딧 {credits}개}}",
@@ -4989,6 +4998,22 @@
   "0d3e9f1f27c0e780": "계정 이메일 표시",
   "9217e0c91cee3cf8": "로그인됨",
   "5f12a194d158f9b1": "소스",
+  "8ee47ebca67e9746": [
+    {
+      "t": "Text",
+      "i": 1,
+      "c": [
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    },
+    " ",
+    "사용됨"
+  ],
   "65a7507ffde6d3f8": [
     {
       "t": "Text",
@@ -5014,6 +5039,14 @@
     "에서 한도를 새로 고칠 수 없습니다. 마지막으로 확인된 값을 표시합니다."
   ],
   "726ece0c7139ce8a": "이 계정은 선택한 환경에서 더 이상 한도를 보고하지 않습니다.",
+  "e6a37782de1fc4b2": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "% 사용됨"
+  ],
   "412e3b93454812aa": [
     {
       "i": 1,
@@ -5030,6 +5063,15 @@
     },
     " ",
     "초기화"
+  ],
+  "9da6c2afc7c2b0af": [
+    "균등 속도: 지금까지 ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "% 사용됨"
   ],
   "23d0be01844d163c": [
     "균등 속도: 지금까지 ",
@@ -5061,6 +5103,9 @@
   "8864ac914d8205e8": "초기화 크레딧을 사용할까요?",
   "e32c2c7e61a16f4b": "크레딧 사용",
   "b58a90dc5356f80a": "지금 초기화됨",
+  "114ba73b78ee362c": "↻ 지금 −{percent}%",
+  "a7bb182bbb86d11d": "↻ −{percent}% 곧 초기화됨",
+  "4e03d00e37f33012": "↻ {duration} 후 −{percent}%",
   "1d8c701d90e48e07": "↻ 지금 +{percent}%",
   "949db5acc5a82add": "↻ +{percent}% 곧 초기화됨",
   "96f9e0677375a802": "↻ {duration} 후 +{percent}%",
@@ -5441,5 +5486,8 @@
   "ad208e3e32c85029": "모두 숨기기",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "채팅의 도구 호출",
-  "8d545d54c0a9e950": "에이전트가 실행하는 명령, 편집, 검색을 숨깁니다. 성공한 항목 숨기기는 실패를 남겨 둡니다. Zen은 최종 답변만 표시합니다. 승인, 질문, 오류는 항상 표시됩니다."
+  "8d545d54c0a9e950": "에이전트가 실행하는 명령, 편집, 검색을 숨깁니다. 성공한 항목 숨기기는 실패를 남겨 둡니다. Zen은 최종 답변만 표시합니다. 승인, 질문, 오류는 항상 표시됩니다.",
+  "0e3ed6b33be1a9f6": "남음",
+  "aa77d8906957af91": "사용됨",
+  "464689c7533f1655": "사용량 한도와 막대를 각 한도의 남은 비율 또는 사용한 비율로 표시합니다."
 }

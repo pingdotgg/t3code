@@ -3,6 +3,7 @@ import {
   collectLimitAccounts,
   collectLimitPools,
   remainingPercent,
+  usedPercent,
   type LimitAccount,
   type LimitPoolWindow,
   type LimitPresentations,
@@ -23,9 +24,12 @@ export interface SubscriptionUsageText {
   noSessionLimit: string;
   noWeeklyLimit: string;
   subscriptionRemaining: string;
+  subscriptionUsed: string;
   percentLeft: string;
+  percentUsed: string;
   windowPercentLeft: string;
   left: string;
+  used: string;
   notApplicable: string;
   openApp: string;
   noLimits: string;
@@ -33,6 +37,7 @@ export interface SubscriptionUsageText {
   tapToConnect: string;
   providerAccessibility: string;
   windowAccessibility: string;
+  windowAccessibilityUsed: string;
   moreInApp: Record<string, string>;
 }
 
@@ -41,6 +46,7 @@ export interface WidgetLimitAccount {
   color?: string;
   /** Absent when this account does not report the window. */
   remaining?: number;
+  used?: number;
   refill?: number;
   resetsAt?: number;
   reset?: string;
@@ -51,6 +57,8 @@ export interface SubscriptionUsageSnapshot {
   theme?: WidgetTheme;
   url?: string;
   text?: SubscriptionUsageText;
+  /** Set when the user reads limits as used; `remaining` values stay quota left. */
+  usageLimitDisplay?: "used";
   checkedAt: number;
   providers: Array<{
     name: string;
@@ -60,6 +68,7 @@ export interface SubscriptionUsageSnapshot {
       kind?: string;
       label: string;
       remaining: number;
+      used?: number;
       reset: string;
       accounts?: WidgetLimitAccount[];
     }>;
@@ -130,6 +139,7 @@ function widgetAccounts(window: LimitPoolWindow, resolve: MessageResolver): Widg
     return {
       ...account,
       remaining: remainingPercent(column.window),
+      used: usedPercent(column.window),
       refill: reset ? column.refillPercent : 0,
       ...(reset && {
         resetsAt,
@@ -163,11 +173,14 @@ function subscriptionUsageText(
     noSessionLimit: resolve(msg("No session limit reported")),
     noWeeklyLimit: resolve(msg("No weekly limit reported")),
     subscriptionRemaining: resolve(msg("Subscription remaining")),
+    subscriptionUsed: resolve(msg("Subscription used")),
     percentLeft: resolve(msg("{remaining}% left", { remaining: "{remaining}" })),
+    percentUsed: resolve(msg("{used}% used", { used: "{used}" })),
     windowPercentLeft: resolve(
       msg("{window} · {remaining}% left", { window: "{window}", remaining: "{remaining}" }),
     ),
     left: resolve(msg("left", { $context: "follows a bold percentage, as in 40% left" })),
+    used: resolve(msg("used", { $context: "follows a bold percentage, as in 60% used" })),
     notApplicable: resolve(msg("N/A", { $context: "no usage limit for the chosen period" })),
     openApp: resolve(msg("Open {app}", { app: "T3" })),
     noLimits: resolve(msg("No subscription limits available.")),
@@ -182,6 +195,16 @@ function subscriptionUsageText(
         provider: "{provider}",
         window: "{window}",
         remaining: "{remaining}",
+        reset: "{reset}",
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- placeholders the widget fills in
+        detail: "{detail}",
+      }),
+    ),
+    windowAccessibilityUsed: resolve(
+      msg("{provider}, {window}, {used} percent used. {reset}. {detail}.", {
+        provider: "{provider}",
+        window: "{window}",
+        used: "{used}",
         reset: "{reset}",
         // oxlint-disable-next-line t3code/no-untranslated-copy -- placeholders the widget fills in
         detail: "{detail}",
@@ -276,6 +299,7 @@ function subscriptionUsageProps(
                 kind: window.kind,
                 label: window.label,
                 remaining: Math.round(window.remainingPercent),
+                used: window.usedPercent,
                 reset: window.resets[0]
                   ? isUpcoming(window.resets[0])
                     ? resolve(msg("Next reset {time}", { time: resetTime(window.resets[0].at) }))

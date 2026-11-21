@@ -1706,9 +1706,12 @@
   "a0b256b49573c479": "未报告会话限制",
   "bdb25fc7329e1ea7": "未报告每周限制",
   "2a868f5893b8a3d0": "订阅剩余",
+  "4de5fcfb9d79a954": "订阅已用",
   "07f5912af296f9ea": "剩余 {remaining}%",
+  "d996426072afbeb2": "已使用 {used}%",
   "f60ed5fcf4fd471c": "{window} · 剩余 {remaining}%",
   "30106fc3a8643199": "剩余",
+  "cb3b0988d4d24449": "已使用",
   "bd8554c7671b01a1": "不适用",
   "8963e62b7e4f94cf": "打开 {app}",
   "b6ce773a43c1b2a9": "没有可用的订阅限制。",
@@ -1716,6 +1719,7 @@
   "29519653f14c6817": "点按以在 {app} 中连接",
   "0a3b9942c9a76f23": "{provider}。{detail}。",
   "5270189c209360dd": "{provider}，{window}，剩余 {remaining}%。{reset}。{detail}。",
+  "d44dbb9c4d5a5c59": "{provider}，{window}，已使用 {used}%。{reset}。{detail}。",
   "f7288c2957dc484a": "{count, plural, other {{app} 中还有 {count} 个}}",
   "67651da8154563a1": "没有可用的限制",
   "ebd3a4d6fb5d987b": "{count, plural, other {{count} 个账户 · 合并额度}}",
@@ -4980,9 +4984,14 @@
   "b16fdf56b16d99c9": "用量消耗适中",
   "90f977e97ae8b6c6": "用量消耗偏慢",
   "897aceb6c7196649": "账户",
+  "49d4bcb2d2b83296": "分段 {index}，{account}，已使用 {used}%",
+  "21e4463c7c2ea9b0": "分段 {index}，{account}，已使用 {used}%，窗口已过 {elapsed}%",
   "811008ce95331531": "分段 {index}，{account}，剩余 {remaining}%",
   "bfb2d0ef476d295b": "分段 {index}，{account}，剩余 {remaining}%，窗口剩余 {timeLeft}%",
   "e71c96e5114f7718": "显示账户详情",
+  "1aa64ce1ba713045": "分段 {index}，{account}，已使用 {used}%，{resetsIn}，{credits, plural, other {已存有 {credits} 个重置额度}}",
+  "7005baacced874ff": "分段 {index}，{account}，已使用 {used}%，{resetsIn}",
+  "d8f09fa55ee25b77": "分段 {index}，{account}，已使用 {used}%，{credits, plural, other {已存有 {credits} 个重置额度}}",
   "27cd137302298f71": "分段 {index}，{account}，剩余 {remaining}%，{resetsIn}，{credits, plural, other {已存有 {credits} 个重置额度}}",
   "288ade531cfcf90c": "分段 {index}，{account}，剩余 {remaining}%，{resetsIn}",
   "f78edbddd70ee41d": "分段 {index}，{account}，剩余 {remaining}%，{credits, plural, other {已存有 {credits} 个重置额度}}",
@@ -4993,6 +5002,22 @@
   "0d3e9f1f27c0e780": "显示账户邮箱",
   "9217e0c91cee3cf8": "已登录",
   "5f12a194d158f9b1": "来源",
+  "8ee47ebca67e9746": [
+    "已使用",
+    " ",
+    {
+      "t": "Text",
+      "i": 1,
+      "c": [
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    }
+  ],
   "65a7507ffde6d3f8": [
     "剩余",
     " ",
@@ -5018,6 +5043,15 @@
     " 无法刷新限制。正在显示最近已知的值。"
   ],
   "726ece0c7139ce8a": "此账户已不再在所选环境上报告限制。",
+  "e6a37782de1fc4b2": [
+    "已使用 ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "%"
+  ],
   "412e3b93454812aa": [
     "剩余 ",
     {
@@ -5035,6 +5069,15 @@
       "k": "_gt_value_1",
       "v": "v"
     }
+  ],
+  "9da6c2afc7c2b0af": [
+    "均匀进度：此时应已使用 ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "%"
   ],
   "23d0be01844d163c": [
     "均匀进度：此时应剩余 ",
@@ -5066,6 +5109,9 @@
   "8864ac914d8205e8": "使用一次重置额度？",
   "e32c2c7e61a16f4b": "使用额度",
   "b58a90dc5356f80a": "已到重置时间",
+  "114ba73b78ee362c": "↻ 现在 −{percent}%",
+  "a7bb182bbb86d11d": "↻ −{percent}% 即将重置",
+  "4e03d00e37f33012": "↻ {duration} 后 −{percent}%",
   "1d8c701d90e48e07": "↻ 现在 +{percent}%",
   "949db5acc5a82add": "↻ +{percent}% 即将重置",
   "96f9e0677375a802": "↻ {duration} 后 +{percent}%",
@@ -5447,5 +5493,8 @@
   "ad208e3e32c85029": "全部隐藏",
   "3328503592789bed": "专注模式",
   "856812e7e1fc445e": "聊天中的工具调用",
-  "8d545d54c0a9e950": "隐藏智能体执行的命令、编辑和搜索。“隐藏成功的调用”仍保留失败项；“专注模式”仅显示最终回答。审批、提问和错误始终显示。"
+  "8d545d54c0a9e950": "隐藏智能体执行的命令、编辑和搜索。“隐藏成功的调用”仍保留失败项；“专注模式”仅显示最终回答。审批、提问和错误始终显示。",
+  "0e3ed6b33be1a9f6": "剩余",
+  "aa77d8906957af91": "已使用",
+  "464689c7533f1655": "将用量限制及其进度条显示为每个限制的剩余比例或已用比例。"
 }

@@ -10,6 +10,7 @@ import { TerminalAppearanceSection } from "./appearance/sections/TerminalAppeara
 import { TextAppearanceSection } from "./appearance/sections/TextAppearanceSection";
 import { ThemeAppearanceSection } from "./appearance/sections/ThemeAppearanceSection";
 import { ToolCallsAppearanceSection } from "./appearance/sections/ToolCallsAppearanceSection";
+import { UsageLimitsAppearanceSection } from "./appearance/sections/UsageLimitsAppearanceSection";
 
 export function SettingsAppearanceRouteScreen() {
   const gt = useGT();
@@ -32,6 +33,7 @@ export function SettingsAppearanceRouteScreen() {
         <TerminalAppearanceSection />
         <CodeAppearanceSection />
         <ToolCallsAppearanceSection />
+        <UsageLimitsAppearanceSection />
       </ScrollView>
     </SettingsScreen>
   );

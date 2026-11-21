@@ -58,6 +58,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
   const text = props.text ?? {
     refresh: "Open T3 to refresh",
     left: "left",
+    used: "used",
     asOf: "As of {time}",
     tapToConnect: "Tap to connect in T3",
     moreInApp: {} as Record<string, string>,
@@ -132,6 +133,10 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
     contentHeight / Math.max(1, shown.length + (hidden > 0 ? 1 : 0)),
   );
 
+  const used = props.usageLimitDisplay === "used";
+  // Snapshots from before `used` existed fall back to the complement.
+  const shownPercent = (value: { remaining: number; used?: number }) =>
+    used ? (value.used ?? 100 - value.remaining) : value.remaining;
   const low = (remaining: number) => remaining <= 10;
   const timeLeft = (account: WidgetLimitAccount) =>
     account.resetsAt && account.durationMs
@@ -158,11 +163,15 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
   ) => {
     if (account.remaining === undefined)
       return <Spacer key={account.name} modifiers={[size(segmentWidth, barHeight)]} />;
-    const fill = (segmentWidth * account.remaining) / 100;
-    const refill = (segmentWidth * Math.min(100 - account.remaining, account.refill ?? 0)) / 100;
+    const shown = shownPercent({ remaining: account.remaining, used: account.used });
+    const fill = (segmentWidth * shown) / 100;
+    const refill =
+      (segmentWidth * Math.min(used ? shown : 100 - account.remaining, account.refill ?? 0)) / 100;
     const left = timeLeft(account);
     const tick =
-      left === null ? null : Math.max(0, Math.min(segmentWidth - 5, segmentWidth * left - 2.5));
+      left === null
+        ? null
+        : Math.max(0, Math.min(segmentWidth - 5, segmentWidth * (used ? 1 - left : left) - 2.5));
     return (
       <Box
         key={account.name}
@@ -173,7 +182,8 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
         ) : null}
         {refill > 0 ? (
           <Row modifiers={[size(segmentWidth, barHeight)]}>
-            <Spacer modifiers={[width(segmentWidth - refill)]} />
+            {/* A reset gives back spent quota: the end of the empty track, or the end of a used fill. */}
+            <Spacer modifiers={[width(used ? fill - refill : segmentWidth - refill)]} />
             <Image
               source={{ uri: "t3_widget_hatch" }}
               tint={color}
@@ -215,7 +225,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
               maxLines={1}
               style={{ fontSize: 10, fontWeight: "bold" }}
             >
-              {`${account.remaining}%`}
+              {`${shown}%`}
             </Text>
           </Row>
         ) : null}
@@ -236,7 +246,11 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
   };
 
   const bar = (line: Extract<Line, { type: "window" }>, barWidth: number, barHeight: number) => {
-    const fallback: WidgetLimitAccount = { name: line.provider, remaining: line.window.remaining };
+    const fallback: WidgetLimitAccount = {
+      name: line.provider,
+      remaining: line.window.remaining,
+      ...(line.window.used !== undefined && { used: line.window.used }),
+    };
     const listed = line.window.accounts ?? [];
     // Glance rows hold at most ten children: five segments and their gaps.
     const accounts = listed.length > 0 && listed.length <= 5 ? listed : [fallback];
@@ -257,13 +271,13 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
     );
   };
 
-  const percentText = (remaining: number, fontSize: number) => (
+  const percentText = (value: { remaining: number; used?: number }, fontSize: number) => (
     <Text
-      color={low(remaining) ? colors.error : colors.onSurface}
+      color={low(value.remaining) ? colors.error : colors.onSurface}
       maxLines={1}
       style={{ fontSize, fontWeight: "bold" }}
     >
-      {`${remaining}%`}
+      {`${shownPercent(value)}%`}
     </Text>
   );
 
@@ -297,7 +311,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
           </Text>
           {bar(line, contentWidth - labelWidth - 40, 6)}
           <Box contentAlignment="centerEnd" modifiers={[width(40)]}>
-            {percentText(line.window.remaining, 10)}
+            {percentText(line.window, 10)}
           </Box>
         </Row>
       );
@@ -308,14 +322,14 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
             {label}
           </Text>
           <Row verticalAlignment="bottom">
-            {percentText(line.window.remaining, 18)}
+            {percentText(line.window, 18)}
             <Text
               color={colors.muted}
               maxLines={1}
               style={{ fontSize: 10 }}
               modifiers={[padding(3, 0, 0, 3)]}
             >
-              {`${text.left}${paceArrow(line.window.accounts ?? [])}`}
+              {`${used ? text.used : text.left}${paceArrow(line.window.accounts ?? [])}`}
             </Text>
           </Row>
         </Column>

@@ -5,6 +5,7 @@ import * as Linking from "expo-linking";
 import { useEffect, useEffectEvent } from "react";
 import { Platform } from "react-native";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { useUsageLimitDisplay } from "../features/usage/useUsageLimitDisplay";
 import { environmentCatalog } from "../connection/catalog";
 import { environmentPresentations } from "../state/presentation";
 import { republishAgentActivityWidget } from "./publishAgentActivityWidget";
@@ -48,6 +49,7 @@ export function SubscriptionUsageCoordinator() {
   const resolve = useMessages();
   const locale = useLocale();
   const snapshot = useAtomValue(snapshotAtom(locale, resolve));
+  const display = useUsageLimitDisplay();
   const androidAppearance = Platform.OS === "android" ? themeAppearance : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes subscription usage and theme to the native home screen widget
   useEffect(() => {
@@ -56,6 +58,7 @@ export function SubscriptionUsageCoordinator() {
       .then(() =>
         publishSubscriptionUsage({
           ...snapshot,
+          ...(display === "used" && { usageLimitDisplay: "used" as const }),
           theme: createWidgetTheme(themeMode, themeVariablesByAppearance),
         }),
       )
@@ -66,6 +69,7 @@ export function SubscriptionUsageCoordinator() {
     catalog.isReady,
     appearanceReady,
     snapshot,
+    display,
     themeMode,
     themeVariablesByAppearance,
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Android stores resolved colors; System appearance changes must republish them.
