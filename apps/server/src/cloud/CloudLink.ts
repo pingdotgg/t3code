@@ -38,6 +38,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl, normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -52,6 +53,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -102,7 +104,7 @@ import { relayUrlConfig } from "./publicConfig.ts";
 import {
   filterRelayResponse,
   relayRequestError,
-  type RelayRequestError,
+  RelayRequestError,
   shouldRetryRelayRequest,
 } from "./relayResponse.ts";
 import {
@@ -127,6 +129,9 @@ export const CLOUD_REPLAY_MARKER_PREFIXES = [
   CLOUD_HEALTH_JTI_PREFIX,
 ] as const;
 const MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT = Duration.minutes(2);
+const isRelayRequestError = Schema.is(RelayRequestError);
+// Half the relay's 60-second tolerance: a smaller correction cannot be why it refused a proof.
+const RELAY_CLOCK_CORRECTION_WORTH_RETRY_MILLIS = 30_000;
 const RELAY_CONFIG_FIELD_MESSAGES = {
   relayUrl: "Relay URL must be a secure absolute HTTPS URL.",
   relayIssuer: "Relay issuer must be a secure absolute HTTPS URL.",
@@ -846,6 +851,77 @@ const make = Effect.gen(function* () {
     return yield* options?.lockHeld ? apply : endpointRuntime.withLinkStateLock(apply);
   });
 
+  // Relay minus host time. The relay judges every proof on its own clock, so a host whose
+  // clock is off signs and checks relay proofs at the time the relay last reported.
+  const relayClockOffsetMillis = yield* Ref.make(0);
+  const learnRelayClock = Effect.fnUntraced(function* (
+    response: HttpClientResponse.HttpClientResponse,
+  ) {
+    const relayMillis = Date.parse(response.headers["date"] ?? "");
+    if (Number.isFinite(relayMillis)) {
+      yield* Ref.set(relayClockOffsetMillis, relayMillis - (yield* Clock.currentTimeMillis));
+    }
+  });
+  const relayNow = Effect.gen(function* () {
+    const offset = yield* Ref.get(relayClockOffsetMillis);
+    return DateTime.makeUnsafe((yield* Clock.currentTimeMillis) + offset);
+  });
+  // Untraced: both wrap an effect that already has its own span.
+  const onRelayClock = Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
+    const clock = yield* Clock.Clock;
+    const offset = yield* Ref.get(relayClockOffsetMillis);
+    return yield* Effect.provideService(effect, Clock.Clock, {
+      currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe() + offset,
+      currentTimeMillis: Effect.map(clock.currentTimeMillis, (millis) => millis + offset),
+      currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+      currentTimeNanos: clock.currentTimeNanos,
+      monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+      monotonicTimeNanos: clock.monotonicTimeNanos,
+      sleep: (duration) => clock.sleep(duration),
+    });
+  });
+  /** Signs and sends again, once, when the relay's refusal is what taught this host the relay's clock. */
+  const retryOnceOnRelayClock = Effect.fnUntraced(function* <A, E, R>(
+    request: Effect.Effect<A, E | RelayRequestError, R>,
+  ) {
+    const signedAt = yield* Ref.get(relayClockOffsetMillis);
+    return yield* request.pipe(
+      Effect.catchIf(
+        (error) => isRelayRequestError(error) && error.rejection === "unauthorized",
+        (error) =>
+          Ref.get(relayClockOffsetMillis).pipe(
+            Effect.flatMap((learned) =>
+              Math.abs(learned - signedAt) >= RELAY_CLOCK_CORRECTION_WORTH_RETRY_MILLIS
+                ? request
+                : Effect.fail(error),
+            ),
+          ),
+      ),
+    );
+  });
+
+  /**
+   * Verifies a relay-signed request on the host clock, then on the relay's last reported clock:
+   * either can be the stale one after the host's clock is corrected.
+   */
+  const verifyRelaySignedRequest = Effect.fnUntraced(function* <A>(
+    schema: Schema.ConstraintDecoder<A>,
+    input: Parameters<typeof verifyRelayJwt>[1],
+  ) {
+    const verify = verifyRelayJwt(schema, input).pipe(
+      Effect.provideService(Signature.Signature, signature),
+    );
+    const hostSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
+    const relaySeconds = Math.floor((yield* relayNow).epochMilliseconds / 1_000);
+    return yield* verify.pipe(
+      Effect.map((proof) => ({ proof, nowSeconds: hostSeconds })),
+      Effect.catch(() =>
+        onRelayClock(verify).pipe(Effect.map((proof) => ({ proof, nowSeconds: relaySeconds }))),
+      ),
+      Effect.option,
+    );
+  });
+
   const relayClientRequest = <A>(input: {
     readonly url: string;
     readonly token: string;
@@ -857,6 +933,7 @@ const make = Effect.gen(function* () {
       HttpClientRequest.bearerToken(input.token),
       HttpClientRequest.bodyJson(input.payload),
       Effect.flatMap(httpClient.execute),
+      Effect.tap(learnRelayClock),
       Effect.flatMap(filterRelayResponse),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(input.schema)),
       Effect.timeout(input.timeout ?? "10 seconds"),
@@ -950,8 +1027,7 @@ const make = Effect.gen(function* () {
     "environment.cloud.makeManagedTunnelRecoveryProof",
   )(function* (input: ManagedTunnelRecoveryProofInput) {
     const configuredIssuer = yield* secrets.get(RELAY_ISSUER_SECRET);
-    const now = yield* DateTime.now;
-    const issuedAt = Math.floor(now.epochMilliseconds / 1_000);
+    const issuedAt = Math.floor((yield* relayNow).epochMilliseconds / 1_000);
     const claims = {
       iss: `t3-env:${input.environmentId}`,
       aud: normalizeRelayIssuer(
@@ -1037,26 +1113,25 @@ const make = Effect.gen(function* () {
     const environmentId = yield* environment.getEnvironmentId;
     const relayUrlValue = bytesToString(relayUrl.value);
     const cloudUserIdValue = bytesToString(cloudUserId.value);
-    const proof = yield* makeManagedTunnelRecoveryProof({
+    const tunnelId = config.tunnelId;
+    const credential = bytesToString(environmentCredential.value);
+    const registered = yield* makeManagedTunnelRecoveryProof({
       action: "register",
       environmentId,
       cloudUserId: cloudUserIdValue,
       relayUrl: relayUrlValue,
-      tunnelId: config.tunnelId,
+      tunnelId,
       origin,
-    });
-    const credential = bytesToString(environmentCredential.value);
-    const registered = yield* relayClientRequest({
-      url: `${relayUrlValue}/v1/environments/${encodeURIComponent(environmentId)}/tunnel/recovery`,
-      token: credential,
-      payload: {
-        cloudUserId: cloudUserIdValue,
-        tunnelId: config.tunnelId,
-        origin,
-        proof,
-      },
-      schema: RelayManagedEndpointRecoveryRegistrationResponse,
     }).pipe(
+      Effect.flatMap((proof) =>
+        relayClientRequest({
+          url: `${relayUrlValue}/v1/environments/${encodeURIComponent(environmentId)}/tunnel/recovery`,
+          token: credential,
+          payload: { cloudUserId: cloudUserIdValue, tunnelId, origin, proof },
+          schema: RelayManagedEndpointRecoveryRegistrationResponse,
+        }),
+      ),
+      retryOnceOnRelayClock,
       Effect.catchTags({
         RelayRequestError: (error) =>
           error.rejection === "unauthorized"
@@ -1127,27 +1202,28 @@ const make = Effect.gen(function* () {
     const relayUrlValue = bytesToString(relayUrl.value);
     const cloudUserIdValue = bytesToString(cloudUserId.value);
     const origin = parsedOrigin.origin;
-    const proof = yield* makeManagedTunnelRecoveryProof({
+    const credential = bytesToString(environmentCredential.value);
+    const recovered = yield* makeManagedTunnelRecoveryProof({
       action: "recover",
       environmentId,
       cloudUserId: cloudUserIdValue,
       relayUrl: relayUrlValue,
       origin,
-    });
-    const credential = bytesToString(environmentCredential.value);
-    const recovered = yield* relayClientRequest({
-      url: `${relayUrlValue}/v1/environments/${encodeURIComponent(environmentId)}/tunnel`,
-      token: credential,
-      payload: {
-        cloudUserId: cloudUserIdValue,
-        origin,
-        proof,
-      },
-      schema: RelayManagedEndpointRecoveryResponse,
-      timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
     }).pipe(
+      Effect.flatMap((proof) =>
+        relayClientRequest({
+          url: `${relayUrlValue}/v1/environments/${encodeURIComponent(environmentId)}/tunnel`,
+          token: credential,
+          payload: { cloudUserId: cloudUserIdValue, origin, proof },
+          schema: RelayManagedEndpointRecoveryResponse,
+          timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
+        }),
+      ),
+      retryOnceOnRelayClock,
       Effect.tapError((error) =>
-        error.rejection === "unauthorized" ? markLinkRevoked(credential, error) : Effect.void,
+        isRelayRequestError(error) && error.rejection === "unauthorized"
+          ? markLinkRevoked(credential, error)
+          : Effect.void,
       ),
     );
     if (recovered.endpointRuntime.providerKind !== "cloudflare_tunnel") {
@@ -1513,24 +1589,26 @@ const make = Effect.gen(function* () {
       const environmentId = yield* environment.getEnvironmentId;
       const linkedCloudUserId = yield* readInstalledCloudUserId;
       const now = yield* DateTime.now;
-      const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
-      const proofOption = yield* verifyRelayJwt(RelayCloudEnvironmentHealthProofPayload, {
+      const verified = yield* verifyRelaySignedRequest(RelayCloudEnvironmentHealthProofPayload, {
         publicKey: cloudMintPublicKey,
         token: request.proof,
         typ: RELAY_HEALTH_REQUEST_TYP,
         issuer: normalizeRelayIssuer(relayIssuer),
         audience: `t3-env:${environmentId}`,
-      }).pipe(Effect.provideService(Signature.Signature, signature), Effect.option);
+      });
       if (
-        Option.isNone(proofOption) ||
-        proofOption.value.environmentId !== environmentId ||
-        proofOption.value.sub !== linkedCloudUserId ||
-        !hasBoundedCloudProofLifetime({ ...proofOption.value, nowSeconds }) ||
-        !hasExactScope({ scopes: proofOption.value.scope, expected: "environment:status" })
+        Option.isNone(verified) ||
+        verified.value.proof.environmentId !== environmentId ||
+        verified.value.proof.sub !== linkedCloudUserId ||
+        !hasBoundedCloudProofLifetime({
+          ...verified.value.proof,
+          nowSeconds: verified.value.nowSeconds,
+        }) ||
+        !hasExactScope({ scopes: verified.value.proof.scope, expected: "environment:status" })
       ) {
         return yield* new CloudLinkProofRejectedError({ request: "health" });
       }
-      const proof = proofOption.value;
+      const proof = verified.value.proof;
 
       const jtiSecretName = yield* replayMarkerName(CLOUD_HEALTH_JTI_PREFIX, proof.jti);
       const nonceSecretName = yield* replayMarkerName(CLOUD_HEALTH_NONCE_PREFIX, proof.nonce);
@@ -1544,19 +1622,19 @@ const make = Effect.gen(function* () {
       }
 
       const descriptor = yield* environment.getDescriptor;
-      const responseExpiresAt = DateTime.add(now, { minutes: 5 });
+      // The relay judges the answer on its own clock, which it stamped on this request.
       const responsePayload = {
         iss: `t3-env:${environmentId}`,
         aud: normalizeRelayIssuer(relayIssuer),
         sub: environmentId,
         jti: yield* random.uuidV4(),
-        iat: nowSeconds,
-        exp: Math.floor(responseExpiresAt.epochMilliseconds / 1_000),
+        iat: proof.iat,
+        exp: proof.iat + 5 * 60,
         environmentId,
         requestNonce: proof.nonce,
         status: "online",
         descriptor,
-        checkedAt: DateTime.formatIso(now),
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(proof.iat * 1_000)),
       } satisfies RelayEnvironmentHealthResponseProofPayload;
       const responseProof = yield* signingKey
         .sign({
@@ -1615,25 +1693,27 @@ const make = Effect.gen(function* () {
       const environmentId = yield* environment.getEnvironmentId;
       const linkedCloudUserId = yield* readInstalledCloudUserId;
       const now = yield* DateTime.now;
-      const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
-      const proofOption = yield* verifyRelayJwt(RelayCloudMintCredentialProofPayload, {
+      const verified = yield* verifyRelaySignedRequest(RelayCloudMintCredentialProofPayload, {
         publicKey: cloudMintPublicKey,
         token: request.proof,
         typ: RELAY_MINT_REQUEST_TYP,
         issuer: normalizeRelayIssuer(relayIssuer),
         audience: `t3-env:${environmentId}`,
-      }).pipe(Effect.provideService(Signature.Signature, signature), Effect.option);
+      });
       if (
-        Option.isNone(proofOption) ||
-        proofOption.value.environmentId !== environmentId ||
-        proofOption.value.sub !== linkedCloudUserId ||
-        proofOption.value.cnf.jkt !== proofOption.value.clientProofKeyThumbprint ||
-        !hasBoundedCloudProofLifetime({ ...proofOption.value, nowSeconds }) ||
-        !hasExactScope({ scopes: proofOption.value.scope, expected: "environment:connect" })
+        Option.isNone(verified) ||
+        verified.value.proof.environmentId !== environmentId ||
+        verified.value.proof.sub !== linkedCloudUserId ||
+        verified.value.proof.cnf.jkt !== verified.value.proof.clientProofKeyThumbprint ||
+        !hasBoundedCloudProofLifetime({
+          ...verified.value.proof,
+          nowSeconds: verified.value.nowSeconds,
+        }) ||
+        !hasExactScope({ scopes: verified.value.proof.scope, expected: "environment:connect" })
       ) {
         return yield* new CloudLinkProofRejectedError({ request: "mint" });
       }
-      const proof = proofOption.value;
+      const proof = verified.value.proof;
 
       const jtiSecretName = yield* replayMarkerName(CLOUD_MINT_JTI_PREFIX, proof.jti);
       const nonceSecretName = yield* replayMarkerName(CLOUD_MINT_NONCE_PREFIX, proof.nonce);
@@ -1653,13 +1733,17 @@ const make = Effect.gen(function* () {
         proofKeyThumbprint: proof.clientProofKeyThumbprint,
         requireApproval: settings.requireConnectDeviceApproval,
       });
+      // The relay and the client read the expiry on the relay's clock, stamped on this request.
+      const expiresAt = DateTime.makeUnsafe(
+        proof.iat * 1_000 + (issued.expiresAt.epochMilliseconds - now.epochMilliseconds),
+      );
       const responsePayload = {
         iss: `t3-env:${environmentId}`,
         aud: normalizeRelayIssuer(relayIssuer),
         sub: environmentId,
         jti: yield* random.uuidV4(),
-        iat: nowSeconds,
-        exp: Math.floor(issued.expiresAt.epochMilliseconds / 1_000),
+        iat: proof.iat,
+        exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
         environmentId,
         clientProofKeyThumbprint: proof.clientProofKeyThumbprint,
         requestNonce: proof.nonce,
@@ -1680,7 +1764,7 @@ const make = Effect.gen(function* () {
         );
       return {
         credential: issued.credential,
-        expiresAt: DateTime.formatIso(issued.expiresAt),
+        expiresAt: DateTime.formatIso(expiresAt),
         proof: responseProof,
       } satisfies RelayEnvironmentMintResponse;
     },

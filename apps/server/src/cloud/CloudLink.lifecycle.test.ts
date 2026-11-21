@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -12,7 +13,16 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } from "effect/http";
-import { RELAY_LINK_PROOF_TYP, signRelayJwt, verifyRelayJwt } from "@t3tools/shared/relayJwt";
+import {
+  RELAY_HEALTH_REQUEST_TYP,
+  RELAY_HEALTH_RESPONSE_TYP,
+  RELAY_LINK_PROOF_TYP,
+  RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
+  RELAY_MINT_REQUEST_TYP,
+  RELAY_MINT_RESPONSE_TYP,
+  signRelayJwt,
+  verifyRelayJwt,
+} from "@t3tools/shared/relayJwt";
 import * as NetAddress from "effect/net/NetAddress";
 
 import { EnvironmentId } from "@t3tools/contracts";
@@ -32,7 +42,10 @@ import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import {
+  RelayEnvironmentHealthResponseProofPayload,
   RelayEnvironmentLinkProofPayload,
+  RelayManagedEndpointRecoveryProofPayload,
+  RelayEnvironmentMintResponseProofPayload,
   RelayManagedEndpointRecoveryRegistrationRequest,
 } from "@t3tools/contracts/relay";
 import {
@@ -40,6 +53,7 @@ import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
+  CLOUD_MINT_PUBLIC_KEY,
   decodeRuntimeConfig,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
@@ -230,7 +244,15 @@ describe("releaseManagedTunnelOnShutdown", () => {
         ),
         Effect.provideService(
           EnvironmentAuth.EnvironmentAuth,
-          EnvironmentAuth.EnvironmentAuth.of({} as EnvironmentAuth.EnvironmentAuth["Service"]),
+          EnvironmentAuth.EnvironmentAuth.of({
+            issueConnectCredential: () =>
+              Effect.map(DateTime.now, (now) => ({
+                credential: "connect-credential",
+                expiresAt: DateTime.add(now, { minutes: 2 }),
+              })),
+          } as Partial<
+            EnvironmentAuth.EnvironmentAuth["Service"]
+          > as EnvironmentAuth.EnvironmentAuth["Service"]),
         ),
         Effect.provideService(
           CliTokenManager.CloudCliTokenManager,
@@ -622,6 +644,136 @@ describe("releaseManagedTunnelOnShutdown", () => {
       }),
     );
   });
+
+  it.effect.each([
+    { direction: "behind", skewSeconds: -180 },
+    { direction: "ahead", skewSeconds: 180 },
+  ])(
+    "registers a tunnel and answers the relay at relay time when the host clock is $direction",
+    ({ skewSeconds }) => {
+      const relayNow = 1_800_000_000;
+      const relayIssuer = "https://relay.example.test";
+      const relayDate = DateTime.toDateUtc(DateTime.makeUnsafe(relayNow * 1_000)).toUTCString();
+      const { store, values } = makeMemorySecretStore([
+        [
+          CLOUD_ENDPOINT_RUNTIME_CONFIG,
+          '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}',
+        ],
+        [RELAY_URL_SECRET, relayIssuer],
+        [CLOUD_LINKED_USER_ID, "user-123"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      ]);
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+      return Effect.gen(function* () {
+        const relayKeys = yield* EnvironmentKeys.getOrCreateEnvironmentKeyPairFromSecretStore(
+          makeMemorySecretStore().store,
+        );
+        values.set(CLOUD_MINT_PUBLIC_KEY, new TextEncoder().encode(relayKeys.publicKey));
+        const relayRequest = {
+          iss: relayIssuer,
+          aud: "t3-env:env_123",
+          sub: "user-123",
+          iat: relayNow,
+          exp: relayNow + 120,
+          environmentId: "env_123",
+        };
+        const healthRequest = yield* signRelayJwt({
+          privateKey: relayKeys.privateKey,
+          typ: RELAY_HEALTH_REQUEST_TYP,
+          payload: {
+            ...relayRequest,
+            jti: "health-jti",
+            nonce: "health-nonce",
+            scope: ["environment:status"],
+          },
+        });
+        const mintRequest = yield* signRelayJwt({
+          privateKey: relayKeys.privateKey,
+          typ: RELAY_MINT_REQUEST_TYP,
+          payload: {
+            ...relayRequest,
+            jti: "mint-jti",
+            nonce: "mint-nonce",
+            clientProofKeyThumbprint: "client-jkt",
+            cnf: { jkt: "client-jkt" },
+            scope: ["environment:connect"],
+          },
+        });
+        yield* TestClock.setTime((relayNow + skewSeconds) * 1_000);
+        const link = yield* CloudLink.CloudLink;
+
+        expect(yield* link.registerManagedTunnelRecovery("http://127.0.0.1:3773")).toMatchObject({
+          status: "ready",
+        });
+        expect((yield* link.linkState()).linkRevoked).toBe(false);
+        const health = yield* link.answerHealthRequest({ proof: healthRequest });
+        const minted = yield* link.mintCredential({ proof: mintRequest });
+
+        const environmentKeys =
+          yield* EnvironmentKeys.getOrCreateEnvironmentKeyPairFromSecretStore(store);
+        const relayVerification = {
+          publicKey: environmentKeys.publicKey,
+          issuer: "t3-env:env_123",
+          audience: relayIssuer,
+        };
+        yield* TestClock.setTime(relayNow * 1_000);
+        expect(requests).toHaveLength(2);
+        const body = requests[1]!.body;
+        if (body._tag !== "Uint8Array") throw new Error("Expected a JSON recovery request");
+        const registration = yield* decodeManagedTunnelRecoveryRegistration(
+          new TextDecoder().decode(body.body),
+        );
+        expect(
+          yield* verifyRelayJwt(RelayManagedEndpointRecoveryProofPayload, {
+            ...relayVerification,
+            token: registration.proof,
+            typ: RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
+          }),
+        ).toMatchObject({ iat: relayNow, action: "register" });
+        // The relay also requires `checkedAt` within a minute of its own clock.
+        const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(relayNow * 1_000));
+        expect(health.checkedAt).toBe(checkedAt);
+        expect(
+          yield* verifyRelayJwt(RelayEnvironmentHealthResponseProofPayload, {
+            ...relayVerification,
+            token: health.proof,
+            typ: RELAY_HEALTH_RESPONSE_TYP,
+          }),
+        ).toMatchObject({ iat: relayNow, checkedAt, requestNonce: "health-nonce" });
+        // The relay requires the credential's expiry to match the proof and not be past.
+        expect(minted.expiresAt).toBe(
+          DateTime.formatIso(DateTime.makeUnsafe((relayNow + 120) * 1_000)),
+        );
+        expect(
+          yield* verifyRelayJwt(RelayEnvironmentMintResponseProofPayload, {
+            ...relayVerification,
+            token: minted.proof,
+            typ: RELAY_MINT_RESPONSE_TYP,
+          }),
+        ).toMatchObject({ iat: relayNow, exp: relayNow + 120, requestNonce: "mint-nonce" });
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls: [],
+          requests,
+          // The first proof is signed on the host clock; the refusal's Date header corrects it.
+          respond: () =>
+            requests.length === 1
+              ? Response.json(
+                  {
+                    _tag: "RelayAuthInvalidError",
+                    code: "auth_invalid",
+                    reason: "not_authorized",
+                    traceId: "trace-clock",
+                  },
+                  { status: 401, headers: { date: relayDate } },
+                )
+              : Response.json({ status: "ready" }, { headers: { date: relayDate } }),
+        }),
+      );
+    },
+  );
 
   it.effect("marks a link the relay rejects as revoked without dropping or replacing it", () => {
     const { store, values } = makeMemorySecretStore([

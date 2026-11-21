@@ -223,7 +223,8 @@ function formatCloudStatus(
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
     ...formatRelayClientStatus(status.relayClient),
-    ...(!status.desired
+    // A revoked link is not served by the relay, even while this machine's tunnel still answers.
+    ...(!status.desired || status.revoked
       ? []
       : publishOnly
         ? [
