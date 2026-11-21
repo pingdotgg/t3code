@@ -542,7 +542,6 @@ impl EntityInputHandler for TerminalPanel {
 
 impl Render for TerminalPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let bg = to_hsla(self.tokens.shell_card);
         let muted = to_hsla(self.tokens.muted_foreground);
         let control_bg = to_hsla(self.tokens.shell_control);
         let control_border = to_hsla(self.tokens.shell_divider_header);
@@ -616,7 +615,6 @@ impl Render for TerminalPanel {
             .id("terminal-panel")
             .relative()
             .size_full()
-            .bg(bg)
             .track_focus(&self.focus)
             .key_context("Terminal")
             .on_key_down(cx.listener(Self::key_down))

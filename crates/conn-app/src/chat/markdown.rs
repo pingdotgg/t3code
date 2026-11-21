@@ -721,6 +721,32 @@ fn render_code_block(
             },
         ));
 
+    let lang_icon = language
+        .and_then(language_sample_filename)
+        .map(crate::file_icons::file_icon);
+    let lang_muted = hsla_alpha(tokens.code_foreground, 0.72);
+    let mut lang_header = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.0))
+        .min_w_0();
+    if let Some(icon) = lang_icon {
+        let icon_color = icon
+            .color
+            .map(|c| hsla(c.for_appearance(tokens.appearance)))
+            .unwrap_or(lang_muted);
+        lang_header = lang_header.child(icons::icon(icon.asset, 13.0, icon_color));
+    }
+    lang_header = lang_header.child(
+        div()
+            .font_family(MONO_FONT_FAMILY)
+            .text_size(px(11.0))
+            .line_height(px(16.0))
+            .text_color(lang_muted)
+            .child(lang_label),
+    );
+
     // Conn `MarkdownCodeBlockFrame`: `rounded-bubble` (14px), no header divider,
     // `pt-1.5 pr-1.5 pb-0 pl-3` header, `0.8rem 0.9rem` code body padding.
     let border_color = match tokens.appearance {
@@ -746,14 +772,7 @@ fn render_code_block(
                 .pr(px(6.0))
                 .pb(px(0.0))
                 .pl(px(12.0))
-                .child(
-                    div()
-                        .font_family(MONO_FONT_FAMILY)
-                        .text_size(px(11.0))
-                        .line_height(px(16.0))
-                        .text_color(hsla_alpha(tokens.code_foreground, 0.72))
-                        .child(lang_label),
-                )
+                .child(lang_header)
                 .child(copy_btn),
         )
         .child(
@@ -769,6 +788,45 @@ fn render_code_block(
                 .child(styled_code),
         )
         .into_any_element()
+}
+
+/// Maps a fenced code block language tag to a synthetic filename for `file_icons::file_icon`.
+fn language_sample_filename(lang: &str) -> Option<&'static str> {
+    match lang.trim().to_ascii_lowercase().as_str() {
+        "rs" | "rust" => Some("a.rs"),
+        "ts" | "typescript" => Some("a.ts"),
+        "tsx" => Some("a.tsx"),
+        "js" | "javascript" | "mjs" | "cjs" => Some("a.js"),
+        "jsx" => Some("a.jsx"),
+        "json" | "jsonc" => Some("a.json"),
+        "toml" => Some("a.toml"),
+        "yaml" | "yml" => Some("a.yaml"),
+        "sh" | "bash" | "zsh" | "shell" | "console" => Some("a.sh"),
+        "py" | "python" => Some("a.py"),
+        "go" | "golang" => Some("a.go"),
+        "swift" => Some("a.swift"),
+        "css" => Some("a.css"),
+        "scss" | "sass" => Some("a.scss"),
+        "html" | "htm" => Some("a.html"),
+        "xml" | "svg" => Some("a.xml"),
+        "sql" | "postgres" | "postgresql" | "sqlite" | "mysql" => Some("a.sql"),
+        "md" | "markdown" | "mdx" => Some("a.md"),
+        "c" | "h" => Some("a.c"),
+        "cpp" | "c++" | "cxx" | "cc" | "hpp" => Some("a.cpp"),
+        "php" => Some("a.php"),
+        "rb" | "ruby" => Some("a.rb"),
+        "java" => Some("a.java"),
+        "kt" | "kotlin" => Some("a.kt"),
+        "dockerfile" | "docker" => Some("Dockerfile"),
+        "makefile" | "make" => Some("Makefile"),
+        "diff" | "patch" => Some("a.diff"),
+        "zig" => Some("a.zig"),
+        "lua" => Some("a.lua"),
+        "graphql" | "gql" => Some("a.graphql"),
+        "vue" => Some("a.vue"),
+        "svelte" => Some("a.svelte"),
+        _ => None,
+    }
 }
 
 /// Renders Conn's diagnostics-style table: row bottom borders only, no outer card border,

@@ -777,14 +777,19 @@ fn render_pull_request_row(
     let on_toggle_ctx = Rc::clone(&callbacks.on_toggle_menu);
     let btn_hover = to_hsla(tokens.shell_highlight);
 
+    let fade_bg = gpui_kit::linear_gradient(
+        90.0,
+        gpui_kit::linear_color_stop(to_hsla(tokens.shell_card.with_alpha(0.0)), 0.0),
+        gpui_kit::linear_color_stop(to_hsla(tokens.shell_card), 0.45),
+    );
     let mut action_anchor = div()
         .absolute()
         .right(px(0.0))
         .bottom(px(2.0))
-        .pl(px(12.0))
+        .pl(px(16.0))
         .pr(px(4.0))
         .rounded_r(px(6.0))
-        .bg(to_hsla(tokens.shell_card))
+        .bg(fade_bg)
         .flex()
         .items_center()
         .when(!menu_open, |el| {

@@ -814,7 +814,6 @@ impl Render for ApiPanel {
         v_flex()
             .id("api-panel")
             .size_full()
-            .bg(to_hsla(self.tokens.background))
             .on_key_down(cx.listener(|p, event: &KeyDownEvent, _, cx| {
                 let k = &event.keystroke;
                 if k.key == "enter" && (k.modifiers.platform || k.modifiers.control) {

@@ -1164,7 +1164,6 @@ impl Render for McpPanel {
         let mut root = v_flex()
             .id("mcp-panel")
             .size_full()
-            .bg(to_hsla(self.tokens.background))
             .on_key_down(cx.listener(move |panel, event: &KeyDownEvent, _, cx| {
                 let k = &event.keystroke;
                 if k.key == "escape" && panel.menu.take().is_some() {

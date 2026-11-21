@@ -558,7 +558,11 @@ impl FilesPanel {
             } else {
                 fg
             };
-            let icon_path = file_icon_path(&row.name);
+            let resolved_icon = crate::file_icons::file_icon(&row.name);
+            let icon_color = resolved_icon
+                .color
+                .map(|c| to_hsla(c.for_appearance(self.tokens.appearance)))
+                .unwrap_or(muted);
 
             let item = h_flex()
                 .id(SharedString::from(format!("tree-row-{}", row.path)))
@@ -605,7 +609,7 @@ impl FilesPanel {
                     div().w(px(12.0)).flex_shrink_0()
                 })
                 .when(!is_dir, |el| {
-                    el.child(superhero_icon(icon_path, 15.0, muted))
+                    el.child(superhero_icon(resolved_icon.asset, 15.0, icon_color))
                 })
                 .child(
                     div()
@@ -730,18 +734,15 @@ impl FilesPanel {
 
 impl Render for FilesPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let background = to_hsla(self.tokens.background);
         if self.showing_preview {
             return v_flex()
                 .size_full()
-                .bg(background)
                 .child(self.render_preview_subheader(cx))
                 .child(self.render_preview_column(cx))
                 .into_any_element();
         }
         v_flex()
             .size_full()
-            .bg(background)
             .child(self.render_tree_toolbar(cx))
             .child(self.render_tree_column(cx))
             .into_any_element()
@@ -772,17 +773,6 @@ fn render_breadcrumb(path: &str, fg: gpui_kit::Hsla, muted: gpui_kit::Hsla) -> i
             .child(div().flex_shrink_0().text_color(muted).child("/"));
     }
     row.child(div().flex_shrink_0().text_color(fg).child(name.to_owned()))
-}
-
-fn file_icon_path(name: &str) -> &'static str {
-    let ext = name.rsplit_once('.').map_or("", |(_, e)| e);
-    match ext {
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "c" | "h" | "cpp" | "cc" | "java"
-        | "swift" | "kt" | "rb" | "php" | "sh" | "zsh" | "css" | "scss" | "html" | "sql"
-        | "json" | "toml" | "yaml" | "yml" => "superhero/file-code.svg",
-        "md" | "mdx" | "txt" | "rst" | "adoc" | "log" => "superhero/file-text.svg",
-        _ => "superhero/file.svg",
-    }
 }
 
 fn muted_message(text: &str, color: gpui_kit::Hsla) -> impl IntoElement {

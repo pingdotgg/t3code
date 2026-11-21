@@ -81,7 +81,8 @@ pub(crate) fn render_chat_header(
         .items_center()
         .gap(px(12.0))
         .flex_1()
-        .min_w_0();
+        .min_w_0()
+        .overflow_hidden();
 
     if !layout.sidebar_open {
         left_group = left_group.child(
@@ -111,6 +112,7 @@ pub(crate) fn render_chat_header(
         .gap(px(12.0))
         .min_w_0()
         .flex_1()
+        .overflow_hidden()
         .text_size(px(BREADCRUMB_FONT_SIZE_PX));
 
     if let Some(project) = active_project {
@@ -123,6 +125,7 @@ pub(crate) fn render_chat_header(
                     .gap(px(6.0))
                     .flex_shrink_0()
                     .max_w(px(160.0))
+                    .overflow_hidden()
                     .font_weight(gpui_kit::FontWeight::MEDIUM)
                     .text_color(muted)
                     .child(render_project_favicon(
@@ -139,6 +142,7 @@ pub(crate) fn render_chat_header(
         div()
             .min_w_0()
             .flex_1()
+            .overflow_hidden()
             .truncate()
             .font_weight(gpui_kit::FontWeight::MEDIUM)
             .text_color(fg)

@@ -1053,7 +1053,6 @@ impl Render for DatabasePanel {
         v_flex()
             .id("database-panel")
             .size_full()
-            .bg(to_hsla(self.tokens.shell_card))
             // Capture phase intercepts Cmd+Enter / Ctrl+Enter before TextareaState inserts a newline.
             .capture_key_down(cx.listener(|panel, event: &KeyDownEvent, _, cx| {
                 let k = &event.keystroke;

@@ -12,13 +12,6 @@ use conn_theme::{Appearance, Rgba};
 
 /// Light and dark tint colors for a file-type icon.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into Files tree, tabs, and chips by the orchestrator"
-    )
-)]
 pub(crate) struct IconColor {
     pub(crate) light: Rgba,
     pub(crate) dark: Rgba,
@@ -36,13 +29,6 @@ impl IconColor {
 
     /// Selects the color matching the active theme appearance.
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "wired into Files tree, tabs, and chips by the orchestrator"
-        )
-    )]
     pub(crate) const fn for_appearance(self, appearance: Appearance) -> Rgba {
         match appearance {
             Appearance::Light => self.light,
@@ -56,13 +42,6 @@ impl IconColor {
 /// When `color` is `None`, the icon has no dedicated token color in Conn and
 /// inherits the caller's muted/default icon foreground.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into Files tree, tabs, and chips by the orchestrator"
-    )
-)]
 pub(crate) struct FileIcon {
     pub(crate) asset: &'static str,
     pub(crate) color: Option<IconColor>,
@@ -109,13 +88,6 @@ const VIDEO_FIXED_PURPLE: IconColor = IconColor::hex(0xa631be, 0xa631be);
 ///
 /// Only pass file paths; directories get no icon in Conn (only the chevron).
 #[must_use]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into Files tree, tabs, and chips by the orchestrator"
-    )
-)]
 pub(crate) fn file_icon(path: &str) -> FileIcon {
     let base_name = path.rsplit('/').next().unwrap_or(path);
     let lower_name = base_name.to_lowercase();

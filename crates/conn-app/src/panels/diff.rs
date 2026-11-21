@@ -11,16 +11,19 @@ use conn_theme::{Appearance, Tokens, color_mix_srgb};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    Context, FontWeight, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    SharedString, Styled, Window, div, px,
+    Context, CursorStyle, FontWeight, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Render, SharedString, Styled, Window, div, px,
 };
 use serde_json::{Value, json};
 
 use super::color::to_hsla;
 use super::diff_parser::{DiffFile, DiffLineKind, parse_unified_diff};
 use super::header::{CONTROL_RADIUS_PX, superhero_icon};
+use super::highlight::{HighlightSpan, highlight_lines};
 
 const FILE_LIST_WIDTH_PX: f32 = 216.0;
+const FILE_LIST_MIN_WIDTH_PX: f32 = 140.0;
+const FILE_LIST_MAX_WIDTH_PX: f32 = 420.0;
 const ROW_HEIGHT_PX: f32 = 28.0;
 const ROW_RADIUS_PX: f32 = 5.0;
 const UI_TEXT_PX: f32 = 13.0;
@@ -50,6 +53,8 @@ pub(crate) struct DiffPanel {
     selected_index: usize,
     word_wrap: bool,
     file_tree_open: bool,
+    file_list_width: f32,
+    split_drag: Option<(f32, f32)>,
     generation: u64,
 }
 
@@ -74,6 +79,8 @@ impl DiffPanel {
             selected_index: 0,
             word_wrap: false,
             file_tree_open: true,
+            file_list_width: FILE_LIST_WIDTH_PX,
+            split_drag: None,
             generation: 0,
         }
     }
@@ -341,7 +348,7 @@ impl DiffPanel {
 
         let mut list = v_flex()
             .id("diff-files-scroll")
-            .w(px(FILE_LIST_WIDTH_PX))
+            .w(px(self.file_list_width))
             .h_full()
             .flex_shrink_0()
             .overflow_y_scroll()
@@ -350,6 +357,11 @@ impl DiffPanel {
 
         for (idx, file) in files.iter().enumerate() {
             let selected = idx == self.selected_index;
+            let resolved_icon = crate::file_icons::file_icon(&file.display_path);
+            let icon_color = resolved_icon
+                .color
+                .map(|c| to_hsla(c.for_appearance(self.tokens.appearance)))
+                .unwrap_or(muted);
             let row = h_flex()
                 .id(SharedString::from(format!("diff-file-{idx}")))
                 .mx(px(2.0))
@@ -368,7 +380,7 @@ impl DiffPanel {
                         cx.notify();
                     }),
                 )
-                .child(superhero_icon("superhero/file-diff.svg", 14.0, muted))
+                .child(superhero_icon(resolved_icon.asset, 14.0, icon_color))
                 .child(
                     div()
                         .flex_1()
@@ -444,6 +456,12 @@ impl DiffPanel {
         ));
         let separator_bg = to_hsla(color_mix_srgb(code_bg, 0.95, self.tokens.code_foreground));
 
+        let header_icon = crate::file_icons::file_icon(&file.display_path);
+        let header_icon_color = header_icon
+            .color
+            .map(|c| to_hsla(c.for_appearance(self.tokens.appearance)))
+            .unwrap_or(muted);
+
         let file_header = h_flex()
             .w_full()
             .h(px(32.0))
@@ -460,7 +478,7 @@ impl DiffPanel {
                     .min_w_0()
                     .items_center()
                     .gap(px(6.0))
-                    .child(superhero_icon("superhero/file-diff.svg", 14.0, muted))
+                    .child(superhero_icon(header_icon.asset, 14.0, header_icon_color))
                     .child(
                         div()
                             .flex_1()
@@ -539,6 +557,18 @@ impl DiffPanel {
                 .child(scroll);
         }
 
+        // Syntax-highlight all diff lines in one pass so keywords, strings, and comments color
+        // consistently with `FilesPanel`.
+        let mut all_source = String::new();
+        for hunk in &file.hunks {
+            for line in &hunk.lines {
+                all_source.push_str(&line.text);
+                all_source.push('\n');
+            }
+        }
+        let highlighted = highlight_lines(&file.display_path, &all_source, &self.tokens);
+        let mut highlight_idx = 0usize;
+
         for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
             scroll = scroll.child(
                 div()
@@ -557,6 +587,9 @@ impl DiffPanel {
             );
 
             for line in &hunk.lines {
+                let spans = highlighted.get(highlight_idx).map(Vec::as_slice);
+                highlight_idx += 1;
+
                 let (row_bg, gutter_bg, sign, sign_color) = match line.kind {
                     DiffLineKind::Added => (Some(added_bg), Some(added_gutter_bg), "+", added),
                     DiffLineKind::Removed => {
@@ -567,7 +600,7 @@ impl DiffPanel {
                 let old_no = line.old_line.map_or_else(String::new, |n| n.to_string());
                 let new_no = line.new_line.map_or_else(String::new, |n| n.to_string());
 
-                let mut gutter = h_flex()
+                let gutter = h_flex()
                     .flex_shrink_0()
                     .items_start()
                     .border_r_1()
@@ -591,9 +624,6 @@ impl DiffPanel {
                             .text_color(gutter_fg)
                             .child(new_no),
                     );
-                if gutter_bg.is_none() {
-                    gutter = gutter.bg(to_hsla(code_bg));
-                }
 
                 let mut row = h_flex()
                     .w_full()
@@ -623,7 +653,7 @@ impl DiffPanel {
                                 el.overflow_hidden().whitespace_nowrap()
                             })
                             .text_color(fg)
-                            .child(line.text.clone()),
+                            .child(styled_diff_line(&line.text, spans)),
                     );
 
                 scroll = scroll.child(row);
@@ -678,10 +708,41 @@ impl Render for DiffPanel {
                 let selected = files.get(self.selected_index).or_else(|| files.first());
                 let mut split = h_flex().flex_1().min_h_0().w_full();
                 if self.file_tree_open {
+                    let split_handle = div()
+                        .id("diff-split-handle")
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left(px(-3.0))
+                        .w(px(7.0))
+                        .cursor(CursorStyle::ResizeLeftRight)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                if event.click_count >= 2 {
+                                    this.file_list_width = FILE_LIST_WIDTH_PX;
+                                    this.split_drag = None;
+                                } else {
+                                    this.split_drag =
+                                        Some((f32::from(event.position.x), this.file_list_width));
+                                }
+                                cx.notify();
+                            }),
+                        );
                     split = split
                         .child(self.render_file_list(files, cx))
-                        // Vertical divider meeting the horizontal toolbar divider in a clean T.
-                        .child(div().w(px(1.0)).h_full().bg(divider));
+                        // Vertical divider meeting the horizontal toolbar divider in a clean T,
+                        // with a 7px drag target (double-click resets width).
+                        .child(
+                            div()
+                                .relative()
+                                .w(px(1.0))
+                                .h_full()
+                                .flex_shrink_0()
+                                .bg(divider)
+                                .child(split_handle),
+                        );
                 }
                 split
                     .when_some(selected, |el, file| {
@@ -693,6 +754,24 @@ impl Render for DiffPanel {
 
         v_flex()
             .size_full()
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                if let Some((from_x, start)) = this.split_drag {
+                    let next = (start + (f32::from(event.position.x) - from_x))
+                        .clamp(FILE_LIST_MIN_WIDTH_PX, FILE_LIST_MAX_WIDTH_PX);
+                    if (next - this.file_list_width).abs() > 0.5 {
+                        this.file_list_width = next;
+                        cx.notify();
+                    }
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                    if this.split_drag.take().is_some() {
+                        cx.notify();
+                    }
+                }),
+            )
             .child(self.render_toolbar(cx))
             // One continuous horizontal divider under the toolbar across both columns.
             .child(div().w_full().h(px(1.0)).bg(divider))
@@ -706,6 +785,44 @@ fn muted_text(text: &str, color: gpui_kit::Hsla) -> impl IntoElement {
         .line_height(px(UI_LINE_HEIGHT_PX))
         .text_color(color)
         .child(text.to_owned())
+}
+
+/// Renders one diff line with syntect [`HighlightSpan`] runs via `StyledText`.
+fn styled_diff_line(fallback: &str, spans: Option<&[HighlightSpan]>) -> gpui_kit::StyledText {
+    let Some(spans) = spans else {
+        return gpui_kit::StyledText::new(if fallback.is_empty() {
+            " ".to_owned()
+        } else {
+            fallback.to_owned()
+        });
+    };
+    if spans.is_empty() {
+        return gpui_kit::StyledText::new(" ");
+    }
+    let mut text = String::new();
+    let mut runs = Vec::with_capacity(spans.len());
+    for span in spans {
+        let start = text.len();
+        text.push_str(&span.text);
+        let end = text.len();
+        if end > start {
+            let mut style = gpui_kit::HighlightStyle {
+                color: Some(to_hsla(span.color)),
+                ..Default::default()
+            };
+            if span.bold {
+                style.font_weight = Some(FontWeight::BOLD);
+            }
+            if span.italic {
+                style.font_style = Some(gpui_kit::FontStyle::Italic);
+            }
+            runs.push((start..end, style));
+        }
+    }
+    if text.is_empty() {
+        return gpui_kit::StyledText::new(" ");
+    }
+    gpui_kit::StyledText::new(text).with_highlights(runs)
 }
 
 /// Queries `orchestration.getThreadProjection` to find the highest ready checkpoint turn ordinal

@@ -95,12 +95,24 @@ pub(crate) fn surface_label(surface: &PanelSurface) -> String {
     }
 }
 
-/// The tab icon of an open surface: a file's type icon, else the surface icon.
+/// The tab icon of an open surface: a file's `@pierre/trees` type icon, else the surface icon.
 #[must_use]
 pub(crate) fn surface_icon_path(surface: &PanelSurface) -> &'static str {
     match surface {
         PanelSurface::Kind(tab) => panel_tab_icon_path(*tab),
-        PanelSurface::File(_) => "superhero/file.svg",
+        PanelSurface::File(path) => crate::file_icons::file_icon(path).asset,
+    }
+}
+
+/// Optional themed tint for an open surface's tab icon (`@pierre/trees` file-type colors).
+#[must_use]
+fn surface_icon_color(surface: &PanelSurface, tokens: &Tokens, fallback: Hsla) -> Hsla {
+    match surface {
+        PanelSurface::Kind(_) => fallback,
+        PanelSurface::File(path) => crate::file_icons::file_icon(path)
+            .color
+            .map(|c| to_hsla(c.for_appearance(tokens.appearance)))
+            .unwrap_or(fallback),
     }
 }
 
@@ -173,6 +185,7 @@ pub(crate) fn render_panel_header(
         let text_color = if active { fg } else { muted };
         let label = surface_label(tab);
         let icon_path = surface_icon_path(tab);
+        let icon_color = surface_icon_color(tab, props.tokens, text_color);
         let group = SharedString::from(format!("right-panel-tab-group-{idx}"));
         let on_select = callbacks.on_select_tab.clone();
         let on_close_middle = callbacks.on_close_tab.clone();
@@ -210,7 +223,7 @@ pub(crate) fn render_panel_header(
                     .items_center()
                     .justify_center()
                     .group_hover(group.clone(), |s| s.invisible())
-                    .child(superhero_icon(icon_path, HEADER_ICON_PX, text_color)),
+                    .child(superhero_icon(icon_path, HEADER_ICON_PX, icon_color)),
             )
             .child(
                 div()

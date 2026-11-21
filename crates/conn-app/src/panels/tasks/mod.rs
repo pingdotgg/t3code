@@ -639,7 +639,6 @@ impl TasksPanel {
 
 impl Render for TasksPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let bg = to_hsla(self.tokens.shell_card);
         let entity = cx.entity();
 
         let body = if let Some(reason) = &self.unavailable_reason {
@@ -839,7 +838,6 @@ impl Render for TasksPanel {
             .size_full()
             .min_h_0()
             .overflow_hidden()
-            .bg(bg)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|panel, _, _, cx| {
