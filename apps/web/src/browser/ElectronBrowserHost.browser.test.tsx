@@ -52,27 +52,54 @@ vi.mock(import("~/components/preview/usePreviewBridge"), async (original) => ({
   usePreviewBridge: () => undefined,
 }));
 
+// Stands in for a primary environment, whose server tabs the desktop renders natively.
+vi.mock(import("./previewRuntime"), async (original) => ({
+  ...(await original()),
+  rendersServerTabNatively: (_environmentId, _primaryEnvironmentId, snapshot) =>
+    snapshot?.runtime === "server",
+}));
+
 import {
   __resetClientSettingsPersistenceForTests,
   ensureClientSettingsHydrated,
 } from "~/hooks/useSettings";
 import { reconcilePreviewServerSessions, resetPreviewStateForTests } from "~/previewStateStore";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
+import { acquireBrowserSurface, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
+import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 const threadRef = scopeThreadRef(
   EnvironmentId.make("host-webview-order"),
   ThreadId.make("thread-webview-order"),
 );
 
-const snapshot = (tabId: string, updatedAt: string): PreviewSessionSnapshot => ({
+const snapshot = (
+  tabId: string,
+  updatedAt: string,
+  overrides: Partial<PreviewSessionSnapshot> = {},
+): PreviewSessionSnapshot => ({
   threadId: threadRef.threadId,
   tabId,
-  navStatus: { _tag: "Success", url: `https://example.com/${tabId}`, title: tabId },
+  navStatus: { _tag: "Loading", url: `https://example.com/${tabId}`, title: tabId },
   canGoBack: false,
   canGoForward: false,
   updatedAt,
+  ...overrides,
 });
+
+const loaded = (url: string) => ({
+  navStatus: { _tag: "Success" as const, url, title: url },
+});
+
+const PANEL_RECT = { x: 0, y: 0, width: 800, height: 600 };
+
+/** Shows the tab in a visible preview panel; setup() clears it. */
+function showTab(tabId: string) {
+  const surface = acquireBrowserSurface(previewRuntimeTabId(threadRef, "server-a", tabId));
+  surface.present(PANEL_RECT, true);
+  return surface;
+}
 
 function setup(): Disposable {
   __resetClientSettingsPersistenceForTests();
@@ -89,6 +116,7 @@ function setup(): Disposable {
   return {
     [Symbol.dispose]() {
       resetPreviewStateForTests();
+      useBrowserSurfaceStore.setState({ byTabId: {}, activityByTabId: {} });
       __resetClientSettingsPersistenceForTests();
     },
   };
@@ -160,5 +188,63 @@ describe("ElectronBrowserHost", () => {
     const after = webviews();
     expect(after).toHaveLength(2);
     expect(after.every((node, index) => node.isSameNode(before[index]!))).toBe(true);
+  });
+
+  it("drops a hidden desktop tab's guest after ten minutes and reloads its page when shown", async () => {
+    using _state = setup();
+    reconcilePreviewServerSessions(threadRef, {
+      sessions: [
+        snapshot("tab_desktop", "2026-01-01T00:00:01.000Z"),
+        snapshot("tab_agent_1", "2026-01-01T00:00:02.000Z", { runtime: "server" }),
+      ],
+      serverEpoch: "server-a",
+      revision: 1,
+    });
+    await using screen = await renderHost();
+    const guestOf = (tabId: string) =>
+      screen.container.querySelector(`webview[data-preview-server-tab="${tabId}"]`);
+    const panel = await act(() => showTab("tab_desktop"));
+    using _timers = fakeTimers();
+    await act(() => panel.present(PANEL_RECT, false));
+    const firstGuest = guestOf("tab_desktop");
+    expect(firstGuest).not.toBeNull();
+
+    await act(() => vi.advanceTimersByTimeAsync(10 * 60_000 - 1));
+    expect(guestOf("tab_desktop")).toBe(firstGuest);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(guestOf("tab_desktop")).toBeNull();
+    // The agent's server tab is the server browser's to close.
+    expect(guestOf("tab_agent_1")).not.toBeNull();
+
+    await act(() => {
+      reconcilePreviewServerSessions(threadRef, {
+        sessions: [
+          snapshot("tab_desktop", "2026-01-01T00:00:03.000Z", loaded("https://example.com/next")),
+          snapshot("tab_agent_1", "2026-01-01T00:00:02.000Z", { runtime: "server" }),
+        ],
+        serverEpoch: "server-a",
+        revision: 2,
+      });
+      panel.present(PANEL_RECT, true);
+    });
+    expect(guestOf("tab_desktop")?.getAttribute("src")).toBe("https://example.com/next");
+  });
+
+  it("waits until a hidden tab whose page already loaded is shown to load it", async () => {
+    using _state = setup();
+    reconcilePreviewServerSessions(threadRef, {
+      sessions: [
+        snapshot("tab_loaded", "2026-01-01T00:00:01.000Z", loaded("https://example.com/loaded")),
+      ],
+      serverEpoch: "server-a",
+      revision: 1,
+    });
+    await using screen = await renderHost();
+    const guest = () =>
+      screen.container.querySelector('webview[data-preview-server-tab="tab_loaded"]');
+    expect(guest()).toBeNull();
+
+    await act(() => showTab("tab_loaded"));
+    expect(guest()?.getAttribute("src")).toBe("https://example.com/loaded");
   });
 });

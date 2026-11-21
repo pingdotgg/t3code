@@ -36,6 +36,9 @@ import {
   type WebviewCrashRecoveryState,
 } from "./webviewCrashRecovery";
 
+// Showing a discarded tab reloads its page, so it trades in-page state for the guest's memory.
+const HIDDEN_GUEST_DISCARD_MS = 10 * 60_000;
+
 interface ElectronWebview extends HTMLElement {
   src: string;
   partition: string;
@@ -56,6 +59,8 @@ export function HostedBrowserWebview(props: {
   readonly tabId: string;
   readonly runtimeTabId: string;
   readonly initialUrl: string | null;
+  /** An earlier guest finished loading `initialUrl`, so a hidden tab can wait to load it again. */
+  readonly initialUrlLoaded: boolean;
   readonly viewport: PreviewViewportSetting;
   readonly pictureInPicture: boolean;
   /** Fixed for the tab lifetime; Electron reads partition before guest attachment. */
@@ -72,6 +77,7 @@ export function HostedBrowserWebview(props: {
     tabId,
     runtimeTabId,
     initialUrl,
+    initialUrlLoaded,
     viewport,
     pictureInPicture,
     zoomFactor,
@@ -142,11 +148,32 @@ export function HostedBrowserWebview(props: {
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
   const active = presentation.visible && presentation.rect !== null;
   const shown = active || pictureInPicture;
+  const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
+  // Server tabs are the agent's, and the server browser already closes the idle ones.
+  const discardable = !serverDriven && !renderingActive;
+  const [guestDiscarded, setGuestDiscarded] = useState(
+    () => discardable && initialUrl !== null && initialUrlLoaded,
+  );
+  if (guestDiscarded && !discardable) {
+    setGuestDiscarded(false);
+    setRecoverySrc(initialUrl ?? initialSrc);
+    setWebviewGeneration((generation) => generation + 1);
+  }
   const reportedShown = useEffectEvent(() => serverDriven && shown);
   const remountCrashedWebview = useEffectEvent(() => {
     setRecoverySrc(initialUrl ?? initialSrc);
     setWebviewGeneration((generation) => generation + 1);
   });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the guest's renderer once the tab has stayed hidden for the idle window
+  useEffect(() => {
+    if (!discardable || guestDiscarded) return;
+    const timeout = window.setTimeout(() => {
+      setGuestDiscarded(true);
+      setWebviewGeneration((generation) => generation + 1);
+    }, HIDDEN_GUEST_DISCARD_MS);
+    return () => window.clearTimeout(timeout);
+  }, [discardable, guestDiscarded]);
 
   const setWebviewRef = (node: HTMLElement | null) => {
     webviewRef.current = node as ElectronWebview | null;
@@ -341,7 +368,7 @@ export function HostedBrowserWebview(props: {
     };
   }, [clientSettingsHydrated, fullDetail, runtimeTabId, serverDriven]);
 
-  if (!clientSettingsHydrated || !config) return null;
+  if (!clientSettingsHydrated || !config || guestDiscarded) return null;
 
   // This fixed wrapper sits outside the right panel shell, so it takes thumb presses itself.
   const navigateThumb = (direction: "back" | "forward") => {
@@ -349,7 +376,6 @@ export function HostedBrowserWebview(props: {
     else void previewBridge?.goForward(runtimeTabId);
   };
 
-  const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
   const viewportTransform = resolveBrowserViewportTransform(layout.viewportScale, fullDetail);
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,

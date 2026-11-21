@@ -3936,7 +3936,7 @@ it.effect("failed session and browser launches release capacity, as does closing
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("a full server takes back the slot of the longest idle agent tab nobody views", () =>
+it.effect("agent tabs the desktop renders close once hidden and idle, without another open", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const broker = yield* Broker.PreviewAutomationBroker;
@@ -3945,116 +3945,40 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       yield* Effect.yieldNow;
       const now = vi.spyOn(Date, "now").mockReturnValue(0);
       yield* Effect.addFinalizer(() => Effect.sync(() => now.mockRestore()));
-      const open = (providerSessionId: string) => {
+      const opened: Array<string> = [];
+      for (let index = 0; index < 3; index++) {
         desktopRendersNext = true;
-        return broker.invoke<PreviewAutomationStatus>({
-          scope: asSession(providerSessionId),
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope: asSession(`agent-${index}`),
           operation: "open",
           input: { reuseExistingTab: false, open: false },
         });
-      };
-      const opened: Array<string> = [];
-      for (let index = 0; index < 32; index++) {
-        now.mockReturnValue(index);
-        opened.push((yield* open(`agent-${Math.floor(index / 8)}`)).tabId!);
+        opened.push(status.tabId!);
       }
-
-      now.mockReturnValue(100);
-      yield* broker.invoke<PreviewAutomationStatus>({
-        scope: asSession("agent-observer"),
-        operation: "status",
-        tabId: PreviewTabId.make(opened[0]!),
-        input: {},
-      });
-
-      // Inside the idle window every desktop tab keeps its slot.
-      now.mockReturnValue(29 * 60 * 1000);
-      expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
-      expect(releasedDesktopTabs).toEqual([]);
-
-      now.mockReturnValue(31 * 60 * 1000);
-      // A session at its own limit couldn't use a freed slot, so nothing closes for it.
-      expect(yield* open("agent-3").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
-      expect(releasedDesktopTabs).toEqual([]);
-      // Tabs a desktop window shows keep their slots however long they sit idle.
-      for (const tabId of opened) shownDesktopTabs.add(tabId);
-      expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
-      expect(releasedDesktopTabs).toEqual([]);
-      shownDesktopTabs.clear();
       shownDesktopTabs.add(opened[1]!);
-      desktopConnections[2]!.context.page.beforeUnload = "listen";
-      const events = yield* manager.subscribeEvents;
-      const releases = yield* Queue.unbounded<string>();
-      const recordRelease = (tabId: string) => Queue.offerUnsafe(releases, tabId);
-      desktopDetaches.on("release", recordRelease);
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => desktopDetaches.off("release", recordRelease)),
-      );
-      const fresh = yield* open("agent-new");
-      expect(fresh.tabId).toBeDefined();
-      expect(yield* Queue.take(releases)).toBe(opened[2]);
-      expect(desktopConnections[2]!.context.page.unloadEvents).toEqual([
-        "beforeunload",
-        "pagehide",
-        "visibilitychange",
-      ]);
-      yield* Stream.fromSubscription(events).pipe(
-        Stream.filter((event) => event.type === "closed" && event.tabId === opened[2]),
-        Stream.runHead,
-      );
-      expect(releasedDesktopTabs).toEqual([opened[2]]);
-      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
-      expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
-        [...opened.filter((tabId) => tabId !== opened[2]), fresh.tabId!].toSorted(),
-      );
+      const openTabIds = () =>
+        manager
+          .list({ threadId: scope.thread.threadId })
+          .pipe(Effect.map(({ sessions }) => sessions.map((session) => session.tabId).toSorted()));
+      const sweepAt = (minutes: number) => {
+        now.mockReturnValue(minutes * 60 * 1000);
+        return TestClock.adjust("1 minute");
+      };
 
-      // A second open must reclaim a different tab while the first page is unloading.
-      const closingPage = desktopConnections[3]!.context.page;
-      closingPage.beforeUnload = "listen";
-      closingPage.unloadGate = Promise.withResolvers<void>();
-      const closeRequests = yield* Queue.unbounded<void>();
-      const close = manager.close;
-      const closeSpy = vi
-        .spyOn(manager, "close")
-        .mockImplementation((input) =>
-          Queue.offer(closeRequests, undefined).pipe(Effect.andThen(close(input))),
-        );
-      yield* Effect.addFinalizer(() => Effect.sync(() => closeSpy.mockRestore()));
-      const firstOpen = yield* open("agent-concurrent").pipe(Effect.forkScoped);
-      yield* Queue.take(closeRequests);
-      yield* Effect.promise(() => closingPage.pagehideWatched.promise);
-      const secondOpen = yield* open("agent-concurrent").pipe(Effect.forkScoped);
-      yield* Queue.take(closeRequests);
-      closingPage.unloadGate.resolve();
-      const concurrent = yield* Effect.all([Fiber.join(firstOpen), Fiber.join(secondOpen)]);
-      expect(concurrent.every((status) => status.available)).toBe(true);
-      const remaining = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
-      expect(remaining).toHaveLength(32);
-      const closedBeforeReturn = yield* Deferred.make<void>();
-      const finishClose = yield* Deferred.make<void>();
-      let heldClose = false;
-      closeSpy.mockImplementation((input) => {
-        const hold = !heldClose;
-        heldClose = true;
-        return close(input).pipe(
-          Effect.andThen(
-            hold
-              ? Deferred.succeed(closedBeforeReturn, undefined).pipe(
-                  Effect.andThen(Deferred.await(finishClose)),
-                )
-              : Effect.void,
-          ),
-        );
-      });
-      const reclaimingOpen = yield* open("agent-reclaiming").pipe(Effect.forkScoped);
-      yield* Deferred.await(closedBeforeReturn);
-      const takingFreedSlot = yield* open("agent-taking-free-slot");
-      expect(takingFreedSlot.available).toBe(true);
-      yield* Deferred.succeed(finishClose, undefined);
-      expect((yield* Fiber.join(reclaimingOpen)).available).toBe(true);
-      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(32);
-      expect(remaining.some((session) => session.tabId === opened[3])).toBe(false);
-      expect(remaining.some((session) => session.tabId === opened[4])).toBe(false);
+      yield* sweepAt(29);
+      expect(yield* openTabIds()).toEqual(opened.toSorted());
+
+      yield* sweepAt(31);
+      expect(releasedDesktopTabs.toSorted()).toEqual([opened[0], opened[2]].toSorted());
+      // A shown tab keeps its guest however long the agent leaves it alone.
+      expect(yield* openTabIds()).toEqual([opened[1]]);
+
+      // Its idle window starts when it was last on screen, not when the agent last used it.
+      shownDesktopTabs.delete(opened[1]!);
+      yield* sweepAt(60);
+      expect(yield* openTabIds()).toEqual([opened[1]]);
+      yield* sweepAt(62);
+      expect(yield* openTabIds()).toEqual([]);
     }),
   ).pipe(Effect.provide(layer)),
 );

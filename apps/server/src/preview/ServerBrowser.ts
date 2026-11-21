@@ -1800,58 +1800,23 @@ const make = Effect.gen(function* () {
   const isVisible = (tab: ServerTab) =>
     tab.viewers.size > 0 || (tab.desktop !== null && desktopChannel.isShown(tab));
 
-  const reclaimingTabs = new Set<ServerTab>();
   const idleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
     return [...tabs.values()].filter(
-      (tab) =>
-        tab.control.agentId !== null &&
-        !reclaimingTabs.has(tab) &&
-        !isVisible(tab) &&
-        tab.usedAt < cutoff,
+      (tab) => tab.control.agentId !== null && !isVisible(tab) && tab.usedAt < cutoff,
     );
-  };
-
-  // The desktop app renders every server tab, so idle desktop agent tabs would otherwise
-  // hold the server's budget forever. Hidden ones give up their slots, longest idle first,
-  // only when an agent needs one and has room for it.
-  const freeIdleAgentSlot = async (agentSessionId: string) => {
-    if (!serverAtTabLimit() || agentAtTabLimit(agentSessionId)) return;
-    const longestIdle = idleAgentTabs().sort((left, right) => left.usedAt - right.usedAt)[0];
-    if (longestIdle) {
-      reclaimingTabs.add(longestIdle);
-      try {
-        await runPromise(
-          manager.close({ threadId: longestIdle.threadId, tabId: longestIdle.tabId }),
-        );
-        dropTab(longestIdle, false);
-      } finally {
-        reclaimingTabs.delete(longestIdle);
-      }
-    }
   };
 
   // A Playwright launch must settle before its capacity can be released.
   const openTab = Effect.fn("ServerBrowser.openTab")(function* (
     input: Parameters<typeof manager.open>[0],
-    options: { readonly reclaimIdleSlot?: boolean } = {},
   ) {
     let key: string = NodeCrypto.randomUUID();
     const reservation = { agentId: input.automationOwner ?? null };
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         try: async () => {
-          if (input.automationOwner !== undefined) {
-            while (
-              options.reclaimIdleSlot &&
-              serverAtTabLimit() &&
-              !agentAtTabLimit(input.automationOwner) &&
-              idleAgentTabs().length > 0
-            ) {
-              await freeIdleAgentSlot(input.automationOwner);
-            }
-            assertTabCapacity(input.automationOwner);
-          }
+          if (input.automationOwner !== undefined) assertTabCapacity(input.automationOwner);
           pendingTabs.set(key, reservation);
         },
         catch: ServerBrowserPage.toOperationError,
@@ -1888,10 +1853,12 @@ const make = Effect.gen(function* () {
     );
   }, Effect.uninterruptible);
 
-  // Desktop browsing bypasses streamed viewers and server input tracking,
-  // so these idle signals only apply to headless tabs.
+  // Desktop browsing bypasses server input tracking, so a shown tab counts as used; the idle
+  // window then starts when it was last on screen, and hidden desktop guests do not live forever.
   const closeIdleAgentTabs = () => {
-    for (const tab of idleAgentTabs()) if (tab.desktop === null) dropTab(tab, true);
+    const now = Date.now();
+    for (const tab of tabs.values()) if (isVisible(tab)) tab.usedAt = now;
+    for (const tab of idleAgentTabs()) dropTab(tab, true);
   };
 
   const latestThreadTab = (threadId: string, agentSessionId?: string) => {
@@ -2607,17 +2574,14 @@ const make = Effect.gen(function* () {
         const tab =
           existing ??
           (await runPromise(
-            openTab(
-              {
-                threadId: request.threadId,
-                ...(url ? { url } : {}),
-                ...(profileId === undefined ? {} : { profileId }),
-                runtime: "server",
-                reveal: false,
-                automationOwner: request.agentSessionId,
-              },
-              { reclaimIdleSlot: true },
-            ),
+            openTab({
+              threadId: request.threadId,
+              ...(url ? { url } : {}),
+              ...(profileId === undefined ? {} : { profileId }),
+              runtime: "server",
+              reveal: false,
+              automationOwner: request.agentSessionId,
+            }),
           ));
         if (existing?.dialog)
           throw new BrowserControlInterrupted({

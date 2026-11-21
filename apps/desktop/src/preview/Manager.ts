@@ -2662,8 +2662,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (serverTab) browserHost.setCaptureDrawn(serverTab, drawn);
   });
 
-  // A window reload or guest crash destroys the guest without the renderer reporting it hidden.
-  // The renderer reports again once a new guest registers.
+  // A window reload, guest crash or discarded hidden tab destroys the guest without the renderer
+  // reporting it hidden or Chromium reporting it silent. Both report again for the next guest.
   const hideDestroyedGuest = Effect.fnUntraced(function* (webContentsId: number) {
     for (const tab of (yield* SynchronizedRef.get(tabsRef)).values()) {
       if (tab.webContentsId === webContentsId && tab.serverTab) {
@@ -2671,6 +2671,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         browserHost.setCaptureDrawn(tab.serverTab, false);
       }
     }
+    const updatedAt = yield* currentIso;
+    const silenced = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+      const tab = [...tabs.values()].find(
+        (candidate) => candidate.webContentsId === webContentsId && candidate.audible,
+      );
+      if (!tab) return [Option.none<PreviewTabState>(), tabs] as const;
+      const state: PreviewTabState = { ...tab, audible: false, updatedAt };
+      return [
+        Option.some(state),
+        replaceMap(tabs, (copy) => {
+          copy.set(tab.tabId, state);
+        }),
+      ] as const;
+    });
+    if (Option.isSome(silenced)) yield* emitIfCurrent(silenced.value.tabId, silenced.value);
   });
 
   const setAudioMuted = Effect.fn("PreviewManager.setAudioMuted")(function* (
