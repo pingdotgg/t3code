@@ -800,6 +800,8 @@ it("revokes across windows even before the storage event and survives stale pref
     expect(canSend()).toBe(false);
   } finally {
     other.remove();
+    if (previousSettings === null) localStorage.removeItem(settingsKey);
+    else localStorage.setItem(settingsKey, previousSettings);
   }
   expect(localStorage.getItem(settingsKey)).toBe(previousSettings);
 });
