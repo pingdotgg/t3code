@@ -717,7 +717,19 @@ describe("pull request guide tools", () => {
           }),
           id: ProjectId.make("project-fork"),
         };
-        const harness = yield* makeHarness({ projects: [makeProject(), other, fork] });
+        const harness = yield* makeHarness({
+          projects: [makeProject(), other, fork],
+          // The service accepts a repository the caller's project tracks, and refuses the rest.
+          generate: (input) =>
+            input.repository === "someone/else"
+              ? Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "generateReviewGuide",
+                    detail: "this pull request is in another repository",
+                  }),
+                )
+              : Effect.succeed({ ...NO_GUIDE, started: true }),
+        });
         const result = yield* harness.call("write_pull_request_guides", {
           pullRequests: [
             { url: "https://github.com/acme/web/pull/7" },
@@ -734,12 +746,13 @@ describe("pull request guide tools", () => {
           ["someone/else", 1, "failed"],
           ["someone/web", 3, "started"],
         ]);
-        expect(result.guides[2]?.detail).toContain("No project in this environment");
+        expect(result.guides[2]?.detail).toBe("this pull request is in another repository");
         expect(
           (yield* Ref.get(harness.guideRequests)).map((ref) => [ref.projectId, ref.number]),
         ).toEqual([
           ["project-web", 7],
           [PROJECT_ID, 12],
+          [PROJECT_ID, 1],
           ["project-fork", 3],
         ]);
       }),
