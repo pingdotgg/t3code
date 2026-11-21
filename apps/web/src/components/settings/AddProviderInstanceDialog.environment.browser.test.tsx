@@ -205,7 +205,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
     await click("Add instance");
     expect(settingsHooks.mutate).toHaveBeenCalledWith({
       operation: "create",
-      instanceId: "fx",
+      instanceId: "fx_2",
       instance: { driver: "fx", enabled: true, displayName: "fx" },
     });
   });
