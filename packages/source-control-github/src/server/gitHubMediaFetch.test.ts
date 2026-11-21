@@ -3,13 +3,84 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import {
+  HttpClient,
+  HttpClientError,
+  type HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubMediaFetch from "./gitHubMediaFetch.ts";
 import * as GitHubRest from "./GitHubRest.ts";
+import { definition } from "../shared/definition.ts";
 
 const PR_REPOSITORY = "enterprise/private";
+const ENTERPRISE_HOST = "ghe.example.com";
+const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+const UPLOAD_PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+const COMMITTED_GIF = new Uint8Array([71, 73, 70, 56, 57, 97, 1, 0, 1, 0]);
+
+/**
+ * A GitHub Enterprise Server 3.21.4 without subdomain isolation, answering the way a real one did:
+ * its web routes send a token to the sign-in page, it has no `raw.` host, the Contents API serves
+ * files, and an upload redirects to a signed same-host URL that refuses the token.
+ */
+const enterpriseServer = () => {
+  const respond = (
+    request: HttpClientRequest.HttpClientRequest,
+    body: BodyInit | null,
+    init?: ResponseInit,
+  ) => Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, init)));
+  const client = HttpClient.make((request) => {
+    const url = new URL(request.url);
+    const authorization = request.headers.authorization;
+    if (url.host === `raw.${ENTERPRISE_HOST}`) {
+      return Effect.fail(
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({
+            request,
+            cause: new Error(`getaddrinfo ENOTFOUND ${url.host}`),
+          }),
+        }),
+      );
+    }
+    if (url.host !== ENTERPRISE_HOST) return Effect.die(`unexpected request to ${url.host}`);
+    if (url.pathname === "/user-attachments/assets/abc-123" && authorization) {
+      return respond(request, null, {
+        status: 302,
+        headers: { location: "/storage/abc-123?token=signed" },
+      });
+    }
+    if (url.pathname === "/storage/abc-123" && url.searchParams.get("token") === "signed") {
+      return authorization
+        ? respond(request, "Not Found", { status: 404 })
+        : respond(request, UPLOAD_PNG, { headers: { "content-type": "image/png" } });
+    }
+    const contents = /^\/api\/v3\/repos\/OWNER\/REPO\/contents\/(.+)$/u.exec(url.pathname);
+    if (contents) {
+      const ref = url.searchParams.get("ref") ?? "";
+      return authorization &&
+        contents[1] === "docs/evidence/demo.gif" &&
+        [COMMIT, "test/pr-images"].includes(ref)
+        ? respond(request, COMMITTED_GIF, {
+            headers: {
+              "content-type": "application/vnd.github.raw; charset=utf-8",
+              "content-length": String(COMMITTED_GIF.length),
+            },
+          })
+        : respond(request, "Not Found", { status: 404 });
+    }
+    return respond(request, "<html>Sign in</html>", {
+      status: 302,
+      headers: {
+        location: `https://${ENTERPRISE_HOST}/login`,
+        "content-type": "text/html; charset=utf-8",
+      },
+    });
+  });
+  return { client };
+};
 
 /** An SSO organization: the upload URL answers with a sign-in page, a rendered signed URL with bytes. */
 const makeSsoFixture = (uploadUrl: string) => {
@@ -76,6 +147,164 @@ const makeSsoFixture = (uploadUrl: string) => {
 };
 
 describe("GitHubMediaFetch", () => {
+  it.effect("fetches nothing for an Enterprise host the user has not signed in to", () => {
+    const requests: Array<string> = [];
+    return Effect.gen(function* () {
+      const fetchMedia = yield* GitHubMediaFetch.make;
+      const response = yield* fetchMedia({
+        url: "https://raw.unknown.example/owner/repo/main/a.png",
+        headers: {},
+        host: "unknown.example",
+      });
+      expect(response).toBeNull();
+      expect(requests).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(GitHubRest.GitHubRest)({}),
+          Layer.mock(GitHubCredentials.GitHubCredentials)({
+            get: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+          }),
+        ),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requests.push(request.url);
+          return Effect.die("unexpected request");
+        }),
+      ),
+    );
+  });
+
+  it.effect("sends an Enterprise Server token only to that host", () => {
+    const requests: Array<{ url: string; authorization?: string; accept?: string }> = [];
+    const hosts: Array<string> = [];
+    return Effect.gen(function* () {
+      const fetchMedia = yield* GitHubMediaFetch.make;
+      yield* fetchMedia({
+        url: `https://raw.${ENTERPRISE_HOST}/OWNER/REPO/${COMMIT}/a.png`,
+        headers: {},
+        host: ENTERPRISE_HOST,
+      });
+      // A github.com image in an Enterprise pull request keeps github.com's account.
+      yield* fetchMedia({
+        url: "https://raw.githubusercontent.com/owner/repo/main/b.png",
+        headers: {},
+        host: ENTERPRISE_HOST,
+      });
+      // A request naming another host cannot borrow the Enterprise token.
+      yield* fetchMedia({
+        url: "https://raw.elsewhere.example/owner/repo/main/c.png",
+        headers: {},
+        host: ENTERPRISE_HOST,
+      });
+      expect(hosts).toEqual([ENTERPRISE_HOST, "github.com", "github.com"]);
+      expect(requests).toEqual([
+        {
+          url: `https://${ENTERPRISE_HOST}/api/v3/repos/OWNER/REPO/contents/a.png?ref=${COMMIT}`,
+          authorization: `Bearer token-${ENTERPRISE_HOST}`,
+          accept: "application/vnd.github.raw",
+        },
+        {
+          url: "https://raw.githubusercontent.com/owner/repo/main/b.png",
+          authorization: "Bearer token-github.com",
+        },
+        { url: "https://raw.elsewhere.example/owner/repo/main/c.png" },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(GitHubRest.GitHubRest)({}),
+          Layer.mock(GitHubCredentials.GitHubCredentials)({
+            get: (host) => {
+              hosts.push(host);
+              return Effect.succeed({
+                host,
+                token: Redacted.make(`token-${host}`),
+                source: "gh" as const,
+                fingerprint: host,
+              });
+            },
+          }),
+        ),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requests.push({
+            url: request.url,
+            ...(request.headers.authorization
+              ? { authorization: request.headers.authorization }
+              : {}),
+            ...(request.headers.accept ? { accept: request.headers.accept } : {}),
+          });
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(null, { headers: { "content-type": "image/png" } }),
+            ),
+          );
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "loads an Enterprise Server pull request's images from a server without a raw host",
+    () => {
+      const server = enterpriseServer();
+      const images = {
+        upload: [`https://${ENTERPRISE_HOST}/user-attachments/assets/abc-123`, UPLOAD_PNG],
+        commit: [
+          `https://${ENTERPRISE_HOST}/OWNER/REPO/blob/${COMMIT}/docs/evidence/demo.gif?raw=true`,
+          COMMITTED_GIF,
+        ],
+        branch: [
+          `https://${ENTERPRISE_HOST}/OWNER/REPO/blob/test/pr-images/docs/evidence/demo.gif?raw=true`,
+          COMMITTED_GIF,
+        ],
+      } as const;
+      return Effect.gen(function* () {
+        const fetchMedia = yield* GitHubMediaFetch.make;
+        for (const [name, [url, bytes]] of Object.entries(images)) {
+          // Loaded straight from the client, every image is a redirect to the sign-in page.
+          const direct = yield* server.client.get(url);
+          expect.soft(direct.headers.location, name).toBe(`https://${ENTERPRISE_HOST}/login`);
+          // The pull request panel names its media by the change request's host.
+          const media = definition.mediaUrl(new URL(url), ENTERPRISE_HOST);
+          expect.soft(media, name).not.toBeNull();
+          const response = yield* fetchMedia({
+            url: media?.fetchUrl ?? url,
+            headers: {},
+            host: ENTERPRISE_HOST,
+          }).pipe(Effect.orElseSucceed(() => null));
+          expect.soft(response?.status, name).toBe(200);
+          if (response !== null)
+            expect.soft(new Uint8Array(yield* response.arrayBuffer), name).toEqual(bytes);
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            Layer.mock(GitHubRest.GitHubRest)({}),
+            Layer.mock(GitHubCredentials.GitHubCredentials)({
+              get: (host) =>
+                host === ENTERPRISE_HOST
+                  ? Effect.succeed({
+                      host,
+                      token: Redacted.make("enterprise-token"),
+                      source: "gh" as const,
+                      fingerprint: host,
+                    })
+                  : Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+            }),
+          ),
+        ),
+        Effect.provideService(HttpClient.HttpClient, server.client),
+      );
+    },
+  );
+
   it.effect("loads private media immediately after login with the GitHub credential", () => {
     let lookups = 0;
     const authorizations: Array<string | undefined> = [];

@@ -77,7 +77,10 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  changeRequestMediaHost,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { vcsEnvironment } from "~/state/vcs";
 import { RelativeTime } from "~/components/RelativeTime";
@@ -302,6 +305,7 @@ function pullRequestMarkdownContext(
     lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
     threadRef,
     repository: detail?.repository ?? null,
+    host: changeRequestMediaHost(detail) ?? null,
   };
 }
 
