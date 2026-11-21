@@ -2505,3 +2505,455 @@ describe("AntigravityAdapterV2 session system prompt", () => {
       }).pipe(Effect.provide(layerSession)),
   );
 });
+
+describe("AntigravityAdapterV2 native swarm protocol", () => {
+  it("projects legacy swarm add calls as native subagents and delegates native-protocol swarm cards to _antigravity/swarm", () => {
+    const legacySingle = flavor.extractSubagentUpdate?.({
+      toolCallId: "swarm-call-1",
+      title: "Add swarm worker @alpha",
+      kind: "other",
+      status: "completed",
+      data: {
+        meta: { antigravity: { swarm: { tool: "swarm", action: "add" } } },
+        rawInput: { action: "add", name: "alpha", brief: "Check config", model: "fast-model" },
+        rawOutput: { status: "added", name: "alpha", conversation_id: "child-alpha" },
+      },
+    });
+    assert.equal(legacySingle?.title, "@alpha");
+    assert.equal(legacySingle?.prompt, "Check config");
+    assert.equal(legacySingle?.model, "fast-model");
+    assert.equal(legacySingle?.childSessionId, "child-alpha");
+    assert.equal(legacySingle?.status, "running");
+  });
+
+  it.effect(
+    "keeps turns open across background swarm workers, streams worker child activity, blocks idle eviction, and reopens woken workers",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-swarm-" });
+
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let onSessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        let onSwarmNotification:
+          | ((payload: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
+          | undefined;
+        let seenClientCapsMeta: unknown;
+        let promptCalls = 0;
+
+        const rootSessionId = "11111111-1111-4000-8000-000000000001";
+        const alphaSessionId = "11111111-1111-4000-8000-00000000000a";
+        const betaSessionId = "11111111-1111-4000-8000-00000000000b";
+
+        const continuationRequests = {
+          offer: () => Effect.succeed(true),
+        } as unknown as NonNullable<
+          Parameters<typeof makeAntigravityAdapterV2>[0]["continuationRequests"]
+        >;
+
+        const instanceId = ProviderInstanceId.make("antigravity-swarm-e2e");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          continuationRequests,
+          selfInvocation: yield* resolveSelfInvocation(),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+          makeRuntime: (runtimeInput) =>
+            Effect.sync((): RuntimeService => {
+              seenClientCapsMeta = runtimeInput.clientCapabilities?._meta;
+              return {
+                start: () =>
+                  Effect.succeed({
+                    initializeResult: {
+                      protocolVersion: 1,
+                      agentInfo: { name: "Antigravity ACP Server", version: "1.5.14" },
+                      agentCapabilities: {
+                        loadSession: true,
+                        _meta: {
+                          antigravity: { tier: true, systemPrompt: { append: true }, swarm: true },
+                        },
+                      },
+                    },
+                    sessionId: rootSessionId,
+                    resumed: false,
+                    sessionSetupResult: {
+                      sessionId: rootSessionId,
+                      modes: {
+                        currentModeId: "default",
+                        availableModes: [{ id: "default", name: "Default" }],
+                      },
+                      models: {
+                        currentModelId: "test-model",
+                        availableModels: [{ modelId: "test-model", name: "Test Model" }],
+                      },
+                      configOptions: [],
+                    },
+                  } as unknown as AcpSessionRuntime.AcpSessionRuntimeStartResult),
+                getEvents: () => Stream.empty,
+                drainEvents: Effect.void,
+                getSessionId: Effect.succeed(rootSessionId),
+                getConfigOptions: Effect.succeed([]),
+                getModeState: Effect.succeed({
+                  currentModeId: "default",
+                  availableModes: [{ id: "default", name: "Default" }],
+                }),
+                getModelState: Effect.succeed({
+                  currentModelId: "test-model",
+                  availableModels: [{ modelId: "test-model", name: "Test Model" }],
+                }),
+                setConfigOption: () => Effect.succeed({ configOptions: [] }),
+                setMode: () => Effect.void,
+                setModel: () => Effect.void,
+                prompt: (
+                  _payload: Parameters<RuntimeService["prompt"]>[0],
+                  promptOptions: Parameters<RuntimeService["prompt"]>[1],
+                ) =>
+                  Effect.gen(function* () {
+                    promptCalls += 1;
+                    if (promptOptions?.dispatched !== undefined) {
+                      yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                    }
+                    if (promptCalls === 1) {
+                      yield* onSessionUpdate!({
+                        sessionId: rootSessionId,
+                        update: {
+                          sessionUpdate: "tool_call",
+                          toolCallId: "coord-add-1",
+                          kind: "other",
+                          title: "Add 2 swarm workers (@worker-1..2)",
+                          status: "completed",
+                          rawInput: { action: "add", name: "worker", n: 2, brief: "Inspect repo" },
+                          _meta: { antigravity: { swarm: { tool: "swarm", action: "add" } } },
+                        },
+                      });
+                      yield* onSwarmNotification!({
+                        sessionId: rootSessionId,
+                        title: "Repo Audit",
+                        head: 1,
+                        activeWorkers: 2,
+                        workingWorkers: 2,
+                        waitingWorkers: 0,
+                        members: [
+                          {
+                            name: "alpha",
+                            role: "worker",
+                            conversationId: alphaSessionId,
+                            brief: "Inspect frontend",
+                            modelLabel: "Test Model",
+                            state: "working",
+                          },
+                          {
+                            name: "beta",
+                            role: "worker",
+                            conversationId: betaSessionId,
+                            brief: "Inspect backend",
+                            modelLabel: "Test Model",
+                            state: "working",
+                          },
+                        ],
+                      });
+                      yield* onSessionUpdate!({
+                        sessionId: rootSessionId,
+                        update: {
+                          sessionUpdate: "agent_message_chunk",
+                          content: { type: "text", text: "Spawned @alpha and @beta." },
+                        },
+                      });
+                    } else {
+                      yield* onSwarmNotification!({
+                        sessionId: rootSessionId,
+                        head: 5,
+                        activeWorkers: 1,
+                        workingWorkers: 1,
+                        waitingWorkers: 0,
+                        members: [
+                          {
+                            name: "alpha",
+                            role: "worker",
+                            conversationId: alphaSessionId,
+                            brief: "Inspect frontend",
+                            state: "working",
+                          },
+                        ],
+                      });
+                      yield* onSessionUpdate!({
+                        sessionId: rootSessionId,
+                        update: {
+                          sessionUpdate: "agent_message_chunk",
+                          content: { type: "text", text: "Sent follow-up to @alpha." },
+                        },
+                      });
+                    }
+                    return { stopReason: "end_turn" as const };
+                  }),
+                cancel: () => Effect.void,
+                closeSession: () => Effect.void,
+                extRequest: () => Effect.die("unused"),
+                extNotification: () => Effect.void,
+                handleSessionUpdate: (
+                  handler: Parameters<RuntimeService["handleSessionUpdate"]>[0],
+                ) =>
+                  Effect.sync(() => {
+                    onSessionUpdate = handler;
+                  }),
+                handleRequestPermission: () => Effect.void,
+                handleReadTextFile: () => Effect.void,
+                handleWriteTextFile: () => Effect.void,
+                handleCreateTerminal: () => Effect.void,
+                handleTerminalOutput: () => Effect.void,
+                handleWaitForTerminalExit: () => Effect.void,
+                handleKillTerminalCommand: () => Effect.void,
+                handleReleaseTerminal: () => Effect.void,
+                handleElicitation: () => Effect.void,
+                handleElicitationComplete: () => Effect.void,
+                handleExtRequest: () => Effect.void,
+                handleExtNotification: (
+                  method: string,
+                  _schema: unknown,
+                  handler: (payload: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>,
+                ) =>
+                  Effect.sync(() => {
+                    if (method === "_antigravity/swarm") {
+                      onSwarmNotification = handler;
+                    }
+                  }),
+              } as unknown as RuntimeService;
+            }),
+        });
+
+        const threadId = ThreadId.make("thread-ag-swarm");
+        const modelSelection = { instanceId, model: "antigravity-default" } as const;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("ps-ag-swarm"),
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.deepEqual(seenClientCapsMeta, { antigravity: { swarm: true } });
+
+        const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const reader = yield* session.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              collected.push(event);
+            }),
+          ),
+          Effect.forkScoped,
+        );
+
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const turn1Input = makeTurnInput({
+          instanceId,
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        });
+        yield* session.startTurn(turn1Input);
+
+        // Stream live worker reasoning, tool call, and reply on @alpha while prompt has already returned.
+        yield* onSessionUpdate!({
+          sessionId: alphaSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "Reviewing UI routes." },
+          },
+        });
+        yield* onSessionUpdate!({
+          sessionId: alphaSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "alpha-tool-1",
+            kind: "execute",
+            title: "pnpm test",
+            status: "completed",
+            rawInput: { CommandLine: "pnpm test" },
+            rawOutput: { combinedOutput: "ok" },
+          },
+        });
+
+        // Turn stays open past deferred-finalize debounce and protects the session from idle eviction.
+        yield* TestClock.adjust("5 seconds");
+        yield* Effect.yieldNow;
+        assert.equal(
+          collected.filter((event) => event.type === "turn.terminal").length,
+          0,
+          "turn must remain active while swarm workers are running",
+        );
+        assert.isTrue(yield* session.hasPendingBackgroundWork ?? Effect.succeed(false));
+
+        // Workers finish and hold coordinatorPendingWake through the coordinator's out-of-turn synthesis.
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 3,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 2,
+          coordinatorPendingWake: true,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+            { name: "beta", role: "worker", conversationId: betaSessionId, state: "waiting" },
+          ],
+          posts: [
+            { seq: 2, agent: "alpha", text: "@coordinator Frontend passed." },
+            { seq: 3, agent: "beta", text: "@coordinator Backend passed." },
+          ],
+        });
+        yield* TestClock.adjust("5 seconds");
+        yield* Effect.yieldNow;
+        assert.equal(
+          collected.filter((event) => event.type === "turn.terminal").length,
+          0,
+          "turn must stay open while coordinatorPendingWake is true",
+        );
+
+        yield* onSessionUpdate!({
+          sessionId: rootSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Combined summary ready." },
+          },
+        });
+        yield* onSessionUpdate!({
+          sessionId: rootSessionId,
+          update: { sessionUpdate: "usage_update", used: 420, size: 100_000 },
+        });
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 3,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 2,
+          coordinatorPendingWake: false,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+            { name: "beta", role: "worker", conversationId: betaSessionId, state: "waiting" },
+          ],
+        });
+
+        yield* TestClock.adjust("4 seconds");
+        yield* Effect.yieldNow;
+        assert.equal(collected.filter((event) => event.type === "turn.terminal").length, 1);
+        assert.isFalse(yield* session.hasPendingBackgroundWork ?? Effect.succeed(true));
+
+        const subagentsByTitle = () => {
+          const map = new Map<
+            string,
+            Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "subagent.updated" }
+            >["subagent"]
+          >();
+          for (const event of collected) {
+            if (event.type === "subagent.updated") {
+              map.set(event.subagent.title ?? event.subagent.id, event.subagent);
+            }
+          }
+          return map;
+        };
+        const alphaAfterTurn1 = subagentsByTitle().get("@alpha");
+        const betaAfterTurn1 = subagentsByTitle().get("@beta");
+        assert.equal(alphaAfterTurn1?.status, "idle");
+        assert.equal(alphaAfterTurn1?.result, "Frontend passed.");
+        assert.equal(betaAfterTurn1?.status, "idle");
+        assert.equal(betaAfterTurn1?.result, "Backend passed.");
+        assert.isTrue(
+          collected.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.threadId === alphaAfterTurn1?.childThreadId &&
+              event.turnItem.type === "reasoning" &&
+              event.turnItem.text === "Reviewing UI routes.",
+          ),
+        );
+
+        // Between turns @beta wakes and is killed; turn 2 must not replay the queued running update.
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 4,
+          activeWorkers: 1,
+          workingWorkers: 1,
+          waitingWorkers: 1,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+            { name: "beta", role: "worker", conversationId: betaSessionId, state: "working" },
+          ],
+        });
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 4,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 1,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+            { name: "beta", role: "worker", conversationId: betaSessionId, state: "killed" },
+          ],
+          posts: [{ seq: 4, agent: "beta", text: "@coordinator Backend wrap-up." }],
+        });
+
+        // Turn 2 wakes @alpha again on the exact same child thread, then kills @alpha after reporting.
+        const turn2Input = makeTurnInput({
+          instanceId,
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        });
+        yield* session.startTurn({
+          ...turn2Input,
+          runId: RunId.make("run-2"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt-2"),
+          rootNodeId: NodeId.make("root-2"),
+          runtimePolicy,
+        });
+        yield* TestClock.adjust("5 seconds");
+        yield* Effect.yieldNow;
+        assert.equal(subagentsByTitle().get("@alpha")?.status, "running");
+        assert.equal(
+          subagentsByTitle().get("@alpha")?.childThreadId,
+          alphaAfterTurn1?.childThreadId,
+        );
+        assert.equal(collected.filter((event) => event.type === "turn.terminal").length, 1);
+
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 6,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 0,
+          coordinatorPendingWake: false,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "killed" },
+          ],
+          posts: [{ seq: 6, agent: "alpha", text: "@coordinator Follow-up complete." }],
+        });
+        yield* onSessionUpdate!({
+          sessionId: rootSessionId,
+          update: { sessionUpdate: "usage_update", used: 620, size: 100_000 },
+        });
+        yield* TestClock.adjust("4 seconds");
+        yield* Effect.yieldNow;
+        assert.equal(collected.filter((event) => event.type === "turn.terminal").length, 2);
+        assert.equal(subagentsByTitle().get("@alpha")?.status, "completed");
+        assert.equal(subagentsByTitle().get("@alpha")?.result, "Follow-up complete.");
+        assert.equal(subagentsByTitle().get("@beta")?.status, "completed");
+        assert.equal(subagentsByTitle().get("@beta")?.result, "Backend wrap-up.");
+
+        yield* Fiber.interrupt(reader);
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
