@@ -127,11 +127,13 @@ describe("readEnvironmentFromLoginShell", () => {
       try {
         const tools = NodePath.join(home, "tools 'quoted $dir");
         NodeFS.mkdirSync(tools);
-        const printenv = NodeChildProcess.execFileSync("/bin/bash", ["-c", "type -P printenv"], {
-          encoding: "utf8",
-          env: { PATH: process.env.PATH },
-        }).trim();
-        NodeFS.copyFileSync(printenv, NodePath.join(tools, "printenv"));
+        // A private printenv stands in for the system one: macOS ships /usr/bin/printenv as a
+        // shared-cache stub, and a copy of it dies with SIGKILL.
+        NodeFS.writeFileSync(
+          NodePath.join(tools, "printenv"),
+          ["#!/bin/sh", 'eval "printf \'%s\\n\' \\"\\${$1-}\\""', ""].join("\n"),
+          { mode: 0o755 },
+        );
         vi.stubEnv("PATH", tools);
         const shellPath = NodePath.join(home, "bin");
         const bashEnv = NodePath.join(home, "env.bash");
@@ -139,7 +141,7 @@ describe("readEnvironmentFromLoginShell", () => {
           bashEnv,
           [
             `export PATH='${shellPath.replaceAll("'", "'\\''")}'`,
-            // Simulate a non-FHS host while retaining the real executable in its private prefix.
+            // Simulate a non-FHS host, where only the private prefix has printenv.
             "function /usr/bin/printenv { return 127; }",
             `trap 'echo -ne "\\033]0;\${BASH_COMMAND}\\007"' DEBUG`,
           ].join("\n"),
