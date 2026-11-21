@@ -5,6 +5,7 @@
 import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type {
+  IssueAutomationOption,
   IssueState,
   IssueCandidates,
   IssueCapabilities,
@@ -26,6 +27,8 @@ import type {
   StandaloneIssueTrackerDescriptor,
 } from "@t3tools/contracts";
 import { IssueTrackerKind as IssueTrackerKindSchema } from "@t3tools/contracts";
+
+import type { IssueLink } from "../shared/definition.ts";
 
 /**
  * The one failure shape every tracker reports, so the service can decide what a failure means
@@ -202,6 +205,8 @@ export interface IssueTrackerCredential {
  */
 export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
   readonly standalone: StandaloneIssueTrackerDescriptor;
+  /** Keeps the workspace an issue URL names, which status rules match links by. */
+  readonly parseIssueUrl?: (url: URL) => (IssueLink & { readonly workspace: string }) | null;
   /**
    * Who a credential signs in as and which scopes it reaches, asked of the tracker itself. Run on
    * a credential before it is stored, and on the stored one to report connection status.
@@ -212,6 +217,48 @@ export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
     { readonly account: string; readonly scopes: ReadonlyArray<IssueTrackerScope> },
     IssueTrackerError
   >;
+  /**
+   * What issue status rules read, present with `parseIssueUrl` when `standalone.automationContainer`
+   * is. A container is the team or board a rule watches; its id must be unique across the
+   * tracker's workspaces, or the tracker must refuse a workspace other than the credential's.
+   */
+  readonly automation?: {
+    /** One page of the containers the credential reaches, whose names hold `query`. */
+    readonly listContainers: (input: {
+      readonly query?: string | undefined;
+      readonly cursor?: string | undefined;
+    }) => Effect.Effect<
+      {
+        /** The credential's workspace, as `parseIssueUrl` names it. */
+        readonly workspace: string;
+        readonly containers: ReadonlyArray<IssueAutomationOption>;
+        readonly nextCursor: string | null;
+      },
+      IssueTrackerError
+    >;
+    /** The container by id, or null when the credential cannot reach it. */
+    readonly getContainer: (containerId: string) => Effect.Effect<
+      {
+        readonly workspace: string;
+        readonly container: IssueAutomationOption | null;
+      },
+      IssueTrackerError
+    >;
+    /** Every status an issue in the container can be in, in workflow order. */
+    readonly listStates: (input: {
+      readonly workspace: string;
+      readonly containerId: string;
+    }) => Effect.Effect<ReadonlyArray<IssueAutomationOption>, IssueTrackerError>;
+    /** The status id of each issue key found in the container; keys outside it are left out. */
+    readonly readStatuses: (input: {
+      readonly workspace: string;
+      readonly containerId: string;
+      readonly keys: ReadonlyArray<string>;
+    }) => Effect.Effect<
+      ReadonlyArray<{ readonly key: string; readonly stateId: string }>,
+      IssueTrackerError
+    >;
+  };
 }
 
 export function isStandaloneIssueTracker(api: IssueTrackerApi): api is StandaloneIssueTrackerApi {

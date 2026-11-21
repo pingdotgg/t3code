@@ -135,7 +135,11 @@ describe("LinearIssueTracker", () => {
   it.effect("lists a team's issues as summaries keyed by identifier", () =>
     Effect.gen(function* () {
       const { tracker, requests } = fakeLinear({
-        T3Viewer: () => ({ viewer: JULIUS, teams: { nodes: [] } }),
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [] },
+        }),
         T3Issues: (variables) => {
           expect(variables.filter).toMatchObject({
             team: { key: { eq: "ENG" } },
@@ -223,7 +227,11 @@ describe("LinearIssueTracker", () => {
       const created: Array<unknown> = [];
       const deleted: Array<unknown> = [];
       const { tracker } = fakeLinear({
-        T3Viewer: () => ({ viewer: JULIUS, teams: { nodes: [] } }),
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [] },
+        }),
         T3Issue: (variables) => {
           // Linear refuses a page of zero comments, which fails the write that looked the issue up.
           expect(variables.comments).toBeGreaterThan(0);
@@ -264,7 +272,11 @@ describe("LinearIssueTracker", () => {
   it.effect("reads an issue with its comments, reactions, history and linked pull requests", () =>
     Effect.gen(function* () {
       const { tracker } = fakeLinear({
-        T3Viewer: () => ({ viewer: JULIUS, teams: { nodes: [] } }),
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [] },
+        }),
         T3Issue: () => ({
           issue: issue("ENG-7", {
             comments: {
@@ -489,4 +501,69 @@ describe("LinearIssueTracker", () => {
       link: { name: "Intake", about: "", url: "https://linear.app/team/ENG/new?template=tpl_2" },
     });
   });
+
+  it.effect("reads a team's workflow and its issues' states by team id for status rules", () =>
+    Effect.gen(function* () {
+      const numbers: Array<ReadonlyArray<number>> = [];
+      const { tracker } = fakeLinear({
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [{ id: "team_eng", key: "ENG", name: "Engineering" }] },
+        }),
+        T3TeamStates: (variables) => {
+          expect(variables.id).toBe("team_eng");
+          return {
+            team: {
+              states: {
+                nodes: [
+                  state("Done", "completed", 2),
+                  state("In Progress", "started", 1),
+                  state("Todo", "unstarted", 0),
+                ],
+              },
+            },
+          };
+        },
+        T3IssueStates: (variables) => {
+          expect(variables.teamId).toBe("team_eng");
+          const batch = variables.numbers as ReadonlyArray<number>;
+          numbers.push(batch);
+          return {
+            issues: {
+              nodes: batch.includes(1) ? [{ identifier: "ENG-1", state: { id: "st_done" } }] : [],
+            },
+          };
+        },
+      });
+      const automation = (yield* tracker).automation;
+      expect(yield* automation.listContainers({})).toEqual({
+        workspace: "acme",
+        containers: [{ id: "team_eng", name: "Engineering (ENG)" }],
+        nextCursor: null,
+      });
+      expect((yield* automation.listContainers({ query: "ENGIN" })).containers).toHaveLength(1);
+      expect((yield* automation.listContainers({ query: "Support" })).containers).toEqual([]);
+      expect(yield* automation.getContainer("team_ops")).toEqual({
+        workspace: "acme",
+        container: null,
+      });
+      expect(
+        (yield* automation.listStates({ workspace: "acme", containerId: "team_eng" })).map(
+          (option) => option.name,
+        ),
+      ).toEqual(["Todo", "In Progress", "Done"]);
+      const keys = [
+        "ENG-1",
+        "eng-1",
+        "not a key",
+        ...Array.from({ length: 250 }, (_, i) => `ENG-${i + 2}`),
+      ];
+      expect(
+        yield* automation.readStatuses({ workspace: "acme", containerId: "team_eng", keys }),
+      ).toEqual([{ key: "ENG-1", stateId: "st_done" }]);
+      // Numbers are deduplicated and read 250 at a time.
+      expect(numbers.map((batch) => batch.length)).toEqual([250, 1]);
+    }),
+  );
 });

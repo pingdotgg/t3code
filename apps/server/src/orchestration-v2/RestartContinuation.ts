@@ -21,6 +21,7 @@ import type {
 import * as ServerSettings from "../serverSettings.ts";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import { snoozeHolds } from "./threadSnooze.ts";
 import {
   awaitingProviderThreadId,
   cancelledRosterTaskWork,
@@ -55,7 +56,7 @@ export function restartContinuationBlocked(
     thread.archivedAt !== null ||
     thread.deletedAt !== null ||
     thread.settledOverride === "settled" ||
-    (thread.snoozedUntil != null && DateTime.isGreaterThan(thread.snoozedUntil, now))
+    snoozeHolds(thread, DateTime.toEpochMillis(now))
   )
     return true;
   const turn = latestProviderTurnForAttempt(projection.providerTurns, source.activeAttemptId);

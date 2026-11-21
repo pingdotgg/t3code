@@ -27,6 +27,14 @@ export function createIssueTrackerEnvironmentAtoms<R, E>(
     label: "environment-data:issue-trackers:connections",
     tag: WS_METHODS.issueTrackersList,
   });
+  const automation = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:issue-trackers:automation",
+    tag: WS_METHODS.issueTrackersAutomation,
+  });
+  const automationCatalog = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:issue-trackers:automation-catalog",
+    tag: WS_METHODS.issueTrackersAutomationCatalog,
+  });
   const refresh = (environmentId: Parameters<typeof connections>[0]["environmentId"]) =>
     connections({ environmentId, input: {} });
   // Connect, disconnect and bind all edit one environment's tracker state; serialized so a
@@ -37,6 +45,21 @@ export function createIssueTrackerEnvironmentAtoms<R, E>(
   };
   return {
     connections,
+    /** Issue status rules, and how each one's last status read went. */
+    automation,
+    /** A tracker's teams or boards, and with `containerId` that one's workflow statuses. */
+    automationCatalog,
+    /** Saves a rule the tracker can reach, or removes one with a null rule. */
+    saveAutomation: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issue-trackers:save-automation",
+      tag: WS_METHODS.issueTrackersSaveAutomation,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+      onSettled: (target, registry) =>
+        Effect.sync(() =>
+          registry.refresh(automation({ environmentId: target.environmentId, input: {} })),
+        ),
+    }),
     /** Saves a credential the tracker accepted, or removes the stored one with a null token. */
     connect: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issue-trackers:connect",

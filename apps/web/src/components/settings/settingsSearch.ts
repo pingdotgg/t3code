@@ -1162,6 +1162,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["linear jira issues tracker team api key connect bind project"],
   },
   {
+    id: "issue-status-rules",
+    targetId: "issue-trackers",
+    title: msg("Issue status rules"),
+    to: "/settings/source-control",
+    scope: "environment-defaults",
+    searchTerms: [msg("linear team jira board issue status workflow wake snooze settle thread")],
+  },
+  {
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",

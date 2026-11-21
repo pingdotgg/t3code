@@ -23,6 +23,7 @@ import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
+import { IssueAutomationSettings } from "./IssueAutomationSettings";
 import { SecretInput } from "./SecretInput";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -264,6 +265,15 @@ function TrackerRow({
               ) : null}
             </div>
           </fieldset>
+          {usable && tracker.automationContainer !== undefined ? (
+            <div className="px-3 pb-4 sm:px-4">
+              <IssueAutomationSettings
+                environmentId={environmentId}
+                tracker={tracker.tracker}
+                container={tracker.automationContainer}
+              />
+            </div>
+          ) : null}
         </CollapsibleContent>
       </Collapsible>
     </div>

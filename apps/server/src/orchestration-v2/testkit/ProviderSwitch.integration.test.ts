@@ -67,6 +67,7 @@ import {
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { automationFingerprint } from "../../issue/issueAutomation.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -3368,6 +3369,7 @@ describe("orchestration v2 provider switching", () => {
     ["runtime mode", "runtime-mode"],
     ["worktree", "worktree"],
     ["provider instance", "instance"],
+    ["settled state", "issue-settle"],
   ] as const)("keeps background work alive when the %s changes on an idle thread", ([, change]) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace(`settings-background-${change}`);
@@ -3417,25 +3419,47 @@ describe("orchestration v2 provider switching", () => {
         yield* Ref.set(backgroundWork, true);
 
         const commandId = CommandId.make(`command:settings-background-${change}:change`);
-        yield* orchestrator
-          .dispatch(
-            change === "runtime-mode"
-              ? {
-                  type: "thread.runtime-mode.set",
-                  commandId,
-                  threadId,
-                  runtimeMode: "auto-accept-edits",
-                }
-              : change === "worktree"
-                ? { type: "thread.metadata.update", commandId, threadId, worktreePath: nextCwd }
-                : {
-                    type: "thread.model-selection.set",
-                    commandId,
-                    threadId,
-                    modelSelection: secondSelection,
-                  },
-          )
-          .pipe(Effect.ignore);
+        // A rule decides at the thread's newest organizing event, here an unsettle.
+        const settleByRule = orchestrator
+          .dispatch({
+            type: "thread.unsettle",
+            commandId: CommandId.make(`command:settings-background-${change}:organize`),
+            threadId,
+            reason: "user",
+          })
+          .pipe(
+            Effect.flatMap(({ storedEvents }) =>
+              orchestrator.dispatch({
+                type: "thread.issue-automation.apply",
+                commandId,
+                threadId,
+                action: "settle",
+                expectedRevision: storedEvents.at(-1)?.sequence ?? 0,
+                rulesFingerprint: automationFingerprint([]),
+              }),
+            ),
+          );
+        yield* (
+          change === "issue-settle"
+            ? settleByRule
+            : orchestrator.dispatch(
+                change === "runtime-mode"
+                  ? {
+                      type: "thread.runtime-mode.set",
+                      commandId,
+                      threadId,
+                      runtimeMode: "auto-accept-edits",
+                    }
+                  : change === "worktree"
+                    ? { type: "thread.metadata.update", commandId, threadId, worktreePath: nextCwd }
+                    : {
+                        type: "thread.model-selection.set",
+                        commandId,
+                        threadId,
+                        modelSelection: secondSelection,
+                      },
+              )
+        ).pipe(Effect.ignore);
         yield* worker.drain();
 
         const projection = yield* orchestrator.getThreadProjection(threadId);

@@ -444,3 +444,259 @@ describe("JiraIssueTracker", () => {
     }),
   );
 });
+
+describe("Jira board status rules", () => {
+  const credential: IssueTrackerCredential = {
+    token: "tok_rules",
+    fields: { site: "acme", email: "sam.rivera@acme.test" },
+  };
+  const SITE = "acme.atlassian.net";
+  const board = (id: number, name: string, projectKey?: string) => ({
+    id,
+    name,
+    type: "kanban",
+    ...(projectKey === undefined ? {} : { location: { projectKey, projectName: projectKey } }),
+  });
+  const automationOf = (api: StandaloneIssueTrackerApi) => {
+    if (api.automation === undefined) throw new Error("Jira offers no status rules");
+    return api.automation;
+  };
+
+  it.effect("searches boards by name a page at a time, and finds a project's by its key", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeJira(
+        {
+          "GET /rest/agile/1.0/board": ({ query }) => {
+            if (query.get("projectKeyOrId") === "OPS")
+              return { values: [board(31, "Ops triage", "OPS")], isLast: true };
+            const startAt = Number(query.get("startAt"));
+            return query.get("name") === null
+              ? { values: [board(startAt + 1, "Delivery", "ENG")], isLast: false }
+              : { values: [board(startAt + 7, "Ops review")], isLast: true };
+          },
+          "GET /rest/api/3/project/OPS": () => ({ key: "OPS", name: "Operations" }),
+        },
+        credential,
+      );
+      const automation = automationOf(yield* tracker);
+      expect(yield* automation.listContainers({})).toEqual({
+        workspace: SITE,
+        containers: [{ id: "1", name: "Delivery (ENG)" }],
+        nextCursor: "1",
+      });
+      expect(yield* automation.listContainers({ query: "Ops review", cursor: "50" })).toEqual({
+        workspace: SITE,
+        containers: [{ id: "57", name: "Ops review" }],
+        nextCursor: null,
+      });
+      expect(requests.at(-1)?.query.get("name")).toBe("Ops review");
+      expect(requests.at(-1)?.query.get("startAt")).toBe("50");
+      // A project key also lists that project's boards, ahead of the boards named like it.
+      expect((yield* automation.listContainers({ query: "ops" })).containers).toEqual([
+        { id: "31", name: "Ops triage (OPS)" },
+        { id: "7", name: "Ops review" },
+      ]);
+      // Each search reads one bounded page, never the whole site.
+      const listings = requests.filter((request) => request.path === "/rest/agile/1.0/board");
+      expect(listings.map((request) => request.query.get("maxResults"))).toEqual(
+        listings.map(() => "50"),
+      );
+      expect(listings).toHaveLength(4);
+    }),
+  );
+
+  it.effect("reads a board's statuses from its column mapping", () =>
+    Effect.gen(function* () {
+      const { tracker } = fakeJira(
+        {
+          "GET /rest/agile/1.0/board/12": () => board(12, "Delivery", "ENG"),
+          "GET /rest/agile/1.0/board/404": () =>
+            Response.json({ errorMessages: ["The board does not exist."] }, { status: 404 }),
+          "GET /rest/agile/1.0/board/12/configuration": () => ({
+            columnConfig: {
+              columns: [
+                { name: "To do", statuses: [{ id: "1" }] },
+                { name: "Doing", statuses: [{ id: "3" }, { id: "4" }] },
+                { name: "Done", statuses: [{ id: "4" }, { id: "6" }] },
+              ],
+            },
+          }),
+          "GET /rest/api/3/status/1": () => ({ id: "1", name: "To Do" }),
+          "GET /rest/api/3/status/3": () => ({ id: "3", name: "In Progress" }),
+          "GET /rest/api/3/status/4": () => ({ id: "4", name: "In Review" }),
+          "GET /rest/api/3/status/6": () => ({ id: "6", name: "Done" }),
+        },
+        credential,
+      );
+      const automation = automationOf(yield* tracker);
+      expect(yield* automation.getContainer("12")).toEqual({
+        workspace: SITE,
+        container: { id: "12", name: "Delivery (ENG)" },
+      });
+      expect((yield* automation.getContainer("404")).container).toBeNull();
+      expect(yield* automation.listStates({ workspace: SITE, containerId: "12" })).toEqual([
+        { id: "1", name: "To Do" },
+        { id: "3", name: "In Progress" },
+        { id: "4", name: "In Review" },
+        { id: "6", name: "Done" },
+      ]);
+    }),
+  );
+
+  it.effect("reads only the board's projects' linked issues, in batches of JQL searches", () =>
+    Effect.gen(function* () {
+      const searched: string[] = [];
+      const { tracker, requests } = fakeJira(
+        {
+          "GET /rest/agile/1.0/board/12/project": () => ({
+            values: [{ key: "ENG" }, { key: "WEB" }],
+            isLast: true,
+          }),
+          "POST /rest/api/3/search/jql": ({ body }) => {
+            const { jql, fields } = body as { jql: string; fields: ReadonlyArray<string> };
+            expect(fields).toEqual(["status"]);
+            searched.push(jql);
+            return {
+              issues: [...jql.matchAll(/"([A-Z]+-\d+)"/gu)].map(([, key]) => ({
+                key,
+                fields: { status: { id: key === "ENG-1" ? "4" : "1" } },
+              })),
+            };
+          },
+        },
+        credential,
+      );
+      const automation = automationOf(yield* tracker);
+      const keys = [
+        "ENG-1",
+        "eng-1",
+        "OPS-1",
+        "not a key",
+        "WEB-2",
+        ...Array.from({ length: 60 }, (_, index) => `ENG-${index + 10}`),
+      ];
+      const statuses = yield* automation.readStatuses({ workspace: SITE, containerId: "12", keys });
+      expect(statuses).toHaveLength(62);
+      expect(statuses.slice(0, 2)).toEqual([
+        { key: "ENG-1", stateId: "4" },
+        { key: "WEB-2", stateId: "1" },
+      ]);
+      // OPS is not on the board, so its issue is never asked for; 62 keys take two searches.
+      expect(searched).toHaveLength(2);
+      expect(searched[0]).toMatch(/^key in \("ENG-1", "WEB-2", "ENG-10", /u);
+      expect(searched.join(" ")).not.toContain("OPS-1");
+      expect(requests.filter((request) => request.method === "POST")).toHaveLength(2);
+    }),
+  );
+
+  it.effect("leaves out a linked issue Jira says does not exist", () =>
+    Effect.gen(function* () {
+      const searched: string[] = [];
+      const { tracker } = fakeJira(
+        {
+          "GET /rest/agile/1.0/board/12/project": () => ({ values: [{ key: "ENG" }] }),
+          "POST /rest/api/3/search/jql": ({ body }) => {
+            const { jql } = body as { jql: string };
+            searched.push(jql);
+            return jql.includes("ENG-404")
+              ? Response.json(
+                  {
+                    errorMessages: ["An issue with key 'ENG-404' does not exist for field 'key'."],
+                  },
+                  { status: 400 },
+                )
+              : { issues: [{ key: "ENG-1", fields: { status: { id: "4" } } }] };
+          },
+        },
+        credential,
+      );
+      const automation = automationOf(yield* tracker);
+      expect(
+        yield* automation.readStatuses({
+          workspace: SITE,
+          containerId: "12",
+          keys: ["ENG-1", "ENG-404"],
+        }),
+      ).toEqual([{ key: "ENG-1", stateId: "4" }]);
+      expect(searched).toEqual(['key in ("ENG-1", "ENG-404")', 'key in ("ENG-1")']);
+    }),
+  );
+
+  it.effect(
+    "offers a Service Management project without boards, with its issue types' statuses",
+    () =>
+      Effect.gen(function* () {
+        const { tracker, requests } = fakeJira(
+          {
+            "GET /rest/agile/1.0/board": () => ({ values: [], isLast: true }),
+            "GET /rest/api/3/project/HELP": () => ({ key: "HELP", name: "Help Center" }),
+            "GET /rest/api/3/project/HELP/statuses": () => [
+              {
+                id: "10001",
+                name: "Service request",
+                statuses: [
+                  { id: "20", name: "Waiting for support" },
+                  { id: "21", name: "In progress" },
+                  { id: "22", name: "Resolved" },
+                ],
+              },
+              {
+                id: "10002",
+                name: "Incident",
+                statuses: [
+                  { id: "20", name: "Waiting for support" },
+                  { id: "23", name: "Waiting for customer" },
+                  { id: "22", name: "Resolved" },
+                ],
+              },
+            ],
+            "POST /rest/api/3/search/jql": () => ({
+              issues: [{ key: "HELP-3", fields: { status: { id: "23" } } }],
+            }),
+          },
+          credential,
+        );
+        const automation = automationOf(yield* tracker);
+        expect((yield* automation.listContainers({ query: "HELP" })).containers).toEqual([
+          { id: "project:HELP", name: "Help Center (HELP)" },
+        ]);
+        expect((yield* automation.getContainer("project:HELP")).container).toEqual({
+          id: "project:HELP",
+          name: "Help Center (HELP)",
+        });
+        expect(
+          (yield* automation.listStates({ workspace: SITE, containerId: "project:HELP" })).map(
+            (state) => state.name,
+          ),
+        ).toEqual(["Waiting for support", "In progress", "Resolved", "Waiting for customer"]);
+        expect(
+          yield* automation.readStatuses({
+            workspace: SITE,
+            containerId: "project:HELP",
+            keys: ["HELP-3", "ENG-1"],
+          }),
+        ).toEqual([{ key: "HELP-3", stateId: "23" }]);
+        expect(requests.at(-1)?.body).toMatchObject({ jql: 'key in ("HELP-3")' });
+      }),
+  );
+
+  it.effect("refuses a rule made on another site and names each link's site", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeJira({}, credential);
+      const api = yield* tracker;
+      const refused = yield* automationOf(api)
+        .readStatuses({ workspace: "other.atlassian.net", containerId: "12", keys: ["ENG-1"] })
+        .pipe(Effect.flip);
+      expect(refused.reason).toBe("failed");
+      expect(requests).toEqual([]);
+      expect(api.parseIssueUrl?.(new URL("https://ACME.atlassian.net/browse/eng-7"))).toEqual({
+        host: "atlassian.net",
+        workspace: SITE,
+        scope: "ENG",
+        key: "ENG-7",
+      });
+      expect(api.parseIssueUrl?.(new URL("http://acme.atlassian.net/browse/ENG-7"))).toBeNull();
+      expect(api.parseIssueUrl?.(new URL("https://acme.atlassian.net/jira/ENG-7"))).toBeNull();
+    }),
+  );
+});

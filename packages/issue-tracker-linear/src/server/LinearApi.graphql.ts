@@ -184,6 +184,13 @@ export const LinearPageInfo = Schema.Struct({
 })
 export interface LinearPageInfo extends Schema.Struct.Type<typeof LinearPageInfo.fields> {}
 
+/** A workspace (referred to as Organization in the API). Workspaces are the root-level container for all teams, users, projects, issues, and settings. Every user belongs to at least one workspace, and all data is scoped within a workspace boundary. */
+export const Organization = Schema.Struct({
+  /** The workspace's unique URL key, used in URLs to identify the workspace. */
+  urlKey: Schema.String
+})
+export interface Organization extends Schema.Struct.Type<typeof Organization.fields> {}
+
 /** A team is the primary organizational unit in Linear. Issues belong to teams, and each team has its own workflow states, cycles, labels, and settings. Teams can be public (visible to all workspace members), private (visible only to team members), or restricted (visible only within an enclosing private-team boundary). Teams can also have sub-teams that inherit settings from their parent. */
 export const T3ViewerTeamsNodesTeam = Schema.Struct({
   /** The unique identifier of the entity. */
@@ -206,6 +213,7 @@ export const T3Viewer = GraphQL.query("T3Viewer", {
     variables: [],
     selections: [
       { name: "viewer", body: ["{...LinearUser}"] },
+      { name: "organization", body: ["{urlKey}"] },
       { name: "teams", body: ["(first:250){nodes{id key name}}"] }
     ],
     fragments: [
@@ -215,6 +223,8 @@ export const T3Viewer = GraphQL.query("T3Viewer", {
   result: Schema.Struct({
     /** The currently authenticated user making the API request. */
     viewer: LinearUser,
+    /** The authenticated user's workspace. */
+    organization: Organization,
     /** All teams whose issues the user can access. This includes public teams and private teams the user is a member of. This may differ from `administrableTeams`, which returns teams whose settings the user can change but whose issues they don't necessarily have access to. */
     teams: T3ViewerTeamsTeamConnection
   })
@@ -224,11 +234,11 @@ export declare namespace T3Viewer {
   export type Result = typeof T3Viewer.result.Type
 }
 
-export const IssueConnection = Schema.Struct({
+export const T3IssuesIssuesIssueConnection = Schema.Struct({
   nodes: Schema.Array(LinearIssue),
   pageInfo: LinearPageInfo
 })
-export interface IssueConnection extends Schema.Struct.Type<typeof IssueConnection.fields> {}
+export interface T3IssuesIssuesIssueConnection extends Schema.Struct.Type<typeof T3IssuesIssuesIssueConnection.fields> {}
 
 /** `query T3Issues` */
 export const T3Issues = GraphQL.query("T3Issues", {
@@ -259,7 +269,7 @@ export const T3Issues = GraphQL.query("T3Issues", {
   },
   result: Schema.Struct({
     /** All issues. Returns a paginated list of issues visible to the authenticated user. Can be filtered by various criteria including team, assignee, state, labels, project, and cycle. */
-    issues: IssueConnection
+    issues: T3IssuesIssuesIssueConnection
   })
 })
 export declare namespace T3Issues {
@@ -807,5 +817,85 @@ export declare namespace T3CommentReactions {
   export type Result = typeof T3CommentReactions.result.Type
 }
 
+/** A team is the primary organizational unit in Linear. Issues belong to teams, and each team has its own workflow states, cycles, labels, and settings. Teams can be public (visible to all workspace members), private (visible only to team members), or restricted (visible only within an enclosing private-team boundary). Teams can also have sub-teams that inherit settings from their parent. */
+export const T3TeamStatesTeamTeam = Schema.Struct({
+  /** The states that define the workflow associated with the team. */
+  states: TeamStatesWorkflowStateConnection
+})
+export interface T3TeamStatesTeamTeam extends Schema.Struct.Type<typeof T3TeamStatesTeamTeam.fields> {}
+
+/** `query T3TeamStates` */
+export const T3TeamStates = GraphQL.query("T3TeamStates", {
+  document: {
+    variables: [
+      { name: "id", body: "String!" }
+    ],
+    selections: [
+      { name: "team", body: ["(id:$", "id", "){states(first:250){nodes{...LinearWorkflowState}}}"] }
+    ],
+    fragments: [
+      { name: "LinearWorkflowState", body: ["on WorkflowState{id name type position}"] }
+    ]
+  },
+  variables: {
+    id: Schema.String
+  },
+  result: Schema.Struct({
+    /** Fetches a specific team by its ID. */
+    team: T3TeamStatesTeamTeam
+  })
+})
+export declare namespace T3TeamStates {
+  export type Variables = typeof T3TeamStates.variables.Type
+  export type Result = typeof T3TeamStates.result.Type
+}
+
+/** A state in a team's workflow, representing an issue status such as Triage, Backlog, Todo, In Progress, In Review, Done, or Canceled. Each team has its own set of workflow states that define the progression of issues through the team's process. Workflow states have a type that categorizes them (triage, backlog, unstarted, started, completed, canceled), a position that determines their display order, and a color for visual identification. States can be inherited from parent teams to sub-teams. */
+export const WorkflowState = Schema.Struct({
+  /** The unique identifier of the entity. */
+  id: Shared.ID
+})
+export interface WorkflowState extends Schema.Struct.Type<typeof WorkflowState.fields> {}
+
+/** An issue is the core work item in Linear. Issues belong to a team, have a workflow status, can be assigned to users, carry a priority level, and can be organized into projects and cycles. Issues support sub-issues (parent-child hierarchy up to 10 levels deep), labels, due dates, estimates, and SLA tracking. They can also be linked to other issues via relations, attached to releases, and tracked through their full history of changes. */
+export const NodesIssue = Schema.Struct({
+  /** Issue's human readable identifier (e.g. ENG-123). */
+  identifier: Schema.String,
+  /** The workflow state (issue status) that the issue is currently in. Workflow states represent the issue's progress through the team's workflow, such as Triage, Todo, In Progress, Done, or Canceled. */
+  state: WorkflowState
+})
+export interface NodesIssue extends Schema.Struct.Type<typeof NodesIssue.fields> {}
+
+export const T3IssueStatesIssuesIssueConnection = Schema.Struct({
+  nodes: Schema.Array(NodesIssue)
+})
+export interface T3IssueStatesIssuesIssueConnection extends Schema.Struct.Type<typeof T3IssueStatesIssuesIssueConnection.fields> {}
+
+/** `query T3IssueStates` */
+export const T3IssueStates = GraphQL.query("T3IssueStates", {
+  document: {
+    variables: [
+      { name: "teamId", body: "ID!" },
+      { name: "numbers", body: "[Float!]!" }
+    ],
+    selections: [
+      { name: "issues", body: ["(first:250 filter:{team:{id:{eq:$", "teamId", "}}number:{in:$", "numbers", "}}){nodes{identifier state{id}}}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    teamId: Shared.ID,
+    numbers: Schema.Array(Shared.Float)
+  },
+  result: Schema.Struct({
+    /** All issues. Returns a paginated list of issues visible to the authenticated user. Can be filtered by various criteria including team, assignee, state, labels, project, and cycle. */
+    issues: T3IssueStatesIssuesIssueConnection
+  })
+})
+export declare namespace T3IssueStates {
+  export type Variables = typeof T3IssueStates.variables.Type
+  export type Result = typeof T3IssueStates.result.Type
+}
+
 /** Every operation in LinearApi.graphql. */
-export const LinearApiGraphQLGroup = GraphQLGroup.make(T3Viewer, T3Issues, T3Issue, T3Comments, T3Team, T3IssueCreate, T3IssueUpdate, T3CommentCreate, T3ReactionCreate, T3ReactionDelete, T3IssueReactions, T3CommentReactions)
+export const LinearApiGraphQLGroup = GraphQLGroup.make(T3Viewer, T3Issues, T3Issue, T3Comments, T3Team, T3IssueCreate, T3IssueUpdate, T3CommentCreate, T3ReactionCreate, T3ReactionDelete, T3IssueReactions, T3CommentReactions, T3TeamStates, T3IssueStates)

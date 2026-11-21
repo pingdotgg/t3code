@@ -1,4 +1,5 @@
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
+import { IssueAutomationRule } from "./issue.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthAccessWriteScope,
@@ -1458,6 +1459,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
+  /** Saved through IssueThreadAutomationService, which checks each rule with its tracker. */
+  issueThreadAutomationRules: Schema.Array(IssueAutomationRule).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snoozePresets: SnoozePresetSettings.pipe(
@@ -1908,6 +1913,7 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
+  issueThreadAutomationRules: Schema.optionalKey(Schema.Array(IssueAutomationRule)),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
@@ -1993,9 +1999,18 @@ export const ServerSettingsPatch = Schema.Struct({
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
-/** The theme service sets theme defaults after it validates them, so clients cannot. */
+/**
+ * The theme service sets theme defaults, and the issue automation service its rules, after they
+ * validate them, so clients cannot.
+ */
 export const ClientServerSettingsPatch = ServerSettingsPatch.mapFields(
-  Struct.omit(["defaultTheme", "defaultThemeSetAt", "defaultAppearance", "defaultAppearanceSetAt"]),
+  Struct.omit([
+    "defaultTheme",
+    "defaultThemeSetAt",
+    "defaultAppearance",
+    "defaultAppearanceSetAt",
+    "issueThreadAutomationRules",
+  ]),
 );
 
 export function requiredScopesForServerSettingsPatch(

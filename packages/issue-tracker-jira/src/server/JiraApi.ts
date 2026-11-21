@@ -23,6 +23,9 @@ const REQUEST_TIMEOUT = "30 seconds";
 const PAGE = 100;
 /** Pages read of a list that only feeds a picker; past it the list is reported truncated. */
 const MAX_PAGES = 5;
+/** Jira's agile API pages boards and a board's projects 50 at a time. */
+const BOARD_PAGE = 50;
+const MAX_BOARD_PROJECT_PAGES = 10;
 
 const User = Schema.Struct({
   accountId: Schema.String,
@@ -75,6 +78,17 @@ const Issue = Schema.Struct({
   changelog: Schema.optional(Schema.Struct({ histories: Schema.Array(History) })),
 });
 export type JiraIssue = typeof Issue.Type;
+
+const Board = Schema.Struct({
+  id: Schema.Number,
+  name: Schema.String,
+  location: Schema.optional(
+    Schema.NullOr(Schema.Struct({ projectKey: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
+});
+export type JiraBoard = typeof Board.Type;
+
+const NamedStatus = Schema.Struct({ id: Schema.String, name: Schema.String });
 
 const Comment = Schema.Struct({
   id: Schema.String,
@@ -228,6 +242,43 @@ export class JiraApi extends Context.Service<
     readonly findUsers: (
       query: string,
     ) => Effect.Effect<ReadonlyArray<JiraUser>, IssueTrackerError>;
+    /** One page of the boards whose names hold `name`, or of one project's boards. */
+    readonly boards: (input: {
+      readonly name?: string | undefined;
+      readonly projectKey?: string | undefined;
+      readonly startAt: number;
+    }) => Effect.Effect<
+      { readonly boards: ReadonlyArray<JiraBoard>; readonly isLast: boolean },
+      IssueTrackerError
+    >;
+    readonly board: (id: string) => Effect.Effect<JiraBoard, IssueTrackerError>;
+    /** The keys of every project whose issues the board shows. */
+    readonly boardProjects: (id: string) => Effect.Effect<ReadonlyArray<string>, IssueTrackerError>;
+    /** The ids of the statuses the board's columns hold, in column order. */
+    readonly boardStatusIds: (
+      id: string,
+    ) => Effect.Effect<ReadonlyArray<string>, IssueTrackerError>;
+    readonly status: (
+      id: string,
+    ) => Effect.Effect<{ readonly id: string; readonly name: string }, IssueTrackerError>;
+    readonly project: (
+      key: string,
+    ) => Effect.Effect<{ readonly key: string; readonly name: string }, IssueTrackerError>;
+    /** A project's statuses, one list per issue type, each in its workflow's order. */
+    readonly projectStatuses: (
+      key: string,
+    ) => Effect.Effect<
+      ReadonlyArray<ReadonlyArray<{ readonly id: string; readonly name: string }>>,
+      IssueTrackerError
+    >;
+    /** The status id of each issue the query finds, up to `limit`. */
+    readonly issueStatuses: (input: {
+      readonly jql: string;
+      readonly limit: number;
+    }) => Effect.Effect<
+      ReadonlyArray<{ readonly key: string; readonly statusId: string }>,
+      IssueTrackerError
+    >;
   }
 >()("@t3tools/issue-tracker-jira/server/JiraApi") {}
 
@@ -492,6 +543,116 @@ export const make = Effect.gen(function* () {
       query: { query, maxResults: 20 },
     });
 
+  const boards: JiraApi["Service"]["boards"] = (input) =>
+    send(
+      "boards",
+      Schema.Struct({ values: Schema.Array(Board), isLast: Schema.optional(Schema.Boolean) }),
+      {
+        method: "GET",
+        path: "/rest/agile/1.0/board",
+        query: {
+          startAt: input.startAt,
+          maxResults: BOARD_PAGE,
+          name: input.name,
+          projectKeyOrId: input.projectKey,
+        },
+      },
+    ).pipe(
+      Effect.map((page) => ({
+        boards: page.values,
+        isLast: page.isLast ?? page.values.length < BOARD_PAGE,
+      })),
+    );
+
+  const board: JiraApi["Service"]["board"] = (id) =>
+    send("board", Board, {
+      method: "GET",
+      path: `/rest/agile/1.0/board/${encodeURIComponent(id)}`,
+    });
+
+  const boardProjects = Effect.fn("JiraApi.boardProjects")(function* (id: string) {
+    const keys: string[] = [];
+    for (let page = 0; page < MAX_BOARD_PROJECT_PAGES; page += 1) {
+      const answer = yield* send(
+        "boardProjects",
+        Schema.Struct({
+          values: Schema.Array(Schema.Struct({ key: Schema.String })),
+          isLast: Schema.optional(Schema.Boolean),
+        }),
+        {
+          method: "GET",
+          path: `/rest/agile/1.0/board/${encodeURIComponent(id)}/project`,
+          query: { startAt: keys.length, maxResults: BOARD_PAGE },
+        },
+      );
+      keys.push(...answer.values.map((project) => project.key));
+      if ((answer.isLast ?? answer.values.length < BOARD_PAGE) || answer.values.length === 0)
+        return keys;
+    }
+    return yield* fail("boardProjects", "failed", "This Jira board spans too many projects.");
+  });
+
+  const boardStatusIds: JiraApi["Service"]["boardStatusIds"] = (id) =>
+    send(
+      "boardStatusIds",
+      Schema.Struct({
+        columnConfig: Schema.Struct({
+          columns: Schema.Array(
+            Schema.Struct({ statuses: Schema.Array(Schema.Struct({ id: Schema.String })) }),
+          ),
+        }),
+      }),
+      { method: "GET", path: `/rest/agile/1.0/board/${encodeURIComponent(id)}/configuration` },
+    ).pipe(
+      Effect.map((config) => [
+        ...new Set(
+          config.columnConfig.columns.flatMap((column) =>
+            column.statuses.map((status) => status.id),
+          ),
+        ),
+      ]),
+    );
+
+  const status: JiraApi["Service"]["status"] = (id) =>
+    send("status", NamedStatus, {
+      method: "GET",
+      path: `/rest/api/3/status/${encodeURIComponent(id)}`,
+    });
+
+  const project: JiraApi["Service"]["project"] = (key) =>
+    send("project", Schema.Struct({ key: Schema.String, name: Schema.String }), {
+      method: "GET",
+      path: `/rest/api/3/project/${encodeURIComponent(key)}`,
+    });
+
+  const projectStatuses: JiraApi["Service"]["projectStatuses"] = (key) =>
+    send("projectStatuses", Schema.Array(Schema.Struct({ statuses: Schema.Array(NamedStatus) })), {
+      method: "GET",
+      path: `/rest/api/3/project/${encodeURIComponent(key)}/statuses`,
+    }).pipe(Effect.map((types) => types.map((type) => type.statuses)));
+
+  const issueStatuses: JiraApi["Service"]["issueStatuses"] = (input) =>
+    send(
+      "issueStatuses",
+      Schema.Struct({
+        issues: Schema.Array(
+          Schema.Struct({
+            key: Schema.String,
+            fields: Schema.Struct({ status: Schema.Struct({ id: Schema.String }) }),
+          }),
+        ),
+      }),
+      {
+        method: "POST",
+        path: "/rest/api/3/search/jql",
+        body: { jql: input.jql, maxResults: input.limit, fields: ["status"] },
+      },
+    ).pipe(
+      Effect.map((page) =>
+        page.issues.map((issue) => ({ key: issue.key, statusId: issue.fields.status.id })),
+      ),
+    );
+
   return JiraApi.of({
     origin: storedSite("origin").pipe(Effect.map((site) => site.origin)),
     myself,
@@ -508,6 +669,14 @@ export const make = Effect.gen(function* () {
     labels,
     assignable,
     findUsers,
+    boards,
+    board,
+    boardProjects,
+    boardStatusIds,
+    status,
+    project,
+    projectStatuses,
+    issueStatuses,
   });
 });
 

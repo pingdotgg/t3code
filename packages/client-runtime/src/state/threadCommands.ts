@@ -521,11 +521,13 @@ export function createThreadEnvironmentAtoms<R, E>(
         ((thread.pendingRuntimeRequest !== null &&
           thread.pendingRuntimeRequest.kind !== "user_input") ||
           ["preparing", "queued", "starting"].includes(thread.status))) ||
-      !(Date.parse(input.snoozedUntil) > DateTime.toEpochMillis(now))
+      (input.snoozedUntil !== null &&
+        !(Date.parse(input.snoozedUntil) > DateTime.toEpochMillis(now)))
         ? thread
         : {
             ...thread,
-            snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
+            snoozedUntil:
+              input.snoozedUntil === null ? null : DateTime.makeUnsafe(input.snoozedUntil),
             snoozedAt: now,
           },
     ),
