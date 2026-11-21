@@ -39,17 +39,21 @@ There are two ways to build one:
      and tool rows. Each turn is `{ match, steps }`: `think`, `text`, `bash` (+ `output`, `ms`),
      `wait`, and `tool` (+ `input`), which calls that T3 MCP tool for real, e.g.
      `delegate_task`. Match generated titles with a `{ match: "title", repeat: true }` turn.
-     `<var:name>` is filled from the JSON file at `T3_DEV_REPLAY_VARS`, for ids that change
+     `<var:name>` is filled from the JSON file at `FAKE_CLAUDE_VARS`, for ids that change
      every run. `fake-claude.log` in the home records the protocol, for debugging.
    - Data a real flow can't produce cheaply goes into the app's own stores, never into pixels.
-     `stagings/environments-map/` shows the tools: `insertPeerLinks` writes link rows into a
-     stopped server, `serveDescriptors` makes fake machines answer the reachability probe,
-     and its drive seeds the client's saved environments and routes into IndexedDB
-     (`t3code:connection-runtime` / `catalog` / `document`). Route kinds come from hostnames:
-     `*.localhost` is LAN, `*.ts.net` is Tailscale; Chrome's
+     `insertPeerLinks` writes link rows into a stopped server; `serveDescriptors` makes fake
+     machines answer the reachability probe. The client's saved environments and routes live
+     in IndexedDB (`t3code:connection-runtime` / `catalog` / `document`): write the document
+     from the page after its first load, then reload. Route kinds come from hostnames
+     (`*.localhost` is LAN, `*.ts.net` Tailscale); Chrome's
      `--host-resolver-rules=MAP *.tail-demo.ts.net 127.0.0.1` makes fake tailnet names work.
-   - The free replay agent (`apps/server/scripts/dev-replay-agent.ts`) still works without
-     `claude`, but it shows as an ACP provider.
+   - Gestures: hold the mouse down, move in steps, and `saveBeat` mid-drag to freeze the
+     app's own drag line and highlight; animate between those beats with `Kit.reveal`.
+   - A capped, scrolling modal freezes at different scroll offsets per beat. Freeze at a
+     viewport tall enough that nothing scrolls, and size `.app` to match.
+   - Without `claude`, turns go to the dev replay agent (`apps/server/scripts/dev-replay-agent.ts`),
+     which shows as an ACP provider.
 4. **Create the story:** `scripts/new.sh ~/launch-videos/<slug>`, then copy the beats in, or
    pass that directory as the staging's `<out>`. Add one `<iframe data-beat>` per beat and
    write `setup()` and `placeCursor()` (see Anatomy).

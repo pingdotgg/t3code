@@ -61,7 +61,6 @@ import {
   readDesktopSecondaryBootstrapsResult,
   type DesktopSecondaryBootstrapsRead,
 } from "./desktopLocal";
-import { DEV_FAKE_CONNECT_TOKEN, devFakeConnect } from "../cloud/devFakeConnect";
 import * as ConnectionStorage from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
 import { m } from "../i18n/messages";
@@ -369,41 +368,36 @@ const layerCapabilities = Layer.effectContext(
     const presentation = ClientCapabilities.ClientPresentation.of({
       metadata: currentClientMetadata(),
     });
-    const cloudSession = devFakeConnect
-      ? ClientCapabilities.CloudSession.of({
-          identity: Effect.succeedSome({ accountId: devFakeConnect.account.email }),
-          clerkToken: Effect.succeed(DEV_FAKE_CONNECT_TOKEN),
-        })
-      : ClientCapabilities.CloudSession.of({
-          identity: Effect.sync(() =>
-            Option.fromNullishOr(appAtomRegistry.get(managedRelaySessionAtom)),
+    const cloudSession = ClientCapabilities.CloudSession.of({
+      identity: Effect.sync(() =>
+        Option.fromNullishOr(appAtomRegistry.get(managedRelaySessionAtom)),
+      ),
+      clerkToken: Effect.gen(function* () {
+        const session = appAtomRegistry.get(managedRelaySessionAtom);
+        if (session === null) {
+          return yield* new ConnectionBlockedError({
+            reason: "authentication",
+            detail: m(msg("Sign in to T3 Connect to connect this environment.")),
+          });
+        }
+        const token = yield* session.readClerkToken().pipe(
+          Effect.mapError(
+            (error) =>
+              new ConnectionTransientError({
+                reason: "network",
+                detail: error.message,
+              }),
           ),
-          clerkToken: Effect.gen(function* () {
-            const session = appAtomRegistry.get(managedRelaySessionAtom);
-            if (session === null) {
-              return yield* new ConnectionBlockedError({
-                reason: "authentication",
-                detail: m(msg("Sign in to T3 Connect to connect this environment.")),
-              });
-            }
-            const token = yield* session.readClerkToken().pipe(
-              Effect.mapError(
-                (error) =>
-                  new ConnectionTransientError({
-                    reason: "network",
-                    detail: error.message,
-                  }),
-              ),
-            );
-            if (token === null) {
-              return yield* new ConnectionBlockedError({
-                reason: "authentication",
-                detail: m(msg("The T3 Connect session is unavailable.")),
-              });
-            }
-            return token;
-          }),
-        });
+        );
+        if (token === null) {
+          return yield* new ConnectionBlockedError({
+            reason: "authentication",
+            detail: m(msg("The T3 Connect session is unavailable.")),
+          });
+        }
+        return token;
+      }),
+    });
     const identity = ClientCapabilities.RelayDeviceIdentity.of({
       deviceId: Effect.succeedNone,
     });
