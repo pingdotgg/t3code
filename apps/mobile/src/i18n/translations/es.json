@@ -5393,5 +5393,11 @@
   "ad208e3e32c85029": "Ocultar todo",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Llamadas a herramientas en el chat",
-  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran."
+  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
+  "6dc1e8c15f62989d": "Restaurar colores originales",
+  "0d576a2c32b02d5d": "Invertir colores",
+  "66104e819c8d2122": "Seguir el tema",
+  "a368bf0b43feb260": "Colores originales",
+  "4d2fa01e838b9549": "Colores invertidos",
+  "1c19f2863386a317": "Colores del PDF"
 }

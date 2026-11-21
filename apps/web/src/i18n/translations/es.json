@@ -12392,5 +12392,14 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
+  "4d2fa01e838b9549": "Colores invertidos",
+  "6dc1e8c15f62989d": "Restaurar colores originales",
+  "0d576a2c32b02d5d": "Invertir colores",
+  "66104e819c8d2122": "Seguir el tema",
+  "a368bf0b43feb260": "Colores originales",
+  "f3b15c962c62a815": "Elige si las vistas previas de PDF se abren con los colores invertidos. Seguir el tema usa colores invertidos con temas oscuros y los colores originales con temas claros.",
+  "1c19f2863386a317": "Colores del PDF",
+  "9f21ef367149a1fa": "vista previa documento apariencia oscuro original colores tema invertir invertidos",
+  "f7d9556aee292b4c": "Restablecer los colores del PDF"
 }

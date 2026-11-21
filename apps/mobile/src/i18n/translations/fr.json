@@ -5393,5 +5393,11 @@
   "ad208e3e32c85029": "Tout masquer",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
-  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours."
+  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
+  "6dc1e8c15f62989d": "Rétablir les couleurs d’origine",
+  "0d576a2c32b02d5d": "Inverser les couleurs",
+  "66104e819c8d2122": "Suivre le thème",
+  "a368bf0b43feb260": "Couleurs d’origine",
+  "4d2fa01e838b9549": "Couleurs inversées",
+  "1c19f2863386a317": "Couleurs du PDF"
 }

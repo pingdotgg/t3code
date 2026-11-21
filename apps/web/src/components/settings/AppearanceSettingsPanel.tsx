@@ -7,6 +7,7 @@ import {
   type ChatWidth,
   type EffortDisplay,
   type EnvironmentIdentificationMode,
+  type PdfAppearance,
   MAX_APPEARANCE_CONTRAST,
   MAX_GLASS_OPACITY,
   MAX_PANEL_ANIMATION_DURATION_MS,
@@ -83,6 +84,12 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
 const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
   label: msg("Word", { $context: "show effort as a word" }),
   bars: msg("Bars", { $context: "show effort as bars" }),
+};
+
+const PDF_APPEARANCE_LABELS: Record<PdfAppearance, string> = {
+  "match-app": msg("Match theme"),
+  original: msg("Original colors"),
+  dark: msg("Inverted colors"),
 };
 
 export function AppearanceSettingsPanel() {
@@ -359,6 +366,43 @@ export function AppearanceSettingsPanel() {
               }
               aria-label={gt("Render math")}
             />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("pdf-appearance")}
+          description={gt(
+            "Choose whether PDF previews start with inverted colors. Match theme uses inverted colors for dark themes and original colors for light themes.",
+          )}
+          resetAction={
+            settings.pdfAppearance !== DEFAULT_UNIFIED_SETTINGS.pdfAppearance ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset PDF colors to default")}
+                onClick={() =>
+                  updateSettings({ pdfAppearance: DEFAULT_UNIFIED_SETTINGS.pdfAppearance })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.pdfAppearance}
+                onValueChange={(value) => {
+                  if (value !== null) updateSettings({ pdfAppearance: value });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label={gt("PDF colors")}>
+                  <SelectValue>{m(PDF_APPEARANCE_LABELS[settings.pdfAppearance])}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {Object.entries(PDF_APPEARANCE_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {m(label)}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
           }
         />
         <AdvancedSettings

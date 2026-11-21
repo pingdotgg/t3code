@@ -12406,5 +12406,14 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide"
+  "9e91e9a77b664e4e": "Could not start a review guide",
+  "4d2fa01e838b9549": "Inverted colors",
+  "6dc1e8c15f62989d": "Restore original colors",
+  "0d576a2c32b02d5d": "Invert colors",
+  "66104e819c8d2122": "Match theme",
+  "a368bf0b43feb260": "Original colors",
+  "f3b15c962c62a815": "Choose whether PDF previews start with inverted colors. Match theme uses inverted colors for dark themes and original colors for light themes.",
+  "1c19f2863386a317": "PDF colors",
+  "9f21ef367149a1fa": "preview document appearance dark original colors match theme app invert inverted",
+  "f7d9556aee292b4c": "Reset PDF colors to default"
 }

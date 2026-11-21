@@ -12397,5 +12397,14 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "4d2fa01e838b9549": "Invertierte Farben",
+  "6dc1e8c15f62989d": "Originalfarben wiederherstellen",
+  "0d576a2c32b02d5d": "Farben invertieren",
+  "66104e819c8d2122": "Design übernehmen",
+  "a368bf0b43feb260": "Originalfarben",
+  "f3b15c962c62a815": "Wähle, ob PDF-Vorschauen mit invertierten Farben geöffnet werden. Beim Übernehmen des Designs werden für dunkle Designs invertierte Farben und für helle Designs Originalfarben verwendet.",
+  "1c19f2863386a317": "PDF-Farben",
+  "9f21ef367149a1fa": "Vorschau Dokument Darstellung dunkel original Farben Design invertieren invertiert",
+  "f7d9556aee292b4c": "PDF-Farben auf Standard zurücksetzen"
 }

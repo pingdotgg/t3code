@@ -12397,5 +12397,14 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
+  "4d2fa01e838b9549": "Couleurs inversées",
+  "6dc1e8c15f62989d": "Rétablir les couleurs d’origine",
+  "0d576a2c32b02d5d": "Inverser les couleurs",
+  "66104e819c8d2122": "Suivre le thème",
+  "a368bf0b43feb260": "Couleurs d’origine",
+  "f3b15c962c62a815": "Choisissez si les aperçus de PDF s’ouvrent avec des couleurs inversées. Suivre le thème utilise les couleurs inversées avec les thèmes sombres et les couleurs d’origine avec les thèmes clairs.",
+  "1c19f2863386a317": "Couleurs du PDF",
+  "9f21ef367149a1fa": "aperçu document apparence sombre origine couleurs thème inverser inversées",
+  "f7d9556aee292b4c": "Rétablir les couleurs du PDF par défaut"
 }

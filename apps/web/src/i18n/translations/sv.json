@@ -12404,5 +12404,14 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "4d2fa01e838b9549": "Inverterade färger",
+  "6dc1e8c15f62989d": "Återställ originalfärger",
+  "0d576a2c32b02d5d": "Invertera färger",
+  "66104e819c8d2122": "Följ temat",
+  "a368bf0b43feb260": "Originalfärger",
+  "f3b15c962c62a815": "Välj om PDF-förhandsvisningar ska öppnas med inverterade färger. Följ temat använder inverterade färger för mörka teman och originalfärger för ljusa teman.",
+  "1c19f2863386a317": "PDF-färger",
+  "9f21ef367149a1fa": "förhandsvisning dokument utseende mörkt ljust originalfärger tema invertera",
+  "f7d9556aee292b4c": "Återställ PDF-färger till standard"
 }

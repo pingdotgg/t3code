@@ -13,6 +13,7 @@ import { pdfInitialPage, pdfLinkUrl, preparePdfPreview } from "../lib/pdfPreview
 import { m } from "../i18n/messages";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import { ControlPill } from "./ui/ControlPill";
+import { PdfAppearance } from "./PdfAppearance";
 
 const preparedPdfAtom = Atom.family((uri: string) =>
   Atom.make(
@@ -49,6 +50,14 @@ const preparedPdfAtom = Atom.family((uri: string) =>
 );
 
 export function PdfPreview(props: { readonly uri: string }) {
+  return (
+    <PdfAppearance key={props.uri}>
+      <PdfContent uri={props.uri} />
+    </PdfAppearance>
+  );
+}
+
+function PdfContent(props: { readonly uri: string }) {
   const gt = useGT();
   const atom = preparedPdfAtom(props.uri);
   const prepared = useAtomValue(atom);

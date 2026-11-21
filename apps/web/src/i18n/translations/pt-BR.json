@@ -12396,5 +12396,14 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
+  "4d2fa01e838b9549": "Cores invertidas",
+  "6dc1e8c15f62989d": "Restaurar cores originais",
+  "0d576a2c32b02d5d": "Inverter cores",
+  "66104e819c8d2122": "Seguir o tema",
+  "a368bf0b43feb260": "Cores originais",
+  "f3b15c962c62a815": "Escolha se as prévias de PDF devem abrir com cores invertidas. Seguir o tema usa cores invertidas em temas escuros e cores originais em temas claros.",
+  "1c19f2863386a317": "Cores do PDF",
+  "9f21ef367149a1fa": "prévia documento aparência escuro original cores tema inverter invertidas",
+  "f7d9556aee292b4c": "Redefinir as cores do PDF para o padrão"
 }
