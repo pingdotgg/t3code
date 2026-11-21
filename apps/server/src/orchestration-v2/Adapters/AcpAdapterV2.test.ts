@@ -78,6 +78,7 @@ import {
 } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -6961,6 +6962,69 @@ describe("AcpAdapterV2", () => {
       });
       yield* Fiber.join(turnFiber);
       assert.deepEqual(outcome, { outcome: "selected", optionId });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("counts a running ACP agent for port discovery until its session closes", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const instanceId = ProviderInstanceId.make("acp-test-track-agent");
+      const threadId = ThreadId.make("thread-acp-track-agent");
+      let running = 0;
+      yield* Effect.gen(function* () {
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath }),
+          },
+          selfInvocation,
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-track-agent"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(running, 1);
+        yield* runtime.rollbackThread({
+          providerThread,
+          providerThreadTurns: [],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-acp-track-agent"),
+            appRunOrdinal: 0,
+          },
+        });
+        assert.equal(running, 1, "the replacement agent must stay counted");
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(ProviderHost.ProviderHost, {
+          ...host,
+          trackAgent: () => {
+            running += 1;
+            return () => {
+              running -= 1;
+            };
+          },
+        }),
+      );
+      assert.equal(running, 0);
     }).pipe(Effect.provide(layerTest)),
   );
 
