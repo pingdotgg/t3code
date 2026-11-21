@@ -19,12 +19,18 @@ import {
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
 
+const REMOTE_PLUGIN_SKILL = "remote-plugin:skill";
+const OLD_CLI_HOME = "/home-old-cli";
+const OFFLINE_ONCE_HOME = "/home-offline-once";
+
 function makeFakeCodexAppServers() {
   const helpers: Array<{
     readonly codexHome: unknown;
     readonly crash: Effect.Effect<void>;
     readonly requests: Array<unknown>;
     closed: boolean;
+    remotePluginsLoaded: boolean;
+    reconcileFailuresLeft: number;
   }> = [];
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
@@ -34,16 +40,22 @@ function makeFakeCodexAppServers() {
         Effect.andThen(Queue.end(output)),
         Effect.asVoid,
       );
+      const codexHome =
+        command._tag === "StandardCommand" ? command.options.env?.CODEX_HOME : undefined;
       const helper = {
-        codexHome: command._tag === "StandardCommand" ? command.options.env?.CODEX_HOME : undefined,
+        codexHome,
         crash,
         requests: [] as Array<unknown>,
         closed: false,
+        remotePluginsLoaded: false,
+        reconcileFailuresLeft: codexHome === OFFLINE_ONCE_HOME ? 1 : 0,
       };
       helpers.push(helper);
       yield* Effect.addFinalizer(() => Effect.sync(() => (helper.closed = true)));
       const respond = (id: unknown, result: unknown) =>
         Queue.offer(output, new TextEncoder().encode(`${JSON.stringify({ id, result })}\n`));
+      const respondError = (id: unknown, error: unknown) =>
+        Queue.offer(output, new TextEncoder().encode(`${JSON.stringify({ id, error })}\n`));
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(900_000_000 + helpers.length),
         exitCode: Deferred.await(exited),
@@ -71,6 +83,24 @@ function makeFakeCodexAppServers() {
                 });
               }
               helper.requests.push(frame.params);
+              if (frame.method === "plugin/reconcile") {
+                if (helper.codexHome === OLD_CLI_HOME) {
+                  return respondError(frame.id, {
+                    code: -32600,
+                    message: "Invalid request: unknown variant `plugin/reconcile`",
+                  });
+                }
+                if (helper.reconcileFailuresLeft > 0) {
+                  helper.reconcileFailuresLeft -= 1;
+                  return respondError(frame.id, { code: -32603, message: "backend unreachable" });
+                }
+                helper.remotePluginsLoaded = true;
+                return respond(frame.id, {
+                  changedPlugins: [],
+                  failedMaterializationRemotePluginIds: [],
+                  failedRemotePluginIds: [],
+                });
+              }
               return respond(frame.id, {
                 data: (frame.params?.cwds ?? []).map((cwd) => ({
                   cwd,
@@ -83,6 +113,18 @@ function makeFakeCodexAppServers() {
                       description: "",
                       scope: "repo",
                     },
+                    // Real Codex lists remote plugin skills only once that inventory is published.
+                    ...(helper.remotePluginsLoaded
+                      ? [
+                          {
+                            name: REMOTE_PLUGIN_SKILL,
+                            path: "/codex-home/plugins/remote/SKILL.md",
+                            enabled: true,
+                            description: "",
+                            scope: "user",
+                          },
+                        ]
+                      : []),
                   ],
                 })),
               });
@@ -114,34 +156,65 @@ it.effect("reuses one Codex skills helper per launch until it idles out", () =>
         Effect.map((skills) => skills.map((skill) => skill.name)),
       );
 
-    assert.deepStrictEqual(yield* read("/alpha"), ["skill-in-/alpha"]);
-    assert.deepStrictEqual(yield* read("/beta"), ["skill-in-/beta"]);
+    assert.deepStrictEqual(yield* read("/alpha"), ["skill-in-/alpha", REMOTE_PLUGIN_SKILL]);
+    assert.deepStrictEqual(yield* read("/beta"), ["skill-in-/beta", REMOTE_PLUGIN_SKILL]);
     assert.strictEqual(helpers.length, 1);
     assert.deepStrictEqual(helpers[0]!.requests, [
+      {},
       { cwds: ["/alpha"], forceReload: true },
       { cwds: ["/beta"], forceReload: true },
     ]);
 
     // Another home is another launch identity; the previous helper retires at once.
-    assert.deepStrictEqual(yield* read("/alpha", "/home-b"), ["skill-in-/alpha"]);
+    assert.deepStrictEqual(yield* read("/alpha", "/home-b"), [
+      "skill-in-/alpha",
+      REMOTE_PLUGIN_SKILL,
+    ]);
     assert.strictEqual(helpers.length, 2);
     assert.strictEqual(helpers[0]!.closed, true);
     assert.strictEqual(helpers[1]!.codexHome, "/home-b");
 
     // A helper that exits is replaced within the same read.
     yield* helpers[1]!.crash;
-    assert.deepStrictEqual(yield* read("/beta", "/home-b"), ["skill-in-/beta"]);
+    assert.deepStrictEqual(yield* read("/beta", "/home-b"), [
+      "skill-in-/beta",
+      REMOTE_PLUGIN_SKILL,
+    ]);
     assert.strictEqual(helpers.length, 3);
 
     yield* TestClock.adjust("29 seconds");
     assert.strictEqual(helpers[2]!.closed, false);
     yield* TestClock.adjust("1 second");
     assert.strictEqual(helpers[2]!.closed, true);
-    assert.deepStrictEqual(yield* read("/alpha", "/home-b"), ["skill-in-/alpha"]);
+    assert.deepStrictEqual(yield* read("/alpha", "/home-b"), [
+      "skill-in-/alpha",
+      REMOTE_PLUGIN_SKILL,
+    ]);
     assert.strictEqual(helpers.length, 4);
 
+    // A CLI that rejects plugin/reconcile as unknown lists its skills and is not asked again.
+    assert.deepStrictEqual(yield* read("/alpha", OLD_CLI_HOME), ["skill-in-/alpha"]);
+    yield* TestClock.adjust("29 seconds");
+    assert.deepStrictEqual(yield* read("/alpha", OLD_CLI_HOME), ["skill-in-/alpha"]);
+    yield* TestClock.adjust("29 seconds");
+    assert.deepStrictEqual(yield* read("/alpha", OLD_CLI_HOME), ["skill-in-/alpha"]);
+    assert.strictEqual(helpers.length, 5);
+    const alphaRead = { cwds: ["/alpha"], forceReload: true };
+    assert.deepStrictEqual(helpers[4]!.requests, [{}, alphaRead, alphaRead, alphaRead]);
+
+    // A failed reconcile is tried again on a helper that reads keep alive.
+    assert.deepStrictEqual(yield* read("/alpha", OFFLINE_ONCE_HOME), ["skill-in-/alpha"]);
+    yield* TestClock.adjust("29 seconds");
+    assert.deepStrictEqual(yield* read("/alpha", OFFLINE_ONCE_HOME), ["skill-in-/alpha"]);
+    yield* TestClock.adjust("2 seconds");
+    assert.deepStrictEqual(yield* read("/alpha", OFFLINE_ONCE_HOME), [
+      "skill-in-/alpha",
+      REMOTE_PLUGIN_SKILL,
+    ]);
+    assert.strictEqual(helpers.length, 6);
+
     yield* Scope.close(providerScope, Exit.void);
-    assert.strictEqual(helpers[3]!.closed, true);
+    assert.strictEqual(helpers[5]!.closed, true);
   }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
 );
 

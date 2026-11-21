@@ -139,6 +139,9 @@ export const codexRoutesSpendNativeQuota = (
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
 const CODEX_CONFIG_PROBE_TIMEOUT_MS = 3_000;
+const CODEX_PLUGIN_RECONCILE_TIMEOUT_MS = 5_000;
+// Codex answers a method it does not know with invalid request, not method not found.
+const CODEX_UNSUPPORTED_REQUEST_CODES: ReadonlySet<number> = new Set([-32600, -32601]);
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
 // Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
@@ -603,6 +606,50 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
   );
 });
 
+/**
+ * A fresh app-server lists skills before it has loaded the account's remote plugins and
+ * sends no notification once it has. plugin/reconcile answers after publishing them.
+ * Best-effort: the local skills are still worth listing. False means a later try may help.
+ */
+const loadCodexRemotePlugins = Effect.fn("loadCodexRemotePlugins")(function* (
+  client: CodexClient.CodexAppServerClient["Service"],
+  deadlineMs = Infinity,
+) {
+  return yield* withCodexDiscoveryDeadline(
+    client.request("plugin/reconcile", {}),
+    deadlineMs,
+    CODEX_PLUGIN_RECONCILE_TIMEOUT_MS,
+  ).pipe(
+    Effect.map((result) => result?.failedMaterializationRemotePluginIds.length === 0),
+    Effect.catch((cause) => {
+      const unsupported =
+        cause._tag === "CodexAppServerRequestError" &&
+        CODEX_UNSUPPORTED_REQUEST_CODES.has(cause.code);
+      return Effect.logDebug("Codex plugin reconcile failed.", {
+        errorTag: cause._tag,
+        unsupported,
+      }).pipe(Effect.as(unsupported));
+    }),
+  );
+});
+
+/** Lists before and after reconcile, so one that outlasts the budget keeps the first answer. */
+const requestCodexCatalogSkills = Effect.fn("requestCodexCatalogSkills")(function* (input: {
+  readonly client: CodexClient.CodexAppServerClient["Service"];
+  readonly cwd: string;
+  readonly deadlineMs: number;
+}) {
+  const listSkills = withCodexDiscoveryDeadline(
+    input.client.request("skills/list", { cwds: [input.cwd] }),
+    input.deadlineMs,
+  );
+  const listed = yield* listSkills;
+  if (listed === undefined) return listed;
+  yield* loadCodexRemotePlugins(input.client, input.deadlineMs);
+  const reconciled = yield* listSkills.pipe(Effect.orElseSucceed(() => undefined));
+  return reconciled ?? listed;
+});
+
 /** Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models. */
 export const codexAppServerEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
@@ -770,7 +817,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const deadlineMs = spawnedAtMs + input.probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
   const [skillsResponse, models, { config, nativeUsage, rateLimits }] = yield* Effect.all(
     [
-      withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
+      requestCodexCatalogSkills({ client, cwd: input.cwd, deadlineMs }),
       accountResponse.account?.type === "chatgpt"
         ? requestCodexChatGptModels({
             client,
@@ -875,6 +922,7 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
     ...input,
     environment: providerProbeEnvironment(input.environment ?? process.env),
   });
+  yield* loadCodexRemotePlugins(client);
   const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
   return parseCodexSkillsListResponse(skillsResponse, input.cwd);
 });
@@ -893,7 +941,15 @@ export const makeCodexSkillsProbe = Effect.fn("makeCodexSkillsProbe")(function* 
       readonly environment: NodeJS.ProcessEnv;
     }) =>
       withCodexAppServerClient({ ...launch, cwd: process.cwd() }).pipe(
-        Effect.map(({ client }) => client),
+        Effect.flatMap(({ client }) =>
+          // Remembered once it works; a failed attempt may run again on a later read.
+          loadCodexRemotePlugins(client).pipe(
+            Effect.cachedWithTTL((exit) =>
+              Exit.isSuccess(exit) && exit.value ? Duration.infinity : CODEX_SKILLS_HELPER_IDLE_TTL,
+            ),
+            Effect.map((loadRemotePlugins) => ({ client, loadRemotePlugins })),
+          ),
+        ),
       ),
     idleTimeToLive: CODEX_SKILLS_HELPER_IDLE_TTL,
   });
@@ -915,7 +971,11 @@ export const makeCodexSkillsProbe = Effect.fn("makeCodexSkillsProbe")(function* 
     );
     yield* Effect.forEach(stale, (key) => RcMap.invalidate(helpers, key), { discard: true });
     const skillsResponse = yield* RcMap.get(helpers, launch).pipe(
-      Effect.flatMap((client) => client.request("skills/list", { cwds: [cwd], forceReload: true })),
+      Effect.flatMap(({ client, loadRemotePlugins }) =>
+        loadRemotePlugins.pipe(
+          Effect.andThen(client.request("skills/list", { cwds: [cwd], forceReload: true })),
+        ),
+      ),
       Effect.scoped,
       // RcMap keeps a failed spawn, and a dead helper keeps failing; drop it so the retry respawns.
       Effect.onError(() => RcMap.invalidate(helpers, launch)),

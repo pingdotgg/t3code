@@ -349,6 +349,51 @@ function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   });
 }
 
+/** A Codex app-server whose replies come from `answer`; a request it ignores stays unanswered. */
+function scriptedCodexAppServer(
+  answer: (
+    request: { readonly id: number; readonly method: string },
+    reply: (result: unknown) => Effect.Effect<void>,
+  ) => Effect.Effect<unknown, never, Scope.Scope>,
+) {
+  return ChildProcessSpawner.make(() =>
+    Effect.gen(function* () {
+      const scope = yield* Effect.scope;
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const decoder = new TextDecoder();
+      let buffered = "";
+      const handle = (line: string) => {
+        const { id, method } = JSON.parse(line) as { id?: number; method?: string };
+        if (id === undefined || method === undefined) return Effect.void;
+        return answer({ id, method }, (result) =>
+          Queue.offer(output, encoder.encode(`${JSON.stringify({ id, result })}\n`)).pipe(
+            Effect.asVoid,
+          ),
+        ).pipe(Scope.provide(scope));
+      };
+      return ChildProcessSpawner.makeHandle({
+        ...mockHandle({ stdout: "", stderr: "", code: 0 }),
+        exitCode: Effect.never,
+        isRunning: Effect.succeed(true),
+        stdin: Sink.forEach((chunk: Uint8Array) => {
+          buffered += decoder.decode(chunk, { stream: true });
+          const lines = buffered.split("\n");
+          buffered = lines.pop() ?? "";
+          return Effect.forEach(lines.filter(Boolean), handle, { discard: true });
+        }),
+        stdout: Stream.fromQueue(output),
+      });
+    }),
+  );
+}
+
+const codexInitializeResult = {
+  userAgent: "codex_cli_rs/0.167.0",
+  codexHome: "/nonexistent-codex-home",
+  platformFamily: "unix",
+  platformOs: "linux",
+};
+
 function layerMockSpawner(
   handler: (args: ReadonlyArray<string>) => {
     stdout: string;
@@ -922,68 +967,35 @@ it.layer(
     it.effect("shows Codex usage that answers after three seconds inside the probe budget", () =>
       Effect.gen(function* () {
         const usageRequested = yield* Deferred.make<void>();
-        const spawner = ChildProcessSpawner.make(() =>
-          Effect.gen(function* () {
-            const scope = yield* Effect.scope;
-            const output = yield* Queue.unbounded<Uint8Array>();
-            const send = (message: unknown) =>
-              Queue.offer(output, encoder.encode(`${JSON.stringify(message)}\n`));
-            const results: Record<string, unknown> = {
-              initialize: {
-                userAgent: "codex_cli_rs/0.167.0",
-                codexHome: "/nonexistent-codex-home",
-                platformFamily: "unix",
-                platformOs: "linux",
-              },
-              "account/read": {
-                account: { type: "chatgpt", email: "test@example.com", planType: "pro" },
-                requiresOpenaiAuth: true,
-              },
-              "config/read": { config: {}, origins: {} },
-              "skills/list": { data: [] },
-              "model/list": { data: [] },
-            };
-            const answer = (line: string) => {
-              const { id, method } = JSON.parse(line) as { id?: number; method?: string };
-              if (id === undefined || method === undefined) return Effect.void;
-              if (method !== "account/rateLimits/read") {
-                return send({ id, result: results[method] ?? {} });
-              }
-              return Deferred.succeed(usageRequested, undefined).pipe(
+        const results: Record<string, unknown> = {
+          initialize: codexInitializeResult,
+          "account/read": {
+            account: { type: "chatgpt", email: "test@example.com", planType: "pro" },
+            requiresOpenaiAuth: true,
+          },
+          "config/read": { config: {}, origins: {} },
+          "skills/list": { data: [] },
+          "model/list": { data: [] },
+        };
+        const spawner = scriptedCodexAppServer(({ method }, reply) =>
+          method !== "account/rateLimits/read"
+            ? reply(results[method] ?? {})
+            : Deferred.succeed(usageRequested, undefined).pipe(
                 Effect.andThen(Effect.sleep("4 seconds")),
                 Effect.andThen(
-                  send({
-                    id,
-                    result: {
-                      rateLimits: {
-                        limitId: "codex",
-                        planType: "pro",
-                        primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 2e9 },
-                      },
-                      rateLimitsByLimitId: null,
-                      rateLimitResetCredits: null,
-                      accountId: null,
+                  reply({
+                    rateLimits: {
+                      limitId: "codex",
+                      planType: "pro",
+                      primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 2e9 },
                     },
+                    rateLimitsByLimitId: null,
+                    rateLimitResetCredits: null,
+                    accountId: null,
                   }),
                 ),
-                Effect.forkIn(scope),
-              );
-            };
-            const decoder = new TextDecoder();
-            let buffered = "";
-            return ChildProcessSpawner.makeHandle({
-              ...mockHandle({ stdout: "", stderr: "", code: 0 }),
-              exitCode: Effect.never,
-              isRunning: Effect.succeed(true),
-              stdin: Sink.forEach((chunk: Uint8Array) => {
-                buffered += decoder.decode(chunk, { stream: true });
-                const lines = buffered.split("\n");
-                buffered = lines.pop() ?? "";
-                return Effect.forEach(lines.filter(Boolean), answer, { discard: true });
-              }),
-              stdout: Stream.fromQueue(output),
-            });
-          }),
+                Effect.forkScoped,
+              ),
         );
         const fiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -996,6 +1008,60 @@ it.layer(
         assert.strictEqual(status.auth.status, "authenticated");
         assert.isUndefined(status.usageLimits?.unavailable);
         assert.strictEqual(status.usageLimits?.windows[0]?.usedPercent, 42);
+      }),
+    );
+
+    it.effect("keeps Codex skills when plugin reconcile outlasts the discovery budget", () =>
+      Effect.gen(function* () {
+        const accountRequested = yield* Deferred.make<void>();
+        const reconcileRequested = yield* Deferred.make<void>();
+        const results: Record<string, unknown> = {
+          initialize: codexInitializeResult,
+          "account/read": { account: { type: "apiKey" }, requiresOpenaiAuth: false },
+          "config/read": { config: {}, origins: {} },
+          "skills/list": {
+            data: [
+              {
+                cwd: "/",
+                errors: [],
+                skills: [
+                  {
+                    name: "local",
+                    path: "/local/SKILL.md",
+                    enabled: true,
+                    description: "",
+                    scope: "user",
+                  },
+                ],
+              },
+            ],
+          },
+          "model/list": { data: [] },
+        };
+        const spawner = scriptedCodexAppServer(({ method }, reply) => {
+          if (method === "plugin/reconcile") return Deferred.succeed(reconcileRequested, undefined);
+          if (method !== "account/read") return reply(results[method] ?? {});
+          // A slow account read leaves discovery less time than a reconcile may take.
+          return Deferred.succeed(accountRequested, undefined).pipe(
+            Effect.andThen(Effect.sleep("16 seconds")),
+            Effect.andThen(reply(results[method])),
+            Effect.forkScoped,
+          );
+        });
+        const fiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(accountRequested);
+        yield* TestClock.adjust("16 seconds");
+        yield* TestClock.adjust("4 seconds");
+        const status = yield* Fiber.join(fiber);
+
+        assert.isTrue(yield* Deferred.isDone(reconcileRequested));
+        assert.deepStrictEqual(
+          status.skills.map((skill) => skill.name),
+          ["local"],
+        );
       }),
     );
 
