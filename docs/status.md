@@ -26,6 +26,9 @@ Keep this file accurate. Update it whenever a milestone lands, a proof passes, o
 - **Build host:** Approved to build, test, and run locally on this Mac for overnight/dedicated runs (keep all worktrees, build output, and disposable `--state-dir` isolated).
 - **Contract sharing:** `conn-wire` and `conn-contract` are path dependencies on `../conn-server/crates/`.
 - **GPUI version:** Pinned to `gpui-kit = "=0.9.0"` (matching `.refs/threadbear`). If macOS polish requires vendoring `gpui-component`, `gpui-base`, or `gpui-pre`, follow `.refs/threadbear/desktop/Cargo.toml`'s `[patch.crates-io]` pattern and record each patch here.
+- **Vendored `gpui-pre-macos` (2026-11-21):** Threadbear's copy (plain keys go to an embedded web view that holds the keyboard), plus frames paced by CVDisplayLink instead of `CAMetalDisplayLink`. Under the Metal link, a frame drawn during key dispatch stayed off screen until the next mouse event (Cmd+K from the composer, typing in the palette); reproduced and verified fixed in nick-vm. `CONN_GPUI_METAL_DISPLAY_LINK=1` opts back in.
+- **Overlay focus:** closing the palette or Settings returns the keyboard to what had it before (else the shell root), so shortcuts keep working after Escape.
+- **Diagnostics:** GPUI warnings/errors go to stderr; `CONN_GPUI_FRAME_LOG=1` also logs keys, the palette action and renders per second.
 
 ## How to run (reproduction)
 
