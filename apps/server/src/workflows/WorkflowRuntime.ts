@@ -47,6 +47,8 @@ const LIST_RETRY = "30 seconds";
 // A leading dot is how a file is kept out: a draft being checked, an editor's swap file.
 // One name in the folder, never a path: the name is also the key a save and a removal go by.
 const DEFINITION_FILE = /^[A-Za-z0-9_][\w.-]*\.(ts|mts|js|mjs)$/;
+const NAMING =
+  "Name the file with letters, digits, dashes and dots, ending in .ts: for example release.ts.";
 
 export class WorkflowDefinitionsLoadError extends Schema.TaggedError<WorkflowDefinitionsLoadError>()(
   "WorkflowDefinitionsLoadError",
@@ -314,6 +316,8 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   /** Files whose change clashes with another file or drops what a run needs, and why. */
   const held = new Map<string, Array<WorkflowDefinitionProblem>>();
   let between: ReadonlyArray<WorkflowDefinitionProblem> = [];
+  /** Code files in the folder that are not loaded because of their name. */
+  let misnamed: ReadonlyArray<WorkflowDefinitionProblem> = [];
   let retrying = false;
   const state = yield* SubscriptionRef.make<{ revision: number; problem: string | null }>({
     revision: 0,
@@ -322,23 +326,26 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   const told = (problem: WorkflowDefinitionProblem) =>
     problem.file === undefined ? problem.message : `${problem.file}: ${problem.message}`;
   const report = Effect.suspend(() => {
-    const problems = [...broken.values(), ...[...held.values()].flat(), ...between];
+    const problems = [...broken.values(), ...[...held.values()].flat(), ...misnamed, ...between];
     return SubscriptionRef.update(state, (current) => ({
       revision: current.revision + 1,
       problem: problems.length === 0 ? null : problems.map(told).join("\n"),
     }));
   });
 
-  const names = Effect.gen(function* () {
+  /** Every name in the folder, or the one file. */
+  const entries = Effect.gen(function* () {
     if (single) {
       return (yield* fileSystem.exists(target)) ? [path.basename(target)] : [];
     }
     // A folder that is not there yet is empty. One that cannot be read just now is not: it
     // fails, and what was loaded stays.
     if (!(yield* fileSystem.exists(directory))) return [];
-    const entries = yield* fileSystem.readDirectory(directory);
-    return entries.filter((entry) => DEFINITION_FILE.test(entry)).toSorted();
+    return (yield* fileSystem.readDirectory(directory)).toSorted();
   });
+  const definitionNames = (all: ReadonlyArray<string>) =>
+    all.filter((entry) => DEFINITION_FILE.test(entry));
+  const names = Effect.map(entries, definitionNames);
 
   /** A fresh engine for these definitions in its own scope, or the failure that stopped it. */
   const build = Effect.fn("WorkflowRuntime.build")(function* (
@@ -419,7 +426,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   let retryLater: Effect.Effect<void> = Effect.void;
   /** Take in what changed in the folder, and run the result unless something is wrong with it. */
   const reload = Effect.fn("WorkflowRuntime.reload")(function* () {
-    const listed = yield* Effect.option(names);
+    const listed = yield* Effect.option(entries);
     if (Option.isNone(listed)) {
       yield* Effect.logWarning(
         "The workflows folder could not be read; its workflows stay as they are",
@@ -427,8 +434,24 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       yield* retryLater;
       return false;
     }
-    const present = listed.value;
+    const present = definitionNames(listed.value);
+    // A leading dot keeps a file out on purpose; any other code file left out is a surprise.
+    const wasMisnamed = misnamed;
+    misnamed = listed.value
+      .filter((entry) => /^[^.].*\.(ts|mts|js|mjs)$/.test(entry) && !DEFINITION_FILE.test(entry))
+      .map((entry) => ({ message: `It is not loaded. ${NAMING}`, file: entry }));
+    const renamed =
+      misnamed.map((problem) => problem.file).join("/") !==
+      wasMisnamed.map((problem) => problem.file).join("/");
     let changed = false;
+    for (const problem of misnamed) {
+      if (!wasMisnamed.some((known) => known.file === problem.file)) {
+        yield* Effect.logWarning(
+          "A file in the workflows folder is not loaded because of its name",
+          problem,
+        );
+      }
+    }
     for (const name of present) {
       const file = path.join(directory, name);
       const source = yield* fileSystem.readFileString(file).pipe(Effect.option);
@@ -452,7 +475,10 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       changed = true;
     }
     // Asked again while something stands between files: the runs that held a version may be over.
-    if (!changed && between.length === 0 && held.size === 0) return true;
+    if (!changed && between.length === 0 && held.size === 0) {
+      if (renamed) yield* report;
+      return true;
+    }
     const runs = yield* unfinished;
     // A change that clashes is held back like a file that does not load: that file keeps its last
     // good version, a new one stays out, and every other change is taken.
@@ -618,10 +644,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       ? alone
       : DEFINITION_FILE.test(name)
         ? undefined
-        : {
-            message:
-              "Name the file with letters, digits, dashes and dots, ending in .ts: for example release.ts.",
-          };
+        : { message: NAMING };
   /** What is wrong with the folder once `change` is made to the files that load. */
   const wouldBreak = Effect.fn("WorkflowRuntime.wouldBreak")(function* (
     change: (files: Map<string, ReadonlyArray<WorkflowDefinition>>) => void,
@@ -717,7 +740,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
           const gone = [...held]
             .filter(([name]) => !files.some((file) => file.name === name))
             .flatMap(([, problems]) => problems);
-          return { directory, single, files, problems: [...between, ...gone], ...at };
+          return { directory, single, files, problems: [...misnamed, ...between, ...gone], ...at };
         }),
         save: Effect.fn("WorkflowDefinitions.save")(function* (name, source) {
           return yield* lock.withPermits(1)(save(name, source));
