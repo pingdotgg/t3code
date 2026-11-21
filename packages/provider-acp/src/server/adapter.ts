@@ -3125,6 +3125,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           kind: "user" | "assistant" | "reasoning",
           completed: boolean,
           flushOf?: ActiveTextSegment,
+          phase?: "final_answer",
         ) {
           const stream = textStreamFor(context, kind);
           const segment = stream.current;
@@ -3240,6 +3241,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       messageId,
                       text,
                       streaming: !completed,
+                      ...(phase === undefined ? {} : { phase }),
                     },
                   },
             );
@@ -3295,11 +3297,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const closeTextStream = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           kind: "user" | "assistant" | "reasoning",
+          phase?: "final_answer",
         ) {
           const stream = textStreamFor(context, kind);
           const segment = stream.current;
           if (segment === null) return;
-          yield* emitTextSegment(context, kind, true);
+          yield* emitTextSegment(context, kind, true, undefined, phase);
           if (segment.sourceMessageId !== null) {
             stream.closedNamedSegments.set(segment.sourceMessageId, segment);
           }
@@ -9158,7 +9161,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     !context.interrupted &&
                     hasDeferredBackgroundWork(context)
                   ) {
-                    yield* closeTextStreams(context);
+                    yield* closeTextStream(context, "user");
+                    yield* closeTextStream(context, "reasoning");
+                    // The run stays open for the wake; its reply must not fold this answer away.
+                    yield* closeTextStream(context, "assistant", "final_answer");
                     yield* (
                       options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
                     );
