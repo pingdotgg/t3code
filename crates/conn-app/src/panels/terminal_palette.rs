@@ -10,6 +10,23 @@ use super::color::{Rgb8, mix_rgb8, to_rgb8};
 
 const ESC: u8 = 0x1b;
 
+/// Conn's dark ANSI palette (`TERMINAL_PALETTES.dark`), slots 0..=15.
+const CONN_ANSI_DARK: [u32; 16] = [
+    0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5, 0x666666,
+    0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xe5e5e5,
+];
+
+/// Conn's light ANSI palette (`TERMINAL_PALETTES.light`), slots 0..=15.
+const CONN_ANSI_LIGHT: [u32; 16] = [
+    0x000000, 0xcd3131, 0x107c10, 0x949800, 0x0451a5, 0xbc05bc, 0x0598bc, 0x555555, 0x666666,
+    0xcd3131, 0x14ce14, 0xb5ba00, 0x0451a5, 0xbc05bc, 0x0598bc, 0xa5a5a5,
+];
+
+fn rgb_from_hex(hex: u32) -> Rgb8 {
+    let [_, r, g, b] = hex.to_be_bytes();
+    (r, g, b)
+}
+
 /// Resolved terminal palette derived purely from [`conn_theme::Tokens`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TerminalPalette {
@@ -21,12 +38,11 @@ pub(crate) struct TerminalPalette {
 }
 
 impl TerminalPalette {
-    /// Builds a 256-color terminal palette from the active Conn theme's [`Tokens`].
+    /// Builds a 256-color terminal palette for the active Conn theme.
     ///
-    /// Uses `terminal_background`, `terminal_foreground`, `terminal_cursor`, and
-    /// `terminal_selection`, and derives the 16 ANSI slots from semantic theme roles
-    /// (`destructive`, `success`, `warning`, `primary`, `info`, `accent`, `muted_foreground`,
-    /// `foreground`) with zero hardcoded hex literals.
+    /// Background, foreground, cursor and selection come from the theme's tokens. The 16 ANSI
+    /// colors are Conn's fixed light/dark palettes (`TERMINAL_PALETTES` in
+    /// `apps/web/src/components/ThreadTerminalDrawer.tsx`), so prompts and `ls` colors match.
     #[must_use]
     pub(crate) fn from_tokens(tokens: &Tokens) -> Self {
         let bg = to_rgb8(tokens.shell_card);
@@ -34,43 +50,14 @@ impl TerminalPalette {
         let cursor = to_rgb8(tokens.terminal_cursor);
         let selection = to_rgb8(tokens.terminal_selection);
 
-        let black = match tokens.appearance {
-            Appearance::Dark => to_rgb8(tokens.background),
-            Appearance::Light => fg,
+        let base = match tokens.appearance {
+            Appearance::Dark => &CONN_ANSI_DARK,
+            Appearance::Light => &CONN_ANSI_LIGHT,
         };
-        let red = to_rgb8(tokens.destructive);
-        let green = to_rgb8(tokens.success);
-        let yellow = to_rgb8(tokens.warning);
-        let blue = to_rgb8(tokens.primary);
-        let magenta = mix_rgb8(red, 0.50, blue);
-        let cyan = to_rgb8(tokens.info);
-        let white = match tokens.appearance {
-            Appearance::Dark => fg,
-            Appearance::Light => to_rgb8(tokens.muted),
-        };
-
-        // Bright variants lift toward foreground in dark themes and deepen toward foreground in light.
-        let bright_target = fg;
-        let brighten = |c: Rgb8| mix_rgb8(c, 0.72, bright_target);
-
         let mut ansi = [(0u8, 0u8, 0u8); 256];
-        ansi[0] = black;
-        ansi[1] = red;
-        ansi[2] = green;
-        ansi[3] = yellow;
-        ansi[4] = blue;
-        ansi[5] = magenta;
-        ansi[6] = cyan;
-        ansi[7] = white;
-
-        ansi[8] = to_rgb8(tokens.muted_foreground);
-        ansi[9] = brighten(red);
-        ansi[10] = brighten(green);
-        ansi[11] = brighten(yellow);
-        ansi[12] = brighten(blue);
-        ansi[13] = brighten(magenta);
-        ansi[14] = brighten(cyan);
-        ansi[15] = brighten(white);
+        for (slot, &hex) in ansi.iter_mut().zip(base.iter()) {
+            *slot = rgb_from_hex(hex);
+        }
 
         // Standard xterm 6x6x6 color cube (indices 16..=231).
         const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
@@ -280,7 +267,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ansi_palette_derives_from_dark_and_light_themes() {
+    fn ansi_palette_matches_conn_for_dark_and_light_themes() {
         let Some(dark) = theme_by_id("dark-ocean") else {
             panic!("dark-ocean theme must exist");
         };
@@ -297,20 +284,12 @@ mod tests {
             to_rgb8(dark_tokens.terminal_foreground),
             "terminal foreground matches token"
         );
+        assert_eq!(dark_palette.ansi[1], (0xcd, 0x31, 0x31), "Conn dark red");
+        assert_eq!(dark_palette.ansi[2], (0x0d, 0xbc, 0x79), "Conn dark green");
         assert_eq!(
-            dark_palette.ansi[1],
-            to_rgb8(dark_tokens.destructive),
-            "ANSI red maps to destructive token"
-        );
-        assert_eq!(
-            dark_palette.ansi[2],
-            to_rgb8(dark_tokens.success),
-            "ANSI green maps to success token"
-        );
-        assert_eq!(
-            dark_palette.ansi[4],
-            to_rgb8(dark_tokens.primary),
-            "ANSI blue maps to primary token"
+            dark_palette.ansi[12],
+            (0x3b, 0x8e, 0xea),
+            "Conn dark bright blue"
         );
         assert_ne!(
             dark_palette.ansi[1], dark_palette.ansi[9],
@@ -338,6 +317,11 @@ mod tests {
         assert_ne!(
             dark_palette.background, light_palette.background,
             "dark and light palettes must differ"
+        );
+        assert_eq!(
+            light_palette.ansi[2],
+            (0x10, 0x7c, 0x10),
+            "Conn light green"
         );
     }
 
