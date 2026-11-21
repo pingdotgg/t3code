@@ -11,16 +11,16 @@ import {
 } from "@t3tools/contracts";
 import type { CachedPullRequestDiff } from "@t3tools/client-runtime/state/pull-requests";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { setAppearanceMode } from "../../hooks/useTheme";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
-  const filePatch = (path: string) =>
+  const filePatch = (path: string, addition = "after()") =>
     [
       `diff --git a/${path} b/${path}`,
       "index 1111111..2222222 100644",
@@ -28,7 +28,7 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
       `+++ b/${path}`,
       "@@ -1,6 +1,6 @@",
       "-before()",
-      "+after()",
+      `+${addition}`,
       " one()",
       " two()",
       " three()",
@@ -41,23 +41,24 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     truncated: false,
     nextCursor: null,
   };
-  const pages: Record<string, CachedPullRequestDiff> = {
-    first: {
-      patch: Array.from({ length: 40 }, (_, index) =>
-        filePatch(index === 1 ? "early-1.test.ts" : `early-${index}.ts`),
-      ).join(""),
-      truncated: true,
-      nextCursor: "page-2",
-    },
-    "page-2": { patch: filePatch("late.test.ts"), truncated: false, nextCursor: null },
-    short: { patch: filePatch("early.ts"), truncated: false, nextCursor: "page-2" },
-    refreshed: { patch: filePatch("pushed.ts"), truncated: false, nextCursor: null },
-  };
-  return {
-    // An environment query whose refetch returns equal content hands back the previous value
-    // itself, so a refresh publishes a new result around the very same page.
-    diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
-    pagedDiffAtom: Atom.family((cursor: string) =>
+  const pagedDiffAtom = Atom.family((shortPages: boolean) => {
+    const pages: Record<string, CachedPullRequestDiff> = {
+      first: {
+        patch: Array.from({ length: shortPages ? 2 : 40 }, (_, index) =>
+          filePatch(index === 1 ? "early-1.test.ts" : `early-${index}.ts`),
+        ).join(""),
+        truncated: true,
+        nextCursor: "page-2",
+      },
+      "page-2": {
+        patch: (shortPages ? filePatch("late.ts") : "") + filePatch("late.test.ts"),
+        truncated: false,
+        nextCursor: null,
+      },
+      short: { patch: filePatch("early.ts"), truncated: false, nextCursor: "page-2" },
+      refreshed: { patch: filePatch("pushed.ts"), truncated: false, nextCursor: null },
+    };
+    return Atom.family((cursor: string) =>
       Atom.make(() =>
         AsyncResult.success(
           cursor === "first"
@@ -75,7 +76,24 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
               : pages[cursor]!,
         ),
       ),
+    );
+  });
+  return {
+    // An environment query whose refetch returns equal content hands back the previous value
+    // itself, so a refresh publishes a new result around the very same page.
+    diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
+    testFileDiffAtom: Atom.make(() =>
+      AsyncResult.success({
+        patch:
+          filePatch("early-0.ts") +
+          filePatch("early-1.test.ts", "testOnly()") +
+          filePatch("early-2.generated.ts") +
+          (mocks.refreshed ? filePatch("early-3.ts") : ""),
+        truncated: false,
+        nextCursor: null,
+      }),
     ),
+    pagedDiffAtom,
   };
 });
 
@@ -83,6 +101,9 @@ const mocks = vi.hoisted(() => ({
   paged: false,
   diffRevision: "before-push",
   shortDiff: false,
+  shortPages: false,
+  withTestFile: false,
+  refreshed: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
@@ -135,17 +156,20 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
         input: { cursor?: string; commit?: string; cacheRevision?: string };
       }) => {
         mocks.diffCommits.push(input.commit);
-        const page =
-          input.cacheRevision === "after-push"
-            ? "refreshed"
-            : (input.cursor ?? (mocks.shortDiff ? "short" : "first"));
-        return mocks.paged ? pagedDiffAtom(page) : diffAtom;
+        if (mocks.paged) {
+          const page =
+            input.cacheRevision === "after-push"
+              ? "refreshed"
+              : (input.cursor ?? (mocks.shortDiff ? "short" : "first"));
+          return pagedDiffAtom(mocks.shortPages)(page);
+        }
+        return mocks.withTestFile ? testFileDiffAtom : diffAtom;
       }) as never,
     },
   };
 });
 
-import { render } from "../../../test/render";
+import { render, stubGlobal } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
 
 const detail: PullRequestDetailView = {
@@ -206,6 +230,9 @@ function setup({ paged }: { paged: boolean }) {
   mocks.paged = paged;
   mocks.diffRevision = "before-push";
   mocks.shortDiff = false;
+  mocks.shortPages = false;
+  mocks.withTestFile = false;
+  mocks.refreshed = false;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
@@ -400,6 +427,101 @@ it.each(["manual", "background"] as const)(
     await expect.element(screen.getByText("late.test.ts", { exact: true })).not.toBeInTheDocument();
   },
 );
+
+it("keeps a linked test file expanded when a refresh changes the rest of the diff", async () => {
+  setup({ paged: false });
+  mocks.withTestFile = true;
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
+  using _preferences = {
+    [Symbol.dispose]() {
+      window.localStorage.removeItem("t3code.diffHideTestFiles");
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+  await screen.getByRole("button", { name: "Hide test files" }).click();
+
+  const path = "early-1.test.ts";
+  const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode(path)))}`;
+  const settled = vi.fn();
+  await screen.rerender(tab(0, null, url, settled));
+  await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+  await screen.rerender(tab(0));
+  const testLine = screen.getByText("testOnly()", { exact: true });
+  await expect.element(testLine).toBeVisible();
+
+  mocks.refreshed = true;
+  await screen.rerender(tab(1));
+  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
+  await expect.element(testLine).toBeVisible();
+});
+
+// Two short pages of a source and a test file each; the next page loads only through the file tree.
+async function renderShortPages(stack: AsyncDisposableStack) {
+  setup({ paged: true });
+  mocks.shortPages = true;
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  stack.defer(() => {
+    window.localStorage.removeItem("t3code.diffHideTestFiles");
+    window.localStorage.removeItem("t3code.pullRequestFileTreeOpen");
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  });
+  stack.use(
+    stubGlobal(
+      "IntersectionObserver",
+      class extends IntersectionObserver {
+        constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+          super(options?.rootMargin === "240px" ? () => {} : callback, options);
+        }
+      },
+    ),
+  );
+  const container = document.createElement("div");
+  container.className = "flex h-[1000px] w-[900px]";
+  const screen = stack.use(await render(tab(0), { container }));
+  const loadNextPage = async () => {
+    await screen.getByRole("button", { name: "Show file tree", exact: true }).click();
+    const loadMore = screen.getByRole("button", { name: "Load more files", exact: true });
+    await loadMore.click();
+    await expect.element(loadMore).not.toBeInTheDocument();
+    await screen.getByRole("button", { name: "Hide file tree", exact: true }).click();
+  };
+  // The later page sits at the bottom of the list, which grows as expanded files render.
+  const diffToggle = async (path: string) => {
+    const scroller = container.querySelector(".diff-render-surface")!;
+    const header = await vi.waitFor(() => {
+      scroller.scrollTop = scroller.scrollHeight;
+      return screen.getByText(path, { exact: true }).element();
+    });
+    const { host } = header.getRootNode() as ShadowRoot;
+    return page.elementLocator(host).getByRole("button", { name: /^(Expand|Collapse) diff$/ });
+  };
+  const filter = screen.getByRole("button", { name: "Hide test files" });
+  return { screen, loadNextPage, diffToggle, filter };
+}
+
+it("keeps a later test file folded by hand through a refresh and bulk toggles while hidden", async () => {
+  await using stack = new AsyncDisposableStack();
+  const { screen, loadNextPage, diffToggle, filter } = await renderShortPages(stack);
+  await loadNextPage();
+  const lateTest = await diffToggle("late.test.ts");
+  await lateTest.click();
+  await expect.element(lateTest).toHaveAttribute("aria-expanded", "false");
+  await filter.click();
+
+  // A refresh drops the loaded later page, so the bulk toggles below run without it.
+  await screen.rerender(tab(1));
+  await expect.element(screen.getByText("1 test file hidden", { exact: true })).toBeVisible();
+  await screen.getByRole("button", { name: "Collapse all files", exact: true }).click();
+  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await loadNextPage();
+  await filter.click();
+
+  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
+  await expect.element(await diffToggle("late.test.ts")).toHaveAttribute("aria-expanded", "false");
+});
 
 it("never requests the diff of a selected commit the pull request no longer has", async () => {
   setup({ paged: false });

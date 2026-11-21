@@ -111,13 +111,12 @@ overrides:
   expo-audio: 58.0.11
   expo-network: 58.0.4
   "@clerk/expo-native-components": 0.4.4
-  "@cursor/sdk": 1.3.1
+  "@cursor/sdk": 1.4.2
   expo-sharing: 58.0.22
   expo-widgets: 58.0.27
   "@ff-labs/fff-node": 0.11.0
   "@legendapp/list": 3.7.3
   "@pierre/diffs": 1.7.0-beta.4
-  "@react-native-ai/apple": 0.12.0
   "@react-native-menu/menu": 2.0.0
   "@react-navigation/native-stack": 7.21.0
   dbus-next: 0.10.2
@@ -249,9 +248,9 @@ patchedDependencies:
   "@expo/ui@58.0.27": patches/@expo__ui@58.0.27.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
   # Exports the dependency-light subpaths mobile and the web diff parser import, re-measures
-  # editor carets when the code font changes, and stops the find bar reclaiming focus from the file.
+  # editor carets when the code font changes, stops the find bar reclaiming focus from the file,
+  # and keeps drag selections intact across virtualized scroll renders.
   "@pierre/diffs@1.7.0-beta.4": patches/@pierre__diffs@1.7.0-beta.4.patch
-  "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
   "@react-navigation/native-stack@7.21.0": patches/@react-navigation%2Fnative-stack@7.21.0.patch
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
@@ -276,8 +275,9 @@ patchedDependencies:
   # stalled update download hangs forever.
   electron-updater@6.8.9: patches/electron-updater@6.8.9.patch
   # Local agents honor the attribution settings in the user's Cursor CLI cli-config.json, stream
-  # shell output while it runs, and expose agent.resume() (the protocol's ResumeAction).
-  "@cursor/sdk@1.3.1": patches/@cursor__sdk@1.3.1.patch
+  # shell output while it runs, expose agent.resume() (the protocol's ResumeAction), and offer
+  # background shells to the host so they can outlive the run.
+  "@cursor/sdk@1.4.2": patches/@cursor__sdk@1.4.2.patch
   # A failed Artifacts.cached effect hangs every later caller: https://github.com/alchemy-run/alchemy/issues/2981
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
   # Android: a marker orient other than "auto" or a number (auto-start-reverse) no longer throws.
@@ -329,3 +329,9 @@ minimumReleaseAgeExclude:
   - "@anthropic-ai/claude-agent-sdk@0.3.321"
   - "@pierre/diffs@1.7.0-beta.4"
   - "@pierre/highlights@0.5.0"
+  - "@cursor/sdk-darwin-arm64@1.4.1"
+  - "@cursor/sdk-darwin-x64@1.4.1"
+  - "@cursor/sdk-linux-arm64@1.4.1"
+  - "@cursor/sdk-linux-x64@1.4.1"
+  - "@cursor/sdk-win32-x64@1.4.1"
+  - "@cursor/sdk@1.4.1"
