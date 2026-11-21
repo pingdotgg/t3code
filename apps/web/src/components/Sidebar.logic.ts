@@ -42,6 +42,7 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
+import { parseTimestampDate } from "../timestampFormat";
 import { THREAD_STATUS_TEXT } from "@t3tools/client-runtime/state/thread-activity-announcement";
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
@@ -55,6 +56,10 @@ import { isModelPickerOpen, subscribeToModelPickerVisibility } from "../modelPic
 import { shortcutModifierStore } from "../shortcutModifierState";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import {
+  isRecentThreadSwitcherOpen,
+  subscribeToRecentThreadSwitcherOpen,
+} from "./recentThreads/recentThreadVisitsStore";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -736,6 +741,7 @@ function subscribeToThreadJumpHintInputs(listener: () => void): () => void {
   const unsubscribeTerminals = useTerminalUiStateStore.subscribe(listener);
   const unsubscribeRightPanels = useRightPanelStore.subscribe(listener);
   const unsubscribeModelPicker = subscribeToModelPickerVisibility(listener);
+  const unsubscribeSwitcher = subscribeToRecentThreadSwitcherOpen(listener);
   return () => {
     unsubscribeHold();
     unsubscribeModifiers();
@@ -743,12 +749,14 @@ function subscribeToThreadJumpHintInputs(listener: () => void): () => void {
     unsubscribeTerminals();
     unsubscribeRightPanels();
     unsubscribeModelPicker();
+    unsubscribeSwitcher();
   };
 }
 
 /**
  * Thread jump hints appear once the jump modifier has been held for a moment,
- * so a quick shortcut never flashes them, and hide as soon as it is released.
+ * so a quick shortcut never flashes them, and hide as soon as it is released or
+ * the recent threads switcher opens.
  * The snapshot is the visibility itself, so a quick shortcut never re-renders the caller.
  */
 export function useThreadJumpHintsVisible(
@@ -759,6 +767,7 @@ export function useThreadJumpHintsVisible(
     subscribeToThreadJumpHintInputs,
     () =>
       threadJumpModifierHold.getSnapshot() &&
+      !isRecentThreadSwitcherOpen() &&
       shouldShowThreadJumpHintsForModifiers(shortcutModifierStore.getSnapshot(), keybindings, {
         platform: navigator.platform,
         context: threadShortcutContext(routeThreadRef),
@@ -1001,6 +1010,110 @@ export function resolveSidebarRowStatus(
   // A runtime failure without a failed run has nothing to date it, so it stays.
   if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
   return hasUnseenRunFailure(thread) ? status : "ready";
+}
+
+export type SidebarTopStatusIcon =
+  | "working"
+  | "waiting"
+  | "input"
+  | "request"
+  | "approval"
+  | "failed"
+  | "done"
+  | "woke";
+
+export interface SidebarTopStatus {
+  /** A `msg()` string; render it through `useMessages()`. */
+  readonly label: string;
+  readonly icon: SidebarTopStatusIcon;
+  readonly className: string;
+}
+
+/** The status a thread card shows top right; null leaves the slot to its time. */
+export function resolveSidebarTopStatus(input: {
+  readonly status: SidebarThreadStatus;
+  readonly goalActive: boolean;
+  readonly isWoke: boolean;
+  readonly isUnread: boolean;
+}): SidebarTopStatus | null {
+  switch (input.status) {
+    case "preparing":
+      return { label: msg("Setting up"), icon: "working", className: "text-info-foreground" };
+    case "working":
+      return {
+        label: input.goalActive
+          ? msg("Goal", { $context: "thread status: working on a goal" })
+          : msg("Working", { $context: "thread status" }),
+        icon: "working",
+        className: "text-info-foreground",
+      };
+    case "waiting":
+      return {
+        label: msg("Waiting", { $context: "thread status" }),
+        icon: "waiting",
+        className: "text-muted-foreground",
+      };
+    case "approval":
+      return {
+        label: msg("Approval", { $context: "thread status: needs approval" }),
+        icon: "approval",
+        className: "text-warning-foreground",
+      };
+    case "input":
+      return {
+        label: msg("Input", { $context: "thread status: needs user input" }),
+        icon: "input",
+        className: "text-indigo-600 dark:text-indigo-300",
+      };
+    case "request":
+      return {
+        label: msg("Request", { $context: "thread status: guest request" }),
+        icon: "request",
+        className: "text-guest-foreground",
+      };
+    case "limited":
+      return {
+        label: msg("Limited", { $context: "thread status: usage limited" }),
+        icon: "failed",
+        className: "text-warning-foreground",
+      };
+    case "failed":
+      return {
+        label: msg("Failed", { $context: "thread status" }),
+        icon: "failed",
+        className: "text-error-foreground",
+      };
+    case "ready":
+      if (input.isWoke) {
+        return {
+          label: msg("Woke", { $context: "thread status: woke from snooze" }),
+          icon: "woke",
+          className: "text-warning-foreground",
+        };
+      }
+      return input.isUnread
+        ? {
+            label: msg("Done", { $context: "thread status" }),
+            icon: "done",
+            className: "text-success-foreground",
+          }
+        : null;
+  }
+}
+
+export function isSidebarThreadWoke(input: {
+  readonly wokeAt: string | null;
+  readonly lastVisitedAt: string | undefined;
+  readonly settledOverride: SidebarThreadSummary["settledOverride"];
+}): boolean {
+  const wokeAtDate = input.wokeAt === null ? null : parseTimestampDate(input.wokeAt);
+  const lastVisitedDate =
+    input.lastVisitedAt === undefined ? null : parseTimestampDate(input.lastVisitedAt);
+  return (
+    wokeAtDate !== null &&
+    (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
+    input.settledOverride !== "settled"
+  );
 }
 
 /** What the window title says the open thread is doing, in the words its announcer uses. */
