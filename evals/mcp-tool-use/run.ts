@@ -1437,74 +1437,72 @@ export const t3Default = (
       const own = branchPullRequest(sample);
       const number = typeof input.number === "number" ? input.number : own.number;
       const world = worldPullRequests(sample).find((pr) => Number(pr.number) === number);
-      const sections = Array.isArray(input.sections) ? input.sections : ["summary", "checks"];
+      const include = Array.isArray(input.include) ? input.include : [];
       const checks = Array.isArray(world?.checks) ? world.checks.filter(isRecord) : [];
+      const checkRuns = checks.map((check) => ({
+        name: valueText(check.name),
+        status:
+          check.state === "fail"
+            ? "failure"
+            : check.state === "cancelled" ||
+                check.state === "pending" ||
+                check.state === "action-required"
+              ? check.state
+              : "success",
+        description: null,
+        url: null,
+      }));
+      const comments = (Array.isArray(world?.comments) ? world.comments : []).filter(isRecord);
       return {
         ...pullRequest(sample.repo, { number }),
-        ...(sections.includes("summary")
-          ? {
-              summary: {
-                title: valueText(
-                  world?.title ?? sample.testCase.setup.world?.commits?.[0]?.subject,
-                ),
-                body: valueText(world?.body ?? ""),
-                state: mergedIn(sample, sample.repo, number) ? "merged" : worldState(world),
-                isDraft: false,
-                author: "user",
-                headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
-                baseBranch: valueText(world?.baseRefName ?? "main"),
-                // Only the branch's own PR is at the checkout's latest commit.
-                headSha:
-                  typeof world?.headRefOid === "string"
-                    ? world.headRefOid
-                    : number === own.number
-                      ? (sample.testCase.setup.world?.commits?.[0]?.sha ?? null)
-                      : null,
-                mergeability: "mergeable",
-                behindBy: 0,
-                autoMergeEnabled: false,
-                additions: 1,
-                deletions: 1,
-                changedFiles: 1,
-                labels: [],
-                reviewers: [],
-              },
-            }
-          : {}),
-        ...(sections.includes("checks")
-          ? {
-              checks: checks.map((check) => ({
-                name: valueText(check.name),
-                status:
-                  check.state === "fail"
-                    ? "failure"
-                    : check.state === "pending"
-                      ? "pending"
-                      : "success",
-                description: null,
-                url: null,
-              })),
-            }
-          : {}),
-        ...(sections.includes("diff")
+        title: valueText(world?.title ?? sample.testCase.setup.world?.commits?.[0]?.subject),
+        state: mergedIn(sample, sample.repo, number) ? "merged" : worldState(world),
+        isDraft: false,
+        author: "user",
+        headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
+        baseBranch: valueText(world?.baseRefName ?? "main"),
+        // Only the branch's own PR is at the checkout's latest commit.
+        headSha:
+          typeof world?.headRefOid === "string"
+            ? world.headRefOid
+            : number === own.number
+              ? (sample.testCase.setup.world?.commits?.[0]?.sha ?? null)
+              : null,
+        mergeability: "mergeable",
+        behindBy: 0,
+        autoMergeEnabled: false,
+        checks: {
+          passed: checkRuns.filter((check) => check.status === "success").length,
+          pending: checkRuns.filter(
+            (check) => check.status === "pending" || check.status === "action-required",
+          ).length,
+          failed: checkRuns
+            .filter((check) => check.status === "failure" || check.status === "cancelled")
+            .map((check) => check.name),
+        },
+        unresolvedThreads: 0,
+        ...(include.includes("body") ? { body: valueText(world?.body ?? "") } : {}),
+        ...(include.includes("checks") ? { checkRuns } : {}),
+        ...(include.includes("diff")
           ? { diff: { patch: valueText(world?.diff ?? ""), truncated: false, nextCursor: null } }
           : {}),
-        ...(sections.includes("conversation")
+        ...(include.includes("threads") || include.includes("comments")
           ? {
               conversation: {
-                comments: (Array.isArray(world?.comments) ? world.comments : [])
-                  .filter(isRecord)
-                  .map((comment, index) => ({
-                    id: `comment-${index + 1}`,
-                    kind: "issue-comment",
-                    author: valueText(comment.author),
-                    body: valueText(comment.body),
-                    createdAt: "2026-10-27T10:00:00Z",
-                    path: null,
-                    reviewState: null,
-                  })),
-                reviewThreads: [],
-                hiddenResolvedThreads: 0,
+                ...(include.includes("threads") ? { reviewThreads: [] } : {}),
+                ...(include.includes("comments")
+                  ? {
+                      comments: comments.map((comment, index) => ({
+                        id: `comment-${index + 1}`,
+                        kind: "issue-comment",
+                        author: valueText(comment.author),
+                        body: valueText(comment.body),
+                        createdAt: "2026-10-27T10:00:00Z",
+                        path: null,
+                        reviewState: null,
+                      })),
+                    }
+                  : {}),
                 truncated: false,
                 nextCursor: null,
               },
