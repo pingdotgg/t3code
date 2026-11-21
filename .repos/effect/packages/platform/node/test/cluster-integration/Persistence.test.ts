@@ -263,6 +263,24 @@ describe("cluster message persistence integration", () => {
         })
       }))
 
+    it.live(`${backend}: replays a request whose reply was fenced by a slow lock check`, () =>
+      Effect.gen(function*() {
+        resetState()
+        const cluster = yield* make({
+          backend,
+          config: { shardsPerGroup: 2 },
+          entities: PersistenceEntityLayer
+        })
+        const [runner] = yield* cluster.start(1)
+        yield* cluster.waitForStableAssignments()
+        const client = yield* cluster.getClient(PersistenceEntity)
+        const id = `${backend}-fenced`
+        yield* cluster.holdShardLockCheck(runner, yield* cluster.shardOfEntity(PersistenceEntity, "fence"))
+
+        assert.strictEqual(yield* client("fence").Persisted(new KeyedPayload({ id })), `persisted:${id}`)
+        assert.strictEqual(count("Persisted", id), 2)
+      }))
+
     it.live(`${backend}: serves primary-key duplicates from the stored reply`, () =>
       Effect.gen(function*() {
         resetState()

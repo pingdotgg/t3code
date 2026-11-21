@@ -1,3 +1,6 @@
+"@effect/sql-sqlite-react-native/SqliteClient#SqliteClient":
+  replacement: "@effect/sql-sqlite-react-native/SqliteClient#SqliteClient"
+  note: "Retained; the service value is now a Context.Service. The SqliteClient interface no longer extends SqlClient.SqlClient. Yielding the service still gives SqliteClient & SqlClient, but an effect that requires SqliteClient no longer type-checks against a SqlClient requirement annotation, and a SqlClient-only layer no longer satisfies SqliteClient. Annotate a layer chosen between drivers as Layer.Layer<SqlClient.SqlClient, E>."
 "@effect/sql-sqlite-react-native/SqliteClient#asyncQuery":
   replacement: "@effect/sql-sqlite-react-native/SqliteClient#AsyncQuery"
   note: "Renamed and changed from FiberRef to Context.Reference; prefer withAsyncQuery or provide AsyncQuery as a service."
