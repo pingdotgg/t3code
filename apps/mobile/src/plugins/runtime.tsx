@@ -270,6 +270,8 @@ async function downloadNativePlugin(
   return defineDeclarativeNativePlugin(manifest, JSON.parse(source));
 }
 
+const NativePluginTargetsContext = React.createContext<ReadonlySet<EnvironmentId>>(new Set());
+
 /** Metro bundles and environment-owned declarative documents share native activation lifecycle. */
 export function NativePluginsProvider({ children }: { readonly children: ReactNode }) {
   const { environments } = useEnvironments();
@@ -299,12 +301,28 @@ export function NativePluginsProvider({ children }: { readonly children: ReactNo
   }
   return (
     <NativePluginEnvironmentContext value={workspaceEnvironmentId ?? primaryEnvironmentId}>
-      {targets.map((target) => (
-        <NativeEnvironmentPlugins key={target.environmentId} environmentId={target.environmentId} />
-      ))}
-      {children}
+      <NativePluginTargetsContext value={mountedEnvironmentIds}>
+        {targets.map((target) => (
+          <NativeEnvironmentPlugins
+            key={target.environmentId}
+            environmentId={target.environmentId}
+          />
+        ))}
+        {children}
+      </NativePluginTargetsContext>
     </NativePluginEnvironmentContext>
   );
+}
+
+/**
+ * Mounted by App inside I18nProvider: the plugin provider sits above it so app-level features
+ * resolve their environment, and recovery needs translations.
+ */
+export function NativePluginRecoveryHost() {
+  const environmentIds = React.use(NativePluginTargetsContext);
+  return [...environmentIds].map((environmentId) => (
+    <NativePluginRecovery key={environmentId} environmentId={environmentId} />
+  ));
 }
 
 function NativeEnvironmentPlugins({ environmentId }: { readonly environmentId: EnvironmentId }) {
@@ -392,18 +410,16 @@ function NativeEnvironmentPlugins({ environmentId }: { readonly environmentId: E
       clearNativeBuiltinEnabled(environmentId);
     };
   }, [environmentId]);
-  return <NativePluginRecovery environmentId={environmentId} snapshot={snapshot} />;
+  return null;
 }
 
 /** Recovery uses native primitives so disabling a contributed interface cannot hide it. */
-function NativePluginRecovery({
-  environmentId,
-  snapshot,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly snapshot: PluginSnapshot | null;
-}) {
+function NativePluginRecovery({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const gt = useGT();
+  const snapshotResult = useAtomValue(nativePluginAtoms.snapshotAtom(environmentId));
+  const [retainedSnapshot, setRetainedSnapshot] = useState<PluginSnapshot | null>(null);
+  const snapshot = AsyncResult.isSuccess(snapshotResult) ? snapshotResult.value : retainedSnapshot;
+  if (snapshot !== retainedSnapshot) setRetainedSnapshot(snapshot);
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

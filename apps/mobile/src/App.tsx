@@ -109,7 +109,7 @@ import {
 import { pruneNewTaskFlowStates } from "./features/threads/new-task-flow-state";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
 import { installAppUpdateChecks } from "./features/updates/app-updates";
-import { NativePluginsProvider } from "./plugins/runtime";
+import { NativePluginRecoveryHost, NativePluginsProvider } from "./plugins/runtime";
 import { defineNativePluginFeature, NativePluginBanner } from "./plugins/features";
 
 import "../global.css";
@@ -290,6 +290,7 @@ export default function App() {
           <AppearancePreferencesProvider>
             <I18nProvider>
               <AppContent />
+              <NativePluginRecoveryHost />
             </I18nProvider>
           </AppearancePreferencesProvider>
         </CloudAuthProvider>
