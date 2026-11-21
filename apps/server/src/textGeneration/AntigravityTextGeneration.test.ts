@@ -70,6 +70,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
   const path = yield* Path.Path;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-text-test-" });
   const profileDirectory = path.join(root, "profile");
+  const userHome = path.join(root, "home");
   const projectDirectory = path.join(root, "project");
   const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
   const nativeSessionId = options.sessionId ?? SESSION_ID;
@@ -292,6 +293,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
 
   const textGeneration = yield* makeAntigravityTextGeneration({
     profileDirectory,
+    userHome,
     makeRuntime,
     withProcess,
   });
@@ -314,6 +316,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     fs,
     path,
     profileDirectory,
+    userHome,
     projectDirectory,
     sessionBase,
     brainDirectory,
@@ -627,7 +630,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       const configDirectory = fixture.path.join(fixture.profileDirectory, "config");
       yield* fixture.fs.makeDirectory(configDirectory, { recursive: true });
       yield* fixture.fs.writeFileString(fixture.path.join(configDirectory, name), value);
-      expect(yield* isAntigravityTextGenerationAvailable(fixture.profileDirectory)).toBe(available);
+      expect(yield* isAntigravityTextGenerationAvailable(fixture)).toBe(available);
       const result = yield* fixture.textGeneration
         .generateThreadTitle(fixture.titleInput)
         .pipe(Effect.exit);
@@ -635,6 +638,73 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       expect(fixture.state.workspaces.length).toBe(available ? 1 : 0);
       yield* fixture.assertCleaned;
     }),
+  );
+
+  it.effect.each([
+    {
+      case: "files agy never loads",
+      files: {
+        "skills/review/SKILL.md": "---\n---\n",
+        "hooks/hooks.json": '{"hooks":{"Stop":[]}}',
+        ".mcp.json": '{"mcpServers":{"s":{"command":"do-not-run"}}}',
+        "plugin.json": '{"name":"p","hooks":"./h.json","mcpServers":{"s":{"command":"false"}}}',
+      },
+      available: true,
+    },
+    { case: "hooks.json", files: { "hooks.json": '{"hooks":{"Stop":[]}}' }, available: false },
+    {
+      case: "mcp_config.json",
+      files: { "mcp_config.json": '{"mcpServers":{"s":{"command":"do-not-run"}}}' },
+      available: false,
+    },
+    {
+      case: "a disabled plugin with MCP servers",
+      files: { "mcp_config.json": '{"mcpServers":{"s":{"command":"do-not-run"}}}' },
+      disabled: true,
+      available: true,
+    },
+    {
+      case: "a plugin that ships disabled",
+      files: {
+        "plugin.json": '{"name":"p","disabled":true}',
+        "hooks.json": '{"hooks":{"Stop":[]}}',
+        "mcp_config.json": '{"mcpServers":{"s":{"command":"do-not-run"}}}',
+      },
+      available: true,
+    },
+  ])(
+    "checks plugin startup configuration before starting a helper: $case",
+    ({ files, disabled, available }) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const { fs, path } = fixture;
+        const write = Effect.fn("writePluginFile")(function* (file: string, text: string) {
+          yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+          yield* fs.writeFileString(file, text);
+        });
+        // agy links the user's plugins into the profile after this check, so both must pass.
+        for (const [config, manifest] of [
+          [path.join(fixture.profileDirectory, "config"), undefined],
+          [path.join(fixture.userHome, ".gemini", "config"), '{"name":"p"}'],
+        ] as const) {
+          const plugin = path.join(config, "plugins", "p");
+          if (manifest !== undefined) yield* write(path.join(plugin, "plugin.json"), manifest);
+          for (const [file, text] of Object.entries(files)) {
+            yield* write(path.join(plugin, file), text);
+          }
+          if (disabled) {
+            yield* write(path.join(config, "config.json"), '{"plugins":{"p":{"enabled":false}}}');
+          }
+          expect(yield* isAntigravityTextGenerationAvailable(fixture)).toBe(available);
+          const result = yield* fixture.textGeneration
+            .generateThreadTitle(fixture.titleInput)
+            .pipe(Effect.exit);
+          expect(Exit.isSuccess(result)).toBe(available);
+          yield* fs.remove(config, { recursive: true });
+        }
+        expect(fixture.state.workspaces.length).toBe(available ? 2 : 0);
+        yield* fixture.assertCleaned;
+      }),
   );
 
   it.effect("does not launch during sign-out or before sign-in", () =>

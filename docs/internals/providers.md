@@ -42,8 +42,13 @@ environment. The 1.5 CLI keeps every profile's sign-in in one OS keyring entry a
 account instances launch with `SSH_CONNECTION` set and sign in with `--login`. Gemini Enterprise
 has no such sign-in and still shares the keyring entry. The launch environment removes ambient Google credentials,
 so an instance cannot silently use another account or billing project. The agent also resolves
-its user-global skill directories under that profile, so the profile links those two directories
-back to the user's real `~/.gemini`; MCP servers, hooks, and rules there stay out of the profile.
+its user-global skill directories, rules, and plugins under that profile, so the profile links those
+two skill directories, the global `AGENTS.md` and `GEMINI.md` rules (copied on Windows), and each
+enabled plugin back to the user's real `~/.gemini`. Plugins are linked one by one, never as a
+folder, so plugins installed into the profile itself keep working. agy reads plugin overrides only
+from the profile's `config.json`, so a user's `enabled: true` for a plugin whose manifest sets
+`"disabled": true` is carried there unless the profile sets its own value. A plugin's own hooks and MCP
+servers come with it, while the top-level `~/.gemini/config/mcp_config.json` and `hooks.json` stay out.
 See [profile isolation](../../apps/server/src/provider/antigravityAuthSupport.ts).
 
 The [Antigravity installer](../../apps/server/src/provider/AntigravityInstallation.ts) outlives
@@ -76,7 +81,8 @@ metadata. Otherwise a helper or resumed session could retain the old account. Ca
 do not establish current access, and an authoritative empty catalog must clear the old list.
 
 Antigravity text-generation helpers deny tool requests, but native hooks and MCP configuration can
-run before the prompt. They reject profiles with such configuration before launch. Prompt
+run before the prompt. They reject profiles with such configuration, including in enabled plugins,
+before launch. The check also covers user plugins that profile preparation links later. Prompt
 instructions and tool denial do not create a native sandbox.
 See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGeneration.ts).
 

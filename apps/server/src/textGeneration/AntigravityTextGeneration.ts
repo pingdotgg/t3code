@@ -20,6 +20,7 @@ import {
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
   isAntigravitySignInRequiredError,
 } from "../provider/antigravityAuthSupport.ts";
+import { readAntigravityPlugins } from "../provider/Drivers/AntigravitySkills.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { collectSessionConfigOptionValues } from "@t3tools/provider-acp/server/runtimeModel";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
@@ -58,6 +59,7 @@ type AntigravityTextRuntime = Pick<
 
 export interface AntigravityTextGenerationOptions {
   readonly profileDirectory: string;
+  readonly userHome: string;
   readonly defaultModel?: Effect.Effect<string | undefined>;
   readonly makeRuntime: (
     cwd: string,
@@ -68,38 +70,45 @@ export interface AntigravityTextGenerationOptions {
   ) => Effect.Effect<A, E | ProviderSetupError, R | Scope.Scope>;
 }
 
-/** Global hooks and MCP servers can run before a helper can deny a tool request. */
+/** Global and plugin hooks and MCP servers can run before a helper can deny a tool request. */
 export const isAntigravityTextGenerationAvailable = Effect.fn(
   "isAntigravityTextGenerationAvailable",
-)(function* (profileDirectory: string) {
+)(function* (input: { readonly profileDirectory: string; readonly userHome: string }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  for (const name of ["hooks.json", "mcp_config.json"]) {
-    const configurationPath = path.join(profileDirectory, "config", name);
-    if (!(yield* fs.exists(configurationPath))) {
-      continue;
-    }
-    const info = yield* fs.stat(configurationPath);
-    if (info.type !== "File" || info.size > 64_000n) {
-      return false;
-    }
-    // CLI 1.5.8 writes a 0-byte mcp_config.json before any server exists.
-    const empty = yield* fs.readFileString(configurationPath).pipe(
-      Effect.flatMap((text) =>
-        text.trim().length === 0
-          ? Effect.succeed(true)
-          : decodeConfiguration(text).pipe(
-              Effect.flatMap((configuration) =>
-                decodeConfigurationObject(
-                  configuration[name === "hooks.json" ? "hooks" : "mcpServers"] ?? configuration,
+  // agy 1.5.12 reads plugin hooks and MCP servers only from these files at the plugin root.
+  const directories = [
+    path.join(input.profileDirectory, "config"),
+    ...(yield* readAntigravityPlugins(input)),
+  ];
+  for (const directory of directories) {
+    for (const name of ["hooks.json", "mcp_config.json"]) {
+      const configurationPath = path.join(directory, name);
+      if (!(yield* fs.exists(configurationPath))) {
+        continue;
+      }
+      const info = yield* fs.stat(configurationPath);
+      if (info.type !== "File" || info.size > 64_000n) {
+        return false;
+      }
+      // CLI 1.5.8 writes a 0-byte mcp_config.json before any server exists.
+      const empty = yield* fs.readFileString(configurationPath).pipe(
+        Effect.flatMap((text) =>
+          text.trim().length === 0
+            ? Effect.succeed(true)
+            : decodeConfiguration(text).pipe(
+                Effect.flatMap((configuration) =>
+                  decodeConfigurationObject(
+                    configuration[name === "hooks.json" ? "hooks" : "mcpServers"] ?? configuration,
+                  ),
                 ),
+                Effect.map((configuration) => Object.keys(configuration).length === 0),
               ),
-              Effect.map((configuration) => Object.keys(configuration).length === 0),
-            ),
-      ),
-      Effect.orElseSucceed(() => false),
-    );
-    if (!empty) return false;
+        ),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!empty) return false;
+    }
   }
   return true;
 });
@@ -137,7 +146,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
     return true;
   });
 
-  const available = isAntigravityTextGenerationAvailable(options.profileDirectory).pipe(
+  const available = isAntigravityTextGenerationAvailable(options).pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
   );
@@ -152,7 +161,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
           return yield* new TextGenerationError({
             operation,
             detail:
-              "Antigravity text generation is unavailable for profiles with global hooks or MCP configuration. Select another system model.",
+              "Antigravity text generation is unavailable for profiles with global or plugin hooks or MCP configuration. Select another system model.",
           });
         }
 

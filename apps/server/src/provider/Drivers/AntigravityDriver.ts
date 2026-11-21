@@ -572,7 +572,10 @@ export const AntigravityDriver: ProviderDriver<
       probeUsage: usage.probe,
       clearUsage: usage.clear,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
-      supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
+      supportsTextGeneration: isAntigravityTextGenerationAvailable({
+        profileDirectory,
+        userHome,
+      }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.orElseSucceed(() => false),
@@ -621,6 +624,7 @@ export const AntigravityDriver: ProviderDriver<
     });
     const textGeneration = yield* makeAntigravityTextGeneration({
       profileDirectory,
+      userHome,
       defaultModel,
       withProcess: authFlow.withProcess,
       makeRuntime: (cwd) =>

@@ -106,6 +106,15 @@ Skills for every project go in `~/.gemini/config/skills` or
 on its own; to share a folder like that one, list it in `~/.gemini/config/skills.json`
 (or a project's `.agents/skills.json`), and T3 Code shows the skills it declares,
 honoring `inherits`, `include_only`, and `exclude`.
+Global rules in `~/.gemini/AGENTS.md` and `~/.gemini/GEMINI.md` apply to every session.
+
+Plugins installed in `~/.gemini/config/plugins` work too, unless
+`~/.gemini/config/config.json` turns them off. A plugin that ships with `"disabled": true`
+stays off until that file sets `"enabled": true` for it. T3 Code sessions load their
+skills, hooks, and MCP servers as `agy` does. MCP servers and hooks configured directly in
+`~/.gemini/config/mcp_config.json` and `~/.gemini/config/hooks.json` do not. If an enabled plugin has hooks or MCP servers,
+Antigravity cannot serve as a
+[text generation model](./text-generation.md), so pick another one.
 
 Antigravity receives images and audio directly, and reads PDFs and text files as
 documents. Other attachments, including videos, are passed as a saved file path for
