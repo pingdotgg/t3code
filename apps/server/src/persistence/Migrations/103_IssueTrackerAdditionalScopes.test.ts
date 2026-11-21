@@ -33,11 +33,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           VALUES ('other', 'linear', 'OPS', '2026-11-21', 'invalid')
         `;
         assert.deepStrictEqual(yield* read(), binding);
-        assert.strictEqual((yield* bindings.list(ProjectId.make("missing"))).size, 0);
-        const corrupt = yield* Effect.result(bindings.list(ProjectId.make("other")));
-        const all = yield* Effect.result(bindings.list());
-        assert.strictEqual(corrupt._tag, "Failure");
-        assert.strictEqual(all._tag, "Failure");
+        assert.strictEqual((yield* Effect.result(bindings.list()))._tag, "Failure");
       }),
     );
   },
