@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import { useCallback, useRef, useState } from "react";
 import {
+  Platform,
   Pressable,
   ScrollView,
   View,
@@ -29,6 +30,8 @@ export function ComposerInlineControl(props: {
   readonly accessibilityLabel?: string;
   readonly disabled?: boolean;
   readonly emphasized?: boolean;
+  /** The control asks for a decision; it stays usable. */
+  readonly tone?: "warning";
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly renderIcon?: (size: number) => ReactNode;
   readonly label: string;
@@ -80,7 +83,11 @@ export function ComposerInlineControl(props: {
             name={props.icon}
             size={iconSize}
             tintColorClassName={
-              props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
+              props.tone === "warning"
+                ? "accent-warning-foreground"
+                : props.emphasized || props.selected
+                  ? "accent-icon"
+                  : "accent-icon-muted"
             }
             type="monochrome"
           />
@@ -93,7 +100,11 @@ export function ComposerInlineControl(props: {
             <Text
               className={cn(
                 props.size === "large" ? "text-base font-t3-medium" : "text-sm font-t3-medium",
-                props.emphasized || props.selected ? "text-foreground" : "text-foreground-muted",
+                props.tone === "warning"
+                  ? "text-warning-foreground"
+                  : props.emphasized || props.selected
+                    ? "text-foreground"
+                    : "text-foreground-muted",
               )}
               numberOfLines={1}
               ellipsizeMode={props.labelEllipsizeMode}
@@ -368,9 +379,9 @@ export function ComposerToolbarButton(props: {
       disabled={props.disabled}
       onPress={props.onPress}
       className={cn(
-        "h-11 max-w-[172px] flex-row items-center justify-center rounded-full border active:opacity-70",
+        "h-[44px] max-w-[172px] flex-row items-center justify-center rounded-full border active:opacity-70 android:h-[48px]",
         variant === "primary" && "shadow-lg shadow-adaptive-black-a10-a25 disabled:shadow-none",
-        isCircle ? "w-11" : "gap-2 px-3.5",
+        isCircle ? "w-[44px] android:w-[48px]" : "gap-2 px-3.5 android:min-w-[48px]",
         variant === "primary"
           ? props.disabled
             ? "bg-subtle-strong"
@@ -394,7 +405,10 @@ export function ComposerToolbarButton(props: {
       style={({ pressed }) => [
         {
           maxWidth: props.maxWidth,
-          minWidth: props.minWidth,
+          minWidth:
+            Platform.OS === "android" && props.minWidth !== undefined
+              ? Math.max(48, props.minWidth)
+              : props.minWidth,
           opacity: props.disabled ? 0.55 : pressed ? 0.72 : 1,
         },
         props.style,
