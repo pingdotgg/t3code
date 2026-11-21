@@ -204,6 +204,7 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import {
   isBrowserPreviewFile,
+  isHtmlFile,
   openFileInPreview,
   openUrlInPreview,
   BrowserPreviewUnavailableError,
@@ -698,7 +699,7 @@ function useChatMarkdownState({
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
-  const revealFileInFileManager = (filePath: string) => {
+  const launchInFileManager = (filePath: string, reveal: boolean) => {
     if (environmentId === null) {
       return Promise.resolve(
         AsyncResult.failure<void, PreferredEditorEnvironmentRequiredError>(
@@ -709,13 +710,19 @@ function useChatMarkdownState({
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
       return Promise.resolve(
         AsyncResult.failure<void, Error>(
-          Cause.fail(new Error(gt("This connection cannot reveal files on this environment."))),
+          Cause.fail(
+            new Error(
+              reveal
+                ? gt("This connection cannot reveal files on this environment.")
+                : gt("This connection cannot open files on this environment."),
+            ),
+          ),
         ),
       );
     }
     return openInEditor({
       environmentId,
-      input: { cwd: filePath, editor: "file-manager", reveal: true },
+      input: { cwd: filePath, editor: "file-manager", ...(reveal ? { reveal: true } : {}) },
     });
   };
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
@@ -1001,7 +1008,7 @@ function useChatMarkdownState({
         openInEditorMenuLabel={canOpenApp ? gt("Open app") : preferredEditorMenuLabel}
         onReveal={
           canUseShellActions && revealInFileManagerLabel !== undefined
-            ? async () => revealFileInFileManager((await resolveHostPath()).absolutePath)
+            ? async () => launchInFileManager((await resolveHostPath()).absolutePath, true)
             : undefined
         }
         revealLabel={revealInFileManagerLabel}
@@ -1011,6 +1018,14 @@ function useChatMarkdownState({
           isPreviewAvailableFor(threadRef.environmentId) &&
           isBrowserPreviewFile(fileLinkMeta.filePath)
             ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
+            : undefined
+        }
+        onOpenInSystemBrowser={
+          // The OS default handler runs on the environment's host, so only offer it when that host is this machine.
+          canUseShellActions &&
+          availableEditors.includes("file-manager") &&
+          isHtmlFile(fileLinkMeta.filePath)
+            ? async () => launchInFileManager((await resolveHostPath()).absolutePath, false)
             : undefined
         }
       />

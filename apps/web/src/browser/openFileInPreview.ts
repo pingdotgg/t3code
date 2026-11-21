@@ -37,6 +37,9 @@ import { m } from "~/i18n/messages";
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
+export const isHtmlFile = (path: string): boolean =>
+  /\.html?$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+
 export class BrowserPreviewUnavailableError extends Schema.TaggedError<BrowserPreviewUnavailableError>()(
   "BrowserPreviewUnavailableError",
   { message: Schema.String },

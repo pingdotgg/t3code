@@ -1683,6 +1683,7 @@
   "09fc00e945452096": "No se encontró el archivo en {machine} en {path}.",
   "489ad5b6df027e0d": "Contenido multimedia no disponible",
   "a4d43351599654ca": "Esta conexión no puede mostrar archivos en este entorno.",
+  "8ab876b185fdc9f3": "Esta conexión no puede abrir archivos en este entorno.",
   "2b06a4b6f5369ae2": "El acceso a la vista previa no está disponible para este cliente.",
   "fca9c023f4f870b1": "No se puede abrir el enlace en el navegador",
   "2db10394281f4dc9": "El entorno no está conectado.",

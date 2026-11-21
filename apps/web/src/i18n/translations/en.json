@@ -1683,6 +1683,7 @@
   "09fc00e945452096": "The file was not found on {machine} at {path}.",
   "489ad5b6df027e0d": "Media unavailable",
   "a4d43351599654ca": "This connection cannot reveal files on this environment.",
+  "8ab876b185fdc9f3": "This connection cannot open files on this environment.",
   "2b06a4b6f5369ae2": "Preview access is unavailable for this client.",
   "fca9c023f4f870b1": "Unable to open link in browser",
   "2db10394281f4dc9": "Environment is not connected.",

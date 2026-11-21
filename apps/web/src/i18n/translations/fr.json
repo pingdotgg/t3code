@@ -1683,6 +1683,7 @@
   "09fc00e945452096": "Le fichier est introuvable sur {machine} à l’emplacement {path}.",
   "489ad5b6df027e0d": "Média indisponible",
   "a4d43351599654ca": "Cette connexion ne peut pas afficher les fichiers de cet environnement.",
+  "8ab876b185fdc9f3": "Cette connexion ne peut pas ouvrir de fichiers dans cet environnement.",
   "2b06a4b6f5369ae2": "L’accès à l’aperçu n’est pas disponible pour ce client.",
   "fca9c023f4f870b1": "Impossible d’ouvrir le lien dans le navigateur",
   "2db10394281f4dc9": "L’environnement n’est pas connecté.",

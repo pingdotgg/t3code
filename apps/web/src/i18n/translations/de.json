@@ -1682,6 +1682,7 @@
   "09fc00e945452096": "Die Datei wurde auf {machine} unter {path} nicht gefunden.",
   "489ad5b6df027e0d": "Medien nicht verfügbar",
   "a4d43351599654ca": "Diese Verbindung kann in dieser Umgebung keine Dateien anzeigen.",
+  "8ab876b185fdc9f3": "Diese Verbindung kann in dieser Umgebung keine Dateien öffnen.",
   "2b06a4b6f5369ae2": "Vorschauzugriff ist für diesen Client nicht verfügbar.",
   "fca9c023f4f870b1": "Link kann nicht im Browser geöffnet werden",
   "2db10394281f4dc9": "Umgebung ist nicht verbunden.",

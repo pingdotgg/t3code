@@ -1683,6 +1683,7 @@
   "09fc00e945452096": "Filen hittades inte på {machine} i {path}.",
   "489ad5b6df027e0d": "Media är inte tillgängligt",
   "a4d43351599654ca": "Den här anslutningen kan inte visa filer i den här miljön.",
+  "8ab876b185fdc9f3": "Den här anslutningen kan inte öppna filer i den här miljön.",
   "2b06a4b6f5369ae2": "Förhandsvisningsåtkomst är inte tillgänglig för den här klienten.",
   "fca9c023f4f870b1": "Det gick inte att öppna länken i webbläsaren",
   "2db10394281f4dc9": "Miljön är inte ansluten.",
