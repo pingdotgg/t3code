@@ -57,7 +57,7 @@
   note: "Capitalized instance name; case-sensitive JavaScript lexicographic ordering is unchanged."
 "effect/Order#struct":
   replacement: "Order.Struct"
-  note: "Capitalized constructor name; field-order tie-breaking is unchanged."
+  note: "Capitalized constructor name; field-order tie-breaking is unchanged. V4 also compares own enumerable symbol fields, after string fields."
 "effect/Order#tuple":
   replacement: "Order.Tuple([orderA, orderB, ...])"
   note: "Capitalized constructor now takes one comparator array instead of rest arguments and evaluates every configured position."

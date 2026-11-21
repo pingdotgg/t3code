@@ -126,6 +126,13 @@ export const layer = Api.make(
       // to PlanetScale `us-west` the request pays that distance once.
       placement: { region: "aws:us-west-2" },
       domain: relayPublicDomain,
+      // Workers Logs bills per GB, and every request, queue batch, and DO call is
+      // an invocation log. Axiom traces carry the full detail; keep a sample for
+      // crashes and limit errors that never export a span.
+      observability: {
+        enabled: true,
+        logs: { enabled: true, invocationLogs: true, headSamplingRate: 0.01 },
+      },
     })),
     Effect.orDie,
   ),
@@ -448,16 +455,9 @@ export const layer = Api.make(
         deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
       },
       (stream) =>
-        stream.pipe(
-          Stream.withSpan("relay.apn_delivery_queue.process_batch"),
-          Stream.runForEach((message) =>
-            ApnsDeliveries.ApnsDeliveries.pipe(
-              Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
-              Effect.withSpan("relay.apn_delivery_queue.process_message"),
-            ),
-          ),
-          Effect.provide(layerRuntime),
-        ),
+        Effect.flatMap(ApnsDeliveries.ApnsDeliveries, (deliveries) =>
+          deliveries.processBatch(stream),
+        ).pipe(Effect.provide(layerRuntime)),
     );
 
     yield* Cloudflare.Queues.consumeQueueMessages<unknown>(

@@ -3,10 +3,14 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
+  CheckpointRef,
+  CheckpointScopeId,
   ProjectId,
   RunId,
   ThreadId,
+  TurnItemId,
   type ClientSettings,
+  type OrchestrationGetTurnDiffResult,
   type ReviewBranchCommitsResult,
   type ReviewDiffPreviewResult,
   type ReviewDiffPreviewSource,
@@ -31,13 +35,18 @@ const state = vi.hoisted(() => ({
   previews: new Map<string | null, ResultAtom<ReviewDiffPreviewResult>>(),
   patch: null as unknown as ResultAtom<ReviewDiffPreviewSource>,
   diffFilesCollapsed: false,
+  project: {
+    workspaceRoot: "/project",
+    repositoryIdentity: null as { rootPath: string } | null,
+  },
+  toolCallItem: null as unknown,
   config: null as unknown as Atom.Atom<null>,
   status: null as unknown as ResultAtom<VcsStatusResult>,
   localRefs: null as unknown as ResultAtom<VcsListRefsResult>,
   remoteRefs: null as unknown as ResultAtom<VcsListRefsResult>,
   commits: null as unknown as ResultAtom<ReviewBranchCommitsResult>,
   checkpoints: [] as unknown[],
-  checkpointDiff: null as { diff: string } | null,
+  checkpointDiff: null as Partial<OrchestrationGetTurnDiffResult> | null,
 }));
 
 vi.mock("~/state/server", () => ({
@@ -61,12 +70,14 @@ vi.mock("~/state/vcs", () => ({
 }));
 vi.mock("~/state/entities", () => ({
   useQuietThreadShell: () => state.thread,
-  useProject: () => ({ workspaceRoot: "/project", repositoryIdentity: null }),
+  useProject: () => state.project,
   useThreadCheckpointSummaries: () => state.checkpoints,
   useQuietThreadVisibleTurnItems: () => [],
+  useQuietThreadProjection: () => null,
 }));
 vi.mock("~/state/filesystem", () => ({
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
+  filesystemEnvironment: {},
 }));
 vi.mock("~/hooks/useThreadRouteTarget", () => ({ useThreadRouteRef: () => state.threadRef }));
 vi.mock("~/hooks/useSettings", () => ({
@@ -81,7 +92,11 @@ vi.mock("~/hooks/useTheme", () => ({
 }));
 vi.mock("~/state/queries", () => ({
   useCheckpointDiff: () => ({ data: state.checkpointDiff, error: null, isPending: false }),
-  useTurnItemDetail: () => ({ data: null, error: null, isPending: false }),
+  useTurnItemDetail: () => ({
+    data: state.toolCallItem ? { item: state.toolCallItem } : null,
+    error: null,
+    isPending: false,
+  }),
   useDebouncedValue: <A,>(value: A) => value,
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => {} }));
@@ -131,6 +146,8 @@ function setup(failedBaseRef: string | null) {
   };
   reset();
   state.diffFilesCollapsed = false;
+  state.project = { workspaceRoot: "/project", repositoryIdentity: null };
+  state.toolCallItem = null;
   state.checkpoints = [];
   state.checkpointDiff = null;
   const patch = Atom.make<AsyncResult.AsyncResult<ReviewDiffPreviewSource, Error>>(
@@ -335,10 +352,87 @@ it("says a turn diff cut off at the server's size limit is incomplete", async ()
     .toBeVisible();
 });
 
-// Paths as git's numstat reports them; the parsed patch trims the trailing space from its name.
+it("shows a turn's repositories in a folder that is not a Git repository", async () => {
+  using context = setup("origin/orphan");
+  state.status = Atom.make(
+    AsyncResult.success({
+      isRepo: false,
+      hasPrimaryRemote: false,
+      isDefaultRef: false,
+      refName: null,
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: false,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    }),
+  );
+  const patch = (path: string) =>
+    `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-before\n+after\n`;
+  const repository = (name: string) => ({
+    scopeId: CheckpointScopeId.make(`scope-${name}`),
+    name,
+    repositoryPath: `${cwd}/${name}`,
+    cwd: `${cwd}/${name}`,
+    relativePath: name,
+    files: [{ path: "README.md", kind: "modified", additions: 1, deletions: 1 }],
+    baselineMissing: false,
+  });
+  state.checkpoints = [
+    {
+      runId: RunId.make("run-1"),
+      checkpointTurnCount: 1,
+      checkpointRef: CheckpointRef.make("refs/t3/root-1"),
+      status: "missing",
+      files: [],
+      repositories: [repository("api"), repository("web")],
+      assistantMessageId: null,
+      completedAt: "2026-11-10T00:00:00.000Z",
+    },
+  ];
+  state.checkpointDiff = {
+    threadId: context.threadRef.threadId,
+    fromTurnCount: 0,
+    toTurnCount: 1,
+    diff: "",
+    repositories: ["api", "web"].map((name) => ({
+      name,
+      repositoryPath: `${cwd}/${name}`,
+      relativePath: name,
+      diff: patch("README.md"),
+    })),
+  };
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, width: 390, display: "flex", flexDirection: "column" }}>
+        <DiffPanel
+          mode="embedded"
+          composerDraftTarget={context.threadRef}
+          workspaceMutationId={null}
+          visible
+        />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  const api = screen.getByRole("button", { name: "Collapse api/README.md", exact: true });
+  const web = screen.getByRole("button", { name: "Collapse web/README.md", exact: true });
+  await expect.element(api).toBeVisible();
+  await expect.element(web).toBeVisible();
+  // Both pickers keep their labels in a phone-width panel.
+  await expect.element(screen.getByText("Latest turn", { exact: true })).toBeVisible();
+  const picker = screen.getByRole("button", { name: "Repository: All repositories" });
+  await expect.element(picker.getByText("All repositories")).toBeVisible();
+  await userEvent.click(picker);
+  await userEvent.click(page.getByRole("menuitemradio", { name: "web" }));
+  await expect.element(web).toBeVisible();
+  await expect.element(api).not.toBeInTheDocument();
+});
+
+// Paths as git's numstat reports them; the parsed patch keeps their edge whitespace.
 it.each([
   { path: " leading.ts", name: " leading.ts" },
-  { path: "src/trailing.ts ", name: "src/trailing.ts" },
+  { path: "src/trailing.ts ", name: "src/trailing.ts " },
 ])("reveals the turn file $path picked from the changed files", async ({ path, name }) => {
   using context = setup("origin/orphan");
   state.diffFilesCollapsed = true;
@@ -367,4 +461,39 @@ it.each([
   await expect
     .element(screen.getByRole("button", { name: `Collapse ${name}`, exact: true }))
     .toHaveAttribute("aria-expanded", "true");
+});
+
+it("opens a file from a tool call's diff by the path its agent recorded", async () => {
+  using context = setup("origin/orphan");
+  // A local thread in a project that is the repository's apps/web folder.
+  state.thread = { ...state.thread!, worktreePath: null };
+  state.project = { workspaceRoot: "/repo/apps/web", repositoryIdentity: { rootPath: "/repo" } };
+  const status = AsyncResult.getOrThrow(context.registry.get(state.status));
+  state.status = Atom.make(
+    AsyncResult.success({ ...status, workingTree: { ...status.workingTree, rootPath: "/repo" } }),
+  );
+  // Claude's Edit can record a path relative to the workspace, unlike the repository's diffs.
+  state.toolCallItem = {
+    type: "file_change",
+    fileName: "src/a.ts",
+    diffStr: "--- src/a.ts\n+++ src/a.ts\n@@ -1 +1 @@\n-before\n+after\n",
+  };
+  useDiffPanelStore.getState().selectToolCall(context.threadRef, {
+    threadId: context.threadRef.threadId,
+    itemId: TurnItemId.make("edit"),
+    revision: "1",
+  });
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div className="flex h-[600px] flex-col">
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await userEvent.click(screen.getByText("src/a.ts", { exact: true }));
+  await vi.waitFor(() =>
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
+    ).toMatchObject({ activeSurfaceId: "file:src/a.ts" }),
+  );
 });

@@ -68,3 +68,25 @@ export function deriveBottomControlInsets(metrics: NativeLayoutMetrics | null) {
   }
   return { left, right: metrics.width - right, bottom: metrics.height - bottom };
 }
+
+/**
+ * Where a bar can share the top safe area with the system status, as Safari does on iPhone Duo:
+ * the status block covers one end of that band, so the rest of it is free. Null otherwise.
+ */
+export function deriveSharedTopBand(metrics: NativeLayoutMetrics | null) {
+  if (!metrics || metrics.safeArea.top <= 0) return null;
+  const blocks = metrics.reservedRegions.filter(
+    (region) =>
+      region.kind === "occlusion" && region.y <= 0 && region.height >= metrics.safeArea.top - 1,
+  );
+  const [block] = blocks;
+  if (blocks.length !== 1 || !block) return null;
+  const height = metrics.safeArea.top;
+  if (block.x > metrics.width / 2 && block.x + block.width >= metrics.width - 1) {
+    return { height, left: 0, right: metrics.width - block.x };
+  }
+  if (block.x <= 1 && block.x + block.width < metrics.width / 2) {
+    return { height, left: block.x + block.width, right: 0 };
+  }
+  return null;
+}

@@ -278,6 +278,23 @@ describe("Pool", () => {
     }))
 
   describe("usage TTL idle timeout", () => {
+    it.effect("retires an idle item one TTL after its last release", () =>
+      Effect.gen(function*() {
+        const pool = yield* Pool.makeWithTTL({
+          acquire: Effect.succeed("resource"),
+          min: 0,
+          max: 1,
+          timeToLive: 1000,
+          timeToLiveStrategy: "usage"
+        })
+        yield* TestClock.adjust(50)
+        yield* Pool.use(pool, Effect.succeed)
+        yield* TestClock.adjust(999)
+        strictEqual(pool.state.items.size, 1)
+        yield* TestClock.adjust(1)
+        strictEqual(pool.state.items.size, 0)
+      }))
+
     it.effect("shrinks to min in idle order rather than acquisition order", () =>
       Effect.gen(function*() {
         let acquired = 0
@@ -579,6 +596,20 @@ describe("Pool", () => {
       assert.strictEqual(result, 1)
       assert.strictEqual(acquired, 3)
       assert.strictEqual(pool.state.usage, 0)
+
+      const lease = yield* Scope.fork(yield* Effect.scope)
+      const held = yield* Scope.fork(yield* Effect.scope)
+      const item = yield* Pool.get(pool).pipe(Scope.provide(lease))
+      yield* Pool.reserve(pool, item).pipe(Scope.provide(held))
+      yield* TestClock.adjust(50)
+      yield* Scope.close(lease, Exit.void)
+      yield* TestClock.adjust(970)
+      assert.strictEqual(pool.state.items.size, 1)
+      yield* Scope.close(held, Exit.void)
+      yield* TestClock.adjust(29)
+      assert.strictEqual(pool.state.items.size, 1)
+      yield* TestClock.adjust(1)
+      assert.strictEqual(pool.state.items.size, 0)
     }))
 
   it.effect("reserve is a no-op with concurrency one", () =>

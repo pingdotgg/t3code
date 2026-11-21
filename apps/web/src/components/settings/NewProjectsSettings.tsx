@@ -1,11 +1,12 @@
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { resolvePastedPath } from "@t3tools/shared/path";
+import { useGT } from "gt-react";
 
 import { DraftInput } from "../ui/draft-input";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -13,6 +14,8 @@ import {
 } from "./useScopedSettings";
 
 export function NewProjectsSettingsSection() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
   const { connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -24,18 +27,20 @@ export function NewProjectsSettingsSection() {
   );
 
   return (
-    <SettingsSection id="new-projects" title="New projects">
+    <SettingsSection id="new-projects" title={gt("New projects")}>
       {supportsNewProjectsDirectory ? (
         <SettingsRow
           serverScoped
           settingKeys={["newProjectsDirectory"]}
-          {...searchableSetting("new-projects-directory")}
-          description="Folder where New project creates repositories, such as ~/repos. Existing projects stay where they are. Leave empty to use the projects folder in the T3 home."
+          {...setting("new-projects-directory")}
+          description={gt(
+            "Folder where New project creates repositories, such as ~/repos. Existing projects stay where they are. Leave empty to use the projects folder in the T3 home.",
+          )}
           resetAction={
             mixedNewProjectsDirectory ||
             settings.newProjectsDirectory !== DEFAULT_UNIFIED_SETTINGS.newProjectsDirectory ? (
               <SettingResetButton
-                label="new projects directory"
+                ariaLabel={gt("Reset new projects directory to default")}
                 onClick={() =>
                   updateSettings({
                     newProjectsDirectory: DEFAULT_UNIFIED_SETTINGS.newProjectsDirectory,
@@ -51,9 +56,9 @@ export function NewProjectsSettingsSection() {
               value={mixedNewProjectsDirectory ? "" : settings.newProjectsDirectory}
               onCommit={(next) => updateSettings({ newProjectsDirectory: next })}
               normalizeDraft={resolvePastedPath}
-              placeholder={mixedNewProjectsDirectory ? "Mixed" : "~/.t3/projects"}
+              placeholder={mixedNewProjectsDirectory ? gt("Mixed") : "~/.t3/projects"}
               spellCheck={false}
-              aria-label="New projects directory"
+              aria-label={gt("New projects directory")}
             />
           }
         />
@@ -61,12 +66,12 @@ export function NewProjectsSettingsSection() {
       <SettingsRow
         serverScoped
         settingKeys={["addProjectBaseDirectory"]}
-        {...searchableSetting("add-project-starts-in")}
-        description='Leave empty to use "~/" when the Add Project browser opens.'
+        {...setting("add-project-starts-in")}
+        description={gt('Leave empty to use "~/" when the Add Project browser opens.')}
         resetAction={
           settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
             <SettingResetButton
-              label="add project base directory"
+              ariaLabel={gt("Reset add project base directory to default")}
               onClick={() =>
                 updateSettings({
                   addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
@@ -82,21 +87,21 @@ export function NewProjectsSettingsSection() {
             value={mixedAddProjectBaseDirectory ? "" : settings.addProjectBaseDirectory}
             onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
             normalizeDraft={resolvePastedPath}
-            placeholder={mixedAddProjectBaseDirectory ? "Mixed" : "~/"}
+            placeholder={mixedAddProjectBaseDirectory ? gt("Mixed") : "~/"}
             spellCheck={false}
-            aria-label="Add project base directory"
+            aria-label={gt("Add project base directory")}
           />
         }
       />
       <SettingsRow
         serverScoped
         settingKeys={["ghqCloneLayout"]}
-        {...searchableSetting("ghq-clone-layout")}
-        description="Clones go to github.com/owner/repo under the folder above, like ghq."
+        {...setting("ghq-clone-layout")}
+        description={gt("Clones go to github.com/owner/repo under the folder above, like ghq.")}
         resetAction={
           settings.ghqCloneLayout !== DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout ? (
             <SettingResetButton
-              label="clone into host folders"
+              ariaLabel={gt("Reset clone into host folders to default")}
               onClick={() =>
                 updateSettings({ ghqCloneLayout: DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout })
               }
@@ -108,7 +113,7 @@ export function NewProjectsSettingsSection() {
             settingKeys={["ghqCloneLayout"]}
             checked={settings.ghqCloneLayout}
             onCheckedChange={(checked) => updateSettings({ ghqCloneLayout: Boolean(checked) })}
-            aria-label="Clone into host folders"
+            aria-label={gt("Clone into host folders")}
           />
         }
       />

@@ -1,11 +1,10 @@
 /**
  * MCP v2026-07-28 wire projections.
- *
- * @internal
  */
 import * as Deferred from "../../../Deferred.ts"
 import * as Effect from "../../../Effect.ts"
 import * as Base64 from "../../../encoding/Base64.ts"
+import type * as Headers from "../../../http/Headers.ts"
 import { appendPreResponseHandlerUnsafe } from "../../../http/HttpEffect.ts"
 import * as HttpServerRequest from "../../../http/HttpServerRequest.ts"
 import * as HttpServerResponse from "../../../http/HttpServerResponse.ts"
@@ -276,6 +275,51 @@ const failWithHttpStatus = (status: number, error: McpProtocol.ProtocolError) =>
     return Effect.fail(error)
   })
 
+// Only properties paths may mirror headers; composition, arrays, and references do not qualify.
+const validateParameterHeaders = (
+  inputSchema: unknown,
+  args: unknown,
+  headers: Headers.Headers
+) =>
+  Effect.suspend(() => {
+    const pending: Array<{ readonly schema: unknown; readonly argument: unknown; readonly path: string }> = [
+      { schema: inputSchema, argument: args, path: "" }
+    ]
+    while (pending.length > 0) {
+      const { schema, argument, path } = pending.pop()!
+      if (!Predicate.isReadonlyObject(schema)) continue
+      const annotation = schema["x-mcp-header"]
+      if (typeof annotation === "string") {
+        const headerName = `mcp-param-${annotation.toLowerCase()}`
+        if (!parameterHeaderMatches(headers[headerName], argument)) {
+          return failWithHttpStatus(
+            400,
+            new McpProtocol.ProtocolError({
+              code: PublicMcpSchema.HEADER_MISMATCH_ERROR_CODE,
+              message: `${headerName} does not match argument '${path}'`
+            })
+          )
+        }
+      }
+      if (Predicate.isReadonlyObject(schema.properties)) {
+        for (const [name, property] of Object.entries(schema.properties)) {
+          pending.push({
+            schema: property,
+            argument: Predicate.isReadonlyObject(argument) && Object.hasOwn(argument, name)
+              ? argument[name]
+              : undefined,
+            path: path === "" ? name : `${path}.${name}`
+          })
+        }
+      }
+    }
+    return Effect.void
+  }).pipe(
+    Effect.mapError((error) =>
+      new McpCore.RequestRejected({ code: error.code, message: error.message, data: error.data, error })
+    )
+  )
+
 /**
  * @internal
  */
@@ -478,13 +522,19 @@ export const makeHandlers = (
           Effect.flatMap((notification) => sendNotification(McpSchema.protocolVersion, client.id, notification))
         )
       )
-      yield* Effect.race(deliver, Deferred.await(overflowed))
-      yield* context.terminateSubscription?.(
-        McpSchema.protocolVersion,
-        client.id,
-        requestId,
-        "Pending notification limit exceeded"
-      ) ?? Effect.void
+      const didOverflow = yield* Effect.raceAll([
+        deliver,
+        Deferred.await(overflowed).pipe(Effect.as(true)),
+        (context.awaitClientEnd ?? Effect.never).pipe(Effect.as(false))
+      ])
+      if (didOverflow) {
+        yield* context.terminateSubscription?.(
+          McpSchema.protocolVersion,
+          client.id,
+          requestId,
+          "Pending notification limit exceeded"
+        ) ?? Effect.void
+      }
       const encodedServerInfo = yield* encodeImplementation(context.serverInfo)
       return McpSchema.SubscriptionsListenResult.make({
         _meta: {
@@ -507,8 +557,9 @@ export const makeHandlers = (
       return yield* decodeDiscoverResult(result)
     }, Effect.mapError(projectError)),
     "resources/list": Effect.fnUntraced(function*(
-      _request: typeof McpSchema.ListResources.payloadSchema.Type
+      request: typeof McpSchema.ListResources.payloadSchema.Type
     ) {
+      yield* McpProtocol.rejectCursor(request.cursor)
       const invocation = yield* getInvocation
       const resources = yield* core.resources.list(invocation)
       const result = yield* projectCompleteResult({
@@ -518,8 +569,9 @@ export const makeHandlers = (
       return yield* decodeListResourcesResult(result)
     }, Effect.mapError(projectError)),
     "resources/templates/list": Effect.fnUntraced(function*(
-      _request: typeof McpSchema.ListResourceTemplates.payloadSchema.Type
+      request: typeof McpSchema.ListResourceTemplates.payloadSchema.Type
     ) {
+      yield* McpProtocol.rejectCursor(request.cursor)
       const invocation = yield* getInvocation
       const resourceTemplates = yield* core.resources.listTemplates(invocation)
       const result = yield* projectCompleteResult({
@@ -540,7 +592,7 @@ export const makeHandlers = (
       return yield* decodeReadResourceResult(result)
     }, Effect.mapError(projectError)),
     "prompts/list": Effect.fnUntraced(function*(
-      _request: typeof McpSchema.ListPrompts.payloadSchema.Type
+      request: typeof McpSchema.ListPrompts.payloadSchema.Type
     ) {
       const presence = yield* context.registrationPresence
       if (!presence.prompts) {
@@ -552,6 +604,7 @@ export const makeHandlers = (
           })
         )
       }
+      yield* McpProtocol.rejectCursor(request.cursor)
       const invocation = yield* getInvocation
       const prompts = yield* core.prompts.list(invocation)
       const projectedPrompts = yield* Effect.forEach(prompts, projectPrompt)
@@ -606,8 +659,9 @@ export const makeHandlers = (
       return yield* decodeCompleteResult(result)
     }, Effect.mapError(projectError)),
     "tools/list": Effect.fnUntraced(function*(
-      _request: typeof McpSchema.ListTools.payloadSchema.Type
+      request: typeof McpSchema.ListTools.payloadSchema.Type
     ) {
+      yield* McpProtocol.rejectCursor(request.cursor)
       const invocation = yield* getInvocation
       const tools = yield* core.tools.list(invocation)
       const projectedTools = yield* Effect.forEach(tools, projectTool)
@@ -619,45 +673,13 @@ export const makeHandlers = (
     }, Effect.mapError(projectError)),
     "tools/call": Effect.fnUntraced(function*(request: typeof McpSchema.CallTool.payloadSchema.Type) {
       const invocation = yield* getInputInvocation(request)
-      const tool = core.tools.find(request.name, invocation.protocol)
       const httpRequest = yield* Effect.serviceOption(HttpServerRequest.HttpServerRequest)
-
-      if (tool !== undefined && Option.isSome(httpRequest)) {
-        const pending: Array<{ readonly schema: unknown; readonly argument: unknown; readonly path: string }> = [
-          { schema: tool.inputSchema, argument: request.arguments, path: "" }
-        ]
-        // Only properties paths may mirror headers; composition, arrays, and references do not qualify.
-        while (pending.length > 0) {
-          const { schema, argument, path } = pending.pop()!
-          if (!Predicate.isReadonlyObject(schema)) continue
-          const annotation = schema["x-mcp-header"]
-          if (typeof annotation === "string") {
-            const headerName = `mcp-param-${annotation.toLowerCase()}`
-            if (!parameterHeaderMatches(httpRequest.value.headers[headerName], argument)) {
-              return yield* failWithHttpStatus(
-                400,
-                new McpProtocol.ProtocolError({
-                  code: PublicMcpSchema.HEADER_MISMATCH_ERROR_CODE,
-                  message: `${headerName} does not match argument '${path}'`
-                })
-              )
-            }
-          }
-          if (Predicate.isReadonlyObject(schema.properties)) {
-            for (const [name, property] of Object.entries(schema.properties)) {
-              pending.push({
-                schema: property,
-                argument: Predicate.isReadonlyObject(argument) && Object.hasOwn(argument, name)
-                  ? argument[name]
-                  : undefined,
-                path: path === "" ? name : `${path}.${name}`
-              })
-            }
-          }
-        }
-      }
-
-      const outcome = yield* core.tools.call({ name: request.name, arguments: request.arguments ?? {} }, invocation)
+      const beforeHandle = Option.isSome(httpRequest)
+        ? (tool: PublicMcpSchema.Tool) =>
+          validateParameterHeaders(tool.inputSchema, request.arguments, httpRequest.value.headers)
+        : undefined
+      const call = { name: request.name, arguments: request.arguments ?? {} }
+      const outcome = yield* core.tools.call(call, invocation, beforeHandle)
         .pipe(
           Effect.catchTag(
             ["ToolExecutionError", "InvalidToolInput"],
@@ -686,7 +708,7 @@ export const makeHandlers = (
     }, Effect.mapError(projectError)),
     "skills/list": Effect.fnUntraced(function*(request: typeof McpSkills.ListSkills.payloadSchema.Type) {
       yield* requireSkills("skills/list")
-      yield* McpSkills.rejectCursor(request.cursor)
+      yield* McpProtocol.rejectCursor(request.cursor)
       const skills = yield* core.skills.list(yield* getInvocation)
       const result = yield* projectCompleteResult({ ...cacheHint("skills"), skills }, context.serverInfo)
       return yield* decodeListSkillsResult(result)
@@ -701,7 +723,7 @@ export const makeHandlers = (
       request: typeof McpSkills.ReadResourceDirectory.payloadSchema.Type
     ) {
       yield* requireSkills("resources/directory/read")
-      yield* McpSkills.rejectCursor(request.cursor)
+      yield* McpProtocol.rejectCursor(request.cursor)
       const resources = yield* core.skills.readDirectory(request.uri, yield* getInvocation)
       const result = yield* projectCompleteResult({ ...cacheHint("skills"), resources }, context.serverInfo)
       return yield* decodeReadResourceDirectoryResult(result)
@@ -742,8 +764,7 @@ export const protocol = McpProtocol.make({
   }),
   projectNotification: (notification) =>
     McpProtocol.isSubscriptionServerNotification(notification)
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off the projector requires the value `undefined`
-      ? Effect.succeed(undefined)
+      ? Effect.undefined
       : McpProtocol.makeNotificationProjector({
         supportsProgressMessage: true
       }, notification),

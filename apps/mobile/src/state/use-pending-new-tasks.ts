@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import { useMessages } from "gt-react-native";
 import { useMemo } from "react";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -48,6 +49,7 @@ const threadOutboxSendGateAtom = Atom.make((get): ThreadOutboxSendGate => {
 }).pipe(Atom.withLabel("mobile:pending-new-tasks:send-gate"));
 
 export function usePendingNewTasks(): ReadonlyArray<PendingNewTask> {
+  const resolve = useMessages();
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const drafts = useAtomValue(newTaskComposerDraftsAtom);
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
@@ -56,11 +58,14 @@ export function usePendingNewTasks(): ReadonlyArray<PendingNewTask> {
   const queuedMessages = flattenQueuedThreadMessages(queuedMessagesByThreadKey).filter(
     (message) => !hiddenKeys.has(threadKey(message)),
   );
-  return buildPendingNewTasks({
-    queuedMessages,
-    drafts,
-    sendGate,
-  });
+  return buildPendingNewTasks(
+    {
+      queuedMessages,
+      drafts,
+      sendGate,
+    },
+    resolve,
+  );
 }
 
 /** The list's threads, with creations the outbox is sending placed as working. */
