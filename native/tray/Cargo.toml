@@ -1,0 +1,27 @@
+[package]
+name = "t3-tray"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+png = "0.18.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+tao = "0.37.2"
+tray-icon = "0.26.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CFRunLoop",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true

@@ -1,0 +1,39 @@
+name: Standalone tray
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/standalone-tray.yml"
+      - "native/tray/**"
+      - "assets/prod/t3-black-web-favicon-32x32.png"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - id: toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          components: rustfmt
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/tray/target
+          key: tray-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('native/tray/Cargo.lock') }}
+      - run: cargo fmt --manifest-path native/tray/Cargo.toml -- --check
+      - run: cargo test --locked --manifest-path native/tray/Cargo.toml
+      - run: cargo build --locked --release --manifest-path native/tray/Cargo.toml
