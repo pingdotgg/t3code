@@ -5969,6 +5969,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
+            // Codex still asks for commands it deems dangerous under the granular full-access policy.
+            if (
+              context.input.runtimePolicy.runtimeMode === "full-access" &&
+              context.input.runtimePolicy.approvalPolicy === undefined
+            ) {
+              return {
+                decision: "accept",
+              } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
+            }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("command")) {
               return {
