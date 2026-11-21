@@ -110,7 +110,14 @@ export class TaskFolders extends Context.Service<
         readonly total: number;
       }) => Effect.Effect<void>;
     }) => Effect.Effect<
-      { readonly taskFolder: TaskFolder; readonly branch: string },
+      {
+        readonly taskFolder: TaskFolder;
+        readonly branch: string;
+        /** The project's own command made the checkouts, from whatever start it chose. */
+        readonly laidOutByProject: boolean;
+        /** A repository's worktree starts from the commit just fetched from its remote. */
+        readonly repositoriesStartedFromOrigin: boolean;
+      },
       TaskFolderError
     >;
     /**
@@ -324,18 +331,23 @@ const make = Effect.gen(function* () {
 
   // What a layout command leaves must be a checkout this service can later remove, restore and
   // rename: a worktree linked to the repository, on the thread's branch. Null when it is.
-  const unadoptable = Effect.fnUntraced(function* (checkout: TaskFolderCheckout, branch: string) {
+  /** The checkout's own Git directory when it is a worktree linked to its repository. */
+  const linkedGitDir = Effect.fnUntraced(function* (checkout: TaskFolderCheckout) {
     const real = (target: string) =>
       fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => target));
     const resolved = yield* gitDirPointer(checkout.worktreePath);
-    const linked =
-      resolved !== null &&
+    return resolved !== null &&
       isWithinRoot(
         path,
         yield* real(resolved),
         path.join(yield* real(yield* commonGitDir(checkout.repositoryPath)), "worktrees"),
-      );
-    if (!linked)
+      )
+      ? resolved
+      : null;
+  });
+  const unadoptable = Effect.fnUntraced(function* (checkout: TaskFolderCheckout, branch: string) {
+    const resolved = yield* linkedGitDir(checkout);
+    if (resolved === null)
       return `${checkout.worktreePath} is not a Git worktree of ${checkout.repositoryPath}`;
     const head = (yield* fileSystem
       .readFileString(path.join(resolved, "HEAD"))
@@ -387,7 +399,13 @@ const make = Effect.gen(function* () {
       (folder) => folder.git && !folder.submodule && folder.path !== projectRoot,
     );
     // A project that lays its own thread folder out gets one even with nothing else to check out.
-    if (tracked.length === 0 && (yield* worktreeLayout(projectRoot)) === null) return null;
+    // An explicit choice still goes through the checks below, so it is refused, not dropped.
+    if (
+      tracked.length === 0 &&
+      (input.repositories ?? []).length === 0 &&
+      (yield* worktreeLayout(projectRoot)) === null
+    )
+      return null;
     // A repository on another Windows drive has no place in the folder; only choosing it fails.
     const { anchor, unreachable } = layoutAnchor(
       path,
@@ -403,20 +421,15 @@ const make = Effect.gen(function* () {
       for (const requested of input.repositories) {
         const requestedPath = path.resolve(requested.path);
         const folder = classified.find((candidate) => candidate.path === requestedPath);
-        if (
-          folder === undefined ||
-          !folder.git ||
-          folder.submodule ||
-          folder.path === projectRoot
-        ) {
+        // A submodule comes with its repository's worktree; clients cannot tell one apart.
+        if (folder?.submodule === true) continue;
+        if (folder === undefined || !folder.git || folder.path === projectRoot) {
           return yield* new TaskFolderError({
             operation: "plan",
             detail:
               folder === undefined
                 ? `"${requested.path}" is not a tracked folder of project "${project.title}".`
-                : folder.submodule
-                  ? `"${requested.path}" is a submodule, so it comes with its repository's worktree.`
-                  : `"${requested.path}" is not a Git repository, so it cannot get a worktree.`,
+                : `"${requested.path}" is not a Git repository, so it cannot get a worktree.`,
           });
         }
         if (unreachable.includes(folder.path)) {
@@ -580,6 +593,19 @@ const make = Effect.gen(function* () {
         if (!(yield* removeLinks(path.join(target, name)))) empty = false;
       }
       return empty && (yield* removeEmptyDirectory(target));
+    });
+
+  /** Whether `removeLinks` would leave nothing: only links and folders of links are inside. */
+  const holdsOnlyLinks: (target: string) => Effect.Effect<boolean, PlatformError.PlatformError> =
+    Effect.fnUntraced(function* (target) {
+      if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) return true;
+      if (!(yield* exists(target))) return true;
+      if ((yield* fileSystem.stat(target)).type !== "Directory") return false;
+      if (yield* isRepository(target)) return false;
+      for (const name of yield* fileSystem.readDirectory(target)) {
+        if (!(yield* holdsOnlyLinks(path.join(target, name)))) return false;
+      }
+      return true;
     });
 
   const allocateRoot = Effect.fn("TaskFolders.allocateRoot")(function* (
@@ -757,7 +783,12 @@ const make = Effect.gen(function* () {
       }
     } else if (!projectHoldsKept) {
       // A folder that stays keeps its links: restoring relinks only a folder that is gone.
-      projectGone = yield* removeLinks(projectPath).pipe(Effect.orElseSucceed(() => false));
+      projectGone = yield* holdsOnlyLinks(projectPath).pipe(
+        Effect.flatMap((onlyLinks) =>
+          onlyLinks ? removeLinks(projectPath) : Effect.succeed(false),
+        ),
+        Effect.orElseSucceed(() => false),
+      );
       if (!projectGone && input.force && input.inspect === undefined) {
         // Forced: what is left are files the thread wrote beside the links.
         projectGone = yield* fileSystem.remove(projectPath, { recursive: true, force: true }).pipe(
@@ -818,10 +849,13 @@ const make = Effect.gen(function* () {
       path: worktreePath,
     });
     return {
-      repositoryPath: repository.path,
-      worktreePath,
-      name: repository.name,
-    } satisfies TaskFolderRepository;
+      repository: {
+        repositoryPath: repository.path,
+        worktreePath,
+        name: repository.name,
+      } satisfies TaskFolderRepository,
+      fromOrigin: start.refName !== start.baseRefName,
+    };
   });
 
   const create: TaskFolders["Service"]["create"] = Effect.fn("TaskFolders.create")(
@@ -857,6 +891,7 @@ const make = Effect.gen(function* () {
         repositories: [],
       };
       const created: TaskFolderRepository[] = [];
+      let repositoriesStartedFromOrigin = false;
       const current = (): TaskFolder => ({ ...empty, repositories: [...created] });
       const checkedOutFrom = [
         ...(taskPlan.projectIsRepository ? [taskPlan.projectRoot] : []),
@@ -921,7 +956,12 @@ const make = Effect.gen(function* () {
               taskPlan.projectIsRepository && (yield* isRepository(empty.projectPath)),
           };
           yield* store.put(taskFolder);
-          return { taskFolder, branch };
+          return {
+            taskFolder,
+            branch,
+            laidOutByProject: true,
+            repositoriesStartedFromOrigin: false,
+          };
         }
         if (taskPlan.projectIsRepository) {
           yield* fileSystem.makeDirectory(path.dirname(empty.projectPath), { recursive: true });
@@ -962,7 +1002,8 @@ const make = Effect.gen(function* () {
               ).pipe(
                 Effect.tap((worktree) =>
                   Effect.suspend(() => {
-                    created.push(worktree);
+                    created.push(worktree.repository);
+                    repositoriesStartedFromOrigin ||= worktree.fromOrigin;
                     return (
                       input.onRepository?.({
                         name: repository.name,
@@ -982,14 +1023,19 @@ const make = Effect.gen(function* () {
         }
         const taskFolder = current();
         yield* store.put(taskFolder);
-        return { taskFolder, branch };
+        return { taskFolder, branch, laidOutByProject: false, repositoriesStartedFromOrigin };
       }).pipe(
         Effect.onError(() =>
-          removeLocked(
-            current(),
-            { force: true, forget: true, deleteBranch: branch },
-            hadBranch,
-          ).pipe(
+          // Recorded first: a checkout the rollback cannot remove must still be known afterwards.
+          store.put(current()).pipe(
+            Effect.ignoreCause({ log: true }),
+            Effect.andThen(
+              removeLocked(
+                current(),
+                { force: true, forget: true, deleteBranch: branch },
+                hadBranch,
+              ),
+            ),
             Effect.tap(({ kept }) =>
               kept.length === 0
                 ? Effect.void
@@ -1055,7 +1101,7 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(fail("add-repository", "Could not read the thread")));
     if (thread === null || thread.worktreePath === null || thread.branch === null)
       return yield* refuse("This thread does not work in a worktree.");
-    const branch = thread.branch;
+    const recordedBranch = thread.branch;
     const startFromOrigin =
       input.startFromOrigin ?? (yield* startsFromOrigin("add-repository", thread.projectId));
     const found = yield* requireTaskFolder("add-repository", thread.worktreePath);
@@ -1064,6 +1110,15 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         // Read again under the lease: another add may have landed.
         const taskFolder = yield* requireTaskFolder("add-repository", found.root);
+        // The thread's record lags a rename of its branch, so a checkout says which one it is.
+        const checkedOut = taskFolder.projectIsWorktree
+          ? taskFolder.projectPath
+          : taskFolder.repositories[0]?.worktreePath;
+        const branch =
+          (checkedOut === undefined
+            ? null
+            : yield* git.currentBranch(checkedOut).pipe(Effect.orElseSucceed(() => null))) ??
+          recordedBranch;
         const project = yield* readProject("add-repository", taskFolder.projectId);
         const repositoryPath = path.resolve(input.repositoryPath);
         const folder = (yield* trackedFolders(project)).find(
@@ -1086,6 +1141,9 @@ const make = Effect.gen(function* () {
           !taskFolder.projectIsWorktree &&
           isWithinRoot(path, repositoryPath, taskFolder.projectRoot) &&
           repositoryPath !== taskFolder.projectRoot;
+        const wasLinked =
+          insideLinkedProject &&
+          Option.isSome(yield* fileSystem.readLink(worktreePath).pipe(Effect.option));
         const opened = insideLinkedProject
           ? yield* openLinkedPath(
               taskFolder.projectRoot,
@@ -1128,6 +1186,16 @@ const make = Effect.gen(function* () {
             });
           }
         }).pipe(
+          Effect.onError(() =>
+            wasLinked
+              ? // Git may or may not have left an empty folder where the link was.
+                removeEmptyDirectory(worktreePath).pipe(
+                  Effect.ignore,
+                  Effect.andThen(fileSystem.symlink(repositoryPath, worktreePath)),
+                  Effect.ignoreCause({ log: true }),
+                )
+              : Effect.void,
+          ),
           Effect.mapError(fail("add-repository", `Could not create the ${folder.name} worktree`)),
         );
         const updated: TaskFolder = {
@@ -1249,7 +1317,14 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.ignoreCause({ log: true }));
     }
     const recreateMissing = Effect.fnUntraced(function* (checkout: TaskFolderCheckout) {
-      if (yield* isRepository(checkout.worktreePath)) return;
+      if (yield* isRepository(checkout.worktreePath)) {
+        // Another checkout in its place is not the thread's: resuming there would work on it.
+        if ((yield* linkedGitDir(checkout)) !== null) return;
+        return yield* new TaskFolderError({
+          operation: "create",
+          detail: `${checkout.worktreePath} holds a checkout that is not a worktree of ${checkout.repositoryPath}. Move it away to restore the thread's worktree.`,
+        });
+      }
       yield* fileSystem
         .makeDirectory(path.dirname(checkout.worktreePath), { recursive: true })
         .pipe(Effect.mapError(restoreFailed));

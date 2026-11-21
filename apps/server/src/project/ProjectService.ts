@@ -62,6 +62,9 @@ export interface ProjectCreateInput extends ProjectCreatePayload {
 export interface ProjectUpdateInput extends ProjectUpdatePayload {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
+  /** Added to, and removed by path from, the list the project has when the update commits. */
+  readonly trackFolders?: ReadonlyArray<ProjectTrackedFolder> | undefined;
+  readonly untrackFolders?: ReadonlyArray<string> | undefined;
 }
 
 export interface ProjectBootstrapInput extends ProjectCreateInput {}
@@ -606,11 +609,32 @@ export const make = Effect.gen(function* () {
           if (current === undefined || current.deletedAt !== null) return command;
           const root = command.workspaceRoot ?? current.workspaceRoot;
           // Moving the project's folder re-checks the folders it keeps tracking.
-          if (input.trackedFolders === undefined && root === current.workspaceRoot) return command;
+          const untracked = new Set(
+            (input.untrackFolders ?? []).map((entry) => path.resolve(entry)),
+          );
+          const tracking = input.trackFolders ?? [];
+          if (
+            input.trackedFolders === undefined &&
+            untracked.size === 0 &&
+            tracking.length === 0 &&
+            root === current.workspaceRoot
+          )
+            return command;
+          const listed: ReadonlyArray<ProjectTrackedFolder> =
+            input.trackedFolders ?? current.trackedFolders;
+          const kept = listed.filter(
+            (folder) => folder.discovered !== true && !untracked.has(path.resolve(folder.path)),
+          );
           const trackedFolders = yield* normalizeTrackedFolders(
             input.projectId,
             root,
-            input.trackedFolders ?? current.trackedFolders,
+            [
+              ...kept,
+              ...tracking.filter(
+                (folder) =>
+                  !kept.some((entry) => path.resolve(entry.path) === path.resolve(folder.path)),
+              ),
+            ],
             current.trackedFolders,
           );
           return { ...command, trackedFolders };

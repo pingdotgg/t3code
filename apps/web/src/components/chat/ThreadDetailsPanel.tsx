@@ -109,7 +109,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const tracksFolders = (project?.trackedFolders?.length ?? 0) > 0;
   // A worktree thread reaches tracked repositories only through its own task folder.
   const taskFolderQuery = useEnvironmentQuery(
-    props.isServerThread && props.worktreePath !== null && tracksFolders
+    // Asked whatever the project tracks now: a thread keeps its task folder when that changes.
+    props.isServerThread && props.worktreePath !== null
       ? filesystemEnvironment.taskFolder({
           environmentId: props.environmentId,
           input: { worktreePath: props.worktreePath },
@@ -192,7 +193,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           git:
             offersGit &&
             props.activeProjectName !== undefined &&
-            (folderIsRepo || !tracksFolders) &&
+            (folderIsRepo || (!tracksFolders && taskFolder === null)) &&
             (visible.gitActions || (visible.changes && folderIsRepo)),
           // Also for a project that tracks nothing: a thread can change a submodule.
           repositories: offersGit && density !== "essential" && visible.gitActions,

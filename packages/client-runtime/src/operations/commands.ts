@@ -78,6 +78,9 @@ export interface UpdateProjectInput extends CommandMetadata {
   readonly scripts?: ReadonlyArray<ProjectScript>;
   /** Replaces the whole list. Paths only mean something on the project's own environment. */
   readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
+  /** Added to, and removed by path from, the list as the server has it. */
+  readonly trackFolders?: ReadonlyArray<ProjectTrackedFolder>;
+  readonly untrackFolders?: ReadonlyArray<string>;
   readonly pinned?: boolean;
   readonly archived?: boolean;
 }
@@ -415,6 +418,8 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly defaultModelSelection?: ModelSelection | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
         readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
+        readonly trackFolders?: ReadonlyArray<ProjectTrackedFolder>;
+        readonly untrackFolders?: ReadonlyArray<string>;
       }
     | {
         readonly type: "project.delete";
@@ -466,6 +471,8 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
       : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
     ...(input.trackedFolders === undefined ? {} : { trackedFolders: input.trackedFolders }),
+    ...(input.trackFolders === undefined ? {} : { trackFolders: input.trackFolders }),
+    ...(input.untrackFolders === undefined ? {} : { untrackFolders: input.untrackFolders }),
     ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
     ...(input.archived === undefined ? {} : { archived: input.archived }),
   });

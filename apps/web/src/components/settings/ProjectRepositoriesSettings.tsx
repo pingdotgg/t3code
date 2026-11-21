@@ -104,18 +104,24 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   const [isAddingFolder, setIsAddingFolder] = useState(false);
   // A save builds on the listed folders, so it waits for the list that follows the last one.
   const disabled = !canEdit || !isConnected || isSaving || listQuery.isPending;
-  const added = folders.filter((folder) => folder.discovered !== true);
   const gt = useGT();
   const m = useMessages();
 
-  const save = async (next: ReadonlyArray<ProjectTrackedFolder>, failureTitle: string) => {
+  // One folder in or out: the server applies it to its own list, which another client may have
+  // changed since this one was read.
+  const save = async (
+    change: { readonly track: ProjectTrackedFolder } | { readonly untrack: string },
+    failureTitle: string,
+  ) => {
     if (checkProjectAccess([member], failureTitle)) return false;
     setIsSaving(true);
     const result = await updateProject({
       environmentId,
       input: {
         projectId: member.id,
-        trackedFolders: next.map(({ path, name }) => ({ path, name })),
+        ...("track" in change
+          ? { trackFolders: [{ path: change.track.path, name: change.track.name }] }
+          : { untrackFolders: [change.untrack] }),
       },
     });
     setIsSaving(false);
@@ -128,7 +134,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   };
 
   const addFolder = async (folder: ProjectTrackedFolder) => {
-    if (await save([...added, folder], gt("Failed to add folder"))) setIsAddingFolder(false);
+    if (await save({ track: folder }, gt("Failed to add folder"))) setIsAddingFolder(false);
   };
 
   return (
@@ -183,12 +189,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
                   variant="ghost"
                   disabled={disabled}
                   aria-label={gt("Remove {name} from the project", { name: folder.name })}
-                  onClick={() =>
-                    void save(
-                      added.filter((candidate) => candidate.path !== folder.path),
-                      gt("Failed to remove folder"),
-                    )
-                  }
+                  onClick={() => void save({ untrack: folder.path }, gt("Failed to remove folder"))}
                 >
                   <T>Remove</T>
                 </Button>
@@ -220,7 +221,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
               variant="ghost"
               disabled={disabled}
               aria-label={gt("Add {name} to the project", { name: folder.name })}
-              onClick={() => void save([...added, folder], gt("Failed to add folder"))}
+              onClick={() => void save({ track: folder }, gt("Failed to add folder"))}
             >
               <T>Add</T>
             </Button>

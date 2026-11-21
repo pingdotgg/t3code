@@ -286,11 +286,17 @@ const make = Effect.gen(function* () {
                       startFromOrigin,
                     })
                     .pipe(
-                      Effect.map((created) => ({
-                        path: created.taskFolder.projectPath,
-                        refName: created.branch,
-                        taskFolder: created.taskFolder.root,
-                      })),
+                      Effect.map((created) => {
+                        // A layout command is handed the branch name, not the fetched commit.
+                        startedFromOrigin =
+                          !created.laidOutByProject &&
+                          (startedFromOrigin || created.repositoriesStartedFromOrigin);
+                        return {
+                          path: created.taskFolder.projectPath,
+                          refName: created.branch,
+                          taskFolder: created.taskFolder.root,
+                        };
+                      }),
                     ),
           ).pipe(asOperationFailed("Unable to create the worktree")),
         );

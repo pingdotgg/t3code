@@ -251,6 +251,9 @@ export const ProjectMutation = Schema.Union([
     commandId: CommandId,
     projectId: ProjectId,
     ...ProjectUpdatePayload.fields,
+    // Applied to the list as the server has it, so two clients' edits do not undo each other.
+    trackFolders: Schema.optional(ProjectAddedFolders),
+    untrackFolders: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   }),
   Schema.Struct({
     type: Schema.Literal("project.delete"),

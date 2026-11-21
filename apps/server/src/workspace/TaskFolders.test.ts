@@ -156,9 +156,15 @@ it.live("lays a plain wrapper out as links around its repositories' worktrees", 
       for (const worktree of [path.join(root, "services", "api"), path.join(root, "web")]) {
         assert.equal(yield* run(worktree, "symbolic-ref", "--short", "HEAD"), "feature");
       }
-      assert.deepEqual(
-        yield* (yield* TaskFolders.TaskFolders).find(path.join(root, "web", "src")),
-        taskFolder,
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      assert.deepEqual(yield* taskFolders.find(path.join(root, "web", "src")), taskFolder);
+
+      // A file of the thread's own keeps the folder, and a folder that stays keeps its links.
+      yield* fileSystem.writeFileString(path.join(root, "draft.md"), "mine\n");
+      yield* taskFolders.remove({ root, force: false, forget: true });
+      assert.equal(
+        yield* fileSystem.readLink(path.join(root, "AGENTS.md")),
+        path.join(shop, "AGENTS.md"),
       );
     }),
   ),
@@ -182,7 +188,8 @@ it.live("keeps a Git project and its sibling repository side by side", () =>
       state.workspaceRoot = ctx;
       state.trackedFolders = tracked(app, lib);
 
-      const { taskFolder } = yield* create("feature");
+      // Named by a client that cannot tell it apart, the submodule is left to its repository.
+      const { taskFolder } = yield* create("feature", [{ path: app }, { path: lib }]);
 
       assert.equal(taskFolder.anchor, path.dirname(ctx));
       assert.equal(taskFolder.projectPath, path.join(taskFolder.root, "ctx"));
@@ -674,6 +681,12 @@ it.live("selects every tracked repository up to eight and none beyond", () =>
 
       state.trackedFolders = tracked(plain);
       assert.isNull(yield* taskFolders.plan({ projectId }));
+      // A named choice is refused, not dropped, when the project has no repository left.
+      assert.include(
+        (yield* taskFolders.plan({ projectId, repositories: [{ path: plain }] }).pipe(Effect.flip))
+          .detail,
+        "is not a Git repository",
+      );
 
       state.trackedFolders = tracked(...folders.slice(0, 8), plain);
       assert.lengthOf((yield* taskFolders.plan({ projectId }))!.repositories, 8);
@@ -710,6 +723,7 @@ it.live("adds a repository to an existing task folder on the thread's branch", (
       const web = yield* repository("shop/web");
       yield* fileSystem.makeDirectory(path.join(shop, "tools"), { recursive: true });
       yield* fileSystem.makeDirectory(path.join(shop, "taken"), { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(shop, "unborn"), { recursive: true });
       yield* fileSystem.writeFileString(path.join(shop, "tools", "run.sh"), "#!/bin/sh\n");
       state.workspaceRoot = shop;
       const { taskFolder } = yield* create("feature", [{ path: api }]);
@@ -730,6 +744,8 @@ it.live("adds a repository to an existing task folder on the thread's branch", (
         "feature",
       );
 
+      // The thread's record can lag a rename of its branch; the checkouts say which one it is.
+      state.thread = { worktreePath: root, branch: "name-before-the-rename" };
       // The link that stood for `tools` becomes a folder: the worktree, and links to the rest.
       yield* taskFolders.addRepository({ threadId, repositoryPath: late });
       assert.isFalse(yield* isLink(path.join(root, "tools")));
@@ -758,6 +774,26 @@ it.live("adds a repository to an existing task folder on the thread's branch", (
         assert.include(error.detail, detail);
       }
       assert.lengthOf((yield* taskFolders.find(root))!.repositories, 3);
+
+      // A repository with no commit gets no worktree, and the link it stood behind comes back.
+      const unborn = path.join(shop, "unborn");
+      yield* run(unborn, "init", "-b", "main");
+      yield* taskFolders.addRepository({ threadId, repositoryPath: unborn }).pipe(Effect.flip);
+      assert.equal(yield* fileSystem.readLink(path.join(root, "unborn")), unborn);
+
+      // Another checkout where a worktree belongs is not restored over, nor resumed in.
+      const webWorktree = path.join(root, "web");
+      yield* run(web, "worktree", "remove", "--force", webWorktree);
+      yield* fileSystem.makeDirectory(webWorktree);
+      yield* run(webWorktree, "init", "-b", "main");
+      const refused = yield* taskFolders
+        .restore({
+          taskFolder: (yield* taskFolders.find(root))!,
+          branch: "feature",
+          recreate: () => Effect.die("an existing checkout is never recreated"),
+        })
+        .pipe(Effect.flip);
+      assert.include(refused.detail, "is not a worktree of");
     }),
   ),
 );

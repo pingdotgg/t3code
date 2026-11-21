@@ -1161,9 +1161,12 @@ const make = Effect.gen(function* () {
         // Measuring takes time, and what follows deletes ignored files under these rules.
         if (yield* settingsChanged)
           return { keep: "settings changed since check", force: false, bytes };
-        if (rules.worktreeKeepWhen === "tracked-changes")
-          yield* cleanupGit(checkoutPath, ["clean", "-ffdx"], "git clean");
+        // Before anything is deleted: a submodule may be the reason this checkout stays whole.
         const submodules = yield* submoduleRemoval(checkoutPath, rules);
+        if (submodules.reason !== null)
+          return { keep: submodules.reason, force: submodules.force, bytes };
+        if (rules.worktreeKeepWhen === "tracked-changes" && !submodules.force)
+          yield* cleanupGit(checkoutPath, ["clean", "-ffdx"], "git clean");
         return {
           keep:
             submodules.reason ??

@@ -73,13 +73,19 @@ export function ProjectRepositoriesSection(props: {
   const isBusy = isSaving || listQuery.isPending;
   const added = folders.filter((folder) => folder.discovered !== true);
 
-  const save = async (next: ReadonlyArray<ProjectTrackedFolder>) => {
+  // One folder in or out: the server applies it to its own list, which another client may have
+  // changed while a confirmation was open here.
+  const save = async (
+    change: { readonly track: ProjectTrackedFolder } | { readonly untrack: string },
+  ) => {
     setIsSaving(true);
     const result = await updateProject({
       environmentId: member.environmentId,
       input: {
         projectId: member.id,
-        trackedFolders: next.map(({ path, name }) => ({ path, name })),
+        ...("track" in change
+          ? { trackFolders: [{ path: change.track.path, name: change.track.name }] }
+          : { untrackFolders: [change.untrack] }),
       },
     });
     setIsSaving(false);
@@ -104,7 +110,7 @@ export function ProjectRepositoriesSection(props: {
       }),
       confirmText: gt("Remove", { $context: "verb, removes a folder from the project" }),
       destructive: true,
-      onConfirm: () => void save(added.filter((entry) => entry.path !== folder.path)),
+      onConfirm: () => void save({ untrack: folder.path }),
     });
 
   const add = (folder: ProjectTrackedFolder) => {
@@ -116,7 +122,7 @@ export function ProjectRepositoriesSection(props: {
       );
       return;
     }
-    void save(next);
+    void save({ track: folder });
   };
 
   if (folders.length === 0 && suggested.length === 0) {

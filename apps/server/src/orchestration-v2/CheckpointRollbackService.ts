@@ -334,14 +334,25 @@ export const layer: Layer.Layer<
       if (restoreFiles && !(yield* isolated)) return yield* sharedWorkspace();
 
       // Before the provider conversation changes: a rewind with nothing to restore is refused.
-      const repositories =
+      const readable =
         restoreFiles && taskFolder !== null
-          ? yield* checkpoints.repositoryScopes({
+          ? yield* checkpoints.repositoryScopesIfReadable({
               rootScope: scope,
               projectId: context.thread.projectId,
               worktreePath,
             })
           : [];
+      // Unknown repositories are not "none": the rewind would leave their changes unmentioned.
+      if (readable === null) {
+        return yield* new CheckpointRollbackExecutionError({
+          reason: "unexpected-failure",
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+          cause: new Error("The thread's repositories could not be read."),
+        });
+      }
+      const repositories = readable;
       const recorded =
         repositories.length === 0
           ? []

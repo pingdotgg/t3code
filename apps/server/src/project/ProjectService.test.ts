@@ -10,7 +10,6 @@ import {
   type Project,
   ProjectId,
   type ProjectTrackedFolder,
-  type ProjectUpdatePayload,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -377,7 +376,7 @@ it.layer(layerTest)("ProjectService", (it) => {
           workspaceRoot: `${work}/app`,
           trackedFolders,
         });
-      const update = (key: string, change: Partial<ProjectUpdatePayload>) =>
+      const update = (key: string, change: Partial<ProjectService.ProjectUpdateInput>) =>
         service.update({
           commandId: CommandId.make(`command:tracked:update:${key}`),
           projectId,
@@ -410,6 +409,16 @@ it.layer(layerTest)("ProjectService", (it) => {
         Option.getOrThrow(yield* service.getById(projectId)).trackedFolders,
         tracked,
       );
+      // One folder out or in applies to the list the project has, not to one a client read.
+      assert.deepEqual(
+        (yield* update("untrack", { untrackFolders: [`${work}/api/`] })).trackedFolders,
+        tracked.slice(1),
+      );
+      assert.deepEqual(
+        (yield* update("track", { trackFolders: tracked })).trackedFolders,
+        tracked.toReversed(),
+      );
+      yield* update("reorder", { trackedFolders: tracked });
       // A folder already tracked may go missing; only one being added has to be there.
       yield* fileSystem.remove(`${work}/api`, { recursive: true });
       assert.deepEqual(

@@ -183,6 +183,12 @@ export interface CheckpointServiceV2Shape {
     readonly projectId: ProjectId;
     readonly worktreePath: string | null;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2CheckpointScope>>;
+  /** As `repositoryScopes`, but null when the folders cannot be read: a rewind must not guess. */
+  readonly repositoryScopesIfReadable: (input: {
+    readonly rootScope: OrchestrationV2CheckpointScope;
+    readonly projectId: ProjectId;
+    readonly worktreePath: string | null;
+  }) => Effect.Effect<ReadonlyArray<OrchestrationV2CheckpointScope> | null>;
   readonly nestedScopePaths: (
     scopes: ReadonlyArray<Pick<OrchestrationV2CheckpointScope, "id" | "cwd">>,
   ) => Effect.Effect<NestedScopePaths>;
@@ -873,54 +879,55 @@ export const layer: Layer.Layer<
       },
     );
 
-    const repositoryScopes: CheckpointServiceV2Shape["repositoryScopes"] = Effect.fn(
-      "CheckpointService.repositoryScopes",
-    )(
-      function* (input) {
-        const [workspace, submodules] = yield* Effect.all([
-          workspaceFolders.forThread(input),
-          workspaceFolders.submodules(input),
-        ]);
-        return yield* Effect.forEach(
-          [...workspace.folders.filter((folder) => folder.isGitRepository), ...submodules],
-          (folder) =>
-            idAllocator.allocate
-              .checkpointScope({
-                threadId: input.rootScope.threadId,
-                name: `repository:${folder.repositoryPath ?? folder.path}`,
-              })
-              .pipe(
-                Effect.map(
-                  (id) =>
-                    ({
-                      id,
-                      threadId: input.rootScope.threadId,
-                      runId: input.rootScope.runId,
-                      nodeId: input.rootScope.nodeId,
-                      parentScopeId: input.rootScope.id,
-                      providerThreadId: input.rootScope.providerThreadId,
-                      kind: "manual",
-                      ordinalWithinParent: 1,
-                      advancesAppRunCount: false,
-                      cwd: folder.path,
-                      label: folder.name,
-                      repositoryPath: folder.repositoryPath ?? folder.path,
-                      createdAt: input.rootScope.createdAt,
-                    }) satisfies OrchestrationV2CheckpointScope,
+    const repositoryScopesIfReadable: CheckpointServiceV2Shape["repositoryScopesIfReadable"] =
+      Effect.fn("CheckpointService.repositoryScopes")(
+        function* (input) {
+          const [workspace, submodules] = yield* Effect.all([
+            workspaceFolders.forThread(input),
+            workspaceFolders.submodules(input),
+          ]);
+          return yield* Effect.forEach(
+            [...workspace.folders.filter((folder) => folder.isGitRepository), ...submodules],
+            (folder) =>
+              idAllocator.allocate
+                .checkpointScope({
+                  threadId: input.rootScope.threadId,
+                  name: `repository:${folder.repositoryPath ?? folder.path}`,
+                })
+                .pipe(
+                  Effect.map(
+                    (id) =>
+                      ({
+                        id,
+                        threadId: input.rootScope.threadId,
+                        runId: input.rootScope.runId,
+                        nodeId: input.rootScope.nodeId,
+                        parentScopeId: input.rootScope.id,
+                        providerThreadId: input.rootScope.providerThreadId,
+                        kind: "manual",
+                        ordinalWithinParent: 1,
+                        advancesAppRunCount: false,
+                        cwd: folder.path,
+                        label: folder.name,
+                        repositoryPath: folder.repositoryPath ?? folder.path,
+                        createdAt: input.rootScope.createdAt,
+                      }) satisfies OrchestrationV2CheckpointScope,
+                  ),
                 ),
-              ),
-        );
-      },
-      (effect, input) =>
-        effect.pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("orchestration V2 repository checkpoint scopes unavailable", {
-              threadId: input.rootScope.threadId,
-              cause,
-            }).pipe(Effect.as([])),
+          );
+        },
+        (effect, input) =>
+          effect.pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration V2 repository checkpoint scopes unavailable", {
+                threadId: input.rootScope.threadId,
+                cause,
+              }).pipe(Effect.as(null)),
+            ),
           ),
-        ),
-    );
+      );
+    const repositoryScopes: CheckpointServiceV2Shape["repositoryScopes"] = (input) =>
+      repositoryScopesIfReadable(input).pipe(Effect.map((scopes) => scopes ?? []));
 
     const captureRepositoryBaselines = Effect.fn("CheckpointService.captureRepositoryBaselines")(
       function* (input: {
@@ -1123,6 +1130,7 @@ export const layer: Layer.Layer<
           ),
         ),
       repositoryScopes,
+      repositoryScopesIfReadable,
       nestedScopePaths: resolveNestedScopePaths,
       captureBaseline,
       materializeBaselineCheckpoint,
