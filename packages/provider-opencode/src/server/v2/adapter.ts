@@ -105,6 +105,28 @@ import {
   openCodeToolTurnItem,
 } from "../toolItems.ts";
 
+const SUBAGENT_PROMPT_WRAPPER = "You are a subagent spawned by another session.\n";
+
+function takeMatchingPendingPrompt(
+  pendingPrompts: Array<{ readonly call: SubagentCall; readonly text: string }>,
+  text: string,
+): string {
+  const unwrapped = text.startsWith(SUBAGENT_PROMPT_WRAPPER)
+    ? text.slice(SUBAGENT_PROMPT_WRAPPER.length)
+    : undefined;
+  const matchedTexts = new Set<string>();
+  let matchIndex = -1;
+  for (let i = 0; i < pendingPrompts.length; i += 1) {
+    const candidate = pendingPrompts[i]!.text;
+    if (candidate === text || (unwrapped !== undefined && candidate === unwrapped)) {
+      matchedTexts.add(candidate);
+      if (matchIndex === -1) matchIndex = i;
+    }
+  }
+  if (matchedTexts.size !== 1) return text;
+  return pendingPrompts.splice(matchIndex, 1)[0]!.text;
+}
+
 const NativeGoal = Schema.NullOr(
   Schema.Struct({
     objective: Schema.NonEmptyString,
@@ -3786,7 +3808,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               if (!next.done) {
                 const [nextId, nextText] = next.value;
                 state.subagent.steers.delete(nextId);
-                state.subagent.queuedPrompt = { inboxId: nextId, text: nextText };
+                state.subagent.queuedPrompt = {
+                  inboxId: nextId,
+                  text: takeMatchingPendingPrompt(state.subagent.pendingPrompts, nextText),
+                };
                 state.subagent.queued ??= nextId;
               }
             }
@@ -3821,16 +3846,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         const text = event.data.item.payload.text;
         if (state.subagent !== undefined) {
           if (state.active === undefined && state.subagent.queuedPrompt === undefined) {
-            const matchIndex = state.subagent.pendingPrompts.findIndex(
-              (entry) => text === entry.text || text.includes(entry.text),
-            );
-            const matched =
-              matchIndex === -1
-                ? undefined
-                : state.subagent.pendingPrompts.splice(matchIndex, 1)[0];
             state.subagent.queuedPrompt = {
               inboxId: event.data.inboxID,
-              text: matched?.text ?? text,
+              text: takeMatchingPendingPrompt(state.subagent.pendingPrompts, text),
             };
           } else {
             state.subagent.steers.set(event.data.inboxID, text);
@@ -4170,11 +4188,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return;
       }
       const active = { ...(yield* client.session.active()) };
-      const attachedBefore = new Map(
-        [...threads.values()].flatMap((state) =>
-          state.subagent === undefined ? [] : [[state, state.subagent.call] as const],
-        ),
-      );
       for (const sessionId of busy) if (!(sessionId in active)) busy.delete(sessionId);
       for (const state of threads.values()) {
         if (state.unsettled && !(state.sessionId in active)) state.unsettledStarted = true;
@@ -4216,13 +4229,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }),
         );
       }
-      // A child the parent's backfill found running started in the gap; its start is not replayed.
+      // A locally idle child listed as active started in the gap while a call awaited execution.
       for (const state of threads.values()) {
-        if (state.subagent === undefined || state.active !== undefined) continue;
-        if (attachedBefore.get(state) === state.subagent.call || !(state.sessionId in active)) {
+        if (
+          state.subagent === undefined ||
+          state.active !== undefined ||
+          state.unsettled ||
+          !(state.sessionId in active)
+        ) {
           continue;
         }
-        yield* lock.withPermit(startChildTurn(state));
+        yield* lock.withPermit(
+          Effect.gen(function* () {
+            if (state.subagent === undefined || state.active !== undefined || state.unsettled) {
+              return;
+            }
+            if (!callsAttachedTo(state).some((call) => call.run === undefined)) return;
+            yield* startChildTurn(state);
+          }),
+        );
       }
       for (const state of threads.values()) {
         yield* lock

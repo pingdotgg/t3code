@@ -228,6 +228,13 @@ function withLinkedChildThreadId(
   return { ...current, linkedChildThreadIds };
 }
 
+function isOwnedByRun(
+  row: { readonly runId: OrchestrationV2Run["id"] | null; readonly threadId: ThreadId },
+  run: OrchestrationV2Run,
+): boolean {
+  return row.runId === run.id || (row.threadId !== run.threadId && row.runId === null);
+}
+
 export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
   "RunExecutionService.cascadeTerminalizeRunOwnedSubagents",
 )(function* (input: {
@@ -244,8 +251,13 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
   // Prefer lifetime linkage over currently-open rows: subagent/turn-item
   // snapshots may terminalize before the linked child-thread node settles.
   const childThreadIds = new Set(input.open.linkedChildThreadIds);
-  for (const item of [...input.open.subagents.values(), ...input.open.turnItems.values()]) {
-    if (item.childThreadId !== null) {
+  for (const subagent of input.open.subagents.values()) {
+    if (isOwnedByRun(subagent, input.run) && subagent.childThreadId !== null) {
+      childThreadIds.add(subagent.childThreadId);
+    }
+  }
+  for (const item of input.open.turnItems.values()) {
+    if (item.runId === input.run.id && item.childThreadId !== null) {
       childThreadIds.add(item.childThreadId);
     }
   }
@@ -256,18 +268,20 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
   ]);
   for (const key of keys) {
     const subagent = input.open.subagents.get(key);
-    if (subagent !== undefined && !isSettledSubagentStatus(subagent.status)) {
+    const ownedSubagent =
+      subagent !== undefined && isOwnedByRun(subagent, input.run) ? subagent : undefined;
+    if (ownedSubagent !== undefined && !isSettledSubagentStatus(ownedSubagent.status)) {
       events.push({
         id: yield* input.allocateEventId(),
         type: "subagent.updated",
-        threadId: subagent.threadId,
+        threadId: ownedSubagent.threadId,
         runId: input.run.id,
-        nodeId: subagent.id,
-        driver: subagent.driver,
-        providerInstanceId: subagent.providerInstanceId,
+        nodeId: ownedSubagent.id,
+        driver: ownedSubagent.driver,
+        providerInstanceId: ownedSubagent.providerInstanceId,
         occurredAt: input.completedAt,
         payload: {
-          ...subagent,
+          ...ownedSubagent,
           status: input.status,
           completedAt: input.completedAt,
           updatedAt: input.completedAt,
@@ -277,7 +291,8 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
     const node = input.open.nodes.get(key);
     if (
       node !== undefined &&
-      (subagent !== undefined ||
+      isOwnedByRun(node, input.run) &&
+      (ownedSubagent !== undefined ||
         (node.threadId === input.run.threadId && node.runId === input.run.id) ||
         childThreadIds.has(node.threadId)) &&
       isOpenExecutionNodeStatus(node.status)
@@ -321,9 +336,11 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
     }
   }
   for (const turnItem of input.open.childTurnItems.values()) {
-    const ownedByOpenSubagent =
-      turnItem.type === "subagent" && input.open.subagents.has(turnItem.subagentId);
+    const owner =
+      turnItem.type === "subagent" ? input.open.subagents.get(turnItem.subagentId) : undefined;
+    const ownedByOpenSubagent = owner !== undefined && isOwnedByRun(owner, input.run);
     if (
+      (turnItem.runId !== null && turnItem.runId !== input.run.id) ||
       (!childThreadIds.has(turnItem.threadId) && !ownedByOpenSubagent) ||
       isSettledTurnItemStatus(turnItem.status)
     ) {
@@ -1342,11 +1359,9 @@ export const layer: Layer.Layer<
           const nodes = new Map<NodeId, OrchestrationV2ExecutionNode>();
           const turnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
           if (input.loadUnsettledWork === undefined) return { subagents, nodes, turnItems };
-          const trackedItemIds = new Set<TurnItemId>([
-            ...openRootToolCalls.keys(),
-            ...open.childTurnItems.keys(),
-            ...[...open.turnItems.values()].map((item) => item.id),
-          ]);
+          const trackedSubagentItemIds = new Set<TurnItemId>(
+            [...open.turnItems.values()].map((item) => item.id),
+          );
           for (const threadId of new Set(threadIds)) {
             const stored = yield* input.loadUnsettledWork(
               threadId,
@@ -1354,18 +1369,41 @@ export const layer: Layer.Layer<
                 .filter((record) => record.threadId === threadId)
                 .map((record) => record.id),
             );
-            for (const subagent of stored.subagents) {
-              if (open.subagents.has(subagent.id) && !isSettledSubagentStatus(subagent.status)) {
-                subagents.set(subagent.id, subagent);
-              }
-            }
+            const foreignOwnedNodeIds = new Set<NodeId>();
             for (const node of stored.nodes) {
+              if (!isOwnedByRun(node, input.run)) {
+                foreignOwnedNodeIds.add(node.id);
+                continue;
+              }
               if (open.nodes.has(node.id) && isOpenExecutionNodeStatus(node.status)) {
                 nodes.set(node.id, node);
               }
             }
+            for (const subagent of stored.subagents) {
+              if (
+                open.subagents.has(subagent.id) &&
+                !foreignOwnedNodeIds.has(subagent.id) &&
+                isOwnedByRun(subagent, input.run) &&
+                !isSettledSubagentStatus(subagent.status)
+              ) {
+                subagents.set(subagent.id, subagent);
+              }
+            }
             for (const item of stored.turnItems) {
-              if (trackedItemIds.has(item.id) && !isSettledTurnItemStatus(item.status)) {
+              if (isSettledTurnItemStatus(item.status)) continue;
+              const trackedRootToolCall =
+                openRootToolCalls.has(item.id) &&
+                item.threadId === input.run.threadId &&
+                (item.runId === input.run.id ||
+                  (item.runId !== null &&
+                    inheritedBackgroundTurnItemsById.get(item.id) === item.runId));
+              const trackedSubagentItem =
+                trackedSubagentItemIds.has(item.id) && item.runId === input.run.id;
+              const trackedChildItem =
+                open.childTurnItems.has(item.id) &&
+                item.threadId !== input.run.threadId &&
+                (item.runId === null || item.runId === input.run.id);
+              if (trackedRootToolCall || trackedSubagentItem || trackedChildItem) {
                 turnItems.set(item.id, item);
               }
             }
@@ -1379,83 +1417,83 @@ export const layer: Layer.Layer<
         );
         // Subagents and tool calls that outlived the root run die with the provider runtime. Stop
         // can settle them meanwhile, so each write holds only while its stored row is unchanged.
-        const endLostWork = Effect.fn("RunExecutionService.endLostWork")(
-          function* (completedAt: DateTime.Utc, options: { readonly includeToolCalls: boolean }) {
-            const allocateEventId = () =>
-              idAllocator.allocate.event({ threadId: input.run.threadId });
-            const open = yield* Ref.get(openRunOwnedSubagents);
-            const stored = yield* loadTrackedWork([
-              input.run.threadId,
-              ...[
-                ...open.subagents.values(),
-                ...open.nodes.values(),
-                ...open.childTurnItems.values(),
-              ].map((record) => record.threadId),
-            ]);
-            for (const subagent of stored.subagents.values()) {
-              const subagentItemId = open.turnItems.get(subagent.id)?.id;
-              const subagentItem =
-                subagentItemId === undefined ? undefined : stored.turnItems.get(subagentItemId);
-              const events = yield* cascadeTerminalizeRunOwnedSubagents({
-                run: input.run,
-                open: {
-                  subagents: new Map([[subagent.id, subagent]]),
-                  turnItems: new Map(
-                    subagentItem?.type === "subagent" ? [[subagent.id, subagentItem]] : [],
-                  ),
-                  childTurnItems: new Map(
-                    [...stored.turnItems].filter(
-                      ([id, item]) =>
-                        open.childTurnItems.has(id) &&
-                        (item.threadId === subagent.childThreadId ||
-                          (item.type === "subagent" && item.subagentId === subagent.id)),
-                    ),
-                  ),
-                  nodes: new Map(
-                    [...stored.nodes].filter(
-                      ([id, node]) =>
-                        id === subagent.id || node.threadId === subagent.childThreadId,
-                    ),
-                  ),
-                  linkedChildThreadIds: new Set(
-                    subagent.childThreadId === null ? [] : [subagent.childThreadId],
-                  ),
-                },
-                status: "failed",
-                completedAt,
-                allocateEventId,
-              });
-              yield* eventSink.writeIfSubagentUnchanged({ expected: subagent, events });
-            }
-            if (options.includeToolCalls) {
-              for (const toolCall of stored.turnItems.values()) {
-                if (!openRootToolCalls.has(toolCall.id)) continue;
-                yield* eventSink.writeIfTurnItemUnchanged({
-                  expected: toolCall,
-                  events: yield* interruptLostToolCalls({
-                    run: input.run,
-                    toolCalls: [toolCall],
-                    completedAt,
-                    allocateEventId,
-                  }),
-                });
-              }
-              openRootToolCalls.clear();
-            }
+        const endLostWorkOnce = Effect.fn("RunExecutionService.endLostWork")(function* (
+          completedAt: DateTime.Utc,
+          options: { readonly includeToolCalls: boolean },
+        ) {
+          const allocateEventId = () =>
+            idAllocator.allocate.event({ threadId: input.run.threadId });
+          const open = yield* Ref.get(openRunOwnedSubagents);
+          const hasSubagents = open.subagents.size > 0;
+          const hasToolCalls = options.includeToolCalls && openRootToolCalls.size > 0;
+          if (!hasSubagents && !hasToolCalls) {
             yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
-          },
-          (effect) =>
-            effect.pipe(
-              Effect.catchCauseIf(
-                (cause) => !Cause.hasInterruptsOnly(cause),
-                (cause) =>
-                  Effect.logWarning(
-                    "orchestration V2 failed to end work lost with the provider runtime",
-                    { runId: input.run.id, cause },
+            return;
+          }
+          const stored = yield* loadTrackedWork([
+            input.run.threadId,
+            ...[
+              ...open.subagents.values(),
+              ...open.nodes.values(),
+              ...open.childTurnItems.values(),
+            ].map((record) => record.threadId),
+          ]);
+          for (const subagent of stored.subagents.values()) {
+            const subagentItemId = open.turnItems.get(subagent.id)?.id;
+            const subagentItem =
+              subagentItemId === undefined ? undefined : stored.turnItems.get(subagentItemId);
+            const events = yield* cascadeTerminalizeRunOwnedSubagents({
+              run: input.run,
+              open: {
+                subagents: new Map([[subagent.id, subagent]]),
+                turnItems: new Map(
+                  subagentItem?.type === "subagent" ? [[subagent.id, subagentItem]] : [],
+                ),
+                childTurnItems: new Map(
+                  [...stored.turnItems].filter(
+                    ([id, item]) =>
+                      open.childTurnItems.has(id) &&
+                      (item.threadId === subagent.childThreadId ||
+                        (item.type === "subagent" && item.subagentId === subagent.id)),
                   ),
-              ),
-            ),
-        );
+                ),
+                nodes: new Map(
+                  [...stored.nodes].filter(
+                    ([id, node]) => id === subagent.id || node.threadId === subagent.childThreadId,
+                  ),
+                ),
+                linkedChildThreadIds: new Set(
+                  subagent.childThreadId === null ? [] : [subagent.childThreadId],
+                ),
+              },
+              status: "failed",
+              completedAt,
+              allocateEventId,
+            });
+            const expectedNode = stored.nodes.get(subagent.id);
+            yield* eventSink.writeIfSubagentUnchanged({
+              expected: subagent,
+              ...(expectedNode === undefined ? {} : { expectedNode }),
+              events,
+            });
+          }
+          if (options.includeToolCalls) {
+            for (const toolCall of stored.turnItems.values()) {
+              if (!openRootToolCalls.has(toolCall.id)) continue;
+              yield* eventSink.writeIfTurnItemUnchanged({
+                expected: toolCall,
+                events: yield* interruptLostToolCalls({
+                  run: input.run,
+                  toolCalls: [toolCall],
+                  completedAt,
+                  allocateEventId,
+                }),
+              });
+            }
+            openRootToolCalls.clear();
+          }
+          yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
+        });
         // Runs for every provider event, including streamed text updates; avoid a per-event span.
         const trackChildLifecycle = Effect.fnUntraced(function* (
           event: ProviderAdapter.ProviderAdapterV2Event,
@@ -2101,6 +2139,47 @@ export const layer: Layer.Layer<
                   const routing = yield* Ref.get(eventRouting);
                   const rootProviderTurn = yield* Ref.get(latestRootProviderTurn);
                   const squashed = Cause.squash(cause);
+                  const retryRecoveryWrite = <A, E, R>(
+                    effect: Effect.Effect<A, E, R>,
+                    warningMessage: string,
+                  ) => {
+                    let nextRetryWarningAt = completedAt;
+                    return effect.pipe(
+                      // Storage failures can be defects; retry both failure channels.
+                      Effect.catchCause((writeCause) =>
+                        Effect.gen(function* () {
+                          if (Cause.hasInterruptsOnly(writeCause)) {
+                            return yield* Effect.failCause(writeCause);
+                          }
+                          const now = yield* DateTime.now;
+                          if (DateTime.isGreaterThanOrEqualTo(now, nextRetryWarningAt)) {
+                            yield* Effect.logWarning(warningMessage, {
+                              runId: input.run.id,
+                              attemptId: input.attempt.id,
+                              cause: writeCause,
+                            });
+                            // Persistent storage failures must not flood the same disk.
+                            nextRetryWarningAt = DateTime.add(now, { minutes: 10 });
+                          }
+                          return yield* Effect.fail(writeCause);
+                        }),
+                      ),
+                      Effect.retry({
+                        schedule: Schedule.exponential("1 second").pipe(
+                          Schedule.modifyDelay(({ duration }) =>
+                            Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                          ),
+                        ),
+                      }),
+                    );
+                  };
+                  const runInRecoveryScope = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+                    effect.pipe(
+                      // Startup may cancel the consumer and fail its own terminal
+                      // write. Only service shutdown or the atomic gate ends recovery.
+                      Effect.forkIn(scope),
+                      Effect.flatMap(Fiber.join),
+                    );
                   // An exclusive session closes when its thread detaches, and no terminal
                   // follows. The process is gone, so a handoff settles here with no interrupt.
                   if (
@@ -2137,7 +2216,12 @@ export const layer: Layer.Layer<
                     );
                     if (handedOff) {
                       // Its tool calls, the handoff's own among them, died with that process.
-                      yield* endLostWork(completedAt, { includeToolCalls: true });
+                      yield* runInRecoveryScope(
+                        retryRecoveryWrite(
+                          endLostWorkOnce(completedAt, { includeToolCalls: true }),
+                          "orchestration V2 lost-work cleanup retry",
+                        ),
+                      );
                       return;
                     }
                   }
@@ -2152,7 +2236,14 @@ export const layer: Layer.Layer<
                     isProviderEventStreamError(squashed.cause) &&
                     squashed.cause.raisedByT3 !== true;
                   if (yield* Ref.get(rootRunFinalized)) {
-                    if (runtimeLost) yield* endLostWork(completedAt, { includeToolCalls: true });
+                    if (runtimeLost) {
+                      yield* runInRecoveryScope(
+                        retryRecoveryWrite(
+                          endLostWorkOnce(completedAt, { includeToolCalls: true }),
+                          "orchestration V2 lost-work cleanup retry",
+                        ),
+                      );
+                    }
                     return;
                   }
                   const providerThread = yield* Ref.get(latestProviderThread);
@@ -2205,72 +2296,47 @@ export const layer: Layer.Layer<
                         ),
                       )
                     : [];
-                  let nextRetryWarningAt = completedAt;
                   const reloadSubagents = input.loadUnsettledWork !== undefined;
-                  const finalized = yield* writeFinalRunEvents({
-                    run: input.run,
-                    rootNode: input.rootNode,
-                    checkpointScope: input.checkpointScope,
-                    providerThread,
-                    attempt: input.attempt,
-                    writeIfRunCurrent: {
-                      activeAttemptId: input.attempt.id,
-                      expectedStatus: "running",
-                    },
-                    ...(reloadSubagents ? {} : { openRunOwnedSubagents: openSubagents }),
-                    ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
-                    lostToolCalls,
-                    completedAt,
-                    terminal: makeFailedTerminalEvent(
-                      makeProviderFailure({
-                        cause: squashed,
-                        message:
-                          knownProviderFailureMessage(squashed) ??
-                          userFacingDatabaseErrorMessage(squashed),
-                        class: "unknown",
-                      }),
-                      latestItemOrdinal + 1,
-                    ),
-                    failureItemPersisted: false,
-                    refreshAfterTurn,
-                  }).pipe(
-                    // Storage failures can be defects; retry both failure channels.
-                    Effect.catchCause((writeCause) =>
-                      Effect.gen(function* () {
-                        if (Cause.hasInterruptsOnly(writeCause)) {
-                          return yield* Effect.failCause(writeCause);
-                        }
-                        const now = yield* DateTime.now;
-                        if (DateTime.isGreaterThanOrEqualTo(now, nextRetryWarningAt)) {
-                          yield* Effect.logWarning(
-                            "orchestration V2 run failure finalization retry",
-                            {
-                              runId: input.run.id,
-                              attemptId: input.attempt.id,
-                              cause: writeCause,
-                            },
-                          );
-                          // Persistent storage failures must not flood the same disk.
-                          nextRetryWarningAt = DateTime.add(now, { minutes: 10 });
-                        }
-                        return yield* Effect.fail(writeCause);
-                      }),
-                    ),
-                    Effect.retry({
-                      schedule: Schedule.exponential("1 second").pipe(
-                        Schedule.modifyDelay(({ duration }) =>
-                          Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-                        ),
-                      ),
+                  yield* runInRecoveryScope(
+                    Effect.gen(function* () {
+                      const finalized = yield* retryRecoveryWrite(
+                        writeFinalRunEvents({
+                          run: input.run,
+                          rootNode: input.rootNode,
+                          checkpointScope: input.checkpointScope,
+                          providerThread,
+                          attempt: input.attempt,
+                          writeIfRunCurrent: {
+                            activeAttemptId: input.attempt.id,
+                            expectedStatus: "running",
+                          },
+                          ...(reloadSubagents ? {} : { openRunOwnedSubagents: openSubagents }),
+                          ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
+                          lostToolCalls,
+                          completedAt,
+                          terminal: makeFailedTerminalEvent(
+                            makeProviderFailure({
+                              cause: squashed,
+                              message:
+                                knownProviderFailureMessage(squashed) ??
+                                userFacingDatabaseErrorMessage(squashed),
+                              class: "unknown",
+                            }),
+                            latestItemOrdinal + 1,
+                          ),
+                          failureItemPersisted: false,
+                          refreshAfterTurn,
+                        }),
+                        "orchestration V2 run failure finalization retry",
+                      );
+                      if (finalized && reloadSubagents) {
+                        yield* retryRecoveryWrite(
+                          endLostWorkOnce(completedAt, { includeToolCalls: false }),
+                          "orchestration V2 lost-subagent cleanup retry",
+                        );
+                      }
                     }),
-                    // Startup may cancel the consumer and fail its own terminal
-                    // write. Only service shutdown or the atomic gate ends recovery.
-                    Effect.forkIn(scope),
-                    Effect.flatMap(Fiber.join),
                   );
-                  if (finalized && reloadSubagents) {
-                    yield* endLostWork(completedAt, { includeToolCalls: false });
-                  }
                 }),
             ),
             Effect.ensuring(endPreviewActivity),

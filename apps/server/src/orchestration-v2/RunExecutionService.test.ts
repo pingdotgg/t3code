@@ -3638,9 +3638,25 @@ it.effect.each([
   { ended: false, rootLive: true, settledStatus: "completed" as const },
   // Moving child C to another run keeps nested subagent G owned by this run for lost-work cleanup.
   { ended: true, rootLive: true, handedOffWithNested: true },
+  // A legacy subagent claimed by a newer run under the same ID is not failed by the older run's cascade.
+  { ended: false, rootLive: true, claimedByOtherRun: true },
+  // Even if only the shared node has been claimed by a newer run, the older run skips the subagent.
+  { ended: false, rootLive: true, nodeClaimedByOtherRun: true },
+  // If the shared node is claimed between reload and conditional write, expectedNode rejects the write.
+  { ended: false, rootLive: true, nodeClaimedBeforeWrite: true },
 ] as const)(
   "ends a subagent that outlived its root when the provider stream fails (%o)",
-  ({ ended, raisedByT3, stopped, rootLive, settledStatus, handedOffWithNested }) =>
+  ({
+    ended,
+    raisedByT3,
+    stopped,
+    rootLive,
+    settledStatus,
+    handedOffWithNested,
+    claimedByOtherRun,
+    nodeClaimedByOtherRun,
+    nodeClaimedBeforeWrite,
+  }) =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex");
       const grandchildId = NodeId.make("node:stream-error-outlived-subagent:grandchild");
@@ -3670,6 +3686,17 @@ it.effect.each([
             { type: "subagent.updated", driver, subagent: baseSubagent },
             { type: "turn_item.updated", driver, turnItem: baseTurnItem },
           ];
+          if (
+            claimedByOtherRun === true ||
+            nodeClaimedByOtherRun === true ||
+            nodeClaimedBeforeWrite === true
+          ) {
+            events.push({
+              type: "node.updated",
+              driver,
+              node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+            });
+          }
           if (handedOffWithNested === true) {
             events.push(
               {
@@ -3739,9 +3766,38 @@ it.effect.each([
             ),
           );
         },
-        ...(stopped === true || settledStatus !== undefined
+        ...(nodeClaimedBeforeWrite === true
+          ? {
+              beforeSubagentWrite: (payload, stored) =>
+                Effect.sync(() => {
+                  const node = stored.nodes.get(payload.expected.id);
+                  if (node !== undefined) {
+                    stored.nodes.set(node.id, { ...node, runId: RunId.make("run:other-owner") });
+                  }
+                }),
+            }
+          : {}),
+        ...(stopped === true ||
+        settledStatus !== undefined ||
+        claimedByOtherRun === true ||
+        nodeClaimedByOtherRun === true
           ? {
               settleStored: (work) => {
+                if (claimedByOtherRun === true) {
+                  const otherRunId = RunId.make("run:other-owner");
+                  return {
+                    subagents: work.subagents.map((row) => ({ ...row, runId: otherRunId })),
+                    nodes: work.nodes.map((row) => ({ ...row, runId: otherRunId })),
+                    turnItems: work.turnItems.map((row) => ({ ...row, runId: otherRunId })),
+                  };
+                }
+                if (nodeClaimedByOtherRun === true) {
+                  const otherRunId = RunId.make("run:other-owner");
+                  return {
+                    ...work,
+                    nodes: work.nodes.map((row) => ({ ...row, runId: otherRunId })),
+                  };
+                }
                 const status = settledStatus ?? "interrupted";
                 return {
                   ...work,
@@ -3776,7 +3832,10 @@ it.effect.each([
             ];
           }
           if (
-            handedOffWithNested === true &&
+            (handedOffWithNested === true ||
+              claimedByOtherRun === true ||
+              nodeClaimedByOtherRun === true ||
+              nodeClaimedBeforeWrite === true) &&
             event.type === "node.updated" &&
             event.payload.kind === "subagent"
           ) {
@@ -3792,6 +3851,144 @@ it.effect.each([
           return [];
         }),
         expected,
+      );
+    }),
+);
+
+it.effect(
+  "retries lost-subagent cleanup after root finalization without rewriting settled rows",
+  () =>
+    Effect.gen(function* () {
+      const key = "retry-lost-subagent-cleanup";
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const subagent1Id = NodeId.make(`node:${key}:subagent:1`);
+      const subagent2Id = NodeId.make(`node:${key}:subagent:2`);
+      const subagent3Id = NodeId.make(`node:${key}:subagent:3`);
+      const subagent1ItemId = TurnItemId.make(`turn-item:${key}:subagent:1`);
+      const subagent2ItemId = TurnItemId.make(`turn-item:${key}:subagent:2`);
+      const subagent3ItemId = TurnItemId.make(`turn-item:${key}:subagent:3`);
+      const rootWrites = yield* Ref.make(0);
+      const subagentWriteAttempts = yield* Ref.make<ReadonlyArray<NodeId>>([]);
+      const transientFailed = yield* Deferred.make<void>();
+      let failedSubagent2Once = false;
+      let subagent3Completed = false;
+
+      const scenario = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        beforeTerminalWrite: () =>
+          Ref.update(rootWrites, (count) => count + 1).pipe(Effect.as(true)),
+        beforeSubagentWrite: (payload) =>
+          Effect.gen(function* () {
+            yield* Ref.update(subagentWriteAttempts, (current) => [
+              ...current,
+              payload.expected.id,
+            ]);
+            if (payload.expected.id === subagent2Id && !failedSubagent2Once) {
+              failedSubagent2Once = true;
+              subagent3Completed = true;
+              yield* Deferred.succeed(transientFailed, undefined);
+              return yield* new EventSink.EventSinkWriteError({
+                eventCount: payload.events.length,
+                cause: new Error("SQLITE_BUSY"),
+              });
+            }
+          }),
+        settleStored: (work) =>
+          subagent3Completed
+            ? {
+                ...work,
+                subagents: work.subagents.map((row) =>
+                  row.id === subagent3Id ? { ...row, status: "completed" as const } : row,
+                ),
+                turnItems: work.turnItems.map((row) =>
+                  row.id === subagent3ItemId ? { ...row, status: "completed" as const } : row,
+                ),
+              }
+            : work,
+        events: (ids) => {
+          const baseSubagent = makeRunOwnedSubagentFixture({
+            ids,
+            providerInstanceId,
+            childThreadId: ids.childThreadId,
+            driver,
+            status: "running",
+          });
+          const baseTurnItem = makeRunOwnedSubagentTurnItemFixture({
+            ids,
+            providerInstanceId,
+            childThreadId: ids.childThreadId,
+            driver,
+            status: "running",
+          });
+          const specs = [
+            { id: subagent1Id, itemId: subagent1ItemId, child: ThreadId.make(`thread:${key}:c1`) },
+            { id: subagent2Id, itemId: subagent2ItemId, child: ThreadId.make(`thread:${key}:c2`) },
+            { id: subagent3Id, itemId: subagent3ItemId, child: ThreadId.make(`thread:${key}:c3`) },
+          ] as const;
+          return Stream.fromIterable(
+            specs.flatMap(
+              ({ id, itemId, child }): ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> => [
+                {
+                  type: "subagent.updated",
+                  driver,
+                  subagent: { ...baseSubagent, id, childThreadId: child },
+                },
+                {
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: {
+                    ...baseTurnItem,
+                    id: itemId,
+                    nodeId: id,
+                    subagentId: id,
+                    childThreadId: child,
+                  },
+                },
+              ],
+            ),
+          ).pipe(
+            Stream.concat(
+              Stream.fail(
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver,
+                  providerSessionId: ProviderSessionId.make(`session:${key}`),
+                  cause: "provider process exited",
+                }),
+              ),
+            ),
+          );
+        },
+      }).pipe(Effect.forkChild);
+
+      yield* Deferred.await(transientFailed);
+      yield* TestClock.adjust("1 second");
+      const { finalEvents } = yield* Fiber.join(scenario);
+
+      assert.equal(yield* Ref.get(rootWrites), 1);
+      assert.deepEqual(yield* Ref.get(subagentWriteAttempts), [
+        subagent1Id,
+        subagent2Id,
+        subagent2Id,
+      ]);
+      assert.deepEqual(
+        finalEvents.flatMap((event) => {
+          if (event.type === "run.updated") return [`${event.type}:${event.payload.status}`];
+          if (event.type === "subagent.updated") {
+            return [`${event.type}:${event.payload.status}:${event.payload.id}`];
+          }
+          if (event.type === "turn-item.updated" && event.payload.type === "subagent") {
+            return [`${event.type}:${event.payload.status}:${event.payload.id}`];
+          }
+          return [];
+        }),
+        [
+          "run.updated:failed",
+          `subagent.updated:failed:${subagent1Id}`,
+          `turn-item.updated:failed:${subagent1ItemId}`,
+          `subagent.updated:failed:${subagent2Id}`,
+          `turn-item.updated:failed:${subagent2ItemId}`,
+        ],
       );
     }),
 );
@@ -4106,6 +4303,14 @@ function captureRootRunTermination(input: {
   readonly beforeTerminalWrite?: (
     request: Parameters<EventSink.EventSinkV2["Service"]["writeIfRunCurrent"]>[0],
   ) => Effect.Effect<boolean, EventSink.EventSinkV2Error>;
+  readonly beforeSubagentWrite?: (
+    request: Parameters<EventSink.EventSinkV2["Service"]["writeIfSubagentUnchanged"]>[0],
+    stored: {
+      readonly subagents: Map<string, OrchestrationV2Subagent>;
+      readonly nodes: Map<string, OrchestrationV2ExecutionNode>;
+      readonly turnItems: Map<string, OrchestrationV2TurnItem>;
+    },
+  ) => Effect.Effect<void, EventSink.EventSinkV2Error>;
   readonly afterStart?: (
     closed: Deferred.Deferred<void>,
   ) => Effect.Effect<void, never, PreviewAgentActivity.PreviewAgentActivity>;
@@ -4137,7 +4342,11 @@ function captureRootRunTermination(input: {
           nodes: [...stored.nodes.values()].filter((row) => row.threadId === threadId),
           turnItems: [...stored.turnItems.values()].filter((row) => row.threadId === threadId),
         };
-        return input.settleStored?.(work) ?? work;
+        const settled = input.settleStored?.(work) ?? work;
+        for (const row of settled.subagents) stored.subagents.set(row.id, row);
+        for (const row of settled.nodes) stored.nodes.set(row.id, row);
+        for (const row of settled.turnItems) stored.turnItems.set(row.id, row);
+        return settled;
       });
     const providerInstanceId = ProviderInstanceId.make("codex");
     const runningSubagent = makeRunOwnedSubagentFixture({
@@ -4209,11 +4418,31 @@ function captureRootRunTermination(input: {
               }),
             // Committed only against the row that was read, as the real conditional writes are.
             writeIfSubagentUnchanged: (payload) =>
-              stored.subagents.get(payload.expected.id) === payload.expected
-                ? captureFinalEvents(payload.events).pipe(
-                    Effect.as({ committed: true, storedEvents: [] }),
-                  )
-                : Effect.succeed({ committed: false, storedEvents: [] }),
+              Effect.gen(function* () {
+                if (input.beforeSubagentWrite !== undefined) {
+                  yield* input.beforeSubagentWrite(payload, stored);
+                }
+                if (
+                  stored.subagents.get(payload.expected.id) !== payload.expected ||
+                  (payload.expectedNode !== undefined &&
+                    stored.nodes.get(payload.expectedNode.id) !== payload.expectedNode)
+                ) {
+                  return { committed: false, storedEvents: [] };
+                }
+                for (const event of payload.events) {
+                  if (event.type === "subagent.updated") {
+                    stored.subagents.set(event.payload.id, event.payload);
+                  }
+                  if (event.type === "node.updated") {
+                    stored.nodes.set(event.payload.id, event.payload);
+                  }
+                  if (event.type === "turn-item.updated") {
+                    stored.turnItems.set(event.payload.id, event.payload);
+                  }
+                }
+                yield* captureFinalEvents(payload.events);
+                return { committed: true, storedEvents: [] };
+              }),
             writeIfTurnItemUnchanged: (payload) =>
               stored.turnItems.get(payload.expected.id) === payload.expected
                 ? captureFinalEvents(payload.events).pipe(
@@ -6493,6 +6722,24 @@ it.effect(
 
       // Run 2 detaches the legacy row and closes its subscription while Run 3 ingests the claim.
       yield* Deferred.await(ingestionDone);
+      const beforeRun3Projection = yield* projectionStore.getThreadProjection(ids.threadId);
+      const beforeRun3Nodes = beforeRun3Projection.nodes.filter((node) => node.kind === "subagent");
+      const beforeRun3Items = beforeRun3Projection.turnItems.filter(
+        (item) => item.type === "subagent",
+      );
+      assert.lengthOf(beforeRun3Nodes, 1);
+      assert.lengthOf(beforeRun3Projection.subagents, 1);
+      assert.lengthOf(beforeRun3Items, 1);
+      assert.equal(beforeRun3Nodes[0]?.id, legacyNodeId);
+      assert.equal(beforeRun3Nodes[0]?.runId, ids.runId);
+      assert.equal(beforeRun3Nodes[0]?.status, "running");
+      assert.equal(beforeRun3Projection.subagents[0]?.id, legacyNodeId);
+      assert.equal(beforeRun3Projection.subagents[0]?.runId, ids.runId);
+      assert.equal(beforeRun3Projection.subagents[0]?.status, "running");
+      assert.equal(beforeRun3Items[0]?.id, legacyItemId);
+      assert.equal(beforeRun3Items[0]?.runId, ids.runId);
+      assert.equal(beforeRun3Items[0]?.status, "running");
+
       for (const claimEvent of [run3ClaimNode, run3ClaimSubagent, run3ClaimTurnItem]) {
         yield* ingestor.ingestNormalized({
           providerSessionId,

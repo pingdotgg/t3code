@@ -2322,7 +2322,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             sessionID: CHILD,
             item: {
               type: "user",
-              payload: { text: "You are a subagent.\nsleep", files: [] },
+              payload: { text: "You are a subagent spawned by another session.\nsleep", files: [] },
               delivery: "steer",
             },
           }),
@@ -2863,46 +2863,34 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
-  it.effect.each(["launched", "redirected"] as const)(
+  it.effect.each(["launched", "redirected", "redirected-before-disconnect"] as const)(
     "streams a child that %s and started while the parent was disconnected",
     (mode) =>
       Effect.gen(function* () {
+        const isRedirect = mode !== "launched";
         const { runtime, thread } = yield* resumed([
-          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-          promptAccepted,
-          event("session.execution.started", { sessionID: SESSION }),
-          ...(mode === "redirected"
+          ...(isRedirect
             ? [
-                event("session.created", {
-                  session: { id: CHILD, title: "Sleep", parentID: SESSION },
-                }),
-                event("session.tool.started", {
-                  sessionID: SESSION,
-                  assistantMessageID: "msg_parent_initial",
-                  toolID: "call-initial",
-                  name: "subagent",
-                  input: { description: "Sleep", prompt: "first", background: true },
-                }),
-                event("session.tool.progress", {
-                  sessionID: SESSION,
-                  assistantMessageID: "msg_parent_initial",
-                  toolID: "call-initial",
-                  name: "subagent",
-                  metadata: { sessionID: CHILD, status: "running" },
-                }),
-                event("session.execution.started", { sessionID: CHILD }),
+                ...launchedAndRunning,
                 event("session.execution.succeeded", { sessionID: CHILD }),
-                event("session.tool.completed", {
-                  sessionID: SESSION,
-                  assistantMessageID: "msg_parent_initial",
-                  toolID: "call-initial",
-                  name: "subagent",
-                  output: "The subagent is working in the background.",
-                  metadata: { sessionID: CHILD, status: "running" },
-                }),
                 childReport("msg_report_initial", "FIRST_OK"),
+                ...(mode === "redirected-before-disconnect"
+                  ? callAgain(
+                      {
+                        sessionID: CHILD,
+                        description: "Redirect",
+                        prompt: "second",
+                        background: true,
+                      },
+                      { id: "call-redirect", writesRules: true },
+                    )
+                  : []),
               ]
-            : []),
+            : [
+                out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+                promptAccepted,
+                event("session.execution.started", { sessionID: SESSION }),
+              ]),
           { type: "runtime_exit", status: "success" },
           out("event.subscribe"),
           out("session.active"),
@@ -2922,20 +2910,19 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 content: [
                   {
                     type: "tool",
-                    id: mode === "redirected" ? "call-redirect" : "call-background",
+                    id: isRedirect ? "call-redirect" : "call-background",
                     name: "subagent",
                     executed: true,
                     state: {
                       status: "completed",
-                      input:
-                        mode === "redirected"
-                          ? {
-                              sessionID: CHILD,
-                              description: "Redirect",
-                              prompt: "second",
-                              background: true,
-                            }
-                          : { description: "Sleep", prompt: "sleep", background: true },
+                      input: isRedirect
+                        ? {
+                            sessionID: CHILD,
+                            description: "Redirect",
+                            prompt: "second",
+                            background: true,
+                          }
+                        : { description: "Sleep", prompt: "sleep", background: true },
                       content: [
                         { type: "text", text: "The subagent is working in the background." },
                       ],
@@ -2955,8 +2942,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ],
             cursor: {},
           }),
-          out("session.update", { sessionID: CHILD, permissions: "<any>" }),
-          reply("session.update", null),
+          ...(mode === "redirected-before-disconnect"
+            ? []
+            : [
+                out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+                reply("session.update", null),
+              ]),
           out("permission.list", { sessionID: SESSION }),
           replyData("permission.list", []),
           out("session.form.list", { sessionID: SESSION }),
@@ -3060,7 +3051,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             sessionID: CHILD,
             item: {
               type: "user",
-              payload: { text: "You are a subagent.\nreal next prompt", files: [] },
+              payload: {
+                text: "You are a subagent spawned by another session.\nreal next prompt",
+                files: [],
+              },
               delivery: "steer",
             },
           }),
@@ -3087,7 +3081,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 id: "msg_real_launch",
                 time: { created: 3 },
                 type: "user",
-                text: "You are a subagent.\nreal next prompt",
+                text: "You are a subagent spawned by another session.\nreal next prompt",
               },
               {
                 id: "msg_child_prior_report",
@@ -3154,6 +3148,131 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           { text: "sleep", inputIntent: "turn_start" },
           { text: "real next prompt", inputIntent: "turn_start" },
           { text: "genuine mid-turn steer", inputIntent: "steer" },
+        ]);
+      }),
+  );
+
+  it.effect(
+    "matches full unwrapped child prompt instead of a prefix and preserves unknown wrappers",
+    () =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed([
+          ...launchedAndRunning,
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          // Two pending redirects where the first prompt is a prefix of the second.
+          ...callAgain(
+            { background: true, description: "Prefix redirect", prompt: "fix" },
+            { id: "call-prefix", writesRules: true },
+          ),
+          ...callAgain(
+            { background: true, description: "Full redirect", prompt: "fix tests" },
+            { id: "call-full", writesRules: false },
+          ),
+          event("session.inbox.enqueued", {
+            inboxID: "msg_cancelled_launch",
+            sessionID: CHILD,
+            item: {
+              type: "user",
+              payload: { text: "cancelled placeholder", files: [] },
+              delivery: "steer",
+            },
+          }),
+          event("session.inbox.enqueued", {
+            inboxID: "msg_full_launch",
+            sessionID: CHILD,
+            item: {
+              type: "user",
+              payload: {
+                text: "You are a subagent spawned by another session.\nfix tests",
+                files: [],
+              },
+              delivery: "steer",
+            },
+          }),
+          // Cancelling the queued item promotes msg_full_launch from steers and unwraps it.
+          event("session.inbox.cancelled", {
+            sessionID: CHILD,
+            inboxID: "msg_cancelled_launch",
+          }),
+          event("session.execution.started", { sessionID: CHILD }),
+          event("session.inbox.delivered", { sessionID: CHILD, inboxID: "msg_full_launch" }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          // Direct idle-enqueue with full match (without cancellation) and unknown wrapper fallback.
+          ...callAgain(
+            { background: true, description: "Direct wrapped", prompt: "fix lint" },
+            { id: "call-direct-wrapped", writesRules: false },
+          ),
+          event("session.inbox.enqueued", {
+            inboxID: "msg_direct_launch",
+            sessionID: CHILD,
+            item: {
+              type: "user",
+              payload: {
+                text: "You are a subagent spawned by another session.\nfix lint",
+                files: [],
+              },
+              delivery: "steer",
+            },
+          }),
+          event("session.execution.started", { sessionID: CHILD }),
+          event("session.inbox.delivered", { sessionID: CHILD, inboxID: "msg_direct_launch" }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          // Unknown wrapper cannot match unambiguously: keep inbox text verbatim.
+          ...callAgain(
+            { background: true, description: "Unknown wrapper redirect", prompt: "fix" },
+            { id: "call-unknown-wrapper", writesRules: false },
+          ),
+          event("session.inbox.enqueued", {
+            inboxID: "msg_unknown_wrapper",
+            sessionID: CHILD,
+            item: {
+              type: "user",
+              payload: { text: "Custom wrapper.\nfix", files: [] },
+              delivery: "steer",
+            },
+          }),
+          event("session.execution.started", { sessionID: CHILD }),
+          event("session.inbox.delivered", { sessionID: CHILD, inboxID: "msg_unknown_wrapper" }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          childReport("msg_report_1", "ONE"),
+          childReport("msg_report_2", "TWO"),
+          childReport("msg_report_3", "THREE"),
+          childReport("msg_report_4", "FOUR"),
+          childReport("msg_report_5", "FIVE"),
+        ]);
+        const childUserPrompts: Array<{ readonly text: string; readonly inputIntent: string }> = [];
+        let childThreadId: string | undefined;
+        const done = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.tap((e) =>
+            Effect.gen(function* () {
+              if (e.type === "app_thread.created") childThreadId = e.appThread.id;
+              if (
+                e.type === "turn_item.updated" &&
+                e.turnItem.type === "user_message" &&
+                e.turnItem.threadId === childThreadId
+              ) {
+                childUserPrompts.push({
+                  text: e.turnItem.text,
+                  inputIntent: e.turnItem.inputIntent,
+                });
+              }
+              if (e.type === "subagent.updated" && e.subagent.status === "completed") {
+                yield* Deferred.succeed(done, undefined);
+              }
+            }),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(done);
+        assert.deepEqual(childUserPrompts, [
+          { text: "sleep", inputIntent: "turn_start" },
+          { text: "fix tests", inputIntent: "turn_start" },
+          { text: "fix lint", inputIntent: "turn_start" },
+          { text: "Custom wrapper.\nfix", inputIntent: "turn_start" },
         ]);
       }),
   );
@@ -4023,7 +4142,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Stream.takeUntil(
           (event) =>
             event.type === "provider_turn.updated" &&
-            event.providerTurn.nativeTurnRef?.nativeId?.startsWith(`${CHILD}:turn:`) === true,
+            event.providerTurn.nativeTurnRef?.nativeId === `${CHILD}:turn:2`,
         ),
         Stream.runCollect,
         Effect.forkScoped,
