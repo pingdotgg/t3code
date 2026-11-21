@@ -32,6 +32,11 @@ describe("renameForkText", () => {
       'const message = "Restart Lathe?";',
     ],
     [
+      "apps/web/src/components/mcp/mcpApps.ts",
+      "`https://poke.com/integrations/new?name=T3%20Code&url=${url}`",
+      "`https://poke.com/integrations/new?name=Lathe&url=${url}`",
+    ],
+    [
       "apps/server/src/cli/config.ts",
       'Config.String("T3CODE_HOME")',
       'Config.String("LATHE_HOME")',

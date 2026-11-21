@@ -54,7 +54,7 @@ export const MCP_APPS: readonly McpApp[] = [
     logo: pokeLogo,
     handoff: {
       kind: "open",
-      link: (url) => `https://poke.com/integrations/new?name=Lathe%20Code&url=${encoded(url)}`,
+      link: (url) => `https://poke.com/integrations/new?name=Lathe&url=${encoded(url)}`,
     },
     steps: [msg("Open poke.com/integrations/new."), msg("Paste the URL and add the integration.")],
     docs: "https://poke.com/docs/mcp-servers",
@@ -66,7 +66,7 @@ export const MCP_APPS: readonly McpApp[] = [
     handoff: {
       kind: "open",
       link: (url) =>
-        `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=Lathe%20Code&connectorUrl=${encoded(url)}`,
+        `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=Lathe&connectorUrl=${encoded(url)}`,
     },
     steps: [
       msg("In Claude, open Customize, then Connectors."),
