@@ -12239,31 +12239,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           from: "run-b",
         });
 
-        // A continuation gets no new instructions, so its agent names the run it continues.
-        yield* eventSink.write({
-          events: [
-            {
-              id: EventId.make(`${threadId}-run-b-continues-a`),
-              type: "run.updated",
-              threadId,
-              runId: runB.id,
-              occurredAt: runB.requestedAt,
-              payload: {
-                ...afterB.runs.find((run) => run.id === runB.id)!,
-                manualContinuationOfRunId: runA.id,
-              },
-            },
-          ],
-        });
-        const acceptedViaContinuation = yield* threadManagement.submitRunOutput({
-          threadId,
-          commandId: CommandId.make("runtime-layer-run-output-via-continuation"),
-          json: '{"from":"continued"}',
-          callerRunId: runA.id,
-        });
-        assert.equal(acceptedViaContinuation.runId, runB.id);
-
-        // A plain turn with no schema preserves the plain-turn guidance even for stale/unbound MCP callers.
+        // A continuation of stopped run A rejects A's delayed unbound submission and accepts C's own runId.
         yield* eventSink.write({
           events: [
             {
@@ -12272,7 +12248,73 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
               threadId,
               runId: runB.id,
               occurredAt: runB.requestedAt,
-              payload: { ...runB, status: "completed", completedAt: runB.requestedAt },
+              payload: {
+                ...afterB.runs.find((run) => run.id === runB.id)!,
+                status: "completed",
+                completedAt: runB.requestedAt,
+              },
+            },
+          ],
+        });
+        yield* send("run-c", { type: "object" });
+        const runC = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id !== runA.id && run.id !== runB.id,
+        )!;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-c-continues-a`),
+              type: "run.updated",
+              threadId,
+              runId: runC.id,
+              occurredAt: runC.requestedAt,
+              payload: {
+                ...runC,
+                manualContinuationOfRunId: runA.id,
+              },
+            },
+          ],
+        });
+        const lateFromStoppedAncestor = yield* threadManagement
+          .submitRunOutput({
+            threadId,
+            commandId: CommandId.make("runtime-layer-run-output-from-stopped-ancestor"),
+            json: '{"from":"late-ancestor"}',
+            callerRunId: runA.id,
+          })
+          .pipe(Effect.flip);
+        assert.equal(lateFromStoppedAncestor._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(lateFromStoppedAncestor.message, "no longer active");
+        assert.isUndefined(
+          (yield* orchestrator.getThreadProjection(threadId)).runs.find((run) => run.id === runC.id)
+            ?.output,
+        );
+        const acceptedViaContinuation = yield* threadManagement.submitRunOutput({
+          threadId,
+          commandId: CommandId.make("runtime-layer-run-output-via-continuation"),
+          json: '{"from":"continued"}',
+          callerRunId: runC.id,
+        });
+        assert.equal(acceptedViaContinuation.runId, runC.id);
+        const afterC = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(afterC.runs.find((run) => run.id === runC.id)?.output?.value, {
+          from: "continued",
+        });
+
+        // A plain turn with no schema preserves the plain-turn guidance even for stale/unbound MCP callers.
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-c-completed`),
+              type: "run.updated",
+              threadId,
+              runId: runC.id,
+              occurredAt: runC.requestedAt,
+              payload: {
+                ...afterC.runs.find((run) => run.id === runC.id)!,
+                status: "completed",
+                completedAt: runC.requestedAt,
+              },
             },
           ],
         });

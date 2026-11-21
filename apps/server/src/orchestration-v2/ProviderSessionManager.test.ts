@@ -3478,6 +3478,34 @@ it.effect.each([
         const token1 = config1!.authorizationHeader.replace(/^Bearer\s+/, "");
         assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
 
+        // Re-opening the same run/attempt after toggling browser access syncs preview while keeping run1 bound.
+        yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run1,
+          attemptId: RunAttemptId.make("attempt-none-1"),
+          requireRunScopedMcp: true,
+        });
+        assert.isFalse((yield* registry.resolve(token1))?.capabilities.has("preview") ?? true);
+        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
+        assert.isFalse((yield* mcpSessions.read(threadId))?.browserToolsAvailable);
+        yield* settings.updateSettings({ enableAgentBrowserAccess: true });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run1,
+          attemptId: RunAttemptId.make("attempt-none-1"),
+          requireRunScopedMcp: true,
+        });
+        assert.isTrue((yield* registry.resolve(token1))?.capabilities.has("preview") ?? false);
+        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
+        assert.isTrue((yield* mcpSessions.read(threadId))?.browserToolsAvailable);
+
         // Plain turns and owed wakes for run1 succeed without rotating or mutating token1.
         yield* manager.open({
           threadId,
@@ -3554,6 +3582,43 @@ it.effect.each([
         assert.equal(config5?.authorizationHeader, config1!.authorizationHeader);
         assert.isTrue(config5?.browserToolsAvailable);
         assert.isTrue(config5?.capabilities?.has("preview") ?? false);
+
+        // Disabling and re-enabling browser access also syncs on untyped next runs with no owed output.
+        yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-none-6"),
+          attemptId: RunAttemptId.make("attempt-none-6"),
+          requireRunScopedMcp: false,
+        });
+        const narrowedUntyped = yield* registry.resolve(token1);
+        assert.isDefined(narrowedUntyped);
+        assert.isFalse(narrowedUntyped!.capabilities.has("preview"));
+        const config6 = yield* mcpSessions.read(threadId);
+        assert.equal(config6?.authorizationHeader, config1!.authorizationHeader);
+        assert.isFalse(config6?.browserToolsAvailable);
+        assert.isFalse(config6?.capabilities?.has("preview") ?? false);
+
+        yield* settings.updateSettings({ enableAgentBrowserAccess: true });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("run-none-7"),
+          attemptId: RunAttemptId.make("attempt-none-7"),
+          requireRunScopedMcp: false,
+        });
+        const restoredUntyped = yield* registry.resolve(token1);
+        assert.isDefined(restoredUntyped);
+        assert.isTrue(restoredUntyped!.capabilities.has("preview"));
+        const config7 = yield* mcpSessions.read(threadId);
+        assert.equal(config7?.authorizationHeader, config1!.authorizationHeader);
+        assert.isTrue(config7?.browserToolsAvailable);
+        assert.isTrue(config7?.capabilities?.has("preview") ?? false);
         yield* manager.close(providerSessionId);
       });
 

@@ -3756,6 +3756,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ) => Effect.Effect<void>;
     readonly renameSession?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["renameSession"];
     readonly setMcpServers?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setMcpServers"];
+    readonly omitSetMcpServers?: boolean;
     readonly applyFlagSettings?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"];
     readonly stopTask?: (
       taskId: string,
@@ -3947,10 +3948,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   Effect.sync(() => {
                     renameCalls.push(title);
                   }).pipe(Effect.andThen(() => options?.renameSession?.(title) ?? Effect.void)),
-                setMcpServers: (servers) =>
-                  Effect.sync(() => {
-                    setMcpServersCalls.push(servers);
-                  }).pipe(Effect.andThen(() => options?.setMcpServers?.(servers) ?? Effect.void)),
+                ...(options?.omitSetMcpServers === true
+                  ? {}
+                  : {
+                      setMcpServers: ((servers) =>
+                        Effect.sync(() => {
+                          setMcpServersCalls.push(servers);
+                        }).pipe(
+                          Effect.andThen(() => options?.setMcpServers?.(servers) ?? Effect.void),
+                        )) satisfies NonNullable<
+                        ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setMcpServers"]
+                      >,
+                    }),
                 backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
                 mcpServerStatus: options?.mcp?.mcpServerStatus ?? Effect.succeed([]),
                 readMcpResource:
@@ -25267,28 +25276,54 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         description:
           "fails explicitly when live setMcpServers fails on token rotation while background work is active",
       },
+      {
+        mode: "continuation-refresh-failed" as const,
+        description:
+          "fails explicitly when live setMcpServers fails on a provider-origin continuation with a rotated credential",
+      },
+      {
+        mode: "continuation-no-live-refresh" as const,
+        description:
+          "fails explicitly when setMcpServers is unavailable on a provider-origin continuation with a rotated credential",
+      },
     ])("$description", ({ mode }) =>
       Effect.gen(function* () {
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        let failRefreshCount =
+          mode === "continuation-refresh-failed" ? 1 : Number.POSITIVE_INFINITY;
         const harness =
           mode === "live-refresh"
             ? yield* makeWakeHarness
             : yield* makeWakeHarnessWithOptions({
                 freshQueueOnReopen: true,
-                setMcpServers: () =>
-                  Effect.fail(
-                    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                      method: "setMcpServers",
-                      cause: new Error("setMcpServers rejected"),
+                ...(mode === "continuation-no-live-refresh"
+                  ? { omitSetMcpServers: true }
+                  : {
+                      setMcpServers: () =>
+                        Effect.suspend(() => {
+                          if (failRefreshCount > 0) {
+                            failRefreshCount -= 1;
+                            return Effect.fail(
+                              new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                                method: "setMcpServers",
+                                cause: new Error("setMcpServers rejected"),
+                              }),
+                            );
+                          }
+                          return Effect.void;
+                        }),
                     }),
-                  ),
               });
+        const isContinuationMode =
+          mode === "continuation-refresh-failed" || mode === "continuation-no-live-refresh";
         const envSlug = `environment-claude-mcp-${mode}`;
         yield* mcpSessions.set({
           environmentId: EnvironmentId.make(envSlug),
           threadId: harness.threadId,
           providerSessionId: `mcp-session-claude-${mode}-1`,
           providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          runId: RunId.make(`claude-mcp-${mode}-run-1`),
+          attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-1`),
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: `Bearer claude-${mode}-run-1`,
           browserToolsAvailable: false,
@@ -25304,7 +25339,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        if (mode === "blocked-by-background-work") {
+        if (mode === "blocked-by-background-work" || isContinuationMode) {
           yield* harness.offerAndWait(wakeTaskStarted);
         }
         const firstQueue =
@@ -25314,8 +25349,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           makeResultFrame({ uuid: `claude-mcp-${mode}-result-1`, result: "Done 1." }),
         );
         yield* Queue.take(harness.terminalReceipts);
-        if (mode === "blocked-by-background-work") {
+        if (mode === "blocked-by-background-work" || isContinuationMode) {
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        }
+        if (isContinuationMode) {
+          yield* harness.offerAndWait(
+            makeSubagentNotificationFrame({
+              taskId: WAKE_TASK_ID,
+              toolUseId: WAKE_TOOL_USE_ID,
+              summary: "Background task done.",
+              uuid: `claude-mcp-${mode}-wake-done`,
+            }),
+          );
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* Queue.take(harness.continuationReceipts);
         }
 
         yield* mcpSessions.set({
@@ -25323,10 +25370,50 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           threadId: harness.threadId,
           providerSessionId: `mcp-session-claude-${mode}-2`,
           providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          runId: RunId.make(`claude-mcp-${mode}-run-2`),
+          attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-2`),
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: `Bearer claude-${mode}-run-2`,
           browserToolsAvailable: false,
         });
+
+        if (isContinuationMode) {
+          const continuationTurn = makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-2`),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          });
+          const rejected = yield* harness.runtime.startTurn(continuationTurn).pipe(Effect.flip);
+          assert.instanceOf(rejected.cause, ProviderAdapter.ProviderAdapterMcpRotationBlockedError);
+          assert.equal(harness.processQueues.length, 1);
+          if (mode === "continuation-no-live-refresh") {
+            assert.equal(harness.setMcpServersCalls.length, 0);
+            return;
+          }
+          assert.equal(harness.setMcpServersCalls.length, 1);
+          // The buffered wake stayed intact: once live refresh recovers, the retry delivers it.
+          yield* harness.runtime.startTurn({
+            ...continuationTurn,
+            attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-3`),
+          });
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: `claude-mcp-${mode}-wake-result`,
+              result: "Done wake.",
+              origin: { kind: "task-notification" },
+            }),
+          );
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+          assert.equal(harness.processQueues.length, 1);
+          assert.equal(harness.setMcpServersCalls.length, 2);
+          return;
+        }
 
         if (mode === "blocked-by-background-work") {
           const rejected = yield* harness.runtime

@@ -5371,6 +5371,7 @@ interface ClaudeLiveQueryContext {
   readonly query: ClaudeAgentSdkQuerySession;
   queryPolicyKey: string;
   readonly queryPolicyKeyWithoutMcpAuth: string;
+  mcpAuthorization: string | undefined;
   selection: CompiledClaudeModelSelection;
   readonly closed: Deferred.Deferred<void, never>;
   lastTurn: ActiveClaudeTurnContext | null;
@@ -13215,7 +13216,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             )
               return;
             yield* candidate.query.setMcpServers(mcpOverrides.mcpServers);
-            candidate.queryPolicyKey = queryPolicyKey;
+            candidate.mcpAuthorization = mcpSession?.authorizationHeader;
+            if (candidate.queryPolicyKeyWithoutMcpAuth === queryPolicyKeyWithoutMcpAuth) {
+              candidate.queryPolicyKey = queryPolicyKey;
+            }
           });
           // Continuations drain existing output without prompting; retain the live process regardless of selection.
           if (
@@ -13224,9 +13228,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !existing.stopping &&
             isClaudeProviderContinuationTurn(turnInput)
           ) {
-            // The turn's run may have rotated the credential; the retained query must carry it.
-            // Reopening would end the wake, so a failed refresh keeps the query and is logged.
-            if (canUpdateMcpLive(existing)) {
+            // Refuse to run on a stale credential, keeping the process and its buffered wake for retry.
+            if (existing.mcpAuthorization !== mcpSession?.authorizationHeader) {
+              const rotationBlocked = () =>
+                new ProviderAdapter.ProviderAdapterMcpRotationBlockedError({
+                  driver: CLAUDE_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  providerThreadId: turnInput.providerThread.id,
+                  detail: "Cannot refresh MCP credentials on a retained Claude continuation query.",
+                });
+              if (
+                mcpOverrides.mcpServers === undefined ||
+                existing.query.setMcpServers === undefined
+              ) {
+                return yield* rotationBlocked();
+              }
               yield* syncMcpServersLive(existing).pipe(
                 Effect.catchCauseIf(
                   (cause) => !Cause.hasInterruptsOnly(cause),
@@ -13234,7 +13250,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.logWarning("orchestration-v2.claude-live-mcp-refresh-failed", {
                       threadId: turnInput.threadId,
                       reason: "continuation",
-                    }),
+                    }).pipe(Effect.andThen(Effect.fail(rotationBlocked()))),
                 ),
               );
             }
@@ -13473,6 +13489,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             query: querySession,
             queryPolicyKey,
             queryPolicyKeyWithoutMcpAuth,
+            mcpAuthorization: mcpSession?.authorizationHeader,
             selection: compiledSelection,
             closed,
             lastTurn: null,
