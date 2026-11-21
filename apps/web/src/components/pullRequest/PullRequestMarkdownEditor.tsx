@@ -19,6 +19,7 @@ import {
 
 export function PullRequestMarkdownEditor({
   value,
+  resetKey = value,
   cwd,
   environmentId,
   completionScope,
@@ -32,6 +33,8 @@ export function PullRequestMarkdownEditor({
   onCancel,
 }: {
   readonly value: string;
+  /** Identity of the saved text when value includes temporary rendering data. */
+  readonly resetKey?: string | undefined;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
   readonly completionScope: PullRequestCompletionScope | null;
@@ -48,9 +51,9 @@ export function PullRequestMarkdownEditor({
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const [draft, setDraft] = useState(value);
   const [preview, setPreview] = useState(false);
-  const [seed, setSeed] = useState(value);
-  if (seed !== value) {
-    setSeed(value);
+  const [seed, setSeed] = useState(resetKey);
+  if (seed !== resetKey) {
+    setSeed(resetKey);
     setDraft(value);
   }
   const empty = draft.trim().length === 0;

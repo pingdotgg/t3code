@@ -1,6 +1,12 @@
 import type { IssueDetail, IssueEvent } from "@t3tools/contracts";
+import { stripLinearFileSignatures } from "@t3tools/issue-tracker-linear/shared/fileUrls";
+import { LINEAR_KIND } from "@t3tools/issue-tracker-linear/shared/issueUrl";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
+
+export function issueDescriptionResetKey({ tracker, body }: Pick<IssueDetail, "tracker" | "body">) {
+  return tracker === LINEAR_KIND ? stripLinearFileSignatures(body) : body;
+}
 
 /** "completed" → "Completed"; a reason the tracker spells with a dash reads as words. */
 function issueCloseReasonLabel(reason: string): string {
