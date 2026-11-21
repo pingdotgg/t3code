@@ -18,7 +18,6 @@ pub(super) const SHIELD_WARNING: &str = "superhero/needs-approval.svg";
 pub(super) const WARNING: &str = "superhero/warning.svg";
 pub(super) const INFO: &str = "superhero/info.svg";
 pub(super) const COPY: &str = "superhero/copy.svg";
-pub(super) const SPARKLE: &str = "superhero/ai.svg";
 pub(super) const SQUARE: &str = "superhero/stop.svg";
 pub(super) const CHAT_CIRCLE: &str = "superhero/comment.svg";
 
