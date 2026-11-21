@@ -1,6 +1,6 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
-import type { PullRequestActor } from "@t3tools/contracts";
+import { pullRequestActorLabel, type PullRequestActor } from "@t3tools/contracts";
 import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import { Image } from "expo-image";
 import { useGT } from "gt-react-native";
@@ -52,11 +52,12 @@ export function PullRequestAvatar(props: {
   readonly size?: number;
 }) {
   const size = props.size ?? 24;
+  const displayLabel = props.actor ? pullRequestActorLabel(props.actor) : undefined;
   return props.actor?.avatarUrl ? (
     <Image
       source={{ uri: props.actor.avatarUrl }}
       recyclingKey={props.actor.avatarUrl}
-      accessibilityLabel={props.actor.login}
+      accessibilityLabel={displayLabel}
       style={{ width: size, height: size, borderRadius: size / 2 }}
       cachePolicy="memory-disk"
     />
@@ -66,7 +67,7 @@ export function PullRequestAvatar(props: {
       style={{ width: size, height: size }}
     >
       <Text className="font-t3-medium text-foreground-muted" style={{ fontSize: size * 0.45 }}>
-        {props.actor?.login.slice(0, 1).toUpperCase() ?? "?"}
+        {displayLabel?.slice(0, 1).toUpperCase() ?? "?"}
       </Text>
     </View>
   );

@@ -2,7 +2,11 @@ import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
-import type { PullRequestAction, PullRequestDetail } from "@t3tools/contracts";
+import {
+  pullRequestActorLabel,
+  type PullRequestAction,
+  type PullRequestDetail,
+} from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import Animated from "react-native-reanimated";
@@ -364,13 +368,15 @@ export function PullRequestReviewersRow(props: RowProps) {
             .map((reviewer) => (
               <View
                 key={reviewer.login}
-                accessibilityLabel={gt("{login}, Review requested", { login: reviewer.login })}
+                accessibilityLabel={gt("{login}, Review requested", {
+                  login: pullRequestActorLabel(reviewer),
+                })}
                 className="min-h-14 flex-row items-center gap-3 px-4 py-2"
               >
                 <SymbolView name="clock" size={18} tintColorClassName="accent-icon-muted" />
                 <PullRequestAvatar actor={reviewer} size={32} />
                 <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
-                  {reviewer.login}
+                  {pullRequestActorLabel(reviewer)}
                 </Text>
               </View>
             ))}

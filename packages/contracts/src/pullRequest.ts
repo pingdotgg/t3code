@@ -86,11 +86,16 @@ export type PullRequestBaseComparison = typeof PullRequestBaseComparison.Type;
 
 export const PullRequestActor = Schema.Struct({
   isBot: Schema.optional(Schema.Boolean),
+  isGroup: Schema.optional(Schema.Boolean),
   login: TrimmedNonEmptyString,
   name: Schema.NullOr(Schema.String),
   avatarUrl: Schema.NullOr(Schema.String),
 });
 export type PullRequestActor = typeof PullRequestActor.Type;
+
+export function pullRequestActorLabel(actor: PullRequestActor) {
+  return actor.isGroup ? (actor.name ?? actor.login) : actor.login;
+}
 
 export const PullRequestLabel = Schema.Struct({
   name: TrimmedNonEmptyString,
