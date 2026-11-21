@@ -347,6 +347,7 @@ export function resolveClaudeUpdateRequiredModels(
 export function formatClaudeVersionUpgradeMessage(
   catalog: ClaudeModelCatalog,
   version: string | null,
+  latestVersion?: string | null,
 ): string | undefined {
   const unavailable = catalog.models
     .filter(
@@ -359,7 +360,31 @@ export function formatClaudeVersionUpgradeMessage(
     )[0];
   if (!unavailable?.compatibility.minVersion) return undefined;
   const versionLabel = version ? `v${version}` : "the installed version";
-  return `Claude Code ${versionLabel} is too old for ${unavailable.model.name}. Upgrade to v${unavailable.compatibility.minVersion} or newer to access it.`;
+  const minVersion = unavailable.compatibility.minVersion;
+  if (latestVersion && compareSemverVersions(latestVersion, minVersion) < 0) {
+    return `Claude Code ${versionLabel} is too old for ${unavailable.model.name}, which needs v${minVersion} or newer, but the newest version this install can update to is v${latestVersion}. Install Claude Code another way or wait for a newer release.`;
+  }
+  return `Claude Code ${versionLabel} is too old for ${unavailable.model.name}. Upgrade to v${minVersion} or newer to access it.`;
+}
+
+/** The status check words the upgrade before the install channel reports its newest version. */
+export function scopeClaudeUpgradeMessageToChannel<
+  P extends {
+    readonly message?: string | undefined;
+    readonly version: string | null;
+    readonly versionAdvisory?: { readonly latestVersion: string | null } | undefined;
+  },
+>(catalog: ClaudeModelCatalog, provider: P): P {
+  const latestVersion = provider.versionAdvisory?.latestVersion;
+  if (
+    !latestVersion ||
+    provider.message === undefined ||
+    provider.message !== formatClaudeVersionUpgradeMessage(catalog, provider.version)
+  ) {
+    return provider;
+  }
+  const message = formatClaudeVersionUpgradeMessage(catalog, provider.version, latestVersion);
+  return message === undefined ? provider : { ...provider, message };
 }
 
 /** Claude Code's effort levels, lowest first. */
