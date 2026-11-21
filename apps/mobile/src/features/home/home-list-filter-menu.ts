@@ -1,6 +1,8 @@
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
+import type { ReactNode } from "react";
 
 import { msg } from "gt-react-native";
 
@@ -29,6 +31,7 @@ export function homeListFilterEnvironments(environments: ReadonlyArray<Workspace
 export interface HomeListFilterMenuProject {
   readonly key: string;
   readonly label: string;
+  readonly representative: EnvironmentProject;
 }
 
 export function buildHomeListFilterMenuItems(
@@ -39,6 +42,8 @@ export function buildHomeListFilterMenuItems(
     readonly selectedProjectKey: string | null;
     readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
     readonly onProjectChange: (projectKey: string | null) => void;
+    /** `null` is "All projects". */
+    readonly renderProjectIcon: (project: EnvironmentProject | null, size: number) => ReactNode;
   },
   resolve: MessageResolver = m,
 ): AppBarMenuItem[] {
@@ -74,12 +79,14 @@ export function buildHomeListFilterMenuItems(
           title: resolve(msg("All projects")),
           subtitle: resolve(msg("Show threads from every project")),
           selected: props.selectedProjectKey === null,
+          renderIcon: (size) => props.renderProjectIcon(null, size),
           onPress: () => props.onProjectChange(null),
         },
         ...props.projects.map((project) => ({
           id: `project:${project.key}`,
           title: project.label,
           selected: props.selectedProjectKey === project.key,
+          renderIcon: (size: number) => props.renderProjectIcon(project.representative, size),
           onPress: () => props.onProjectChange(project.key),
         })),
       ],

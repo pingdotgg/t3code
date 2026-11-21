@@ -1,5 +1,6 @@
 import type { MenuAction } from "@react-native-menu/menu";
 import type { AppBarMenuItem } from "./AppBar.types";
+import type { MenuItemAction } from "./Menu.types";
 
 /** Adapts a `MenuAction` tree and its selection handler to `AppBar` menu items. */
 export function appBarMenuItemsFromActions(
@@ -29,8 +30,8 @@ export function appBarMenuItemsFromActions(
 }
 
 /** Adapts `AppBar` menu items to a `Menu`'s actions; `findAppBarMenuItem` resolves a selection. */
-export function menuActionsFromAppBarItems(items: ReadonlyArray<AppBarMenuItem>): MenuAction[] {
-  return items.flatMap((item): MenuAction[] =>
+export function menuActionsFromAppBarItems(items: ReadonlyArray<AppBarMenuItem>): MenuItemAction[] {
+  return items.flatMap((item): MenuItemAction[] =>
     "items" in item
       ? item.inline && !item.title
         ? menuActionsFromAppBarItems(item.items)
@@ -50,6 +51,7 @@ export function menuActionsFromAppBarItems(items: ReadonlyArray<AppBarMenuItem>)
             subtitle: item.subtitle,
             image: item.icon,
             imageColor: item.iconColor,
+            renderIcon: item.renderIcon,
             state: item.selected ? "on" : undefined,
             attributes:
               item.disabled || item.destructive

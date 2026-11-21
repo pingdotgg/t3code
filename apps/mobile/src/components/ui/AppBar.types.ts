@@ -26,6 +26,8 @@ export type AppBarMenuItem =
       readonly icon?: string;
       /** Android: tints the icon, such as a label's color dot. */
       readonly iconColor?: ColorValue;
+      /** Android: draws the row's icon in place of `icon`, such as a project's favicon. */
+      readonly renderIcon?: (size: number) => ReactNode;
       readonly subtitle?: string;
       readonly disabled?: boolean;
       readonly selected?: boolean;

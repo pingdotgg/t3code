@@ -1,4 +1,4 @@
-import type { MenuAction } from "@react-native-menu/menu";
+import type { MenuItemAction } from "./Menu.types";
 
 export interface MenuPopupProps {
   readonly menuWidth: number;
@@ -8,10 +8,10 @@ export interface MenuPopupProps {
     readonly width: number;
     readonly height: number;
   };
-  readonly actions: readonly MenuAction[];
+  readonly actions: readonly MenuItemAction[];
   readonly title?: string;
-  readonly parent: MenuAction | null;
-  readonly onPress: (action: MenuAction) => void;
+  readonly parent: MenuItemAction | null;
+  readonly onPress: (action: MenuItemAction) => void;
   readonly onBack: () => void;
   readonly onClose: () => void;
   readonly inline?: boolean;

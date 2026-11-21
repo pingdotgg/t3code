@@ -50,6 +50,7 @@ import {
   buildHomeListFilterMenuItems,
   homeListFilterEnvironments,
 } from "../home/home-list-filter-menu";
+import { renderProjectFilterMenuIcon } from "../home/ProjectFilterMenuIcon";
 import {
   buildHomeProjectScopes,
   resolveHomeProjectFilterScope,
@@ -198,6 +199,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   ).map((scope) => ({
     key: scope.key,
     label: scope.title,
+    representative: scope.representative,
   }));
   const projectTitleByProjectKey = useMemo(
     () =>
@@ -555,6 +557,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             selectedProjectKey,
             onEnvironmentChange: setSelectedEnvironmentId,
             onProjectChange: setSelectedProjectKey,
+            renderProjectIcon: renderProjectFilterMenuIcon,
           },
           messages,
         ),

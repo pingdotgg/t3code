@@ -8,22 +8,21 @@ import {
   Text,
 } from "@expo/ui/jetpack-compose";
 import { defaultMinSize, padding, size, width } from "@expo/ui/jetpack-compose/modifiers";
-import type { MenuAction } from "@react-native-menu/menu";
+import type { ReactNode } from "react";
 import { Pressable } from "react-native";
 import { resolveScaledTextRole } from "../../lib/appearancePreferences";
 
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
+import type { MenuItemAction } from "./Menu.types";
 import type { MenuPopupProps } from "./MenuPopup";
 import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol.android";
 
 // The Compose glyph host consumes touches; run the action here and keep accessibility on the row.
-function MenuIcon(props: {
-  readonly name: AppSymbolName;
-  readonly color?: MenuAction["imageColor"];
+function MenuIconHost(props: {
   readonly onPress: () => void;
-  readonly destructive?: boolean;
-  readonly disabled?: boolean;
+  readonly disabled?: boolean | undefined;
+  readonly children: (size: number) => ReactNode;
 }) {
   const { iconSize } = useAndroidControlSizing();
   return (
@@ -36,6 +35,22 @@ function MenuIcon(props: {
         style={{ width: iconSize, height: iconSize }}
         importantForAccessibility="no-hide-descendants"
       >
+        {props.children(iconSize)}
+      </Pressable>
+    </RNHostView>
+  );
+}
+
+function MenuIcon(props: {
+  readonly name: AppSymbolName;
+  readonly color?: MenuItemAction["imageColor"];
+  readonly onPress: () => void;
+  readonly destructive?: boolean;
+  readonly disabled?: boolean;
+}) {
+  return (
+    <MenuIconHost onPress={props.onPress} disabled={props.disabled}>
+      {(iconSize) => (
         <SymbolView
           name={props.name}
           size={iconSize}
@@ -50,8 +65,8 @@ function MenuIcon(props: {
                     : "accent-foreground",
               })}
         />
-      </Pressable>
-    </RNHostView>
+      )}
+    </MenuIconHost>
   );
 }
 
@@ -95,7 +110,16 @@ export function MenuPopupItems(
           modifiers={itemModifiers}
           onClick={() => props.onPress(action)}
         >
-          {action.image && isAppSymbolName(action.image) ? (
+          {action.renderIcon ? (
+            <DropdownMenuItem.LeadingIcon>
+              <MenuIconHost
+                onPress={() => props.onPress(action)}
+                disabled={action.attributes?.disabled}
+              >
+                {action.renderIcon}
+              </MenuIconHost>
+            </DropdownMenuItem.LeadingIcon>
+          ) : action.image && isAppSymbolName(action.image) ? (
             <DropdownMenuItem.LeadingIcon>
               <MenuIcon
                 name={action.image}

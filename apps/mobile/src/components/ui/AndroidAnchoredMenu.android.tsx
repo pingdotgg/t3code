@@ -1,4 +1,4 @@
-import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
+import type { MenuComponentProps } from "@react-native-menu/menu";
 import type { ReactNode } from "react";
 import { use, useRef, useState } from "react";
 import type { StyleProp, ViewInstance, ViewStyle } from "react-native";
@@ -13,6 +13,7 @@ import {
 import { WindowHingeContext } from "../../native/window-hinge-context";
 import { OverlayPortal } from "./OverlayPortal";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
+import type { MenuItemAction } from "./Menu.types";
 import { MenuPopup } from "./MenuPopup";
 
 const SCREEN_MARGIN = 12;
@@ -35,7 +36,7 @@ type OverlayFrame = {
 };
 
 export type AndroidAnchoredMenuProps = {
-  readonly actions: readonly MenuAction[];
+  readonly actions: readonly MenuItemAction[];
   readonly title?: string;
   readonly onPressAction?: MenuComponentProps["onPressAction"];
   readonly className?: string;
@@ -46,7 +47,7 @@ export type AndroidAnchoredMenuProps = {
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const { scale, menuWidth: desiredMenuWidth, menuItemHeight } = useAndroidControlSizing();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
-  const [path, setPath] = useState<readonly MenuAction[]>([]);
+  const [path, setPath] = useState<readonly MenuItemAction[]>([]);
   const [overlay, setOverlay] = useState<OverlayFrame | null>(null);
   const windowHinge = use(WindowHingeContext);
   // State, not a ref: `open` reaches render-prop children, and the compiler
@@ -128,7 +129,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           minHeight: 2 * menuItemHeight + 14 * scale,
         });
 
-  const onPressItem = (action: MenuAction) => {
+  const onPressItem = (action: MenuItemAction) => {
     if ((action.subactions?.length ?? 0) > 0) {
       setPath((current) => [...current, action]);
       return;

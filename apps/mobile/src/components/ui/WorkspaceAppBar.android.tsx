@@ -1,7 +1,7 @@
 import { useGT } from "gt-react-native";
 import { Box, Icon, IconButton, RNHostView } from "@expo/ui/jetpack-compose";
 import { size } from "@expo/ui/jetpack-compose/modifiers";
-import type { MenuAction } from "@react-native-menu/menu";
+import type { MenuItemAction } from "./Menu.types";
 import {
   createContext,
   use,
@@ -40,7 +40,7 @@ export interface WorkspaceAppBarProps {
   readonly filter?: {
     readonly accessibilityLabel: string;
     readonly customized: boolean;
-    readonly actions: MenuAction[];
+    readonly actions: MenuItemAction[];
     readonly onSelect: (id: string) => void;
   };
 }
