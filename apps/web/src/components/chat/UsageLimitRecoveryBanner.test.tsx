@@ -74,7 +74,7 @@ describe("usageLimitRecoveryBannerItem", () => {
       using _between = vi
         .spyOn(Date, "now")
         .mockReturnValue(new Date(2026, 9, 20, 15, 14).getTime());
-      expect(makeScheduled().description).toBe("Resumes 16:00");
+      expect(makeScheduled().title).toBe("Resumes 16:00");
     }
     {
       using _afterSnooze = vi
