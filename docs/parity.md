@@ -43,10 +43,17 @@ every known gap. Update it as gaps close; never mark a surface done without a si
 - Model/effort picker, attachments, `/` commands, `@` files, `$` skills menus.
 
 ### Features missing entirely
-- New thread (sidebar compose button), thread search, settle/archive, rename.
+- Thread search, settle/archive, rename. (New thread works via Cmd+N; the sidebar compose
+  button still needs wiring to `ConnApp::start_new_thread`.)
 - Approve/deny approval cards (`runtime-request.respond`).
 - Add project; workspaces.
 - Tasks, Pull requests, Usage surfaces.
+
+### Built, not yet verified live
+- Approve/deny (`runtime-request.respond`): `ConnApp::respond_approval`, request ids kept in
+  `ThreadState::approval_requests`, automation `approve`/`deny`. The disposable server's Claude
+  provider wrote a file in `approval-required` mode without asking, so no live approval was
+  seen yet. The timeline's approval card buttons still need wiring to it.
 
 ### Fixed
 - Browser flicker on every click (visibility was guessed from repaints; now explicit).

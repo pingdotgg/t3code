@@ -61,6 +61,8 @@ pub(crate) struct ConnApp {
     ended_threads: HashSet<String>,
     /// A new thread being composed in this project; sent with `orchestration.launchThread`.
     draft_project: Option<String>,
+    /// Runtime mode for the draft, when set (else the project's latest thread's mode).
+    draft_runtime_mode: Option<String>,
     command_palette: Option<Entity<crate::palette::CommandPalette>>,
     settings_modal: Option<Entity<crate::settings::SettingsModal>>,
     overlay_subscriptions: Vec<gpui_kit::Subscription>,
@@ -140,6 +142,7 @@ impl ConnApp {
             right_panel,
             ended_threads: HashSet::new(),
             draft_project: None,
+            draft_runtime_mode: None,
             command_palette: None,
             settings_modal: None,
             overlay_subscriptions: Vec::new(),
@@ -374,6 +377,12 @@ impl ConnApp {
         self.layout.selected_thread_id = Some(thread_id);
     }
 
+    /// Sets the runtime mode (`approval-required`, `full-access`, ...) for the next draft.
+    #[cfg(feature = "automation")]
+    pub(crate) fn set_draft_runtime_mode(&mut self, mode: Option<String>) {
+        self.draft_runtime_mode = mode;
+    }
+
     /// Starts a new thread draft in `project_id` (or the selected thread's project). The
     /// composer's first send launches it.
     pub(crate) fn start_new_thread(
@@ -409,9 +418,14 @@ impl ConnApp {
             eprintln!("new thread: no model selection for project {project_id}");
             return;
         };
-        let runtime = template.map_or_else(
-            || serde_json::json!("full-access"),
-            |t| conn_contract::to_json(&t.runtime_mode),
+        let runtime = self.draft_runtime_mode.take().map_or_else(
+            || {
+                template.map_or_else(
+                    || serde_json::json!("full-access"),
+                    |t| conn_contract::to_json(&t.runtime_mode),
+                )
+            },
+            serde_json::Value::String,
         );
         let interaction = template.map_or_else(
             || serde_json::json!("default"),
@@ -463,6 +477,50 @@ impl ConnApp {
         cx.spawn(async move |_, _| {
             if let Err(e) = connection.dispatch_command(command).await {
                 eprintln!("send: dispatchCommand failed: {e}");
+            }
+        })
+        .detach();
+    }
+
+    /// Answers the approval timeline entry `entry_id` of the selected thread.
+    #[cfg_attr(
+        not(feature = "automation"),
+        expect(
+            dead_code,
+            reason = "the timeline's approval buttons call this once wired"
+        )
+    )]
+    pub(crate) fn respond_approval(
+        &mut self,
+        entry_id: &str,
+        decision: &str,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(connection), Some(thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let Some(request_id) = self
+            .threads
+            .get(&thread_id)
+            .and_then(|t| t.approval_requests.get(entry_id))
+            .cloned()
+        else {
+            eprintln!("approval: no request id for entry {entry_id}");
+            return;
+        };
+        let command = match crate::commands::respond_approval(&thread_id, &request_id, decision) {
+            Ok(command) => command,
+            Err(e) => {
+                eprintln!("approval: could not build runtime-request.respond: {e}");
+                return;
+            }
+        };
+        cx.spawn(async move |_, _| {
+            if let Err(e) = connection.dispatch_command(command).await {
+                eprintln!("approval: dispatchCommand failed: {e}");
             }
         })
         .detach();

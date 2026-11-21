@@ -16,6 +16,7 @@
 //! - `{"cmd":"palette"}`, `{"cmd":"settings"}`: toggle the overlays
 //! - `{"cmd":"browse","url":"..."}`, `{"cmd":"browser-title"}` (CEF builds)
 //! - `{"cmd":"new-thread","project":"hello-rust"}`: open a draft; the next `send` launches it
+//! - `{"cmd":"approve"}`, `{"cmd":"deny"}`: answer every pending approval in the selected thread
 //! - `{"cmd":"sidebar"}`, `{"cmd":"panel","tab":"files"}`, `{"cmd":"close-panel"}`
 //! - `{"cmd":"resize","width":1440,"height":900}`
 
@@ -173,6 +174,7 @@ async fn run(
                 .get("project")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
+            let mode = cmd.get("mode").and_then(Value::as_str).map(str::to_owned);
             app.update(cx, |app, cx| {
                 let project_id = project.and_then(|title| {
                     app.shell()
@@ -181,8 +183,33 @@ async fn run(
                         .find(|p| p.title == title || p.id == title)
                         .map(|p| p.id.clone())
                 });
+                app.set_draft_runtime_mode(mode);
                 app.start_new_thread(project_id, cx);
                 json!("ok")
+            })
+            .map_err(|e| err(e.into()))
+        }
+        "approve" | "deny" => {
+            let decision = if text(cmd, "cmd") == "approve" {
+                "accept"
+            } else {
+                "decline"
+            };
+            app.update(cx, |app, cx| {
+                let pending: Vec<String> = app
+                    .selected_timeline()
+                    .map(|t| {
+                        t.entries
+                            .iter()
+                            .filter(|e| matches!(e, conn_state::TimelineEntry::Approval { .. }))
+                            .map(|e| e.id().to_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for id in &pending {
+                    app.respond_approval(id, decision, cx);
+                }
+                json!(pending.len())
             })
             .map_err(|e| err(e.into()))
         }

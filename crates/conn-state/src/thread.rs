@@ -105,6 +105,8 @@ pub struct ThreadState {
     pub working: bool,
     pub sequence: Option<i64>,
     pub synchronized: bool,
+    /// Server request id of each approval entry, by entry id, for `runtime-request.respond`.
+    pub approval_requests: std::collections::HashMap<String, String>,
 }
 
 impl ThreadState {
@@ -137,12 +139,20 @@ impl ThreadState {
                     let mut rows = projection.visible_turn_items;
                     rows.sort_by_key(|row| row.position);
                     for row in rows {
+                        if let ProjectionTurnItem::ApprovalRequest(i) = &row.item {
+                            self.approval_requests
+                                .insert(i.id.clone(), i.request_id.clone());
+                        }
                         if let Some(entry) = map_projection_turn_item(row.item) {
                             upsert_entry(&mut entries, entry);
                         }
                     }
                 } else {
                     for turn_item in projection.turn_items {
+                        if let ProjectionTurnItem::ApprovalRequest(i) = &turn_item {
+                            self.approval_requests
+                                .insert(i.id.clone(), i.request_id.clone());
+                        }
                         if let Some(entry) = map_projection_turn_item(turn_item) {
                             upsert_entry(&mut entries, entry);
                         }
@@ -182,6 +192,10 @@ impl ThreadState {
             }
             DomainEvent::TurnItemUpdated(ev) => {
                 let item_id = turn_item_id(&ev.payload).to_owned();
+                if let TurnItem::ApprovalRequest(i) = &ev.payload {
+                    self.approval_requests
+                        .insert(i.id.clone(), i.request_id.clone());
+                }
                 if let Some(entry) = map_turn_item(ev.payload) {
                     upsert_entry(&mut self.entries, entry)
                 } else {

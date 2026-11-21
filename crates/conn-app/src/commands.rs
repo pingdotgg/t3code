@@ -83,6 +83,29 @@ pub(crate) fn launch_thread_payload(
     })
 }
 
+/// `runtime-request.respond`: answer an approval with `decision` (`accept`,
+/// `acceptForSession`, `decline`, `cancel`).
+#[cfg_attr(
+    not(any(test, feature = "automation")),
+    expect(
+        dead_code,
+        reason = "the timeline's approval buttons call this once wired"
+    )
+)]
+pub(crate) fn respond_approval(
+    thread_id: &str,
+    request_id: &str,
+    decision: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "runtime-request.respond",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "requestId": request_id,
+        "decision": decision,
+    }))
+}
+
 /// `thread.stop`: stop the running turn.
 pub(crate) fn stop_thread(thread_id: &str) -> Result<OrchestrationV2Command, serde_json::Error> {
     conn_contract::from_json(json!({
@@ -107,6 +130,10 @@ mod tests {
             "queued dispatch decodes"
         );
         assert!(stop_thread("t1").is_ok(), "thread.stop decodes");
+        assert!(
+            respond_approval("t1", "r1", "accept").is_ok(),
+            "runtime-request.respond decodes"
+        );
     }
 
     #[test]
