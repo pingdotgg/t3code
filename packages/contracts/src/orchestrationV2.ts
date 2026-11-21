@@ -331,6 +331,8 @@ export const OrchestrationV2ToolCapabilities = Schema.Struct({
   emitsToolOutput: Schema.Boolean,
   supportsMcpTools: Schema.Boolean,
   supportsDynamicToolCallbacks: Schema.Boolean,
+  /** The agent can mark background work it resumes from, so the thread holds as waiting. */
+  supportsBackgroundWait: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2ToolCapabilities = typeof OrchestrationV2ToolCapabilities.Type;
 
@@ -763,6 +765,14 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
 
+/** What a run returned as data: a value the server accepted against the run's `outputSchema`. */
+export const OrchestrationV2RunOutput = Schema.Struct({
+  value: Schema.Json,
+  // A string, not a DateTime: the run's JSON form only converts its own top-level dates.
+  submittedAt: IsoDateTime,
+});
+export type OrchestrationV2RunOutput = typeof OrchestrationV2RunOutput.Type;
+
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
@@ -800,8 +810,21 @@ export const OrchestrationV2Run = Schema.Struct({
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
   /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
   freshContext: Schema.optional(Schema.Boolean),
+  /** The JSON Schema of the result this run was asked to return as data. */
+  outputSchema: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+  /**
+   * Its own field, written by its own event: lifecycle writers hold a copy of the run from when
+   * the turn started, and their updates must not put an unanswered run back.
+   */
+  output: Schema.optional(OrchestrationV2RunOutput),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
+
+export const OrchestrationV2RunOutputSubmitted = Schema.Struct({
+  runId: RunId,
+  output: OrchestrationV2RunOutput,
+});
+export type OrchestrationV2RunOutputSubmitted = typeof OrchestrationV2RunOutputSubmitted.Type;
 
 export function orchestrationV2RunWorkStartedAt(
   run: Pick<OrchestrationV2Run, "workStartedAt" | "startedAt" | "requestedAt">,
@@ -1636,6 +1659,9 @@ export type OrchestrationV2UserMessageInputIntent =
 /** Notices without a level predate it and are warnings. */
 const OrchestrationV2SystemNoticeLevel = Schema.Literals(["info", "warning", "error"]);
 
+/** A notice about an MCP server that a sign-in from the thread would fix. */
+const OrchestrationV2McpSignIn = Schema.Struct({ server: Schema.String });
+
 /** A same-harness model or effort change that took effect with this message. */
 export const OrchestrationV2ModelSwitch = Schema.Struct({
   from: ModelSelection,
@@ -1700,6 +1726,15 @@ export type OrchestrationV2SecretRequestStatus = typeof OrchestrationV2SecretReq
 /** `file`: the value goes to an owner-only file the agent's shell commands can read. */
 export const OrchestrationV2SecretRequestDelivery = Schema.Literal("file");
 
+/** One input of a multi-value card. `secret: false` shows what the user types, such as an email. */
+export const OrchestrationV2SecretRequestField = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  placeholder: Schema.optional(Schema.String),
+  secret: Schema.optional(Schema.Boolean),
+});
+export type OrchestrationV2SecretRequestField = typeof OrchestrationV2SecretRequestField.Type;
+
 const OrchestrationV2SecretRequestFields = {
   type: Schema.Literal("secret_request"),
   label: TrimmedNonEmptyString,
@@ -1707,6 +1742,7 @@ const OrchestrationV2SecretRequestFields = {
   url: Schema.optional(Schema.String),
   placeholder: Schema.optional(Schema.String),
   delivery: Schema.optional(OrchestrationV2SecretRequestDelivery),
+  fields: Schema.optional(Schema.Array(OrchestrationV2SecretRequestField)),
   secretStatus: OrchestrationV2SecretRequestStatus,
 } as const;
 
@@ -1885,6 +1921,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("system_notice"),
     message: Schema.String,
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
+    mcpSignIn: Schema.optional(OrchestrationV2McpSignIn),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2081,6 +2118,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("run.background-work-cancelled"),
     payload: OrchestrationV2RunBackgroundWorkCancelled,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run.output-submitted"),
+    payload: OrchestrationV2RunOutputSubmitted,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -2769,6 +2811,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("system_notice"),
     message: Schema.String,
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
+    mcpSignIn: Schema.optional(OrchestrationV2McpSignIn),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3031,6 +3074,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run.output-submitted"),
+    payload: OrchestrationV2RunOutputSubmitted,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("run-attempt.created"),
     payload: OrchestrationV2RunAttemptJson,
   }),
@@ -3173,6 +3221,7 @@ export const OrchestrationV2Command = Schema.Union([
         titleSeed: Schema.optional(TrimmedNonEmptyString),
         scheduledTaskId: Schema.optional(ScheduledTaskId),
         senderThreadId: Schema.optional(ThreadId),
+        outputSchema: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
         workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
       }),
     ),
@@ -3428,6 +3477,8 @@ export const OrchestrationV2Command = Schema.Union([
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     /** Start a new provider session without the thread's earlier context. Never steers. */
     freshContext: Schema.optional(Schema.Boolean),
+    /** Asks the run for a result as data matching this JSON Schema. Never steers. */
+    outputSchema: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,
@@ -3652,6 +3703,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  // The server issues this after checking the value against the run's declared schema.
+  Schema.Struct({
+    type: Schema.Literal("run.output.submit"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    value: Schema.Json,
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),
@@ -3844,6 +3903,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     url: Schema.optional(Schema.String),
     placeholder: Schema.optional(Schema.String),
     delivery: Schema.optional(OrchestrationV2SecretRequestDelivery),
+    fields: Schema.optional(Schema.Array(OrchestrationV2SecretRequestField)),
     secretStatus: OrchestrationV2SecretRequestStatus,
   }),
   /**

@@ -69,6 +69,7 @@ import * as Statement from "effect/sql/Statement";
 import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -94,12 +95,15 @@ import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
+import * as McpSignIn from "./mcpApps/McpSignIn.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
+import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
+import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -840,6 +844,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(HostResources.HostResources)({}),
   Layer.mock(McpAppRequests.McpAppRequests)({}),
+  Layer.mock(McpSignIn.McpSignIn)({}),
   Layer.mock(ModelManifest.ModelManifest)({}),
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -847,6 +852,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(PairingGrantStore.PairingGrantStore)({}),
   Layer.mock(PeerLinks.PeerLinks)({}),
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+  Layer.mock(PeerThreadRelay.PeerThreadRelay)({}),
+  Layer.mock(PeerClientPairing.PeerClientPairing)({}),
   Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined }),
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),
@@ -900,6 +907,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
 const layerConfigSources = Layer.mergeAll(
   Keybindings.layer,
   AssetSigner.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+  WorkspacePreviewRevisions.layer,
   ServerSettings.layer.pipe(
     Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
   ),

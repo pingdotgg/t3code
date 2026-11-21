@@ -187,7 +187,7 @@ export class GitManager extends Context.Service<
       input: GitRunStackedActionInput,
       options?: GitRunStackedActionOptions,
     ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
-    /** Opens a PR for the checkout's pushed branch, or returns the one already open. */
+    /** Pushes the checkout's branch when needed, then opens its PR or returns the one already open. */
     readonly createPullRequest: (input: {
       readonly cwd: string;
       readonly projectId: ProjectId;
@@ -844,6 +844,22 @@ export const make = Effect.gen(function* () {
       yield* shareBranchBase(cwd, result.branch);
     }
     return result;
+  });
+  const createPrNeedsPush = Effect.fn("GitManager.createPrNeedsPush")(function* (
+    cwd: string,
+    status: {
+      readonly branch: string | null;
+      readonly hasUpstream: boolean;
+      readonly aheadCount: number;
+    },
+  ) {
+    if (!status.branch) return false;
+    if (!status.hasUpstream || status.aheadCount > 0) return true;
+    // A current upstream says nothing about a separate push remote, which may lack HEAD.
+    const target = yield* gitCore
+      .resolvePushTarget(cwd, { branch: status.branch, hasUpstream: true })
+      .pipe(Effect.orElseSucceed(() => null));
+    return target?.viaPushRemote === true;
   });
   const readWorktreeCreationSettings = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => ({
@@ -2465,6 +2481,7 @@ export const make = Effect.gen(function* () {
     emit: GitActionProgressEmitter,
     pushRemoteRef: { readonly remoteName: string; readonly upstreamRef: string } | undefined,
     requestedBase: string | undefined,
+    draft: boolean,
     content: (input: {
       readonly provider: SourceControlProvider.SourceControlProvider["Service"];
       readonly baseBranch: string;
@@ -2510,8 +2527,9 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    // A PR opened from the remote branch would leave out commits not pushed yet.
-    if (details.aheadCount > 0) {
+    // A PR opened from the remote branch would leave out commits not pushed yet. The ahead
+    // count is against the upstream, which a push to a separate push remote leaves behind.
+    if (!pushRemoteRef && details.aheadCount > 0) {
       return yield* new GitManagerError({
         operation: "runPrStep",
         cwd,
@@ -2563,6 +2581,7 @@ export const make = Effect.gen(function* () {
           : {}),
         title: generated.title,
         bodyFile,
+        ...(draft ? { draft: true } : {}),
       })
       .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.ignore)));
 
@@ -2608,6 +2627,7 @@ export const make = Effect.gen(function* () {
       emit,
       pushRemoteRef,
       undefined,
+      false,
       ({ provider, baseBranch, baseRef, headBranch }) =>
         Effect.gen(function* () {
           const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
@@ -2646,17 +2666,61 @@ export const make = Effect.gen(function* () {
   const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
     "GitManager.createPullRequest",
   )(function* (input) {
-    const result = yield* openPrFromBranch(
-      input.cwd,
-      null,
-      () => Effect.void,
-      undefined,
-      input.baseBranch,
-      () => Effect.succeed({ title: input.title, body: input.body }),
+    const status = yield* gitCore.statusDetails(input.cwd);
+    const needsPush = yield* createPrNeedsPush(input.cwd, status);
+    if (needsPush && status.branch) {
+      yield* ensurePrHeadIsNotBase(
+        input.cwd,
+        { ...status, branch: status.branch },
+        (yield* changeRequestTermsFor(input.cwd)).shortLabelWithArticle,
+      );
+    }
+    const push = needsPush
+      ? yield* pushCurrentBranch(input.cwd, status.branch).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitManagerError({
+                operation: "createPullRequest",
+                cwd: input.cwd,
+                detail: `Could not push ${status.branch}: ${cause.detail}${cause.reason === undefined ? "" : ` (${cause.reason})`}`,
+                cause,
+              }),
+          ),
+        )
+      : null;
+    const result = yield* Effect.gen(function* () {
+      // Publishing records the upstream, which the PR step needs to find the head branch.
+      if (!status.hasUpstream && push?.status === "pushed" && push.setUpstream === false) {
+        return yield* new GitManagerError({
+          operation: "createPullRequest",
+          cwd: input.cwd,
+          detail: `Pushed ${status.branch} to ${push.upstreamBranch}, but could not record it as the branch's upstream. Set the upstream, then try again.`,
+        });
+      }
+      return yield* openPrFromBranch(
+        input.cwd,
+        null,
+        () => Effect.void,
+        push && "pushRemote" in push && push.pushRemote && push.upstreamBranch
+          ? { remoteName: push.pushRemote, upstreamRef: push.upstreamBranch }
+          : undefined,
+        input.baseBranch,
+        input.draft === true,
+        () => Effect.succeed({ title: input.title, body: input.body }),
+      );
+    }).pipe(
+      // A push changes the ahead count, and a new PR changes the branch's PR lookup, so
+      // both leave cached status stale whatever the PR step does next.
+      Effect.onExit((exit) =>
+        push?.status === "pushed" || (Exit.isSuccess(exit) && exit.value.status === "created")
+          ? invalidateStatus(input.cwd)
+          : Effect.void,
+      ),
     );
-    // The thread's branch PR comes from status, which may hold the lookup from before.
-    if (result.status === "created") yield* invalidateStatus(input.cwd);
-    if (input.draft === true && !(yield* draftOpened(input, result))) {
+    const openedAsDraft =
+      result.status === "created" &&
+      (yield* sourceControlProvider(input.cwd)).createsDraftChangeRequests === true;
+    if (input.draft === true && !openedAsDraft && !(yield* draftOpened(input, result))) {
       // A retry finds the open PR and drafts it then.
       return yield* new GitManagerError({
         operation: "createPullRequest",
@@ -3607,26 +3671,12 @@ export const make = Effect.gen(function* () {
       > {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
         const wantsCommit = isCommitAction(input.action);
-        const upToDateBranch =
-          input.action === "create_pr" &&
-          initialStatus.hasUpstream &&
-          initialStatus.aheadCount === 0
-            ? initialStatus.branch
-            : null;
-        // A current upstream says nothing about a separate push remote, which may lack HEAD.
-        const pushTarget = upToDateBranch
-          ? yield* gitCore
-              .resolvePushTarget(input.cwd, { branch: upToDateBranch, hasUpstream: true })
-              .pipe(Effect.orElseSucceed(() => null))
-          : null;
         const wantsPush =
           input.action === "push" ||
           input.action === "commit_push" ||
           input.action === "commit_push_pr" ||
           (input.action === "create_pr" &&
-            (!initialStatus.hasUpstream ||
-              initialStatus.aheadCount > 0 ||
-              pushTarget?.viaPushRemote === true));
+            (!initialStatus.hasUpstream || (yield* createPrNeedsPush(input.cwd, initialStatus))));
         const wantsPr = input.action === "create_pr" || input.action === "commit_push_pr";
 
         if (input.featureBranch && !wantsCommit) {
