@@ -191,3 +191,28 @@ describe("preview stream agent pointer", () => {
     });
   });
 });
+
+describe("preview stream page cursor", () => {
+  beforeEach(() => vi.stubGlobal("WebSocket", FakeSocket));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reports cursor changes, never an image, and resets when the stream stops", () => {
+    const onCursor = vi.fn();
+    const client = createPreviewStreamClient(target, {
+      onFrame: vi.fn(),
+      onCursor,
+      onViewport: vi.fn(),
+      onConnectedChange: vi.fn(),
+      onUnauthorized: vi.fn(),
+    });
+    const cursor = (value: unknown) =>
+      FakeSocket.current.message(JSON.stringify({ type: "cursor", cursor: value }));
+    cursor("pointer");
+    cursor("pointer");
+    cursor('url("https://tracker.test/c.png"), pointer');
+    cursor(4);
+    cursor("grab");
+    client.stop();
+    expect(onCursor.mock.calls).toEqual([["pointer"], ["default"], ["grab"], ["default"]]);
+  });
+});

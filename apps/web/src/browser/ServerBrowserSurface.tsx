@@ -1,10 +1,12 @@
 import {
+  createPreviewCursor,
   createPreviewFramePainter,
   createPreviewStreamClient,
   previewStreamControlLabel,
   previewStreamModifiers,
   type PreviewStreamClient,
   type PreviewStreamControl,
+  type PreviewCursor,
   type PreviewStreamDownload,
   type PreviewStreamFileChooser,
   uploadPreviewStreamFiles,
@@ -183,6 +185,7 @@ export function ServerBrowserSurface(props: {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const keySentRef = useRef(false);
   const clientRef = useRef<PreviewStreamClient | null>(null);
+  const cursorRef = useRef<PreviewCursor | null>(null);
   const viewportRef = useRef<PreviewStreamViewport | null>(null);
   const sizeRef = useRef<{ width: number; height: number } | null>(null);
   const hasFrameRef = useRef(false);
@@ -247,6 +250,7 @@ export function ServerBrowserSurface(props: {
     lastClickRef.current = null;
     touchRef.current = probeRef.current = lastProbeRef.current = null;
     keySentRef.current = false;
+    cursorRef.current?.show(false);
     if (inputRef.current) inputRef.current.value = INPUT_SENTINEL;
     inputRef.current?.blur();
   };
@@ -393,6 +397,8 @@ export function ServerBrowserSurface(props: {
       setFramesStalled(false);
       firstFrame();
     });
+    const cursor = createPreviewCursor(canvas);
+    cursorRef.current = cursor;
     const client = createPreviewStreamClient(
       { access, threadId, tabId, maxWidth: cap.width, maxHeight: cap.height },
       {
@@ -416,6 +422,7 @@ export function ServerBrowserSurface(props: {
           const placed = placeAgentCursor(pointer, canvasRef.current, viewportRef.current);
           if (placed) setAgentCursor(placed);
         },
+        onCursor: cursor.set,
         onClipboard: (text) => void copyPageText(text),
         onDownload: offerDownload,
         onPopup: popupOpened,
@@ -483,6 +490,7 @@ export function ServerBrowserSurface(props: {
       setControl(null);
       controlChanged(null);
       clearInput();
+      if (cursorRef.current === cursor) cursorRef.current = null;
     };
   }, [
     access,
@@ -504,6 +512,7 @@ export function ServerBrowserSurface(props: {
     // Registered natively: React's wheel listener is passive and cannot stop the panel scrolling.
     const onWheel = (event: WheelEvent) => {
       const point = pagePoint(event.clientX, event.clientY, false);
+      if (controlRef.current?.controller === "you") cursorRef.current?.show(point !== null);
       if (!point) return;
       event.preventDefault();
       const unit =
@@ -616,6 +625,7 @@ export function ServerBrowserSurface(props: {
       type !== "pointerdown" &&
         (cancelled || type === "pointerup" || previous !== 0 || event.buttons !== 0),
     );
+    cursorRef.current?.show(pagePoint(clientX, clientY, false) !== null);
     if (!point) return;
     const at = { x: point.x, y: point.y, modifiers: previewStreamModifiers(event) };
     const mouse = (action: "down" | "up", button: PreviewStreamMouseButton, buttons: number) => {
