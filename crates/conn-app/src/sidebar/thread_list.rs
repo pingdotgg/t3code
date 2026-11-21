@@ -1,24 +1,26 @@
 //! Thread sidebar column (`Sidebar.tsx`, `SidebarThreadHeader.tsx`, `SidebarThreadRow.tsx` parity).
 //!
-//! Layout:
-//! - 44px transparent header with the sidebar toggle positioned at `x = 90px`
-//!   from the window edge (`36px` inside the sidebar column, directly right of
-//!   the macOS traffic lights).
-//! - Inset panel card (`8px` content inset):
-//!   - Top row: `"Search"` soft field (`32px` height) + trailing Lucide icon
-//!     buttons (`ListFilter`, `FolderPlus`, `SquarePen`, `28px x 28px` each).
-//!   - Flat list of thread card rows (`Sidebar.tsx` default when `boringSidebarEnabled`
-//!     is false), sorted as `ShellState.threads` already is:
-//!     - Line 1 (`20px` height): `16px` project monogram + project name + right-aligned
-//!       relative age (`now`, `5m`, `3h`, `2d`, `247d`) or active status indicator.
-//!     - Line 2: single-line truncated `13px` title in `sidebar_foreground`.
-//!     - Line 3 (when branch is present): muted branch name + trailing provider icon.
-//!   - Bottom footer `"Settled  N >"` row (`CollapsibleSectionHeader` / `SidebarListMarkers`).
+//! Layout matching real Conn (`apps/web/src/components/sidebar/`):
+//! - `44px` transparent header with the sidebar toggle at `x = 90px` from the
+//!   window edge (`36px` inside the sidebar column, right of macOS traffic lights).
+//! - Inset panel card:
+//!   - Fixed top `SidebarGroup` (`p-2` = `8px`): `"Search"` (`h-8`, `text-sm font-medium`)
+//!     + trailing `28x28` icon buttons (`ListFilter`, `FolderPlus`, `SquarePen`).
+//!   - Scrollable `SidebarGroup` (`px-2 pb-2`, `gap-px`): two-line card rows
+//!     (`SidebarThreadRow.tsx` `variant="card"`):
+//!     - Outer wrapper: `py-0.5` (`2px`), card `rounded-lg` (`8px`), `px-2.5 py-2` (`10px`/`8px`),
+//!       `border-t` (`--shell-divider-raised/50` when active, transparent otherwise).
+//!     - Line 1 (`h-5`, `gap-1.5`): `16px` project favicon/monogram wrapped in `StatusDotBadge`
+//!       (`6px` corner status dot for working / attention / failed / unread) + `14px` medium title.
+//!     - Line 2 (`mt-1`, `ps-5.5` = `22px`, `gap-1.5`, `text-xs` = `12px`, muted):
+//!       `14px` provider icon · project name · branch (when present) · compact relative age.
+//!   - `Settled` collapsible section header (`SidebarSectionHeader`) pushed to the
+//!     bottom (`mt-auto`) when settled threads exist; hidden when empty.
 
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use conn_state::{LayoutState, ShellState, ThreadActivity, ThreadShell};
+use conn_state::{LayoutState, ProjectShell, ShellState, ThreadActivity, ThreadShell};
 use conn_theme::{Appearance, ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
@@ -30,28 +32,61 @@ use crate::app::ConnApp;
 use crate::fixture::thread_activity;
 use crate::icons;
 use crate::shell::{CardJoin, MACOS_TRAFFIC_LIGHTS_INSET_PX, WORKSPACE_RAIL_WIDTH_PX, inset_card};
-use crate::sidebar::render_project_monogram;
+use crate::sidebar::{render_project_favicon, render_project_monogram};
 use crate::theme::{hsla, hsla_alpha};
 
 /// `--sidebar-content-inset: 0.5rem` (`8px`).
 const SIDEBAR_CONTENT_INSET_PX: f32 = 8.0;
 /// `--sidebar-row-content-inset: 0.625rem` (`10px`).
 const ROW_HORIZONTAL_INSET_PX: f32 = 10.0;
-/// `rounded-md` (`6px`) on search field, icon buttons, and thread cards.
-const CONTROL_RADIUS_PX: f32 = 6.0;
+/// `rounded-lg` (`--radius: 0.5rem` = `8px`) on thread cards and icon controls.
+const ROW_RADIUS_PX: f32 = 8.0;
+/// `rounded-md` (`6px`) on the search field and collapsible section header.
+const SEARCH_RADIUS_PX: f32 = 6.0;
 /// `size-7` (`28px`) for `SidebarHeaderIconButton` and `SidebarTrigger`.
 const HEADER_ICON_BTN_PX: f32 = 28.0;
 /// `size-4` (`16px`) for `ProjectFavicon` / `ProjectMonogram` in thread rows.
-const ROW_MONOGRAM_PX: f32 = 16.0;
-/// `text-xs` (`12px`) for project label, relative age, branch, and Settled footer.
+const ROW_FAVICON_PX: f32 = 16.0;
+/// `ps-5.5` (`22px` = `16px` favicon + `6px` gap) aligning line 2 under the title.
+const META_LINE_INDENT_PX: f32 = 22.0;
+/// `text-sm` (`14px` / `20px`) for search field and thread row titles.
+const TITLE_FONT_SIZE_PX: f32 = 14.0;
+const TITLE_LINE_HEIGHT_PX: f32 = 20.0;
+/// `text-xs` (`12px` / `16px`) for line-2 metadata and Settled section header.
 const META_FONT_SIZE_PX: f32 = 12.0;
 const META_LINE_HEIGHT_PX: f32 = 16.0;
+/// `size-1.5` (`6px`) corner dot in `StatusDotBadge.tsx`.
+const STATUS_DOT_PX: f32 = 6.0;
 /// Left offset inside the sidebar header so the toggle sits at `x = 90px`
 /// (`--desktop-window-controls-inset`) directly right of the traffic lights.
 const SIDEBAR_TOGGLE_LEFT_OFFSET_PX: f32 = MACOS_TRAFFIC_LIGHTS_INSET_PX - WORKSPACE_RAIL_WIDTH_PX;
 /// Sentinel key stored in `collapsed_projects` to toggle the Settled shelf
 /// without requiring a new field on `ConnApp`.
 const SETTLED_SHELF_TOGGLE_KEY: &str = "__settled__";
+
+/// Status dot state matching `StatusDotBadge.tsx`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatusDotState {
+    Working,
+    Waiting,
+    #[expect(
+        dead_code,
+        reason = "ready for unread-completion tracking in LayoutState"
+    )]
+    Done,
+    Failed,
+}
+
+impl StatusDotState {
+    fn from_activity(activity: ThreadActivity) -> Option<Self> {
+        match activity {
+            ThreadActivity::Working => Some(Self::Working),
+            ThreadActivity::NeedsAttention => Some(Self::Waiting),
+            ThreadActivity::Failed => Some(Self::Failed),
+            ThreadActivity::Idle => None,
+        }
+    }
+}
 
 /// Renders the thread sidebar column (`layout.sidebar_width` wide).
 #[must_use]
@@ -66,7 +101,9 @@ pub(crate) fn render_thread_sidebar(
 ) -> gpui_kit::Div {
     let fg = hsla(tokens.sidebar_foreground);
     let muted = hsla(tokens.sidebar_muted_foreground);
+    let search_icon_color = hsla_alpha(tokens.sidebar_muted_foreground, 0.85);
     let hover_bg = hsla(tokens.sidebar_row_hover);
+    let has_projects = !shell.projects.is_empty();
 
     // 44px transparent header above the inset thread card.
     // Places the sidebar toggle directly right of the macOS traffic lights
@@ -88,7 +125,7 @@ pub(crate) fn render_thread_sidebar(
                 .items_center()
                 .justify_center()
                 .size(px(HEADER_ICON_BTN_PX))
-                .rounded(px(CONTROL_RADIUS_PX))
+                .rounded(px(ROW_RADIUS_PX))
                 .cursor_pointer()
                 .hover(move |s| s.bg(hover_bg))
                 .on_click(cx.listener(|app, _event, _window, cx| {
@@ -98,6 +135,29 @@ pub(crate) fn render_thread_sidebar(
         );
 
     // Top row (`SidebarThreadHeader.tsx`): "Search" soft field + trailing icon buttons.
+    let mut header_actions = div().flex().flex_row().items_center().flex_shrink_0();
+    if has_projects {
+        header_actions = header_actions
+            .child(sidebar_header_icon_btn(
+                "sidebar-filter-projects",
+                IconName::ListFilter,
+                tokens,
+                cx.listener(|_app, _event, _window, _cx| {}),
+            ))
+            .child(sidebar_header_icon_btn(
+                "sidebar-add-project",
+                IconName::FolderPlus,
+                tokens,
+                cx.listener(|_app, _event, _window, _cx| {}),
+            ));
+    }
+    header_actions = header_actions.child(sidebar_header_icon_btn(
+        "sidebar-new-thread",
+        IconName::SquarePen,
+        tokens,
+        cx.listener(|_app, _event, _window, _cx| {}),
+    ));
+
     let top_row = div()
         .flex()
         .flex_row()
@@ -105,6 +165,7 @@ pub(crate) fn render_thread_sidebar(
         .gap(px(4.0))
         .w_full()
         .flex_shrink_0()
+        .p(px(SIDEBAR_CONTENT_INSET_PX))
         .child(
             div()
                 .id("sidebar-search")
@@ -116,41 +177,17 @@ pub(crate) fn render_thread_sidebar(
                 .min_w_0()
                 .h(px(geometry.toolbar_height_px))
                 .px(px(8.0))
-                .rounded(px(CONTROL_RADIUS_PX))
+                .rounded(px(SEARCH_RADIUS_PX))
                 .cursor_text()
-                .text_size(px(geometry.ui_font_size_px))
-                .line_height(px(geometry.ui_line_height_px))
+                .text_size(px(TITLE_FONT_SIZE_PX))
+                .line_height(px(TITLE_LINE_HEIGHT_PX))
                 .font_weight(gpui_kit::FontWeight::MEDIUM)
                 .text_color(muted)
                 .hover(move |s| s.bg(hover_bg).text_color(fg))
-                .child(icons::chrome(IconName::Search, muted))
+                .child(icons::chrome(IconName::Search, search_icon_color))
                 .child(div().flex_1().min_w_0().truncate().child("Search")),
         )
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .flex_shrink_0()
-                .child(sidebar_header_icon_btn(
-                    "sidebar-filter-projects",
-                    IconName::ListFilter,
-                    tokens,
-                    cx.listener(|_app, _event, _window, _cx| {}),
-                ))
-                .child(sidebar_header_icon_btn(
-                    "sidebar-add-project",
-                    IconName::FolderPlus,
-                    tokens,
-                    cx.listener(|_app, _event, _window, _cx| {}),
-                ))
-                .child(sidebar_header_icon_btn(
-                    "sidebar-new-thread",
-                    IconName::SquarePen,
-                    tokens,
-                    cx.listener(|_app, _event, _window, _cx| {}),
-                )),
-        );
+        .child(header_actions);
 
     // Flat list of threads, scoped to `active_workspace` when selected.
     let now_secs = current_unix_secs();
@@ -162,26 +199,16 @@ pub(crate) fn render_thread_sidebar(
 
     let mut thread_rows = Vec::with_capacity(visible_threads.len());
     for (idx, thread) in visible_threads.into_iter().enumerate() {
-        let project_name = shell
-            .project(&thread.project_id)
-            .map(|p| p.title.as_str())
-            .unwrap_or("No project");
+        let project = shell.project(&thread.project_id);
         let selected = layout.selected_thread_id.as_deref() == Some(thread.id.as_str());
         let activity = thread_activity(shell, thread);
         thread_rows.push(render_thread_card(
-            idx,
-            thread,
-            project_name,
-            selected,
-            activity,
-            now_secs,
-            tokens,
-            geometry,
-            cx,
+            idx, thread, project, selected, activity, now_secs, tokens, cx,
         ));
     }
 
-    // Bottom "Settled  N >" footer row (`SidebarListMarkers.tsx` + `CollapsibleSectionHeader.tsx`).
+    // Settled shelf (`SidebarSectionHeader` in `Sidebar.tsx`): only shown when
+    // settled threads exist, pushed to the bottom of the list with `mt-auto`.
     let settled_threads: Vec<&ThreadShell> = shell
         .archived_threads
         .iter()
@@ -189,59 +216,72 @@ pub(crate) fn render_thread_sidebar(
         .collect();
     let settled_count = settled_threads.len();
     let settled_expanded = collapsed_projects.contains(SETTLED_SHELF_TOGGLE_KEY);
-    let settled_footer = div()
-        .id("sidebar-settled-footer")
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(8.0))
-        .w_full()
-        .h(px(geometry.toolbar_height_px))
-        .px(px(8.0))
-        .flex_shrink_0()
-        .rounded(px(CONTROL_RADIUS_PX))
-        .cursor_pointer()
-        .text_size(px(META_FONT_SIZE_PX))
-        .line_height(px(META_LINE_HEIGHT_PX))
-        .text_color(muted)
-        .hover(move |s| s.bg(hover_bg))
-        .on_click(cx.listener(|app, _event, _window, cx| {
-            app.toggle_project_collapsed(SETTLED_SHELF_TOGGLE_KEY, cx);
-        }))
-        .child(
-            div()
-                .flex_shrink_0()
-                .font_weight(gpui_kit::FontWeight::MEDIUM)
-                .child("Settled"),
-        )
-        .child(div().flex_1())
-        .child(
-            div()
-                .flex_shrink_0()
-                .font_weight(gpui_kit::FontWeight::NORMAL)
-                .child(settled_count.to_string()),
-        )
-        .child(icons::caret(settled_expanded, muted));
 
-    let mut settled_rows = Vec::new();
-    if settled_expanded {
-        for (idx, thread) in settled_threads.into_iter().enumerate() {
-            let project_name = shell
-                .project(&thread.project_id)
-                .map(|p| p.title.as_str())
-                .unwrap_or("No project");
-            let selected = layout.selected_thread_id.as_deref() == Some(thread.id.as_str());
-            settled_rows.push(render_thread_card(
-                100_000 + idx,
-                thread,
-                project_name,
-                selected,
-                ThreadActivity::Idle,
-                now_secs,
-                tokens,
-                geometry,
-                cx,
-            ));
+    let mut list_scroll = div()
+        .id("sidebar-thread-scroll")
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scroll()
+        .px(px(SIDEBAR_CONTENT_INSET_PX))
+        .pb(px(SIDEBAR_CONTENT_INSET_PX))
+        .gap(px(1.0))
+        .children(thread_rows);
+
+    if settled_count > 0 {
+        let settled_header = div()
+            .id("sidebar-settled-footer")
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.0))
+            .w_full()
+            .h(px(geometry.toolbar_height_px))
+            .mt_auto()
+            .px(px(8.0))
+            .flex_shrink_0()
+            .rounded(px(SEARCH_RADIUS_PX))
+            .cursor_pointer()
+            .text_size(px(META_FONT_SIZE_PX))
+            .line_height(px(META_LINE_HEIGHT_PX))
+            .text_color(muted)
+            .hover(move |s| s.bg(hover_bg))
+            .on_click(cx.listener(|app, _event, _window, cx| {
+                app.toggle_project_collapsed(SETTLED_SHELF_TOGGLE_KEY, cx);
+            }))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .font_weight(gpui_kit::FontWeight::MEDIUM)
+                    .child("Settled"),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .font_weight(gpui_kit::FontWeight::NORMAL)
+                    .child(settled_count.to_string()),
+            )
+            .child(icons::caret(settled_expanded, muted));
+
+        list_scroll = list_scroll.child(settled_header);
+
+        if settled_expanded {
+            for (idx, thread) in settled_threads.into_iter().enumerate() {
+                let project = shell.project(&thread.project_id);
+                let selected = layout.selected_thread_id.as_deref() == Some(thread.id.as_str());
+                list_scroll = list_scroll.child(render_thread_card(
+                    100_000 + idx,
+                    thread,
+                    project,
+                    selected,
+                    ThreadActivity::Idle,
+                    now_secs,
+                    tokens,
+                    cx,
+                ));
+            }
         }
     }
 
@@ -254,23 +294,8 @@ pub(crate) fn render_thread_sidebar(
             right: true,
         },
     )
-    .p(px(SIDEBAR_CONTENT_INSET_PX))
-    .gap(px(4.0))
     .child(top_row)
-    .child(
-        div()
-            .id("sidebar-thread-scroll")
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .gap(px(2.0))
-            .pt(px(2.0))
-            .children(thread_rows),
-    )
-    .child(settled_footer)
-    .children(settled_rows);
+    .child(list_scroll);
 
     div()
         .flex()
@@ -288,7 +313,7 @@ fn sidebar_header_icon_btn(
     tokens: &Tokens,
     on_click: impl Fn(&gpui_kit::ClickEvent, &mut gpui_kit::Window, &mut gpui_kit::App) + 'static,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let muted = hsla(tokens.sidebar_muted_foreground);
+    let icon_color = hsla_alpha(tokens.sidebar_muted_foreground, 0.80);
     let hover_bg = hsla(tokens.sidebar_row_hover);
 
     div()
@@ -298,36 +323,35 @@ fn sidebar_header_icon_btn(
         .justify_center()
         .size(px(HEADER_ICON_BTN_PX))
         .flex_shrink_0()
-        .rounded(px(CONTROL_RADIUS_PX))
+        .rounded(px(ROW_RADIUS_PX))
         .cursor_pointer()
         .hover(move |s| s.bg(hover_bg))
         .on_click(on_click)
-        .child(icons::chrome(icon_name, muted))
+        .child(icons::chrome(icon_name, icon_color))
 }
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "pure view helper taking borrowed thread and theme slices"
+    reason = "pure view helper taking borrowed thread, project, and theme slices"
 )]
 fn render_thread_card(
     row_key: usize,
     thread: &ThreadShell,
-    project_name: &str,
+    project: Option<&ProjectShell>,
     selected: bool,
     activity: ThreadActivity,
     now_secs: i64,
     tokens: &Tokens,
-    geometry: &ShellGeometry,
     cx: &mut Context<'_, ConnApp>,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let fg = hsla(tokens.sidebar_foreground);
+) -> gpui_kit::Div {
+    let fg = hsla(tokens.foreground);
     let muted = hsla(tokens.sidebar_muted_foreground);
     let hover_bg = hsla(tokens.sidebar_row_hover);
     let selected_bg = hsla(tokens.sidebar_row_selected);
     let active_bg = hsla(tokens.sidebar_row_active);
-    let provider_color = hsla_alpha(tokens.sidebar_muted_foreground, 0.70);
     let thread_id = thread.id.clone();
 
+    let project_name = project.map(|p| p.title.as_str());
     let provider_hint = thread
         .model_selection
         .provider
@@ -337,15 +361,19 @@ fn render_thread_card(
         .or_else(|| thread.model_selection.model.as_str())
         .unwrap_or("");
     let provider_icon_name = icons::provider_icon(provider_hint);
-    let provider_glyph = icons::compact(provider_icon_name, provider_color);
+    let provider_color = provider_tint(provider_hint, tokens);
 
-    // Line 1: project monogram + project name + right-aligned status or relative age.
-    let timestamp_iso = thread
-        .latest_user_message_at
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .unwrap_or(&thread.updated_at);
-    let trailing_status = render_top_status_or_age(activity, timestamp_iso, now_secs, tokens);
+    // Line 1 (`h-5`, `gap-1.5`): 16px project favicon (with corner StatusDotBadge) + 14px medium title.
+    let favicon = project.map_or_else(
+        || render_project_monogram("No project", ROW_FAVICON_PX, tokens),
+        |p| render_project_favicon(p, ROW_FAVICON_PX, tokens),
+    );
+    let leading_icon = render_status_dot_badge(
+        favicon,
+        StatusDotState::from_activity(activity),
+        selected,
+        tokens,
+    );
 
     let line1 = div()
         .flex()
@@ -353,28 +381,31 @@ fn render_thread_card(
         .items_center()
         .gap(px(6.0))
         .w_full()
-        .h(px(20.0))
+        .h(px(TITLE_LINE_HEIGHT_PX))
         .min_w_0()
-        .child(render_project_monogram(
-            project_name,
-            ROW_MONOGRAM_PX,
-            tokens,
-        ))
+        .child(leading_icon)
         .child(
             div()
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(px(META_FONT_SIZE_PX))
-                .line_height(px(META_LINE_HEIGHT_PX))
-                .font_weight(gpui_kit::FontWeight::NORMAL)
-                .text_color(muted)
-                .child(project_name.to_owned()),
-        )
-        .child(trailing_status);
+                .text_size(px(TITLE_FONT_SIZE_PX))
+                .line_height(px(TITLE_LINE_HEIGHT_PX))
+                .font_weight(gpui_kit::FontWeight::MEDIUM)
+                .text_color(fg)
+                .child(thread.title.clone()),
+        );
 
-    // Line 2: single-line truncated 13px title in `sidebar_foreground`.
-    let has_branch = thread.branch.as_deref().is_some_and(|b| !b.is_empty());
+    // Line 2 (`cardMetaLine` in `SidebarThreadRow.tsx:1357-1392`):
+    // `mt-1 flex min-w-0 items-center gap-1.5 ps-5.5 text-secondary-label text-xs`
+    // Contents: provider icon · project · branch · relative age
+    let timestamp_iso = thread
+        .latest_user_message_at
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&thread.updated_at);
+    let age = format_compact_relative_age_at(timestamp_iso, now_secs).unwrap_or_default();
+
     let mut line2 = div()
         .flex()
         .flex_row()
@@ -382,21 +413,40 @@ fn render_thread_card(
         .gap(px(6.0))
         .w_full()
         .mt(px(4.0))
+        .pl(px(META_LINE_INDENT_PX))
         .min_w_0()
+        .text_size(px(META_FONT_SIZE_PX))
+        .line_height(px(META_LINE_HEIGHT_PX))
+        .text_color(muted)
         .child(
             div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_size(px(geometry.ui_font_size_px))
-                .line_height(px(geometry.ui_line_height_px))
-                .font_weight(gpui_kit::FontWeight::MEDIUM)
-                .text_color(fg)
-                .child(thread.title.clone()),
+                .flex()
+                .items_center()
+                .flex_shrink_0()
+                .child(icons::compact(provider_icon_name, provider_color)),
         );
 
-    if !has_branch {
-        line2 = line2.child(provider_glyph);
+    if let Some(name) = project_name {
+        line2 = line2.child(div().flex_shrink_0().child("·")).child(
+            div()
+                .min_w_0()
+                .max_w(px(92.0))
+                .flex_shrink_0()
+                .truncate()
+                .child(name.to_owned()),
+        );
+    }
+
+    if let Some(branch) = thread.branch.as_deref().filter(|b| !b.is_empty()) {
+        line2 = line2
+            .child(div().flex_shrink_0().child("·"))
+            .child(div().min_w_0().truncate().child(branch.to_owned()));
+    }
+
+    if !age.is_empty() {
+        line2 = line2
+            .child(div().flex_shrink_0().child("·"))
+            .child(div().flex_shrink_0().child(age));
     }
 
     let mut card = div()
@@ -406,7 +456,7 @@ fn render_thread_card(
         .w_full()
         .px(px(ROW_HORIZONTAL_INSET_PX))
         .py(px(SIDEBAR_CONTENT_INSET_PX))
-        .rounded(px(CONTROL_RADIUS_PX))
+        .rounded(px(ROW_RADIUS_PX))
         .border_t_1()
         .cursor_pointer()
         .on_click(cx.listener(move |app, _event, _window, cx| {
@@ -415,35 +465,12 @@ fn render_thread_card(
         .child(line1)
         .child(line2);
 
-    if let Some(branch) = thread.branch.as_deref().filter(|b| !b.is_empty()) {
-        let line3 = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.0))
-            .w_full()
-            .mt(px(2.0))
-            .min_w_0()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(META_FONT_SIZE_PX))
-                    .line_height(px(META_LINE_HEIGHT_PX))
-                    .text_color(muted)
-                    .child(branch.to_owned()),
-            )
-            .child(icons::compact(provider_icon_name, provider_color));
-        card = card.child(line3);
-    }
-
-    // Active row carries a 1px top highlight (`--shell-divider-raised`) and
-    // `sidebar_row_active` fill; light mode adds the subtle inset border.
+    // Active row: `bg-sidebar-row-active` + `border-t-(--shell-divider-raised)/50`;
+    // Light mode adds `ring-1 ring-inset ring-sidebar-border/70`.
     if selected {
         card = card
             .bg(active_bg)
-            .border_color(hsla(tokens.shell_divider_raised))
+            .border_color(hsla_alpha(tokens.shell_divider_raised, 0.50))
             .hover(move |s| s.bg(active_bg));
         if tokens.appearance == Appearance::Light {
             card = card
@@ -457,55 +484,64 @@ fn render_thread_card(
             .active(move |s| s.bg(selected_bg));
     }
 
-    card
+    // Outer `li` wrapper carries `py-0.5` (`2px`) matching `SidebarThreadRow.tsx:1610`.
+    div().w_full().py(px(2.0)).child(card)
 }
 
-/// Renders Conn's top-right status slot (`SidebarThreadRow.tsx:1451-1514`):
-/// shows the status icon + label for active/attention/failed threads, or the
-/// compact relative age (`now`, `5m`, `3h`, `2d`, `247d`) for idle threads.
-fn render_top_status_or_age(
-    activity: ThreadActivity,
-    timestamp_iso: &str,
-    now_secs: i64,
+/// Wraps a 16px leading project icon with Conn's `StatusDotBadge` (`StatusDotBadge.tsx`):
+/// a 6px (`size-1.5`) dot at `top: -1px, right: -1px` with a cutout border.
+fn render_status_dot_badge(
+    icon: gpui_kit::Div,
+    state: Option<StatusDotState>,
+    selected: bool,
     tokens: &Tokens,
 ) -> gpui_kit::Div {
-    let slot = div()
+    let mut wrapper = div()
+        .relative()
         .flex()
-        .flex_row()
         .items_center()
-        .justify_end()
-        .gap(px(4.0))
+        .justify_center()
         .flex_shrink_0()
-        .text_size(px(META_FONT_SIZE_PX))
-        .line_height(px(META_LINE_HEIGHT_PX));
+        .child(icon);
 
-    match activity {
-        ThreadActivity::Working => {
-            let color = hsla(tokens.info_foreground);
-            slot.font_weight(gpui_kit::FontWeight::MEDIUM)
-                .text_color(color)
-                .child(icons::compact(IconName::CircleDashed, color))
-                .child("Working")
-        }
-        ThreadActivity::NeedsAttention => {
-            let color = hsla(tokens.warning_foreground);
-            slot.font_weight(gpui_kit::FontWeight::MEDIUM)
-                .text_color(color)
-                .child(icons::compact(IconName::ShieldAlert, color))
-                .child("Approval")
-        }
-        ThreadActivity::Failed => {
-            let color = hsla(tokens.destructive);
-            slot.font_weight(gpui_kit::FontWeight::MEDIUM)
-                .text_color(color)
-                .child(icons::compact(IconName::CircleAlert, color))
-                .child("Failed")
-        }
-        ThreadActivity::Idle => {
-            let age = format_compact_relative_age_at(timestamp_iso, now_secs).unwrap_or_default();
-            slot.text_color(hsla(tokens.sidebar_muted_foreground))
-                .child(age)
-        }
+    if let Some(dot_state) = state {
+        let dot_color = match dot_state {
+            StatusDotState::Working => hsla(tokens.info),
+            StatusDotState::Waiting => hsla_alpha(tokens.muted_foreground, 0.70),
+            StatusDotState::Done => hsla(tokens.success),
+            StatusDotState::Failed => hsla(tokens.destructive),
+        };
+        // Ring color blends the cutout cleanly into the row behind the icon.
+        let ring_color = if selected {
+            hsla(tokens.shell_control)
+        } else {
+            hsla(tokens.shell_card)
+        };
+        wrapper = wrapper.child(
+            div()
+                .absolute()
+                .top(px(-2.0))
+                .right(px(-2.0))
+                .size(px(STATUS_DOT_PX + 2.0))
+                .rounded_full()
+                .bg(dot_color)
+                .border(px(1.5))
+                .border_color(ring_color),
+        );
+    }
+
+    wrapper
+}
+
+/// Provider glyph tint matching `ProviderInstanceIcon.tsx` (`opacity-60`):
+/// Claude uses the theme's warm warning role; OpenAI/Codex and others use
+/// `foreground` at 60% opacity.
+fn provider_tint(provider_hint: &str, tokens: &Tokens) -> gpui_kit::Hsla {
+    let lower = provider_hint.to_ascii_lowercase();
+    if lower.contains("claude") || lower.contains("anthropic") {
+        hsla_alpha(tokens.warning, 0.75)
+    } else {
+        hsla_alpha(tokens.foreground, 0.60)
     }
 }
 

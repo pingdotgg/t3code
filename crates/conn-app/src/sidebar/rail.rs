@@ -1,20 +1,22 @@
 //! Leftmost workspace rail (`WorkspaceRail.tsx` parity).
 //!
-//! Geometry (`../conn/apps/web/src/components/sidebar/WorkspaceRail.tsx`):
+//! Geometry (`apps/web/src/components/sidebar/WorkspaceRail.tsx`, `index.css`):
 //! - Width: `54px` (`w-13.5`).
 //! - Top `44px` drag spacer clearing the macOS traffic lights.
 //! - First button ("All projects") sits `5px` below the `44px` header so the
 //!   `38px` button centers on the `32px` search row (`44 + 8 + 16 = 68px` ==
 //!   `44 + 5 + 19 = 68px`).
-//! - Rail button: `38px x 38px` (`size-9.5`), `10px` radius (`rounded-rail`).
-//! - Inner workspace tile: `28px x 28px` (`size-7`), `5px` radius (`rounded-tile`,
-//!   concentric `10px - 5px` inset), muted monogram tinted from theme tokens.
+//! - Rail button: `38px x 38px` (`size-9.5`), `11px` radius (`--radius-rail: calc(6px + 5px)`).
+//! - Inner tile: `28px x 28px` (`size-7`), `6px` radius (`--radius-tile: 6px`).
 //! - Active workspace: `2px` inset ring (`sidebar_foreground` @ 90%) over
-//!   `sidebar_row_active`, leaving a visible `3px` gap around the `28px` tile.
-//! - Bottom utility column: Usage (`ChartNoAxesColumn`) and Settings (`Settings`).
+//!   `sidebar_row_active`, leaving a concentric `5px` gap around the `28px` tile.
+//! - Saved workspaces live between "All projects" and `+`; when there are none,
+//!   Conn shows only "All projects" and `+` (never individual projects).
+//! - Bottom utility column (`gap-2 pb-2`): Usage (`chart`), Pull Requests
+//!   (`pull-request`), and Settings (`settings`).
 
 use conn_state::ShellState;
-use conn_theme::{Appearance, ShellGeometry, Tokens};
+use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
     Context, InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
@@ -24,61 +26,31 @@ use gpui_kit::{
 use crate::app::ConnApp;
 use crate::icons;
 use crate::shell::WORKSPACE_RAIL_WIDTH_PX;
-use crate::sidebar::{project_monogram, project_monogram_color};
 use crate::theme::{hsla, hsla_alpha};
 
+/// `size-9.5` = `38px`.
 const RAIL_BUTTON_SIZE_PX: f32 = 38.0;
-const RAIL_BUTTON_RADIUS_PX: f32 = 10.0;
+/// `--radius-rail: calc(var(--radius-tile) + 5px)` = `11px`.
+const RAIL_BUTTON_RADIUS_PX: f32 = 11.0;
+/// `size-7` = `28px`.
 const RAIL_TILE_SIZE_PX: f32 = 28.0;
-const RAIL_TILE_RADIUS_PX: f32 = 5.0;
+/// `--radius-tile: 6px` (`index.css`).
+const RAIL_TILE_RADIUS_PX: f32 = 6.0;
 /// `8px (--sidebar-content-inset) - 3px (0.75 * 4px)` so the 38px button centers
-/// on the 32px search row inside the sidebar card (`WorkspaceRail.tsx:256`).
+/// on the 32px search row inside the sidebar card (`WorkspaceRail.tsx:252`).
 const RAIL_TOP_ALIGN_OFFSET_PX: f32 = 5.0;
 
-/// Renders the vertical workspace rail.
+/// Renders the vertical workspace rail matching real Conn (`WorkspaceRail.tsx`).
 #[must_use]
 pub(crate) fn render_workspace_rail(
-    shell: &ShellState,
+    _shell: &ShellState,
     active_workspace: Option<&str>,
     tokens: &Tokens,
     geometry: &ShellGeometry,
     cx: &mut Context<'_, ConnApp>,
 ) -> gpui_kit::Div {
     let all_active = active_workspace.is_none();
-    let tile_bg_alpha = match tokens.appearance {
-        Appearance::Light => 0.14,
-        Appearance::Dark => 0.18,
-    };
-
-    let mut workspace_tiles = Vec::with_capacity(shell.projects.len());
-    for (idx, project) in shell.projects.iter().enumerate() {
-        let project_id = project.id.clone();
-        let active = active_workspace == Some(project.id.as_str());
-        let monogram = project_monogram(&project.title);
-        let accent = project_monogram_color(&project.title, tokens);
-
-        let tile = div()
-            .flex()
-            .items_center()
-            .justify_center()
-            .size(px(RAIL_TILE_SIZE_PX))
-            .rounded(px(RAIL_TILE_RADIUS_PX))
-            .bg(hsla_alpha(accent, tile_bg_alpha))
-            .text_color(hsla(accent))
-            .text_size(px(12.0))
-            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-            .child(monogram);
-
-        workspace_tiles.push(rail_button(
-            ("rail-ws", idx),
-            active,
-            tokens,
-            tile,
-            cx.listener(move |app, _event, _window, cx| {
-                app.select_workspace(Some(project_id.clone()), cx);
-            }),
-        ));
-    }
+    let muted = hsla(tokens.sidebar_muted_foreground);
 
     let all_projects_tile = div()
         .flex()
@@ -92,7 +64,7 @@ pub(crate) fn render_workspace_rail(
             if all_active {
                 hsla(tokens.sidebar_foreground)
             } else {
-                hsla(tokens.sidebar_muted_foreground)
+                muted
             },
         ));
 
@@ -110,7 +82,7 @@ pub(crate) fn render_workspace_rail(
         "rail-new-workspace",
         false,
         tokens,
-        icons::chrome(IconName::Plus, hsla(tokens.sidebar_muted_foreground)),
+        icons::chrome(IconName::Plus, muted),
         cx.listener(|_app, _event, _window, _cx| {}),
     );
 
@@ -118,10 +90,15 @@ pub(crate) fn render_workspace_rail(
         "rail-usage",
         false,
         tokens,
-        icons::chrome(
-            IconName::ChartNoAxesColumn,
-            hsla(tokens.sidebar_muted_foreground),
-        ),
+        icons::chrome(IconName::ChartNoAxesColumn, muted),
+        cx.listener(|_app, _event, _window, _cx| {}),
+    );
+
+    let pull_requests_btn = rail_button(
+        "rail-pull-requests",
+        false,
+        tokens,
+        icons::concept(icons::PULL_REQUEST, icons::CHROME_ICON_PX, muted),
         cx.listener(|_app, _event, _window, _cx| {}),
     );
 
@@ -129,8 +106,10 @@ pub(crate) fn render_workspace_rail(
         "rail-settings",
         false,
         tokens,
-        icons::chrome(IconName::Settings, hsla(tokens.sidebar_muted_foreground)),
-        cx.listener(|_app, _event, _window, _cx| {}),
+        icons::chrome(IconName::Settings, muted),
+        cx.listener(|app, _event, window, cx| {
+            app.open_settings(window, cx);
+        }),
     );
 
     div()
@@ -147,7 +126,7 @@ pub(crate) fn render_workspace_rail(
                 .flex_shrink_0()
                 .window_control_area(WindowControlArea::Drag),
         )
-        // Main workspace tiles column.
+        // Main workspace tiles column: "All projects" + saved workspaces (none yet) + "+".
         .child(
             div()
                 .flex()
@@ -171,7 +150,6 @@ pub(crate) fn render_workspace_rail(
                         .mt(px(8.0))
                         .pb(px(8.0))
                         .overflow_y_scroll()
-                        .children(workspace_tiles)
                         .child(add_workspace_btn),
                 ),
         )
@@ -186,6 +164,7 @@ pub(crate) fn render_workspace_rail(
                 .gap(px(8.0))
                 .pb(px(8.0))
                 .child(usage_btn)
+                .child(pull_requests_btn)
                 .child(settings_btn),
         )
 }

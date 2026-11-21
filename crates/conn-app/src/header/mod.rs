@@ -1,19 +1,22 @@
-//! 44px transparent glass chat header, 28px circular action buttons, and
-//! pill `ToolbarGroup` right-panel toggles.
+//! 44px transparent glass chat header (`ChatHeader.tsx`, `WorkspaceBreadcrumb.tsx`,
+//! and `PanelLayoutControls.tsx` parity).
 //!
-//! Matches `docs/design-spec.md` §3–4, `../conn/apps/web/src/components/chat/ChatHeader.tsx`,
-//! `../conn/apps/web/src/components/WorkspaceBreadcrumb.tsx`, and
-//! `../conn/apps/web/src/components/ToolbarGroup.tsx`:
+//! Geometry (`apps/web/src/components/ChatView.tsx`, `chat/ChatHeader.tsx`,
+//! `chat/PanelLayoutControls.tsx`, `WorkspaceBreadcrumb.tsx`):
 //! - Header height: `44px` (`--shell-header-height`), transparent over frosted frame.
-//! - Sidebar toggle sits at `x = 90px` directly right of the macOS traffic lights
-//!   when the sidebar is collapsed (matching its open position in `thread_list.rs`).
-//! - Breadcrumb typography: `14px` (`text-sm`), project monogram (`14px`) + muted
-//!   project label + `/` + medium foreground thread title.
-//! - Right controls inset: `11px` (`--workspace-controls-right`).
-//! - Circular header buttons: `28px`, rest `shell_header_control`, hover `shell_header_control_hover`.
-//! - `ToolbarGroup`: `32px` height, `9999px` pill radius, `3px` inner padding,
-//!   `shell_control` fill, `1px` `shell_divider_header` border, `24px` ghost buttons
-//!   inside whose active state brightens the icon to `foreground` with no fill.
+//! - Left padding: `20px` (`sm:px-5`) when the sidebar is open; `90px`
+//!   (`--desktop-window-controls-inset`) when collapsed so the `28px` sidebar
+//!   reopen button stays at `x = 90px` right of the macOS traffic lights.
+//! - Right padding: `11px` (`--workspace-controls-right`).
+//! - Breadcrumb: `14px` (`text-sm`), `12px` (`sm:gap-3`) between segments:
+//!   `14px` (`size-3.5`) project favicon + `6px` (`gap-1.5`) + muted project label,
+//!   `/` in muted icon tone, and medium foreground thread title.
+//! - Right controls (`ThreadPanelHeaderControl` / `PanelLayoutControls`):
+//!   - When the right panel is open, Conn shows only the `28px` ghost thread-details
+//!     button (`SquareMenu` -> `superhero/panel-menu.svg`, `16px`).
+//!   - When the right panel is closed, Conn shows the `gap-1` (`4px`) ghost toggle
+//!     trio: thread details (`panel-menu`), terminal drawer (`panel-bottom`), and
+//!     right panel (`sidebar-right`).
 
 use conn_state::{LayoutState, RightPanelTab, ShellState};
 use conn_theme::{ShellGeometry, Tokens};
@@ -26,25 +29,21 @@ use gpui_kit::{
 use crate::app::ConnApp;
 use crate::icons;
 use crate::shell::MACOS_TRAFFIC_LIGHTS_INSET_PX;
-use crate::sidebar::render_project_monogram;
+use crate::sidebar::render_project_favicon;
 use crate::theme::{hsla, hsla_alpha};
 
-const HEADER_ACTION_BTN_PX: f32 = 28.0;
-const TOOLBAR_INNER_PADDING_PX: f32 = 3.0;
-const TOOLBAR_BUTTON_SIZE_PX: f32 = 24.0;
+/// `sm:h-7 sm:min-w-7` (`28px`) for `Toggle size="sm"` and `SidebarTrigger`.
+const HEADER_CONTROL_BTN_PX: f32 = 28.0;
+/// `sm:px-5` (`20px`) left padding on desktop when the sidebar is open.
+const HEADER_LEFT_PAD_OPEN_PX: f32 = 20.0;
+/// `text-sm` (`14px`) breadcrumb font size (`WorkspaceBreadcrumb.tsx`).
 const BREADCRUMB_FONT_SIZE_PX: f32 = 14.0;
-const BREADCRUMB_MONOGRAM_PX: f32 = 14.0;
-const SIDEBAR_TOGGLE_RADIUS_PX: f32 = 6.0;
+/// `size-3.5` (`14px`) project favicon inside the breadcrumb (`ChatHeader.tsx:296`).
+const BREADCRUMB_FAVICON_PX: f32 = 14.0;
+/// `--control-radius: 0.5rem` (`8px`) on `SidebarTrigger`.
+const SIDEBAR_TOGGLE_RADIUS_PX: f32 = 8.0;
 
-/// Primary right-panel toggles shown in the chat header's `ToolbarGroup`.
-const HEADER_PANEL_TOGGLES: [RightPanelTab; 4] = [
-    RightPanelTab::Files,
-    RightPanelTab::Diff,
-    RightPanelTab::Terminal,
-    RightPanelTab::Browser,
-];
-
-/// Renders the 44px transparent chat header.
+/// Renders the 44px transparent chat header matching real Conn.
 #[must_use]
 pub(crate) fn render_chat_header(
     shell: &ShellState,
@@ -55,7 +54,7 @@ pub(crate) fn render_chat_header(
 ) -> gpui_kit::Div {
     let fg = hsla(tokens.foreground);
     let muted = hsla(tokens.muted_foreground);
-    let separator_color = hsla_alpha(tokens.muted_foreground, 0.70);
+    let separator_color = hsla_alpha(tokens.muted_foreground, 0.55);
     let sidebar_hover_bg = hsla(tokens.sidebar_row_hover);
 
     let active_thread = layout
@@ -64,9 +63,6 @@ pub(crate) fn render_chat_header(
         .and_then(|id| shell.thread(id));
     let active_project = active_thread.and_then(|t| shell.project(&t.project_id));
 
-    let project_name = active_project
-        .map(|p| p.title.as_str())
-        .unwrap_or("No project");
     let thread_title = active_thread
         .map(|t| t.title.as_str())
         .unwrap_or("New thread");
@@ -74,7 +70,7 @@ pub(crate) fn render_chat_header(
     // When the sidebar is collapsed, clear the macOS traffic lights (`90px`)
     // so the reopen-sidebar toggle sits at the exact same x=90px coordinate.
     let left_pad = if layout.sidebar_open {
-        px(16.0)
+        px(HEADER_LEFT_PAD_OPEN_PX)
     } else {
         px(MACOS_TRAFFIC_LIGHTS_INSET_PX)
     };
@@ -94,7 +90,7 @@ pub(crate) fn render_chat_header(
                 .flex()
                 .items_center()
                 .justify_center()
-                .size(px(HEADER_ACTION_BTN_PX))
+                .size(px(HEADER_CONTROL_BTN_PX))
                 .flex_shrink_0()
                 .rounded(px(SIDEBAR_TOGGLE_RADIUS_PX))
                 .cursor_pointer()
@@ -106,18 +102,18 @@ pub(crate) fn render_chat_header(
         );
     }
 
-    // 14px breadcrumb (`ChatHeader.tsx` + `WorkspaceBreadcrumb.tsx`):
-    // [14px project monogram + muted project label] / [medium foreground thread title].
+    // 14px breadcrumb (`ChatHeader.tsx` + `WorkspaceBreadcrumb.tsx`, `sm:gap-3` = 12px):
+    // [14px project favicon + 6px gap + muted project label] / [medium foreground thread title].
     let mut breadcrumb = div()
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(8.0))
+        .gap(px(12.0))
         .min_w_0()
         .flex_1()
         .text_size(px(BREADCRUMB_FONT_SIZE_PX));
 
-    if active_project.is_some() {
+    if let Some(project) = active_project {
         breadcrumb = breadcrumb
             .child(
                 div()
@@ -129,12 +125,12 @@ pub(crate) fn render_chat_header(
                     .max_w(px(160.0))
                     .font_weight(gpui_kit::FontWeight::MEDIUM)
                     .text_color(muted)
-                    .child(render_project_monogram(
-                        project_name,
-                        BREADCRUMB_MONOGRAM_PX,
+                    .child(render_project_favicon(
+                        project,
+                        BREADCRUMB_FAVICON_PX,
                         tokens,
                     ))
-                    .child(div().min_w_0().truncate().child(project_name.to_owned())),
+                    .child(div().min_w_0().truncate().child(project.title.clone())),
             )
             .child(div().flex_shrink_0().text_color(separator_color).child("/"));
     }
@@ -151,26 +147,44 @@ pub(crate) fn render_chat_header(
 
     left_group = left_group.child(breadcrumb);
 
-    // Right-side controls: ToolbarGroup pill + 28px circular button, 11px right inset.
-    let toolbar_group = render_panel_toolbar_group(layout, tokens, geometry, cx);
-    let toggle_panel_btn = header_circle_button(
-        "header-toggle-right-panel",
-        IconName::PanelRight,
-        layout.right_panel_open,
-        tokens,
-        cx.listener(|app, _event, _window, cx| {
-            app.toggle_right_panel(cx);
-        }),
-    );
-
-    let right_group = div()
+    // Right-side controls (`ThreadPanelHeaderControl` / `PanelLayoutControls`):
+    // When the right panel is open, only the thread details/notes button sits on
+    // the chat header; when closed, the terminal and right-panel toggles join it.
+    let mut right_group = div()
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(8.0))
+        .gap(px(4.0))
         .flex_shrink_0()
-        .child(toolbar_group)
-        .child(toggle_panel_btn);
+        .child(header_ghost_toggle(
+            "header-thread-details",
+            icons::PANEL_MENU,
+            false,
+            tokens,
+            cx.listener(|_app, _event, _window, _cx| {}),
+        ));
+
+    if !layout.right_panel_open {
+        right_group = right_group
+            .child(header_ghost_toggle(
+                "header-toggle-terminal",
+                icons::PANEL_BOTTOM,
+                false,
+                tokens,
+                cx.listener(|app, _event, _window, cx| {
+                    app.activate_or_toggle_right_panel_tab(RightPanelTab::Terminal, cx);
+                }),
+            ))
+            .child(header_ghost_toggle(
+                "header-toggle-right-panel",
+                icons::SIDEBAR_RIGHT,
+                false,
+                tokens,
+                cx.listener(|app, _event, _window, cx| {
+                    app.toggle_right_panel(cx);
+                }),
+            ));
+    }
 
     div()
         .flex()
@@ -188,83 +202,39 @@ pub(crate) fn render_chat_header(
         .child(right_group)
 }
 
-/// Renders a `28px` circular chat header button (`shell_header_control` rest,
-/// `shell_header_control_hover` hover; active brightens icon to `foreground`).
-#[must_use]
-pub(crate) fn header_circle_button(
+/// Renders a `28px` ghost toggle button matching Conn's `Toggle variant="ghost" size="sm"`
+/// inside `[data-chat-header]` (`--control-radius: 9999px`, transparent rest,
+/// `shell_highlight` hover, icon at `foreground @ 80%`).
+fn header_ghost_toggle(
     id: impl Into<gpui_kit::ElementId>,
-    icon_name: IconName,
-    active: bool,
+    icon_path: &'static str,
+    pressed: bool,
     tokens: &Tokens,
     on_click: impl Fn(&gpui_kit::ClickEvent, &mut gpui_kit::Window, &mut gpui_kit::App) + 'static,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let rest_bg = hsla(tokens.shell_header_control);
-    let hover_bg = hsla(tokens.shell_header_control_hover);
-    let icon_color = if active {
+    let hover_bg = hsla(tokens.shell_highlight);
+    let icon_color = if pressed {
         hsla(tokens.foreground)
     } else {
-        hsla(tokens.muted_foreground)
+        hsla_alpha(tokens.foreground, 0.80)
     };
 
-    div()
+    let mut btn = div()
         .id(id)
         .flex()
         .items_center()
         .justify_center()
-        .size(px(HEADER_ACTION_BTN_PX))
+        .size(px(HEADER_CONTROL_BTN_PX))
         .flex_shrink_0()
         .rounded(px(9999.0))
-        .bg(rest_bg)
         .cursor_pointer()
         .hover(move |s| s.bg(hover_bg))
         .on_click(on_click)
-        .child(icons::chrome(icon_name, icon_color))
-}
+        .child(icons::concept(icon_path, icons::CHROME_ICON_PX, icon_color));
 
-/// Renders Conn's pill `ToolbarGroup` (`h-8`, `3px` padding, `24px` ghost buttons).
-fn render_panel_toolbar_group(
-    layout: &LayoutState,
-    tokens: &Tokens,
-    geometry: &ShellGeometry,
-    cx: &mut Context<'_, ConnApp>,
-) -> gpui_kit::Div {
-    let fg = hsla(tokens.foreground);
-    let muted = hsla(tokens.muted_foreground);
-    let hover_bg = hsla(tokens.shell_highlight);
-
-    let mut buttons = Vec::with_capacity(HEADER_PANEL_TOGGLES.len());
-    for (idx, tab) in HEADER_PANEL_TOGGLES.into_iter().enumerate() {
-        let pressed = layout.right_panel_open && layout.right_panel_tab == tab;
-        // Pressed toggles keep no fill and brighten their icon to `foreground`.
-        let icon_color = if pressed { fg } else { muted };
-
-        buttons.push(
-            div()
-                .id(("header-panel-toggle", idx))
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(TOOLBAR_BUTTON_SIZE_PX))
-                .rounded(px(9999.0))
-                .cursor_pointer()
-                .hover(move |s| s.bg(hover_bg))
-                .on_click(cx.listener(move |app, _event, _window, cx| {
-                    app.activate_or_toggle_right_panel_tab(tab, cx);
-                }))
-                .child(icons::chrome(icons::right_panel_tab_icon(tab), icon_color)),
-        );
+    if pressed {
+        btn = btn.bg(hover_bg);
     }
 
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(2.0))
-        .h(px(geometry.toolbar_height_px))
-        .px(px(TOOLBAR_INNER_PADDING_PX))
-        .rounded(px(9999.0))
-        .bg(hsla(tokens.shell_control))
-        .border_1()
-        .border_color(hsla(tokens.shell_divider_header))
-        .children(buttons)
+    btn
 }
