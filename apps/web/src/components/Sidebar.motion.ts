@@ -27,7 +27,7 @@ export function forEachSidebarListRow(
   }
 }
 
-/** Folder rows are positioned relative to their sortable wrapper. */
+/** Position the list and each folder group so a row's offsets plus its folder's share an origin. */
 export function createSidebarListMotion(parent: HTMLUListElement) {
   let positions: Map<HTMLElement, RowPosition> | null = null;
   let disposed = false;
@@ -252,7 +252,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       const origin = parent.getBoundingClientRect().top;
       const tops = new Map<HTMLElement, number>();
       forEachSidebarListRow(parent, (node) => {
-        tops.set(node, node.getBoundingClientRect().top - origin);
+        if (!exiting.has(node)) tops.set(node, node.getBoundingClientRect().top - origin);
       });
       released = tops;
     },

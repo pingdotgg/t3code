@@ -98,8 +98,7 @@ export const SidebarProjectFolder = memo(function SidebarProjectFolder(props: {
           );
         }}
         className={cn(
-          "flex h-8 w-full items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          props.sortableDisabled ? "cursor-pointer" : "cursor-grab active:cursor-grabbing",
+          "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           isDragging && "bg-sidebar-row-active",
         )}
       >
