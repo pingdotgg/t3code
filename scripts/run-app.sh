@@ -25,6 +25,7 @@ open -n "$ROOT/target/debug/Conn GPUI.app" \
   --env CONN_GPUI_SERVER="http://127.0.0.1:$PORT" \
   --env CONN_GPUI_TOKEN_FILE="$DEV/bearer" \
   --env CONN_GPUI_AUTOMATION="$DEV/automation-port" \
+  --env CONN_GPUI_CONTROL_STATE_DIR="${CONN_GPUI_CONTROL_STATE_DIR:-$DEV/state}" \
   --env CONN_GPUI_THEME="${CONN_GPUI_THEME:-dark-mono}" \
   --env CONN_GPUI_BROWSER_URL="${CONN_GPUI_BROWSER_URL:-}" \
   --stdout "$DEV/app.log" --stderr "$DEV/app.log"

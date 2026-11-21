@@ -685,6 +685,7 @@ impl DatabasePanel {
             save_store(&self.store);
         }
         self.menu_open = false;
+        self.allow_unlock_next = id.starts_with("vault:");
         self.synced_sql = None;
         self.ensure_tables_loaded(cx);
         cx.notify();
@@ -765,6 +766,7 @@ impl DatabasePanel {
     fn refresh(&mut self, cx: &mut Context<'_, Self>) {
         self.reconnect_next = true;
         self.env_connection = load_env_connection(self.workspace_root.as_deref());
+        self.load_vault_databases(false, cx);
         self.refresh_nonce = self.refresh_nonce.wrapping_add(1);
         self.tables_load = None;
         self.columns_load = None;
@@ -816,6 +818,11 @@ impl DatabasePanel {
                 move |_, _, cx| {
                     entity.update(cx, |panel, cx| {
                         panel.menu_open = !panel.menu_open;
+                        if panel.menu_open
+                            && (panel.vault_connections.is_empty() || panel.vault_status.is_some())
+                        {
+                            panel.load_vault_databases(false, cx);
+                        }
                         cx.notify();
                     });
                 }
