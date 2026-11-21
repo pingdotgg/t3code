@@ -2241,3 +2241,107 @@ it.effect.each([
       }).pipe(Effect.provide(layerLive));
     }),
 );
+
+it.effect(
+  "drops a queued interval occurrence after its window closes and starts the next one",
+  () => {
+    const local = (day: number, hour: number, minute: number) =>
+      DateTime.makeZonedUnsafe(
+        { year: 2026, month: 7, day, hour, minute, second: 0, millisecond: 0 },
+        { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+      );
+    const insideDate = local(6, 19, 0);
+    const inside = DateTime.toEpochMillis(insideDate);
+    const closed = DateTime.toEpochMillis(local(6, 20, 1));
+    const next = DateTime.toEpochMillis(local(7, 10, 0));
+    return Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:window-queue");
+      const taskId = ScheduledTaskId.make("scheduled-task:window-queue");
+      const sql = yield* SqlClient.SqlClient;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      yield* TestClock.setTime(inside);
+      yield* sql`INSERT INTO scheduled_tasks ${sql.insert({
+        task_id: taskId,
+        title: "Window",
+        prompt: "Run",
+        enabled: 1,
+        schedule_json: JSON.stringify({
+          type: "interval",
+          everyMs: 3600000,
+          window: { start: "10:00", end: "20:00" },
+        }),
+        project_id: "project:thread-stop",
+        thread_id: threadId,
+        workspace_strategy_json: '{"type":"root"}',
+        model_selection_json: JSON.stringify(modelSelection),
+        runtime_mode: "full-access",
+        interaction_mode: "default",
+        created_by: "user",
+        creation_source: "web",
+        created_at: DateTime.formatIso(DateTime.toUtc(insideDate)),
+        updated_at: DateTime.formatIso(DateTime.toUtc(insideDate)),
+        next_run_at: null,
+        last_run_at: null,
+        last_run_status: "never",
+        last_run_error: null,
+        run_count: 0,
+      })}`;
+      yield* createWatchingThread(threadId, 1);
+      yield* send(threadId, "busy", "start_immediately");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("window:queued"),
+        threadId,
+        messageId: MessageId.make(`scheduled-task-message:${taskId}:${inside}:scheduled`),
+        scheduledTaskId: taskId,
+        text: "scheduled",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const [busy, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.isDefined(busy);
+      assert.isDefined(queued);
+      yield* TestClock.setTime(closed);
+      const now = yield* DateTime.now;
+      yield* projections.apply({
+        id: EventId.make("window:busy-completed"),
+        type: "run.updated",
+        threadId,
+        runId: busy!.id,
+        occurredAt: now,
+        payload: { ...busy!, status: "completed", completedAt: now },
+      });
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("window:resume"),
+        threadId,
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id === queued!.id,
+        )?.status,
+        "cancelled",
+      );
+      yield* TestClock.setTime(next);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("window:next"),
+        threadId,
+        messageId: MessageId.make(`scheduled-task-message:${taskId}:${next}:scheduled`),
+        scheduledTaskId: taskId,
+        text: "next scheduled",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+        "starting",
+      );
+    }).pipe(Effect.provide(layerTest));
+  },
+);
