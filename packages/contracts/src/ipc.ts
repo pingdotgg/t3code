@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
-import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -67,6 +67,11 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
     ),
   ),
 });
+
+// Native menus opened from the keyboard select their first item, which is what
+// moves a screen reader into the menu. Electron assumes a mouse unless told.
+export const ContextMenuSource = Schema.Literals(["mouse", "keyboard"]);
+export type ContextMenuSource = typeof ContextMenuSource.Type;
 
 export type DesktopUpdateStatus =
   | "disabled"
@@ -287,6 +292,8 @@ export interface DesktopUpdateState {
   notAppliedVersion?: string;
   /** Off only because a managed policy rules out this channel; switching channels turns it on. */
   channelBlockedByPolicy?: true;
+  /** The check failed only because this build's track differs from the saved `channel`. */
+  trackMismatch?: { readonly buildChannel: DesktopUpdateChannel };
 }
 
 export interface DesktopUpdateReleaseNote {
@@ -330,6 +337,8 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
   canRetry: Schema.Boolean,
   notAppliedVersion: Schema.optionalKey(Schema.String),
+  channelBlockedByPolicy: Schema.optionalKey(Schema.Literal(true)),
+  trackMismatch: Schema.optionalKey(Schema.Struct({ buildChannel: DesktopUpdateChannelSchema })),
 });
 
 export const DesktopCliCommandStateSchema = Schema.Struct({
@@ -981,6 +990,35 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
   /** Main must derive the partition to ensure its session has UA rewrites and permission handlers. */
   profileId: Schema.optional(BrowserProfileId),
+  /** Carry the partition's loopback traffic to the environment instead of this machine. */
+  tunnelLoopback: Schema.optional(Schema.Boolean),
+});
+
+export interface DesktopPreviewTunnelAccessRequest {
+  readonly requestId: string;
+  readonly environmentId: EnvironmentId;
+}
+
+export const DesktopPreviewTunnelAccessResolutionInputSchema = Schema.Struct({
+  requestId: Schema.String,
+  /** The environment's tunnel WebSocket URL with its ticket, or null when it cannot be reached. */
+  url: Schema.NullOr(Schema.String),
+});
+
+/** A loopback port of another environment, reachable on this machine's 127.0.0.1. */
+export const DesktopPortForwardSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  remotePort: PortSchema,
+  /** The same as `remotePort` unless that port was taken here. */
+  localPort: PortSchema,
+});
+export type DesktopPortForward = typeof DesktopPortForwardSchema.Type;
+
+export const DesktopSharesLoopbackInputSchema = Schema.Struct({ environmentId: EnvironmentId });
+
+export const DesktopPortForwardInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  remotePort: PortSchema,
 });
 
 export const DesktopPreviewClearDataInputSchema = Schema.Struct({
@@ -1016,6 +1054,11 @@ export const DesktopPreviewSetShownInputSchema = Schema.Struct({
   shown: Schema.Boolean,
 });
 
+export const DesktopPreviewSetCaptureDrawnInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  drawn: Schema.Boolean,
+});
+
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
   theme: DesktopPreviewAnnotationThemeSchema,
 });
@@ -1042,14 +1085,32 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
+/** `value` is the resolved locale from `prepare` and the transcript from `transcribe`. */
+export const DesktopAppleSpeechResultSchema = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), value: Schema.String }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    code: Schema.Literals(["unavailable", "unsupported-locale", "failed"]),
+  }),
+]);
+export type DesktopAppleSpeechResult = typeof DesktopAppleSpeechResultSchema.Type;
+
+export const DesktopAppleSpeechTranscribeInputSchema = Schema.Struct({
+  locale: Schema.String.check(Schema.isMaxLength(64)),
+  // 16 kHz mono Float32 PCM, at most five minutes.
+  pcm: Schema.Uint8Array,
+});
+
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
-  getRelayTelemetryEnabled: () => boolean;
+  /** `null` until the desktop host has read the login shell's environment; ask again later. */
+  getRelayTelemetryEnabled: () => boolean | null;
   getPathForFile: (file: File) => string;
   getClientPlatform: () => string;
+  restartAudioService?: () => Promise<boolean>;
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear: (listener: () => void) => () => void;
   onTrackpadScrollBegin: (listener: () => void) => () => void;
@@ -1127,15 +1188,19 @@ export interface DesktopBridge {
   setWslDistro: (distro: string | null) => Promise<DesktopWslState>;
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
+  /** Maps a Windows path to the one a local backend (`primary` or `wsl:…`) sees; null when it cannot. */
+  toLocalBackendPath: (backendId: string, windowsPath: string) => Promise<string | null>;
   pickProjectFavicon: (initialPath?: string) => Promise<string | null>;
   pickThemeFiles: () => Promise<readonly PickedThemeFile[] | null>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
+    source?: ContextMenuSource,
   ) => Promise<T | null>;
   receiveProviderAuthCallback: (authorizationUrl: string) => Promise<string>;
   cancelProviderAuthCallback: (authorizationUrl: string) => Promise<void>;
+  startFileDrag: (input: { environmentId: EnvironmentId; path: string }) => Promise<boolean>;
   openExternal: (url: string) => Promise<boolean>;
   /** Reads http(s) media in the main process, outside renderer CORS and CSP; null on network failure. */
   readMedia: (url: string) => Promise<DesktopMediaRead | null>;
@@ -1176,6 +1241,12 @@ export interface DesktopBridge {
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
   };
   preview: DesktopPreviewBridge;
+  /** On-device dictation through macOS 26 SpeechAnalyzer; absent in older desktop builds. */
+  appleSpeech?: {
+    supportedLocales: () => Promise<readonly string[]>;
+    prepare: (locale: string) => Promise<DesktopAppleSpeechResult>;
+    transcribe: (input: { locale: string; pcm: Uint8Array }) => Promise<DesktopAppleSpeechResult>;
+  };
 }
 
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
@@ -1263,6 +1334,7 @@ export interface DesktopPreviewBridge {
   goBack: (tabId: string) => Promise<void>;
   goForward: (tabId: string) => Promise<void>;
   refresh: (tabId: string) => Promise<void>;
+  stopLoading: (tabId: string) => Promise<void>;
   zoomIn: (tabId: string) => Promise<void>;
   zoomOut: (tabId: string) => Promise<void>;
   resetZoom: (tabId: string) => Promise<void>;
@@ -1278,13 +1350,28 @@ export interface DesktopPreviewBridge {
   stopFindInPage: (tabId: string) => Promise<void>;
   /** Tells the tab's server whether its webview is on screen. */
   setShown: (tabId: string, shown: boolean) => Promise<void>;
+  /** Tells the tab's server whether its webview is drawn at full detail for a capture. */
+  setCaptureDrawn: (tabId: string, drawn: boolean) => Promise<void>;
   openDevTools: (tabId: string) => Promise<void>;
   clearCookies: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   clearCache: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   getPreviewConfig: (
     environmentId: EnvironmentId,
     profileId?: string,
+    tunnelLoopback?: boolean,
   ) => Promise<DesktopPreviewWebviewConfig>;
+  /** Main asks for an environment's tunnel URL once per connection a tunnelled page opens. */
+  onTunnelAccessRequest: (
+    listener: (request: DesktopPreviewTunnelAccessRequest) => void,
+  ) => () => void;
+  resolveTunnelAccess: (requestId: string, url: string | null) => Promise<void>;
+  /** Forwards an environment's loopback port to this machine until stopped or the app quits. */
+  forwardPort: (environmentId: EnvironmentId, remotePort: number) => Promise<DesktopPortForward>;
+  stopPortForward: (environmentId: EnvironmentId, remotePort: number) => Promise<void>;
+  listPortForwards: () => Promise<ReadonlyArray<DesktopPortForward>>;
+  /** Whether the environment runs on this machine, where its ports need no forward. */
+  sharesLoopback: (environmentId: EnvironmentId) => Promise<boolean>;
+  onPortForwards: (listener: (forwards: ReadonlyArray<DesktopPortForward>) => void) => () => void;
   listBrowserImportSources: () => Promise<ReadonlyArray<BrowserImportSource>>;
   importBrowserCookies: (input: {
     readonly environmentId: EnvironmentId;
@@ -1352,6 +1439,7 @@ export interface LocalApi {
     show: <T extends string>(
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
+      source?: ContextMenuSource,
     ) => Promise<T | null>;
     close: () => Promise<void>;
   };

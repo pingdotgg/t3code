@@ -1,8 +1,8 @@
-import type { ModelSelection, ThreadId } from "@t3tools/contracts";
+import { CommandId, type ModelSelection, type ThreadId } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import {
   WS_METHODS,
   type EnvironmentId,
@@ -13,10 +13,13 @@ import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
 import * as DateTime from "effect/DateTime";
 
 import {
+  type AtomCommand,
   createAtomCommandScheduler,
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
+  environmentConnectionAtom,
 } from "./runtime.ts";
+import { waitForTitleRegenerationOutcome } from "./threadTitleRegeneration.ts";
 import {
   type InterruptThreadTurnInput,
   type UpdateThreadMetadataInput,
@@ -36,6 +39,7 @@ import {
   resumeThreadQueue,
   retryWorkspacePreparation,
   linkThreadPullRequest,
+  linkThreadIssue,
   respondToThreadApproval,
   respondToThreadUserInput,
   dismissThreadUserInput,
@@ -52,6 +56,7 @@ import {
   stopThreadSession,
   unarchiveThread,
   unlinkThreadPullRequest,
+  unlinkThreadIssue,
   unpinThread,
   unsettleThread,
   unsnoozeThread,
@@ -59,6 +64,7 @@ import {
   visitThread,
   watchThreadPullRequest,
 } from "../operations/commands.ts";
+import { connectionProjectionPhase } from "../connection/model.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
@@ -119,7 +125,74 @@ export function createThreadEnvironmentAtoms<R, E>(
     );
   });
 
-  const commands = {
+  const armTitleRegeneration = Effect.fn("ThreadCommands.armTitleRegeneration")(function* (input: {
+    readonly threadId: ThreadId;
+  }) {
+    const random = yield* SecureRandom.SecureRandom;
+    const requestId = CommandId.make(yield* random.uuidV4());
+    const result = yield* updateThreadMetadata({
+      threadId: input.threadId,
+      regenerateTitle: true,
+      commandId: requestId,
+    });
+    return { requestId, sequence: result.sequence };
+  });
+
+  // Counts the commands that move or remove a thread's row. A list that holds its rows while
+  // environments synchronize (`stepSteadyShells`) shows the user's own change at once.
+  const rowActionsAtom = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make(0).pipe(Atom.keepAlive),
+  );
+  const rowAction = <W extends { readonly environmentId: EnvironmentId }, A, E>(
+    command: AtomCommand<W, A, E>,
+  ): AtomCommand<W, A, E> => ({
+    label: command.label,
+    run: (registry, target) =>
+      Effect.suspend(() => {
+        registry.update(rowActionsAtom(target.environmentId), (count) => count + 1);
+        return command.run(registry, target);
+      }),
+  });
+
+  // The environment's time of the last sign-in to a server in a thread, until the app reloads.
+  const mcpSignedInAtFamily = Atom.family((_key: string) =>
+    Atom.make<number | null>(null).pipe(Atom.keepAlive),
+  );
+  const mcpSignInKey = (
+    environmentId: EnvironmentId,
+    input: { readonly threadId: ThreadId; readonly server: string },
+  ) => JSON.stringify([environmentId, input.threadId, input.server]);
+  const markMcpSignedIn = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    input: { readonly threadId: ThreadId; readonly server: string },
+    signedInAt: string,
+  ) =>
+    registry.update(mcpSignedInAtFamily(mcpSignInKey(environmentId, input)), (current) =>
+      Math.max(current ?? 0, Date.parse(signedInAt)),
+    );
+  const mcpNoticeSignedInFamily = Atom.family((key: string) => {
+    const [signInKey, noticeAt] = JSON.parse(key) as [string, number];
+    // A notice newer than the sign-in means the server needs one again.
+    return Atom.make((get) => {
+      const signedInAt = get(mcpSignedInAtFamily(signInKey));
+      return signedInAt !== null && noticeAt <= signedInAt;
+    });
+  });
+  /** Whether a sign-in notice, by its environment time, came before the server was signed in. */
+  const mcpSignedInAtom = (
+    environmentId: EnvironmentId,
+    input: { readonly threadId: ThreadId; readonly server: string; readonly noticeAt: number },
+  ) =>
+    mcpNoticeSignedInFamily(JSON.stringify([mcpSignInKey(environmentId, input), input.noticeAt]));
+  const sent = {
+    armTitleRegeneration: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:regenerate-title",
+      execute: armTitleRegeneration,
+      scheduler,
+      concurrency,
+    }),
+
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: createThread,
@@ -253,6 +326,18 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    linkIssue: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:link-issue",
+      execute: linkThreadIssue,
+      scheduler,
+      concurrency,
+    }),
+    unlinkIssue: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:unlink-issue",
+      execute: unlinkThreadIssue,
+      scheduler,
+      concurrency,
+    }),
     setRuntimeMode: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-runtime-mode",
       execute: setThreadRuntimeMode,
@@ -381,10 +466,70 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    // Outside the thread's queue: finishing can wait on the agent, and messages must not.
+    mcpSignInStart: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:mcp-sign-in-start",
+      tag: WS_METHODS.providerMcpSignInStart,
+      onSuccess: ({ environmentId, input }, registry, result) =>
+        Effect.sync(() => {
+          if (result.signedInAt !== null) {
+            markMcpSignedIn(registry, environmentId, input, result.signedInAt);
+          }
+        }),
+    }),
+    mcpSignInComplete: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:mcp-sign-in-complete",
+      tag: WS_METHODS.providerMcpSignInComplete,
+      onSuccess: ({ environmentId, input }, registry, result) =>
+        Effect.sync(() => markMcpSignedIn(registry, environmentId, input, result.signedInAt)),
+    }),
+  };
+  const commands = {
+    ...sent,
+    delete: rowAction(sent.delete),
+    archive: rowAction(sent.archive),
+    unarchive: rowAction(sent.unarchive),
+    settle: rowAction(sent.settle),
+    unsettle: rowAction(sent.unsettle),
+    snooze: rowAction(sent.snooze),
+    unsnooze: rowAction(sent.unsnooze),
+    pin: rowAction(sent.pin),
+    unpin: rowAction(sent.unpin),
   };
   const optimistic = createOptimisticThreadLifecycle(snapshotAtom);
+  const disconnectedAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const connection = AsyncResult.getOrElse(
+        get(environmentConnectionAtom(runtime, environmentId)),
+        () => null,
+      );
+      return connection !== null && connectionProjectionPhase(connection[0]) === "disconnected";
+    }),
+  );
+  const regenerateTitle = {
+    label: commands.armTitleRegeneration.label,
+    run: (
+      registry: AtomRegistry.AtomRegistry,
+      target: { readonly environmentId: EnvironmentId; readonly input: { threadId: ThreadId } },
+    ) =>
+      commands.armTitleRegeneration.run(registry, target).pipe(
+        Effect.flatMap((armed) =>
+          waitForTitleRegenerationOutcome(
+            registry,
+            {
+              snapshot: snapshotAtom(target.environmentId),
+              disconnected: disconnectedAtom(target.environmentId),
+            },
+            { threadId: target.input.threadId, ...armed },
+          ),
+        ),
+      ),
+  };
   return {
     ...commands,
+    regenerateTitle,
+    rowActionsAtom,
+    mcpSignedInAtom,
     snapshotAtom: optimistic.snapshotAtom,
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
@@ -409,7 +554,14 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       settledOverride: input.reason === "user" ? "active" : null,
       settledAt: null,
-      unsettledAt: thread.settledOverride === "active" ? (thread.unsettledAt ?? null) : now,
+      unsettledAt:
+        thread.settledOverride === "active"
+          ? (thread.unsettledAt ?? null)
+          : input.restoreUnsettledAt === undefined
+            ? now
+            : input.restoreUnsettledAt === null
+              ? null
+              : DateTime.makeUnsafe(input.restoreUnsettledAt),
     })),
     snooze: optimistic.wrap(commands.snooze, (thread, input, now, accepted) =>
       (!accepted &&

@@ -190,9 +190,32 @@ export function ghosttyKeyForCode(code: string): number {
   return codeToGhosttyKey.get(code) ?? 0;
 }
 
+// With NumLock off, keypad digits report navigation keys; Ghostty encodes those as keypad variants.
+const NUMPAD_NAVIGATION_KEYS = new Map<string, number>(
+  (
+    [
+      ["ArrowDown", "NumpadArrowDown"],
+      ["ArrowLeft", "NumpadArrowLeft"],
+      ["ArrowRight", "NumpadArrowRight"],
+      ["ArrowUp", "NumpadArrowUp"],
+      ["Clear", "NumpadBegin"],
+      ["Delete", "NumpadDelete"],
+      ["End", "NumpadEnd"],
+      ["Home", "NumpadHome"],
+      ["Insert", "NumpadInsert"],
+      ["PageDown", "NumpadPageDown"],
+      ["PageUp", "NumpadPageUp"],
+    ] as const
+  ).map(([key, code]) => [key, ghosttyKeyForCode(code)]),
+);
+
 export function ghosttyKeyForEvent(event: Pick<KeyboardEvent, "code" | "key">): number {
-  // Android browsers can omit the physical code for keys such as Backspace.
-  return ghosttyKeyForCode(event.code) || ghosttyKeyForCode(event.key);
+  return (
+    (event.code.startsWith("Numpad") && NUMPAD_NAVIGATION_KEYS.get(event.key)) ||
+    ghosttyKeyForCode(event.code) ||
+    // Android browsers can omit the physical code for keys such as Backspace.
+    ghosttyKeyForCode(event.key)
+  );
 }
 
 export interface GhosttyKeyboardLayoutMap {
