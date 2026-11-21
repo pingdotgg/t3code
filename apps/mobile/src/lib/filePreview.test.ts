@@ -89,6 +89,7 @@ vi.mock("react-native", () => ({
     addEventListener: () => ({ remove() {} }),
   },
   View: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
+  ScrollView: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
   Pressable: (props: {
     children?: ReactNode;
     onPress: () => void;
@@ -183,7 +184,10 @@ vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironm
 vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
   useThreadChipIcons: () => new Map(),
+  useEnvironmentPreviewTunnelOff: () => false,
 }));
+vi.mock("../state/peerLinks", () => ({ useLinkedEnvironments: () => new Map() }));
+vi.mock("../features/threads/useOpenThreadLink", () => ({ useOpenThreadLink: () => vi.fn() }));
 vi.mock("../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: null }),
 }));
@@ -237,6 +241,13 @@ vi.mock("expo-haptics", () => ({ selectionAsync: async () => {} }));
 vi.mock("expo-image", () => ({}));
 vi.mock("uniwind", () => ({}));
 vi.mock("../components/ui/Dialog", () => ({}));
+vi.mock("../components/ui/Sheet", () => ({
+  Sheet: ({ children }: { children?: ReactNode }) => children,
+}));
+vi.mock("../components/ui/ListActionRow", () => ({
+  ListActionRow: ({ label, onPress }: { label: string; onPress(): void }) =>
+    createElement("button", { onClick: onPress }, label),
+}));
 vi.mock("../components/ui/NativePresentation", () => ({
   PresentationSource: ({ children }: { children?: ReactNode }) => children,
 }));
@@ -292,6 +303,9 @@ vi.mock("../features/threads/LinkRequestCard", () => ({ LinkRequestCard: () => n
 vi.mock("../features/threads/worktree-setup-card", () => ({}));
 vi.mock("../features/threads/CopyTextButton", () => ({ CopyTextButton: () => null }));
 vi.mock("../features/threads/thread-work-log", () => ({ THREAD_DISCLOSURE_TRANSITION_MS: 100 }));
+vi.mock("../features/threads/CollapsibleUserMessageBody", () => ({
+  CollapsibleUserMessageBody: (props: { children: ReactNode }) => props.children,
+}));
 vi.mock("../features/threads/HtmlRenderWebView", () => ({}));
 vi.mock("../features/threads/McpAppWebView", () => ({}));
 vi.mock("../features/layout/AdaptiveWorkspaceLayout", () => ({
