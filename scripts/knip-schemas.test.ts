@@ -75,6 +75,8 @@ it("allows types and schemas through the real Knip CLI without hiding runtime or
       export default Text;
       export const Record = S.Struct({ name: Text }).annotate({ title: "record" });
       export const Branded = S.String.pipe(S.brand("Name"));
+      const makeNamed = () => S.Struct({ name: Text });
+      export const FromHelper = makeNamed();
       export class Failure extends S.TaggedError<Failure>()("Failure", { reason: Text }) {}
       export class Person extends S.Class<Person>("Person")({ name: Text }) {}
       export type UnusedType = { name: string };

@@ -258,38 +258,26 @@ Windows investigation while that suite is not a required gate.
 
 ### Unused code
 
-`vp run fallow:check` runs [fallow](https://fallow.tools) in one pass. It checks unused files and
-dependencies across the repo, and unused runtime exports in every workspace except
-`apps/marketing`, `apps/mobile`, `evals`, `infra/*`, and `scripts`. CI enforces it.
-Exported types and Effect schemas are allowed without consumers. Fallow recognizes schema
-declarations, including aliases and schema classes; functions that create or decode schemas remain
-checked. Canonical Effect service construction APIs stay exported with an explicit `@public`
-annotation, which fallow recognizes. Completely unused files remain checked too.
-Named exports in web UI component modules are kept as complete component sets. Fallow ignores
-unused exports in `apps/web/src/components/ui/*.tsx`, while still reporting an entire unused file.
-Use `vp run fallow --workspace apps/web` to audit one workspace with every dead-code check,
-or `vp run fallow:production --workspace apps/web` to find code kept alive only by tests.
-The export check still has findings in the workspaces listed above, so an override in
-[.fallowrc.jsonc](../../.fallowrc.jsonc) turns it off there. The override also applies to
-`vp run fallow`. To see the export findings of one of those workspaces, remove its path from the
-override in your working copy and run `vp run fallow:check`. Keep the removal when the workspace is
-clean. Review callers before deleting code; production mode can also report
-development scripts and test fixtures.
-Runtime-discovered entrypoints and dependency exceptions belong in
-[.fallowrc.jsonc](../../.fallowrc.jsonc).
+Two checks gate unused code, and CI, the pre-commit hook and `check:changed` run both.
+`vp run fallow:check` runs [fallow](https://fallow.tools) for unused files and dependencies across
+the repo. `vp run knip:check:exports` runs Knip for unused runtime exports in `apps/server`,
+`apps/desktop`, `apps/web`, and the internal packages listed in that script.
 
-When the check reports an export, remove the `export` keyword or the code. If a module outside the
-import graph uses the export, add `/** @public */` above it. For a single exception, put
-`// fallow-ignore-next-line unused-export` on the line above.
+Exports stay with Knip because its [schema preprocessor](../../scripts/knip-schemas.ts) reads types:
+exported types and Effect schemas are allowed without consumers, including schemas a helper builds,
+while functions that create or decode schemas remain checked. Fallow recognizes schemas by syntax
+only, and it counts a name that a package entry re-exports with `export *` as used. Canonical Effect
+service construction APIs stay exported with an explicit `@public` annotation. Named exports in
+`apps/web/src/components/ui/*.tsx` are kept as complete component sets, while an entire unused file
+is still reported. Extend the export check's workspace selectors as more workspaces become clean.
 
-Fallow counts a name that a package entry re-exports with `export *` as used. The packages with
-such barrels (`client-runtime`, `contracts`, `effect-acp`, `effect-codex-app-server`, `tailscale`)
-keep Knip's export pass, `vp run knip:check:exports`, which CI, the pre-commit hook and
-`check:changed` run next to `fallow:check`. Its schema preprocessor is
-[scripts/knip-schemas.ts](../../scripts/knip-schemas.ts) and its config is
-[knip.jsonc](../../knip.jsonc). Add a package there when it gains an `export *` barrel, and drop the
-pass once fallow checks these exports. A namespace import that escapes as a value, such as
-`Contracts as Record<string, unknown>`, makes fallow count every export of that module used; read
+When the check reports an export, remove the `export` keyword or the code. Review callers before
+deleting code. Runtime-discovered entrypoints and dependency exceptions belong in
+[.fallowrc.jsonc](../../.fallowrc.jsonc); export exceptions belong in [knip.jsonc](../../knip.jsonc).
+Use `vp run fallow --workspace apps/web` to audit one workspace with every fallow check, or
+`vp run fallow:production --workspace apps/web` to find code kept alive only by tests; both can
+report schemas and barrel exports the gate allows. A namespace import that escapes as a value, such
+as `Contracts as Record<string, unknown>`, makes fallow count every export of that module used; read
 namespace members by name instead.
 
 ## Desktop artifacts

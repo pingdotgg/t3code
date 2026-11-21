@@ -9,8 +9,6 @@
     // Fallow warns for these by default. The gate must fail on them.
     "unused-dev-dependencies": "error",
     "unused-optional-dependencies": "error",
-    "unused-namespace-members": "error",
-    "duplicate-export-aliases": "error",
   },
   "effect": { "schemaExportsAsTypes": true },
   // Files that run in production and that no import or package manifest reaches.
@@ -61,8 +59,7 @@
   "ignoreExports": [{ "file": "apps/web/src/components/ui/*.tsx", "exports": ["*"] }],
   "overrides": [
     {
-      // The export check is not clean in these workspaces yet, so `fallow:check`
-      // does not gate it there. Remove a path when its workspace is clean.
+      // Knip's export gate skips these workspaces too; keep the audit quiet there.
       "files": ["apps/marketing/**", "apps/mobile/**", "evals/**", "infra/**", "scripts/**"],
       "rules": {
         "unused-exports": "off",
