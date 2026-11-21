@@ -456,7 +456,7 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
         liveAnswerPreview ??
         gt("Thinking")
       }
-      iconName="brain"
+      iconName={providerStartingLabel === null ? "brain" : "terminal"}
       active={live}
       shimmer={live}
     />
