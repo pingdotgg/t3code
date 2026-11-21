@@ -233,6 +233,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       partialize: (state) => ({
         byThreadKey: state.byThreadKey,
         branchBaseRefByThreadKey: state.branchBaseRefByThreadKey,
+        gitRepositoryByThreadKey: state.gitRepositoryByThreadKey,
       }),
     },
   ),
