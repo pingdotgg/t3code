@@ -2,6 +2,11 @@ import type { EnvironmentId, OrchestrationGetTurnDiffResult, ThreadId } from "@t
 import * as Effect from "effect/Effect";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
+import {
+  MAX_CACHED_REVIEW_DIFFS,
+  MAX_CACHED_REVIEW_SOURCE_CHARACTERS,
+} from "../features/review/reviewState";
+
 const EMPTY_TURN_DIFFS = Object.freeze<Readonly<Record<number, string>>>({});
 
 // The last answered diff of each single turn, keyed by its turn count, so review keeps showing
@@ -16,6 +21,31 @@ const lastTurnDiffsFamily = Atom.family((key: string) =>
 export function lastReviewTurnDiffsAtom(environmentId: EnvironmentId, threadId: ThreadId) {
   return lastTurnDiffsFamily(JSON.stringify([environmentId, threadId]));
 }
+
+// Integer keys enumerate in ascending order, so the lowest turn counts are evicted first.
+const pruneTurnDiffs = (diffs: Readonly<Record<number, string>>) => {
+  const turnCounts = Object.keys(diffs).map((key) => Number(key));
+  let characters = turnCounts.reduce(
+    (total, turnCount) => total + (diffs[turnCount]?.length ?? 0),
+    0,
+  );
+  let dropped = 0;
+  while (
+    turnCounts.length - dropped > MAX_CACHED_REVIEW_DIFFS ||
+    characters > MAX_CACHED_REVIEW_SOURCE_CHARACTERS
+  ) {
+    const oldest = turnCounts[dropped];
+    if (oldest === undefined) break;
+    characters -= diffs[oldest]?.length ?? 0;
+    dropped += 1;
+  }
+  if (dropped === 0) return diffs;
+  const kept: Record<number, string> = { ...diffs };
+  for (const turnCount of turnCounts.slice(0, dropped)) {
+    delete kept[turnCount];
+  }
+  return kept;
+};
 
 export const recordReviewTurnDiffAnswer = (
   target: {
@@ -34,5 +64,8 @@ export const recordReviewTurnDiffAnswer = (
     const atom = lastReviewTurnDiffsAtom(target.environmentId, value.threadId);
     const current = registry.get(atom);
     if (current[value.toTurnCount] === value.diff) return;
-    registry.set(atom, { ...current, [value.toTurnCount]: value.diff });
+    // A diff larger than the whole budget never fits, so it is left out and the turns
+    // already kept stay, the way the parsed diff cache leaves out one it cannot hold.
+    if (value.diff.length > MAX_CACHED_REVIEW_SOURCE_CHARACTERS) return;
+    registry.set(atom, pruneTurnDiffs({ ...current, [value.toTurnCount]: value.diff }));
   });
