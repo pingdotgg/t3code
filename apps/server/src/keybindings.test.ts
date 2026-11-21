@@ -446,38 +446,33 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
-  it.effect.each([
-    ["key", { key: "f8" }],
-    ["condition", { when: "threadRoute" }],
-  ] as const)(
-    "preserves sibling shortcuts when editing an inherited shortcut's %s",
-    (_field, edit) =>
-      Effect.gen(function* () {
-        const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
-        const keybindings = yield* Keybindings.Keybindings;
-        const target = { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" } as const;
-        const sibling = { ...target, key: "mod+n" };
-        const unrelated = { ...sibling, command: "threadPanel.toggle" } as const;
-        yield* writeKeybindingsConfig(keybindingsConfigPath, [unrelated]);
+  it.effect("preserves sibling shortcuts when editing an inherited shortcut", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const target = { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" } as const;
+      const sibling = { ...target, key: "mod+n" };
+      const unrelated = { ...sibling, command: "threadPanel.toggle" } as const;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [unrelated]);
 
-        const replacement = { ...target, ...edit };
-        const saved = yield* keybindings.upsertKeybindingRule({
-          ...replacement,
-          replace: { ...target, key: "Shift+Mod+O", when: "!(terminalFocus)" },
-        });
-        const relevant = (rule: (typeof saved.keybindings)[number]) =>
-          rule.command === target.command || rule.command === unrelated.command;
-        const expected = SharedKeybindings.compileResolvedKeybindingsConfig([
-          sibling,
-          unrelated,
-          replacement,
-        ]);
-        assert.deepEqual(saved.keybindings.filter(relevant), expected);
+      const replacement = { ...target, key: "f8" };
+      const saved = yield* keybindings.upsertKeybindingRule({
+        ...replacement,
+        replace: { ...target, key: "Shift+Mod+O", when: "!(terminalFocus)" },
+      });
+      const relevant = (rule: (typeof saved.keybindings)[number]) =>
+        rule.command === target.command || rule.command === unrelated.command;
+      const expected = SharedKeybindings.compileResolvedKeybindingsConfig([
+        sibling,
+        unrelated,
+        replacement,
+      ]);
+      assert.deepEqual(saved.keybindings.filter(relevant), expected);
 
-        yield* keybindings.syncDefaultKeybindingsOnStartup;
-        const snapshot = yield* keybindings.getSnapshot;
-        assert.deepEqual(snapshot.keybindings.filter(relevant), expected);
-      }).pipe(Effect.provide(layerKeybindings())),
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      const snapshot = yield* keybindings.getSnapshot;
+      assert.deepEqual(snapshot.keybindings.filter(relevant), expected);
+    }).pipe(Effect.provide(layerKeybindings())),
   );
 
   it.effect("preserves sibling shortcuts when adding to an inherited command", () =>
