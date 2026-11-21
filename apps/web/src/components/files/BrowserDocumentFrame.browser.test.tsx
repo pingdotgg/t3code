@@ -414,5 +414,16 @@ describe("BrowserDocumentFrame", () => {
       reports.filter((report) => report.source === shown).map((report) => report.y),
       "the next revision was uncovered before it took the reader's position",
     ).toContain(1200);
+
+    // Leaving the thread unmounts the frame; coming back reopens the page where it was read.
+    await screen.rerender(<div />);
+    await screen.rerender(frame("2", second));
+    await vi.waitFor(() => {
+      const reopened = iframes()[0]!.contentWindow;
+      expect(reopened === shown).toBe(false);
+      expect(
+        reports.filter((report) => report.source === reopened).map((report) => report.y),
+      ).toContain(1200);
+    });
   });
 });

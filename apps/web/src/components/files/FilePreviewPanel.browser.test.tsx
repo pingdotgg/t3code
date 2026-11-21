@@ -370,37 +370,52 @@ describe("source file scroll", () => {
     await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
   });
 
-  it("returns a file to where it was scrolled after its thread was left and reopened", async () => {
-    using _settings = setup();
-    const style = document.createElement("style");
-    style.textContent = appCss;
-    document.head.append(style);
-    using _style = { [Symbol.dispose]: () => style.remove() };
-    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
-    const contents = Array.from({ length: 2000 }, (_, i) => `const line${i} = ${i};`).join("\n");
-    state.file = { relativePath: "a.ts", contents, byteLength: contents.length, truncated: false };
-    const panel = (shown: boolean) => (
-      <StrictMode>
-        <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
-          {shown ? filePreview("a.ts") : null}
-        </div>
-      </StrictMode>
-    );
-    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+  it.each([
+    { view: "code", path: "a.ts", selector: ".file-preview-virtualizer" },
+    {
+      view: "rendered Markdown",
+      path: "a.md",
+      selector: ':not([data-file-breadcrumbs]) > [data-slot="scroll-area-viewport"]',
+    },
+  ])(
+    "returns a $view file to where it was scrolled after its thread was left and reopened",
+    async ({ path, selector }) => {
+      using _settings = setup();
+      const style = document.createElement("style");
+      style.textContent = appCss;
+      document.head.append(style);
+      using _style = { [Symbol.dispose]: () => style.remove() };
+      await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+      const contents = Array.from({ length: 2000 }, (_, i) => `const line${i} = ${i};`).join(
+        "\n\n",
+      );
+      state.file = { relativePath: path, contents, byteLength: contents.length, truncated: false };
+      const panel = (shown: boolean) => (
+        <StrictMode>
+          <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
+            {shown ? filePreview(path) : null}
+          </div>
+        </StrictMode>
+      );
+      const scroller = () => document.querySelector<HTMLElement>(selector);
 
-    await using screen = await render(panel(true));
-    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
-    scroller()!.scrollTop = 4200;
-    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+      await using screen = await render(panel(true));
+      await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+      const scrolled = new Promise((resolve) =>
+        scroller()!.addEventListener("scroll", resolve, { once: true }),
+      );
+      scroller()!.scrollTop = 4200;
+      await scrolled;
 
-    // Switching to another thread unmounts this thread's file panel.
-    await screen.rerender(panel(false));
-    await vi.waitFor(() => expect(scroller()).toBeNull());
-    await screen.rerender(panel(true));
-    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+      // Switching to another thread unmounts this thread's file panel.
+      await screen.rerender(panel(false));
+      await vi.waitFor(() => expect(scroller()).toBeNull());
+      await screen.rerender(panel(true));
+      await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
 
-    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
-  });
+      await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+    },
+  );
 
   it.each([
     {

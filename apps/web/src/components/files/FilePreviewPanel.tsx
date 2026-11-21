@@ -617,6 +617,20 @@ interface FileRevealState {
 
 // Session-only and keyed by thread, so a file's offset outlives the panel unmounting on a thread switch.
 const scrollTopByFileKey = new Map<string, number>();
+const fileScrollKey = (threadRef: ScopedThreadRef, relativePath: string) =>
+  `${threadRef.environmentId}:${threadRef.threadId}:${relativePath}`;
+
+// Waits for late-rendered content to make the offset reachable, and yields to any scroll that lands first.
+function restoreScrollTop(element: HTMLElement, top: number, attempt = 0) {
+  requestAnimationFrame(() => {
+    if (!element.isConnected || element.scrollTop !== 0) return;
+    if (element.scrollHeight - element.clientHeight >= top || attempt >= REVEAL_MAX_ATTEMPTS) {
+      element.scrollTop = top;
+      return;
+    }
+    restoreScrollTop(element, top, attempt + 1);
+  });
+}
 
 function useFileLineReveal(
   threadRef: ScopedThreadRef,
@@ -628,7 +642,7 @@ function useFileLineReveal(
 
   return (fileContainer, instance, phase) => {
     if (relativePath === null) return;
-    const fileKey = `${threadRef.environmentId}:${threadRef.threadId}:${relativePath}`;
+    const fileKey = fileScrollKey(threadRef, relativePath);
 
     const existingState = revealStatesByPath.get(relativePath);
     const state: FileRevealState = existingState ?? {
@@ -1224,8 +1238,29 @@ function RenderedMarkdownSurface({
   const saveTarget = { environmentId, cwd, relativePath };
   useFileSaveSession(saveTarget, onPendingChange);
 
+  const scrollKey = `${fileScrollKey(threadRef, relativePath)}:rendered`;
+  const rootRef = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores and records the viewport's DOM scroll offset
+  useEffect(() => {
+    const viewport = rootRef.current?.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    if (!viewport) return;
+    const saved = scrollTopByFileKey.get(scrollKey);
+    if (saved !== undefined) restoreScrollTop(viewport, saved);
+    const save = () => {
+      if (viewport.scrollTop > 0) scrollTopByFileKey.set(scrollKey, viewport.scrollTop);
+      else scrollTopByFileKey.delete(scrollKey);
+    };
+    viewport.addEventListener("scroll", save, { passive: true });
+    return () => viewport.removeEventListener("scroll", save);
+  }, [scrollKey]);
   return (
-    <ScrollArea className="min-h-0 flex-1" onKeyDown={selectRenderedContentOnSelectAll}>
+    <ScrollArea
+      ref={rootRef}
+      className="min-h-0 flex-1"
+      onKeyDown={selectRenderedContentOnSelectAll}
+    >
       <FileMarkdownPreview
         text={contents}
         cwd={cwd}

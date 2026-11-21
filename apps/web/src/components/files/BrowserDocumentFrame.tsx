@@ -177,6 +177,7 @@ export function BrowserDocumentFrame(props: {
     <FileDocument
       key={props.documentId ?? key}
       documentKey={key}
+      documentId={props.documentId}
       src={props.src}
       title={props.title}
     />
@@ -202,11 +203,15 @@ const showRevision =
 // A page whose load never fires (a stalled subresource) must not pin the previous revision.
 const FILE_DOCUMENT_SWAP_TIMEOUT_MS = 5_000;
 
+// Session-only, so a page returns to where it was read after the panel remounts on a thread switch.
+const fileDocumentScrolls = new Map<string, FilePreviewScroll>();
+
 // URL renewals keep a revision's first URL, so they do not discard form input or scroll. A new
 // revision loads beneath the page on screen, takes its scroll position and replaces it once
 // painted, so no blank frame shows and the reader keeps their place.
 function FileDocument(props: {
   readonly documentKey: string;
+  readonly documentId: string | undefined;
   readonly src: string;
   readonly title: string;
 }) {
@@ -226,14 +231,22 @@ function FileDocument(props: {
   const nextFrame = useRef<HTMLIFrameElement>(null);
   // The page reports its scroll position (see FILE_PREVIEW_SCROLL_SCRIPT); the next revision
   // scrolls there before it is uncovered.
-  const scroll = useRef<FilePreviewScroll | null>(null);
+  // Restores only the first page shown; later revisions take the live position.
+  const [saved] = useState(() => ({
+    key: props.documentKey,
+    scroll: props.documentId === undefined ? undefined : fileDocumentScrolls.get(props.documentId),
+  }));
+  const scroll = useRef<FilePreviewScroll | null>(saved.scroll ?? null);
   // Two frames let the browser paint the incoming page before it is uncovered.
   const reveal = (revision: FileDocumentRevision) =>
     requestAnimationFrame(() => requestAnimationFrame(() => setFrames(showRevision(revision))));
   const onFrameMessage = useEffectEvent((event: MessageEvent) => {
     const position = readFilePreviewScroll(event.data);
     if (position !== undefined) {
-      if (event.source === shownFrame.current?.contentWindow) scroll.current = position;
+      if (event.source === shownFrame.current?.contentWindow) {
+        scroll.current = position;
+        if (props.documentId !== undefined) fileDocumentScrolls.set(props.documentId, position);
+      }
     } else if (
       next !== null &&
       event.source === nextFrame.current?.contentWindow &&
@@ -281,7 +294,13 @@ function FileDocument(props: {
                       "*",
                     );
                   }
-                : undefined
+                : saved.scroll !== undefined && revision.key === saved.key
+                  ? (event) =>
+                      event.currentTarget.contentWindow?.postMessage(
+                        filePreviewRestoreScrollMessage(saved.scroll!),
+                        "*",
+                      )
+                  : undefined
             }
           />
         ),
