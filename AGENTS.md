@@ -18,16 +18,15 @@ This repo piggybacks on three upstream/sibling repos. Pin versions live in `refe
    - `desktop/vendor/` and `desktop/Cargo.toml` for known `gpui-kit`/`gpui-base`/`gpui-pre` macOS fixes (popup menus, soft-wrap selection, long paste scroll, file drags, scroll bounce).
 4. **`.refs/rune`** (`anomalyco/rune`, gitignored; synced by `scripts/sync-refs.sh`): Secondary inspiration reference only (do not switch frameworks away from GPUI). Useful for its `research/` notes (GPUI perf/text/scroll/motion analyses), agent-verification patterns, frosted glass/token ideas, and `rune-kit` coding-agent UX patterns.
 
-## Build and run in `nick-vm` only
+## Build and run safety
 
-Follow `~/apps/AGENTS.md` without exception:
+This repo is cleared to build, test, and run locally on this Mac (or in `nick-vm` when preferred):
 
-1. **Never build, run, or test this Mac app on Nick's Mac (`nick.local`).** All `cargo build`, `cargo check`, `cargo test`, `cargo clippy`, app launches, and GUI screenshots run inside the macOS VM `nick-vm` (`ssh vm` from `nick.local`).
-2. **Own checkout / worktree.** Work in your own worktree (`git worktree add ~/apps/conn-gpui-<task>`) when multiple agents run concurrently. Relative path deps (`../conn-server/crates/...`) resolve cleanly from any sibling checkout in `~/apps/`.
-3. **Own build folder.** Keep Cargo target output in a git-ignored folder inside your checkout (default `target/` or `CARGO_TARGET_DIR`). Never clear shared caches or another checkout's build folder.
-4. **Own processes.** Track PIDs of every `conn-server` or `conn-gpui` process you launch and stop only those PIDs. Never run `killall` or `pkill`.
-5. **GUI lock.** Before any GUI step in `nick-vm` (launching `conn-gpui`, taking window screenshots, changing macOS appearance), acquire `mkdir /tmp/vm-gui.lock` (retry every 20s if busy) and `rmdir /tmp/vm-gui.lock` immediately after, even on failure. Headless `cargo build` and `cargo test` need no lock.
-6. **Never touch live `~/.t3/userdata`.** Always run `conn-server` (or the TS server) against a disposable temp `--state-dir` (or a read-only copied/migrated dev DB). Never connect tests to Nick's live server or credentials.
+1. **Own checkout / worktree.** Work in your own worktree (`git worktree add ~/apps/conn-gpui-<task>`) when multiple agents run concurrently. Relative path deps (`../conn-server/crates/...`) resolve cleanly from any sibling checkout in `~/apps/`.
+2. **Own build folder.** Keep Cargo target output in a git-ignored folder inside your checkout (default `target/` or `CARGO_TARGET_DIR`). Never clear shared caches or another checkout's build folder.
+3. **Own processes.** Track PIDs of every `conn-server` or `conn-gpui` process you launch and stop only those PIDs. Never run `killall` or `pkill`.
+4. **One GUI verification at a time.** Only the orchestrator launches `conn-app` windows or captures screenshots, so concurrent sub-agents do not fight over window focus.
+5. **Never touch live `~/.t3/userdata`.** Always run `conn-server` (or the TS server) against a disposable temp `--state-dir` (or a read-only copied/migrated dev DB). Never connect tests to Nick's live server or credentials.
 
 ## Workspace boundaries (multi-agent safe)
 
@@ -52,7 +51,7 @@ Keep crate boundaries strict so parallel sub-agents do not collide:
 3. **Theme-driven tokens, never hardcoded hex in views:** Views read semantic tokens from `conn-theme` derived from the active theme's color roles (default dark verification theme: Dark Ocean; also verify Light).
 4. **Icons:** UI chrome uses Lucide; thread timeline uses Phosphor (solid by default, bold for carets/line glyphs). Match `../conn/apps/web/src/icons/`.
 5. **Typography:** `13px` (`text-ui`, `20px` line height) for panel chrome, settings, tree items, status lines, and controls. Sans everywhere except code and terminal output; `tabular-nums` for aligned numbers; no uppercase section labels.
-6. **Prove visual parity with screenshots:** Every UI milestone must capture screenshots of `conn-gpui` (via its automation/capture hook in `nick-vm`, under `/tmp/vm-gui.lock`) and compare against the real Conn desktop/web layout (`../conn`). Fix visible spacing, alignment, border, or color drift before marking a milestone done.
+6. **Prove visual parity with screenshots:** Every UI milestone must capture screenshots of `conn-gpui` (via its automation/capture hook) and compare against the real Conn desktop/web layout (`../conn`). Fix visible spacing, alignment, border, or color drift before marking a milestone done.
 
 ## Rust & GPUI rules
 
@@ -65,7 +64,7 @@ Keep crate boundaries strict so parallel sub-agents do not collide:
 
 ## Verification and git
 
-- Run `scripts/check.sh` inside `nick-vm` before declaring a milestone complete (`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`).
+- Run `scripts/check.sh` before declaring a milestone complete (`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`).
 - Commit locally in small, coherent steps with conventional commit titles (`feat(theme): ...`, `feat(client): ...`, `feat(app): ...`).
 - Never push or open a PR unless Nick explicitly asks.
 - Update `docs/status.md` whenever a milestone lands or a blocker is discovered.
@@ -74,6 +73,6 @@ Keep crate boundaries strict so parallel sub-agents do not collide:
 
 When orchestrating sub-agents:
 1. Partition work strictly along crate or feature-module lines (`conn-client`, `conn-state`, `conn-theme`, `conn-app` shell, `conn-app` chat, `conn-app` right panels, `conn-web`).
-2. Keep one orchestrator owning `Cargo.toml`, `crates/conn-app/src/main.rs`, integration wiring, and final visual verification in `nick-vm`.
-3. Only one agent runs GUI builds/launches at a time (or uses its own worktree + `/tmp/vm-gui.lock`). Pure Rust sub-agents (`conn-client`, `conn-state`, `conn-theme`) can run unit tests in parallel in their own worktrees.
+2. Keep one orchestrator owning `Cargo.toml`, `crates/conn-app/src/main.rs`, integration wiring, and final visual verification.
+3. Only the orchestrator launches GUI windows or captures screenshots. Pure Rust sub-agents (`conn-client`, `conn-state`, `conn-theme`) can run builds and unit tests in parallel in their own worktrees.
 4. Keep every step green on `scripts/check.sh` before moving to the next phase in `GOAL.md`.

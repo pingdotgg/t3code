@@ -1,6 +1,6 @@
 # Status
 
-**State:** Scaffolded — ready for Phase 1 in `nick-vm`. No Rust build has been run yet.
+**State:** Scaffolded — ready for Phase 1. No Rust build has been run yet.
 
 Keep this file accurate. Update it whenever a milestone lands, a proof passes, or a blocker is found.
 
@@ -21,6 +21,6 @@ Keep this file accurate. Update it whenever a milestone lands, a proof passes, o
 
 ## Known decisions & open notes
 
-- **Build host:** All builds, tests, and GUI screenshots must run in `nick-vm` (`~/apps/AGENTS.md`).
+- **Build host:** Approved to build, test, and run locally on this Mac for overnight/dedicated runs (keep all worktrees, build output, and disposable `--state-dir` isolated).
 - **Contract sharing:** `conn-wire` and `conn-contract` are path dependencies on `../conn-server/crates/`.
 - **GPUI version:** Pinned to `gpui-kit = "=0.9.0"` (matching `.refs/threadbear`). If macOS polish requires vendoring `gpui-component`, `gpui-base`, or `gpui-pre`, follow `.refs/threadbear/desktop/Cargo.toml`'s `[patch.crates-io]` pattern and record each patch here.

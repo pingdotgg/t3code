@@ -24,18 +24,16 @@ Pinned in [`references.pin`](references.pin):
 - **`.refs/threadbear`** — Read-only shallow clone of [`mikecann/threadbear`](https://github.com/mikecann/threadbear) (gitignored). Primary reference for GPUI + `gpui-kit = "=0.9.0"`, macOS AppKit hooks, `alacritty_terminal`, and `cef-rs` on-demand embedding.
 - **`.refs/rune`** — Read-only shallow clone of [`anomalyco/rune`](https://github.com/anomalyco/rune) (gitignored). Secondary inspiration reference (rendering/text/perf research notes, frosted-glass & motion ideas, agent visual-verification patterns). Run `scripts/sync-refs.sh` to populate or sync both `.refs/` checkouts.
 
-## Prerequisites & commands (run in `nick-vm`)
-
-Per `~/apps/AGENTS.md`, build, test, and run Mac apps in `nick-vm`, never on Nick's Mac:
+## Prerequisites & commands
 
 ```sh
-# 1. Ensure read-only Threadbear reference is present
+# 1. Ensure read-only references (.refs/threadbear, .refs/rune) are present
 scripts/sync-refs.sh
 
-# 2. Run formatting, clippy (-D warnings), and workspace tests (inside nick-vm)
+# 2. Run formatting, clippy (-D warnings), and workspace tests
 scripts/check.sh
 
-# 3. Run the desktop app against a disposable conn-server (inside nick-vm, under /tmp/vm-gui.lock)
+# 3. Run the desktop app against a disposable conn-server
 cargo run -p conn-app
 ```
 

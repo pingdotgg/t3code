@@ -6,7 +6,7 @@
 - Do NOT implement mobile (iOS/Android stays separate).
 - Do NOT re-implement `conn-server` or provider adapters—connect to `../conn-server` over `/ws` using `conn-wire` and `conn-contract`.
 - Do NOT implement Clerk cloud auth, auto-updater, Vaultwarden autofill, or Orbit fleet sync yet (keep local/dev-token connection rock solid first).
-- Do NOT touch live `~/.t3/userdata` or build on Nick's Mac (everything builds and runs in `nick-vm`).
+- Do NOT touch live `~/.t3/userdata` (always run `conn-server` against a disposable `--state-dir`). Building, testing, and running directly on this Mac is explicitly approved for this run.
 
 ---
 
@@ -48,25 +48,25 @@ Spawn specialized sub-agents along crate boundaries so work stays parallel and m
 6. **Stream 6 — Visual Verification, Settings Modal & Command Palette (`conn-app`: `settings/`, `palette/`, `automation.rs`)**
    - `Cmd+K` Command Palette (`--command-shell-inset`, `--command-content-inset`, threads/projects/themes/actions).
    - Settings route modal (`AppRouteModal`: frosted frame, transparent 44px header, inset left nav, raised group cards with `--shell-divider-raised`, theme switcher live-updating the whole window).
-   - Scripted automation & screenshot capture hook (`--automation` feature, modeled on `.refs/threadbear/desktop/gpui/src/automation.rs`) so the orchestrator can capture screenshots of every major view (Dark Ocean + Light) in `nick-vm` and visually diff them against Conn Electron screenshots.
+   - Scripted automation & screenshot capture hook (`--automation` feature, modeled on `.refs/threadbear/desktop/gpui/src/automation.rs`) so the orchestrator can capture screenshots of every major view (Dark Ocean + Light) and visually diff them against Conn Electron screenshots.
 
 ---
 
 ## Phased Milestones (6-Hour Target)
 
-| Phase | Time budget | Exit criteria (must pass `scripts/check.sh` in `nick-vm`) |
+| Phase | Time budget | Exit criteria (must pass `scripts/check.sh`) |
 | --- | --- | --- |
-| **Phase 1: Boots & Connects** | 0:00 – 1:00 | Workspace builds cleanly in `nick-vm`; `conn-client` connects to a temp `conn-server`, receives `subscribeShell` snapshot; `conn-theme` computes Dark Ocean + Light tokens; `conn-app` opens a native macOS window with 44px traffic-light alignment and frosted shell frame. |
+| **Phase 1: Boots & Connects** | 0:00 – 1:00 | Workspace builds cleanly; `conn-client` connects to a temp `conn-server`, receives `subscribeShell` snapshot; `conn-theme` computes Dark Ocean + Light tokens; `conn-app` opens a native macOS window with 44px traffic-light alignment and frosted shell frame. |
 | **Phase 2: Shell + Sidebar + Live Threads** | 1:00 – 2:30 | Workspace rail, thread sidebar with real projects/threads from `conn-server`, 44px header, theme switcher, and Lucide/Phosphor SVG icon assets loaded. First visual screenshot comparison against Conn desktop; fix geometry/color drift. |
 | **Phase 3: Chat Timeline + Working Composer** | 2:30 – 4:00 | Selecting a thread streams real history via `subscribeThread`; Markdown + code blocks + tool call rows + user bubbles render cleanly; sending a prompt dispatches `dispatchCommand` and streams live response (tested with fake/replay provider or cheap Haiku turn). |
 | **Phase 4: Right Panels (Files, Diff, Terminal)** | 4:00 – 5:00 | Right panel opens/resizes with T-junction dividers; Files tree + viewer, Diff viewer, and live `alacritty_terminal` panel work end-to-end. |
-| **Phase 5: Polish, Settings, Palette & CEF Browser Spike** | 5:00 – 6:00 | `Cmd+K` palette, Settings modal with live theme switching, `conn-web` CEF-on-demand browser spike (at minimum downloading/loading CEF and rendering a localhost URL inside the Browser tab), final side-by-side screenshot audit in `nick-vm`, and updated `docs/status.md`. |
+| **Phase 5: Polish, Settings, Palette & CEF Browser Spike** | 5:00 – 6:00 | `Cmd+K` palette, Settings modal with live theme switching, `conn-web` CEF-on-demand browser spike (at minimum downloading/loading CEF and rendering a localhost URL inside the Browser tab), final side-by-side screenshot audit, and updated `docs/status.md`. |
 
 ---
 
 ## Starting Prompt Checklist for Orchestrator
 
-When launching the 6-hour run in `nick-vm`:
+When launching the 6-hour run:
 1. Confirm `.refs/threadbear` exists (run `scripts/sync-refs.sh` if needed) and `../conn` + `../conn-server` are present.
 2. Start a disposable `conn-server` (seeded or fresh `--state-dir /tmp/conn-gpui-dev`) on a free port—never `~/.t3`.
 3. Capture 2–3 baseline reference screenshots of Conn's current UI (Dark Ocean + Light) or inspect `../conn/apps/web/src/index.css` & `nckrtl-shell-design` so every agent shares the exact target.
