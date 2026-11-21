@@ -55,8 +55,9 @@ waiting for a signal that would never come.
 
 **The store is for inside a step.** Its values change between replays, so the body must not read
 it; `step` and `onEnd` hand their code the store, a way to signal, and a way to start, find and
-cancel runs, and nothing else may use them. A step's signals are numbered from the step's name, so a retried step sends the same
-signals again instead of new ones.
+cancel runs, and nothing else may use them. A step's signals are numbered from the step's name
+and where each goes, so a retried step that sends the same signal again sends no new one, and
+one that sends somewhere new is not taken for what an earlier try sent.
 
 **A thread owes its result across turns.** An agent that waits for something ends its turn and is
 woken later, in a turn nobody asked a result of. A submission from such a turn goes to the newest

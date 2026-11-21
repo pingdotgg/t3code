@@ -167,7 +167,10 @@ const engineOf = (link: EngineLink["Service"]) =>
     ? Effect.die(new Error("The workflow engine is not up."))
     : Effect.succeed(link.current);
 
-/** The services for the step `name` of `runId`. Each signal it sends is the two and a number. */
+/**
+ * The services for the step `name` of `runId`. Each signal it sends is the two, where it goes,
+ * and how many it sent there before, so a retry that sends the same again is not new.
+ */
 export const forStep = (
   keyValues: KeyValues["Service"],
   link: EngineLink["Service"],
@@ -176,7 +179,7 @@ export const forStep = (
   name: string,
 ): Context.Context<InStep> => {
   const owner = `${runId}/${name}`;
-  let sent = 0;
+  const sent = new Map<string, number>();
   return Context.make(KeyValues, keyValues).pipe(
     Context.add(WorkflowForge, forge),
     Context.add(
@@ -184,8 +187,15 @@ export const forStep = (
       Signals.of({
         send: Effect.fn("Signals.send")(function* (address, value, options) {
           const { signal: send } = yield* engineOf(link);
+          const to = JSON.stringify(
+            "runId" in address
+              ? [address.runId, address.wait]
+              : [address.workflow, address.channel],
+          );
+          const before = sent.get(to) ?? 0;
+          sent.set(to, before + 1);
           return yield* send(address, value, {
-            id: options?.id ?? `${owner}/signal/${sent++}`,
+            id: options?.id ?? `${owner}/signal/${to}/${before}`,
             ...(options?.ttl === undefined ? {} : { ttl: options.ttl }),
           });
         }),

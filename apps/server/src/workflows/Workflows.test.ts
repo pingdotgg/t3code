@@ -256,6 +256,25 @@ const stored = [
         }),
       ),
   ),
+  /** Opens two doors, fails, and on its second try opens the second and a third. */
+  workflow(
+    "relay",
+    { version: 1, payload: Schema.Struct({ doors: Schema.Array(Schema.String) }) },
+    (payload) =>
+      step(
+        "pass",
+        { returns: Schema.Void, retry: { times: 1 } },
+        Effect.gen(function* () {
+          const tries = yield* store
+            .entry("relay-tries", Schema.Number)
+            .update((current) => Option.getOrElse(current, () => 0) + 1);
+          const [a, b, c] = payload.doors;
+          const doors = Option.contains(tries, 1) ? [a!, b!] : [b!, c!];
+          for (const door of doors) yield* signal({ workflow: "door", channel: door }, "came in");
+          if (Option.contains(tries, 1)) return yield* Effect.fail("slipped");
+        }),
+      ),
+  ),
 ];
 
 const kid = workflow(
@@ -1475,6 +1494,26 @@ it.effect(
           assert.equal(
             (yield* workflows.waitFor(waiting.runId, status("completed"))).result,
             "came in",
+          );
+
+          // A retry sends again what the first try sent, and what it sends anew is new.
+          const doors = ["ra", "rb", "rc"];
+          const held = yield* Effect.forEach(doors, (door) =>
+            workflows.start("door", { door }, { idempotencyKey: door }),
+          );
+          yield* Effect.forEach(held, (run) => workflows.waitFor(run.runId, status("waiting")));
+          const relay = yield* workflows.start("relay", { doors }, { idempotencyKey: "relay" });
+          yield* workflows.waitFor(relay.runId, status("completed"));
+          assert.equal(
+            yield* workflows.signal({ workflow: "door", channel: "rc" }, "late", { id: "rc-late" }),
+            "buffered",
+          );
+          const opened = yield* Effect.forEach(held, (run) =>
+            workflows.waitFor(run.runId, status("completed")),
+          );
+          assert.deepStrictEqual(
+            opened.map((run) => run.result),
+            ["came in", "came in", "came in"],
           );
         }),
       );
