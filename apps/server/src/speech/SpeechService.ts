@@ -370,7 +370,14 @@ const make = Effect.gen(function* () {
       requestedAcceleration === "auto" && autoCpuModel === definition.id
         ? "cpu"
         : requestedAcceleration;
-    if (model && loadedModelId === definition.id && loadedAcceleration === acceleration) {
+    // A cached worker can exit while idle. Replace it here, or its first failure would count
+    // as a GPU failure and pin Auto to the CPU.
+    if (
+      model &&
+      !model.isStopped() &&
+      loadedModelId === definition.id &&
+      loadedAcceleration === acceleration
+    ) {
       scheduleUnload();
       return model;
     }

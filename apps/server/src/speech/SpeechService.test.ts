@@ -34,6 +34,7 @@ const native = vi.hoisted(() => ({
   finish: vi.fn(async () => "hello"),
   reset: vi.fn(async () => {}),
   dispose: vi.fn(),
+  isStopped: vi.fn(() => false),
   transcribe: vi.fn(async (_pcm: Float32Array, _options?: unknown) => ({ text: "hello" })),
 }));
 const loadNative = vi.hoisted(() =>
@@ -836,6 +837,33 @@ it.effect("reports a failure on a GPU the person chose instead of switching to C
     expect(loadNative).toHaveBeenCalledTimes(1);
     expect(loadNative.mock.calls[0]?.[3]).toBe(acceleration);
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect("replaces an idle Auto worker that exited instead of pinning the model to CPU", () =>
+  Effect.gen(function* () {
+    let exited = false;
+    const stale = {
+      ...native,
+      isStopped: vi.fn(() => exited),
+      begin: vi.fn(async (_options?: unknown, _filterSilence?: boolean, _vadPath?: string) => {
+        if (exited) throw new Error("Speech process exited (SIGKILL).");
+      }),
+    };
+    loadNative.mockImplementationOnce(async () => stale);
+    const speech = yield* SpeechService.SpeechService;
+    yield* Effect.scoped(
+      Effect.flatMap(
+        speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
+        (first) => first.finish,
+      ),
+    );
+    exited = true;
+    const loads = loadNative.mock.calls.length;
+    const second = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+    yield* second.feed(pcm());
+    expect(loadNative.mock.calls.slice(loads).map((call) => call[3])).toEqual(["auto"]);
+    expect(yield* speech.status).toMatchObject({ benchmarkTier: "accelerated" });
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once", () =>
