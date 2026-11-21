@@ -270,6 +270,7 @@ import {
 } from "../composerDraftStore";
 import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
 import {
+  SidebarDropVerbBadge,
   SidebarSearchResultRow,
   SortableThreadRow,
   type SidebarProviderEntry,
@@ -602,6 +603,15 @@ function useSidebarThreads(input: {
   ] as const) {
     for (const thread of list) sectionByThreadKey.set(threadShellKey(thread), section);
   }
+  const orderedThreadKeys = orderedThreads.map(threadShellKey);
+  const routeSection =
+    routeRowThreadKey === null ? undefined : sectionByThreadKey.get(routeRowThreadKey);
+  const routeRowHidden =
+    (routeSection === "input" && !inputShelfExpanded) ||
+    (routeSection === "working" && !workingShelfExpanded);
+  const visibleThreadKeys = routeRowHidden
+    ? orderedThreadKeys.filter((key) => key !== routeRowThreadKey)
+    : orderedThreadKeys;
   return {
     ...partition,
     threads,
@@ -634,7 +644,8 @@ function useSidebarThreads(input: {
     visibleSnoozedThreads,
     visibleInputThreads,
     visibleWorkingThreads,
-    orderedThreadKeys: orderedThreads.map(threadShellKey),
+    orderedThreadKeys,
+    visibleThreadKeys,
     threadByKey: new Map(
       searchableThreads.map((thread) => [threadShellKey(thread), thread] as const),
     ),
@@ -1378,6 +1389,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     visibleInputThreads,
     visibleWorkingThreads,
     orderedThreadKeys,
+    visibleThreadKeys,
     threadByKey,
     settledThreadKeys,
     snoozedThreadKeys,
@@ -1479,6 +1491,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
 
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
+  const visibleThreadKeysRef = useRef(visibleThreadKeys);
   // Read changing maps/sets through refs so streamed events preserve row callbacks.
   const threadByKeyRef = useRef(threadByKey);
   const settledThreadKeysRef = useRef(settledThreadKeys);
@@ -1490,12 +1503,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const listedDraftIds = isSearchingThreads ? EMPTY_DRAFT_IDS : draftIds;
   const draftIdByRowKey = new Map<string, DraftId>(listedDraftIds.map((id) => [`draft:${id}`, id]));
   const orderedRowKeys = [...draftIdByRowKey.keys(), ...orderedThreadKeys];
+  const jumpRowKeys =
+    visibleThreadKeys === orderedThreadKeys
+      ? orderedRowKeys
+      : [...draftIdByRowKey.keys(), ...visibleThreadKeys];
   const routeDraftRowKey = `draft:${routeDraftIdForRows}`;
   const routeRowKey = draftIdByRowKey.has(routeDraftRowKey) ? routeDraftRowKey : routeRowThreadKey;
 
   const jumpLabelByKey = (() => {
     const mapping = new Map<string, string>();
-    for (const [index, rowKey] of orderedRowKeys.entries()) {
+    for (const [index, rowKey] of jumpRowKeys.entries()) {
       const jumpCommand = threadJumpCommandForIndex(index);
       if (!jumpCommand) break;
       const label = shortcutLabelForCommand(keybindings, jumpCommand);
@@ -1638,7 +1655,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     if (event.shiftKey) {
       event.preventDefault();
-      rangeSelectTo(threadKey, orderedThreadKeysRef.current);
+      rangeSelectTo(threadKey, visibleThreadKeysRef.current);
       return;
     }
     if (isTrailingDoubleClick(event.detail)) {
@@ -1789,6 +1806,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     dragState?.activeSection === "working" ||
     dragState?.activeSection === "input";
   const dragTargetSection = isContextDrag ? null : (dragState?.targetSection ?? null);
+  const dragDropVerb =
+    dragState === null ? null : resolveSidebarDropVerb(dragState.activeSection, dragTargetSection);
   const finishThreadDrag = (started: boolean) => {
     dragSensorRef.current = null;
     contextDragKeyRef.current = null;
@@ -1864,6 +1883,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   useLayoutEffect(() => {
     projectGroupsRef.current = projectGroups;
     orderedThreadKeysRef.current = orderedThreadKeys;
+    visibleThreadKeysRef.current = visibleThreadKeys;
     threadByKeyRef.current = threadByKey;
     settledThreadKeysRef.current = settledThreadKeys;
     snoozedThreadKeysRef.current = snoozedThreadKeys;
@@ -1890,7 +1910,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const sweepTo = (key: string | null) => {
         if (key === null || key === targetKey) return;
         targetKey = key;
-        sweptKeys = resolveSidebarSweepKeys(orderedThreadKeysRef.current, originKey, key, canApply);
+        sweptKeys = resolveSidebarSweepKeys(visibleThreadKeysRef.current, originKey, key, canApply);
         setActionSweep({ action, keys: new Set(sweptKeys) });
       };
       dragSensorRef.current = new SidebarPointerSensor({
@@ -3019,12 +3039,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
       const jumpIndex = threadJumpIndexFromCommand(command ?? "");
       if (jumpIndex === null) return;
-      navigateToRowKey(orderedRowKeys[jumpIndex] ?? null);
+      navigateToRowKey(jumpRowKeys[jumpIndex] ?? null);
     };
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
     draftIdByRowKey,
+    jumpRowKeys,
     keybindings,
     navigateToDraft,
     navigateToThread,
@@ -3515,6 +3536,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           sortableId={threadKey}
                           contextDrag={isContextDrag}
                           sortableDisabled={
+                            section === "input" ||
                             renamingThreadKey === threadKey ||
                             !draggableThreadKeys.has(threadKey) ||
                             optimisticDrop !== null
@@ -3834,10 +3856,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 {createPortal(
                   <DragOverlay dropAnimation={null}>
                     {draggedThreadKey && !isContextDrag ? (
-                      <div className="rounded-md bg-sidebar p-3 text-sm text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border">
+                      <div className="flex items-center gap-2 rounded-md bg-sidebar p-3 text-sm text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border">
                         <span>{threadByKey.get(draggedThreadKey)?.title}</span>
                         {dragTargetSection ? (
-                          <span className="ml-2 text-xs text-sidebar-muted-foreground">
+                          <span className="text-xs text-sidebar-muted-foreground">
                             {
                               {
                                 pinned: gt("Pinned", { $context: "sidebar section" }),
@@ -3850,6 +3872,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                           </span>
                         ) : null}
+                        {dragDropVerb === null ? null : (
+                          <SidebarDropVerbBadge verb={dragDropVerb} />
+                        )}
                       </div>
                     ) : null}
                   </DragOverlay>,

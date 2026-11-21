@@ -24,6 +24,7 @@ import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
+import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
@@ -45,6 +46,7 @@ vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
 vi.mock("../hooks/useNowMinute", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
+vi.mock("../hooks/useShownThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
 vi.mock("../state/session", { spy: true });
 vi.mock("../state/use-orchestration-command", { spy: true });
@@ -241,12 +243,27 @@ describe("sidebar status shelf collapse", () => {
         id: ThreadId.make("adjacent-thread"),
         title: "Adjacent active thread",
       });
-      vi.mocked(useQuietThreadShells).mockReturnValue([adjacentThread, thread]);
+      const snoozedThread = {
+        ...makeThreadFixture({
+          environmentId: activeProject.environmentId,
+          projectId: activeProject.id,
+          id: ThreadId.make("snoozed-thread"),
+          title: "Snoozed range endpoint",
+        }),
+        snoozedAt: "2025-12-31T00:00:00.000Z",
+        snoozedUntil: "2099-01-02T00:00:00.000Z",
+      };
+      vi.mocked(useQuietThreadShells).mockReturnValue([adjacentThread, thread, snoozedThread]);
+      vi.mocked(useServerConfigs).mockReturnValue(
+        new Map([[activeProject.environmentId, {} as EnvironmentServerConfig]]),
+      );
+      stack.defer(() => vi.mocked(useServerConfigs).mockRestore());
       vi.mocked(useNowMinute).mockReturnValue("2026-01-01T00:00");
-      vi.mocked(useThreadRouteTarget).mockReturnValue({
-        kind: "server",
-        threadRef: routeThreadRef,
+      vi.mocked(useShownThreadRouteTarget).mockReturnValue({
+        shownTarget: { kind: "server", threadRef: routeThreadRef },
+        modalOpen: false,
       });
+      stack.defer(() => vi.mocked(useShownThreadRouteTarget).mockRestore());
       vi.mocked(useHandleNewThread).mockReturnValue({
         activeDraftThread: null,
         activeThread: null,
@@ -265,6 +282,9 @@ describe("sidebar status shelf collapse", () => {
         </SidebarProvider>,
       );
       using navigation = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
+      const snoozedToggle = screen.getByTestId("sidebar-snoozed-shelf-toggle");
+      snoozedToggle.element().focus();
+      await userEvent.keyboard("{ArrowLeft}");
       const toggle = screen.getByTestId(`sidebar-${section}-shelf-toggle`);
       toggle.element().focus();
       await userEvent.keyboard("{ArrowRight}");
@@ -284,6 +304,31 @@ describe("sidebar status shelf collapse", () => {
           params: { environmentId: adjacentThread.environmentId, threadId: adjacentThread.id },
         }),
       );
+      using _selection = {
+        [Symbol.dispose]: () => useThreadSelectionStore.getState().clearSelection(),
+      };
+      const adjacentRow = screen.getByText(adjacentThread.title, { exact: true });
+      const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+      snoozedToggle.element().focus();
+      await userEvent.keyboard("{ArrowRight}");
+      const snoozedRow = screen.getByText(snoozedThread.title, { exact: true });
+      await expect.element(snoozedRow).toBeInTheDocument();
+      await userEvent.keyboard(`{${mod}>}`);
+      await userEvent.click(adjacentRow);
+      await userEvent.keyboard(`{/${mod}}{Shift>}`);
+      await userEvent.click(snoozedRow);
+      await userEvent.keyboard("{/Shift}");
+      expect(useThreadSelectionStore.getState().selectedThreadKeys.size).toBe(2);
+      useThreadSelectionStore.getState().clearSelection();
+
+      navigation.mockClear();
+      await userEvent.keyboard(`{${mod}>}2{/${mod}}`);
+      expect(navigation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          params: { environmentId: snoozedThread.environmentId, threadId: snoozedThread.id },
+        }),
+      );
+      toggle.element().focus();
       await userEvent.keyboard("{ArrowRight}");
       await expect.element(row).toBeInTheDocument();
       await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
@@ -292,7 +337,10 @@ describe("sidebar status shelf collapse", () => {
         environmentId: adjacentThread.environmentId,
         threadId: adjacentThread.id,
       };
-      vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: adjacentRef });
+      vi.mocked(useShownThreadRouteTarget).mockReturnValue({
+        shownTarget: { kind: "server", threadRef: adjacentRef },
+        modalOpen: false,
+      });
       vi.mocked(useHandleNewThread).mockReturnValue({
         activeDraftThread: null,
         activeThread: null,
@@ -310,13 +358,8 @@ describe("sidebar status shelf collapse", () => {
           <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
         </SidebarProvider>,
       );
-      using _selection = {
-        [Symbol.dispose]: () => useThreadSelectionStore.getState().clearSelection(),
-      };
       const show = vi.fn().mockResolvedValue(null);
       vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
-      const adjacentRow = screen.getByText(adjacentThread.title, { exact: true });
-      const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
       await userEvent.keyboard(`{${mod}>}`);
       await userEvent.click(row);
       await userEvent.click(adjacentRow);
@@ -581,6 +624,7 @@ describe("sidebar settled pagination", () => {
       const activeViewport = screen.container
         .querySelector('[data-sidebar-list="active"]')
         ?.closest('[data-slot="scroll-area-viewport"]');
+      expect(activeViewport).toBeInstanceOf(HTMLElement);
       expect(viewport === activeViewport).toBe(!fixed);
       viewport.style.height = "300px";
       viewport.style.maxHeight = "300px";
