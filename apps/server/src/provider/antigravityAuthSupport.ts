@@ -21,6 +21,7 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityUserSkillDirectories,
+  readAntigravityBoundedFile,
   readAntigravityUserPlugins,
   resolveAntigravityUserHome,
 } from "./Drivers/AntigravitySkills.ts";
@@ -333,6 +334,40 @@ const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(functio
   }
 });
 
+const UnknownRecord = Schema.Record(Schema.String, Schema.Unknown);
+const ProfileConfigJson = Schema.fromJsonString(
+  Schema.StructWithRest(
+    Schema.Struct({ plugins: Schema.optional(Schema.Record(Schema.String, UnknownRecord)) }),
+    [UnknownRecord],
+  ),
+);
+const decodeProfileConfig = Schema.decodeUnknownEffect(ProfileConfigJson);
+const encodeProfileConfig = Schema.encodeSync(ProfileConfigJson);
+
+/** agy reads plugin overrides only from the profile's config.json, and an explicit profile value wins. */
+const enableAntigravityProfilePlugins = Effect.fn("enableAntigravityProfilePlugins")(
+  function* (configPath: string, names: ReadonlyArray<string>) {
+    const fs = yield* FileSystem.FileSystem;
+    const config = yield* decodeProfileConfig(
+      (yield* readAntigravityBoundedFile(configPath)) ?? "{}",
+    );
+    const plugins = { ...config.plugins };
+    const missing = names.filter((name) => plugins[name]?.enabled === undefined);
+    if (missing.length === 0) return;
+    for (const name of missing) plugins[name] = { ...plugins[name], enabled: true };
+    yield* fs.writeFileString(configPath, encodeProfileConfig({ ...config, plugins }));
+  },
+  (effect, configPath) =>
+    effect.pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Antigravity plugin overrides are not carried into the profile.", {
+          configPath,
+          error,
+        }),
+      ),
+    ),
+);
+
 /** Link each enabled plugin instead of the folder, so plugins installed into the profile keep working. */
 const linkAntigravityUserPlugins = Effect.fn("linkAntigravityUserPlugins")(function* (input: {
   readonly profileDirectory: string;
@@ -350,6 +385,7 @@ const linkAntigravityUserPlugins = Effect.fn("linkAntigravityUserPlugins")(funct
         .readDirectory(profilePlugins)
         .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([]))),
     );
+    const linked = new Set<string>();
     for (const name of existing) {
       const link = path.join(profilePlugins, name);
       const target = yield* fs.readLink(link).pipe(
@@ -358,18 +394,31 @@ const linkAntigravityUserPlugins = Effect.fn("linkAntigravityUserPlugins")(funct
       );
       // Only links into the user's plugins are ours. Real folders and other links stay.
       if (target === undefined || path.dirname(target) !== userPlugins) continue;
-      if (enabled.get(name) === target) continue;
+      if (enabled.get(name)?.directory === target) {
+        linked.add(name);
+        continue;
+      }
       yield* fs.remove(link);
       existing.delete(name);
     }
-    for (const [name, target] of enabled) {
+    for (const [name, plugin] of enabled) {
       if (existing.has(name)) continue;
       const link = path.join(profilePlugins, name);
       yield* fs.makeDirectory(profilePlugins, { recursive: true });
       yield* Effect.tryPromise({
-        try: () => NodeFSP.symlink(target, link, input.platform === "win32" ? "junction" : "dir"),
+        try: () =>
+          NodeFSP.symlink(plugin.directory, link, input.platform === "win32" ? "junction" : "dir"),
         catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
       });
+      linked.add(name);
+    }
+    // A profile folder with the same name shadows the user's plugin, so it keeps its own setting.
+    const enableByDefault = [...linked].filter((name) => enabled.get(name)?.disabledByDefault);
+    if (enableByDefault.length > 0) {
+      yield* enableAntigravityProfilePlugins(
+        path.join(input.profileDirectory, "config", "config.json"),
+        enableByDefault,
+      );
     }
   }).pipe(
     Effect.catch((error) =>

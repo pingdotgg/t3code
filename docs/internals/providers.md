@@ -45,7 +45,9 @@ so an instance cannot silently use another account or billing project. The agent
 its user-global skill directories, rules, and plugins under that profile, so the profile links those
 two skill directories, the global `AGENTS.md` and `GEMINI.md` rules (copied on Windows), and each
 enabled plugin back to the user's real `~/.gemini`. Plugins are linked one by one, never as a
-folder, so plugins installed into the profile itself keep working. A plugin's own hooks and MCP
+folder, so plugins installed into the profile itself keep working. agy reads plugin overrides only
+from the profile's `config.json`, so a user's `enabled: true` for a plugin whose manifest sets
+`"disabled": true` is carried there unless the profile sets its own value. A plugin's own hooks and MCP
 servers come with it, while the top-level `~/.gemini/config/mcp_config.json` and `hooks.json` stay out.
 See [profile isolation](../../apps/server/src/provider/antigravityAuthSupport.ts).
 

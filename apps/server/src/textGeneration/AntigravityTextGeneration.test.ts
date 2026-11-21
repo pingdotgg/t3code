@@ -663,6 +663,15 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       disabled: true,
       available: true,
     },
+    {
+      case: "a plugin that ships disabled",
+      files: {
+        "plugin.json": '{"name":"p","disabled":true}',
+        "hooks.json": '{"hooks":{"Stop":[]}}',
+        "mcp_config.json": '{"mcpServers":{"s":{"command":"do-not-run"}}}',
+      },
+      available: true,
+    },
   ])(
     "checks plugin startup configuration before starting a helper: $case",
     ({ files, disabled, available }) =>
