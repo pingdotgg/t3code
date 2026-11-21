@@ -8,17 +8,18 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
+import { visibleCatalogValueAtom } from "../connection/visibleCatalog";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { createThreadListEnvironmentsAtom } from "./thread-list-environments";
 
 export const environmentPresentations = createEnvironmentPresentationAtoms({
-  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  catalogValueAtom: visibleCatalogValueAtom,
   stateAtom: environmentCatalog.stateAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
 });
 
 export const { connectedEnvironmentIdsAtom } = createEnvironmentSummaryAtoms({
-  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  catalogValueAtom: visibleCatalogValueAtom,
   presentationAtom: environmentPresentations.presentationAtom,
 });
 
@@ -32,7 +33,7 @@ const EMPTY_ENVIRONMENT_PRESENTATION_ATOM = Atom.make<EnvironmentPresentation | 
 );
 
 export function useEnvironmentPresentation(environmentId: EnvironmentId | null) {
-  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const catalog = useAtomValue(visibleCatalogValueAtom);
   const presentation = useAtomValue(
     environmentId === null
       ? EMPTY_ENVIRONMENT_PRESENTATION_ATOM

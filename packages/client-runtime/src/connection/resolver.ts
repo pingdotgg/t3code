@@ -171,6 +171,9 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         ? yield* remote.authorizeDirectDpop({
             expectedEnvironmentId: target.environmentId,
             connectionId: credentialConnectionId(target.connectionId),
+            ...(target.provisionalPairingId === undefined
+              ? {}
+              : { provisionalPairingId: target.provisionalPairingId }),
             httpBaseUrl: profile.httpBaseUrl,
             wsBaseUrl: profile.wsBaseUrl,
           })

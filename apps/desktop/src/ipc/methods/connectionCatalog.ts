@@ -12,6 +12,7 @@ export const getConnectionCatalog = DesktopIpc.makeIpcMethod({
   result: Schema.NullOr(Schema.String),
   handler: Effect.fn("desktop.ipc.connectionCatalog.get")(function* () {
     const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+    // An absent catalog returns null. Read errors reject the invocation so the renderer can retry.
     return Option.getOrNull(yield* store.get);
   }),
 });

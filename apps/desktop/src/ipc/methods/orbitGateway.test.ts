@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import { INSIGHT_PERIODS } from "@t3tools/client-runtime/orbit-gateway";
 
-import { isAllowedConnQuery, resolveConnUrl, resolveRootUrl } from "./orbitGateway.ts";
+import {
+  isAllowedConnMethod,
+  isAllowedConnQuery,
+  resolveConnUrl,
+  resolveRootUrl,
+} from "./orbitGateway.ts";
 
 describe("resolveConnUrl", () => {
   it("keeps ordinary Conn paths below the prefix", () => {
@@ -175,5 +180,22 @@ describe("resolveRootUrl", () => {
     expect(insights({ project_id: "0" })).toBeNull();
     expect(insights({ period: "30d", search: "x" })).toBeNull();
     expect(insights({ period: "30d" }, "POST")).toBeNull();
+  });
+});
+
+describe("isAllowedConnMethod", () => {
+  it("allows a DELETE only to release a reservation", () => {
+    expect(
+      isAllowedConnMethod({
+        method: "DELETE",
+        path: "/reservations/0b6c1c2e-5d7a-4a8e-9a39-1f1c0f6f6e01",
+      }),
+    ).toBe(true);
+    expect(isAllowedConnMethod({ method: "DELETE", path: "/instances/5" })).toBe(false);
+    expect(isAllowedConnMethod({ method: "DELETE", path: "/reservations/a/finalize" })).toBe(false);
+    expect(isAllowedConnMethod({ method: "DELETE", path: "/reservations/a", root: true })).toBe(
+      false,
+    );
+    expect(isAllowedConnMethod({ method: "POST", path: "/reservations/a/finalize" })).toBe(true);
   });
 });

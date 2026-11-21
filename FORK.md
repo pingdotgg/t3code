@@ -438,6 +438,26 @@ skips a clone a start is pairing with (`heldOrbitInstanceIds`), and an asleep on
 pending thread, a toast reports the result. Starts saved by the removed sidebar dialog load as
 pending threads, so they resume or can be dismissed; one whose send finished is dropped.
 
+**Pre-warm (reservations).** While the prompt box of a new Instance shows (the desktop draft in
+the main window, the phone's Orbit project screen), Conn reserves a clone of the Project
+(`POST /conn/projects/{id}/reservations`, `reservations.ts`), polls it every 2 s while it
+prepares, and installs a one-time link as soon as a ready GET delivers it. With no link it
+uses the existing pairing endpoints. The link is used in memory before any further read. Conn reads
+the reservation every 60 s once ready to keep it held. A send during that read or install lets
+it finish before reading the reservation again. The runner finalizes it
+(`POST /conn/reservations/{id}/finalize` with the name and branch), follows that Operation with
+the same create rows, and skips pairing if the device already saved the server. Conn waits up
+to two minutes for readiness. If the wait expires, the reservation is gone or failed, or the
+finalize fails, Conn releases it and starts an ordinary create with a fresh deadline. An
+abandoned reservation stays hidden until its pairing install settles and Conn removes the
+connection and credential it installed. The catalog stores the install identity with each
+record. Cleanup matches that identity, resumes after a restart, and leaves independently
+saved routes visible. Finalize clears the provisional identity and keeps the connection.
+Closing the prompt releases it (`DELETE`, the desktop's only allowed DELETE). A restart
+releases what the last run held. At most 3 are held: a fourth Project releases the oldest. Reserved clones (Gateway rows with `reservation_id`, and the ones a start finalizes)
+stay out of every list: the lists read `visibleCatalogValueAtom`, and the Gateway-fed lists drop
+reserved rows. Nothing about it shows on screen.
+
 **Workspaces.** A start saves the workspace selected at Start (null for all). Once the first
 message is sent, that workspace gets the clone's `<environmentId>:<projectId>` ref unless it
 already lists the project or no longer exists, so the sidebar shows the thread (a clone is a new

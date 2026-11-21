@@ -176,7 +176,7 @@ function layerPairingOnboarding(
       listDisabled: Effect.succeed([]),
     }),
     Layer.mock(Persistence.ConnectionRegistrationStore)({
-      register: () => Effect.void,
+      register: () => Effect.succeed(true),
       setEnabled: () => Effect.void,
     }),
     Layer.mock(Persistence.EnvironmentCacheStore)({}),

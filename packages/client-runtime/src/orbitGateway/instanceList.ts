@@ -3,6 +3,7 @@ import type {
   OrbitGatewayEnvironment,
   OrbitGatewayProjectListing,
 } from "./client.ts";
+import { visibleOrbitEnvironments } from "./client.ts";
 import type { OrbitInstanceGitState } from "./instanceGit.ts";
 
 /**
@@ -51,7 +52,7 @@ function orbitInstanceRowsFromEnvironments(
   projects: ReadonlyArray<Pick<OrbitGatewayProjectListing, "id" | "slug" | "name" | "nodeName">>,
 ): OrbitInstanceListRow[] {
   const byInstance = new Map<number, OrbitGatewayEnvironment & { readonly projectId: number }>();
-  for (const environment of environments) {
+  for (const environment of visibleOrbitEnvironments(environments)) {
     const { instanceId, projectId } = environment;
     if (instanceId === null || projectId === null) continue;
     if (environment.instanceName === DEFAULT_INSTANCE_NAME) continue;

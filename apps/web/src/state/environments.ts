@@ -9,6 +9,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { environmentCatalog } from "../connection/catalog";
+import { visibleCatalogValueAtom } from "../connection/visibleCatalog";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   environmentPresentations,
@@ -40,7 +41,7 @@ function projectEnvironmentPresentation(
 }
 
 export function useEnvironments() {
-  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const catalog = useAtomValue(visibleCatalogValueAtom);
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
   const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
 

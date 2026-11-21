@@ -8,6 +8,7 @@ import {
   orbitInstanceProjectOptions,
   type OrbitInstanceState,
   type OrbitInstanceWithThreads,
+  visibleOrbitEnvironments,
 } from "@t3tools/client-runtime/orbit-gateway";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import { EnvironmentId, isListedThreadLineage, ThreadId } from "@t3tools/contracts";
@@ -132,10 +133,10 @@ function NewThreadButton({ row }: { readonly row: OrbitInstanceWithThreads }) {
       },
       instance: { id: row.id, name: row.name },
       // A fresh read, as the palette's own on open: its cached list can miss this row's state.
-      environments: () => {
+      environments: async () => {
         const client = desktopOrbitGatewayClient();
         if (client === null) throw new Error("The Orbit Gateway is not available here.");
-        return client.environments();
+        return visibleOrbitEnvironments(await client.environments());
       },
     }).catch((error: unknown) => ({
       kind: "unavailable" as const,

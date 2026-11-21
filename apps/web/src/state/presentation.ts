@@ -8,16 +8,17 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
+import { visibleCatalogValueAtom } from "../connection/visibleCatalog";
 import { serverEnvironment } from "./server";
 
 export const environmentPresentations = createEnvironmentPresentationAtoms({
-  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  catalogValueAtom: visibleCatalogValueAtom,
   stateAtom: environmentCatalog.stateAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
 });
 
 export const environmentSummaries = createEnvironmentSummaryAtoms({
-  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  catalogValueAtom: visibleCatalogValueAtom,
   presentationAtom: environmentPresentations.presentationAtom,
 });
 

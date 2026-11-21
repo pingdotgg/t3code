@@ -66,7 +66,23 @@ export class ConnectionRegistrationStore extends Context.Service<
     readonly register: (
       registration: ConnectionRegistration,
       routes: ReadonlyArray<PersistedConnectionTarget>,
-    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    ) => Effect.Effect<boolean, ConnectionPersistenceError>;
+    readonly settleProvisionalPairing: (
+      environmentId: EnvironmentId,
+      installId: string,
+      keep: boolean,
+    ) => Effect.Effect<
+      {
+        readonly routes: ReadonlyArray<PersistedConnectionTarget>;
+        readonly promoted: boolean;
+      },
+      ConnectionPersistenceError
+    >;
+    readonly learnLabel: (
+      environmentId: EnvironmentId,
+      expected: ReadonlyArray<PersistedConnectionTarget>,
+      label: string,
+    ) => Effect.Effect<ReadonlyArray<PersistedConnectionTarget>, ConnectionPersistenceError>;
     /**
      * `routes` must not be empty.
      */

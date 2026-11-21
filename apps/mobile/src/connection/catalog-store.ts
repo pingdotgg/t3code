@@ -2,9 +2,11 @@ import {
   ConnectionCatalogDocument,
   type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
+  provisionalPairingsInCatalog,
 } from "@t3tools/client-runtime/platform";
 import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import { msg } from "gt-react-native";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -54,6 +56,7 @@ const encodeCatalog = Effect.fn("mobile.connectionStorage.encodeCatalog")(functi
 
 interface CatalogStore {
   readonly read: Effect.Effect<ConnectionCatalogDocumentType, ConnectionTransientError>;
+  readonly readStartupPairings: Effect.Effect<ReadonlySet<string>, ConnectionTransientError>;
   readonly update: (
     transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
   ) => Effect.Effect<void, ConnectionTransientError>;
@@ -69,6 +72,7 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
     storage.removeItem(key).pipe(Effect.mapError((cause) => catalogError("delete", cause)));
   const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
   const lock = yield* Semaphore.make(1);
+  const startupPairings = yield* Deferred.make<ReadonlySet<string>>();
 
   const loadLegacyCatalog = Effect.fn("mobile.connectionStorage.loadLegacyCatalog")(function* () {
     const legacyRaw = yield* getItem(LEGACY_CONNECTIONS_KEY);
@@ -110,16 +114,23 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
     } else {
       catalog = yield* loadLegacyCatalog();
     }
+    // A write can load the catalog before startup recovery retries. Capture the IDs first.
+    if (!(yield* Deferred.isDone(startupPairings))) {
+      yield* Deferred.succeed(startupPairings, provisionalPairingsInCatalog(catalog));
+    }
     yield* Ref.set(state, Option.some(catalog));
     return catalog;
   });
 
   const read = lock.withPermits(1)(loadUnlocked());
+  const readStartupPairings = read.pipe(Effect.andThen(Deferred.await(startupPairings)));
   const update: CatalogStore["update"] = Effect.fn("mobile.connectionStorage.updateCatalog")(
     function* (transform) {
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
-          const next = transform(yield* loadUnlocked());
+          const current = yield* loadUnlocked();
+          const next = transform(current);
+          if (next === current) return;
           const encoded = yield* encodeCatalog(next);
           yield* setItem(CONNECTION_CATALOG_KEY, encoded);
           yield* Ref.set(state, Option.some(next));
@@ -128,5 +139,5 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
     },
   );
 
-  return { read, update } satisfies CatalogStore;
+  return { read, readStartupPairings, update } satisfies CatalogStore;
 });

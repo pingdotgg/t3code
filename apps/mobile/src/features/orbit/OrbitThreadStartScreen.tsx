@@ -17,6 +17,7 @@ import { ListSection } from "../../components/ui/ListSection";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { orbitGatewayClient } from "./orbitGatewayClient";
+import { useOrbitReservation } from "./orbitReservations";
 import { startOrbitThread } from "./orbitThreadStartRuntime";
 import { orbitStartReturn } from "./orbitThreadStarts";
 
@@ -47,6 +48,8 @@ export function OrbitThreadStartScreen() {
   }, []);
 
   const project = projects?.find((entry) => entry.id === chosenId) ?? projects?.[0] ?? null;
+  // Conn: a clone of the chosen Project is reserved while this screen shows (invisible pre-warm).
+  useOrbitReservation(project?.id ?? null, true);
   const canStart = project !== null && text.trim() !== "";
   const goBack = () => {
     if (navigation.canGoBack()) navigation.goBack();

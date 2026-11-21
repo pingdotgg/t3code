@@ -102,6 +102,23 @@ describe("planEnvironmentProvider", () => {
     expect(plan.pair).toEqual(["other-clone"]);
   });
 
+  it("leaves reserved servers to the reservation's pairing flow", () => {
+    const plan = planEnvironmentProvider({
+      provider: "orbit",
+      saved: [saved("saved-reservation")],
+      orbit: [
+        { ...orbit("reserved", "registered", 41), reservationId: "r41" },
+        { ...orbit("saved-reservation", "registered", 42), reservationId: "r42" },
+      ],
+      state: EMPTY_ORBIT_ENVIRONMENT_STATE,
+      requestedEnvironmentIds: ["reserved"],
+      renew: [{ environmentId: "saved-reservation", reason: "expired" }],
+    });
+    expect(plan.pair).toEqual([]);
+    expect(plan.renew).toEqual([]);
+    expect(plan.remove).toEqual([]);
+  });
+
   it("pairs a host server at once but a clone only when the user asks for it", () => {
     const input = {
       provider: "orbit" as const,

@@ -1,3 +1,4 @@
+import { visibleOrbitEnvironments } from "@t3tools/client-runtime/orbit-gateway";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   OrbitGatewayBranches,
@@ -9,7 +10,7 @@ import { useEffect } from "react";
 import { create } from "zustand";
 
 import type { OrbitPaletteProjectsState } from "../components/CommandPalette.logic";
-import { environmentCatalog } from "../connection/catalog";
+import { visibleCatalogValueAtom } from "../connection/visibleCatalog";
 import { useOrbitThreadsAvailable } from "./environmentProvider";
 import { desktopOrbitGatewayClient } from "./OrbitProfileSync";
 
@@ -41,7 +42,7 @@ export async function loadOrbitPaletteProjects(
       client.projects({ includeUnavailable: true }),
       client.environments(),
     ]);
-    next = { status: "loaded", projects, environments };
+    next = { status: "loaded", projects, environments: visibleOrbitEnvironments(environments) };
   } catch {
     if (options?.keepLoadedOnFailure && state.status === "loaded") return false;
     next = { status: "unreachable" };
@@ -103,10 +104,10 @@ export async function readOrbitEnvironments(): Promise<readonly OrbitGatewayEnvi
   if (state.status === "loaded") return state.environments;
   const client = desktopOrbitGatewayClient();
   if (client === null) throw new Error("The Orbit Gateway is not available here.");
-  return client.environments();
+  return visibleOrbitEnvironments(await client.environments());
 }
 
 /** The environments this device has paired with (saved in its catalog). */
 export function useOrbitPairedEnvironmentIds(): ReadonlySet<string> {
-  return new Set(useAtomValue(environmentCatalog.catalogValueAtom).entries.keys());
+  return new Set(useAtomValue(visibleCatalogValueAtom).entries.keys());
 }

@@ -6,6 +6,7 @@ import {
   forgetRenewalFailure,
   isFinalPairingError,
   isPairingRevokedError,
+  isReservedOrbitEnvironment,
   orbitInstanceFromEnvironment,
   orbitInstancesByEnvironment,
   parseEnvironmentProvider,
@@ -386,7 +387,12 @@ export async function reconcileEnvironmentProvider(
 ): Promise<readonly OrbitGatewayEnvironment[] | null> {
   const { provider, state } = useEnvironmentProvider.getState();
   const orbit = provider === "orbit" ? await client.environments() : null;
-  saveOrbitInstances(orbit === null ? {} : orbitInstancesByEnvironment(orbit));
+  // Conn: reserved clones stay out of every list until finalized; the plan below still sees them.
+  saveOrbitInstances(
+    orbit === null
+      ? {}
+      : orbitInstancesByEnvironment(orbit.filter((row) => !isReservedOrbitEnvironment(row))),
+  );
   // Conn: asleep Instances nobody uses stay unconnected; one in use is woken.
   await observeOrbitInstancePower(client, orbit);
   const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);

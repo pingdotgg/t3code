@@ -306,6 +306,8 @@ describe("readOrbitThreadStarts", () => {
       completionProcessUnit: null,
       completionRequires: null,
       completionRetryable: false,
+      reservationId: null,
+      reservedEnvironmentId: null,
     });
 
     const { client, calls } = gateway({});

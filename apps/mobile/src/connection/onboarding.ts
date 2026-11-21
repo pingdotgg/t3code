@@ -16,13 +16,9 @@ export const connectPairingUrl = createRuntimeCommand(connectionAtomRuntime, {
   concurrency: {
     mode: "singleFlight",
     // The same link used for another machine needs its own expected-machine check.
-    key: (input: { readonly pairingUrl: string; readonly expectedEnvironmentId?: EnvironmentId }) =>
-      JSON.stringify([input.pairingUrl, input.expectedEnvironmentId ?? null]),
+    key: (input: ConnectionOnboarding.PairingConnectionInput) => JSON.stringify(input),
   },
-  execute: (input: {
-    readonly pairingUrl: string;
-    readonly expectedEnvironmentId?: EnvironmentId;
-  }) =>
+  execute: (input: ConnectionOnboarding.PairingConnectionInput) =>
     ConnectionOnboarding.ConnectionOnboarding.pipe(
       Effect.flatMap((onboarding) => onboarding.registerPairing(input)),
     ),

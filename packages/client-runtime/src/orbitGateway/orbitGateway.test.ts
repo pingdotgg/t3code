@@ -961,6 +961,35 @@ describe("createOrbitGatewayClient", () => {
       ],
     });
   });
+
+  it("reads an Operation the Conn read does not serve, such as instance.finalize, through Orbit's read", async () => {
+    const requests: OrbitGatewayRequest[] = [];
+    const client = createOrbitGatewayClient(async (request) => {
+      requests.push(request);
+      if (request.root !== true) {
+        return {
+          status: 404,
+          body: JSON.stringify({ error: { code: "http.404", message: "Resource not found." } }),
+        };
+      }
+      return {
+        status: 200,
+        body: JSON.stringify({
+          data: { id: 31898, kind: "instance.finalize", status: "succeeded", target_id: 3929 },
+        }),
+      };
+    });
+    await expect(client.operation(31898)).resolves.toMatchObject({
+      id: 31898,
+      kind: "instance.finalize",
+      status: "succeeded",
+      targetId: 3929,
+    });
+    expect(requests.map((request) => [request.path, request.root ?? false])).toEqual([
+      ["/operations/31898", false],
+      ["/operations/31898", true],
+    ]);
+  });
 });
 
 describe("orbitInstanceFromEnvironment", () => {

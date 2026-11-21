@@ -400,6 +400,16 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const requireEncryption = Effect.gen(function* () {
+    if (!(yield* encryptionAvailable)) {
+      return yield* new DesktopConnectionCatalogStoreProtectionError({
+        operation: "check-encryption-availability",
+        catalogPath,
+        cause: new Error("Desktop secure storage is unavailable."),
+      });
+    }
+  });
+
   const decryptDocument = (document: EncryptedConnectionCatalogDocument) =>
     decodeSecretBytes(catalogPath, document.encryptedCatalog).pipe(
       Effect.flatMap((encryptedCatalog) =>
@@ -477,9 +487,6 @@ export const make = Effect.gen(function* () {
   });
 
   const migrateLegacyCatalog = Effect.gen(function* () {
-    if (!(yield* encryptionAvailable)) {
-      return Option.none<string>();
-    }
     const records = yield* savedEnvironments.getRegistry.pipe(
       Effect.mapError(
         (cause) =>
@@ -493,6 +500,7 @@ export const make = Effect.gen(function* () {
     if (records.length === 0) {
       return Option.none<string>();
     }
+    yield* requireEncryption;
     const catalog = yield* migrateSavedEnvironmentRecords(records, savedEnvironments, catalogPath);
     const encoded = yield* encodeRuntimeConnectionCatalogDocumentJson(catalog).pipe(
       Effect.mapError(
@@ -523,9 +531,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(document)) {
         return yield* migrateLegacyCatalog;
       }
-      if (!(yield* encryptionAvailable)) {
-        return Option.none<string>();
-      }
+      yield* requireEncryption;
       return Option.some(yield* decryptDocument(document.value));
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {

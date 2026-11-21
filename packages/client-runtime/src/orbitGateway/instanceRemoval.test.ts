@@ -312,8 +312,10 @@ describe("removal states (conn remove UX, 2026-11-13)", () => {
       "GET /operations/77",
     ]);
 
-    const gone = gateway([error(404, "http.404")]);
+    // A 404 on the Conn read falls back to Orbit's own read; lost only when both say 404.
+    const gone = gateway([error(404, "http.404"), error(404, "http.404")]);
     expect(await gone.follow()).toEqual({ kind: "lost" });
+    expect(gone.requests.map((request) => request.root === true)).toEqual([false, true]);
   });
 
   it("keeps following a saved Operation through a 401 or a 5xx, and its id is never dropped", async () => {

@@ -7,10 +7,21 @@ import {
   RelayConnectionTarget,
   SshConnectionTarget,
   type ConnectionTarget,
+  type PersistedConnectionTarget,
 } from "./model.ts";
 import { connectionRoutes, entryWithRoutes } from "./routes.ts";
 
 /** Conn: the same target under another name. `setByUser` marks a name the person chose. */
+export function withTargetLabel(
+  target: PersistedConnectionTarget,
+  label: string,
+  setByUser?: boolean,
+): PersistedConnectionTarget;
+export function withTargetLabel(
+  target: ConnectionTarget,
+  label: string,
+  setByUser?: boolean,
+): ConnectionTarget;
 export function withTargetLabel(
   target: ConnectionTarget,
   label: string,
@@ -29,7 +40,13 @@ export function withTargetLabel(
         wsBaseUrl: target.wsBaseUrl,
       });
     case "BearerConnectionTarget":
-      return new BearerConnectionTarget({ ...named, connectionId: target.connectionId });
+      return new BearerConnectionTarget({
+        ...named,
+        connectionId: target.connectionId,
+        ...(target.provisionalPairingId === undefined
+          ? {}
+          : { provisionalPairingId: target.provisionalPairingId }),
+      });
     case "RelayConnectionTarget":
       return new RelayConnectionTarget(named);
     case "SshConnectionTarget":

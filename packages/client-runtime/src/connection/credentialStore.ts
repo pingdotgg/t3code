@@ -15,6 +15,7 @@ export class ConnectionCredentialStore extends Context.Service<
     readonly put: (
       connectionId: string,
       credential: ConnectionCredential,
+      expectedProvisionalPairingId?: string,
     ) => Effect.Effect<void, ConnectionAttemptError>;
     readonly remove: (connectionId: string) => Effect.Effect<void, ConnectionAttemptError>;
   }

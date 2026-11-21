@@ -258,6 +258,9 @@ export function mergeLearnedRoutes(input: {
 }): ReadonlyArray<ConnectionRoute> | null {
   const { entry } = input;
   const active = input.activeRoute.target;
+  if (active._tag === "BearerConnectionTarget" && active.provisionalPairingId !== undefined) {
+    return null;
+  }
   const saved = connectionRoutes(entry);
   if (active._tag !== "RelayConnectionTarget" && active._tag !== "BearerConnectionTarget") {
     return null;

@@ -1,4 +1,5 @@
 import { m } from "../i18n/messages";
+import { useOrbitReservation } from "../orbit/orbitReservations";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useGT, useMessages } from "gt-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
@@ -1809,6 +1810,8 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread,
     orbitTarget: draftThread?.orbitTarget,
   });
+  // Conn: a clone is reserved while the prompt box of a new Instance shows (invisible pre-warm).
+  useOrbitReservation(orbitDraftTarget?.instanceKind === "new" ? orbitDraftTarget.projectId : null);
   // An Orbit draft kept open after leaving Orbit mode (or the desktop app) says how to send it.
   const orbitDraftBlockedReason =
     !isServerThread && draftThread?.orbitTarget && orbitDraftTarget === null

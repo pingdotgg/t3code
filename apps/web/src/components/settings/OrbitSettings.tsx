@@ -8,6 +8,7 @@ import {
   type OrbitConnectionProbe,
   type OrbitGatewayEnvironment,
   type OrbitNodeState,
+  visibleOrbitEnvironments,
 } from "@t3tools/client-runtime/orbit-gateway";
 import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, XIcon } from "lucide-react";
@@ -140,7 +141,9 @@ function useOrbitConnection() {
         ? { status: "ok", node: me.value }
         : { status: "error", error: me.reason },
     );
-    setEnvironments(servers.status === "fulfilled" ? servers.value : null);
+    setEnvironments(
+      servers.status === "fulfilled" ? visibleOrbitEnvironments(servers.value) : null,
+    );
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the Orbit Gateway once on mount; Reload reads it again

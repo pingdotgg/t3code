@@ -10,6 +10,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -22,6 +23,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
 
+import { withTargetLabel } from "./serverLabel.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import {
@@ -47,6 +49,7 @@ import {
   ConnectionTransientError,
   ConnectionBlockedError,
   BearerConnectionTarget,
+  type PersistedConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
@@ -221,7 +224,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         );
         switch (registration._tag) {
           case "RelayConnectionRegistration":
-            return;
+            return true;
           case "BearerConnectionRegistration":
           case "SshConnectionRegistration":
             yield* Ref.update(storedProfiles, (current) => {
@@ -234,8 +237,30 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               next.set(registration.target.connectionId, registration.credential);
               return next;
             });
-            return;
+            return true;
         }
+      }),
+    settleProvisionalPairing: () => Effect.die("Unexpected provisional pairing"),
+    learnLabel: (environmentId, expected, label) =>
+      Ref.modify(storedTargets, (current) => {
+        const updated: Array<PersistedConnectionTarget> = [];
+        if (
+          current.some((target) => target.environmentId === environmentId && target.labelSetByUser)
+        ) {
+          return [updated, current];
+        }
+        const targets = current.map((target) => {
+          if (
+            target._tag === "PrimaryConnectionTarget" ||
+            target.label === label ||
+            !expected.some((previous) => Equal.equals(previous, target))
+          )
+            return target;
+          const named = withTargetLabel(target, label);
+          updated.push(named);
+          return named;
+        });
+        return [updated, targets];
       }),
     setRoutes: (environmentId, routes) =>
       Ref.update(storedTargets, (current) => replaceRoutes(current, environmentId, routes)),

@@ -1,4 +1,5 @@
 import { msg, useGT, useMessages } from "gt-react-native";
+import { visibleCatalogValueAtom } from "../../connection/visibleCatalog";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -44,7 +45,7 @@ const options: ReadonlyArray<{
 export function PullRequestRoutingSettings() {
   const gt = useGT();
   const m = useMessages();
-  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const catalog = useAtomValue(visibleCatalogValueAtom);
   const permissions = useAtomValue(environmentCatalog.pullRequestRoutingPermissionsValueAtom);
   const update = useAtomCommand(environmentCatalog.setPullRequestRoutingPermission);
   const [expanded, setExpanded] = useState<string | null>(null);

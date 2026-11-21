@@ -12,7 +12,8 @@ import * as Schema from "effect/Schema";
 export const DEFAULT_ORBIT_GATEWAY_URL = "https://gateway.orbit";
 
 export interface OrbitGatewayRequest {
-  readonly method: "GET" | "POST" | "PUT" | "PATCH";
+  /** DELETE only releases a reservation (`/reservations/{id}`); the desktop refuses it elsewhere. */
+  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   /** A path below `/api/v1/conn`, such as `/me`. */
   readonly path: string;
   readonly body?: unknown;
@@ -135,7 +136,67 @@ export interface OrbitGatewayEnvironment {
   readonly instanceName: string | null;
   readonly nodeName: string | null;
   readonly instanceUrl: string | null;
+  /**
+   * Conn: the reservation that holds this clone ready for a prompt, or null once it is finalized
+   * (and on Gateways without reservations). The UI hides such rows everywhere.
+   */
+  readonly reservationId?: string | null;
 }
+
+/** Whether an environment row is a reserved clone, which the UI never shows. */
+export function isReservedOrbitEnvironment(
+  environment: Pick<OrbitGatewayEnvironment, "reservationId">,
+): boolean {
+  return typeof environment.reservationId === "string" && environment.reservationId !== "";
+}
+
+/** The rows a list shows: reserved clones stay out until they are finalized. */
+export function visibleOrbitEnvironments<T extends Pick<OrbitGatewayEnvironment, "reservationId">>(
+  environments: readonly T[],
+): T[] {
+  return environments.filter((environment) => !isReservedOrbitEnvironment(environment));
+}
+
+/**
+ * Conn: a clone the Gateway prepares while the prompt box of a new Instance is open
+ * (`/conn/projects/{project}/reservations`). Finalize gives it the typed name and branch.
+ */
+export interface OrbitGatewayReservation {
+  readonly id: string;
+  readonly projectId: number;
+  readonly instanceId: number | null;
+  readonly state: OrbitGatewayReservationState;
+  readonly expiresAt: string | null;
+  readonly createOperationId: number | null;
+  /** Set from `ready` on; pair with it as with any clone. */
+  readonly environmentId: string | null;
+  readonly finalizeOperationId: number | null;
+  readonly errorCode: string | null;
+  /** Delivered once by a ready reservation GET. Redeem in memory. */
+  readonly pairing: OrbitGatewayPairing | null;
+}
+
+export type OrbitGatewayReservationState =
+  | "preparing"
+  | "ready"
+  | "finalizing"
+  | "finalized"
+  | "failed"
+  | "expired"
+  | "released";
+
+const RESERVATION_STATES: ReadonlySet<string> = new Set([
+  "preparing",
+  "ready",
+  "finalizing",
+  "finalized",
+  "failed",
+  "expired",
+  "released",
+]);
+
+/** A finalize of a reservation that another key finalized already. */
+export const ORBIT_RESERVATION_FINALIZED = "reservation.finalized";
 
 /** A Project a thread can start in: its default Instance runs in a container on `nodeName`. */
 export interface OrbitGatewayProject {
@@ -461,6 +522,28 @@ export interface OrbitGatewayClient {
   ) => Promise<OrbitGatewayWakeOperation>;
   /** Conn: reads a wake's Operation (`GET /api/v1/operations/{id}`; the Conn read does not serve it). */
   readonly wakeOperation: (operationId: number) => Promise<OrbitGatewayWakeOperation>;
+  /**
+   * Conn: reserves a clone of the Project for an open prompt box. Orbit keeps one per caller Node,
+   * profile and Project (a repeat returns it) and at most 3 per caller; a fourth releases the oldest.
+   */
+  readonly reserve: (
+    projectId: number,
+    idempotencyKey?: string,
+  ) => Promise<OrbitGatewayReservation>;
+  /** Reads a reservation and keeps it 10 minutes longer. Another caller's, or a released one, is 404. */
+  readonly reservation: (reservationId: string) => Promise<OrbitGatewayReservation>;
+  /** Releases a reservation: the destroy Operation's id, or null when no create had started. */
+  readonly releaseReservation: (reservationId: string) => Promise<number | null>;
+  /**
+   * Gives a reservation its name and branch; follow the `instance.finalize` Operation. The
+   * environment and its pairing stay. A replay under the same key returns the same Operation.
+   */
+  readonly finalizeReservation: (
+    reservationId: string,
+    name: string,
+    idempotencyKey: string,
+    branch?: OrbitGatewayBranchSelection | null,
+  ) => Promise<OrbitGatewayOperation>;
 }
 
 /** Conn: an `instance.wake` Operation. Its statuses include `pending`, which the Conn layer never sends. */
@@ -528,10 +611,11 @@ export function createOrbitGatewayClient(
   const now = options.now ?? Date.now;
   const call = async (request: OrbitGatewayRequest): Promise<unknown> =>
     (await callEnvelope(request)).data;
-  const callEnvelope = async (request: OrbitGatewayRequest): Promise<Record<string, unknown>> => {
-    let response: OrbitGatewayResponse;
+  const callEnvelope = async (request: OrbitGatewayRequest): Promise<Record<string, unknown>> =>
+    parseEnvelope(request, await transportCall(request));
+  const transportCall = async (request: OrbitGatewayRequest): Promise<OrbitGatewayResponse> => {
     try {
-      response = await transport(request);
+      return await transport(request);
     } catch (cause) {
       throw new OrbitGatewayError({
         code: "gateway.unreachable",
@@ -540,6 +624,11 @@ export function createOrbitGatewayClient(
         details: {},
       });
     }
+  };
+  const parseEnvelope = (
+    request: OrbitGatewayRequest,
+    response: OrbitGatewayResponse,
+  ): Record<string, unknown> => {
     const json = parseJson(response.body);
     if (response.status < 200 || response.status >= 300) {
       const error = record(record(json)?.error);
@@ -705,7 +794,13 @@ export function createOrbitGatewayClient(
     },
     operation: async (operationId) => {
       const path = `/operations/${operationId}`;
-      return operation(await call({ method: "GET", path }), path);
+      try {
+        return operation(await call({ method: "GET", path }), path);
+      } catch (error) {
+        // The Conn read serves no `instance.finalize` (release 2201); Orbit's own read does.
+        if (!isOrbitGatewayError(error) || error.status !== 404) throw error;
+        return operation(await call({ method: "GET", path, root: true }), path);
+      }
     },
     cancelOperation: async (operationId) => {
       const path = `/operations/${operationId}/cancel`;
@@ -755,6 +850,83 @@ export function createOrbitGatewayClient(
       const path = `/operations/${operationId}`;
       return wakeOperation(await call({ method: "GET", path, root: true }), path);
     },
+    reserve: async (projectId, idempotencyKey) => {
+      const path = `/projects/${projectId}/reservations`;
+      return reservation(
+        await call({
+          method: "POST",
+          path,
+          body: {},
+          timeoutMs: ADMISSION_TIMEOUT_MS,
+          ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+        }),
+        path,
+      );
+    },
+    reservation: async (reservationId) => {
+      const path = reservationPath(reservationId);
+      return reservation(await call({ method: "GET", path }), path, reservationId);
+    },
+    releaseReservation: async (reservationId) => {
+      const path = reservationPath(reservationId);
+      // 204 carries no body: no create had started.
+      const response = await transportCall({ method: "DELETE", path });
+      if (response.status === 204) return null;
+      const data = record(parseEnvelope({ method: "DELETE", path }, response).data);
+      const operationId = [
+        data?.destroy_operation_id,
+        data?.id,
+        record(data?.operation)?.id,
+        data?.operation_id,
+      ].find((value) => typeof value === "number");
+      return typeof operationId === "number" ? operationId : null;
+    },
+    finalizeReservation: async (reservationId, name, idempotencyKey, branch) => {
+      const path = `${reservationPath(reservationId)}/finalize`;
+      return operation(
+        await call({
+          method: "POST",
+          path,
+          body: branch ? { name, branch: branchBody(branch) } : { name },
+          timeoutMs: ADMISSION_TIMEOUT_MS,
+          idempotencyKey,
+        }),
+        path,
+      );
+    },
+  };
+}
+
+function reservationPath(reservationId: string): string {
+  return `/reservations/${encodeURIComponent(reservationId)}`;
+}
+
+function reservation(value: unknown, path: string, requestedId?: string): OrbitGatewayReservation {
+  const data = record(value);
+  if (
+    typeof data?.id !== "string" ||
+    (requestedId !== undefined && data.id !== requestedId) ||
+    typeof data.project_id !== "number" ||
+    typeof data.state !== "string" ||
+    !RESERVATION_STATES.has(data.state)
+  ) {
+    throw invalid(path);
+  }
+  const number = (field: unknown) => (typeof field === "number" ? field : null);
+  const environmentId = optionalText(data.environment_id);
+  const pairing =
+    requestedId !== undefined && data.state === "ready" ? parseIssuedPairing(data.pairing) : null;
+  return {
+    id: data.id,
+    projectId: data.project_id,
+    instanceId: number(data.instance_id),
+    state: data.state as OrbitGatewayReservationState,
+    expiresAt: optionalText(data.expires_at),
+    createOperationId: number(data.create_operation_id),
+    environmentId,
+    finalizeOperationId: number(data.finalize_operation_id),
+    errorCode: optionalText(data.error_code),
+    pairing: pairing?.environmentId === environmentId ? pairing : null,
   };
 }
 
@@ -770,6 +942,12 @@ function wakeOperation(value: unknown, path: string): OrbitGatewayWakeOperation 
 }
 
 function issuedPairing(value: unknown, path: string): OrbitGatewayPairing {
+  const pairing = parseIssuedPairing(value);
+  if (pairing === null) throw invalid(path);
+  return pairing;
+}
+
+function parseIssuedPairing(value: unknown): OrbitGatewayPairing | null {
   const data = record(value);
   const pairing = record(data?.pairing);
   if (
@@ -777,7 +955,7 @@ function issuedPairing(value: unknown, path: string): OrbitGatewayPairing {
     typeof pairing?.environment_id !== "string" ||
     typeof pairing.expires_at !== "string"
   ) {
-    throw invalid(path);
+    return null;
   }
   return {
     environmentId: pairing.environment_id,
@@ -1215,6 +1393,7 @@ function environment(value: unknown, path: string): OrbitGatewayEnvironment {
     instanceName: optionalText(data.instance_name),
     nodeName: optionalText(data.node_name),
     instanceUrl: optionalText(data.instance_url),
+    reservationId: optionalText(data.reservation_id),
   };
 }
 

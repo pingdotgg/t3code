@@ -4,6 +4,7 @@ import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/sta
 import { WS_METHODS } from "@t3tools/contracts";
 
 import { environmentCatalog } from "../connection/catalog";
+import { visibleCatalogValueAtom } from "../connection/visibleCatalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentShell, environmentSnapshotAtom, expectsPrimaryEnvironment } from "./shell";
 import { parseScopedProjectKey } from "@t3tools/client-runtime/environment";
@@ -12,7 +13,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { serverEnvironment } from "./server";
 
 export const environmentProjects = createEnvironmentProjectAtoms({
-  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  catalogValueAtom: visibleCatalogValueAtom,
   snapshotAtom: environmentSnapshotAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
 });

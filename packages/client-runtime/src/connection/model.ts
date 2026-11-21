@@ -28,6 +28,7 @@ export class BearerConnectionTarget extends Schema.TaggedClass<BearerConnectionT
   {
     ...ConnectionTargetBase,
     connectionId: Schema.String,
+    provisionalPairingId: Schema.optionalKey(Schema.String),
   },
 ) {}
 
@@ -165,6 +166,7 @@ export type PreparedHttpAuthorization =
 export interface DirectDpopConnection {
   /** The credential store key. */
   readonly connectionId: string;
+  readonly provisionalPairingId?: string;
   readonly httpBaseUrl: string;
 }
 

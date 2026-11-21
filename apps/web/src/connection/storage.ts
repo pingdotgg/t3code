@@ -2,12 +2,19 @@ import {
   ConnectionCatalogDocument,
   type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
+  provisionalPairingsInCatalog,
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
   StoredOrchestrationShellSnapshot,
   StoredOrchestrationThreadSnapshot,
   decodeOrDiscardOrchestrationCache,
   putRemoteDpopTokenInCatalog,
+  putConnectionCredentialInCatalog,
   registerConnectionInCatalog,
+  catalogRoutes,
+  learnConnectionLabelInCatalog,
+  provisionalPairingId,
+  recoverProvisionalPairings,
+  settleProvisionalPairingInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
@@ -35,14 +42,18 @@ import { EnvironmentId, ServerConfig, ThreadId, VcsListRefsResult } from "@t3too
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { m } from "../i18n/messages";
+import { isAdditionalDesktopWindow } from "../lib/desktopWindowContext";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
 
 const DATABASE_NAME = "t3code:connection-runtime";
@@ -509,6 +520,7 @@ const encodeCatalog = Effect.fn("web.connectionStorage.encodeCatalog")(function*
 });
 
 export interface CatalogBackend {
+  readonly sharedAcrossWindows?: boolean;
   readonly read: Effect.Effect<string | null, ConnectionTransientError>;
   readonly write: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
   readonly quarantine?: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
@@ -518,6 +530,7 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
   const bridge = window.desktopBridge;
   if (bridge !== undefined) {
     return {
+      sharedAcrossWindows: true,
       read: Effect.tryPromise({
         try: () => bridge.getConnectionCatalog(),
         catch: (cause) => catalogError("load", cause),
@@ -553,6 +566,7 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
 
 interface CatalogStore {
   readonly read: Effect.Effect<ConnectionCatalogDocumentType, ConnectionTransientError>;
+  readonly readStartupPairings: Effect.Effect<ReadonlySet<string>, ConnectionTransientError>;
   readonly update: (
     transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
   ) => Effect.Effect<void, ConnectionTransientError>;
@@ -563,10 +577,11 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
 ) {
   const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
   const lock = yield* Semaphore.make(1);
+  const startupPairings = yield* Deferred.make<ReadonlySet<string>>();
 
-  const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
+  const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* (fresh = false) {
     const cached = yield* Ref.get(state);
-    if (Option.isSome(cached)) {
+    if (!fresh && Option.isSome(cached)) {
       return cached.value;
     }
     const raw = yield* backend.read;
@@ -600,24 +615,52 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
         ),
       );
     }
+    // A write can load the catalog before startup recovery retries. Capture the IDs first.
+    if (!(yield* Deferred.isDone(startupPairings))) {
+      yield* Deferred.succeed(startupPairings, provisionalPairingsInCatalog(catalog));
+    }
     yield* Ref.set(state, Option.some(catalog));
     return catalog;
   });
 
-  const read = lock.withPermits(1)(loadUnlocked());
+  // A desktop renderer's cached snapshot cannot safely be the basis of a catalog write
+  // after another window has paired or replaced a route.
+  const withCatalogLock = <A>(effect: Effect.Effect<A, ConnectionTransientError>) => {
+    const locks = backend.sharedAcrossWindows ? globalThis.navigator?.locks : undefined;
+    return locks === undefined
+      ? effect
+      : Effect.context<never>().pipe(
+          Effect.flatMap((context) =>
+            Effect.tryPromise({
+              try: (signal) =>
+                locks.request("conn:connection-catalog", { signal }, () =>
+                  Effect.runPromiseExitWith(context)(effect),
+                ),
+              catch: (cause) => catalogError("write", cause),
+            }),
+          ),
+          Effect.flatMap(Exit.match({ onFailure: Effect.failCause, onSuccess: Effect.succeed })),
+        );
+  };
+  const read = lock.withPermits(1)(withCatalogLock(loadUnlocked()));
+  const readStartupPairings = read.pipe(Effect.andThen(Deferred.await(startupPairings)));
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
       yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          const next = transform(yield* loadUnlocked());
-          yield* backend.write(yield* encodeCatalog(next));
-          yield* Ref.set(state, Option.some(next));
-        }),
+        withCatalogLock(
+          Effect.gen(function* () {
+            const current = yield* loadUnlocked(backend.sharedAcrossWindows === true);
+            const next = transform(current);
+            if (next === current) return;
+            yield* backend.write(yield* encodeCatalog(next));
+            yield* Ref.set(state, Option.some(next));
+          }),
+        ),
       );
     },
   );
 
-  return { read, update } satisfies CatalogStore;
+  return { read, readStartupPairings, update } satisfies CatalogStore;
 });
 
 // The stored names predate the rename and stay, so a tab still on an older version and an
@@ -747,7 +790,11 @@ export const layer = Layer.effectContext(
       makeDatabaseHandle(),
       (owned) => owned.close,
     );
-    const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
+    const backend = makeCatalogBackend(database);
+    const catalog = yield* makeCatalogStore(backend);
+    if (backend.sharedAcrossWindows && !isAdditionalDesktopWindow()) {
+      yield* recoverProvisionalPairings(catalog);
+    }
     const pullRequestRoutingPermissions = makeBrowserPullRequestRoutingPermissions();
     // Remembers each thread row's encoding, so a save only encodes rows that changed.
     const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder({
@@ -759,22 +806,73 @@ export const layer = Layer.effectContext(
     });
     const threadWriteOrder = makeThreadCacheWriteOrder();
 
+    // Keep registry startup pending while desktop secure storage is inaccessible so its
+    // layer stays alive for recovery. A successful read is cached for subsequent lists.
+    const readTargets = backend.sharedAcrossWindows
+      ? catalog.read.pipe(Effect.retry({ schedule: Schedule.spaced("2 seconds") }))
+      : catalog.read;
     const targetStore = Persistence.ConnectionTargetStore.of({
-      list: catalog.read.pipe(
-        Effect.map((document) => document.targets),
+      list: readTargets.pipe(
+        Effect.map((document) =>
+          document.targets.filter((target) => provisionalPairingId(target) === undefined),
+        ),
         Effect.mapError((cause) => persistenceError("list-targets", cause)),
       ),
-      listDisabled: catalog.read.pipe(
+      listDisabled: readTargets.pipe(
         Effect.map((document) => document.disabledEnvironmentIds),
         Effect.mapError((cause) => persistenceError("list-disabled-targets", cause)),
       ),
     });
     const registrationStore = Persistence.ConnectionRegistrationStore.of({
       register: Effect.fn("Persistence.ConnectionRegistrationStore.register")(
-        function (registration, routes) {
-          return catalog
-            .update((document) => registerConnectionInCatalog(document, registration, routes))
-            .pipe(Effect.mapError((cause) => persistenceError("register-connection", cause)));
+        function* (registration, routes) {
+          let stored = false;
+          yield* catalog
+            .update((document) => {
+              const next = registerConnectionInCatalog(document, registration, routes);
+              stored = next !== document;
+              return next;
+            })
+            .pipe(Effect.mapError((error) => persistenceError("register-connection", error)));
+          return stored;
+        },
+      ),
+      settleProvisionalPairing: Effect.fn(
+        "Persistence.ConnectionRegistrationStore.settleProvisionalPairing",
+      )(function* (environmentId, installId, keep) {
+        let routes: ReturnType<typeof catalogRoutes> = [];
+        let promoted = false;
+        yield* catalog
+          .update((document) => {
+            const next = settleProvisionalPairingInCatalog(
+              document,
+              installId,
+              keep,
+              environmentId,
+            );
+            promoted = keep && next !== document;
+            routes = catalogRoutes(next, environmentId);
+            return next;
+          })
+          .pipe(Effect.mapError((error) => persistenceError("remove-connection", error)));
+        return { routes, promoted };
+      }),
+      learnLabel: Effect.fn("Persistence.ConnectionRegistrationStore.learnLabel")(
+        function* (environmentId, expected, label) {
+          let updated: ReturnType<typeof catalogRoutes> = [];
+          yield* catalog
+            .update((document) => {
+              const result = learnConnectionLabelInCatalog(
+                document,
+                environmentId,
+                expected,
+                label,
+              );
+              updated = result.updated;
+              return result.document;
+            })
+            .pipe(Effect.mapError((error) => persistenceError("set-connection-routes", error)));
+          return updated;
         },
       ),
       setRoutes: Effect.fn("Persistence.ConnectionRegistrationStore.setRoutes")(
@@ -830,14 +928,15 @@ export const layer = Layer.effectContext(
             ),
           ),
         ),
-      put: (connectionId, credential) =>
-        catalog.update((document) => ({
-          ...document,
-          credentials: replaceCatalogValue(document.credentials, (value) => value.connectionId, {
+      put: (connectionId, credential, expectedProvisionalPairingId) =>
+        catalog.update((document) =>
+          putConnectionCredentialInCatalog(
+            document,
             connectionId,
             credential,
-          }),
-        })),
+            expectedProvisionalPairingId,
+          ),
+        ),
       remove: (connectionId) =>
         catalog.update((document) => ({
           ...document,

@@ -10,8 +10,11 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import * as DesktopIpc from "../ipc/DesktopIpc.ts";
+import { getConnectionCatalog } from "../ipc/methods/connectionCatalog.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
@@ -28,9 +31,13 @@ const encodeLegacySavedEnvironments = Schema.encodeEffect(
     Schema.Struct({ version: Schema.Literal(1), records: Schema.Array(Schema.Unknown) }),
   ),
 );
-function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
+function layerSafeStorageFor(
+  available: boolean | Ref.Ref<boolean>,
+  failDecrypt: Ref.Ref<boolean> | null = null,
+) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
-    isEncryptionAvailable: Effect.succeed(available),
+    isEncryptionAvailable:
+      typeof available === "boolean" ? Effect.succeed(available) : Ref.get(available),
     encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
     decryptString: (value) => {
       return Effect.gen(function* () {
@@ -52,7 +59,7 @@ function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> |
 
 function layerFor(
   baseDir: string,
-  encryptionAvailable = true,
+  encryptionAvailable: boolean | Ref.Ref<boolean> = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
 ) {
@@ -91,7 +98,7 @@ function layerFor(
 
 const withStore = <A, E, R>(
   effect: Effect.Effect<A, E, R | DesktopConnectionCatalogStore.DesktopConnectionCatalogStore>,
-  encryptionAvailable = true,
+  encryptionAvailable: boolean | Ref.Ref<boolean> = true,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -123,6 +130,57 @@ describe("DesktopConnectionCatalogStore", () => {
       }),
       false,
     ),
+  );
+
+  it.effect("distinguishes absent and temporarily unreadable catalogs through desktop IPC", () =>
+    Effect.gen(function* () {
+      const available = yield* Ref.make(false);
+      yield* withStore(
+        Effect.gen(function* () {
+          const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+          let listener: DesktopIpc.DesktopIpcHandleListener | undefined;
+          const ipc = DesktopIpc.make(
+            {
+              removeHandler: () => {},
+              handle: (_channel, registered) => {
+                listener = registered;
+              },
+              removeAllListeners: () => {},
+              on: () => {},
+            },
+            () => Effect.succeed(true),
+          );
+          yield* ipc.handle(getConnectionCatalog);
+          const read = Effect.tryPromise({
+            try: () => Promise.resolve(listener!({ sender: { id: 1 } }, undefined)),
+            catch: (cause) => String(cause),
+          });
+
+          assert.isNull(yield* read);
+          assert.isFalse(yield* fileSystem.exists(catalogPath));
+          yield* Ref.set(available, true);
+          assert.isTrue(yield* store.set(emptyCatalog));
+          const encrypted = yield* fileSystem.readFileString(catalogPath);
+
+          yield* Ref.set(available, false);
+          const unavailable = yield* read.pipe(Effect.result);
+          Result.match(unavailable, {
+            onFailure: (failure) => assert.include(failure, "check-encryption-availability"),
+            onSuccess: () => assert.fail("Expected the existing encrypted catalog read to fail"),
+          });
+          assert.isFalse(yield* store.set(emptyCatalog));
+          assert.equal(yield* fileSystem.readFileString(catalogPath), encrypted);
+
+          yield* Ref.set(available, true);
+          assert.equal(yield* read, emptyCatalog);
+        }),
+        available,
+      );
+    }),
   );
 
   it.effect("migrates legacy relay, SSH, bearer profile, and credential data", () =>

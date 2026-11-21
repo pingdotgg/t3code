@@ -17,7 +17,7 @@ import {
   type OrbitThreadStart,
 } from "@t3tools/client-runtime/orbit-gateway";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { type EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectPairing } from "../connection/onboarding";
@@ -42,6 +42,7 @@ import {
   updateStarts,
 } from "./orbitThreadStartStore";
 import { rememberOrbitComposerControls } from "./orbitComposerControls";
+import { getOrbitReservations, takeOrbitReservation } from "./orbitReservations";
 
 /** Conn: runs the threads started in an Orbit Project (FORK.md, "Orbit"), in the main window only. */
 
@@ -70,6 +71,8 @@ function saveOrbitDraftStart(input: OrbitDraftStartInput): OrbitThreadStart {
     instanceDomainSuffix: input.instanceDomainSuffix ?? null,
     branch: input.branch,
     defaultBranch: input.defaultBranch,
+    // Conn: the clone reserved while the prompt box was open; the start finalizes it.
+    reservation: input.instanceKind === "new" ? takeOrbitReservation(input.project.id) : null,
   });
   const start = { ...fresh, workspaceId: useWorkspaceStore.getState().activeWorkspaceId };
   updateStarts((starts) => [...starts, start]);
@@ -171,18 +174,27 @@ function completionStillRuns(start: OrbitThreadStart): boolean {
 const cancelRequested = (id: string) =>
   readStored().find((entry) => entry.id === id)?.cancelRequested === true;
 
-function isSaved(environmentId: string): boolean {
+export function isOrbitServerSaved(environmentId: string): boolean {
   return appAtomRegistry
     .get(environmentCatalog.catalogValueAtom)
     .entries.has(environmentId as EnvironmentId);
 }
 
-async function connect(environmentId: string, pairingUrl: string): Promise<void> {
+/** Opens a clone's one-time pairing link and saves its server. */
+export async function connectOrbitClone(
+  environmentId: string,
+  pairingUrl: string,
+  installId?: string,
+): Promise<void> {
   const result = await runAtomCommand(
     appAtomRegistry,
     connectPairing,
-    { pairingUrl },
-    { reportFailure: false },
+    {
+      pairingUrl,
+      expectedEnvironmentId: EnvironmentId.make(environmentId),
+      ...(installId === undefined ? {} : { provisionalPairingId: installId }),
+    },
+    { reportFailure: false, reportDefect: false },
   );
   if (result._tag === "Failure") {
     const error = squashAtomCommandFailure(result);
@@ -190,7 +202,7 @@ async function connect(environmentId: string, pairingUrl: string): Promise<void>
       `Could not pair with the clone: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  recordOrbitPaired(environmentId);
+  if (installId === undefined) recordOrbitPaired(environmentId);
 }
 
 /** The clone's workspace project and its server's default model, once both loaded. */
@@ -271,9 +283,8 @@ export async function runSavedOrbitThreadStart(
   }
   running.add(id);
   // Dismiss removes the start; a switch to Default pauses it until Orbit mode is back.
-  const stopped = () =>
-    !readStored().some((entry) => entry.id === id) ||
-    useEnvironmentProvider.getState().provider !== "orbit";
+  const dismissed = () => !readStored().some((entry) => entry.id === id);
+  const stopped = () => dismissed() || useEnvironmentProvider.getState().provider !== "orbit";
   try {
     // Whether the device saved the clone's server is known only once the catalog loaded.
     const catalogReady = await waitForAtomValue({
@@ -287,6 +298,8 @@ export async function runSavedOrbitThreadStart(
       return null;
     }
     let environmentId: string | null = null;
+    const reservations =
+      start.reservationId && start.environmentId === null ? getOrbitReservations() : null;
     const sent = await runOrbitThreadStart(start, {
       client,
       // Only the UI sets a Cancel request, so a save of the runner's copy keeps it.
@@ -299,8 +312,11 @@ export async function runSavedOrbitThreadStart(
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: Date.now,
       stopped,
-      isSaved,
-      connect,
+      dismissed,
+      isSaved: isOrbitServerSaved,
+      reservationPairing: reservations ?? undefined,
+      waitForReservationPairing: reservations?.waitForPairing,
+      connect: connectOrbitClone,
       wake: (instanceId) => wakeOrbitInstanceForStart(client, instanceId),
       onCreateOperation: (operation) => recordCreateOperation(id, operation),
       send: async (ready) => {

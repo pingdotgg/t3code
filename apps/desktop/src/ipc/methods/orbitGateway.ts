@@ -14,7 +14,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const CONN_PREFIX = "/api/v1/conn";
 
 const OrbitGatewayRequest = Schema.Struct({
-  method: Schema.Literals(["GET", "POST", "PUT", "PATCH"]),
+  method: Schema.Literals(["GET", "POST", "PUT", "PATCH", "DELETE"]),
   path: Schema.String.check(Schema.isPattern(/^\/[A-Za-z0-9/_.%-]{0,512}$/)),
   body: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_000_000))),
   /** Checked against `CONN_QUERIES`; a path without an entry takes no query. */
@@ -192,10 +192,23 @@ export function isAllowedConnQuery(
   return keys.every((key) => spec.query[key]!(request.query![key]!));
 }
 
+/** Conn: the only DELETE the renderer may send releases a reservation of a pre-warmed clone. */
+const CONN_DELETE = /^\/reservations\/[A-Za-z0-9-]{1,64}$/;
+
+export function isAllowedConnMethod(
+  request: Pick<typeof OrbitGatewayRequest.Type, "method" | "path" | "root">,
+): boolean {
+  return request.method !== "DELETE" || (request.root !== true && CONN_DELETE.test(request.path));
+}
+
 async function send(
   request: typeof OrbitGatewayRequest.Type,
 ): Promise<typeof OrbitGatewayResponse.Type> {
-  const url = request.root === true ? resolveRootUrl(request) : resolveConnUrl(request.path);
+  const url = !isAllowedConnMethod(request)
+    ? null
+    : request.root === true
+      ? resolveRootUrl(request)
+      : resolveConnUrl(request.path);
   if (url === null) {
     return { error: "That Gateway path is not allowed.", status: 0, body: "" };
   }

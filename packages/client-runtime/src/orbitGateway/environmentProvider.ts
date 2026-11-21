@@ -4,7 +4,11 @@ import * as Schema from "effect/Schema";
 
 import type { SupervisorConnectionState } from "../connection/model.ts";
 
-import { OrbitGatewayError, type OrbitGatewayEnvironment } from "./client.ts";
+import {
+  isReservedOrbitEnvironment,
+  OrbitGatewayError,
+  type OrbitGatewayEnvironment,
+} from "./client.ts";
 
 const isOrbitGatewayError = Schema.is(OrbitGatewayError);
 
@@ -412,7 +416,8 @@ export function planEnvironmentProvider(input: {
   const renew: string[] = [];
   const pair = input.orbit
     .filter((environment) => {
-      if (environment.status !== "registered") return false;
+      if (environment.status !== "registered" || isReservedOrbitEnvironment(environment))
+        return false;
       if (environment.instanceId !== null && held.has(environment.instanceId)) return false;
       // An asleep Instance's server cannot mint a pairing link.
       if (environment.powerState === "stopped") return false;

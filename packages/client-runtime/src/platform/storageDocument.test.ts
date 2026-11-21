@@ -3,6 +3,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { Atom, AtomRegistry } from "effect/reactivity";
+import { type EnvironmentCatalogState, visibleConnectionCatalog } from "../state/connections.ts";
 
 import * as TokenStore from "../authorization/tokenStore.ts";
 import {
@@ -20,6 +22,7 @@ import {
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "../connection/model.ts";
+import { withTargetLabel } from "../connection/serverLabel.ts";
 import {
   PullRequestRoutingPermissions,
   makePullRequestRoutingPermissions,
@@ -33,6 +36,8 @@ import {
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
+  settleProvisionalPairingInCatalog,
+  putConnectionCredentialInCatalog,
 } from "./storageDocument.ts";
 
 const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocument);
@@ -248,6 +253,140 @@ describe("ConnectionCatalogDocument", () => {
     expect(removeConnectionFromCatalog(registered, ENVIRONMENT_ID)).toEqual(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
     );
+  });
+
+  const reservationId = "install-1";
+  const provisionalRegistration = new BearerConnectionRegistration({
+    target: new BearerConnectionTarget({
+      ...BEARER_TARGET,
+      connectionId: `bearer:orbit-reservation:${reservationId}`,
+      provisionalPairingId: reservationId,
+    }),
+    profile: new BearerConnectionProfile({
+      ...BEARER_PROFILE,
+      connectionId: `bearer:orbit-reservation:${reservationId}`,
+    }),
+    credential: BEARER_CREDENTIAL,
+  });
+  const pendingCatalog = () =>
+    registerConnectionInCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT, provisionalRegistration);
+
+  it("checks for an independent connection at the actual provisional write", () => {
+    const independent = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: BEARER_CREDENTIAL,
+      }),
+    );
+    expect(registerConnectionInCatalog(independent, provisionalRegistration)).toBe(independent);
+  });
+
+  it("settles the route and credential by their own markers after a partial replacement", () => {
+    const pending = pendingCatalog();
+    const target = new BearerConnectionTarget({
+      ...BEARER_TARGET,
+      connectionId: provisionalRegistration.target.connectionId,
+    });
+    const independentCredential = {
+      connectionId: provisionalRegistration.target.connectionId,
+      credential: new BearerConnectionCredential({ token: "independent" }),
+    };
+    const independentRoute = { ...pending, targets: [target] };
+    expect(settleProvisionalPairingInCatalog(independentRoute, reservationId, true)).toBe(
+      independentRoute,
+    );
+    const routeReplaced = settleProvisionalPairingInCatalog(independentRoute, reservationId, false);
+    expect(routeReplaced.targets).toEqual([target]);
+    expect(routeReplaced.profiles).toEqual(pending.profiles);
+    expect(routeReplaced.credentials).toEqual([]);
+
+    const independentSession = { ...pending, credentials: [independentCredential] };
+    expect(settleProvisionalPairingInCatalog(independentSession, reservationId, true)).toBe(
+      independentSession,
+    );
+    const credentialReplaced = settleProvisionalPairingInCatalog(
+      independentSession,
+      reservationId,
+      false,
+    );
+    expect(credentialReplaced.targets).toEqual([]);
+    expect(credentialReplaced.credentials).toEqual([independentCredential]);
+    expect(settleProvisionalPairingInCatalog(credentialReplaced, reservationId, false)).toBe(
+      credentialReplaced,
+    );
+  });
+
+  it("hides the provisional route while showing an independent route on the same environment", () => {
+    const atom = Atom.make<EnvironmentCatalogState>({
+      isReady: true,
+      entries: new Map([
+        [
+          ENVIRONMENT_ID,
+          {
+            enabled: true,
+            target: withTargetLabel(provisionalRegistration.target, "Renamed clone"),
+            profile: Option.some(provisionalRegistration.profile),
+          },
+        ],
+      ]),
+    });
+    const registry = AtomRegistry.make();
+    const visible = visibleConnectionCatalog(atom);
+    expect(registry.get(visible).entries.size).toBe(0);
+    registry.set(atom, {
+      isReady: true,
+      entries: new Map([
+        [
+          ENVIRONMENT_ID,
+          {
+            enabled: true,
+            target: provisionalRegistration.target,
+            profile: Option.some(provisionalRegistration.profile),
+            alternateRoutes: [{ target: BEARER_TARGET, profile: Option.some(BEARER_PROFILE) }],
+          },
+        ],
+      ]),
+    });
+    expect(registry.get(visible).entries.get(ENVIRONMENT_ID)?.target).toEqual(BEARER_TARGET);
+  });
+
+  it("promotes both durable records and cannot resurrect a discarded credential with a late refresh", () => {
+    const refreshed = putConnectionCredentialInCatalog(
+      pendingCatalog(),
+      provisionalRegistration.target.connectionId,
+      new BearerConnectionCredential({ token: "refreshed" }),
+      reservationId,
+    );
+    expect(refreshed.credentials[0]?.provisionalPairingId).toBe(reservationId);
+    const promoted = settleProvisionalPairingInCatalog(refreshed, reservationId, true);
+    expect(promoted.targets[0]).not.toHaveProperty("provisionalPairingId");
+    expect(promoted.targets).toHaveLength(1);
+    expect(promoted.credentials).toEqual([
+      {
+        connectionId: provisionalRegistration.target.connectionId,
+        credential: new BearerConnectionCredential({ token: "refreshed" }),
+      },
+    ]);
+    expect(settleProvisionalPairingInCatalog(promoted, reservationId, false)).toBe(promoted);
+    expect(
+      putConnectionCredentialInCatalog(
+        promoted,
+        provisionalRegistration.target.connectionId,
+        BEARER_CREDENTIAL,
+        reservationId,
+      ),
+    ).toBe(promoted);
+
+    const discarded = settleProvisionalPairingInCatalog(refreshed, reservationId, false);
+    expect(
+      putConnectionCredentialInCatalog(
+        discarded,
+        provisionalRegistration.target.connectionId,
+        BEARER_CREDENTIAL,
+      ),
+    ).toBe(discarded);
   });
 
   it("stores a DPoP token for a registered relay environment", () => {

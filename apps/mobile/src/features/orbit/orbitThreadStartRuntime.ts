@@ -21,6 +21,11 @@ import {
   subscribeOrbitGateway,
 } from "./orbitGatewayStore";
 import { orbitGatewayClient } from "./orbitGatewayClient";
+import {
+  installOrbitReservations,
+  orbitReservations,
+  takeOrbitReservation,
+} from "./orbitReservations";
 import { orbitThreadStartStore } from "./orbitThreadStartStore";
 import {
   beginOrbitThreadStart,
@@ -70,12 +75,18 @@ const ports: MobileOrbitThreadStartPorts = {
     appAtomRegistry
       .get(environmentCatalog.catalogValueAtom)
       .entries.has(EnvironmentId.make(environmentId)),
-  connect: async (environmentId, pairingUrl) => {
+  reservationPairing: orbitReservations,
+  waitForReservationPairing: orbitReservations.waitForPairing,
+  connect: async (environmentId, pairingUrl, installId) => {
     const result = await runAtomCommand(
       appAtomRegistry,
       connectPairingUrl,
-      { pairingUrl },
-      { reportFailure: false },
+      {
+        pairingUrl,
+        expectedEnvironmentId: EnvironmentId.make(environmentId),
+        ...(installId === undefined ? {} : { provisionalPairingId: installId }),
+      },
+      { reportFailure: false, reportDefect: false },
     );
     if (result._tag !== "Success") {
       const error = squashAtomCommandFailure(result);
@@ -83,7 +94,7 @@ const ports: MobileOrbitThreadStartPorts = {
         `Could not pair with the clone: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    await recordOrbitThreadStartPaired(environmentId);
+    if (installId === undefined) await recordOrbitThreadStartPaired(environmentId);
   },
   firstMessage: {
     waitForClone: async (environmentId) => {
@@ -136,6 +147,7 @@ export function startOrbitThread(
     workspaceId: orbitGatewayState().selectedWorkspaceId,
     uuid: uuidv4,
     now: Date.now(),
+    reservation: takeOrbitReservation(project.id),
   });
   if (returnRouteKey !== undefined) openOnSend.set(start.id, returnRouteKey);
 }
@@ -193,6 +205,7 @@ export function installOrbitThreadStarts(): () => void {
   const disposers = [
     orbitThreadStartStore.subscribe(runReadyStarts),
     subscribeOrbitGateway(runReadyStarts),
+    installOrbitReservations(ports.connect),
   ];
   void orbitThreadStartStore.load();
   return () => {

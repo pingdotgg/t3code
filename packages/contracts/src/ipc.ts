@@ -1303,7 +1303,8 @@ export interface DesktopApiResponse {
 
 /** One call to the Orbit Gateway's Conn layer; `path` is below `/api/v1/conn`. */
 export interface DesktopOrbitGatewayRequest {
-  readonly method: "GET" | "POST" | "PUT" | "PATCH";
+  /** DELETE only releases a reservation (`/reservations/{id}`). */
+  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly path: string;
   /** A JSON body, or null. */
   readonly body: string | null;

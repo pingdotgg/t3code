@@ -50,6 +50,7 @@ export interface PairingConnectionInput {
   readonly pairingUrl?: string;
   readonly host?: string;
   readonly pairingCode?: string;
+  readonly provisionalPairingId?: string;
   readonly expectedEnvironmentId?: EnvironmentId;
 }
 
@@ -138,12 +139,17 @@ export const preparePairingRegistration = Effect.fn(
   ) {
     return yield* differentMachineError(descriptor.label);
   }
-  const connectionId = bearerConnectionId(descriptor.environmentId, target.httpBaseUrl);
+  const provisional = input.provisionalPairingId;
+  const connectionId =
+    provisional === undefined
+      ? bearerConnectionId(descriptor.environmentId, target.httpBaseUrl)
+      : `bearer:orbit-reservation:${provisional}`;
   const route = {
     target: new BearerConnectionTarget({
       environmentId: descriptor.environmentId,
       label: descriptor.label,
       connectionId,
+      ...(provisional === undefined ? {} : { provisionalPairingId: provisional }),
     }),
     profile: new BearerConnectionProfile({
       connectionId,
@@ -213,6 +219,7 @@ const registerPairingConnection = Effect.fn(
   if (!(yield* registry.register(registration, { knownAddressOnly }))) {
     return registration.target.environmentId;
   }
+  if (input.provisionalPairingId !== undefined) return registration.target.environmentId;
   yield* registry.setCompatibility(registration.target.environmentId, null);
   yield* registry
     .setEnabled(registration.target.environmentId, true)

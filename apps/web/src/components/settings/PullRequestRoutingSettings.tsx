@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { visibleCatalogValueAtom } from "../../connection/visibleCatalog";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import {
   pullRequestRoutingConnectionKey,
@@ -56,7 +57,7 @@ export function PullRequestRoutingSettings({
 }) {
   const searchableSetting = useSearchableSetting();
   const permissions = useAtomValue(environmentCatalog.pullRequestRoutingPermissionsValueAtom);
-  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const catalog = useAtomValue(visibleCatalogValueAtom);
   const update = useAtomCommand(environmentCatalog.setPullRequestRoutingPermission);
   const [saving, setSaving] = useState(false);
   const gt = useGT();

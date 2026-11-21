@@ -8,6 +8,7 @@ import type { ComposerEnvironmentCandidate } from "@t3tools/client-runtime/compo
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 
 import { environmentCatalog } from "../connection/catalog";
+import { visibleCatalogValueAtom } from "../connection/visibleCatalog";
 import { environmentPresentations } from "./presentation";
 
 export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
@@ -31,7 +32,7 @@ export function projectEnvironmentPresentation(
 }
 
 export function useEnvironments() {
-  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const catalog = useAtomValue(visibleCatalogValueAtom);
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
   const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
 
