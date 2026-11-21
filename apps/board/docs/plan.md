@@ -1658,14 +1658,14 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B12 to the base-branch stack and the operator lands it bottom-up.
 
-## Run reviews from review templates on the board's orchestrator (R2)
+## Run reviews from review templates, and spend usage wisely, on the board's orchestrator (R2)
 
 **Depends on.** L1.
 
 **Files.**
 
-- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.test.ts`, `apps/board/src/orchestrator/launch.ts`, `apps/board/src/orchestrator/roles.ts`, `apps/board/src/orchestrator/roles.test.ts`, `apps/board/roles/task.md`, `apps/board/roles/reviewer.md`, `apps/board/src/domain/board.ts`, `apps/board/src/store/localState.ts`, `apps/board/src/settings/SettingsNav.tsx`, and `apps/board/src/board/OrchestratorCard.tsx`.
-- [ ] Create `apps/board/src/domain/reviewTemplate.ts`, `apps/board/src/domain/reviewTemplate.test.ts`, and `apps/board/src/settings/ReviewsPage.tsx`.
+- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.test.ts`, `apps/board/src/orchestrator/launch.ts`, `apps/board/src/orchestrator/roles.ts`, `apps/board/src/orchestrator/roles.test.ts`, `apps/board/roles/task.md`, `apps/board/roles/reviewer.md`, `apps/board/roles/sonic.md`, `apps/board/src/domain/board.ts`, `apps/board/src/store/localState.ts`, `apps/board/src/state/orchestrator.ts`, `apps/board/src/settings/SettingsNav.tsx`, and `apps/board/src/board/OrchestratorCard.tsx`.
+- [ ] Create `apps/board/src/domain/reviewTemplate.ts`, `apps/board/src/domain/reviewTemplate.test.ts`, `apps/board/src/usage/usageNotice.ts`, `apps/board/src/usage/usageNotice.test.ts`, and `apps/board/src/settings/ReviewsPage.tsx`.
 - [ ] Delete `apps/board/roles/thermo-nuclear-review-subagent.md` and `apps/board/roles/thermo-nuclear-code-quality-review-subagent.md`.
 - [ ] In `13kparkin/pstack-t3`, edit `skills/pstack-t3/SKILL.md`, then re-vendor `apps/board/pstack/` with `apps/board/scripts/vendor-pstack.mjs`.
 
@@ -1681,25 +1681,36 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Delete the two thermo-nuclear roles and their `roles.ts` entries. `ponytail-review` covers bugs, broken callers, and code that should not exist, and the thermo-nuclear code-quality checklist pushes for restructuring that grows code.
 - [ ] In the `pstack-t3` adapter, map every skill step that says to start a subagent, a scout, a task, or a reviewer to `delegate_task` with the matching registry role. This covers user skills such as `pre-pr-reviewer` and `no-comments`.
 - [ ] The skills come from where they already load on the board's Claude instances: `pstack-t3` for `no-comments`, `unslop`, and `swarm`, `~/.claude/skills` for `review-loop`, `simplify`, `pre-pr-reviewer`, `test-evidence-review`, `security-audit`, and `pr-description`, and the user-scope ponytail plugin for `ponytail-review`. Nothing is vendored twice.
+- [ ] Spend usage wisely without losing quality. Save on waste, never on the hard steps. Anthropic measured an orchestrator with subagents at about 15 times a chat's tokens, and found token use explains most of the quality difference, so cutting thinking blindly makes results worse. Sources: [How we built our multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system) and [Which Claude model should you build with?](https://claude.dev/blog/which-claude-model-should-you-build-with/).
+- [ ] Set the role models in `roles.ts` from that guide, not from omp's settings. `reviewer` runs on Sonnet 5.5 at `medium`, for routine lanes. `security-reviewer` runs on Opus 5.5 at `high`, for security and large diffs. `task` runs on Sonnet 5.5 at `medium`. `scout` stays on Sonnet 5.5 at `medium`. `sonic` stays on Haiku 5.5 at `low`. Roles with no model of their own take Opus 5.5 at `medium`. No role uses Fable 5.1 or `xhigh`.
+- [ ] `roles/sonic.md` keeps sonic off source code. It runs tests, reads logs, collects data, and moves text the task gives word for word. The guide keeps code edits off small models, and Haiku costs five times more on prompts over 100K tokens.
+- [ ] `brief.md` gives the orchestrator the usage rules, always on.
+  - [ ] Pick the cheapest role that can do the step.
+  - [ ] When a child fails, or reports it is unsure, re-run that step once on the next tier up: Haiku, then Sonnet, then Opus, at `medium`. Never retry on the same tier. The guide measured low effort with failures re-run at high at about 97% of tasks for $0.17, against 95.3% for $0.29 with every task at high.
+  - [ ] Never cut planning, a lane the board's template requires, security review on a trust boundary, live lanes, receipts, or the stop after two fix rounds.
+  - [ ] Batch small work, and give one reviewer every lane on a diff of a few files. Hand over file paths, not pasted text. Ask children for short reports, because every report stays in the orchestrator's context. Send a short follow-up to a child that already holds the context. Never poll.
+  - [ ] A Codex orchestrator's children all inherit its model, so lean work lowers `effort` instead of switching models.
+- [ ] Send the orchestrator the usage numbers T3 already reports. The launch facts carry one line per usage window of the orchestrator's provider, such as `Claude weekly 82%, resets Fri`. When a window crosses 50, 80, or 95 percent, the board sends one message with that line. Above 80 percent the orchestrator runs lean: only the cheapest roles, and it asks the operator before starting more than two agents at once. Above 95 percent it finishes the work in flight and asks the operator before it starts any new agent.
+- [ ] In `usageNotice.ts`, keep the pure pieces: the usage line a window renders, and the crossings between two readings of the windows.
 
 **You see.**
 
-- [ ] The operator picks a review template for each board, or builds one from review skills. Every ticket goes through the board's template, and the orchestrator stops and asks after two fix rounds.
+- [ ] The operator picks a review template for each board, or builds one from review skills. Every ticket goes through the board's template, and the orchestrator stops and asks after two fix rounds. Cheap roles do the cheap steps, and the orchestrator slows down and asks as usage limits get close.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `roles.test.ts` asserts the literal registry without the two thermo-nuclear roles. `reviewTemplate.test.ts` asserts the system template's literal facts text, and decodes a fixed local-state file with one custom template into its literal value. Run `vp test run src/orchestrator/roles.test.ts src/domain/reviewTemplate.test.ts` from `apps/board`.
+- [ ] `roles.test.ts` asserts the literal registry with the new models and without the two thermo-nuclear roles. `reviewTemplate.test.ts` asserts the system template's literal facts text, and decodes a fixed local-state file with one custom template into its literal value. `usageNotice.test.ts` turns two fixed readings into the literal messages for a window that crosses 80 percent, and no message for a window that moves without crossing. Run `vp test run src/orchestrator/roles.test.ts src/domain/reviewTemplate.test.ts src/usage/usageNotice.test.ts` from `apps/board`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Every lane uses a real Claude orchestrator on the shared lane repo.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk's orchestrator hands a code-ready ticket to merge approval with no review lanes, so record that. Run a small goal at head on the system template. Save `r2-author-checks.txt`. Pass when the builder's transcript shows `simplify`, `no-comments`, `unslop`, and `pre-pr-reviewer` before code-ready.
-- [ ] Lane 2. Save `r2-lanes.txt` from the same goal. Pass when each applicable reviewer lane starts as its own `delegate_task` child with the `reviewer` role, every skill loads with no refused Skill call, and no Claude built-in subagent call appears.
-- [ ] Lane 3. Give a goal whose builder brief plants one real bug, a comment rendered without the markdown sanitizer. Save `r2-fix-round.txt`. Pass when a lane names it with `file:line`, the builder fixes it, the re-run lanes pass, and the fix round reports its `git diff --shortstat` and adds no guard, fallback, wrapper, or test its finding did not require.
-- [ ] Lane 4. Give a goal whose builder brief asks for three tests of made-up edge cases. Save `r2-tests.txt`. Pass when `test-evidence-review` flags all three and the fix round deletes them.
+- [ ] Lane 2. Save `r2-lanes.txt` from the same goal. Pass when each applicable reviewer lane starts as its own `delegate_task` child, with the `security-reviewer` role for the security lane and the `reviewer` role for the rest, every skill loads with no refused Skill call, and no Claude built-in subagent call appears.
+- [ ] Lane 3. Give a goal whose builder brief plants one real bug, a comment rendered without the markdown sanitizer, and asks for three tests of made-up edge cases. Save `r2-fix-round.txt` and `r2-pr-body.txt`. Pass when a lane names the bug with `file:line`, `test-evidence-review` flags all three tests, the fix round fixes the bug and deletes the tests, reports its `git diff --shortstat`, and adds nothing its findings did not require, and the merged PR body has every `pr-description` section that applies and a Mermaid graph.
+- [ ] Lane 4. Launch a board and record its launch facts. Then send the orchestrator the 80 percent message from the unit fixture, and give it a goal with five tickets. Save `r2-usage.txt`. Pass when the facts' usage lines match the board's usage bar, and after the message the orchestrator starts only the cheapest roles and asks before starting more than two agents.
 - [ ] Lane 5. Create a template named "Security only" with `simplify` as its author check and `security-audit` as its lane, and pick it on a board. Run a small goal. Save `r2-custom.png` and `r2-custom.txt`. Pass when only those two skills run on the ticket.
 - [ ] Lane 6. Give a docs-only goal on the system template. Save `r2-docs.txt`. Pass when the security and test lanes are skipped with their reasons.
 - [ ] Lane 7. Give a goal that still has findings after two fix rounds. Save `r2-escalate.png`. Pass when a For-you question asks the operator and no third fix round starts.
-- [ ] Lane 8. Save `r2-pr-body.txt` from a merged lane PR. Pass when its body has every `pr-description` section that applies and a Mermaid graph.
+- [ ] Lane 8. Run the same three-ticket goal twice in fresh sessions, once with trunk's role models and once at head. Save `r2-models.txt` with each run's tokens per role from the engine's turn usage, its review verdicts, and its fix rounds. Pass when head uses fewer tokens with the same verdicts and no extra fix round, and any escalation re-ran its step exactly one tier up.
 - [ ] Lane 9. Open Settings, then Reviews, and restart the app. Save `r2-templates.png`. Pass when the system template has no edit or delete, the editor lists the skills the instance reports, and the custom template and the board's pick are still there after the restart.
 - [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `r2-checks.txt`. Pass when all three exit 0.
 
