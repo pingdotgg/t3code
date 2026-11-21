@@ -395,11 +395,13 @@ export const layer: Layer.Layer<
       Effect.sync(() => {
         lastCaptures.set(cwd, { count: (lastCaptures.get(cwd)?.count ?? 0) + 1, timedOut });
       });
+    const capturesSoFar = (cwd: string) => lastCaptures.get(cwd)?.count ?? 0;
     const withCaptureLock = Effect.fn("CheckpointService.withCaptureLock")(function* <A, E, R>(
       cwd: string,
+      capturesBeforeLock: number | undefined,
       effect: (capturesBeforeLock: number) => Effect.Effect<A, E, R>,
     ) {
-      return yield* withWorkspaceLock(cwd, effect(lastCaptures.get(cwd)?.count ?? 0));
+      return yield* withWorkspaceLock(cwd, effect(capturesBeforeLock ?? capturesSoFar(cwd)));
     });
     // Both callers hold the workspace lock; post-turn captures always probe for recovery.
     const captureWorkspaceCheckpoint = Effect.fn("CheckpointService.captureWorkspaceCheckpoint")(
@@ -610,9 +612,11 @@ export const layer: Layer.Layer<
       input: Parameters<CheckpointServiceV2Shape["capture"]>[0] & {
         /** The commit a clean folder matches, which then needs no staging to snapshot. */
         readonly cleanHead?: string;
+        /** Captures seen before an earlier wait on this folder's lock, when there was one. */
+        readonly capturesBeforeLock?: number;
       },
     ) =>
-      withCaptureLock(input.scope.cwd, (capturesBeforeLock) =>
+      withCaptureLock(input.scope.cwd, input.capturesBeforeLock, (capturesBeforeLock) =>
         Effect.gen(function* () {
           const checkpointId = yield* checkpointIdForScopeOrdinal(idAllocator, {
             scopeId: input.scope.id,
@@ -1002,6 +1006,7 @@ export const layer: Layer.Layer<
     )(function* (input) {
       const { cwd, id } = input.scope;
       const baselineOrdinal = input.ordinalWithinScope - 1;
+      const capturesBeforeLock = capturesSoFar(cwd);
       const start = yield* withWorkspaceLock(
         cwd,
         Effect.gen(function* () {
@@ -1059,6 +1064,7 @@ export const layer: Layer.Layer<
         ordinalWithinScope: input.ordinalWithinScope,
         appRunOrdinal: null,
         capturedAt: input.capturedAt,
+        capturesBeforeLock,
         ...(input.excludePaths === undefined ? {} : { excludePaths: input.excludePaths }),
         ...(start.cleanHead === null ? {} : { cleanHead: start.cleanHead }),
       });

@@ -578,6 +578,7 @@ it.effect("skips post-turn captures that waited out another capture's timeout in
           Layer.mock(CheckpointStore.CheckpointStore)({
             isGitRepository: () => Effect.succeed(true),
             hasCheckpointRef: () => Effect.succeed(false),
+            resolveCleanHead: () => Effect.succeed(null),
             captureCheckpoint: ({ cwd }) =>
               Effect.gen(function* () {
                 yield* Ref.update(attempts, (count) => count + 1);
@@ -631,13 +632,27 @@ it.effect("skips post-turn captures that waited out another capture's timeout in
         yield* captureTurn(scopeFor("second")),
         yield* captureTurn(scopeFor("third")),
       ];
+      const repository = scopeFor("repository");
+      const repositoryWaiting = yield* checkpoints
+        .captureRepository({
+          scope: repository,
+          runId: repository.runId!,
+          nodeId: repository.nodeId!,
+          ordinalWithinScope: 1,
+          capturedAt: repository.createdAt,
+          baselineCapturedAt: repository.createdAt,
+          baselineRecorded: true,
+        })
+        .pipe(Effect.forkChild);
       yield* TestClock.adjust("30 seconds");
       assert.strictEqual((yield* Fiber.join(first)).status, "error");
-      // Room for both waiters to probe, so the count below is what fails without the fix.
-      yield* TestClock.adjust("60 seconds");
+      // Room for every waiter to probe, so the count below is what fails without the fix.
+      yield* TestClock.adjust("90 seconds");
       for (const fiber of waiting) {
         assert.strictEqual((yield* Fiber.join(fiber)).status, "error");
       }
+      const repositoryCaptured = yield* Fiber.join(repositoryWaiting);
+      assert.strictEqual(Option.getOrThrow(repositoryCaptured).checkpoint.status, "error");
       assert.strictEqual(yield* Ref.get(attempts), 3, "each waiter spent its own full timeout");
 
       // A capture that starts after the timeout still probes for recovery.
