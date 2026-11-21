@@ -75,15 +75,35 @@ const layerServerSettingsWithSecrets = () =>
     ),
   );
 
-const layerFailingSecretStore = (cause: ServerSecretStore.SecretStoreError) =>
+const layerFailingSecretStore = (
+  unreadable: ReadonlySet<string>,
+  secrets: Map<string, Uint8Array>,
+) =>
   Layer.succeed(
     ServerSecretStore.ServerSecretStore,
     ServerSecretStore.ServerSecretStore.of({
-      get: () => Effect.fail(cause),
-      set: () => Effect.void,
+      get: (name) =>
+        unreadable.has(name)
+          ? Effect.fail(
+              new ServerSecretStore.SecretStoreReadError({
+                resource: name,
+                cause: PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "readFile",
+                  pathOrDescriptor: name,
+                  description: "Secret backend unavailable.",
+                }),
+              }),
+            )
+          : Effect.sync(() => {
+              const value = secrets.get(name);
+              return value === undefined ? Option.none() : Option.some(value);
+            }),
+      set: (name, value) => Effect.sync(() => void secrets.set(name, value)),
       create: () => Effect.void,
       getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
-      remove: () => Effect.void,
+      remove: (name) => Effect.sync(() => void secrets.delete(name)),
     }),
   );
 
@@ -1980,19 +2000,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
   );
 
   it.effect("keeps the retired keys for another load when a token cannot be copied", () => {
-    const cause = new ServerSecretStore.SecretStoreReadError({
-      resource: "bitbucket-access-token",
-      cause: PlatformError.systemError({
-        _tag: "PermissionDenied",
-        module: "FileSystem",
-        method: "readFile",
-        pathOrDescriptor: "bitbucket-access-token",
-        description: "Secret backend unavailable.",
-      }),
-    });
+    const secrets = new Map([
+      [
+        `github-token-${Buffer.from("github.com", "utf8").toString("base64url")}`,
+        new TextEncoder().encode("ghp_saved"),
+      ],
+    ]);
+    // Bitbucket's store is down for both names; GitHub's token moves.
+    const unreadable = new Set([
+      "bitbucket-access-token",
+      sourceControlHostSecretName({ kind: "bitbucket", field: "accessToken", serverHost: null }),
+    ]);
     const layerSettings = ServerSettingsModule.layer.pipe(
       Layer.provide(ManagedPolicy.layerTest()),
-      Layer.provide(layerFailingSecretStore(cause)),
+      Layer.provide(layerFailingSecretStore(unreadable, secrets)),
       Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
       Layer.provideMerge(
         Layer.fresh(
@@ -2007,15 +2028,80 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       const legacy = JSON.stringify({
-        bitbucket: { email: "me@example.com", accessToken: "\u2022\u2022\u2022\u2022\u2022\u2022" },
+        bitbucket: { email: "me@example.com", accessToken: SECRET_REDACTED },
+        github: { tokens: { "github.com": SECRET_REDACTED } },
       });
       yield* fileSystem.writeFileString(serverConfig.settingsPath, legacy);
 
-      yield* Effect.exit(serverSettings.getSettings);
+      const loaded = (yield* serverSettings.getSettings).sourceControlHosts;
+      assert.deepEqual(loaded.bitbucket, { email: "me@example.com", accessToken: "" });
+      assert.deepEqual(loaded.github?.tokens, { "github.com": "ghp_saved" });
+      const afterLoad = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      assert.deepEqual(afterLoad.bitbucket, JSON.parse(legacy).bitbucket);
+      assert.isUndefined(afterLoad.github);
 
-      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), legacy);
+      yield* serverSettings.updateSettings({ defaultAutoPull: true });
+      yield* serverSettings.updateSettings({
+        sourceControlHosts: { bitbucket: { email: "new@example.com", accessToken: "" } },
+      });
+      yield* serverSettings.updateSettings({
+        sourceControlHosts: { github: { tokens: { "github.com": "" } } },
+      });
+
+      const written = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      assert.deepEqual(written.bitbucket, JSON.parse(legacy).bitbucket);
+      assert.deepEqual(written.sourceControlHosts.bitbucket, {
+        email: "new@example.com",
+        accessToken: SECRET_REDACTED,
+      });
+      assert.deepEqual(written.sourceControlHosts.github.tokens, { "github.com": "" });
+      assert.deepEqual([...secrets.keys()], []);
+      assert.equal(written.defaultAutoPull, true);
     }).pipe(Effect.provide(layerSettings));
   });
+
+  it.effect(
+    "moves a pending token into a host created before the move, keeping a newer token",
+    () =>
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const encode = (value: string) => new TextEncoder().encode(value);
+        yield* secrets.set("bitbucket-access-token", encode("bb-saved"));
+        yield* secrets.set(
+          `github-token-${Buffer.from("github.com", "utf8").toString("base64url")}`,
+          encode("ghp_old"),
+        );
+        yield* secrets.set(
+          sourceControlHostSecretName({
+            kind: "github",
+            field: "tokens",
+            serverHost: "github.com",
+          }),
+          encode("ghp_new"),
+        );
+        yield* fileSystem.writeFileString(
+          serverConfig.settingsPath,
+          JSON.stringify({
+            bitbucket: { email: "me@example.com", accessToken: SECRET_REDACTED },
+            github: { tokens: { "github.com": SECRET_REDACTED } },
+            sourceControlHosts: {
+              bitbucket: { email: "new@example.com", accessToken: SECRET_REDACTED },
+              github: { tokens: { "github.com": SECRET_REDACTED } },
+            },
+          }),
+        );
+
+        const loaded = (yield* serverSettings.getSettings).sourceControlHosts;
+
+        assert.deepEqual(loaded.bitbucket, { email: "new@example.com", accessToken: "bb-saved" });
+        assert.deepEqual(loaded.github?.tokens, { "github.com": "ghp_new" });
+        const raw = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+        assert.doesNotHaveAnyKeys(raw, ["bitbucket", "github"]);
+      }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
 
   it.effect("moves the retired bitbucket and github keys and their secrets on load", () =>
     Effect.gen(function* () {
@@ -2046,7 +2132,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.deepEqual(loaded.github?.tokens, { "github.com": "ghp_saved" });
       assert.deepEqual(loaded.github?.hosts, { "github.com": { account: "work" } });
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      assert.notInclude(raw, '"bitbucket":{"email"');
+      assert.doesNotHaveAnyKeys(JSON.parse(raw), ["bitbucket", "github"]);
       assert.include(raw, "sourceControlHosts");
       assert.isTrue(Option.isNone(yield* secrets.get("bitbucket-access-token")));
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),

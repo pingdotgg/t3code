@@ -78,7 +78,13 @@ export {
 } from "@t3tools/shared/serverSettings";
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
-const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));
+const RetiredSourceControlFields = {
+  bitbucket: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  github: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+};
+const encodeServerSettingsJson = Schema.encodeUnknownEffect(
+  fromJsonStringPretty(Schema.Struct({ ...ServerSettings.fields, ...RetiredSourceControlFields })),
+);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
@@ -385,8 +391,7 @@ const decodePersistedServerSettingsExit = Schema.decodeUnknownExit(PersistedServ
 const LegacyProviderSettingsJson = fromLenientJson(
   Schema.Struct({
     providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
-    bitbucket: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
-    github: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+    ...RetiredSourceControlFields,
   }),
 );
 const decodeLegacyProviderSettingsJsonExit = Schema.decodeUnknownExit(LegacyProviderSettingsJson);
@@ -406,25 +411,36 @@ function migrateLegacySourceControlSettings(
   },
 ): {
   readonly settings: ServerSettings;
-  readonly secretMoves: ReadonlyArray<{ readonly from: string; readonly to: string }>;
+  readonly secretMoves: ReadonlyArray<{
+    readonly kind: "bitbucket" | "github";
+    readonly from: string;
+    readonly to: string;
+  }>;
 } {
   const sourceControlHosts = { ...settings.sourceControlHosts };
-  const secretMoves: Array<{ readonly from: string; readonly to: string }> = [];
-  if (legacy.bitbucket !== undefined && sourceControlHosts.bitbucket === undefined) {
-    sourceControlHosts.bitbucket = legacy.bitbucket;
+  const secretMoves: Array<{
+    readonly kind: "bitbucket" | "github";
+    readonly from: string;
+    readonly to: string;
+  }> = [];
+  // A host made from a retired record while its token was unreadable still owes that token a move.
+  if (legacy.bitbucket !== undefined) {
+    sourceControlHosts.bitbucket ??= legacy.bitbucket;
     for (const [field, from] of Object.entries(LEGACY_BITBUCKET_SECRET_NAMES)) {
       if (legacy.bitbucket[field] !== SECRET_REDACTED) continue;
       secretMoves.push({
+        kind: "bitbucket",
         from,
         to: sourceControlHostSecretName({ kind: "bitbucket", field, serverHost: null }),
       });
     }
   }
-  if (legacy.github !== undefined && sourceControlHosts.github === undefined) {
-    sourceControlHosts.github = legacy.github;
+  if (legacy.github !== undefined) {
+    sourceControlHosts.github ??= legacy.github;
     for (const [serverHost, value] of readSecretFieldValues(legacy.github.tokens)) {
       if (serverHost === null || value !== SECRET_REDACTED) continue;
       secretMoves.push({
+        kind: "github",
         from: legacyGitHubTokenSecretName(serverHost),
         to: sourceControlHostSecretName({ kind: "github", field: "tokens", serverHost }),
       });
@@ -727,8 +743,18 @@ const make = Effect.gen(function* () {
   });
 
   const writeSettingsAtomically = Effect.fnUntraced(
-    function* (settings: ServerSettings) {
-      const stripped = stripDefaultServerSettings(settings, managed.defaults) ?? {};
+    function* (
+      settings: ServerSettings,
+      retiredSourceControl: Parameters<typeof migrateLegacySourceControlSettings>[1] = {},
+    ) {
+      const stripped = Object.assign(
+        {},
+        stripDefaultServerSettings(settings, managed.defaults),
+        // Retired keys whose secrets could not be copied yet stay for the next load to migrate.
+        Object.fromEntries(
+          Object.entries(retiredSourceControl).filter(([, value]) => value !== undefined),
+        ),
+      );
       const sparseSettingsJson = yield* encodeServerSettingsJson(
         managed.keepStored === undefined
           ? stripped
@@ -784,6 +810,9 @@ const make = Effect.gen(function* () {
       );
     },
   );
+
+  // Secret names of retired tokens whose copy failed on the last load; nothing is stored there yet.
+  let pendingSourceControlSecrets: ReadonlySet<string> = new Set();
 
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = managed.defaults;
@@ -891,45 +920,60 @@ const make = Effect.gen(function* () {
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
-    // Remove retired keys only after copying secrets and writing the new file; failures retry on next load.
-    const legacySecretsCopied = yield* Effect.forEach(
-      settingsFileTrusted
-        ? migrateLegacySourceControlSettings(folded, legacySourceControl).secretMoves
-        : [],
-      (move) =>
-        secretStore.get(move.from).pipe(
-          Effect.flatMap((secret) =>
-            Option.isNone(secret) ? Effect.void : secretStore.set(move.to, secret.value),
-          ),
-          Effect.as(true),
-          Effect.catch(() =>
-            Effect.logWarning("failed to copy a source control secret to its new name", {
-              secretName: move.to,
-            }).pipe(Effect.as(false)),
-          ),
-        ),
-    ).pipe(Effect.map((copied) => copied.every(Boolean)));
-    const hasLegacySourceControl =
+    const hasRetiredSourceControl =
       settingsFileTrusted &&
-      legacySecretsCopied &&
       (legacySourceControl.bitbucket !== undefined || legacySourceControl.github !== undefined);
-    const sourceControlMigration = hasLegacySourceControl
+    const sourceControlMigration = hasRetiredSourceControl
       ? migrateLegacySourceControlSettings(folded, legacySourceControl)
       : { settings: folded, secretMoves: [] };
+    // Remove retired keys only after copying secrets and writing the new file; failures retry on next load.
+    const copied = yield* Effect.forEach(sourceControlMigration.secretMoves, (move) =>
+      secretStore.get(move.to).pipe(
+        // A token saved under the new name while the copy was pending is the newer one.
+        Effect.flatMap((saved) =>
+          Option.isSome(saved) ? Effect.succeedNone : secretStore.get(move.from),
+        ),
+        Effect.flatMap((secret) =>
+          Option.isNone(secret) ? Effect.void : secretStore.set(move.to, secret.value),
+        ),
+        Effect.as(true),
+        Effect.catch(() =>
+          Effect.logWarning("failed to copy a source control secret to its new name", {
+            secretName: move.to,
+          }).pipe(Effect.as(false)),
+        ),
+      ),
+    );
+    const failedMoves = sourceControlMigration.secretMoves.filter((_, index) => !copied[index]);
+    pendingSourceControlSecrets = new Set(failedMoves.map((move) => move.to));
+    // Each kind retires on its own, so a finished one is not copied again while another waits.
+    const pendingKinds = new Set(failedMoves.map((move) => move.kind));
+    const retiredSourceControl = {
+      bitbucket: pendingKinds.has("bitbucket") ? legacySourceControl.bitbucket : undefined,
+      github: pendingKinds.has("github") ? legacySourceControl.github : undefined,
+    };
+    const retiringKind =
+      (legacySourceControl.bitbucket !== undefined &&
+        retiredSourceControl.bitbucket === undefined) ||
+      (legacySourceControl.github !== undefined && retiredSourceControl.github === undefined);
     const migrated = settingsFileTrusted
       ? yield* moveInlineSettingsSecrets(sourceControlMigration.settings)
       : folded;
+    // Hosts filled from a still-pending retired record do not count: rewriting the same file on each
+    // load would wake the settings watcher, which reloads and writes again.
     if (
-      migrated !== loaded ||
+      folded !== loaded ||
+      migrated !== sourceControlMigration.settings ||
       (settingsFileTrusted && legacyProviders !== undefined) ||
-      hasLegacySourceControl
+      (hasRetiredSourceControl && retiringKind)
     ) {
-      yield* writeSettingsAtomically(migrated);
+      yield* writeSettingsAtomically(migrated, retiredSourceControl);
       for (const move of sourceControlMigration.secretMoves) {
+        if (pendingKinds.has(move.kind)) continue;
         yield* secretStore.remove(move.from).pipe(Effect.ignore);
       }
     }
-    return { settings: migrated, parseFailure };
+    return { settings: migrated, parseFailure, retiredSourceControl };
   });
 
   const settingsCache = yield* Cache.makeWith((_key: typeof cacheKey) => loadSettingsFromDisk, {
@@ -953,7 +997,13 @@ const make = Effect.gen(function* () {
         return secret;
       });
       for (const secret of pending.values()) {
-        const value = yield* secretStore.get(secret.secretName).pipe(
+        const read = secretStore.get(secret.secretName);
+        // A token still waiting to move must not make settings unreadable while the store fails.
+        const value = yield* (
+          pendingSourceControlSecrets.has(secret.secretName)
+            ? read.pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()))
+            : read
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new ServerSettingsError({
@@ -1195,7 +1245,7 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const { settings: current, parseFailure } = yield* reloadSettings;
+        const { settings: current, parseFailure, retiredSourceControl } = yield* reloadSettings;
         if (Option.isSome(parseFailure)) {
           return yield* new ServerSettingsError({
             settingsPath,
@@ -1205,10 +1255,18 @@ const make = Effect.gen(function* () {
         }
         // An older client echoes a reference as the redacted marker; restore it before vetting so
         // a removed provider's reference is cleared below rather than restored by persistence.
-        const updated = withoutRedirectedSimlockTokens(
+        const echoed = withoutRedirectedSimlockTokens(
           current,
           withEchoedSecretReferences(current, yield* update(current)),
         );
+        // Clients see a token still waiting to move as unset and echo it back empty; keep its marker.
+        const pendingTokens = pendingSourceControlSecrets;
+        const updated =
+          pendingTokens.size === 0
+            ? echoed
+            : mapSettingsSecretValues(echoed, (value, secretName) =>
+                value === "" && pendingTokens.has(secretName) ? SECRET_REDACTED : value,
+              );
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
@@ -1252,7 +1310,9 @@ const make = Effect.gen(function* () {
               yield* rollbackSecretChanges;
               return yield* Effect.failCause(materializedExit.cause);
             }
-            const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
+            const writeExit = yield* Effect.exit(
+              writeSettingsAtomically(next, retiredSourceControl),
+            );
             if (Exit.isFailure(writeExit)) {
               yield* rollbackSecretChanges;
               return yield* Effect.failCause(writeExit.cause);
@@ -1260,7 +1320,11 @@ const make = Effect.gen(function* () {
             return materializedExit.value;
           }).pipe(Effect.ensuring(invalidateMaterialized)),
         );
-        yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
+        yield* Cache.set(settingsCache, cacheKey, {
+          settings: next,
+          parseFailure: Option.none(),
+          retiredSourceControl,
+        });
         const resolved = toEffective(materializedNext);
         materialized = { source: next, value: resolved };
         yield* emitChange(next);
