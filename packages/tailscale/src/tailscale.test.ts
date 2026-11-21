@@ -313,6 +313,22 @@ describe("tailscale", () => {
       assert.deepEqual(unnamed, { name: null, online: false });
 
       assert.equal(yield* parseTailscaleExitNode(tailscaleStatusJson), null);
+
+      // `tailscale down` keeps ExitNodeStatus, but a stopped backend routes nothing through it.
+      const stopped = yield* parseTailscaleExitNode(
+        JSON.stringify({
+          BackendState: "Stopped",
+          ExitNodeStatus: { ID: "nX", Online: true, TailscaleIPs: ["100.101.102.103/32"] },
+          Peer: {
+            "nodekey:b": {
+              HostName: "raspberrypi",
+              DNSName: "home-pi.tail.ts.net.",
+              ExitNode: true,
+            },
+          },
+        }),
+      );
+      assert.equal(stopped, null);
     }),
   );
 
