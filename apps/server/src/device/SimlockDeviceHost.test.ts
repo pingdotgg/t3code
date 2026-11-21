@@ -59,6 +59,8 @@ const fakePool = (
     };
     /** The gateway's `lease.maxTtlMs`: leases expire one TTL after their last renewal. */
     readonly maxTtlMs?: number;
+    /** What `GET /v1/status` answers; no enrolled phones by default. */
+    readonly status?: unknown;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -68,6 +70,7 @@ const fakePool = (
     const commands: Array<{ readonly args: ReadonlyArray<string>; readonly cwd?: string }> = [];
     let leases = 0;
     let renewStatus = 200;
+    let statusCode = 200;
     let catalog: unknown = CATALOG;
     let leaseDeadline = Infinity;
     const http = HttpClient.make((request) =>
@@ -80,6 +83,7 @@ const fakePool = (
         if (request.headers.authorization !== "Bearer agent-token")
           return json({ error: { code: "UNAUTHENTICATED", message: "Unknown bearer token" } }, 401);
         if (url.pathname === "/v1/catalog") return json(catalog);
+        if (url.pathname === "/v1/status") return json(options.status ?? {}, statusCode);
         if (url.pathname.endsWith("/renew") && options.maxTtlMs !== undefined) {
           if (now >= leaseDeadline) return json({}, 404);
           const body =
@@ -157,6 +161,9 @@ const fakePool = (
       },
       setCatalog: (next: unknown) => {
         catalog = next;
+      },
+      setStatusCode: (next: number) => {
+        statusCode = next;
       },
     };
   });
@@ -275,6 +282,111 @@ describe("Simlock device host", () => {
       expect((yield* ready.devices.list).devices.some((device) => device.booted)).toBe(false);
       yield* Scope.close(scope, Exit.void);
       expect(pool.ran("close")).toHaveLength(1);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("lists enrolled phones on usable workers and leases one as a physical device", () =>
+    Effect.gen(function* () {
+      const phone = (model: string, overrides: Record<string, unknown> = {}) => ({
+        id: `dev-${model}`,
+        spec: { platform: "ios", model, osVersion: "26.1" },
+        state: "ready",
+        physical: true,
+        class: "phone",
+        workerId: "worker-a",
+        ...overrides,
+      });
+      const pool = yield* fakePool({
+        status: {
+          workers: [
+            { id: "worker-a", connection: "connected", drained: false },
+            { id: "worker-b", connection: "connected", drained: true },
+          ],
+          devices: [
+            phone("iPhone 15"),
+            phone("iPhone 15", { id: "dev-second", state: "leased" }),
+            phone("iPhone 15", {
+              id: "dev-older",
+              spec: { platform: "ios", model: "iPhone 15", osVersion: "18.6:beta" },
+            }),
+            phone("Galaxy Tab A7 Lite", {
+              spec: { platform: "android", model: "Galaxy Tab A7 Lite", osVersion: "14" },
+              class: "tablet",
+            }),
+            phone("iPhone 13", { state: "absent" }),
+            phone("iPhone 14", { workerId: "worker-b" }),
+            phone("Apple Watch", { class: "watch" }),
+            phone("iPhone 17 Pro", { physical: false }),
+          ],
+        },
+      });
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(pool, config(), scope);
+      const ready = yield* host.ensureReady(() => Effect.void);
+
+      const phones = (yield* ready.devices.list).devices.filter((device) => device.physical);
+      expect(phones.map((device) => [device.id, device.version])).toEqual([
+        ["simlock-phone:ios:26.1:iPhone 15", "iOS 26.1"],
+        ["simlock-phone:ios:18.6%3Abeta:iPhone 15", "iOS 18.6:beta"],
+        ["simlock-phone:android:14:Galaxy Tab A7 Lite", "Android 14"],
+      ]);
+
+      const leaseId = yield* ready.devices.boot(phones[0]!);
+      yield* ready.devices.boot(phones[1]!);
+      expect(pool.ran("open")[0]?.args.slice(0, 8)).toEqual([
+        "open",
+        "--platform",
+        "ios",
+        "--device",
+        "iPhone 15",
+        "--physical",
+        "--os",
+        "26.1",
+      ]);
+      expect(pool.ran("open")[1]?.args.slice(4, 8)).toEqual([
+        "iPhone 15",
+        "--physical",
+        "--os",
+        "18.6:beta",
+      ]);
+      expect((yield* ready.devices.list).devices.find((d) => d.id === leaseId)).toMatchObject({
+        name: "iPhone 15",
+        booted: true,
+        physical: true,
+      });
+      yield* Scope.close(scope, Exit.void);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("retries phone discovery after a status failure without hiding simulators", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool({
+        status: {
+          devices: [
+            {
+              id: "phone-1",
+              spec: { platform: "ios", model: "iPhone 15", osVersion: "26.1" },
+              state: "ready",
+              physical: true,
+            },
+          ],
+        },
+      });
+      pool.setStatusCode(503);
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(pool, config(), scope);
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const unavailable = (yield* ready.devices.list).devices;
+      expect(unavailable.map((device) => device.name)).toEqual(["iPhone 17 Pro", "Pixel 9"]);
+      expect(unavailable.every((device) => !device.physical)).toBe(true);
+
+      pool.setStatusCode(200);
+      const recovered = (yield* ready.devices.list).devices;
+      expect(recovered.find((device) => device.physical)).toMatchObject({ name: "iPhone 15" });
+      const requests = pool.requests.length;
+      expect((yield* ready.devices.list).devices).toEqual(recovered);
+      expect(pool.requests).toHaveLength(requests);
+      yield* Scope.close(scope, Exit.void);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
