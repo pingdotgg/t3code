@@ -1656,6 +1656,8 @@ it.effect(
           yield* Effect.forEach(held, (run) => workflows.waitFor(run.runId, status("waiting")));
           const relay = yield* workflows.start("relay", { doors }, { idempotencyKey: "relay" });
           yield* workflows.waitFor(relay.runId, status("completed"));
+          // Each try is an attempt, though both were one run of the step.
+          assert.equal((yield* workflows.get(relay.runId)).steps[0]?.attempts, 2);
           assert.equal(
             yield* workflows.signal({ workflow: "door", channel: "rc" }, "late", { id: "rc-late" }),
             "buffered",
