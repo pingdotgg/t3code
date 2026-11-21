@@ -3224,10 +3224,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "on the computer that opened this page"
-      ]
+      "c": [" ", "on the computer that opened this page"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3239,10 +3236,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· whoever runs it gets this access"
-      ]
+      "c": [" ", "· whoever runs it gets this access"]
     }
   ],
   "c54cc9c75db9dc58": "Only approve a sign-in you just started.",
@@ -13048,5 +13042,24 @@
     " more in Linked items"
   ],
   "04c311eddac83b4e": "Start Home fresh? It begins a new conversation. Its notes, preferences and crew carry over, and the old thread is kept.",
-  "4aa5ad6099942650": "Begin a new Home conversation. Notes, preferences and crew carry over."
+  "4aa5ad6099942650": "Begin a new Home conversation. Notes, preferences and crew carry over.",
+  "550bb4787c57a7c7": "Group under {title}",
+  "efb0ce9e17a40413": "Remove from group",
+  "b9357a68c93b554b": "Ungroup",
+  "987de7870e17d4ed": "Failed to update Bot",
+  "69d31508eb4d8dbb": "Failed to update group",
+  "ab8ce40d94482b3e": "Failed to save Bot notes",
+  "77a197a16cc26cc0": "What the Bot keeps track of between turns.",
+  "b7266adde1825b8c": "How you like the Bot to work.",
+  "6076957eb586211e": "Bot notes",
+  "2f4ef70d15027bb0": "Notes",
+  "1594e99201ab43a1": "Preferences",
+  "4eb9f15722252eaf": "Bot",
+  "9b0ffa17971c05e8": "Bot notes",
+  "de21972169ea02a3": "Mute crew noise",
+  "68499884f89d6072": "{count, plural, one {{count} crew} other {{count} crew}}",
+  "9816f4a0873af05c": "Crew muted",
+  "ae4ee49c01c45edf": "Bot",
+  "e9dbf0e54b6ab352": "Start a Bot from this thread",
+  "b359236d6d45d8d5": "Failed to start a Bot"
 }

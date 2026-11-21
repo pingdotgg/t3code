@@ -37,6 +37,7 @@ import {
   createInboxReturnTracker,
   isThreadWorking,
 } from "@t3tools/client-runtime/state/thread-inbox";
+import { groupThreads } from "@t3tools/client-runtime/state/thread-grouping";
 import { activeThreadSortKey, sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
   nextShownOrder,
@@ -77,6 +78,7 @@ import {
   SettingsIcon,
 } from "lucide-react";
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useReducer,
@@ -130,6 +132,12 @@ import {
   useAcknowledgeThreadWoke,
   useThreadActions,
 } from "../hooks/useThreadActions";
+import {
+  isThreadGroupingAction,
+  resolveBulkGroupLeader,
+  threadGroupingMenuState,
+  useThreadGroupingActions,
+} from "../hooks/useThreadGroupingActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { useProjectPin } from "../hooks/useProjectGroupUpdate";
@@ -260,7 +268,7 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHomeEntry } from "./sidebar/SidebarHomeEntry";
-import { withoutHomeThreads } from "./sidebar/homeSidebar.logic";
+import { homeThreads, withoutHomeThreads } from "./sidebar/homeSidebar.logic";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipScrollDismissArea } from "./ui/tooltip";
 import {
@@ -282,6 +290,7 @@ import {
   useDraftTerminalLabels,
   useSidebarDrafts,
 } from "./sidebar/SidebarDraftBlock";
+import { SidebarCrewBlock } from "./sidebar/SidebarCrewBlock";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -350,6 +359,9 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+// Explicit fold choices by leader key; a group without one folds when its Bot mutes crew.
+const CREW_FOLDS_KEY = "t3code:sidebar:crew-folds";
+const CrewFolds = Schema.Record(Schema.String, Schema.Boolean);
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -485,6 +497,7 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
+  const [crewFolds, setCrewFolds] = useLocalStorage(CREW_FOLDS_KEY, {}, CrewFolds);
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -593,7 +606,12 @@ function useSidebarThreads(input: {
       ...workingThreads,
       ...snoozedThreads,
       ...settledThreads,
+      ...[...partition.crewGroups.values()].flatMap((group) => group.crew),
     ],
+    isCrewFolded: (leaderKey: string) =>
+      crewFolds[leaderKey] ?? partition.crewGroups.get(leaderKey)?.muted === true,
+    toggleCrewFold: (leaderKey: string, folded: boolean) =>
+      setCrewFolds((current) => ({ ...current, [leaderKey]: !folded })),
     settledVisibleCount,
     settledCount,
     olderSettledShelf,
@@ -648,6 +666,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   } = input;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
+  const grouping = groupThreads(visible);
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -664,9 +683,11 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     serverConfigs,
     connectedEnvironmentIds: input.connectedEnvironmentIds,
   });
-  for (const thread of visible) {
+  for (const thread of grouping.listed) {
     const configLoaded = serverConfigs.has(thread.environmentId);
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    // Crew at work keeps its group in view, even when the leader itself is settled or snoozed.
+    const crewLive = grouping.groupByLeaderKey.get(threadKey)?.live === true;
     if (optimisticDrop?.key === threadKey) {
       const projected = applySidebarThreadDrop(
         thread,
@@ -686,8 +707,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
       );
     } else {
       const section = resolveSidebarThreadSection({
-        snoozed: configLoaded && effectiveSnoozed(thread, { now: preciseNow }),
-        settled: configLoaded && thread.settledOverride === "settled",
+        snoozed: !crewLive && configLoaded && effectiveSnoozed(thread, { now: preciseNow }),
+        settled: !crewLive && configLoaded && thread.settledOverride === "settled",
         pinned: thread.pinnedAt != null,
       });
       (section === "snoozed"
@@ -734,6 +755,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     ),
     settledThreads: sortSettledThreads(settled),
     visibleThreads: visible,
+    crewGroups: grouping.groupByLeaderKey,
     snoozeNow: preciseNow,
   };
 }
@@ -1015,6 +1037,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
+  const groupingActions = useThreadGroupingActions();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
@@ -1130,7 +1153,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ),
           ),
         );
-  const threads = withoutHomeThreads(useQuietThreadShells());
+  const allThreads = useQuietThreadShells();
+  const threads = withoutHomeThreads(allThreads);
+  const homeCrewThreads = homeThreads(allThreads);
   const promotingDraftThreadKeys = usePromotingDraftThreadKeys();
   const listedThreads =
     promotingDraftThreadKeys.length === 0
@@ -1364,6 +1389,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     visibleWorkingThreads,
     orderedThreadKeys,
     threadByKey,
+    crewGroups,
+    isCrewFolded,
+    toggleCrewFold,
     settledThreadKeys,
     snoozedThreadKeys,
     sectionByThreadKey,
@@ -2394,6 +2422,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const unpinMenuItem = buildBulkUnpinContextMenuItem({
         pinnedCount: pinnedSelectedThreads.length,
       });
+      const groupLeader = resolveBulkGroupLeader(selectedThreads);
       // Presets sync across environments, so the first selected thread's stand for all.
       const menuOpenedAt = new Date();
       const snoozePresets = resolveSnoozePresets(
@@ -2442,6 +2471,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     disabled:
                       titleRegenerationMenuItem.disabled ||
                       !canOperateThreads(regeneratableTitleThreads),
+                  },
+                ]
+              : []),
+            ...(groupLeader
+              ? [
+                  {
+                    id: "group",
+                    label: gt("Group under {title}", { title: groupLeader.title }),
+                    disabled: !canOperateThreads(selectedThreads),
                   },
                 ]
               : []),
@@ -2521,6 +2559,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             );
           }
         }
+        return;
+      }
+      if (clicked.value === "group" && groupLeader) {
+        clearSelection();
+        await groupingActions.groupUnder(
+          scopeThreadRef(groupLeader.environmentId, groupLeader.id),
+          selectedThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
+        );
         return;
       }
       if (clicked.value === "unpin") {
@@ -2748,6 +2794,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               canRename: !fromSearch,
+              grouping: threadGroupingMenuState(thread),
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2767,6 +2814,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           !checkThreadOperations([thread], isThreadTriageAction(clicked.value))
         )
           return;
+        if (isThreadGroupingAction(clicked.value)) {
+          await groupingActions.run(clicked.value, threadRef);
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"
@@ -3092,7 +3143,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         className="min-h-full"
         fixedHeader={
           <SidebarGroup className="z-[1]">
-            <SidebarHomeEntry />
+            <SidebarHomeEntry
+              threads={homeCrewThreads}
+              routeThreadKey={routeThreadKey}
+              isCrewFolded={isCrewFolded}
+              onToggleCrew={toggleCrewFold}
+              onNavigate={navigateToThread}
+              onContextMenu={handleThreadContextMenu}
+            />
             <SidebarThreadHeader
               hasProjects={projectGroups.length > 0}
               projectScope={
@@ -3519,7 +3577,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         : isCard
                           ? "card"
                           : "slim";
-                      return (
+                      const row = (
                         <SortableThreadRow
                           key={threadKey}
                           sortableId={threadKey}
@@ -3607,6 +3665,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onAcknowledgeWoke={acknowledgeWoke}
                           onFileDropThreads={handleThreadFileDrop}
                         />
+                      );
+                      const crewGroup = crewGroups.get(threadKey);
+                      if (crewGroup === undefined) return row;
+                      return (
+                        <Fragment key={threadKey}>
+                          {row}
+                          <SidebarCrewBlock
+                            leaderKey={threadKey}
+                            group={crewGroup}
+                            folded={isCrewFolded(threadKey)}
+                            routeThreadKey={routeThreadKey}
+                            onToggle={toggleCrewFold}
+                            onNavigate={navigateToThread}
+                            onContextMenu={handleThreadContextMenu}
+                          />
+                        </Fragment>
                       );
                     };
                     const from = isContextDrag ? null : (dragState?.activeSection ?? null);

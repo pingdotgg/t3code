@@ -3225,10 +3225,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "auf dem Computer, der diese Seite geöffnet hat"
-      ]
+      "c": [" ", "auf dem Computer, der diese Seite geöffnet hat"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3240,10 +3237,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· wer es ausführt, erhält diesen Zugriff"
-      ]
+      "c": [" ", "· wer es ausführt, erhält diesen Zugriff"]
     }
   ],
   "c54cc9c75db9dc58": "Genehmige nur eine Anmeldung, die du gerade selbst gestartet hast.",
@@ -13039,5 +13033,24 @@
     " weitere unter Verknüpfte Elemente"
   ],
   "04c311eddac83b4e": "Home neu beginnen? Es startet eine neue Unterhaltung. Notizen, Vorlieben und Crew bleiben, und der alte Thread wird behalten.",
-  "4aa5ad6099942650": "Eine neue Home-Unterhaltung beginnen. Notizen, Vorlieben und Crew bleiben erhalten."
+  "4aa5ad6099942650": "Eine neue Home-Unterhaltung beginnen. Notizen, Vorlieben und Crew bleiben erhalten.",
+  "550bb4787c57a7c7": "Unter {title} gruppieren",
+  "efb0ce9e17a40413": "Aus Gruppe entfernen",
+  "b9357a68c93b554b": "Gruppierung aufheben",
+  "987de7870e17d4ed": "Bot konnte nicht aktualisiert werden",
+  "69d31508eb4d8dbb": "Gruppe konnte nicht aktualisiert werden",
+  "ab8ce40d94482b3e": "Bot-Notizen konnten nicht gespeichert werden",
+  "77a197a16cc26cc0": "Was der Bot zwischen den Durchgängen festhält.",
+  "b7266adde1825b8c": "Wie der Bot arbeiten soll.",
+  "6076957eb586211e": "Bot-Notizen",
+  "2f4ef70d15027bb0": "Notizen",
+  "1594e99201ab43a1": "Vorlieben",
+  "4eb9f15722252eaf": "Bot",
+  "9b0ffa17971c05e8": "Bot-Notizen",
+  "de21972169ea02a3": "Crew-Meldungen stummschalten",
+  "68499884f89d6072": "{count, plural, one {{count} Crew-Thread} other {{count} Crew-Threads}}",
+  "9816f4a0873af05c": "Crew stummgeschaltet",
+  "ae4ee49c01c45edf": "Bot",
+  "e9dbf0e54b6ab352": "Einen Bot aus diesem Thread starten",
+  "b359236d6d45d8d5": "Bot konnte nicht gestartet werden"
 }

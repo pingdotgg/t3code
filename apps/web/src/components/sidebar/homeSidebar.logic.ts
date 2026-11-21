@@ -5,14 +5,29 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-// Home has its own sidebar entry, so its thread and the project that holds it leave the lists.
+// Home has its own sidebar entry, so its thread, its crew and the project that holds it leave the
+// lists. Home's crew shows under that entry instead.
 
-export function withoutHomeThreads<Thread extends { readonly id: ThreadId }>(
+type HomeListedThread = {
+  readonly id: ThreadId;
+  readonly groupedUnderThreadId?: ThreadId | null | undefined;
+};
+
+const belongsToHome = (thread: HomeListedThread) =>
+  isHomeThreadId(thread.id) ||
+  (thread.groupedUnderThreadId != null && isHomeThreadId(thread.groupedUnderThreadId));
+
+export function withoutHomeThreads<Thread extends HomeListedThread>(
   threads: readonly Thread[],
 ): readonly Thread[] {
-  return threads.some((thread) => isHomeThreadId(thread.id))
-    ? threads.filter((thread) => !isHomeThreadId(thread.id))
-    : threads;
+  return threads.some(belongsToHome) ? threads.filter((thread) => !belongsToHome(thread)) : threads;
+}
+
+/** Home's threads and its crew, which the Home entry shows. */
+export function homeThreads<Thread extends HomeListedThread>(
+  threads: readonly Thread[],
+): readonly Thread[] {
+  return threads.filter(belongsToHome);
 }
 
 export function withoutHomeProjects<

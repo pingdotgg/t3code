@@ -366,6 +366,21 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    setGroup: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-group",
+      execute: (
+        input: UpdateThreadMetadataInput & { readonly groupedUnderThreadId: ThreadId | null },
+      ) => updateThreadMetadata(input),
+      scheduler,
+      concurrency,
+    }),
+    setBotMuteChildren: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-bot-mute-children",
+      execute: (input: UpdateThreadMetadataInput & { readonly botMuteChildren: boolean }) =>
+        updateThreadMetadata(input),
+      scheduler,
+      concurrency,
+    }),
     setModelSelection: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-model-selection",
       execute: (input: UpdateThreadMetadataInput & { readonly modelSelection: ModelSelection }) =>
@@ -668,6 +683,17 @@ export function createThreadEnvironmentAtoms<R, E>(
     reorderActive: optimistic.wrap(commands.reorderActive, (thread, input) => ({
       ...thread,
       activeOrderKey: input.orderKey,
+    })),
+    setGroup: optimistic.wrap(commands.setGroup, (thread, input) => ({
+      ...thread,
+      groupedUnderThreadId: input.groupedUnderThreadId,
+    })),
+    setBotMuteChildren: optimistic.wrap(commands.setBotMuteChildren, (thread, input) => ({
+      ...thread,
+      botConfig:
+        thread.botConfig == null
+          ? thread.botConfig
+          : { ...thread.botConfig, muteChildren: input.botMuteChildren },
     })),
     // Shown at once, so a composer that releases its accepted pick keeps showing it.
     setModelSelection: optimistic.wrap(commands.setModelSelection, (thread, input) => ({

@@ -24,6 +24,9 @@ export type ThreadActionMenuId =
   | "regenerate-title"
   | "mark-unread"
   | "share-guest"
+  | "start-bot"
+  | "remove-from-group"
+  | "ungroup"
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -127,6 +130,14 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Absent for threads that cannot lead (subagents, side chats) or rows without grouping. */
+  readonly grouping?:
+    | {
+        readonly isBot: boolean;
+        readonly isGrouped: boolean;
+        readonly hasCrew: boolean;
+      }
+    | undefined;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -239,6 +250,31 @@ export function buildThreadActionMenuItems(
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: resolve(msg("Share with guest")), icon: "user-plus" }]
       : []),
+    ...(state.grouping === undefined
+      ? []
+      : [
+          ...(state.grouping.isBot
+            ? []
+            : [
+                {
+                  id: "start-bot" as const,
+                  label: resolve(msg("Start a Bot from this thread")),
+                  icon: "bot",
+                },
+              ]),
+          ...(state.grouping.isGrouped
+            ? [
+                {
+                  id: "remove-from-group" as const,
+                  label: resolve(msg("Remove from group")),
+                  icon: "layers",
+                },
+              ]
+            : []),
+          ...(state.grouping.hasCrew
+            ? [{ id: "ungroup" as const, label: resolve(msg("Ungroup")), icon: "layers" }]
+            : []),
+        ]),
     ...(state.projectFilter
       ? [
           {

@@ -245,6 +245,10 @@ export function startThreadNotifications(
     );
     const delegatedUnderParent = registry.get(environmentThreadShells.delegatedUnderParentAtom);
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
+    // A Bot that mutes its crew hears only what its crew asks, never that it finished.
+    const mutingBotIds = new Set(
+      threads.flatMap((thread) => (thread.botConfig?.muteChildren === true ? [thread.id] : [])),
+    );
     for (const rawThread of threads) {
       if (
         isShownUnderParent(
@@ -307,7 +311,10 @@ export function startThreadNotifications(
     for (const [prior, state] of changed) {
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
-        quiet: state.raw.latestRunStopRequested === true,
+        quiet:
+          state.raw.latestRunStopRequested === true ||
+          (state.raw.groupedUnderThreadId != null &&
+            mutingBotIds.has(state.raw.groupedUnderThreadId)),
         snoozed: isSnoozedForNotification(state.thread, state.completedAt, now),
       });
     }

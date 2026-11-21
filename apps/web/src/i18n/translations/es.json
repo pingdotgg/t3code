@@ -3224,10 +3224,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "en el ordenador que abrió esta página"
-      ]
+      "c": [" ", "en el ordenador que abrió esta página"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3239,10 +3236,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quien lo ejecute obtiene este acceso"
-      ]
+      "c": [" ", "· quien lo ejecute obtiene este acceso"]
     }
   ],
   "c54cc9c75db9dc58": "Aprueba solo un inicio de sesión que acabes de iniciar.",
@@ -13034,5 +13028,24 @@
     " más en Elementos vinculados"
   ],
   "04c311eddac83b4e": "¿Reiniciar Home? Empieza una conversación nueva. Sus notas, preferencias y equipo se conservan, y el hilo anterior se guarda.",
-  "4aa5ad6099942650": "Empieza una conversación nueva de Home. Las notas, preferencias y el equipo se conservan."
+  "4aa5ad6099942650": "Empieza una conversación nueva de Home. Las notas, preferencias y el equipo se conservan.",
+  "550bb4787c57a7c7": "Agrupar bajo {title}",
+  "efb0ce9e17a40413": "Quitar del grupo",
+  "b9357a68c93b554b": "Desagrupar",
+  "987de7870e17d4ed": "No se pudo actualizar el Bot",
+  "69d31508eb4d8dbb": "No se pudo actualizar el grupo",
+  "ab8ce40d94482b3e": "No se pudieron guardar las notas del Bot",
+  "77a197a16cc26cc0": "Lo que el Bot recuerda entre turnos.",
+  "b7266adde1825b8c": "Cómo prefieres que trabaje el Bot.",
+  "6076957eb586211e": "Notas del Bot",
+  "2f4ef70d15027bb0": "Notas",
+  "1594e99201ab43a1": "Preferencias",
+  "4eb9f15722252eaf": "Bot",
+  "9b0ffa17971c05e8": "Notas del Bot",
+  "de21972169ea02a3": "Silenciar avisos del equipo",
+  "68499884f89d6072": "{count, plural, one {{count} del equipo} other {{count} del equipo}}",
+  "9816f4a0873af05c": "Equipo silenciado",
+  "ae4ee49c01c45edf": "Bot",
+  "e9dbf0e54b6ab352": "Iniciar un Bot desde este hilo",
+  "b359236d6d45d8d5": "No se pudo iniciar el Bot"
 }

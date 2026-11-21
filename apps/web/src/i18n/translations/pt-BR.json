@@ -3224,10 +3224,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "no computador que abriu esta página"
-      ]
+      "c": [" ", "no computador que abriu esta página"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3239,10 +3236,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quem executar recebe este acesso"
-      ]
+      "c": [" ", "· quem executar recebe este acesso"]
     }
   ],
   "c54cc9c75db9dc58": "Aprove apenas um login que você acabou de iniciar.",
@@ -13039,5 +13033,24 @@
     " mais em Itens vinculados"
   ],
   "04c311eddac83b4e": "Recomeçar o Home? Uma nova conversa começa. As notas, preferências e a equipe continuam, e a conversa antiga é mantida.",
-  "4aa5ad6099942650": "Comece uma nova conversa do Home. Notas, preferências e equipe continuam."
+  "4aa5ad6099942650": "Comece uma nova conversa do Home. Notas, preferências e equipe continuam.",
+  "550bb4787c57a7c7": "Agrupar em {title}",
+  "efb0ce9e17a40413": "Remover do grupo",
+  "b9357a68c93b554b": "Desagrupar",
+  "987de7870e17d4ed": "Falha ao atualizar o Bot",
+  "69d31508eb4d8dbb": "Falha ao atualizar o grupo",
+  "ab8ce40d94482b3e": "Falha ao salvar as notas do Bot",
+  "77a197a16cc26cc0": "O que o Bot acompanha entre os turnos.",
+  "b7266adde1825b8c": "Como você prefere que o Bot trabalhe.",
+  "6076957eb586211e": "Notas do Bot",
+  "2f4ef70d15027bb0": "Notas",
+  "1594e99201ab43a1": "Preferências",
+  "4eb9f15722252eaf": "Bot",
+  "9b0ffa17971c05e8": "Notas do Bot",
+  "de21972169ea02a3": "Silenciar avisos da equipe",
+  "68499884f89d6072": "{count, plural, one {{count} da equipe} other {{count} da equipe}}",
+  "9816f4a0873af05c": "Equipe silenciada",
+  "ae4ee49c01c45edf": "Bot",
+  "e9dbf0e54b6ab352": "Iniciar um Bot a partir desta conversa",
+  "b359236d6d45d8d5": "Não foi possível iniciar o Bot"
 }

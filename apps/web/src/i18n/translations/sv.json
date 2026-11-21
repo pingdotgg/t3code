@@ -3224,10 +3224,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "på datorn som öppnade den här sidan"
-      ]
+      "c": [" ", "på datorn som öppnade den här sidan"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3239,10 +3236,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· den som kör den får den här åtkomsten"
-      ]
+      "c": [" ", "· den som kör den får den här åtkomsten"]
     }
   ],
   "c54cc9c75db9dc58": "Godkänn bara en inloggning som du själv precis har startat.",
@@ -13046,5 +13040,24 @@
     " till i Länkade objekt"
   ],
   "04c311eddac83b4e": "Börja om Home? En ny konversation startar. Anteckningar, preferenser och crew följer med, och den gamla tråden sparas.",
-  "4aa5ad6099942650": "Börja en ny Home-konversation. Anteckningar, preferenser och crew följer med."
+  "4aa5ad6099942650": "Börja en ny Home-konversation. Anteckningar, preferenser och crew följer med.",
+  "550bb4787c57a7c7": "Gruppera under {title}",
+  "efb0ce9e17a40413": "Ta bort från grupp",
+  "b9357a68c93b554b": "Dela upp grupp",
+  "987de7870e17d4ed": "Det gick inte att uppdatera Bot",
+  "69d31508eb4d8dbb": "Det gick inte att uppdatera gruppen",
+  "ab8ce40d94482b3e": "Det gick inte att spara Bot-anteckningar",
+  "77a197a16cc26cc0": "Det Bot håller reda på mellan omgångar.",
+  "b7266adde1825b8c": "Hur du vill att Bot ska arbeta.",
+  "6076957eb586211e": "Bot-anteckningar",
+  "2f4ef70d15027bb0": "Anteckningar",
+  "1594e99201ab43a1": "Önskemål",
+  "4eb9f15722252eaf": "Bot",
+  "9b0ffa17971c05e8": "Bot-anteckningar",
+  "de21972169ea02a3": "Tysta besättningens aviseringar",
+  "68499884f89d6072": "{count, plural, one {{count} i besättningen} other {{count} i besättningen}}",
+  "9816f4a0873af05c": "Besättningen tystad",
+  "ae4ee49c01c45edf": "Bot",
+  "e9dbf0e54b6ab352": "Starta en Bot från den här tråden",
+  "b359236d6d45d8d5": "Det gick inte att starta Boten"
 }
