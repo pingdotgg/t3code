@@ -1238,7 +1238,7 @@ it.effect(
           yield* agents.end(runId, "write/0", { reply: "done" });
           const correction = yield* agents.started(runId, "write/0/correct/0");
           assert.equal(correction.thread, "thread-1");
-          assert.include(correction.prompt, "without a submitted result");
+          assert.include(correction.prompt, "without an accepted result");
           // What it then submitted does not fit, and it is told so, not that nothing came.
           yield* agents.end(runId, "write/0/correct/0", { output: { branch: 1 } });
           const misfit = yield* agents.started(runId, "write/0/correct/1");
