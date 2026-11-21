@@ -244,9 +244,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
     },
     {
       label: "a stopped service whose home another server owns",
-      status: { ...status, problems: ["service-stopped"] as const, homeOwner: { pid: 4242 } },
+      status: {
+        ...status,
+        current: false,
+        problems: ["service-stopped"] as const,
+        homeOwner: { pid: 4242 },
+      },
       hint: "service install",
       args: [],
+      omits: "starts",
     },
     {
       label: "a restart-pending service",
@@ -280,6 +286,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
         ),
       );
       expect(lines.join("\n")).toContain(`\`${next.command}\``);
+      if (input.omits !== undefined) expect(lines.join("\n")).not.toContain(input.omits);
     }),
   );
 

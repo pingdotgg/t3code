@@ -200,6 +200,16 @@ function formatServiceStatus(
   const problems = (status.problems ?? []).map(
     (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem, commands)}`,
   );
+  const { homeOwner } = status;
+  const waiting = BootService.bootServiceWaitsForHomeOwner(status);
+  const owner =
+    homeOwner === undefined
+      ? []
+      : [
+          waiting
+            ? `  Waiting: ${BootService.formatBootServiceHomeOwner(homeOwner, status.installedBaseDir)}. The service starts once it stops.`
+            : `  Owner: ${BootService.formatBootServiceHomeOwner(homeOwner, status.installedBaseDir)}.`,
+        ];
   if (
     !status.current &&
     status.installedVersion !== undefined &&
@@ -208,6 +218,7 @@ function formatServiceStatus(
     return [
       "T3 Code service",
       `  Status: installed · t3@${installedVersion} (newer than this t3@${cliVersion} CLI)`,
+      ...owner,
       `  Unit: ${status.unitPath}`,
       `  Logs: ${status.logPath}`,
       ...formatProtection(protection),
@@ -215,18 +226,10 @@ function formatServiceStatus(
       `  Next: Run \`${commands.update}\` to match it, or pass \`--allow-downgrade\` to \`${commands.install}\` explicitly.`,
     ].join("\n");
   }
-  const { homeOwner } = status;
-  const waiting = BootService.bootServiceWaitsForHomeOwner(status);
   return [
     "T3 Code service",
     `  Status: ${status.current ? `${waiting ? "waiting" : "installed"} · t3@${installedVersion}` : "needs an update or repair"}`,
-    ...(homeOwner === undefined
-      ? []
-      : [
-          waiting
-            ? `  Waiting: ${BootService.formatBootServiceHomeOwner(homeOwner, status.installedBaseDir)}. The service starts once it stops.`
-            : `  Owner: ${BootService.formatBootServiceHomeOwner(homeOwner, status.installedBaseDir)}.`,
-        ]),
+    ...owner,
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...formatProtection(protection),

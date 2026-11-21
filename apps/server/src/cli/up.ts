@@ -189,7 +189,7 @@ const formatSetup = (setup: Setup, hints: Hints) => {
     ...(service.homeOwner === undefined
       ? []
       : [
-          `The service is not serving: ${BootService.formatBootServiceHomeOwner(service.homeOwner, service.installedBaseDir)}. Other devices reach that server instead.${BootService.bootServiceWaitsForHomeOwner(service) ? ` ${BootService.BOOT_SERVICE_HOME_OWNER_NEXT}` : ""}`,
+          `The service is not serving: ${BootService.formatBootServiceHomeOwner(service.homeOwner, service.installedBaseDir)}.${BootService.bootServiceWaitsForHomeOwner(service) ? ` ${BootService.BOOT_SERVICE_HOME_OWNER_NEXT}` : ""}`,
         ]),
     ...(setup.host === undefined && setup.lan
       ? ["Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock."]
