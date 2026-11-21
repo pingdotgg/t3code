@@ -3,9 +3,8 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import * as Application from "expo-application";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { T, useGT } from "gt-react-native";
@@ -16,7 +15,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { crashReportingAvailable, setCrashReportsEnabled } from "../observability/observe";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
@@ -156,7 +156,7 @@ export function SettingsDiagnosticsRouteScreen() {
 
 function CrashReportsSetting() {
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promiseExit" });
+  const savePreferences = useAtomCommand(saveMobilePreferences, { reportFailure: false });
   // One change at a time, so a slow save never turns sending back on after a later opt-out.
   const [saving, setSaving] = useState(false);
   const gt = useGT();
@@ -170,9 +170,9 @@ function CrashReportsSetting() {
     // Sending stops before the save and starts only after it.
     if (!value) void setCrashReportsEnabled(false);
     savePreferences({ crashReportsEnabled: value })
-      .then((exit) => {
-        if (Exit.isFailure(exit)) {
-          console.warn("[diagnostics] could not save the crash report setting", exit.cause);
+      .then((result) => {
+        if (result._tag === "Failure") {
+          console.warn("[diagnostics] could not save the crash report setting", result.cause);
           return value ? undefined : setCrashReportsEnabled(true);
         }
         return value ? setCrashReportsEnabled(true) : undefined;

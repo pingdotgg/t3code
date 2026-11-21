@@ -11,7 +11,9 @@ import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
+  readAntigravityChildrenAtWork,
   readAntigravityChildWork,
+  readAntigravityPendingReply,
 } from "./AntigravityChildWork.ts";
 import { sanitizeAntigravityToolPayload } from "./AntigravityProtocol.ts";
 import {
@@ -96,7 +98,7 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
   it.effect("matches a permission-prompt call by its launch text, only when unique", () =>
     Effect.gen(function* () {
       const other = { role: "Test Runner", prompt: "Run the tests" };
-      const long = { role: "Long Reader", prompt: `Read this:\n${"x".repeat(9_000)}` };
+      const long = { role: "Long Reader", prompt: `Read this:\n🚀${"x".repeat(7_999)}` };
       // A role's leading byte order mark is part of its text.
       const marked = { role: "\uFEFFMarked", prompt: "Check the mark" };
       const { profile } = yield* makeProfile({
@@ -142,6 +144,13 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       );
       const longMatch = yield* read(profile, opaque, describeAntigravitySubagentLaunches(stored!));
       expect(longMatch.map((child) => child.prompt)).toEqual([long.prompt]);
+      const savedLaunch = {
+        title: long.role,
+        prompt: `[Earlier output truncated]\n\n\uDE80${"x".repeat(7_999)}`,
+      };
+      expect((yield* read(profile, opaque, savedLaunch)).map((child) => child.prompt)).toEqual([
+        long.prompt,
+      ]);
       expect(
         yield* read(profile, opaque, describeAntigravitySubagentLaunches([marked])),
       ).toHaveLength(1);
@@ -227,6 +236,31 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       expect(child?.steps?.length).toBeLessThan(40);
       expect(child?.steps?.at(-1)?.text).toBe("marker 4242 found");
       expect(child?.steps?.[0]?.text?.length).toBeLessThanOrEqual(4_001);
+
+      const lastLine = JSON.stringify(transcriptLines[3]) + "\n";
+      const step = { step_index: 2, type: "VIEW_FILE", content: "" };
+      const remaining = 256 * 1024 - Buffer.byteLength(JSON.stringify(step) + "\n" + lastLine);
+      const firstLine = JSON.stringify({
+        ...step,
+        content: "é".repeat(Math.floor(remaining / 2)) + "x".repeat(remaining % 2),
+      });
+      const aligned = yield* makeProfile({
+        steps: autoApproved,
+        transcript: `${filler}\n${firstLine}\n${lastLine}`,
+      });
+      const [alignedChild] = yield* read(aligned.profile, `${ROOT}:1`);
+      expect(alignedChild).toMatchObject({
+        truncated: true,
+        steps: [{ index: 2 }, { index: 3 }],
+      });
+
+      const paddedLine = firstLine.padEnd(firstLine.length + Buffer.byteLength(lastLine) + 1);
+      const undelimited = yield* makeProfile({
+        steps: autoApproved,
+        transcript: filler + paddedLine,
+      });
+      const [undelimitedChild] = yield* read(undelimited.profile, `${ROOT}:1`);
+      expect(undelimitedChild).toMatchObject({ truncated: true, steps: [] });
     }),
   );
 
@@ -311,6 +345,202 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
     }),
   );
 
+  it.effect("follows a detached 1.5 launch id through the child's inbox to its transcript", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-detached-" });
+      const sibling = "b468c0e1-d2f3-4a5b-6c7d-8e9f0a1b2c3d";
+      const writeJson = (segments: ReadonlyArray<string>, value: unknown) => {
+        const file = path.join(profile, "antigravity-acp", "brain", ...segments);
+        return fs
+          .makeDirectory(path.dirname(file), { recursive: true })
+          .pipe(Effect.andThen(fs.writeFileString(file, JSON.stringify(value))));
+      };
+      const writeTranscript = (
+        conversationId: string,
+        lines: ReadonlyArray<Record<string, unknown>>,
+      ) => {
+        const file = path.join(
+          profile,
+          "antigravity-acp",
+          "brain",
+          conversationId,
+          ".system_generated",
+          "logs",
+          "transcript.jsonl",
+        );
+        return fs
+          .makeDirectory(path.dirname(file), { recursive: true })
+          .pipe(
+            Effect.andThen(
+              fs.writeFileString(file, lines.map((line) => JSON.stringify(line)).join("\n") + "\n"),
+            ),
+          );
+      };
+
+      // Matches real agy 1.5.12 records (no legacy step_type=127 database row).
+      yield* writeJson([ROOT, ".system_generated", "subagents", `${CHILD}.json`], {
+        conversationId: CHILD,
+        subagentDescriptor: { typeName: "research", role: LAUNCH.role },
+        state: "SUBAGENT_STATE_ALIVE",
+      });
+      yield* writeJson([CHILD, ".system_generated", "messages", "launch.json"], {
+        sender: ROOT,
+        content: LAUNCH.prompt,
+        sourceMetadata: {
+          tool: {
+            conversationId: ROOT,
+            stepIndex: 2,
+            toolCall: {
+              id: "call_11340266277043349041",
+              name: "invoke_subagent",
+              argumentsJson: JSON.stringify({
+                TypeName: "research",
+                Role: LAUNCH.role,
+                Prompt: LAUNCH.prompt,
+              }),
+            },
+          },
+        },
+      });
+      yield* writeJson([CHILD, ".system_generated", "messages", "read.json"], { launch: true });
+      yield* writeTranscript(CHILD, [
+        {
+          step_index: 0,
+          type: "SYSTEM_MESSAGE",
+          status: "DONE",
+          content: `<SYSTEM_MESSAGE>\n[Message] sender=${ROOT} content=${LAUNCH.prompt}\n</SYSTEM_MESSAGE>`,
+        },
+        {
+          step_index: 1,
+          type: "PLANNER_RESPONSE",
+          status: "DONE",
+          tool_calls: [{ name: "read_file", args: { Path: '"/project/README.md"' } }],
+        },
+        {
+          step_index: 2,
+          type: "GENERIC",
+          status: "DONE",
+          content: "2: MAGIC_TOKEN=probe-38478-ok",
+        },
+      ]);
+
+      // A second detached child without argumentsJson falls back to descriptor role + message content.
+      yield* writeJson([ROOT, ".system_generated", "subagents", `${sibling}.json`], {
+        conversationId: sibling,
+        subagentDescriptor: { typeName: "research", role: "Line Counter" },
+      });
+      yield* writeJson([sibling, ".system_generated", "messages", "launch.json"], {
+        sender: ROOT,
+        content: "Count lines in README.md",
+        sourceMetadata: {
+          tool: {
+            toolCall: { id: "call_22340266277043349042", name: "invoke_subagent" },
+          },
+        },
+      });
+      // A follow-up send_message must not be treated as a launch.
+      yield* writeJson([sibling, ".system_generated", "messages", "followup.json"], {
+        sender: ROOT,
+        content: "Also check LICENSE",
+        sourceMetadata: {
+          tool: {
+            toolCall: { id: "call_followup", name: "send_message" },
+          },
+        },
+      });
+
+      const [first, ...firstRest] = yield* read(profile, "call_11340266277043349041", {
+        title: LAUNCH.role,
+        prompt: LAUNCH.prompt,
+      });
+      expect(firstRest).toEqual([]);
+      expect(first).toMatchObject({
+        conversationId: CHILD,
+        role: LAUNCH.role,
+        prompt: LAUNCH.prompt,
+        truncated: false,
+      });
+      expect(first?.steps?.map((step) => step.text ?? step.toolCalls[0]?.name)).toEqual([
+        "read_file",
+        "2: MAGIC_TOKEN=probe-38478-ok",
+      ]);
+      expect(first?.steps?.[0]?.toolCalls[0]?.input).toBe('{"Path":"/project/README.md"}');
+
+      // Missing transcript still returns the proven child with steps: null.
+      const [second] = yield* read(profile, "call_22340266277043349042", {
+        title: "Line Counter",
+        prompt: "Count lines in README.md",
+      });
+      expect(second).toEqual({
+        conversationId: sibling,
+        role: "Line Counter",
+        prompt: "Count lines in README.md",
+        steps: null,
+        truncated: false,
+      });
+
+      // Unknown id and send_message id return nothing.
+      expect(yield* read(profile, "call_unknown")).toEqual([]);
+      expect(yield* read(profile, "call_followup")).toEqual([]);
+
+      // Another child claiming the same toolCall id makes ownership ambiguous.
+      yield* writeJson([sibling, ".system_generated", "messages", "dup.json"], {
+        sender: ROOT,
+        content: LAUNCH.prompt,
+        sourceMetadata: {
+          tool: {
+            toolCall: { id: "call_11340266277043349041", name: "invoke_subagent" },
+          },
+        },
+      });
+      expect(yield* read(profile, "call_11340266277043349041")).toEqual([]);
+    }),
+  );
+
+  it.effect("counts a detached child killed before it reported as no longer at work", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-killed-" });
+      const killed = "0a591388-d9d9-439d-a2a0-90932fd25b39";
+      const writeJson = (segments: ReadonlyArray<string>, value: unknown) => {
+        const file = path.join(profile, "antigravity-acp", "brain", ...segments);
+        return fs
+          .makeDirectory(path.dirname(file), { recursive: true })
+          .pipe(Effect.andThen(fs.writeFileString(file, JSON.stringify(value))));
+      };
+      const child = (conversationId: string, state: string, callId: string) =>
+        Effect.all([
+          writeJson([ROOT, ".system_generated", "subagents", `${conversationId}.json`], {
+            conversationId,
+            subagentDescriptor: { typeName: "research", role: LAUNCH.role },
+            state,
+          }),
+          writeJson([conversationId, ".system_generated", "messages", "launch.json"], {
+            sender: ROOT,
+            content: LAUNCH.prompt,
+            sourceMetadata: {
+              tool: { conversationId: ROOT, toolCall: { id: callId, name: "invoke_subagent" } },
+            },
+          }),
+        ]);
+
+      // agy 1.5.13 `manage_subagents(kill)` only rewrites the record's state; nothing reaches the parent's inbox.
+      yield* child(CHILD, "SUBAGENT_STATE_ALIVE", "call_alive");
+      yield* child(killed, "SUBAGENT_STATE_KILLED", "call_killed");
+
+      expect(
+        yield* readAntigravityChildrenAtWork({
+          profileDirectory: profile,
+          rootSessionId: ROOT,
+          toolCallIds: ["call_alive", "call_killed"],
+        }),
+      ).toEqual(["call_alive"]);
+    }),
+  );
+
   it.effect("shares one transcript budget across the batch", () =>
     Effect.gen(function* () {
       const filler = JSON.stringify({
@@ -340,5 +570,116 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       expect(children.every((child) => child.truncated)).toBe(true);
       expect(JSON.stringify(children).length).toBeLessThan(600 * 1024);
     }),
+  );
+
+  it.effect(
+    "detects unread high-priority inbox wakes and trailing waking SYSTEM_MESSAGE steps",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-pending-reply-" });
+        const write = (segments: ReadonlyArray<string>, body: string) => {
+          const file = path.join(
+            profile,
+            "antigravity-acp",
+            "brain",
+            ROOT,
+            ".system_generated",
+            ...segments,
+          );
+          return fs
+            .makeDirectory(path.dirname(file), { recursive: true })
+            .pipe(Effect.andThen(fs.writeFileString(file, body)));
+        };
+        const pending = () =>
+          readAntigravityPendingReply({ profileDirectory: profile, sessionId: ROOT });
+
+        // Empty profile or invalid session id fails closed.
+        expect(yield* pending()).toBe(false);
+        expect(
+          yield* readAntigravityPendingReply({ profileDirectory: profile, sessionId: "../escape" }),
+        ).toBe(false);
+
+        // Low-priority unread notices (e.g. cancelled task / server restart) do not wake the agent.
+        yield* write(
+          ["messages", "low-1.json"],
+          JSON.stringify({ id: "low-1", priority: "MESSAGE_PRIORITY_LOW", sender: "system" }),
+        );
+        expect(yield* pending()).toBe(false);
+
+        // An unread high-priority message indicates a queued wake.
+        yield* write(
+          ["messages", "high-1.json"],
+          JSON.stringify({
+            id: "high-1",
+            priority: "MESSAGE_PRIORITY_HIGH",
+            sender: `${ROOT}/task-1`,
+          }),
+        );
+        expect(yield* pending()).toBe(true);
+
+        // Once marked read in read.json and followed by a completed PLANNER_RESPONSE, nothing is pending.
+        yield* write(["messages", "read.json"], JSON.stringify({ "high-1": true }));
+        yield* write(
+          ["logs", "transcript.jsonl"],
+          `${JSON.stringify({ step_index: 1, type: "PLANNER_RESPONSE", status: "DONE", content: "Done." })}\n`,
+        );
+        expect(yield* pending()).toBe(false);
+
+        // A trailing waking SYSTEM_MESSAGE (even past a >64 KiB prefix) means the reply is in flight.
+        const filler = JSON.stringify({
+          step_index: 0,
+          type: "GENERIC",
+          status: "DONE",
+          content: "x".repeat(8_000),
+        });
+        yield* write(
+          ["logs", "transcript.jsonl"],
+          `${Array.from({ length: 12 }, () => filler).join("\n")}\n${JSON.stringify({
+            step_index: 2,
+            type: "SYSTEM_MESSAGE",
+            status: "DONE",
+            content: "priority=MESSAGE_PRIORITY_HIGH task-2 finished",
+          })}\n`,
+        );
+        expect(yield* pending()).toBe(true);
+
+        // A low-priority-only trailing SYSTEM_MESSAGE does not hold the turn open.
+        yield* write(
+          ["logs", "transcript.jsonl"],
+          `${JSON.stringify({
+            step_index: 3,
+            type: "SYSTEM_MESSAGE",
+            status: "DONE",
+            content: "priority=MESSAGE_PRIORITY_LOW server restart notice",
+          })}\n`,
+        );
+        expect(yield* pending()).toBe(false);
+
+        // Corrupt read.json fails closed rather than treating messages as unread.
+        yield* write(["messages", "read.json"], "{not json");
+        expect(yield* pending()).toBe(false);
+
+        // Symlinked transcript fails closed.
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-pending-outside-" });
+        const external = path.join(outside, "transcript.jsonl");
+        yield* fs.writeFileString(
+          external,
+          `${JSON.stringify({ step_index: 4, type: "SYSTEM_MESSAGE", status: "DONE", content: "priority=MESSAGE_PRIORITY_HIGH" })}\n`,
+        );
+        const transcriptPath = path.join(
+          profile,
+          "antigravity-acp",
+          "brain",
+          ROOT,
+          ".system_generated",
+          "logs",
+          "transcript.jsonl",
+        );
+        yield* fs.remove(transcriptPath);
+        yield* fs.symlink(external, transcriptPath);
+        expect(yield* pending()).toBe(false);
+      }),
   );
 });

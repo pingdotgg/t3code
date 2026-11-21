@@ -15,7 +15,14 @@ const mocks = vi.hoisted(() => ({
   navigation: { setParams: vi.fn<(params: Partial<PullRequestEnvironmentTarget>) => void>() },
 }));
 
-vi.mock("@react-navigation/native", () => ({ useNavigation: () => mocks.navigation }));
+vi.mock("@react-navigation/native", async () => {
+  const { useEffect } = await import("react");
+  return {
+    useNavigation: () => mocks.navigation,
+    // The screen under test is focused, so its focus effect runs like an effect.
+    useFocusEffect: (effect: () => void) => useEffect(effect, [effect]),
+  };
+});
 vi.mock("../../state/entities", () => ({ useProjects: () => mocks.projects }));
 vi.mock("../../state/workspace", () => ({
   useWorkspaceEnvironments: () => mocks.environments,

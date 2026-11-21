@@ -111,6 +111,15 @@ describe("Statement", () => {
     ])
   })
 
+  it("uses each constructor's own compiler for a shared acquirer", () => {
+    const acquirer = Effect.void as any
+    const sql = Statement.make(acquirer, Statement.makeCompilerSqlite(), [], undefined)
+    const transformed = Statement.make(acquirer, Statement.makeCompilerSqlite((name) => `t_${name}`), [], undefined)
+
+    assert.deepStrictEqual(sql`SELECT ${sql("a")}`.compile(), ["SELECT \"a\"", []])
+    assert.deepStrictEqual(transformed`SELECT ${transformed("a")}`.compile(), ["SELECT \"t_a\"", []])
+  })
+
   it("renumbers a cached returning fragment", () => {
     const sql = Statement.make(
       Effect.void as any,
@@ -212,6 +221,20 @@ describe("Statement", () => {
         Effect.provideService(Statement.SpanPropagationEnabled, true),
         Effect.provideService(References.TracerEnabled, false)
       )
+    }).pipe(Effect.provide(Reactivity.layer)))
+
+  it.effect("passes the client that built a statement to the current transformer", () =>
+    Effect.gen(function*() {
+      const sql = yield* makeClient(Effect.void)
+      const copy = sql.withoutTransforms()
+      const clients: Array<string> = []
+      yield* Effect.all([sql`select 1`, sql.unsafe("select 1"), copy`select 1`, copy.unsafe("select 1")]).pipe(
+        Effect.provideService(Statement.CurrentTransformer, (statement, client) => {
+          clients.push(client === sql ? "sql" : client === copy ? "copy" : "other")
+          return Effect.succeed(statement)
+        })
+      )
+      assert.deepStrictEqual(clients, ["sql", "sql", "copy", "copy"])
     }).pipe(Effect.provide(Reactivity.layer)))
 })
 

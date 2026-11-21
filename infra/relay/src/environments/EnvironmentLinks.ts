@@ -145,6 +145,12 @@ export class EnvironmentLinks extends Context.Service<
       readonly environmentPublicKey: string;
       readonly holdWebhooksWhileOffline: boolean;
     }) => Effect.Effect<void, EnvironmentLinkEnvironmentLookupPersistenceError>;
+    readonly updateLiveActivityPreference: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly liveActivitiesEnabled: boolean;
+    }) => Effect.Effect<boolean, EnvironmentLinkEnvironmentLookupPersistenceError>;
     readonly revokeForUser: (input: {
       readonly userId: string;
       readonly environmentId: string;
@@ -463,6 +469,36 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
+    }),
+
+    updateLiveActivityPreference: Effect.fn(
+      "relay.environment_links.update_live_activity_preference",
+    )(function* (input) {
+      const rows = yield* db
+        .update(relayEnvironmentLinks)
+        .set({
+          liveActivitiesEnabled: input.liveActivitiesEnabled,
+          updatedAt: DateTime.formatIso(yield* DateTime.now),
+        })
+        .where(
+          and(
+            eq(relayEnvironmentLinks.userId, input.userId),
+            eq(relayEnvironmentLinks.environmentId, input.environmentId),
+            eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+            isNull(relayEnvironmentLinks.revokedAt),
+          ),
+        )
+        .returning({ environmentId: relayEnvironmentLinks.environmentId })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentLinkEnvironmentLookupPersistenceError({
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
+      return rows.length > 0;
     }),
 
     revokeForUser: Effect.fn("relay.environment_links.revoke_for_user")(function* (input) {
