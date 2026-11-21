@@ -848,6 +848,14 @@ export function instanceHubs(
   return endpoint === undefined ? [] : sources.filter((source) => source.origin === endpoint);
 }
 
+/** Gemini quota is metered apart from the Claude and GPT quota, so each blocks only its models. */
+export function antigravityWindowLimitsModel(
+  window: Pick<ServerProviderUsageWindow, "id">,
+  model: string | null,
+): boolean {
+  return model === null || window.id.startsWith("gemini") === model.startsWith("gemini");
+}
+
 /** The hub accounts that serve a model: those that list it, else every account of the driver. */
 export function hubRoutes(
   sources: UsageLimitSourceSnapshots,
@@ -879,7 +887,10 @@ export function collectProviderUsageLimits(
   if (!selected) return null;
   // Only an instance sent to a hub is known to reach the accounts that hub routes its model to.
   const hubs = instanceHubs(selected, sources);
-  const routes = hubRoutes(hubs, selected.driver, hubs.length > 0 ? model : null);
+  const routes =
+    hubs.length > 0
+      ? hubRoutes(hubs, selected.driver, model)
+      : (account: UsageLimitSourceAccount) => account.driver === selected.driver;
   const shownHubs = hubs.length > 0 ? hubs : sources;
   const drivers = new Set(
     shownHubs.flatMap((source) => source.accounts.filter(routes).map((account) => account.driver)),

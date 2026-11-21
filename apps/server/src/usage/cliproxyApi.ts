@@ -486,19 +486,24 @@ export const makeCliproxyApi = Effect.gen(function* () {
     provider: HubProvider,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const models = yield* routedModels(hub, account).pipe(Effect.option);
     const call: HubCall = (url, data) =>
       apiCall(hub, account, provider.header(account, platform, architecture), url, data);
-    const reading = yield* provider.read({ account, call, checkedAt }).pipe(
-      Effect.provideService(Digest.Digest, digest),
-      Effect.orElseSucceed(() => ({
-        ...listedIdentity(account),
-        usageLimits: makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message: "The hub could not read this account's usage.",
-        }),
-      })),
+    const [models, reading] = yield* Effect.all(
+      [
+        routedModels(hub, account).pipe(Effect.option),
+        provider.read({ account, call, checkedAt }).pipe(
+          Effect.provideService(Digest.Digest, digest),
+          Effect.orElseSucceed(() => ({
+            ...listedIdentity(account),
+            usageLimits: makeUnavailableUsageLimits({
+              checkedAt,
+              reason: "probeFailed",
+              message: "The hub could not read this account's usage.",
+            }),
+          })),
+        ),
+      ],
+      { concurrency: 2 },
     );
     return {
       id: account.id,

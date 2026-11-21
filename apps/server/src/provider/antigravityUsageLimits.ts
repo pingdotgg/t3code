@@ -246,14 +246,6 @@ const readCliKeyringSecret = (platform: NodeJS.Platform, architecture: NodeJS.Ar
 export const antigravityAccountFingerprint = (userInfo: unknown) =>
   decodeUserInfo(userInfo).pipe(Effect.flatMap((info) => sha256(`google-account\0${info.id}`)));
 
-/** Gemini quota is metered apart from the Claude and GPT quota, so each blocks only its models. */
-export function antigravityWindowLimitsModel(
-  window: Pick<ServerProviderUsageWindow, "id">,
-  model: string | null,
-): boolean {
-  return model === null || window.id.startsWith("gemini") === model.startsWith("gemini");
-}
-
 /** Windows from a `retrieveUserQuotaSummary` answer requested at `requestedAt`. */
 export const antigravitySummaryWindows = (response: unknown, requestedAt: number) =>
   decodeSummary(response).pipe(Effect.map((summary) => summaryWindows(summary, requestedAt)));
