@@ -22,6 +22,14 @@ it("a body that reads the clock outside a step fails the replay case", async () 
   ]);
 });
 
+it("a body that keeps the time in a module variable fails the replay case", async () => {
+  expect(
+    await grade(fixture("replay-keeps-in-a-module"), entry("replay-keeps-what-it-read")),
+  ).toEqual([
+    "restart while waiting: The time it returned was read again after the restart, not kept from the start.",
+  ]);
+});
+
 it("an answer to another task fails with the reason", async () => {
   expect(
     await grade(fixture("webhook-filter-and-dedupe"), entry("replay-keeps-what-it-read")),
