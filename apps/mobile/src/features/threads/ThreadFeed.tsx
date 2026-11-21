@@ -2582,7 +2582,7 @@ function renderFeedEntry(
             </View>
           ) : null}
           {bubbleBodyVisible ? (
-            <View className="-my-1.5 flex-row items-center justify-end gap-1 pr-0.5">
+            <View className="-mt-1 flex-row items-center justify-end gap-1 pr-0.5">
               {foldRowId !== null && senderRef ? (
                 <OpenSenderThreadButton
                   environmentId={senderRef.environmentId}
