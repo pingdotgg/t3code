@@ -54,6 +54,7 @@ import {
   hasSavedBearerRoute,
   mergeLearnedRoutes,
   routesAfterRemoving,
+  targetWithLabel,
   upsertRoute,
   type ReportedEndpoint,
 } from "./routes.ts";
@@ -146,6 +147,16 @@ export class EnvironmentRegistry extends Context.Service<
     readonly reorderRoutes: (
       environmentId: EnvironmentId,
       routeIds: ReadonlyArray<string>,
+    ) => Effect.Effect<
+      void,
+      | Persistence.ConnectionPersistenceError
+      | EnvironmentNotRegisteredError
+      | PlatformEnvironmentRemovalError
+      | ConnectionBlockedError
+    >;
+    readonly setLabel: (
+      environmentId: EnvironmentId,
+      label: string,
     ) => Effect.Effect<
       void,
       | Persistence.ConnectionPersistenceError
@@ -1036,6 +1047,32 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const setLabel = Effect.fn("EnvironmentRegistry.setLabel")(function* (
+    environmentId: EnvironmentId,
+    label: string,
+  ) {
+    const trimmed = label.trim();
+    if (trimmed === "") {
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail: "Environment label cannot be empty.",
+      });
+    }
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const entry = yield* userEntry(environmentId);
+        const routes = connectionRoutes(entry);
+        if (routes.every((route) => route.target.label === trimmed)) return;
+        // Only targets' labels are read, so profiles keep what the SSH broker last saved.
+        yield* replaceRoutesLocked(
+          entry,
+          routes.map((route) => ({ ...route, target: targetWithLabel(route.target, trimmed) })),
+        );
+      }),
+    );
+  });
+
   const removeRelayEnvironments = Effect.fn("EnvironmentRegistry.removeRelayEnvironments")(
     function* () {
       const relayEnvironmentIds = [...(yield* SubscriptionRef.get(entries)).values()]
@@ -1204,6 +1241,7 @@ export const make = Effect.gen(function* () {
     remove,
     removeRoute,
     reorderRoutes,
+    setLabel,
     removeRelayEnvironments,
     retryNow,
     setEnabled,
