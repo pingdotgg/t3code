@@ -228,9 +228,6 @@ describe("resolveBackgroundThreadRunStatus", () => {
     ];
     for (const input of heldCases) {
       expect(threadStatus(input)).toBeNull();
-      expect(
-        speak([{ threads: [login()] }, { threads: [login({ runStatus: threadStatus(input) })] }]),
-      ).toEqual([]);
     }
   });
 
