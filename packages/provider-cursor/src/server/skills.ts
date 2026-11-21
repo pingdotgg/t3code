@@ -124,6 +124,7 @@ function parseSkillFrontmatter(contents: string): CursorSkillFrontmatter | undef
 const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (input: {
   readonly directory: string;
   readonly scope: "user" | "project" | "system";
+  readonly skipDirectory?: string;
   readonly budget: CursorSkillScanBudget;
   readonly scannedRoots: Set<string>;
 }): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
@@ -199,6 +200,7 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
     for (const entry of [...entries].sort()) {
       // Installed dependencies can exhaust the shared budget and hide unrelated skills.
       if (entry === "node_modules") continue;
+      if (depth === 0 && entry === input.skipDirectory) continue;
       // Files spend no directory budget, so a separate cap keeps a huge file tree bounded.
       if (input.budget.remainingStats === 0) {
         input.budget.exhausted = true;
@@ -236,7 +238,8 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   const rootsBelow = (base: string, scope: "user" | "project") => [
     { directory: path.join(base, ".cursor", "skills"), scope },
     { directory: path.join(base, ".agents", "skills"), scope },
-    { directory: path.join(base, ".codex", "skills"), scope },
+    // Codex installs its bundled skills in `.system`, scanned below as built-in.
+    { directory: path.join(base, ".codex", "skills"), scope, skipDirectory: ".system" },
     { directory: path.join(base, ".claude", "skills"), scope },
   ];
   const roots = [
@@ -244,6 +247,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     ...rootsBelow(userHome, "user"),
     // Cursor syncs its built-in skills here; same-named user and project skills win.
     { directory: path.join(userHome, ".cursor", "skills-cursor"), scope: "system" as const },
+    { directory: path.join(userHome, ".codex", "skills", ".system"), scope: "system" as const },
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();

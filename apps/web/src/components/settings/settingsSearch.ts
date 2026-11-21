@@ -788,6 +788,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("command menu dollar $ slash /")],
   },
   {
+    id: "system-skills",
+    title: msg("Show built-in skills"),
+    to: "/settings/chat",
+    searchTerms: [
+      msg("system provider cursor codex skills-cursor hide command menu dollar $ slash /"),
+    ],
+  },
+  {
     id: "composer-rich-text",
     title: msg("Rich text composer"),
     to: "/settings/chat",

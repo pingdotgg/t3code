@@ -115,6 +115,45 @@ describe("Cursor skills", () => {
       }),
     ));
 
+  it("reports Codex's bundled skills as built-in, behind same-named user skills", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem
+          .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix: "cursor-skills-home-" })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const writeSkill = Effect.fn("writeCursorSkill")(function* (root: string, name: string) {
+          yield* fileSystem.makeDirectory(path.join(root, name), { recursive: true });
+          yield* fileSystem.writeFileString(path.join(root, name, "SKILL.md"), "");
+        });
+        const codexRoot = path.join(userHome, ".codex", "skills");
+        yield* writeSkill(codexRoot, "mine");
+        yield* writeSkill(path.join(codexRoot, ".system"), "skill-creator");
+        yield* writeSkill(path.join(codexRoot, ".system"), "skill-installer");
+        yield* writeSkill(path.join(userHome, ".cursor", "skills"), "skill-installer");
+
+        const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
+        expect(
+          skills.map(({ name, path: skillPath, scope }) => ({ name, skillPath, scope })),
+        ).toEqual([
+          { name: "mine", skillPath: path.join(codexRoot, "mine", "SKILL.md"), scope: "user" },
+          {
+            name: "skill-creator",
+            skillPath: path.join(codexRoot, ".system", "skill-creator", "SKILL.md"),
+            scope: "system",
+          },
+          {
+            name: "skill-installer",
+            skillPath: path.join(userHome, ".cursor", "skills", "skill-installer", "SKILL.md"),
+            scope: "user",
+          },
+        ]);
+        const fromHome = yield* discoverCursorSkills(userHome, { HOME: userHome });
+        expect(fromHome.find((skill) => skill.name === "skill-creator")?.scope).toBe("system");
+      }),
+    ));
+
   it("skips a skill tree deeper than the limit instead of failing discovery", async () =>
     await runNode(
       Effect.gen(function* () {

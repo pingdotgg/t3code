@@ -300,6 +300,10 @@ provider. On mobile, both are also available before starting a thread on
 The slash menu also includes skills unless you turn off **Settings → Chat →
 Show skills in slash menu**, under Advanced. Only skills enabled for the provider are listed.
 
+To list only your own and project skills, turn off **Show built-in skills** in the
+same section. Skills a provider ships with, such as Cursor's, then leave both the
+`/` and `$` menus, and you can still type one by name.
+
 After you add or change skills, plugins, or MCP servers, use **Restart agent
 session** in the command palette on web and desktop. The conversation continues,
 and your next message starts the agent again with the new setup.
