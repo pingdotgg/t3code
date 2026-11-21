@@ -53,7 +53,6 @@ import { PullRequestListGhost } from "~/components/pullRequest/PullRequestGhosts
 import { PullRequestListNotice } from "~/components/pullRequest/PullRequestListEmptyState";
 import { WorkItemGroupHeader } from "~/components/pullRequest/PullRequestListGroups";
 import {
-  PullRequestFilterOptionIcon,
   pullRequestProjectKey,
   PullRequestSearchInput,
   type PullRequestFilterOption,
@@ -775,7 +774,11 @@ export function IssuesPage() {
       title={gt("Every project is hidden")}
       description={null}
     >
-      <Button size="sm" variant="secondary" onClick={() => updateSearch({ hideProjects: undefined })}>
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={() => updateSearch({ hideProjects: undefined })}
+      >
         <T>Show all projects</T>
       </Button>
     </PullRequestListNotice>

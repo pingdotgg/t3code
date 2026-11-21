@@ -34,7 +34,7 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ContextWindowSegments } from "./ContextWindowMeter";
 import { contextWindowSegments } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
+import { nextPoolReset, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
 
 const USAGE_ROW_CLASS =
   "col-span-full grid min-w-0 grid-cols-subgrid items-center gap-x-1.5 text-meta";
@@ -267,7 +267,7 @@ function pooledWindow(pooled: LimitPoolWindow, now: number): ServerProviderUsage
     kind: pooled.kind,
     label: pooled.label,
     usedPercent: 100 - pooled.remainingPercent,
-    resetsAt: pooled.resets.find((reset) => reset.at > now)?.member.window.resetsAt,
+    resetsAt: nextPoolReset(pooled, now)?.member.window.resetsAt,
   };
 }
 

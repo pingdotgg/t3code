@@ -16,9 +16,6 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ThreadPreviewState } from "../../previewStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type ScopedThreadRef, type RunId, type PreviewSessionSnapshot } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { sideThreadComposer, sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
-import { readThreadShell } from "../../state/entities";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -227,7 +224,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const openSidePaneDefault = (): boolean => {
     if (!activeThreadRef) return false;
     const opensOn = getLayoutBehavior().sidePaneOpensOn;
-    if ((opensOn === "diff" || opensOn === "last-used") && isServerThread && isGitRepo)
+    if ((opensOn === "diff" || opensOn === "last-used") && isServerThread && diffAvailable)
       return (addDiffSurface(), true);
     if ((opensOn === "files" || opensOn === "last-used") && activeProject)
       return (addFilesSurface(), true);
@@ -245,7 +242,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   // "Open beside…" (palette, new tab page) reaches the focused chat's side
   // pane and terminal through this registration.
   const browserBesideAvailable = canOperatePreview && browserAvailable;
-  const diffBesideAvailable = isServerThread && isGitRepo;
+  const diffBesideAvailable = isServerThread && diffAvailable;
   const projectBesideAvailable = activeProject !== null;
   const besideAvailable = (() => {
     const available = new Set<LayoutBesideKind>();

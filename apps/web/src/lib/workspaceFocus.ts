@@ -638,7 +638,7 @@ export function requestSideChatComposerFocus(threadRef: ScopedThreadRef, surface
   requestWorkspaceFocus({
     area: "panel",
     surface: { threadKey: scopedThreadKey(threadRef), surfaceId },
-    selector: `[data-side-chat-pane="${CSS.escape(surfaceId.slice("side-chat:".length))}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+    selector: `[data-side-chat-pane="${CSS.escape(surfaceId.slice("thread:".length))}"] [data-workspace-area="composer"] [contenteditable="true"]`,
   });
 }
 

@@ -1251,7 +1251,7 @@ function LayoutPaneTabButton({
     useLayoutStore.getState().focusTab(tab.id);
     // Choosing a side chat's tab puts the keyboard in its message box.
     const { content } = tab;
-    if (content.kind === "surface" && content.surfaceId.startsWith("side-chat:")) {
+    if (content.kind === "surface" && content.surfaceId.startsWith("thread:")) {
       requestSideChatComposerFocus(content.threadRef, content.surfaceId);
     }
   };
@@ -1361,7 +1361,7 @@ export function useLayoutTabLabel(tab: LayoutTab): {
       ? previewState.sessions[surface.resourceId]
       : null;
   const sideChat = useQuietThreadShell(
-    surface?.kind === "side-chat" && surfaceThreadRef
+    surface?.kind === "thread" && surfaceThreadRef
       ? scopeThreadRef(surfaceThreadRef.environmentId, surface.threadId)
       : null,
   );

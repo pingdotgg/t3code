@@ -4,7 +4,7 @@ import { threadEnvironment } from "../state/threads";
 import { DEFAULT_RUNTIME_MODE } from "../types";
 /** Resolve surface context independently of ChatView so tabs remain usable after the chat closes,
  * and report when their thread is gone. */
-import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { msg, T, useGT, useMessages } from "gt-react";
 import {
   AuthOrchestrationOperateScope,
@@ -71,6 +71,7 @@ import {
   type RightPanelSurface,
 } from "../rightPanelStore";
 import {
+  readThreadShell,
   useAllEnvironmentShellsBootstrapped,
   useEnvironmentSupportsServerBrowser,
   useProject,

@@ -374,7 +374,11 @@ export default function DiffPanel({
       : null,
   );
   const projectFoldersQuery = useEnvironmentQuery(
-    visible && tracksFolders && activeThread != null && threadWorktreePath === null
+    visible &&
+      tracksFolders &&
+      activeThread != null &&
+      activeThread.projectId !== null &&
+      threadWorktreePath === null
       ? filesystemEnvironment.listFolders({
           environmentId: activeThread.environmentId,
           input: { projectId: activeThread.projectId },

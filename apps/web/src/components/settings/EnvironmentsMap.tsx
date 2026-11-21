@@ -68,7 +68,8 @@ import { relayEnvironmentDiscovery } from "~/state/relay";
 import { preparedConnectionsAtom, useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { accessConfig } from "../auth/ConnectAgentSurface";
-import { connectionPhaseDotClassName } from "../ConnectionStatusDot";
+import { connectionPhaseTone } from "../connectionPhaseTone";
+import { StatusDot } from "../ui/status-dot";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Button, ContentButton } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -2086,14 +2087,13 @@ const FleetScene = memo(function FleetScene({
               data-appear=""
               className="absolute"
             >
-              <span
-                aria-hidden
-                className={cn(
-                  "size-2 shrink-0 rounded-full",
+              <StatusDot
+                size="md"
+                tone={
                   node.kind === "environment" && node.enabled
-                    ? connectionPhaseDotClassName(node.phase)
-                    : "bg-muted-foreground/40",
-                )}
+                    ? connectionPhaseTone(node.phase)
+                    : "neutral"
+                }
               />
               <span className="truncate text-caption leading-none">{node.label}</span>
             </ContentButton>
@@ -2178,15 +2178,9 @@ const FleetScene = memo(function FleetScene({
                 )}
               >
                 <EnvironmentMachineIcon kind={node.machine ?? "server"} className="size-3.5" />
-                <span
-                  aria-hidden
-                  className={cn(
-                    "absolute -right-1 -bottom-1 size-2.5 rounded-full border-2 border-card",
-                    node.enabled
-                      ? connectionPhaseDotClassName(node.phase)
-                      : "bg-muted-foreground/40",
-                  )}
-                />
+                <span className="absolute -right-1 -bottom-1 flex rounded-full border-2 border-card">
+                  <StatusDot tone={node.enabled ? connectionPhaseTone(node.phase) : "neutral"} />
+                </span>
               </span>
               <span className={cn("min-w-0 flex-1 pr-1.5", dimmed && "opacity-70")}>
                 <span className="line-clamp-2 text-meta leading-4 [overflow-wrap:anywhere]">

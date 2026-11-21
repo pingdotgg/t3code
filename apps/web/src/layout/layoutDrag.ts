@@ -532,8 +532,10 @@ function openLayoutDragSurface(threadRef: ScopedThreadRef, surface: LayoutDragSu
       return panels.openPullRequest(threadRef, surface);
     case "issue":
       return panels.openIssue(threadRef, surface);
-    case "side-chat":
-      return panels.openSideChat(threadRef, surface.threadId);
+    case "thread":
+      return panels.openThread(threadRef, surface.threadId);
+    case "linked-thread":
+      return panels.openLinkedThread(threadRef, surface);
   }
 }
 

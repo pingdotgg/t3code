@@ -65,6 +65,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       isPending: false,
       observations: [],
       refresh: vi.fn(),
+      retry: vi.fn(),
     }),
     usePullRequestListStats: () => ({ stats: null, isPending: false, refresh: vi.fn() }),
     usePullRequestTurnRefreshes: () => [],

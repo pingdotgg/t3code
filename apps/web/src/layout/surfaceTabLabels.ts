@@ -4,6 +4,7 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../i18n/messages";
 
+import { linkedThreadTitle } from "../linkedThreadSurface";
 import type { RightPanelSurface } from "../rightPanelStore";
 
 /** Tabs show the command; the tooltip retains the complete terminal label. */
@@ -45,8 +46,14 @@ export function surfaceTabTitle(
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
     case "device":
       return surface.title ?? surface.target?.name ?? resolve(msg("Device"));
-    case "side-chat":
-      return resolve(msg("Side chat"));
+    case "thread":
+      // Until the thread's own title loads.
+      return resolve(msg("Thread"));
+    case "linked-thread":
+      return linkedThreadTitle(
+        surface,
+        resolve(msg("Thread on {label}", { label: surface.label })),
+      );
     case "preview": {
       const navigation = snapshot?.navStatus;
       if (navigation && navigation._tag !== "Idle" && navigation.title.trim()) {

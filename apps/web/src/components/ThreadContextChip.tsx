@@ -58,6 +58,8 @@ export function ThreadContextChip(props: {
                 to="/$environmentId/$threadId"
                 params={{ environmentId, threadId }}
                 onClick={(event) => {
+                  props.onClick?.(event);
+                  if (event.defaultPrevented) return;
                   if (shell?.lineage.sideChat !== true || event.button !== 0) return;
                   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
                   // A side chat opens as a tab beside its parent, not as its own page.
@@ -70,7 +72,6 @@ export function ThreadContextChip(props: {
                   });
                 }}
                 draggable={false}
-                onClick={props.onClick}
               />
             }
             aria-label={gt("Thread, {title}", { title })}

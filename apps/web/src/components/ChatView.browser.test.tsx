@@ -1022,8 +1022,8 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
   });
   using _focus = { [Symbol.dispose]: startWorkspaceFocus(router) };
   await act(() => {
-    useRightPanelStore.getState().openSideChat(parentRef, otherSide.id);
-    useRightPanelStore.getState().openSideChat(parentRef, side.id);
+    useRightPanelStore.getState().openThread(parentRef, otherSide.id);
+    useRightPanelStore.getState().openThread(parentRef, side.id);
   });
   const mainEditor = screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true });
   const sideEditor = screen.getByRole("textbox", { name: `Message ${side.title}`, exact: true });
