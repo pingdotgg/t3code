@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
+import { isCloudCliCredentialRefreshError } from "./CliTokenManager.ts";
 import { isRelayUnavailable, relayRetryAfterMillis } from "./relayResponse.ts";
 
 // Relinking revoked environments is the user's choice; startup takes no action.
@@ -112,9 +113,9 @@ export const retryManagedTunnelRegistration = <A, E, R>(
 
 /**
  * Relinks a desired link at startup. Past the retry window it keeps going only
- * while the relay itself is unavailable: a headless host has nobody to restart
- * it once the relay recovers, but a local failure (cloudflared that cannot run)
- * would otherwise relink, and provision a tunnel, forever.
+ * while the relay or the CLI's sign-in refresh is unavailable: a headless host has
+ * nobody to restart it once they recover, but a local failure (cloudflared that
+ * cannot run) would otherwise relink, and provision a tunnel, forever.
  */
 export const retryDesiredLinkReconcile = <A, E, R>(
   reconcile: Effect.Effect<A, E, R>,
@@ -123,7 +124,9 @@ export const retryDesiredLinkReconcile = <A, E, R>(
 ) =>
   retryAcrossWindow(reconcile, {
     while: isRetryable,
-    whilePastWindow: isRelayUnavailable,
+    whilePastWindow: (error) =>
+      isRelayUnavailable(error) ||
+      (isCloudCliCredentialRefreshError(error) && !error.requiresLogin),
     onWindowExhausted: onRetryWindowExhausted,
   });
 

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
+import { CloudCliCredentialRefreshError } from "./CliTokenManager.ts";
 import {
+  retryDesiredLinkReconcile,
   retryManagedTunnelRegistration,
   watchManagedTunnelOrigin,
 } from "./managedTunnelStartup.ts";
@@ -28,6 +31,29 @@ describe("retryManagedTunnelRegistration", () => {
       expect(error).toBe("not authorized");
       expect(attempts).toBe(1);
       expect(fallbacks).toBe(0);
+    }),
+  );
+});
+
+describe("retryDesiredLinkReconcile", () => {
+  it.effect("keeps relinking while the CLI credential cannot refresh, and links once it can", () =>
+    Effect.gen(function* () {
+      const offline = new CloudCliCredentialRefreshError({ cause: new Error("ENETUNREACH") });
+      const reconcile = Effect.gen(function* () {
+        return (yield* Clock.currentTimeMillis) < 30 * 60_000
+          ? yield* offline
+          : ("managed" as const);
+      });
+      const fiber = yield* Effect.forkChild(
+        retryDesiredLinkReconcile(
+          reconcile,
+          () => true,
+          () => Effect.void,
+        ),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("45 minutes");
+      expect(yield* Fiber.join(fiber)).toBe("managed");
     }),
   );
 });
