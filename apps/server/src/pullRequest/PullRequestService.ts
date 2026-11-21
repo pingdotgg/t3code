@@ -144,6 +144,8 @@ const VIEWER_CACHE_TTL = Duration.minutes(10);
 const STALE_DETAIL_WINDOW = Duration.minutes(10);
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
 const LIST_CACHE_CAPACITY = 64;
+const QUIET_READ_TTL = Duration.minutes(10);
+const QUIET_READ_CAPACITY = 512;
 const LIST_STATS_CACHE_CAPACITY = 32;
 const DETAIL_CACHE_CAPACITY = 128;
 const DIFF_CACHE_CAPACITY = 128;
@@ -388,6 +390,20 @@ interface RepositoryBatch {
   readonly truncated: boolean;
   readonly nextCursor: string | null;
 }
+
+// Clients send `{}` or empty label lists when nothing is chosen: that is the unfiltered listing.
+const filtersInUse = (
+  filters: PullRequestListFilters | undefined,
+): PullRequestListFilters | undefined =>
+  filters !== undefined &&
+  (filters.draft !== undefined ||
+    filters.review !== undefined ||
+    filters.checks !== undefined ||
+    filters.author !== undefined ||
+    (filters.labels?.length ?? 0) > 0 ||
+    (filters.excludedLabels?.length ?? 0) > 0)
+    ? filters
+    : undefined;
 
 interface ListCursor extends ProviderListCursor {
   readonly seenAt: ReadonlyArray<number>;
@@ -1380,6 +1396,25 @@ export const make = Effect.gen(function* () {
     };
   };
 
+  // First-page reads of quiet repositories, kept by `quietRead` in `listUncached`.
+  const quietReads = new Map<
+    string,
+    {
+      readonly at: number;
+      readonly listingsEpoch: number;
+      readonly generation: number;
+      readonly batch: RepositoryBatch;
+    }
+  >();
+  // Moves for a repository when its kept read may no longer hold: search returned rows of it, or
+  // a turn ran in one of its checkouts. The floor moves them all.
+  const quietGenerations = new Map<string, number>();
+  let quietGenerationFloor = 0;
+  const quietGeneration = (cursorKey: string) =>
+    quietGenerationFloor + (quietGenerations.get(cursorKey) ?? 0);
+  const endQuietReuse = (cursorKey: string) =>
+    quietGenerations.set(cursorKey, (quietGenerations.get(cursorKey) ?? 0) + 1);
+
   const listUncached: PullRequestService["Service"]["list"] = Effect.fn(
     "PullRequestService.listUncached",
   )(function* (input) {
@@ -1581,13 +1616,84 @@ export const make = Effect.gen(function* () {
       return readSlice(project, cursorOf(project)).pipe(Effect.flatMap((batch) => fill(batch, 1)));
     };
 
+    // A quiet repository has no row newer than the search page, and in the unconstrained listing
+    // any change to one of its pull requests brings that row onto the page, so its own read holds
+    // until then. A narrower search can lose a row (a close, a new label) without gaining one.
+    const reusesQuietReads =
+      input.state === "all" &&
+      involvement === "all" &&
+      input.filters === undefined &&
+      (input.query?.trim() ?? "") === "" &&
+      (yield* routingCredential) === null;
+    const quietKey = (project: SupportedProject) =>
+      `${project.cursorKey}\n${viewers[project.host]}\n${limit}`;
+    const heldQuietRead = (project: SupportedProject, now: number): RepositoryBatch | undefined => {
+      const held = quietReads.get(quietKey(project));
+      if (
+        held === undefined ||
+        held.listingsEpoch !== listingsEpoch ||
+        held.generation !== quietGeneration(project.cursorKey) ||
+        now - held.at >= Duration.toMillis(QUIET_READ_TTL)
+      ) {
+        return undefined;
+      }
+      // Checkouts of one repository share the read; the rows belong to the one listed now.
+      return {
+        ...held.batch,
+        entries: held.batch.entries.map((entry) => ({
+          ...entry,
+          projectId: project.project.id,
+          projectTitle: project.project.title,
+        })),
+      };
+    };
+    const quietRead = Effect.fn("PullRequestService.quietRead")(function* (
+      project: SupportedProject,
+    ) {
+      const key = quietKey(project);
+      const generation = quietGeneration(project.cursorKey);
+      const now = yield* Clock.currentTimeMillis;
+      const held = heldQuietRead(project, now);
+      if (held !== undefined) return held;
+      const epochBefore = epochCounter;
+      const batch = yield* readRepository(project);
+      // Not kept if it failed, or if a turn, refresh or search row arrived while it was read.
+      if (
+        batch.errors.length === 0 &&
+        epochCounter === epochBefore &&
+        quietGeneration(project.cursorKey) === generation
+      ) {
+        quietReads.delete(key);
+        quietReads.set(key, { at: now, listingsEpoch, generation, batch });
+        if (quietReads.size > QUIET_READ_CAPACITY) {
+          const oldest = quietReads.keys().next().value;
+          if (oldest !== undefined) quietReads.delete(oldest);
+        }
+      }
+      return batch;
+    });
+
     const readTogether = (
       chunk: ReadonlyArray<SupportedProject>,
     ): Effect.Effect<ReadonlyArray<RepositoryBatch>> => {
       const first = chunk[0]!;
       const readAcross = first.api.listChangeRequestsAcross;
+      // A failed search says nothing new about a repository, so a read kept since a page last
+      // named it quiet still stands in for it. What is read here is not kept: nothing vouches.
       const separately = () =>
-        Effect.forEach(chunk, readRepository, { concurrency: REPOSITORY_CONCURRENCY });
+        Effect.flatMap(Clock.currentTimeMillis, (now) =>
+          Effect.forEach(
+            chunk,
+            (project): Effect.Effect<RepositoryBatch> => {
+              const held =
+                reusesQuietReads && cursorOf(project) === undefined
+                  ? heldQuietRead(project, now)
+                  : undefined;
+              return held === undefined ? readRepository(project) : Effect.succeed(held);
+            },
+            { concurrency: REPOSITORY_CONCURRENCY },
+          ),
+        );
       if (readAcross === undefined) return separately();
       const viewer = viewers[first.host]!;
       const cursor = cursorOf(first);
@@ -1628,6 +1734,9 @@ export const make = Effect.gen(function* () {
           const unresolved = new Set(
             (page.unresolved ?? []).map((repository) => repository.trim().toLowerCase()),
           );
+          const quiet = new Set(
+            (page.quiet ?? []).map((repository) => repository.trim().toLowerCase()),
+          );
           const boundary = page.items.reduce<string | null>(
             (oldest, item) =>
               oldest === null || item.updatedAt < oldest ? item.updatedAt : oldest,
@@ -1638,7 +1747,12 @@ export const make = Effect.gen(function* () {
             (project): Effect.Effect<RepositoryBatch> => {
               const key = project.repository.trim().toLowerCase();
               const fetched = rows.get(key) ?? [];
-              if (fetched.length === 0 && unresolved.has(key)) return readRepository(project);
+              if (fetched.length > 0) endQuietReuse(project.cursorKey);
+              if (fetched.length === 0 && unresolved.has(key)) {
+                return reusesQuietReads && quiet.has(key) && cursorOf(project) === undefined
+                  ? quietRead(project)
+                  : readRepository(project);
+              }
               const cursorHere = cursorOf(project);
               const items =
                 cursorHere === undefined
@@ -3278,19 +3392,20 @@ export const make = Effect.gen(function* () {
     },
   );
   const list: PullRequestService["Service"]["list"] = (input) => {
+    const filters = filtersInUse(input.filters);
     const key = JSON.stringify([
       listingsEpoch,
       input.state,
       input.involvement ?? null,
-      input.filters === undefined
+      filters === undefined
         ? null
         : [
-            input.filters.draft ?? null,
-            input.filters.review ?? null,
-            input.filters.checks ?? null,
-            input.filters.author ?? null,
-            input.filters.labels ?? null,
-            input.filters.excludedLabels ?? null,
+            filters.draft ?? null,
+            filters.review ?? null,
+            filters.checks ?? null,
+            filters.author ?? null,
+            filters.labels ?? null,
+            filters.excludedLabels ?? null,
           ],
       input.projectId ?? null,
       input.projectIds === undefined ? null : [...input.projectIds].sort(),
@@ -3814,6 +3929,13 @@ export const make = Effect.gen(function* () {
     // change request reached through another repository, and no epoch may move until those
     // reads are gone, or a reader in between keeps the old one under the new epoch.
     yield* forgetProviderReads();
+    if (quietReads.size > 0) {
+      // Resolved as the list resolves it: the list keeps one checkout per repository, so the
+      // turn's project need not be the one a kept read was made through.
+      const turned = yield* listWorkspaceProjects({ projectId }).pipe(Effect.option);
+      if (Option.isNone(turned)) quietGenerationFloor += 1;
+      else for (const { cursorKey } of turned.value.supported) endQuietReuse(cursorKey);
+    }
     const epoch = ++epochCounter;
     // A push can open or move a PR; a plain turn waits for the listing TTL to spare the API quota.
     if (options?.pushed === true) listingsEpoch = epoch;

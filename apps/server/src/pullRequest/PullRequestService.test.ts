@@ -3293,6 +3293,184 @@ it.effect("asks on its own for a repository a search could not vouch for", () =>
     );
   }),
 );
+// A search page filled by acme/web, silent about the others. `pages` adds rows to later pages.
+const quietWorkspace = (input: {
+  readonly reads: Array<string>;
+  readonly quiet?: ReadonlyArray<string>;
+  readonly failing?: string;
+  readonly pages?: Array<ReadonlyArray<ReturnType<typeof batchedChangeRequest>> | "fails">;
+}) =>
+  makeService({
+    projects: [
+      project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+      project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
+      project({ id: "p3", title: "api", workspaceRoot: "/c", repository: "acme/api" }),
+      project({ id: "p4", title: "docs worktree", workspaceRoot: "/d", repository: "acme/docs" }),
+    ],
+    providers: [
+      fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+        listChangeRequests: ({ repository }) => {
+          input.reads.push(repository);
+          return repository === input.failing
+            ? Effect.fail(requestFailed)
+            : Effect.succeed({
+                items: [changeRequest(repository === "acme/docs" ? 7 : 8, "2026-06-01T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              });
+        },
+        listChangeRequestsAcross: () => {
+          const extra = input.pages?.shift() ?? [];
+          if (extra === "fails") return Effect.fail(requestFailed);
+          const silent = ["acme/docs", "acme/api"].filter(
+            (repository) => !extra.some((row) => row.repository === repository),
+          );
+          return Effect.succeed({
+            items: [batchedChangeRequest(1, "acme/web", "2026-07-03T00:00:00Z"), ...extra],
+            truncated: true,
+            unresolved: silent,
+            quiet: silent.filter((repository) => (input.quiet ?? silent).includes(repository)),
+          });
+        },
+      }),
+    ],
+  });
+// What mobile sends with nothing chosen: an empty filters object, not an omitted one.
+const everyListing = {
+  state: "all" as const,
+  involvement: "all" as const,
+  filters: {},
+  limit: 30,
+};
+const pastListingCache = TestClock.adjust("31 seconds");
+
+it.effect("reuses a quiet repository's own read until a turn, a refresh or ten minutes", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* quietWorkspace({ reads });
+
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/docs"]);
+
+    reads.length = 0;
+    yield* pastListingCache;
+    const again = yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, []);
+    assert.deepStrictEqual(
+      again.entries.map((entry) => entry.number),
+      [1, 7, 8],
+    );
+
+    // The listing reads acme/docs through p2; the turn ran in its other checkout.
+    yield* service.refreshAfterTurn("p4" as ProjectId);
+    yield* pastListingCache;
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, ["acme/docs"]);
+
+    reads.length = 0;
+    yield* service.invalidate({});
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/docs"]);
+
+    reads.length = 0;
+    yield* TestClock.adjust("10 minutes");
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/docs"]);
+  }),
+);
+
+it.effect("hands a reused read to the checkout the listing chose", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* quietWorkspace({ reads });
+
+    yield* service.list({ ...everyListing, projectIds: ["p1", "p2"] as Array<ProjectId> });
+    const other = yield* service.list({
+      ...everyListing,
+      projectIds: ["p1", "p4"] as Array<ProjectId>,
+    });
+    assert.deepStrictEqual(reads, ["acme/docs"]);
+    assert.deepStrictEqual(
+      other.entries.map((entry) => [entry.number, entry.projectId, entry.projectTitle]),
+      [
+        [1, "p1", "web"],
+        [7, "p4", "docs worktree"],
+      ],
+    );
+  }),
+);
+
+it.effect("search rows of a quiet repository end the reuse of its earlier read", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* quietWorkspace({
+      reads,
+      pages: [[], [batchedChangeRequest(9, "acme/docs", "2026-07-04T00:00:00Z")]],
+    });
+
+    yield* service.list(everyListing);
+    yield* pastListingCache;
+    yield* service.list(everyListing);
+    yield* pastListingCache;
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/docs", "acme/docs"]);
+  }),
+);
+
+it.effect("a failed search reads only the repositories without a reusable quiet read", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* quietWorkspace({ reads, pages: [[], "fails", "fails", []] });
+
+    yield* service.list(everyListing);
+    reads.length = 0;
+    yield* pastListingCache;
+    const fallback = yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, ["acme/web"]);
+    assert.deepStrictEqual(fallback.entries.map((entry) => entry.number).toSorted(), [7, 8, 8]);
+
+    // A filtered listing reuses nothing in the fallback, and the kept reads outlive it.
+    reads.length = 0;
+    yield* service.list({ ...everyListing, state: "open" as const });
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/docs", "acme/web"]);
+    reads.length = 0;
+    yield* pastListingCache;
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, []);
+  }),
+);
+
+it.effect("reads a silent repository every time when its read cannot be reused", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* quietWorkspace({ reads, quiet: ["acme/docs"], failing: "acme/docs" });
+
+    yield* service.list(everyListing);
+    yield* pastListingCache;
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(
+      reads.toSorted(),
+      ["acme/api", "acme/api", "acme/docs", "acme/docs"],
+      "search does not vouch for acme/api, and the read of acme/docs failed",
+    );
+
+    // A pull request can leave a narrower search without a newer row arriving on its page.
+    const narrowed = yield* quietWorkspace({ reads });
+    for (const narrower of [
+      { ...everyListing, state: "open" as const },
+      { ...everyListing, involvement: "authored" as const },
+      { ...everyListing, filters: { draft: "hide" as const } },
+      { ...everyListing, query: "fix" },
+    ]) {
+      reads.length = 0;
+      yield* narrowed.list(narrower);
+      yield* pastListingCache;
+      yield* narrowed.list(narrower);
+      assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/api", "acme/docs", "acme/docs"]);
+    }
+  }),
+);
+
 it.effect("believes a search's silence about a repository it vouches for", () =>
   Effect.gen(function* () {
     const separately: string[] = [];
