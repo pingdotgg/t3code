@@ -201,6 +201,8 @@ it("ticks a description checkbox placed after an attachment and edits from the t
   await using screen = await render({ ...detail, body, observedAt: 1 });
   const boxes = () => screen.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
   expect([...boxes()].map((box) => box.disabled)).toEqual([false, false]);
+  // The collapsed description clips the list that follows the attachment.
+  await userEvent.click(screen.getByRole("button", { name: "Read more" }));
 
   await userEvent.click(boxes()[1]!);
   expect(state.update).toHaveBeenCalledWith({
@@ -483,6 +485,8 @@ it("scrolls from the keyboard after a click inside it", async () => {
     { container },
   );
   const scroller = container.querySelector<HTMLElement>("[data-pull-request-summary-scroll]")!;
+  // The description starts collapsed; read all of it so the summary has something to scroll.
+  await userEvent.click(screen.getByRole("button", { name: "Read more" }));
   await userEvent.click(screen.getByText("Paragraph 0", { exact: true }));
   await userEvent.keyboard("{PageDown}");
   await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
