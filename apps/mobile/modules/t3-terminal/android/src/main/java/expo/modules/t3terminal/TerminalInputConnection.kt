@@ -48,6 +48,7 @@ internal class TerminalInputConnection(
   target: InputConnection,
   private val sentText: TerminalSentText,
   private val canTrackDeletes: () -> Boolean,
+  private val onComposingFinished: () -> Unit,
   private val sendDeletes: (count: Int) -> Unit
 ) : InputConnectionWrapper(target, true) {
   override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
@@ -62,6 +63,10 @@ internal class TerminalInputConnection(
       forwardDeletes(sentText.removeCodePoints(beforeLength))
     }
     return super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
+  }
+
+  override fun finishComposingText(): Boolean = super.finishComposingText().also {
+    onComposingFinished()
   }
 
   private fun forwardDeletes(count: Int) {
