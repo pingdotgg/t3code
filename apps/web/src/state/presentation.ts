@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
+import type {
+  EnvironmentPresentation,
+  EnvironmentServerConfig,
+} from "@t3tools/client-runtime/connection";
 import {
   createEnvironmentPresentationAtoms,
   createEnvironmentSummaryAtoms,
@@ -20,6 +23,27 @@ export const environmentSummaries = createEnvironmentSummaryAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   presentationAtom: environmentPresentations.presentationAtom,
 });
+
+// Per-environment booleans, so a row reading one doesn't re-render when any other config changes.
+export function createEnvironmentServerConfigFlagAtoms(
+  serverConfigsAtom: Atom.Atom<ReadonlyMap<EnvironmentId, EnvironmentServerConfig>>,
+) {
+  return {
+    hasServerConfigAtom: Atom.family((environmentId: EnvironmentId) =>
+      Atom.make((get) => get(serverConfigsAtom).has(environmentId)),
+    ),
+    issuesSupportedAtom: Atom.family((environmentId: EnvironmentId) =>
+      Atom.make(
+        (get) =>
+          get(serverConfigsAtom).get(environmentId)?.environment.capabilities.issues === true,
+      ),
+    ),
+  };
+}
+
+export const environmentServerConfigFlags = createEnvironmentServerConfigFlagAtoms(
+  environmentPresentations.serverConfigsAtom,
+);
 
 const EMPTY_ENVIRONMENT_PRESENTATION_ATOM = Atom.make<EnvironmentPresentation | null>(null).pipe(
   Atom.withLabel("web-environment-presentation:empty"),
