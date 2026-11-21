@@ -1,3 +1,4 @@
+import { ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 export class ProviderInstanceNotFoundError extends Schema.TaggedError<ProviderInstanceNotFoundError>()(
@@ -22,6 +23,11 @@ export class ProviderWorkspaceMissingError extends Schema.TaggedError<ProviderWo
   },
 ) {
   override get message(): string {
-    return `This thread's workspace folder no longer exists or is not a directory: ${this.cwd}. Restore the folder at this path before retrying.`;
+    return `This thread's workspace folder no longer exists or is not a directory: ${this.cwd}. Restore the folder at this path before retrying. If the project moved, use Change folder in its project settings.`;
+  }
+
+  /** Carried onto the turn's failure item, where clients read it. */
+  get code() {
+    return ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE;
   }
 }

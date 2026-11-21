@@ -49,6 +49,8 @@ import {
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
+import { useMissingProjectFolders } from "../hooks/useMissingProjectFolders";
+import { openCommandPalette } from "../commandPaletteBus";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
@@ -73,6 +75,7 @@ import {
   type AssistantCitation,
   type ResponseContextRecord,
   type ChatFileAttachment,
+  ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -393,7 +396,11 @@ import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
-import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
+import {
+  branchMismatchBannerItem,
+  extensionStatusBannerItem,
+  missingProjectFolderBannerItem,
+} from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { useDelayedStatus } from "../hooks/useDelayedStatus";
@@ -422,6 +429,7 @@ const EMPTY_TURN_ITEMS: ThreadStructure["turnItems"] = [];
 const EMPTY_RUNS: ThreadStructure["runs"] = [];
 const EMPTY_AUTO_UPDATE_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
 const EMPTY_COMPOSER_BANNER_ITEMS: ReadonlyArray<ComposerBannerStackItem> = [];
+const NO_PROJECT_FOLDERS: ReadonlyArray<never> = [];
 
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 
@@ -1266,6 +1274,10 @@ export default function ChatView(props: ChatViewProps) {
       activeProject,
       environmentById.get(activeProject.environmentId)?.serverConfig?.scratchWorkspaceRoot ?? null,
     );
+  const activeProjectFolderMissing =
+    useMissingProjectFolders(
+      activeProject !== null && !activeProjectIsScratch ? [activeProject] : NO_PROJECT_FOLDERS,
+    ).length > 0;
   const logicalProjectEnvironments = useLogicalProjectEnvironments(
     activeProject,
     activeProjectIsScratch && draftId !== null,
@@ -2743,6 +2755,29 @@ export default function ChatView(props: ChatViewProps) {
     const extensionStatusItems = extensionStatusBanner === null ? [] : [extensionStatusBanner];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
+    const missingFolderItems =
+      activeProject !== null && activeProjectFolderMissing
+        ? [
+            missingProjectFolderBannerItem(
+              {
+                workspaceRoot: activeProject.workspaceRoot,
+                ...(canOperateThread
+                  ? {
+                      onChoose: () =>
+                        openCommandPalette({
+                          open: "change-project-folder",
+                          projectRef: scopeProjectRef(
+                            activeProject.environmentId,
+                            activeProject.id,
+                          ),
+                        }),
+                    }
+                  : {}),
+              },
+              messages,
+            ),
+          ]
+        : [];
     // An approval's feedback goes to that approval; the armed session waits for the next message.
     const freshSessionItems =
       freshSessionPending && activePendingApproval === null
@@ -2756,6 +2791,7 @@ export default function ChatView(props: ChatViewProps) {
         ...extensionStatusItems,
         ...usageLimitsItems,
         ...projectCloneItems,
+        ...missingFolderItems,
         ...freshSessionItems,
         ...systemComposerBannerItems,
       ];
@@ -2767,6 +2803,7 @@ export default function ChatView(props: ChatViewProps) {
       ...extensionStatusItems,
       ...usageLimitsItems,
       ...projectCloneItems,
+      ...missingFolderItems,
       ...freshSessionItems,
       ...systemComposerBannerItems,
       branchMismatchBannerItem(
@@ -3540,6 +3577,19 @@ export default function ChatView(props: ChatViewProps) {
               }
               threadErrorCode={
                 threadErrorIsServerRuntimeError ? (serverRuntime?.lastErrorCode ?? null) : null
+              }
+              missingFolderProjectId={
+                // A worktree's folder is not fixed this way, and an older error names a folder
+                // the project has since left. The server's message ends the path with ". ".
+                canOperateThread &&
+                threadErrorIsServerRuntimeError &&
+                serverRuntime?.lastErrorCode === ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE &&
+                activeProject !== null &&
+                !activeProjectIsScratch &&
+                activeThread.worktreePath === null &&
+                timelineThreadError?.includes(`: ${activeProject.workspaceRoot}. `) === true
+                  ? activeProject.id
+                  : null
               }
               threadErrorBannerKey={threadErrorBannerKey}
               setThreadError={setThreadError}

@@ -52,6 +52,7 @@ import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
+import { ChangeProjectFolderPopover } from "./ChangeProjectFolderPopover";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ProjectRepositoriesSettings } from "./ProjectRepositoriesSettings";
@@ -157,6 +158,8 @@ interface ProjectSelection {
   readonly environmentId: EnvironmentId | null;
   readonly checkoutKey: string | null;
   readonly memberKeys: ReadonlyArray<string>;
+  // Member keys come from folders, so a changed folder is followed by project id.
+  readonly memberIds: ReadonlyArray<string>;
 }
 
 function sameProjectSelection(a: ProjectSelection | null, b: ProjectSelection): boolean {
@@ -166,7 +169,8 @@ function sameProjectSelection(a: ProjectSelection | null, b: ProjectSelection): 
     a.environmentId === b.environmentId &&
     a.checkoutKey === b.checkoutKey &&
     a.memberKeys.length === b.memberKeys.length &&
-    a.memberKeys.every((key, index) => key === b.memberKeys[index])
+    a.memberKeys.every((key, index) => key === b.memberKeys[index]) &&
+    a.memberIds.every((id, index) => id === b.memberIds[index])
   );
 }
 
@@ -201,20 +205,25 @@ export function ProjectSettingsPanel({
       environmentId,
       checkoutKey,
       memberKeys: members.map((member) => member.physicalProjectKey),
+      memberIds: members.map((member) => `${member.environmentId}:${member.id}`),
     };
     if (!sameProjectSelection(lastSelection, current)) setLastSelection(current);
   }
 
+  const hasLastId = (member: SidebarProjectGroupMember) =>
+    lastSelection?.memberIds.includes(`${member.environmentId}:${member.id}`) === true;
+  const hasLastKey = (member: SidebarProjectGroupMember) =>
+    lastSelection?.memberKeys.includes(member.physicalProjectKey) === true;
+  // Another project can take a moved project's old folder, so the id wins over the folder key.
+  const isLastMember = groups.some((group) => group.memberProjects.some(hasLastId))
+    ? hasLastId
+    : hasLastKey;
   const successor =
     members.length === 0 &&
     lastSelection?.key === projectKey &&
     lastSelection.environmentId === environmentId &&
     lastSelection.checkoutKey === checkoutKey
-      ? groups.find((group) =>
-          group.memberProjects.some((member) =>
-            lastSelection.memberKeys.includes(member.physicalProjectKey),
-          ),
-        )
+      ? groups.find((group) => group.memberProjects.some(isLastMember))
       : undefined;
   if (successor) {
     return (
@@ -223,7 +232,10 @@ export function ProjectSettingsPanel({
         search={{
           project: successor.projectKey,
           machine: environmentId ?? undefined,
-          checkout: checkoutKey ?? undefined,
+          checkout:
+            checkoutKey === null
+              ? undefined
+              : successor.memberProjects.find(isLastMember)?.physicalProjectKey,
         }}
         replace
         hashScrollIntoView={false}
@@ -444,6 +456,12 @@ function ProjectDetail({
       <div className="min-w-0 flex-1 @min-[32rem]/settings-row:w-72 @min-[32rem]/settings-row:flex-none">
         <CheckoutGroupingSelect member={member} />
       </div>
+      {member.isScratch ? null : (
+        <ChangeProjectFolderPopover
+          member={member}
+          disabled={!editableIds.has(member.environmentId)}
+        />
+      )}
       {hasMultipleCheckouts ? (
         <Button
           size="sm"
@@ -471,7 +489,8 @@ function ProjectDetail({
             <SettingsRow
               key={member.physicalProjectKey}
               title={member.environmentLabel ?? gt("Environment")}
-              description={member.workspaceRoot}
+              // A path has few places to wrap, so a long one would run under the controls.
+              description={<span className="break-all">{member.workspaceRoot}</span>}
               control={checkoutControls(member)}
             />
           ));

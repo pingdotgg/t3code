@@ -19,6 +19,7 @@ import { msg, T, Var } from "gt-react";
 import {
   CircleDashedIcon,
   CircleStopIcon,
+  FolderXIcon,
   GitBranchIcon,
   MessageCircleIcon,
   ShieldQuestionIcon,
@@ -298,6 +299,33 @@ export function backgroundWorkNowItem(
         </InlineButton>
       </>
     ),
+  };
+}
+
+/** The thread's project folder is gone from disk, so its next turn would fail. */
+export function missingProjectFolderBannerItem(
+  input: {
+    readonly workspaceRoot: string;
+    /** Absent on a connection that cannot change the project. */
+    readonly onChoose?: () => void;
+  },
+  resolve: MessageResolver = m,
+): ComposerBannerStackItem {
+  return {
+    id: "missing-project-folder",
+    variant: "warning",
+    icon: <FolderXIcon />,
+    title: resolve(msg("Project folder not found")),
+    description: input.workspaceRoot,
+    ...(input.onChoose
+      ? {
+          actions: (
+            <Button size="xs" variant="ghost" onClick={input.onChoose}>
+              <T>Choose new folder</T>
+            </Button>
+          ),
+        }
+      : {}),
   };
 }
 

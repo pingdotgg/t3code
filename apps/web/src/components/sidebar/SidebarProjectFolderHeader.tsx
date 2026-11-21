@@ -1,18 +1,21 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ContextMenuSource } from "@t3tools/contracts";
-import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
+import { ChevronDownIcon, SquarePenIcon, TriangleAlertIcon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import { useMissingProjectFolders } from "../../hooks/useMissingProjectFolders";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+const NO_MEMBERS: SidebarProjectSnapshot["memberProjects"] = [];
 
 const FOLDER_DOT_CLASS_NAME = {
   attention: "bg-warning",
@@ -27,6 +30,24 @@ const FOLDER_DOT_LABEL = {
   unread: msg(", done", { $context: "project folder status, read after its name" }),
   working: msg(", working", { $context: "project folder status, read after its name" }),
 } as const;
+
+/** Warns that a project's folder is gone from disk. */
+export function MissingProjectFolderMark({ group }: { group: SidebarProjectSnapshot }) {
+  const gt = useGT();
+  const missing = useMissingProjectFolders(group.isScratch ? NO_MEMBERS : group.memberProjects);
+  if (missing.length === 0) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="flex shrink-0 text-warning" />}>
+        <TriangleAlertIcon aria-hidden className="size-3.5" />
+        <span className="sr-only">{gt("Folder not found")}</span>
+      </TooltipTrigger>
+      <TooltipPopup>
+        {gt("Folder not found")}: {missing.map((folder) => folder.workspaceRoot).join(", ")}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
 
 /** The folder's sidebar tree row; its thread rows name it as their parent. */
 export function sidebarFolderRowId(projectKey: string) {
@@ -92,6 +113,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
           {group.displayName}
         </span>
+        <MissingProjectFolderMark group={group} />
         {dot ? (
           <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>
             <span className="sr-only">{m(FOLDER_DOT_LABEL[dot])}</span>

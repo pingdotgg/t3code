@@ -296,6 +296,7 @@ import { requestUrl } from "./requestUrl.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
+const isWorkspacePathsError = Schema.is(WorkspacePaths.WorkspacePathsError);
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -3076,9 +3077,15 @@ export const layerWsRpc = (
                 new ProjectMutationError({
                   commandId: mutation.commandId,
                   message:
-                    cause._tag === "ProjectNotEmptyError" || cause._tag === "ProjectInvalidError"
+                    cause._tag === "ProjectNotEmptyError" ||
+                    cause._tag === "ProjectInvalidError" ||
+                    cause._tag === "ProjectConflictError"
                       ? cause.message
-                      : "Failed to mutate project.",
+                      : cause._tag === "ProjectOperationError" &&
+                          cause.operation === "normalize-workspace" &&
+                          isWorkspacePathsError(cause.cause)
+                        ? cause.cause.message
+                        : "Failed to mutate project.",
                   cause,
                 }),
             ),
