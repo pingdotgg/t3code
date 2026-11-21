@@ -2073,6 +2073,35 @@ it.effect("invalidates a ref snapshot when a mutation fails after changing Git",
   ),
 );
 
+it.effect("lists external worktree paths even within the ref snapshot refresh window", () =>
+  Effect.gen(function* () {
+    const cwd = yield* makeTmpDir();
+    const path = yield* Path.Path;
+    const worktree = path.join(cwd, "another checkout");
+    const movedWorktree = path.join(cwd, "moved checkout");
+    yield* initRepoWithCommit(cwd);
+    yield* git(cwd, ["branch", "feature"]);
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const list = driver.listRefs({ cwd, refresh: true, query: "feature" });
+    yield* list;
+
+    yield* git(cwd, ["worktree", "add", worktree, "feature"]);
+    assert.equal((yield* list).refs[0]?.worktreePath, worktree);
+    yield* git(cwd, ["worktree", "move", worktree, movedWorktree]);
+    assert.equal((yield* list).refs[0]?.worktreePath, movedWorktree);
+    yield* git(cwd, ["worktree", "remove", movedWorktree]);
+    assert.isNull((yield* list).refs[0]?.worktreePath);
+
+    yield* git(cwd, ["worktree", "add", "-b", "new-branch", worktree]);
+    const newBranchQuery = { cwd, query: "new-branch" };
+    assert.equal(
+      (yield* driver.listRefs({ ...newBranchQuery, refresh: true })).refs[0]?.worktreePath,
+      worktree,
+    );
+    assert.equal((yield* driver.listRefs(newBranchQuery)).refs[0]?.worktreePath, worktree);
+  }).pipe(Effect.provide(layerTest), Effect.scoped),
+);
+
 it.effect("marks the current branch when worktree metadata is unavailable", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -5849,6 +5878,35 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.equal(cachedStatus.behindCount, 0);
         assert.equal(refreshedStatus.behindCount, 1);
+      }),
+    );
+
+    it.effect("a ref snapshot detects which branches are checked out in other worktrees", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const worktree = (yield* Path.Path).join(cwd, "linked checkout");
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "feature"]);
+        yield* git(cwd, ["branch", "same-commit"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const snapshot = driver.readRefSnapshot(cwd);
+        const initial = yield* snapshot;
+        assert.isNotNull(initial);
+
+        yield* git(cwd, ["worktree", "add", "--detach", worktree]);
+        assert.equal(yield* snapshot, initial);
+        yield* git(worktree, ["checkout", "feature"]);
+        const attached = yield* snapshot;
+        assert.isNotNull(attached);
+        assert.notEqual(attached, initial);
+        assert.equal(yield* snapshot, attached);
+        yield* git(worktree, ["checkout", "same-commit"]);
+        const switched = yield* snapshot;
+        assert.isNotNull(switched);
+        assert.notEqual(switched, attached);
+        assert.notEqual(switched, initial);
+        yield* git(cwd, ["worktree", "remove", worktree]);
+        assert.equal(yield* snapshot, initial);
       }),
     );
 
