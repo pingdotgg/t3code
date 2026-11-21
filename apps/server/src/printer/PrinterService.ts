@@ -525,7 +525,9 @@ const make = Effect.gen(function* () {
             ? { ...existing, label: config.label }
             : placeholderSnapshot(config);
         }),
-        sessions: current.sessions.filter((session) => nextIds.has(session.printerId)),
+        sessions: current.sessions.filter(
+          (session) => session.proxyEnvironmentId !== undefined || nextIds.has(session.printerId),
+        ),
       };
     });
     if (nextSettings.enablePrinterSupport) {
@@ -640,22 +642,26 @@ const make = Effect.gen(function* () {
 
   const open: PrinterService["Service"]["open"] = Effect.fn("PrinterService.open")(
     function* (input) {
-      const config = configsById.get(input.printerId);
-      if (!config) {
+      const config = input.proxyEnvironmentId ? undefined : configsById.get(input.printerId);
+      if (!input.proxyEnvironmentId && !config) {
         return yield* new PrinterOperationError({
           operation: "open",
           printerId: input.printerId,
           reason: `Printer "${input.printerId}" is not configured.`,
         });
       }
-      const generation = generationsById.get(config.id) ?? 0;
       const existing = (yield* Ref.get(stateRef)).sessions.find(
-        (session) => session.threadId === input.threadId && session.printerId === input.printerId,
+        (session) =>
+          session.threadId === input.threadId &&
+          session.printerId === input.printerId &&
+          session.proxyEnvironmentId === input.proxyEnvironmentId,
       );
       const openedAt = DateTime.formatIso(yield* DateTime.now);
       const session: PrinterSession = existing ?? {
         threadId: input.threadId,
         printerId: input.printerId,
+        ...(input.proxyEnvironmentId ? { proxyEnvironmentId: input.proxyEnvironmentId } : {}),
+        ...(input.printerLabel ? { printerLabel: input.printerLabel } : {}),
         openedAt,
       };
       if (!existing) {
@@ -664,7 +670,10 @@ const make = Effect.gen(function* () {
           sessions: [...current.sessions, session],
         }));
       }
-      yield* pollOne(config, generation).pipe(Effect.ignore);
+      if (config) {
+        const generation = generationsById.get(config.id) ?? 0;
+        yield* pollOne(config, generation).pipe(Effect.ignore);
+      }
       return session;
     },
   );

@@ -49,7 +49,13 @@ export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
   | { id: "device" | `device:${string}`; kind: "device"; target?: DeviceTabTarget; title?: string }
-  | { id: "printer" | `printer:${string}`; kind: "printer"; printerId?: string; title?: string }
+  | {
+      id: "printer" | `printer:${string}`;
+      kind: "printer";
+      printerId?: string;
+      proxyEnvironmentId?: EnvironmentId;
+      title?: string;
+    }
   | {
       id: `terminal:${string}`;
       kind: "terminal";
@@ -200,7 +206,11 @@ interface RightPanelStoreState {
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   openPrinter: (
     ref: ScopedThreadRef,
-    target: { readonly printerId: string; readonly label?: string },
+    target: {
+      readonly printerId: string;
+      readonly proxyEnvironmentId?: EnvironmentId;
+      readonly label?: string;
+    },
     automatic?: boolean,
   ) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
@@ -697,6 +707,12 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         typeof surface.printerId === "string" && surface.printerId.length > 0
                           ? surface.printerId
                           : undefined;
+                      const proxyEnvironmentId =
+                        "proxyEnvironmentId" in surface &&
+                        typeof surface.proxyEnvironmentId === "string" &&
+                        surface.proxyEnvironmentId.length > 0
+                          ? (surface.proxyEnvironmentId as EnvironmentId)
+                          : undefined;
                       const title =
                         typeof surface.title === "string" && surface.title.length > 0
                           ? surface.title
@@ -706,6 +722,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           id: surface.id,
                           kind: "printer" as const,
                           ...(printerId ? { printerId } : {}),
+                          ...(proxyEnvironmentId ? { proxyEnvironmentId } : {}),
                           ...(title ? { title } : {}),
                         },
                       ];
@@ -908,11 +925,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       openPrinter: (ref, target, automatic = false) =>
         set((state) =>
           (automatic ? automaticUpdate : userAction)(state, scopedThreadKey(ref), (current) => {
-            const id = `printer:${encodeURIComponent(target.printerId)}` as const;
+            const proxyEnvironmentId =
+              target.proxyEnvironmentId && target.proxyEnvironmentId !== ref.environmentId
+                ? target.proxyEnvironmentId
+                : undefined;
+            const id = proxyEnvironmentId
+              ? (`printer:${encodeURIComponent(proxyEnvironmentId)}:${encodeURIComponent(target.printerId)}` as const)
+              : (`printer:${encodeURIComponent(target.printerId)}` as const);
             const surface: RightPanelSurface = {
               id,
               kind: "printer",
               printerId: target.printerId,
+              ...(proxyEnvironmentId ? { proxyEnvironmentId } : {}),
               ...(target.label ? { title: target.label } : {}),
             };
             const existing = current.surfaces.find((entry) => entry.id === id);

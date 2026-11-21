@@ -638,6 +638,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     "orchestration",
                     "worktree",
                     "pull-requests",
+                    ...(client.peerLink ? (["printer"] as const) : []),
                   ]),
                   issuedAt,
                 })),

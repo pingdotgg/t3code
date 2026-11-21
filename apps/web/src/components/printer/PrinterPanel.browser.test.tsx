@@ -12,11 +12,13 @@ import * as Exit from "effect/Exit";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import { collectFleetPrinters } from "~/state/printerFleet";
 import { render } from "../../../test/render";
 import { PrinterPanel } from "./PrinterPanel";
 
 const mockStateRef = vi.hoisted(() => ({
   current: null as PrinterServiceState | null,
+  proxyEnv: null as { readonly id: EnvironmentId; readonly label: string } | null,
 }));
 
 const mockRunCommand = vi.hoisted(() => vi.fn());
@@ -30,41 +32,62 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
-vi.mock("~/state/printer", () => ({
-  printerEnvironment: {
-    action: {
-      permissionAtom: () => "printer.action.permission",
+vi.mock("~/state/printer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/state/printer")>();
+  return {
+    ...actual,
+    printerEnvironment: {
+      action: {
+        permissionAtom: () => "printer.action.permission",
+      },
+      list: {
+        permissionAtom: () => "printer.list.permission",
+      },
     },
-    list: {
-      permissionAtom: () => "printer.list.permission",
+    useFleetPrinters: (threadEnvironmentId: EnvironmentId | null) => {
+      const state = mockStateRef.current ?? {
+        enabled: false,
+        agentAccessEnabled: false,
+        mediaBasePath: "/api/printer-media",
+        printers: [],
+        sessions: [],
+        revision: 0,
+      };
+      const sourceEnvId =
+        mockStateRef.proxyEnv?.id ?? threadEnvironmentId ?? EnvironmentId.make("env-1");
+      const sourceLabel = mockStateRef.proxyEnv?.label ?? "Local";
+      const entries = collectFleetPrinters(
+        [
+          {
+            environmentId: sourceEnvId,
+            label: sourceLabel,
+            relayManaged: mockStateRef.proxyEnv !== null,
+            state,
+          },
+        ],
+        threadEnvironmentId,
+      );
+      return {
+        entries,
+        localState: mockStateRef.proxyEnv ? { ...state, printers: [] } : state,
+        loaded: true,
+        error: null,
+      };
     },
-  },
-  usePrinterState: () => ({
-    state: mockStateRef.current ?? {
-      enabled: false,
-      agentAccessEnabled: false,
-      mediaBasePath: "/api/printer-media",
-      printers: [],
-      sessions: [],
-      revision: 0,
-    },
-    loaded: true,
-    error: null,
-    refresh: vi.fn(),
-  }),
-  usePrinterMediaAccess: () => ({
-    httpBase: "/api/printer-media",
-    query: {},
-  }),
-  refreshPrinterMediaAccess: vi.fn(),
-  buildPrinterMediaUrl: (
-    _access: unknown,
-    printerId: string,
-    asset: string,
-    cacheKey: string | number,
-  ) =>
-    `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="%23222"/><text x="10" y="50" fill="%23fff">${printerId}:${asset}:${cacheKey}</text></svg>`,
-}));
+    usePrinterMediaAccess: () => ({
+      httpBase: "/api/printer-media",
+      query: {},
+    }),
+    refreshPrinterMediaAccess: vi.fn(),
+    buildPrinterMediaUrl: (
+      _access: unknown,
+      printerId: string,
+      asset: string,
+      cacheKey: string | number,
+    ) =>
+      `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="%23222"/><text x="10" y="50" fill="%23fff">${printerId}:${asset}:${cacheKey}</text></svg>`,
+  };
+});
 
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => mockRunCommand,

@@ -54,11 +54,18 @@ export class PeerMcpClient extends Context.Service<
   }
 >()("t3/peer/PeerMcpClient") {}
 
+const MAX_PEER_IMAGE_BASE64_LENGTH = 14 * 1024 * 1024;
+
 const ToolCallResponse = Schema.Struct({
   result: Schema.optional(
     Schema.Struct({
       content: Schema.Array(
-        Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }),
+        Schema.Struct({
+          type: Schema.String,
+          text: Schema.optional(Schema.String),
+          data: Schema.optional(Schema.String),
+          mimeType: Schema.optional(Schema.String),
+        }),
       ),
       structuredContent: Schema.optional(Schema.Unknown),
       isError: Schema.optional(Schema.Boolean),
@@ -67,6 +74,8 @@ const ToolCallResponse = Schema.Struct({
   error: Schema.optional(Schema.Struct({ code: Schema.Number, message: Schema.String })),
 });
 const decodeToolCallResponse = Schema.decodeUnknownEffect(Schema.fromJsonString(ToolCallResponse));
+const decodeUnknownJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeFailure = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({ code: OrchestratorMcpFailure.fields.code, message: Schema.String }),
@@ -294,8 +303,55 @@ const make = Effect.gen(function* () {
               }),
         );
       }
+      const imagePart = body.result.content.find(
+        (part) =>
+          part.type === "image" &&
+          typeof part.data === "string" &&
+          part.data.length > 0 &&
+          part.data.length <= MAX_PEER_IMAGE_BASE64_LENGTH,
+      );
+      let payloadText = text;
+      if (imagePart?.data !== undefined) {
+        const parsed = yield* decodeUnknownJson(text).pipe(
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message:
+                  "The linked environment's answer did not match this version. Update both environments.",
+              }),
+          ),
+        );
+        const merged =
+          parsed !== null &&
+          typeof parsed === "object" &&
+          !Array.isArray(parsed) &&
+          "screenshot" in parsed &&
+          parsed.screenshot !== null &&
+          typeof parsed.screenshot === "object" &&
+          !Array.isArray(parsed.screenshot)
+            ? {
+                ...parsed,
+                screenshot: {
+                  ...parsed.screenshot,
+                  data: imagePart.data,
+                  ...(imagePart.mimeType ? { mimeType: imagePart.mimeType } : {}),
+                },
+              }
+            : parsed;
+        payloadText = yield* encodeUnknownJson(merged).pipe(
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message:
+                  "The linked environment's answer did not match this version. Update both environments.",
+              }),
+          ),
+        );
+      }
       const success = Schema.fromJsonString(input.success);
-      return yield* Schema.decodeEffect(success)(text).pipe(
+      return yield* Schema.decodeEffect(success)(payloadText).pipe(
         Effect.map(Result.succeed),
         Effect.mapError(
           () =>

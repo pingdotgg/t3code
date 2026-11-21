@@ -97,7 +97,7 @@ import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeviceState } from "~/state/device";
-import { usePrinterState } from "~/state/printer";
+import { useResolvedFleetPrinter } from "~/state/printer";
 import { formatDurationCompact, formatTemp, statusDotClass } from "./printer/printerFormat";
 import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
 import {
@@ -758,7 +758,13 @@ function SurfaceIcon({
         <Smartphone className="size-3 shrink-0" />
       );
     case "printer":
-      return <PrinterTabIcon environmentId={environmentId} printerId={surface.printerId} />;
+      return (
+        <PrinterTabIcon
+          environmentId={environmentId}
+          printerId={surface.printerId}
+          proxyEnvironmentId={surface.proxyEnvironmentId}
+        />
+      );
   }
 }
 
@@ -1787,11 +1793,14 @@ function DeviceTabTooltip(props: {
 function PrinterTabIcon(props: {
   readonly environmentId: EnvironmentId | null;
   readonly printerId: string | undefined;
+  readonly proxyEnvironmentId: EnvironmentId | undefined;
 }) {
-  const { state } = usePrinterState(props.environmentId);
-  const printer =
-    (props.printerId ? state.printers.find((entry) => entry.id === props.printerId) : undefined) ??
-    state.printers[0];
+  const entry = useResolvedFleetPrinter(
+    props.environmentId,
+    props.printerId,
+    props.proxyEnvironmentId,
+  );
+  const printer = entry?.printer;
   const hasError = printer?.alerts.some((alert) => alert.severity === "error") ?? false;
   const showDot =
     printer !== undefined &&
@@ -1820,11 +1829,12 @@ function PrinterTabTooltip(props: {
   readonly title: string;
 }) {
   const gt = useGT();
-  const { state } = usePrinterState(props.environmentId);
-  const printer =
-    (props.surface.printerId
-      ? state.printers.find((entry) => entry.id === props.surface.printerId)
-      : undefined) ?? state.printers[0];
+  const entry = useResolvedFleetPrinter(
+    props.environmentId,
+    props.surface.printerId,
+    props.surface.proxyEnvironmentId,
+  );
+  const printer = entry?.printer;
   if (!printer) return <span>{props.title}</span>;
   return (
     <div className="flex flex-col gap-0.5">
@@ -1834,6 +1844,7 @@ function PrinterTabTooltip(props: {
         (printer.job.status === "running" || printer.job.status === "pause")
           ? ` · ${printer.job.progressPercent}%`
           : ""}
+        {entry?.isProxied ? ` · ${entry.proxyEnvironmentLabel}` : ""}
       </span>
       <span className="text-muted-foreground tabular-nums">
         {printer.job.displayName

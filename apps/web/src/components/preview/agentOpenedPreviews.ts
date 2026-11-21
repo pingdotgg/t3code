@@ -223,7 +223,7 @@ export function resetDeviceSessionBaselinesForTests(): void {
 const printerSessionBaselines = new Map<EnvironmentId, ReadonlySet<string>>();
 
 const printerSessionKey = (session: PrinterServiceState["sessions"][number]) =>
-  `${session.threadId}:${session.printerId}:${session.openedAt}`;
+  `${session.threadId}:${session.proxyEnvironmentId ?? ""}:${session.printerId}:${session.openedAt}`;
 
 function applyPrinterSnapshot(
   environmentId: EnvironmentId,
@@ -237,11 +237,13 @@ function applyPrinterSnapshot(
     if (previous.has(printerSessionKey(session))) continue;
     const printer = state.printers.find((entry) => entry.id === session.printerId);
     const threadRef = scopeThreadRef(environmentId, session.threadId);
+    const label = session.printerLabel ?? printer?.label;
     useRightPanelStore.getState().openPrinter(
       threadRef,
       {
         printerId: session.printerId,
-        ...(printer ? { label: printer.label } : {}),
+        ...(session.proxyEnvironmentId ? { proxyEnvironmentId: session.proxyEnvironmentId } : {}),
+        ...(label ? { label } : {}),
       },
       true,
     );

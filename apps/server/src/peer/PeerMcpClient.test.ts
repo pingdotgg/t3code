@@ -447,3 +447,108 @@ it.effect("bounds the session handshake, not a tool call that waits longer", () 
     expect(yield* Fiber.join(waiting)).toEqual({ modes: "approval-required/plan" });
   }),
 );
+
+it.effect("merges image content blocks back into screenshot responses across peer links", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const box = descriptorOf("environment-printer-proxy", "Home Proxy");
+      const SnapshotResult = Schema.Struct({
+        printerId: Schema.String,
+        screenshot: Schema.Struct({
+          mimeType: Schema.Literals(["image/jpeg", "image/png"]),
+          data: Schema.String,
+          width: Schema.Int,
+          height: Schema.Int,
+        }),
+      });
+      const imageBase64 = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64");
+      let requests = 0;
+      const http = HttpClient.make((request) => {
+        const index = requests++;
+        if (index === 0) {
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response("{}", { status: 200, headers: { "mcp-session-id": "session" } }),
+            ),
+          );
+        }
+        if (index === 1) {
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response("", { status: 202 })),
+          );
+        }
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              JSON.stringify({
+                result: {
+                  content: [
+                    {
+                      type: "text",
+                      text: JSON.stringify({
+                        printerId: "p1s-studio",
+                        screenshot: { mimeType: "image/jpeg", width: 1280, height: 720 },
+                      }),
+                    },
+                    {
+                      type: "image",
+                      data: imageBase64,
+                      mimeType: "image/jpeg",
+                    },
+                  ],
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+        );
+      });
+      const context = yield* Layer.build(
+        PeerMcpClient.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(HttpClient.HttpClient, http),
+              Layer.mock(PeerLinks.PeerLinks)({
+                resolve: () =>
+                  Effect.succeed({
+                    link: {
+                      environmentId: box.environmentId,
+                      label: box.label,
+                      urls: ["https://peer.example"],
+                      access: "read-only",
+                      linkedAt: DateTime.makeUnsafe(0),
+                      expiresAt: DateTime.makeUnsafe(1),
+                      lastReachedAt: null,
+                      lastError: null,
+                    },
+                    url: "https://peer.example",
+                    token: "fixture",
+                    capabilities: box.capabilities,
+                  }),
+                recordOutcome: () => Effect.void,
+              }),
+            ),
+          ),
+        ),
+      );
+      const result = yield* Context.get(context, PeerMcpClient.PeerMcpClient).call({
+        environmentId: box.environmentId,
+        tool: "printer_camera_snapshot",
+        arguments: { printerId: "p1s-studio" },
+        limits: { runtimeMode: "approval-required", interactionMode: "default" },
+        success: SnapshotResult,
+      });
+      expect(result).toEqual({
+        printerId: "p1s-studio",
+        screenshot: {
+          mimeType: "image/jpeg",
+          data: imageBase64,
+          width: 1280,
+          height: 720,
+        },
+      });
+    }),
+  ),
+);

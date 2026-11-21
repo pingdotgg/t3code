@@ -1,8 +1,10 @@
 import {
+  OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   PrinterToolError,
   PrinterToolListResult,
   PrinterToolOpenResult,
+  PrinterToolPanelTargetInput,
   PrinterToolSnapshotResult,
   PrinterToolStatusResult,
   PrinterToolTargetInput,
@@ -22,10 +24,11 @@ const dependencies = [
 
 const PrinterToolFailure = Schema.Union([PrinterToolError, OrchestratorMcpFailure]);
 
-const PrinterListTool = Tool.make("printer_list", {
+export const PrinterListTool = Tool.make("printer_list", {
   description:
-    "List configured 3D printers, their online and job status, and which ones are open in this thread's Printer panel.",
+    "List 3D printers locally and across linked T3 Connect environments, their status, and which are open in this thread.",
   parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
     refresh: Schema.optional(
       Schema.Boolean.annotate({
         description: "Force a fresh poll from each printer. Default true.",
@@ -41,12 +44,12 @@ const PrinterListTool = Tool.make("printer_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromUnlinkedOutsideClients);
 
 const PrinterOpenTool = Tool.make("printer_open", {
   description:
-    "Open a 3D printer in this thread's Printer panel so the user can watch live camera, thermals, and print progress.",
-  parameters: PrinterToolTargetInput,
+    "Open a 3D printer (local or via a linked T3 Connect proxy environment) in this thread's Printer panel.",
+  parameters: PrinterToolPanelTargetInput,
   success: PrinterToolOpenResult,
   failure: PrinterToolFailure,
   dependencies,
@@ -58,9 +61,9 @@ const PrinterOpenTool = Tool.make("printer_open", {
   .annotate(Tool.OpenWorld, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
-const PrinterStatusTool = Tool.make("printer_status", {
+export const PrinterStatusTool = Tool.make("printer_status", {
   description:
-    "Read live 3D printer telemetry: job progress, layer, stage, nozzle/bed temps, fans, AMS/spool, objects, alerts, and freshness.",
+    "Read live 3D printer telemetry (auto-routing via linked T3 Connect proxy if needed): job, temps, fans, AMS, alerts, freshness.",
   parameters: PrinterToolTargetInput,
   success: PrinterToolStatusResult,
   failure: PrinterToolFailure,
@@ -71,11 +74,11 @@ const PrinterStatusTool = Tool.make("printer_status", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromUnlinkedOutsideClients);
 
 export const PrinterCameraSnapshotTool = Tool.make("printer_camera_snapshot", {
   description:
-    "Capture a live camera frame from a 3D printer (never slicer cover art), with capturedAt timestamp and stale flag.",
+    "Capture a live camera frame from a 3D printer (auto-routing via linked T3 Connect proxy if needed), with timestamp and stale flag.",
   parameters: PrinterToolTargetInput,
   success: PrinterToolSnapshotResult,
   failure: PrinterToolFailure,
@@ -86,12 +89,12 @@ export const PrinterCameraSnapshotTool = Tool.make("printer_camera_snapshot", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, true)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromUnlinkedOutsideClients);
 
 const PrinterCloseTool = Tool.make("printer_close", {
   description:
     "Remove a 3D printer from this thread's Printer panel. Only closes the panel view; never stops a print.",
-  parameters: PrinterToolTargetInput,
+  parameters: PrinterToolPanelTargetInput,
   success: Schema.Record(Schema.String, Schema.Never),
   failure: PrinterToolFailure,
   dependencies,

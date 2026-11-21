@@ -22,6 +22,7 @@ import {
   Play,
   Printer,
   RefreshCw,
+  Server,
   Settings,
   SkipForward,
   Square,
@@ -61,8 +62,9 @@ import { type RightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
 import {
   printerEnvironment,
   refreshPrinterMediaAccess,
+  selectFleetPrinter,
+  useFleetPrinters,
   usePrinterMediaAccess,
-  usePrinterState,
 } from "~/state/printer";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -414,13 +416,27 @@ export function PrinterPanel(props: {
   readonly surface: Extract<RightPanelSurface, { kind: "printer" }>;
   readonly visible: boolean;
 }) {
-  const { environmentId } = props.threadRef;
   const gt = useGT();
   const navigate = useNavigate();
-  const { state, loaded, error: stateError } = usePrinterState(environmentId);
-  const mediaAccess = usePrinterMediaAccess(environmentId);
+  const threadEnvironmentId = props.threadRef.environmentId;
+  const {
+    entries: fleetPrinters,
+    localState: state,
+    loaded,
+    error: stateError,
+  } = useFleetPrinters(threadEnvironmentId);
 
-  const canAction = useAtomValue(printerEnvironment.action.permissionAtom(environmentId));
+  const activeEntry = selectFleetPrinter(
+    fleetPrinters,
+    props.surface.printerId,
+    props.surface.proxyEnvironmentId,
+  );
+  const activePrinter = activeEntry?.printer;
+  const proxyEnvironmentId = activeEntry?.proxyEnvironmentId ?? threadEnvironmentId;
+
+  const mediaAccess = usePrinterMediaAccess(proxyEnvironmentId);
+
+  const canAction = useAtomValue(printerEnvironment.action.permissionAtom(proxyEnvironmentId));
   const runAction = useAtomCommand(printerEnvironment.action, { reportFailure: false });
   const runList = useAtomCommand(printerEnvironment.list, { reportFailure: false });
 
@@ -434,11 +450,6 @@ export function PrinterPanel(props: {
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
   const lastMediaRefreshMsRef = useRef(0);
 
-  const activePrinter =
-    (props.surface.printerId
-      ? state.printers.find((printer) => printer.id === props.surface.printerId)
-      : undefined) ?? state.printers[0];
-
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks container width to switch single-tree narrow vs wide layout without duplicating viewport polling
   useEffect(() => {
     if (!containerElement) return;
@@ -451,18 +462,21 @@ export function PrinterPanel(props: {
     const now = Date.now();
     if (now - lastMediaRefreshMsRef.current < 15_000) return;
     lastMediaRefreshMsRef.current = now;
-    refreshPrinterMediaAccess(environmentId);
+    refreshPrinterMediaAccess(proxyEnvironmentId);
   };
 
   const openSettings = () => {
-    void navigate({ to: "/settings/printers" });
+    void navigate({
+      to: "/settings/printers",
+      ...(activeEntry?.isProxied ? { search: { machine: activeEntry.proxyEnvironmentId } } : {}),
+    });
   };
 
   const handleRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
     const result = await runList({
-      environmentId,
+      environmentId: proxyEnvironmentId,
       input: {
         ...(activePrinter ? { printerId: activePrinter.id } : {}),
         refresh: true,
@@ -482,7 +496,7 @@ export function PrinterPanel(props: {
     if (!activePrinter || !canAction || pendingAction !== null) return;
     setPendingAction(action.kind);
     const result = await runAction({
-      environmentId,
+      environmentId: proxyEnvironmentId,
       input: { printerId: activePrinter.id, action },
     });
     setPendingAction(null);
@@ -495,13 +509,14 @@ export function PrinterPanel(props: {
     }
   };
 
-  const handleSelectPrinter = (printerId: string | null) => {
-    if (!printerId) return;
-    const match = state.printers.find((entry) => entry.id === printerId);
+  const handleSelectPrinter = (fleetKey: string | null) => {
+    if (!fleetKey) return;
+    const match = fleetPrinters.find((entry) => entry.key === fleetKey);
     if (!match) return;
     useRightPanelStore.getState().openPrinter(props.threadRef, {
-      printerId: match.id as PrinterId,
-      label: match.label,
+      printerId: match.printer.id as PrinterId,
+      ...(match.isProxied ? { proxyEnvironmentId: match.proxyEnvironmentId } : {}),
+      label: match.printer.label,
     });
   };
 
@@ -743,15 +758,17 @@ export function PrinterPanel(props: {
                 statusDotClass(activePrinter.job.status, activePrinter.online, hasErrorAlert),
               )}
             />
-            {state.printers.length > 1 ? (
-              <Select value={activePrinter.id} onValueChange={handleSelectPrinter}>
+            {fleetPrinters.length > 1 && activeEntry ? (
+              <Select value={activeEntry.key} onValueChange={handleSelectPrinter}>
                 <SelectTrigger size="sm" className="max-w-44">
                   <SelectValue>{activePrinter.label}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  {state.printers.map((printer) => (
-                    <SelectItem key={printer.id} value={printer.id}>
-                      {printer.label}
+                  {fleetPrinters.map((entry) => (
+                    <SelectItem key={entry.key} value={entry.key}>
+                      {entry.isProxied
+                        ? `${entry.printer.label} · ${entry.proxyEnvironmentLabel}`
+                        : entry.printer.label}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -764,6 +781,27 @@ export function PrinterPanel(props: {
             <Badge size="sm" variant={statusBadgeVariant(activePrinter.job.status, hasErrorAlert)}>
               {statusLabel}
             </Badge>
+            {activeEntry?.isProxied ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Badge size="sm" variant="outline">
+                      <Server className="size-2.5 shrink-0" />
+                      <span className="max-w-24 truncate">
+                        {gt("Via {environment}", {
+                          environment: activeEntry.proxyEnvironmentLabel,
+                        })}
+                      </span>
+                    </Badge>
+                  }
+                />
+                <TooltipPopup>
+                  {gt("Routed through {environment} via T3 Connect", {
+                    environment: activeEntry.proxyEnvironmentLabel,
+                  })}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
           </div>
 
           <div className="flex shrink-0 items-center gap-1">

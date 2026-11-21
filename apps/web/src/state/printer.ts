@@ -9,13 +9,30 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useMessages } from "gt-react";
+import { useEffect } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { useEnvironmentQuery } from "./query";
+import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
+import { useEnvironments } from "./environments";
+import {
+  collectFleetPrinters,
+  type FleetPrinterEntry,
+  type FleetPrinterEnvironmentSource,
+  selectFleetPrinter,
+} from "./printerFleet";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
 import { environmentSession } from "./session";
 
+export {
+  selectFleetPrinter,
+  type FleetPrinterEntry,
+  type FleetPrinterEnvironmentSource,
+} from "./printerFleet";
+
 export const printerEnvironment = createPrinterEnvironmentAtoms(connectionAtomRuntime);
+
+const MEDIA_TICKET_REFRESH_INTERVAL_MS = 210_000;
 
 const EMPTY_PRINTER_STATE: PrinterServiceState = {
   enabled: false,
@@ -25,6 +42,10 @@ const EMPTY_PRINTER_STATE: PrinterServiceState = {
   sessions: [],
   revision: 0,
 };
+
+const connectedPrinterStatesAtom = environmentAtomList("printer:states", (environmentId) =>
+  printerEnvironment.state({ environmentId, input: {} }),
+);
 
 export function usePrinterState(environmentId: EnvironmentId | null): {
   readonly state: PrinterServiceState;
@@ -42,6 +63,85 @@ export function usePrinterState(environmentId: EnvironmentId | null): {
     loaded: query.data !== null,
     error: query.error,
     refresh: query.refresh,
+  };
+}
+
+/**
+ * Discovers 3D printers across all connected T3 Connect environments so any thread
+ * on any machine in the fleet can seamlessly route through whichever environment
+ * has network access to the printer.
+ */
+export function useFleetPrinters(threadEnvironmentId: EnvironmentId | null): {
+  readonly entries: ReadonlyArray<FleetPrinterEntry>;
+  readonly localState: PrinterServiceState;
+  readonly loaded: boolean;
+  readonly error: string | null;
+} {
+  const resolve = useMessages();
+  const { environments } = useEnvironments();
+  const connected = environments.filter((env) => env.connection.phase === "connected");
+
+  const envIds: Array<EnvironmentId> = [];
+  const envMeta = new Map<
+    EnvironmentId,
+    { readonly label: string; readonly relayManaged: boolean }
+  >();
+  if (threadEnvironmentId !== null) {
+    const match = environments.find((env) => env.environmentId === threadEnvironmentId);
+    envIds.push(threadEnvironmentId);
+    envMeta.set(threadEnvironmentId, {
+      label: match?.label ?? threadEnvironmentId,
+      relayManaged: match?.relayManaged ?? false,
+    });
+  }
+  for (const env of connected) {
+    if (envMeta.has(env.environmentId)) continue;
+    envIds.push(env.environmentId);
+    envMeta.set(env.environmentId, {
+      label: env.label,
+      relayManaged: env.relayManaged,
+    });
+  }
+
+  const results = useAtomValue(connectedPrinterStatesAtom(environmentIdsKey(envIds)));
+  const sources: Array<FleetPrinterEnvironmentSource> = [];
+  let localState = EMPTY_PRINTER_STATE;
+  let localLoaded = threadEnvironmentId === null;
+  let localError: string | null = null;
+  let anyOtherLoaded = false;
+
+  for (let index = 0; index < envIds.length; index += 1) {
+    const environmentId = envIds[index]!;
+    const result = results[index];
+    const meta = envMeta.get(environmentId)!;
+    const data = result && AsyncResult.isSuccess(result) ? result.value : null;
+    sources.push({
+      environmentId,
+      label: meta.label,
+      relayManaged: meta.relayManaged,
+      state: data,
+    });
+    if (environmentId === threadEnvironmentId) {
+      if (data !== null) {
+        localState = data;
+        localLoaded = true;
+      } else if (result && AsyncResult.isFailure(result)) {
+        localLoaded = true;
+        localError = formatEnvironmentQueryError(result.cause, resolve);
+      }
+    } else if (data !== null || (result && AsyncResult.isFailure(result))) {
+      anyOtherLoaded = true;
+    }
+  }
+
+  const entries = collectFleetPrinters(sources, threadEnvironmentId);
+  const loaded = entries.length > 0 || (localLoaded && (envIds.length <= 1 || anyOtherLoaded));
+
+  return {
+    entries,
+    localState,
+    loaded,
+    error: entries.length === 0 ? localError : null,
   };
 }
 
@@ -68,7 +168,20 @@ export function usePrinterMediaAccess(environmentId: EnvironmentId | null): Devi
   const result = useAtomValue(
     environmentId === null ? EMPTY_MEDIA_ACCESS_ATOM : printerMediaAccessAtom(environmentId),
   );
-  return AsyncResult.isSuccess(result) ? result.value : null;
+  const access = AsyncResult.isSuccess(result) ? result.value : null;
+  const usesMediaTicket = access?.query.wsTicket !== undefined;
+
+  // Proactively renew 5-minute media wsTickets on long-lived T3 Connect sessions before expiry.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules periodic renewal of short-lived media wsTickets for remote/T3 Connect environments while mounted
+  useEffect(() => {
+    if (environmentId === null || !usesMediaTicket) return;
+    const timer = window.setInterval(() => {
+      refreshPrinterMediaAccess(environmentId);
+    }, MEDIA_TICKET_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [environmentId, usesMediaTicket]);
+
+  return access;
 }
 
 export function refreshPrinterMediaAccess(environmentId: EnvironmentId): void {
@@ -89,4 +202,13 @@ export function buildPrinterMediaUrl(
   params.set("v", String(cacheKey));
   const base = access.httpBase.replace(/\/+$/, "");
   return `${base}/${encodeURIComponent(printerId)}/${asset}?${params.toString()}`;
+}
+
+export function useResolvedFleetPrinter(
+  threadEnvironmentId: EnvironmentId | null,
+  printerId?: string,
+  proxyEnvironmentId?: EnvironmentId,
+): FleetPrinterEntry | undefined {
+  const { entries } = useFleetPrinters(threadEnvironmentId);
+  return selectFleetPrinter(entries, printerId, proxyEnvironmentId);
 }

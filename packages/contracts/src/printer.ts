@@ -1,7 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { EnvironmentId, ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { OrchestratorMcpEnvironmentTarget } from "./orchestratorMcp.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
 
 export const PrinterId = TrimmedNonEmptyString.check(
@@ -302,6 +303,9 @@ export type PrinterSnapshot = typeof PrinterSnapshot.Type;
 export const PrinterSession = Schema.Struct({
   threadId: ThreadId,
   printerId: PrinterId,
+  /** When the printer is hosted by another environment in T3 Connect, route UI & media there. */
+  proxyEnvironmentId: Schema.optional(EnvironmentId),
+  printerLabel: Schema.optional(TrimmedNonEmptyString),
   openedAt: Schema.String,
 });
 export type PrinterSession = typeof PrinterSession.Type;
@@ -353,6 +357,9 @@ export type PrinterListInput = typeof PrinterListInput.Type;
 export const PrinterOpenInput = Schema.Struct({
   threadId: ThreadId,
   printerId: PrinterId,
+  /** Optional T3 Connect environment hosting the printer when proxied from another machine. */
+  proxyEnvironmentId: Schema.optional(EnvironmentId),
+  printerLabel: Schema.optional(TrimmedNonEmptyString),
 });
 export type PrinterOpenInput = typeof PrinterOpenInput.Type;
 
@@ -479,11 +486,28 @@ export const PrinterToolListResult = Schema.Struct({
       progressPercent: Schema.NullOr(Schema.Number),
       hasCamera: Schema.Boolean,
       openInThread: Schema.Boolean,
+      environmentId: Schema.optional(EnvironmentId),
+      environmentLabel: Schema.optional(Schema.String),
     }),
   ),
 });
 
 export const PrinterToolTargetInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+  printerId: Schema.optional(
+    TrimmedString.annotate({
+      description:
+        "Printer id or label from `printer_list`. Omit when only one printer is configured or open.",
+    }),
+  ),
+});
+
+export const PrinterToolPanelTargetInput = Schema.Struct({
+  environmentId: Schema.optional(
+    EnvironmentId.annotate({
+      description: "Optional linked environment hosting the printer. Omit to auto-discover.",
+    }),
+  ),
   printerId: Schema.optional(
     TrimmedString.annotate({
       description:
@@ -495,11 +519,15 @@ export const PrinterToolTargetInput = Schema.Struct({
 export const PrinterToolStatusResult = Schema.Struct({
   printer: PrinterSnapshot,
   cameraAgeSeconds: Schema.NullOr(Schema.Number),
+  environmentId: Schema.optional(EnvironmentId),
+  environmentLabel: Schema.optional(Schema.String),
   note: Schema.String,
 });
 
 export const PrinterToolOpenResult = Schema.Struct({
   printer: PrinterSnapshot,
+  environmentId: Schema.optional(EnvironmentId),
+  environmentLabel: Schema.optional(Schema.String),
   note: Schema.String,
 });
 
@@ -510,6 +538,8 @@ export const PrinterToolSnapshotResult = Schema.Struct({
   stale: Schema.Boolean,
   capturedAt: Schema.String,
   cameraAgeSeconds: Schema.NullOr(Schema.Number),
+  environmentId: Schema.optional(EnvironmentId),
+  environmentLabel: Schema.optional(Schema.String),
   screenshot: Schema.Struct({
     mimeType: Schema.Literals(["image/jpeg", "image/png"]),
     data: Schema.String,

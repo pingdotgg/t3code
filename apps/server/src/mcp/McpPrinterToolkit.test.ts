@@ -7,10 +7,14 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { McpSchema, McpServer } from "effect/ai";
 
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PrinterService from "../printer/PrinterService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -272,6 +276,234 @@ describe("McpPrinterToolkit", () => {
             .pipe(callWith(["printer"]), Effect.provideService(McpSchema.McpServerClient, client));
           expect(closed.isError).toBe(false);
         }).pipe(Effect.provide(layerTest)),
+      ),
+  );
+
+  it.effect(
+    "routes printer_list, printer_status, printer_camera_snapshot, and printer_open through linked T3 Connect proxies",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const proxyEnvId = EnvironmentId.make("env-home-proxy");
+          const openedSessions: Array<PrinterServiceState["sessions"][number]> = [];
+          const forwardedCalls: Array<{ readonly tool: string; readonly env: EnvironmentId }> = [];
+
+          const emptyLocalState = (): PrinterServiceState => ({
+            enabled: false,
+            agentAccessEnabled: false,
+            mediaBasePath: "/api/printer-media",
+            printers: [],
+            sessions: [...openedSessions],
+            revision: 1,
+          });
+
+          const layerRemoteNode = McpHttpServer.layerPrinterToolkit.pipe(
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+            Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+            Layer.provideMerge(
+              Layer.mock(PrinterService.PrinterService)({
+                state: Effect.sync(emptyLocalState),
+                list: () => Effect.sync(emptyLocalState),
+                open: (input) =>
+                  Effect.sync(() => {
+                    const session = {
+                      threadId: input.threadId,
+                      printerId: input.printerId,
+                      ...(input.proxyEnvironmentId
+                        ? { proxyEnvironmentId: input.proxyEnvironmentId }
+                        : {}),
+                      ...(input.printerLabel ? { printerLabel: input.printerLabel } : {}),
+                      openedAt: "2026-11-21T07:00:00.000Z",
+                    };
+                    openedSessions.push(session);
+                    return session;
+                  }),
+                close: () => Effect.void,
+                sessionsForThread: () => Effect.sync(() => [...openedSessions]),
+              }),
+            ),
+            Layer.provideMerge(
+              Layer.mock(PeerLinks.PeerLinks)({
+                enabled: Effect.succeed(true),
+                list: Effect.succeed([
+                  {
+                    environmentId: proxyEnvId,
+                    label: "Home Proxy",
+                    urls: ["https://home.t3.test"],
+                    status: "reachable",
+                    access: "read-only",
+                    linkedAt: DateTime.makeUnsafe(0),
+                    expiresAt: DateTime.makeUnsafe("2099-01-01T00:00:00.000Z"),
+                    lastReachedAt: null,
+                    lastError: null,
+                  },
+                ]),
+                get: (id) =>
+                  Effect.succeed(
+                    id === proxyEnvId
+                      ? Option.some({
+                          environmentId: proxyEnvId,
+                          label: "Home Proxy",
+                          urls: ["https://home.t3.test"],
+                          access: "read-only" as const,
+                          linkedAt: DateTime.makeUnsafe(0),
+                          expiresAt: DateTime.makeUnsafe("2099-01-01T00:00:00.000Z"),
+                          lastReachedAt: null,
+                          lastError: null,
+                        })
+                      : Option.none(),
+                  ),
+              }),
+            ),
+            Layer.provideMerge(
+              Layer.mock(PeerForwarding.PeerForwarding)({
+                call: (_scope, tool, targetEnvId) => {
+                  forwardedCalls.push({ tool: tool.name, env: targetEnvId });
+                  if (tool.name === "printer_list") {
+                    return Effect.succeed({
+                      enabled: true,
+                      printers: [
+                        {
+                          id: printerId,
+                          label: "Studio P1S",
+                          kind: "home-assistant-bambu",
+                          model: "Bambu Lab P1S",
+                          online: true,
+                          stale: false,
+                          status: "running",
+                          stageLabel: "Printing",
+                          fileName: "desk-jig.gcode.3mf",
+                          progressPercent: 42,
+                          hasCamera: true,
+                          openInThread: false,
+                          environmentId: proxyEnvId,
+                        },
+                      ],
+                    }) as never;
+                  }
+                  if (tool.name === "printer_status") {
+                    return Effect.succeed({
+                      printer: mockPrinterSnapshot,
+                      cameraAgeSeconds: 2,
+                      environmentId: proxyEnvId,
+                      note: "Live via Home Proxy.",
+                    }) as never;
+                  }
+                  if (tool.name === "printer_camera_snapshot") {
+                    return Effect.succeed({
+                      printerId,
+                      printerLabel: "Studio P1S",
+                      online: true,
+                      stale: false,
+                      capturedAt: "2026-11-21T07:00:00.000Z",
+                      cameraAgeSeconds: 2,
+                      environmentId: proxyEnvId,
+                      screenshot: {
+                        mimeType: "image/jpeg",
+                        data: Buffer.from(sampleJpeg).toString("base64"),
+                        width: 16,
+                        height: 12,
+                      },
+                    }) as never;
+                  }
+                  return Effect.die(`Unexpected forwarded tool ${tool.name}`);
+                },
+              }),
+            ),
+          );
+
+          yield* Effect.gen(function* () {
+            const server = yield* McpServer.McpServer;
+            const callAsThread = Effect.provideService(McpInvocationContext.McpInvocationContext, {
+              ...invocation(["printer"]),
+              linkedEnvironments: true,
+            });
+
+            // Auto-discovers printer on Home Proxy with 0 local printers.
+            const listed = yield* server
+              .callTool({ name: "printer_list", arguments: {} })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(listed.isError, JSON.stringify(listed.content)).toBe(false);
+            expect(listed.structuredContent).toMatchObject({
+              enabled: true,
+              printers: [
+                {
+                  id: "p1s-studio",
+                  environmentId: proxyEnvId,
+                  environmentLabel: "Home Proxy",
+                },
+              ],
+            });
+
+            // Auto-routes printer_open and records proxyEnvironmentId on the local thread's session.
+            const opened = yield* server
+              .callTool({ name: "printer_open", arguments: {} })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(opened.isError, JSON.stringify(opened.content)).toBe(false);
+            expect(opened.structuredContent).toMatchObject({
+              printer: { id: "p1s-studio" },
+              environmentId: proxyEnvId,
+              environmentLabel: "Home Proxy",
+            });
+            expect(openedSessions).toHaveLength(1);
+            expect(openedSessions[0]?.proxyEnvironmentId).toBe(proxyEnvId);
+
+            // Subsequent printer_status and printer_camera_snapshot reuse the open proxied session directly.
+            const callsBeforeReuse = forwardedCalls.length;
+            const status = yield* server
+              .callTool({ name: "printer_status", arguments: {} })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(status.isError, JSON.stringify(status.content)).toBe(false);
+            expect(status.structuredContent).toMatchObject({
+              printer: { id: "p1s-studio" },
+              environmentId: proxyEnvId,
+              environmentLabel: "Home Proxy",
+            });
+
+            const snap = yield* server
+              .callTool({ name: "printer_camera_snapshot", arguments: {} })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(snap.isError, JSON.stringify(snap.content)).toBe(false);
+            expect(snap.content.map((entry) => entry.type)).toEqual(["text", "image"]);
+            expect(snap.structuredContent).toMatchObject({
+              printerId: "p1s-studio",
+              environmentId: proxyEnvId,
+              environmentLabel: "Home Proxy",
+              screenshot: { mimeType: "image/jpeg", width: 16, height: 12 },
+            });
+            expect(forwardedCalls.slice(callsBeforeReuse)).toEqual([
+              { tool: "printer_status", env: proxyEnvId },
+              { tool: "printer_camera_snapshot", env: proxyEnvId },
+            ]);
+
+            // Linked peer callers never hop onward (single-hop fence) and require local opt-in.
+            const linkedCaller = Effect.provideService(McpInvocationContext.McpInvocationContext, {
+              environmentId,
+              requestNamespace: "client:peer-1",
+              thread: undefined,
+              client: {
+                sessionId: "peer-1",
+                label: "T3 Code · Other",
+                access: "read-only",
+                linked: true,
+              },
+              capabilities: new Set<McpInvocationContext.McpCapability>(["printer"]),
+              issuedAt: 1,
+              linkedEnvironments: true,
+            });
+            const callsBeforePeer = forwardedCalls.length;
+            const peerList = yield* server
+              .callTool({ name: "printer_list", arguments: {} })
+              .pipe(linkedCaller, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(peerList.isError).toBe(false);
+            expect(peerList.structuredContent).toEqual({ enabled: false, printers: [] });
+            const peerStatus = yield* server
+              .callTool({ name: "printer_status", arguments: {} })
+              .pipe(linkedCaller, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(peerStatus.isError).toBe(true);
+            expect(forwardedCalls.length).toBe(callsBeforePeer);
+          }).pipe(Effect.provide(layerRemoteNode));
+        }),
       ),
   );
 });

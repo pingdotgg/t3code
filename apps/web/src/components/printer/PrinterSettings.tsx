@@ -9,7 +9,7 @@ import {
   type SettingsSecretValue,
 } from "@t3tools/contracts";
 import { useGT } from "gt-react";
-import { CheckCircle2, Plus, Printer, Trash2, Wrench, X } from "lucide-react";
+import { CheckCircle2, Plus, Printer, Server, Trash2, Wrench, X } from "lucide-react";
 import { useId, useState } from "react";
 
 import {
@@ -41,8 +41,9 @@ import {
   SettingsSection,
 } from "~/components/settings/settingsLayout";
 import { useSettingsScope } from "~/components/settings/SettingsScopeContext";
+import { selectEnvironmentAxis } from "~/components/settings/settingsScopeAxis";
 import { useScopedSettings } from "~/components/settings/useScopedSettings";
-import { printerEnvironment, usePrinterState } from "~/state/printer";
+import { printerEnvironment, useFleetPrinters, usePrinterState } from "~/state/printer";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -519,11 +520,13 @@ function PrinterEditorForm({
 
 function PrinterSettingsContent() {
   const gt = useGT();
-  const { environment } = useSettingsScope();
+  const { environment, search, selectScope } = useSettingsScope();
   const settings = useScopedSettings();
   const environmentId = environment?.environmentId ?? null;
   const canConfigure = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const { state } = usePrinterState(environmentId);
+  const { entries: fleetPrinters } = useFleetPrinters(environmentId);
+  const remotePrinters = fleetPrinters.filter((entry) => entry.isProxied);
   const configure = useAtomCommand(printerEnvironment.configure, { reportFailure: false });
 
   const [editingDraft, setEditingDraft] = useState<PrinterDraft | null>(null);
@@ -718,6 +721,61 @@ function PrinterSettingsContent() {
           ) : null}
         </div>
       </SettingsSection>
+
+      {remotePrinters.length > 0 ? (
+        <SettingsSection id="printer-fleet-proxies" title={gt("Available via T3 Connect")}>
+          <div className="space-y-2.5 p-4">
+            <p className="text-xs text-muted-foreground">
+              {gt(
+                "Printers configured on another connected environment route automatically through it from any thread.",
+              )}
+            </p>
+            {remotePrinters.map((entry) => (
+              <div
+                key={entry.key}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card/60 px-3 py-2.5"
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate text-sm font-medium text-foreground">
+                      {entry.printer.label}
+                    </span>
+                    <Badge
+                      size="sm"
+                      variant={
+                        entry.printer.online
+                          ? "success"
+                          : entry.printer.connectionState === "error"
+                            ? "error"
+                            : "secondary"
+                      }
+                    >
+                      {entry.printer.online ? gt("Online") : gt("Offline")}
+                    </Badge>
+                    <Badge size="sm" variant="outline">
+                      <Server className="size-2.5 shrink-0" />
+                      {gt("Via {environment}", { environment: entry.proxyEnvironmentLabel })}
+                    </Badge>
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    <PrinterKindLabel kind={entry.printer.kind} />
+                    {entry.printer.hardware.model ? ` · ${entry.printer.hardware.model}` : ""}
+                  </div>
+                </div>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() =>
+                    selectScope(selectEnvironmentAxis(search, entry.proxyEnvironmentId))
+                  }
+                >
+                  {gt("Manage on {environment}", { environment: entry.proxyEnvironmentLabel })}
+                </Button>
+              </div>
+            ))}
+          </div>
+        </SettingsSection>
+      ) : null}
 
       <AlertDialog
         open={removingPrinter !== null}

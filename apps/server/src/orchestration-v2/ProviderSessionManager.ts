@@ -510,16 +510,22 @@ export const layerWithOptions = (
                     !deviceOverridden &&
                     settings.enableAgentDeviceAccess,
                   printer:
-                    settings.enablePrinterSupport &&
                     !printerOverridden &&
-                    settings.enableAgentPrinterAccess,
+                    ((settings.enablePrinterSupport && settings.enableAgentPrinterAccess) ||
+                      (!settings.enablePrinterSupport && settings.linkedEnvironmentsEnabled)),
                 };
             }
             const effective = resolveProjectSettings(settings, thread.projectId).settings;
+            const projectPrinterOverride =
+              settings.projectSettingsOverrides[thread.projectId]?.enableAgentPrinterAccess;
             return {
               browser: effective.enableAgentBrowserAccess,
               device: settings.enableDeviceSupport && effective.enableAgentDeviceAccess,
-              printer: settings.enablePrinterSupport && effective.enableAgentPrinterAccess,
+              printer:
+                (settings.enablePrinterSupport && effective.enableAgentPrinterAccess) ||
+                (!settings.enablePrinterSupport &&
+                  settings.linkedEnvironmentsEnabled &&
+                  projectPrinterOverride !== false),
             };
           }).pipe(
             Effect.catch((cause) =>

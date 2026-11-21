@@ -205,6 +205,16 @@ export const hiddenFromOutsideClients = (): boolean => {
   return scope === undefined || scope.thread !== undefined;
 };
 
+/**
+ * `McpSchema.EnabledWhen` for read-only tools that serve calling threads and
+ * linked peer environments (over T3 Connect), but not unlinked outside OAuth clients.
+ */
+export const hiddenFromUnlinkedOutsideClients = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope === undefined || scope.thread !== undefined || scope.client?.linked === true;
+};
+
 /** `hiddenFromOutsideClients`, and hidden from a thread whose provider cannot hold for background work. */
 export const hiddenWithoutBackgroundWait = (): boolean => {
   const fiber = Fiber.getCurrent();
