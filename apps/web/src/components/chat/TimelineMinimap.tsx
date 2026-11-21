@@ -12,6 +12,7 @@ import {
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import { useStore, type StoreApi } from "zustand";
 
 // A release outside the window can skip `mouseup`, so the next button-free
 // `mousemove` also counts.
@@ -30,11 +31,15 @@ function onMouseButtonsReleased(onRelease: () => void): () => void {
   return stop;
 }
 
+export interface TimelineMinimapPosition {
+  readonly currentIndex: number | null;
+  readonly atEnd: boolean;
+}
+
 export function TimelineMinimap({
   hasPersistentGutter,
   hitStripWidth,
-  currentIndex,
-  atEnd,
+  position,
   items,
   stripMap,
   onWheel,
@@ -42,14 +47,14 @@ export function TimelineMinimap({
 }: {
   hasPersistentGutter: boolean;
   hitStripWidth: number;
-  currentIndex: number | null;
-  atEnd: boolean;
+  position: StoreApi<TimelineMinimapPosition>;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
   onWheel: (event: WheelEvent) => void;
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const gt = useGT();
+  const { currentIndex, atEnd } = useStore(position);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const wheelTargetRef = (node: HTMLDivElement | null) => {
     if (!node) return;

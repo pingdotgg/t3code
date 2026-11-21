@@ -27,6 +27,7 @@ import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/s
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { createStore } from "zustand";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
@@ -105,7 +106,7 @@ import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
-import { TimelineMinimap } from "./TimelineMinimap";
+import { TimelineMinimap, type TimelineMinimapPosition } from "./TimelineMinimap";
 import {
   type TimelineRowSharedState,
   type TimelineRowActivityState,
@@ -892,8 +893,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
           ...(alwaysRenderKeys.length === 0 ? {} : { keys: alwaysRenderKeys }),
         };
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
-  const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
-  const [minimapAtEnd, setMinimapAtEnd] = useState(false);
+  // Scrolling changes the minimap controls without changing the virtualized list.
+  const [minimapPosition] = useState(() =>
+    createStore<TimelineMinimapPosition>(() => ({ currentIndex: null, atEnd: false })),
+  );
   const handleAnchorReady = (info: { anchorIndex: number | undefined }) => {
     if (anchorMessageId !== null && info.anchorIndex !== undefined) {
       onAnchorReady(anchorMessageId, info.anchorIndex);
@@ -965,18 +968,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
       scroll: scroll + currentInset,
       scrollLength: state.scrollLength - currentInset,
     });
-    const nextCurrentIndex = resolveTimelineMinimapCurrentIndex({
+    const currentIndex = resolveTimelineMinimapCurrentIndex({
       visibleStart: currentRange.start,
       visibleEnd: currentRange.end,
       rowIndices: minimapRowIndices,
     });
-    setMinimapCurrentIndex((current) =>
-      current === nextCurrentIndex ? current : nextCurrentIndex,
-    );
     // The exact bottom, not the follow re-arm zone: Next can still scroll inside that zone.
-    setMinimapAtEnd(
+    const atEnd =
       viewport !== undefined &&
-        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 1,
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 1;
+    minimapPosition.setState((previous) =>
+      previous.currentIndex === currentIndex && previous.atEnd === atEnd
+        ? previous
+        : { currentIndex, atEnd },
     );
   });
 
@@ -1507,8 +1511,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               items={minimapItems}
               hasPersistentGutter={minimapHasPersistentGutter}
               hitStripWidth={minimapHitStripWidth}
-              currentIndex={minimapCurrentIndex}
-              atEnd={minimapAtEnd}
+              position={minimapPosition}
               stripMap={minimapStripMap}
               onWheel={forwardMinimapWheel}
               onSelect={(item) => {
