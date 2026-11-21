@@ -77,20 +77,40 @@ export function MediaVideoPlayer({
 
   // Retry and failure remount the element, so its listeners live and die with it.
   const attachVideo = (video: HTMLVideoElement) => {
+    const inNativeFullscreen = () =>
+      document.fullscreenElement?.contains(video) ||
+      ("webkitDisplayingFullscreen" in video && video.webkitDisplayingFullscreen === true);
     const pauseWhenHidden = () => {
       // Native fullscreen can hide the inline page while this video is still visible.
-      const fullscreen =
-        document.fullscreenElement?.contains(video) ||
-        ("webkitDisplayingFullscreen" in video && video.webkitDisplayingFullscreen === true);
-      if (document.hidden && !fullscreen) video.pause();
+      if (document.hidden && !inNativeFullscreen()) video.pause();
+    };
+    // A fullscreen player hides the inline box, so the viewport observer cannot be trusted
+    // while one is up. Its reports are skipped then, so check the video again when it ends.
+    const recheckAfterFullscreen = () => {
+      if (inNativeFullscreen()) return;
+      const observer = new IntersectionObserver((entries) => {
+        observer.disconnect();
+        // The report is queued, so fullscreen can have resumed before it arrives.
+        if (!entries[0]?.isIntersecting && !inNativeFullscreen()) video.pause();
+      });
+      observer.observe(video);
     };
     document.addEventListener("visibilitychange", pauseWhenHidden);
     document.addEventListener("fullscreenchange", pauseWhenHidden);
+    document.addEventListener("fullscreenchange", recheckAfterFullscreen);
     video.addEventListener("webkitendfullscreen", pauseWhenHidden);
+    video.addEventListener("webkitendfullscreen", recheckAfterFullscreen);
+    // Scrolling away must not keep decoding; returning to the video is the reader's choice.
+    const stopOffscreenPause = observeIntersection(video, (entry) => {
+      if (!entry.isIntersecting && !inNativeFullscreen()) video.pause();
+    });
     return () => {
       document.removeEventListener("visibilitychange", pauseWhenHidden);
       document.removeEventListener("fullscreenchange", pauseWhenHidden);
+      document.removeEventListener("fullscreenchange", recheckAfterFullscreen);
       video.removeEventListener("webkitendfullscreen", pauseWhenHidden);
+      video.removeEventListener("webkitendfullscreen", recheckAfterFullscreen);
+      stopOffscreenPause();
       video.pause();
       // A detached element's pause event never reaches onPause.
       setPlaying(false);
