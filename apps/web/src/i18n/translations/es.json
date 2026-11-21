@@ -12392,5 +12392,8 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
+  "6fa89e22ecd13c4c": "Cambiar al proyecto del hilo",
+  "ee750b875ab95c39": "Abrir hilos fuera del filtro de proyectos",
+  "b5230b837a7228fa": "Elige cómo muestra la barra lateral un hilo que queda fuera del filtro de proyectos actual."
 }

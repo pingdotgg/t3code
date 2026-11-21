@@ -12404,5 +12404,8 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "6fa89e22ecd13c4c": "Byt till trådens projekt",
+  "ee750b875ab95c39": "Öppna trådar utanför projektfiltret",
+  "b5230b837a7228fa": "Välj hur sidofältet visar en tråd som ligger utanför det aktuella projektfiltret."
 }

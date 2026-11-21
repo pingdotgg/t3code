@@ -12397,5 +12397,8 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "6fa89e22ecd13c4c": "Zum Projekt des Threads wechseln",
+  "ee750b875ab95c39": "Threads außerhalb des Projektfilters öffnen",
+  "b5230b837a7228fa": "Wähle, wie die Seitenleiste einen Thread außerhalb des aktuellen Projektfilters anzeigt."
 }

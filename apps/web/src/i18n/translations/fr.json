@@ -12397,5 +12397,8 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
+  "6fa89e22ecd13c4c": "Basculer vers le projet du fil",
+  "ee750b875ab95c39": "Ouvrir les fils hors du filtre de projets",
+  "b5230b837a7228fa": "Choisissez comment la barre latérale affiche un fil exclu du filtre de projets actuel."
 }
