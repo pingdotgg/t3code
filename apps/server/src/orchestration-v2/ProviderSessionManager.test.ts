@@ -495,9 +495,24 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
     readonly eventStreamsEnded?: Queue.Queue<ProviderSessionId>;
+    readonly mcpAppConfigs?: Ref.Ref<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >;
+    readonly instanceId?: ProviderInstanceId;
   } = {},
 ) {
+  const instanceId = options.instanceId ?? ProviderInstanceId.make("codex");
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const mcpAppConfigs = options.mcpAppConfigs;
+  const recordMcpAppConfig = (providerThread: OrchestrationV2ProviderThread) =>
+    Effect.gen(function* () {
+      if (mcpAppConfigs === undefined) return;
+      const config =
+        providerThread.appThreadId === null
+          ? undefined
+          : yield* mcpSessions.read(providerThread.appThreadId);
+      yield* Ref.update(mcpAppConfigs, (configs) => [...configs, config]);
+    });
   const countClose = Effect.addFinalizer(() =>
     Ref.update(state, (current) => ({
       ...current,
@@ -516,7 +531,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     ).pipe(Effect.andThen(Effect.never)),
   );
   return ProviderAdapter.ProviderAdapterV2.of({
-    instanceId: ProviderInstanceId.make("codex"),
+    instanceId,
     driver: CODEX_DRIVER,
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
@@ -564,7 +579,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
         }
 
         return {
-          instanceId: ProviderInstanceId.make("codex"),
+          instanceId,
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
           ...(options.normalizeThreadLoadModelSelection === undefined
@@ -640,6 +655,18 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             ),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
+          ...(mcpAppConfigs === undefined
+            ? {}
+            : {
+                mcpApps: {
+                  listTools: ({ providerThread }) =>
+                    recordMcpAppConfig(providerThread).pipe(Effect.as([])),
+                  callTool: ({ providerThread }) =>
+                    recordMcpAppConfig(providerThread).pipe(Effect.as({ content: [] })),
+                  readResource: ({ providerThread }) =>
+                    recordMcpAppConfig(providerThread).pipe(Effect.as({ contents: [] })),
+                },
+              }),
           rollbackThread: () => unimplemented("rollbackThread unused in test"),
           forkThread: () => unimplemented("forkThread unused in test"),
         } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
@@ -683,6 +710,10 @@ function layerTest(input: {
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly eventStreamsEnded?: Queue.Queue<ProviderSessionId>;
+  readonly mcpAppConfigs?: Ref.Ref<
+    ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+  >;
+  readonly secondInstanceId?: ProviderInstanceId;
   readonly releaseRecorded?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
@@ -739,7 +770,18 @@ function layerTest(input: {
       ...(input.eventStreamsEnded === undefined
         ? {}
         : { eventStreamsEnded: input.eventStreamsEnded }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+      ...(input.mcpAppConfigs === undefined ? {} : { mcpAppConfigs: input.mcpAppConfigs }),
+    }).pipe(
+      Effect.flatMap((adapter) =>
+        input.secondInstanceId === undefined
+          ? Effect.succeed([adapter])
+          : makeProviderAdapter(input.state, {
+              instanceId: input.secondInstanceId,
+              ...(input.mcpAppConfigs === undefined ? {} : { mcpAppConfigs: input.mcpAppConfigs }),
+            }).pipe(Effect.map((second) => [adapter, second])),
+      ),
+      Effect.map(ProviderAdapterRegistry.layerFromAdapters),
+    ),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -3278,6 +3320,240 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs })));
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 prepares a thread's MCP session before mcpApps requests on a shared session",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const unloads = yield* Queue.unbounded<string>();
+      const mcpAppConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const ownerTurnHeld = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const now = yield* DateTime.now;
+        const owner = ThreadId.make("thread-provider-session-manager-mcp-apps-owner");
+        const appThread = ThreadId.make("thread-provider-session-manager-mcp-apps-target");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: owner, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: appThread, now }),
+          ],
+        });
+        const ownerRuntime = yield* manager.open({
+          threadId: owner,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const ownerProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: owner,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-mcp-apps-owner",
+        });
+        const appProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: appThread,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-mcp-apps-target",
+        });
+
+        // Keep the shared session alive via owner while appThread is still unattached (as after restart).
+        const ownerRunId = idAllocator.derive.run({ threadId: owner, ordinal: 1 });
+        const ownerTurn = yield* ownerRuntime
+          .startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(owner)).thread,
+            threadId: owner,
+            providerThread: ownerProviderThread,
+            runId: ownerRunId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId: ownerRunId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId: ownerRunId }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId: owner, ordinal: 1 }),
+              text: "keep busy",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        assert.isUndefined(yield* mcpSessions.read(appThread));
+        const liveRuntime = Option.getOrUndefined(yield* manager.get(providerSessionId));
+        assert.isDefined(liveRuntime?.mcpApps);
+
+        yield* Effect.all(
+          [
+            liveRuntime!.mcpApps!.listTools({
+              providerThread: appProviderThread,
+              server: "datadog",
+            }),
+            liveRuntime!.mcpApps!.callTool({
+              providerThread: appProviderThread,
+              server: "datadog",
+              tool: "_dd_guc",
+              arguments: {},
+            }),
+            liveRuntime!.mcpApps!.readResource({
+              providerThread: appProviderThread,
+              server: "datadog",
+              uri: "ui://datadog/chart",
+            }),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        const seen = yield* Ref.get(mcpAppConfigs);
+        assert.equal(seen.length, 3);
+        const firstConfig = seen[0];
+        assert.isDefined(firstConfig, "mcpApps must prepare the thread's MCP session first");
+        for (const config of seen) {
+          assert.equal(config?.providerSessionId, firstConfig!.providerSessionId);
+        }
+        const token = firstConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal((yield* registry.resolve(token))?.thread.threadId, appThread);
+
+        // An idle thread loaded by an MCP app request still unloads after idleTimeoutMs.
+        yield* TestClock.adjust("1 second");
+        assert.equal(yield* Queue.take(unloads), "unload:native-mcp-apps-target");
+
+        // A subsequent turn resume keeps the same credential valid instead of revoking it.
+        yield* liveRuntime!.resumeThread({
+          threadId: appThread,
+          providerThread: appProviderThread,
+        });
+        assert.equal(
+          (yield* mcpSessions.read(appThread))?.providerSessionId,
+          firstConfig!.providerSessionId,
+        );
+        assert.equal((yield* registry.resolve(token))?.thread.threadId, appThread);
+
+        yield* Deferred.succeed(ownerTurnHeld, undefined);
+        yield* Fiber.join(ownerTurn);
+        yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+        assert.isUndefined(yield* registry.resolve(token));
+        assert.isUndefined(yield* mcpSessions.read(appThread));
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            unloads,
+            mcpAppConfigs,
+            startTurn: Deferred.await(ownerTurnHeld),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a thread's live credential when a historical MCP app targets another instance",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpAppConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const duringCurrentOpen = yield* Ref.make<Effect.Effect<void> | undefined>(undefined);
+      const historicalInstanceId = ProviderInstanceId.make("codex-historical");
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const now = yield* DateTime.now;
+        const owner = ThreadId.make("thread-provider-session-manager-mcp-apps-history-owner");
+        const appThread = ThreadId.make("thread-provider-session-manager-mcp-apps-history");
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: owner, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: appThread, now }),
+          ],
+        });
+        const historicalSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: historicalInstanceId,
+        });
+        yield* manager.open({
+          threadId: owner,
+          providerSessionId: historicalSessionId,
+          modelSelection: { ...modelSelection, instanceId: historicalInstanceId },
+          runtimePolicy,
+        });
+        const historicalRuntime = Option.getOrUndefined(yield* manager.get(historicalSessionId));
+        const openHistoricalApp = historicalRuntime!.mcpApps!.listTools({
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId: appThread,
+            providerSessionId: historicalSessionId,
+            now,
+            nativeThreadId: "native-mcp-apps-history",
+          }),
+          server: "datadog",
+        });
+
+        // First while the thread's current open is in flight, then once it is live.
+        yield* Ref.set(duringCurrentOpen, openHistoricalApp.pipe(Effect.asVoid, Effect.orDie));
+        const currentSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* manager.open({
+          threadId: appThread,
+          providerSessionId: currentSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* openHistoricalApp;
+
+        const liveConfig = (yield* Ref.get(mcpConfigs)).at(-1);
+        assert.deepEqual(yield* mcpSessions.read(appThread), liveConfig);
+        const token = liveConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal(
+          (yield* registry.resolve(token))?.thread.providerInstanceId,
+          modelSelection.instanceId,
+        );
+
+        // The historical session must not keep the thread attached, or it would keep the credential alive.
+        yield* manager.release({ providerSessionId: currentSessionId, reason: "manual_shutdown" });
+        assert.isUndefined(yield* registry.resolve(token));
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            mcpAppConfigs,
+            mcpConfigs,
+            secondInstanceId: historicalInstanceId,
+            beforeOpen: () =>
+              Ref.getAndSet(duringCurrentOpen, undefined).pipe(
+                Effect.flatMap((effect) => effect ?? Effect.void),
+              ),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect(
