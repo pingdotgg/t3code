@@ -4721,13 +4721,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.worktreePath !== undefined &&
             command.worktreePath !== thread.worktreePath
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-          : command.type === "thread.runtime-mode.set"
-            ? (providerContext?.providerSessions ?? [])
-                .filter(
-                  (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
-                )
-                .map((session) => session.id)
-            : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
+          : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
     const liveSessions = (providerContext?.providerSessions ?? []).filter(
       (session) =>
@@ -4735,10 +4729,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         session.status !== "stopped" &&
         session.status !== "error",
     );
+    // A mode change waits for the next user turn instead of detaching, so refuse it while
+    // background work would keep running under the previous mode.
+    const probedSessions =
+      command.type === "thread.runtime-mode.set"
+        ? (providerContext?.providerSessions ?? []).filter(
+            (session) =>
+              !session.capabilities.sessions.supportsRuntimeModeSwitchInSession &&
+              session.status !== "stopped" &&
+              session.status !== "error",
+          )
+        : liveSessions;
     if (
       command.type !== "thread.archive" &&
       command.type !== "thread.settle" &&
-      liveSessions.length > 0
+      probedSessions.length > 0
     ) {
       // The provider context holds only the active and target provider threads; a session kept
       // busy by an earlier queued hand-off owns neither, so probe every thread of this one.
@@ -4747,7 +4752,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           omitSettledSubagentRecords: true,
         })
         .pipe(mapDispatchError(command));
-      for (const session of liveSessions) {
+      for (const session of probedSessions) {
         if (yield* sessionHasBackgroundWork(session, providerThreads)) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -5721,9 +5726,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       ? "Thread settled."
                       : command.type === "thread.metadata.update"
                         ? "Workspace changed."
-                        : command.type === "thread.runtime-mode.set"
-                          ? "Runtime mode changed."
-                          : "Provider or model selection changed.",
+                        : "Provider or model selection changed.",
               },
             });
             const pendingEffect = {
@@ -5740,9 +5743,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       ? "Thread settled."
                       : command.type === "thread.metadata.update"
                         ? "Workspace changed."
-                        : command.type === "thread.runtime-mode.set"
-                          ? "Runtime mode changed."
-                          : "Provider or model selection changed.",
+                        : "Provider or model selection changed.",
                 // Terminal detaches revoke MCP credentials; reattachments need other detach reasons to preserve them.
                 ...(command.type === "thread.archive" ? { revokeMcpCredential: true } : {}),
               },
