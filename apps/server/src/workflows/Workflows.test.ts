@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -701,14 +702,28 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
     Layer.provide(NodeCrypto.layer),
   );
   // The engine polls its message store, backs off between retries and bounds its shutdown, all
-  // on the clock, so time runs for as long as a server is up, shutdown included.
+  // on the clock, so time runs for as long as a server is up, shutdown included. A test closes
+  // `clock` to hold time still until it has seen what it waits for.
+  const clock = yield* Latch.make(true);
   const boot = <A, E>(use: Effect.Effect<A, E, Workflows.Workflows>) =>
     Effect.raceFirst(
       Effect.scoped(Effect.provide(use, engine)),
-      Effect.forever(TestClock.adjust("1 second")),
+      Effect.forever(Effect.andThen(clock.await, TestClock.adjust("1 second"))),
     );
-  return { counts, failures, latch, boot, agents, forge };
+  return { counts, failures, latch, boot, agents, forge, clock };
 });
+
+/** The store the engine writes to, for a test to leave what a crash would have left. */
+const exposedStore = () => {
+  const made = Deferred.makeUnsafe<WorkflowStore.WorkflowStore["Service"]>();
+  return {
+    layer: Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.tap(WorkflowStore.make, (store) => Deferred.succeed(made, store)),
+    ),
+    store: Deferred.await(made),
+  };
+};
 
 /** The review workflow sleeps first, which is waiting too; this is its wait for a verdict. */
 const atVerdict = (run: WorkflowRun) => run.status === "waiting" && run.detail === "verdict";
@@ -1114,7 +1129,8 @@ it.effect(
   "an agent whose turn dies is tried on a new thread, then its run pauses until resumed",
   () =>
     Effect.gen(function* () {
-      const { boot, agents } = yield* harness();
+      const exposed = exposedStore();
+      const { boot, agents } = yield* harness(exposed.layer);
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
@@ -1140,6 +1156,10 @@ it.effect(
           assert.include(paused.detail ?? "", "provider error");
           // An agent that gave up starts its whole job again on resume: a person decides that.
           assert.isNull(paused.resumesAt);
+          // A resume cut off before it reached the engine is put back by the sweep, still held.
+          yield* (yield* exposed.store).runUnpaused(runId);
+          const putBack = yield* workflows.waitFor(runId, status("paused"));
+          assert.deepStrictEqual([putBack.status, putBack.resumesAt], ["paused", null]);
           yield* workflows.resume(runId);
           yield* agents.started(runId, "write/2");
           yield* agents.end(runId, "write/2", { output: { branch: "fix/2" } });
