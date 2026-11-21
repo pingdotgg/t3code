@@ -6,7 +6,6 @@ import {
   getSpeechModelDownloadOutcome,
   selectEnvironmentSpeechModel,
   voiceInputBlocksSubmission,
-  type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { AuthOrchestrationOperateScope, CLOUD_SPEECH_LABELS } from "@t3tools/contracts";
@@ -46,7 +45,6 @@ import {
   type VoiceInputTarget,
 } from "./voiceInputSession";
 
-const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
 const INITIAL_SETUP = {
   open: false,
   step: 0,
@@ -176,7 +174,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     readonly prepared: PreparedConnection;
     readonly value: EnvironmentSpeechStatus | null;
   } | null>(null);
-  const [queuedStart, setQueuedStart] = useState<PreparedConnection | null>(null);
   const [setup, setSetup] = useState(INITIAL_SETUP);
   const [previousDestination, setPreviousDestination] = useState({ prepared, grantId });
   const [previousOwner, setPreviousOwner] = useState({
@@ -186,11 +183,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   if (previousDestination.prepared !== prepared || previousDestination.grantId !== grantId) {
     setPreviousDestination({ prepared, grantId });
     setSetup(INITIAL_SETUP);
-    setQueuedStart(null);
   }
   if (previousOwner.key !== input.ownerKey || previousOwner.disabled !== input.disabled) {
     setPreviousOwner({ key: input.ownerKey, disabled: input.disabled });
-    setQueuedStart(null);
     setSetup(INITIAL_SETUP);
   }
 
@@ -198,8 +193,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const snapshot = useVoiceInputSessionSnapshot(session);
   const owns = snapshot.target?.ownerKey === input.ownerKey;
   const activity = useVoiceInputSessionActivity(session, input.ownerKey);
-  const state: VoiceInputState =
-    queuedStart === prepared && prepared ? WAITING_STATE : owns ? snapshot.state : IDLE_VOICE_STATE;
+  const state = owns ? snapshot.state : IDLE_VOICE_STATE;
   // One microphone: another draft's recording leaves this editor without voice input until it ends.
   const busyElsewhere = !owns && voiceInputBlocksSubmission(snapshot.state);
 
@@ -401,48 +395,54 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
       return;
     }
+    if (!session || !prepared || voiceInputBlocksSubmission(session.state)) return;
     const request = ++startRequestRef.current;
     const owner = latestRef.current.input.ownerKey;
-    if (!session || !prepared || busyElsewhere) return;
     if (cloudProvider) {
       await session.start(createTarget());
       return;
     }
+    setSetup(INITIAL_SETUP);
     const stillCurrent = () =>
       request === startRequestRef.current &&
       latestRef.current.session === session &&
       latestRef.current.input.ownerKey === owner &&
       !latestRef.current.input.disabled;
-    setSetup(INITIAL_SETUP);
-    setQueuedStart(prepared);
-    let latestStatus: EnvironmentSpeechStatus;
-    try {
-      latestStatus = await probeSpeechStatus(prepared, true);
-    } catch (error) {
+    const handleStatus = async (latestStatus: EnvironmentSpeechStatus) => {
       if (!stillCurrent()) return;
-      setQueuedStart(null);
-      toastManager.add({
-        type: "error",
-        title: m(msg("Could not start voice input")),
-        description: error instanceof Error ? error.message : String(error),
+      setStatus({ prepared, value: latestStatus });
+      if (!latestStatus.supported) {
+        session.cancel();
+        toastManager.add({
+          type: "error",
+          title: m(msg("Voice input is not available")),
+          description: latestStatus.reason,
+        });
+      } else if (latestStatus.state === "missing-model") {
+        session.cancel();
+        await loadSetupCatalog(prepared, latestStatus.modelId, latestStatus.benchmarkTier, request);
+      }
+    };
+
+    if (currentStatus?.supported && currentStatus.state === "missing-model") {
+      // Setup must remain usable without opening the microphone.
+      const latestStatus = await probeSpeechStatus(prepared, true).catch((error: unknown) => {
+        if (stillCurrent()) {
+          toastManager.add({
+            type: "error",
+            title: m(msg("Could not start voice input")),
+            description: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return null;
       });
-      return;
+      if (!stillCurrent() || !latestStatus) return;
+      await handleStatus(latestStatus);
+      if (!latestStatus.supported || latestStatus.state === "missing-model" || !stillCurrent())
+        return;
     }
-    if (!stillCurrent()) return;
-    setStatus({ prepared, value: latestStatus });
-    setQueuedStart(null);
-    if (latestStatus.supported && latestStatus.state === "missing-model") {
-      return loadSetupCatalog(prepared, latestStatus.modelId, latestStatus.benchmarkTier, request);
-    }
-    if (!latestStatus.supported) {
-      toastManager.add({
-        type: "error",
-        title: m(msg("Voice input is not available")),
-        description: latestStatus.reason,
-      });
-      return;
-    }
-    await session.start(createTarget());
+
+    await session.start(createTarget(), (latestStatus) => void handleStatus(latestStatus));
   });
 
   const downloadSetupModel = useStableCallback(async () => {
@@ -562,7 +562,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     cancel: useStableCallback(() => {
       pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
-      setQueuedStart(null);
       setSetup(INITIAL_SETUP);
       if (owns) session?.cancel();
     }),
