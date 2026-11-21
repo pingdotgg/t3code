@@ -1100,7 +1100,12 @@ it.effect(
   "an agent returns checked data, a person answers, and a later step continues the thread",
   () =>
     Effect.gen(function* () {
-      const { boot, agents } = yield* harness();
+      let kept: WorkflowStore.WorkflowStore["Service"] | undefined;
+      const store = Layer.effect(
+        WorkflowStore.WorkflowStore,
+        Effect.tap(WorkflowStore.make, (real) => Effect.sync(() => void (kept = real))),
+      );
+      const { boot, agents } = yield* harness(store);
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
@@ -1142,7 +1147,16 @@ it.effect(
             .signal({ runId, wait: "merge" }, { choice: "Maybe" }, { id: "a0" })
             .pipe(Effect.flip);
           assert.include(refused.message, "merge waits for");
-          yield* workflows.signal({ runId, wait: "merge" }, { choice: "Merge" }, { id: "a1" });
+          // Clicked twice: one answer, and nothing kept to answer it again.
+          yield* Effect.all(
+            [
+              workflows.answer(runId, "merge", { choice: "Merge" }),
+              workflows.answer(runId, "merge", { choice: "Merge" }),
+            ],
+            { concurrency: "unbounded" },
+          );
+          yield* workflows.answer(runId, "merge", { choice: "Leave" });
+          assert.isUndefined(yield* kept!.mailNext([{ runId, wait: "merge" }]));
 
           const land = yield* agents.started(runId, "land/0");
           assert.equal(land.thread, "thread-1");

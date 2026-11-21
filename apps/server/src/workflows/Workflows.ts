@@ -78,6 +78,15 @@ export class Workflows extends Context.Service<
       value: Schema.Json,
       options: { readonly id: string; readonly ttl?: Duration.Input },
     ) => Effect.Effect<"delivered" | "buffered", WorkflowInputError>;
+    /**
+     * Answer the question a run asks a person. One answer per time it is asked: a second, a
+     * double click, wakes nothing and is not kept for later.
+     */
+    readonly answer: (
+      runId: string,
+      name: string,
+      value: Schema.Json,
+    ) => Effect.Effect<void, WorkflowInputError>;
     /** Run a paused run's failed step again. */
     readonly resume: (runId: string) => Effect.Effect<void, WorkflowError>;
     readonly cancel: (runId: string, reason: string) => Effect.Effect<void, WorkflowError>;
@@ -144,6 +153,7 @@ const refuse = Effect.fn("Workflows.disabled")(function* () {
 export const disabled = Workflows.of({
   start: refuse,
   signal: refuse,
+  answer: refuse,
   resume: refuse,
   cancel: refuse,
   get: Effect.fn("Workflows.get")(function* (runId) {

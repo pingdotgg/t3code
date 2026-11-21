@@ -2366,20 +2366,12 @@ export const layerWsRpc = (
         [WS_METHODS.workflowsGet]: (input) =>
           workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsAnswer]: (input) =>
-          random.uuidV4().pipe(
-            Effect.flatMap((id) =>
-              workflows.signal(
-                { runId: input.runId, wait: input.name },
-                {
-                  choice: input.choice,
-                  ...(input.reason === undefined ? {} : { reason: input.reason }),
-                },
-                { id },
-              ),
-            ),
-            Effect.mapError(toWorkflowRequestError),
-            Effect.asVoid,
-          ),
+          workflows
+            .answer(input.runId, input.name, {
+              choice: input.choice,
+              ...(input.reason === undefined ? {} : { reason: input.reason }),
+            })
+            .pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsResume]: (input) =>
           workflows.resume(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsCancel]: (input) =>

@@ -2717,10 +2717,8 @@ const makeWorkflowClient = Effect.fn("test.makeWorkflowClient")(function* (
         runId === workflowRun.runId
           ? Effect.succeed({ run: workflowRun, steps: [workflowStep] })
           : Effect.fail(new Workflows.WorkflowRunNotFoundError({ runId })),
-      signal: (address, value, options) =>
-        Effect.sync(() => calls.push({ signal: address, value, id: options.id })).pipe(
-          Effect.as("delivered" as const),
-        ),
+      answer: (runId, name, value) =>
+        Effect.sync(() => calls.push({ answer: [runId, name], value })),
       resume: (runId) => Effect.sync(() => calls.push({ resume: runId })),
       cancel: (runId, reason) => Effect.sync(() => calls.push({ cancel: runId, reason })),
     }),
@@ -2777,27 +2775,13 @@ it.effect("workflow RPCs read a run and pass an answer, a resume and a cancel to
     yield* client[WS_METHODS.workflowsCancel]({ runId: "run-1" });
     yield* client[WS_METHODS.workflowsCancel]({ runId: "run-1", reason: "Wrong branch" });
 
-    const ids = calls.flatMap((call) =>
-      typeof call === "object" && call !== null && "id" in call ? [call.id] : [],
-    );
-    // Each answer is its own signal: a reused id would be dropped as a retry of the first.
-    assert.equal(new Set(ids).size, 2);
-    assert.deepEqual(
-      calls.map((call) =>
-        typeof call === "object" && call !== null && "id" in call ? { ...call, id: "id" } : call,
-      ),
-      [
-        {
-          signal: { runId: "run-1", wait: "approve" },
-          value: { choice: "yes", reason: "Looks good" },
-          id: "id",
-        },
-        { signal: { runId: "run-1", wait: "approve" }, value: { choice: "no" }, id: "id" },
-        { resume: "run-1" },
-        { cancel: "run-1", reason: "Cancelled" },
-        { cancel: "run-1", reason: "Wrong branch" },
-      ],
-    );
+    assert.deepEqual(calls, [
+      { answer: ["run-1", "approve"], value: { choice: "yes", reason: "Looks good" } },
+      { answer: ["run-1", "approve"], value: { choice: "no" } },
+      { resume: "run-1" },
+      { cancel: "run-1", reason: "Cancelled" },
+      { cancel: "run-1", reason: "Wrong branch" },
+    ]);
   }).pipe(Effect.provide(layerWorkflowRpcTest), Effect.scoped),
 );
 
