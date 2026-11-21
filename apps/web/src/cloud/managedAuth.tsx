@@ -13,6 +13,7 @@ import {
 import * as Effect from "effect/Effect";
 import { useEffect, type ReactNode } from "react";
 
+import { trackMountedClerk } from "../components/clerk/clerkLoadFailure";
 import { environmentCatalog } from "../connection/catalog";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -70,5 +71,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
   const clerk = useClerk();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the Clerk instance to the managed relay account service for the provider's lifetime
   useEffect(() => managedRelayAccountService.attach(clerk), [clerk]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- exposes the mounted Clerk instance's load status for the provider's lifetime
+  useEffect(() => trackMountedClerk(clerk), [clerk]);
   return children;
 }

@@ -54,6 +54,7 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
+import { retryClerkLoadForEnvironment } from "../clerk/clerkLoadFailure";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
 import { environmentCatalog } from "~/connection/catalog";
@@ -357,7 +358,9 @@ export function SavedBackendListRow({
             <ConnectionDiagnosisPanel
               hostLabel={environment.label}
               diagnosis={diagnosis}
-              onRetry={() => void retryNow(environmentId)}
+              onRetry={() => {
+                if (!retryClerkLoadForEnvironment(environment.entry)) void retryNow(environmentId);
+              }}
               onAddRoute={relayOnly ? () => onAddRoute(environment) : null}
             />
           ) : null}
