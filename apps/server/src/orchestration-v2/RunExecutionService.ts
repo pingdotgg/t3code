@@ -34,6 +34,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -59,7 +60,49 @@ import {
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import {
+  CLAUDE_PROVIDER,
+  CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL,
+} from "./Adapters/ClaudeAdapterV2.ts";
 import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
+
+/**
+ * Claude refuses these before it reads the prompt: replacing a process running background work,
+ * launch arguments whose appended system prompt or settings cannot be read, or MCP registration
+ * that never answers while the query opens. A query that ends before the turn attaches (such as a
+ * rejected resume point) never received the prompt either.
+ */
+const PROMPT_REFUSAL_TAGS = [
+  "ClaudeBackgroundWorkBlocksQueryReplacementError",
+  "ClaudeAppendSystemPromptFileError",
+  "ClaudeAppendSystemPromptMissingValueError",
+  "ClaudeSettingsLaunchArgError",
+  "ClaudeMcpRegistrationTimeoutError",
+] as const;
+
+const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
+
+export const refusedBeforePrompt = (error: unknown): boolean =>
+  PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
+  (isProviderAdapterProtocolError(error) &&
+    error.driver === CLAUDE_PROVIDER &&
+    error.detail === CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL) ||
+  (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
+
+/** Marks a start failure whose prompt reached the provider, so retries stop re-sending its attachments. */
+export const PROVIDER_PROMPT_REJECTED_FAILURE_CODE = "provider_prompt_rejected";
+
+// The handoff budget check fails the start before the provider is called.
+const failedBeforeProviderRead = (error: unknown): boolean =>
+  refusedBeforePrompt(error) ||
+  Predicate.isTagged(error, "ContextHandoffBudgetError") ||
+  (Predicate.hasProperty(error, "cause") && failedBeforeProviderRead(error.cause));
+
+const promptRejectionCode = (cause: unknown) =>
+  failedBeforeProviderRead(cause) ||
+  (Predicate.hasProperty(cause, "code") && typeof cause.code === "string")
+    ? undefined
+    : PROVIDER_PROMPT_REJECTED_FAILURE_CODE;
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -2313,7 +2356,12 @@ export const layer: Layer.Layer<
                           terminal: makeFailedTerminalEvent(
                             makeProviderFailure({
                               cause: Cause.squash(cause),
-                              class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
+                              ...(Exit.isFailure(shouldStart)
+                                ? { class: "unknown" }
+                                : {
+                                    class: "provider_error",
+                                    code: promptRejectionCode(Cause.squash(cause)),
+                                  }),
                             }),
                             latestItemOrdinal + 1,
                           ),
