@@ -281,7 +281,7 @@ describe("sparrow permission policy", () => {
         ...request,
         toolCall: { toolCallId: "ww-mcp", kind: "other", title: "other: mcp" },
       }),
-      "ask",
+      "allow",
     );
   });
 });

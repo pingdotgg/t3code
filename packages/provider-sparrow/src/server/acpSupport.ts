@@ -87,7 +87,8 @@ export const SPARROW_RUNTIME_MODES: ReadonlyArray<ServerProviderRuntimeMode> = [
   {
     mode: "workspace-write",
     label: "Workspace write",
-    description: "Auto-approve workspace edits and shell; ask otherwise.",
+    description:
+      "Auto-approve workspace edits, shell, and MCP tools; ask for outside-workspace and escalated actions.",
     icon: "shield-check",
   },
   {
@@ -396,7 +397,8 @@ export function sparrowPermissionDisposition(
       if (toolKind === "execute") {
         return isSparrowEscalatedPermissionRequest(request) ? "ask" : allowOrAsk();
       }
-      return "ask";
+      // Sparrow's remaining "other" tools (mcp, stop_background) do not cross the write sandbox.
+      return allowOrAsk();
     }
   }
 
