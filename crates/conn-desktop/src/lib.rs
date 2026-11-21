@@ -9,4 +9,5 @@
 pub mod api_request;
 pub mod database;
 pub mod mcp;
+pub mod operator;
 pub mod orbit;

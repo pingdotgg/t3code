@@ -14,21 +14,24 @@ mod menus;
 mod model_picker;
 
 use std::fmt;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use conn_client::Connection;
 use conn_contract::rpc::projects::search_entries;
 use conn_contract::rpc::server::get_config;
 use conn_contract::{ChatAttachment, ProjectSearchEntriesInput, ServerProbePayload};
+use conn_desktop::operator::{DictationStart, DictationWait, OperatorClient};
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::component::input::{
-    Enter, Escape, InputEvent, InputState, MoveDown, MoveUp, Textarea, TextareaState,
+    Enter, Escape, InputEvent, InputState, MoveDown, MoveUp, Paste, Textarea, TextareaState,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions, Render,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, deferred,
-    div, px,
+    AnyElement, AppContext as _, ClipboardEntry, Context, Entity, EventEmitter, ExternalPaths,
+    FontWeight, ImageFormat, InteractiveElement as _, IntoElement, ParentElement as _,
+    PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Window, deferred, div, px,
 };
 
 use self::menus::{
@@ -74,6 +77,33 @@ enum AttachmentUploadStatus {
     Uploading,
     Ready(ChatAttachment),
     Error(String),
+}
+
+/// Active Operator voice dictation session state in the composer.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum DictationState {
+    #[default]
+    Idle,
+    Starting {
+        session_id: String,
+    },
+    Recording {
+        session_id: String,
+    },
+    Transcribing {
+        session_id: String,
+    },
+}
+
+impl DictationState {
+    fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::Idle => None,
+            Self::Starting { session_id }
+            | Self::Recording { session_id }
+            | Self::Transcribing { session_id } => Some(session_id.as_str()),
+        }
+    }
 }
 
 /// Events emitted by [`Composer`] to its host view (`ChatView` -> `ConnApp`).
@@ -126,6 +156,9 @@ pub(crate) struct Composer {
     file_search_generation: u64,
     attachments: Vec<PendingAttachment>,
     next_attachment_id: u64,
+    dictation: DictationState,
+    dictation_error: Option<String>,
+    next_dictation_seq: u64,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -232,6 +265,9 @@ impl Composer {
             file_search_generation: 0,
             attachments: Vec::new(),
             next_attachment_id: 1,
+            dictation: DictationState::Idle,
+            dictation_error: None,
+            next_dictation_seq: 1,
             _subscriptions: vec![textarea_sub, search_sub],
         };
         if composer.connection.is_some() {
@@ -417,9 +453,9 @@ impl Composer {
 
     /// Opens the native file picker to attach one or more files or images to the draft.
     pub(crate) fn pick_attachments(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(conn) = self.connection.clone() else {
+        if self.connection.is_none() {
             return;
-        };
+        }
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -430,67 +466,360 @@ impl Composer {
             let Ok(Ok(Some(paths))) = prompt.await else {
                 return;
             };
-            for path in paths {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("attachment")
-                    .to_owned();
-                let mime_type = infer_mime_type(&path).to_owned();
-                let bytes = match std::fs::read(&path) {
-                    Ok(bytes) => bytes,
-                    Err(err) => {
-                        let _ = this.update(cx, |composer, cx| {
-                            let local_id = composer.next_attachment_id;
-                            composer.next_attachment_id =
-                                composer.next_attachment_id.wrapping_add(1);
-                            composer.attachments.push(PendingAttachment {
-                                local_id,
-                                name: name.clone(),
-                                size_bytes: 0,
-                                status: AttachmentUploadStatus::Error(err.to_string()),
-                            });
-                            cx.notify();
-                        });
-                        continue;
+            let _ = this.update_in(cx, |composer, window, cx| {
+                composer.attach_paths(paths, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Reads local file paths (from file picker, drag-and-drop, or clipboard) and uploads each
+    /// into the composer attachment strip.
+    pub(crate) fn attach_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.connection.is_none() || paths.is_empty() {
+            return;
+        }
+        for path in paths {
+            if !path.is_file() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("attachment")
+                .to_owned();
+            let mime_type = infer_mime_type(&path).to_owned();
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    self.stage_and_upload_bytes(name, mime_type, bytes, window, cx);
+                }
+                Err(err) => {
+                    let local_id = self.next_attachment_id;
+                    self.next_attachment_id = self.next_attachment_id.wrapping_add(1);
+                    self.attachments.push(PendingAttachment {
+                        local_id,
+                        name,
+                        size_bytes: 0,
+                        status: AttachmentUploadStatus::Error(err.to_string()),
+                    });
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    /// Stages in-memory bytes (such as a pasted clipboard image) and uploads via
+    /// `attachments.createUploadUrl`.
+    fn stage_and_upload_bytes(
+        &mut self,
+        name: String,
+        mime_type: String,
+        bytes: Vec<u8>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(conn) = self.connection.clone() else {
+            return;
+        };
+        let local_id = self.next_attachment_id;
+        self.next_attachment_id = self.next_attachment_id.wrapping_add(1);
+        let size_bytes = bytes.len();
+        self.attachments.push(PendingAttachment {
+            local_id,
+            name: name.clone(),
+            size_bytes,
+            status: AttachmentUploadStatus::Uploading,
+        });
+        cx.notify();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let upload_res = conn.upload_chat_attachment(name, mime_type, bytes).await;
+            let _ = this.update(cx, |composer, cx| {
+                if let Some(slot) = composer
+                    .attachments
+                    .iter_mut()
+                    .find(|a| a.local_id == local_id)
+                {
+                    slot.status = match upload_res {
+                        Ok(att) => AttachmentUploadStatus::Ready(att),
+                        Err(err) => AttachmentUploadStatus::Error(err.to_string()),
+                    };
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Intercepts `⌘V` when the clipboard holds copied files or a standalone image (screenshots,
+    /// image copies without accompanying plain text), uploading them as chat attachments.
+    ///
+    /// Returns `true` if the paste was consumed as attachments (caller stops propagation so the
+    /// textarea does not also paste raw paths or fail silently).
+    fn try_paste_attachments(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> bool {
+        if self.connection.is_none() {
+            return false;
+        }
+        let Some(item) = cx.read_from_clipboard() else {
+            return false;
+        };
+        let mut paths: Vec<PathBuf> = Vec::new();
+        let mut images: Vec<gpui_kit::Image> = Vec::new();
+        let mut has_text = false;
+        for entry in item.entries() {
+            match entry {
+                ClipboardEntry::ExternalPaths(p) => {
+                    paths.extend(p.paths().iter().cloned());
+                }
+                ClipboardEntry::Image(img) => {
+                    images.push(img.clone());
+                }
+                ClipboardEntry::String(text) if !text.text().is_empty() => {
+                    has_text = true;
+                }
+                ClipboardEntry::String(_) => {}
+            }
+        }
+        if !paths.is_empty() {
+            self.attach_paths(paths, window, cx);
+            return true;
+        }
+        // Rich text copied from browsers sometimes includes an image flavor alongside text;
+        // keep plain text pasting as text (matching Threadbear's `take_reply_clipboard`).
+        if has_text || images.is_empty() {
+            return false;
+        }
+        let mut attached_any = false;
+        for image in images {
+            if let Some((ext, mime)) = clipboard_image_spec(image.format) {
+                let name = format!("pasted-{:x}.{ext}", image.id);
+                self.stage_and_upload_bytes(name, mime.to_owned(), image.bytes, window, cx);
+                attached_any = true;
+            }
+        }
+        attached_any
+    }
+
+    /// Toggles Operator voice dictation: starts a session when idle, stops & transcribes when
+    /// recording.
+    pub(crate) fn toggle_dictation(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.dictation_error = None;
+        match self.dictation.clone() {
+            DictationState::Idle => self.start_dictation(window, cx),
+            DictationState::Recording { session_id } => {
+                self.stop_dictation(session_id, window, cx);
+            }
+            DictationState::Starting { session_id } => {
+                self.cancel_dictation(session_id, cx);
+            }
+            DictationState::Transcribing { .. } => {}
+        }
+    }
+
+    fn start_dictation(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let seq = self.next_dictation_seq;
+        self.next_dictation_seq = self.next_dictation_seq.wrapping_add(1);
+        let session_id = next_dictation_session_id(seq);
+        self.dictation = DictationState::Starting {
+            session_id: session_id.clone(),
+        };
+        cx.notify();
+
+        let sid_for_start = session_id.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let start_res = crate::live::RT
+                .spawn(async move {
+                    let client = OperatorClient::from_env()?;
+                    match client.start(&sid_for_start).await? {
+                        DictationStart::Started => Ok(DictationStart::Started),
+                        DictationStart::Unsupported => {
+                            // Older Operator without session API: trigger legacy toggle.
+                            client.legacy_toggle().await?;
+                            Ok(DictationStart::Unsupported)
+                        }
                     }
-                };
-                let size_bytes = bytes.len();
-                let local_id = this
-                    .update(cx, |composer, cx| {
-                        let id = composer.next_attachment_id;
-                        composer.next_attachment_id = composer.next_attachment_id.wrapping_add(1);
-                        composer.attachments.push(PendingAttachment {
-                            local_id: id,
-                            name: name.clone(),
-                            size_bytes,
-                            status: AttachmentUploadStatus::Uploading,
+                })
+                .await;
+
+            match start_res {
+                Ok(Ok(DictationStart::Started)) => {
+                    let still_same = this
+                        .update_in(cx, |composer, window, cx| {
+                            if composer.dictation.session_id() == Some(session_id.as_str()) {
+                                composer.dictation = DictationState::Recording {
+                                    session_id: session_id.clone(),
+                                };
+                                composer.spawn_dictation_wait(session_id.clone(), window, cx);
+                                cx.notify();
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false);
+                    if !still_same {
+                        let sid = session_id.clone();
+                        crate::live::RT.spawn(async move {
+                            if let Ok(client) = OperatorClient::from_env() {
+                                let _ = client.cancel(&sid).await;
+                            }
                         });
-                        cx.notify();
-                        id
-                    })
-                    .ok();
-                let Some(local_id) = local_id else {
-                    break;
-                };
-                let upload_res = conn.upload_chat_attachment(name, mime_type, bytes).await;
-                let _ = this.update(cx, |composer, cx| {
-                    if let Some(slot) = composer
-                        .attachments
-                        .iter_mut()
-                        .find(|a| a.local_id == local_id)
-                    {
-                        slot.status = match upload_res {
-                            Ok(att) => AttachmentUploadStatus::Ready(att),
-                            Err(err) => AttachmentUploadStatus::Error(err.to_string()),
-                        };
-                        cx.notify();
                     }
-                });
+                }
+                Ok(Ok(DictationStart::Unsupported)) => {
+                    let _ = this.update(cx, |composer, cx| {
+                        composer.dictation = DictationState::Idle;
+                        cx.notify();
+                    });
+                }
+                Ok(Err(err)) => {
+                    let _ = this.update(cx, |composer, cx| {
+                        composer.dictation = DictationState::Idle;
+                        composer.dictation_error = Some(friendly_operator_error(&err));
+                        cx.notify();
+                    });
+                }
+                Err(err) => {
+                    let _ = this.update(cx, |composer, cx| {
+                        composer.dictation = DictationState::Idle;
+                        composer.dictation_error = Some(err.to_string());
+                        cx.notify();
+                    });
+                }
             }
         })
         .detach();
+    }
+
+    fn spawn_dictation_wait(
+        &mut self,
+        session_id: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                let sid = session_id.clone();
+                let wait_res = crate::live::RT
+                    .spawn(async move {
+                        let client = OperatorClient::from_env()?;
+                        client.wait(&sid).await
+                    })
+                    .await;
+
+                match wait_res {
+                    Ok(Ok(DictationWait::StillWaiting)) => {
+                        let keep_going = this
+                            .read_with(cx, |composer, _| {
+                                matches!(
+                                    &composer.dictation,
+                                    DictationState::Recording { session_id: active }
+                                        if active == &session_id
+                                )
+                            })
+                            .unwrap_or(false);
+                        if !keep_going {
+                            break;
+                        }
+                    }
+                    Ok(Ok(DictationWait::Transcript(text))) => {
+                        let _ = this.update_in(cx, |composer, window, cx| {
+                            if matches!(
+                                &composer.dictation,
+                                DictationState::Recording { session_id: active }
+                                    if active == &session_id
+                            ) {
+                                composer.dictation = DictationState::Idle;
+                                composer.apply_dictation_transcript(&text, window, cx);
+                                cx.notify();
+                            }
+                        });
+                        break;
+                    }
+                    // Older Operator without /dictate/wait, or wait cancelled when user clicked stop.
+                    Ok(Ok(DictationWait::Unsupported)) | Ok(Err(_)) | Err(_) => {
+                        break;
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn stop_dictation(
+        &mut self,
+        session_id: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.dictation = DictationState::Transcribing {
+            session_id: session_id.clone(),
+        };
+        cx.notify();
+
+        let sid = session_id.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let stop_res = crate::live::RT
+                .spawn(async move {
+                    let client = OperatorClient::from_env()?;
+                    client.stop(&sid).await
+                })
+                .await;
+
+            let _ = this.update_in(cx, |composer, window, cx| {
+                if composer.dictation.session_id() != Some(session_id.as_str()) {
+                    return;
+                }
+                composer.dictation = DictationState::Idle;
+                match stop_res {
+                    Ok(Ok(text)) => {
+                        composer.apply_dictation_transcript(&text, window, cx);
+                    }
+                    Ok(Err(err)) => {
+                        composer.dictation_error = Some(friendly_operator_error(&err));
+                    }
+                    Err(err) => {
+                        composer.dictation_error = Some(err.to_string());
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn cancel_dictation(&mut self, session_id: String, cx: &mut Context<'_, Self>) {
+        self.dictation = DictationState::Idle;
+        self.dictation_error = None;
+        cx.notify();
+        crate::live::RT.spawn(async move {
+            if let Ok(client) = OperatorClient::from_env() {
+                let _ = client.cancel(&session_id).await;
+            }
+        });
+    }
+
+    fn apply_dictation_transcript(
+        &mut self,
+        transcript: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let existing = self.textarea.read(cx).value().to_string();
+        let Some(merged) = append_transcript(&existing, transcript) else {
+            return;
+        };
+        self.textarea.update(cx, |input, cx| {
+            input.set_value(merged, window, cx);
+            input.focus(window, cx);
+        });
+        self.on_draft_changed(cx);
     }
 
     fn remove_attachment(&mut self, local_id: u64, cx: &mut Context<'_, Self>) {
@@ -1173,7 +1502,63 @@ impl Render for Composer {
             .conn_tooltip("Attach files", &tokens)
             .child(icons::icon(ICON_ATTACH, 16.0, muted));
 
-        let mic_btn = render_microphone_button(&tokens);
+        let mic_btn = render_microphone_button(
+            &self.dictation,
+            &tokens,
+            cx.listener(|composer, _, window, cx| {
+                composer.toggle_dictation(window, cx);
+            }),
+        );
+
+        let dictation_badge: Option<AnyElement> = match &self.dictation {
+            DictationState::Starting { .. } => Some(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(muted)
+                    .child("Starting…")
+                    .into_any_element(),
+            ),
+            DictationState::Recording { .. } => Some(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(5.0))
+                    .text_size(px(11.0))
+                    .text_color(hsla(tokens.destructive))
+                    .child(
+                        div()
+                            .size(px(6.0))
+                            .rounded_full()
+                            .bg(hsla(tokens.destructive)),
+                    )
+                    .child("Listening…")
+                    .into_any_element(),
+            ),
+            DictationState::Transcribing { .. } => Some(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(muted)
+                    .child("Transcribing…")
+                    .into_any_element(),
+            ),
+            DictationState::Idle => self.dictation_error.as_ref().map(|err| {
+                div()
+                    .id("chat-composer-dictation-err")
+                    .max_w(px(180.0))
+                    .truncate()
+                    .cursor_pointer()
+                    .text_size(px(11.0))
+                    .text_color(hsla(tokens.destructive))
+                    .on_click(cx.listener(|composer, _, _, cx| {
+                        composer.dictation_error = None;
+                        cx.notify();
+                    }))
+                    .conn_tooltip(err.clone(), &tokens)
+                    .child(err.clone())
+                    .into_any_element()
+            }),
+        };
 
         let action_btn = render_primary_action_button(
             self.working,
@@ -1308,6 +1693,7 @@ impl Render for Composer {
                             .gap(px(6.0))
                             .child(model_trigger)
                             .when_some(effort_picker, |el, picker| el.child(picker))
+                            .when_some(dictation_badge, |el, badge| el.child(badge))
                             .child(mic_btn)
                             .child(action_btn),
                     ),
@@ -1317,7 +1703,22 @@ impl Render for Composer {
             .id("chat-composer-root")
             .relative()
             .w_full()
+            .on_drop(
+                cx.listener(|composer, dropped: &ExternalPaths, window, cx| {
+                    composer.attach_paths(dropped.paths().to_vec(), window, cx);
+                }),
+            )
+            .capture_action(cx.listener(|composer, _: &Paste, window, cx| {
+                if composer.try_paste_attachments(window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             .capture_action(cx.listener(|composer, _: &Escape, _window, cx| {
+                if let Some(session_id) = composer.dictation.session_id().map(str::to_owned) {
+                    composer.cancel_dictation(session_id, cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 if composer.model_picker_open
                     || composer.effort_menu_open
                     || composer.runtime_menu_open
@@ -1418,13 +1819,38 @@ fn composer_surface_colors(tokens: &Tokens) -> (gpui_kit::Hsla, gpui_kit::Hsla) 
     (bg, hsla(tokens.shell_inner_border))
 }
 
-/// Microphone button styled like Conn's `ComposerSpeechButton` (`icon-sm` ghost, button only).
-fn render_microphone_button(tokens: &Tokens) -> AnyElement {
+/// Microphone button styled like Conn's `ComposerSpeechButton` wired to local Operator dictation.
+fn render_microphone_button<FClick>(
+    state: &DictationState,
+    tokens: &Tokens,
+    on_click: FClick,
+) -> AnyElement
+where
+    FClick: Fn(&gpui_kit::ClickEvent, &mut Window, &mut gpui_kit::App) + 'static,
+{
     let highlight_bg = hsla(tokens.shell_highlight);
     let fg = hsla(tokens.foreground);
     let muted = hsla(tokens.muted_foreground);
+    let destructive = hsla(tokens.destructive);
 
-    div()
+    let (tooltip, icon_color, active_bg) = match state {
+        DictationState::Idle => ("Dictate with Operator", muted, None),
+        DictationState::Starting { .. } => (
+            "Starting Operator dictation… (Esc to cancel)",
+            destructive,
+            Some(hsla_alpha(tokens.destructive, 0.14)),
+        ),
+        DictationState::Recording { .. } => (
+            "Stop dictation (click or Esc to cancel)",
+            destructive,
+            Some(hsla_alpha(tokens.destructive, 0.18)),
+        ),
+        DictationState::Transcribing { .. } => {
+            ("Transcribing…", fg, Some(hsla_alpha(tokens.accent, 0.16)))
+        }
+    };
+
+    let mut btn = div()
         .id("chat-composer-mic")
         .flex()
         .items_center()
@@ -1432,9 +1858,17 @@ fn render_microphone_button(tokens: &Tokens) -> AnyElement {
         .size(px(FOOTER_CONTROL_HEIGHT_PX))
         .rounded_full()
         .cursor_pointer()
-        .hover(move |s| s.bg(highlight_bg).text_color(fg))
-        .child(icons::icon(ICON_MICROPHONE, 16.0, muted))
-        .into_any_element()
+        .on_click(on_click)
+        .conn_tooltip(tooltip, tokens)
+        .child(icons::icon(ICON_MICROPHONE, 16.0, icon_color));
+
+    if let Some(bg) = active_bg {
+        btn = btn.bg(bg);
+    } else {
+        btn = btn.hover(move |s| s.bg(highlight_bg).text_color(fg));
+    }
+
+    btn.into_any_element()
 }
 
 /// Round send / stop primary button matching `ComposerPrimaryActions.tsx`.
@@ -1561,6 +1995,57 @@ fn format_byte_size(bytes: usize) -> String {
     }
 }
 
+/// Maps a GPUI clipboard [`ImageFormat`] to `(extension, mime_type)`.
+fn clipboard_image_spec(format: ImageFormat) -> Option<(&'static str, &'static str)> {
+    match format {
+        ImageFormat::Png => Some(("png", "image/png")),
+        ImageFormat::Jpeg => Some(("jpg", "image/jpeg")),
+        ImageFormat::Webp => Some(("webp", "image/webp")),
+        ImageFormat::Gif => Some(("gif", "image/gif")),
+        ImageFormat::Bmp => Some(("bmp", "image/bmp")),
+        ImageFormat::Tiff => Some(("tiff", "image/tiff")),
+        ImageFormat::Svg => Some(("svg", "image/svg+xml")),
+        ImageFormat::Ico => Some(("ico", "image/x-icon")),
+        ImageFormat::Pnm => None,
+    }
+}
+
+fn next_dictation_session_id(seq: u64) -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    format!("conn-composer-{millis}-{seq}")
+}
+
+fn friendly_operator_error(err: &conn_desktop::operator::OperatorError) -> String {
+    match err {
+        conn_desktop::operator::OperatorError::Unreachable { .. } => {
+            "Operator isn't running".to_owned()
+        }
+        other => other.to_string(),
+    }
+}
+
+/// Appends dictated `transcript` to `existing` draft text with a single space separator when
+/// needed. Returns `None` when `transcript` is empty/whitespace.
+fn append_transcript(existing: &str, transcript: &str) -> Option<String> {
+    let trimmed = transcript.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if existing.is_empty() {
+        return Some(trimmed.to_owned());
+    }
+    let needs_space = !existing.ends_with(char::is_whitespace);
+    let mut out = String::with_capacity(existing.len() + trimmed.len() + usize::from(needs_space));
+    out.push_str(existing);
+    if needs_space {
+        out.push(' ');
+    }
+    out.push_str(trimmed);
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1613,5 +2098,36 @@ mod tests {
             None,
             "unknown model returns None"
         );
+    }
+
+    #[test]
+    fn append_transcript_joins_cleanly_and_ignores_blank() {
+        assert_eq!(append_transcript("", "   "), None);
+        assert_eq!(
+            append_transcript("", "  fix the build  "),
+            Some("fix the build".to_owned())
+        );
+        assert_eq!(
+            append_transcript("Please", "check tests"),
+            Some("Please check tests".to_owned())
+        );
+        assert_eq!(
+            append_transcript("Line 1\n", "Line 2"),
+            Some("Line 1\nLine 2".to_owned())
+        );
+    }
+
+    #[test]
+    fn clipboard_image_spec_maps_formats_and_session_ids_validate() {
+        assert_eq!(
+            clipboard_image_spec(ImageFormat::Png),
+            Some(("png", "image/png"))
+        );
+        assert_eq!(
+            clipboard_image_spec(ImageFormat::Jpeg),
+            Some(("jpg", "image/jpeg"))
+        );
+        let sid = next_dictation_session_id(7);
+        assert!(conn_desktop::operator::is_valid_session_id(&sid));
     }
 }

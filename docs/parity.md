@@ -31,16 +31,15 @@ Nick's Mac and never by asking Nick to test. Take `/tmp/vm-gui.lock` around GUI 
 
 ### Buttons that exist but do nothing yet
 - Right panel: dock to bottom *(deferred per `docs/scope.md` #16 — hide or wire later)*.
-- Composer: microphone needs **Operator** dictation (`/dictate/start|stop|wait|cancel`, per `docs/scope.md` #6); `/` commands execute `/model`, `/plan`, `/settle` (other provider slash commands stay in the draft for Enter).
 
 ### Features missing (within locked `docs/scope.md`)
-- **Composer (`#6`, `#10`):** clipboard image paste; Operator dictation button.
 - **Browser & Device Annotations (`#18`):** annotation overlay, queue panel, and Operator dictation wired to `annotations_*`.
 - **Diff (`#15`):** working-tree / branch diff scopes (`All changes` and per-turn `Turn N` scopes via `getTurnDiff` are wired).
 - **Device (`#24`):** optional WebRTC transport (MJPEG + VideoToolbox H.264 implemented).
 - **Intentionally omitted (see `docs/scope.md`):** Usage limits/accounts (`#3`), Snooze/Archive/Working shelves (`#9`), Labs/Theme Editor/Keybindings editor (`#13`, `#30`), GitLab & AI PR Review Guides (`#23`), EAS/Simlock hosts (`#24`), SnapShot/Guest Share/Telemetry/Side Chats (`#26`–`#29`).
 
 ### Done so far (verified in `nick-vm` side-by-side captures)
+- Composer Operator dictation & clipboard paste: `conn_desktop::operator::OperatorClient` (`/dictate/{start,stop,wait,cancel}` + 504 wait loop + legacy fallback), composer mic toggle (`Listening…` / `Transcribing…`, `Esc` cancel, external Operator shortcut auto-insert), `⌘V` clipboard image & file paste, and drag-and-drop file upload onto the composer.
 - Orbit profile sync: `OrbitProfileClient` (`GET /me`, `/profiles`, `PUT /me/profile`, `GET/PUT/PATCH /profiles/{id}/settings` with 3-way conflict merges), synced workspace tiles in the 54px rail + sidebar project-group filtering, `"From Orbit profile"` custom themes in Appearance & Command Palette (`⌘K`), bi-directional appearance & desktop settings push, and `Settings › Connections › Orbit profile sync` controls (live-verified against `https://gateway.orbit`).
 - Core shell: sidebar width (288px column), thread order (latest user message), Claude and OpenAI marks, SF Mono for code and inline code, Settled footer, app activation (bundled `.app`), native macOS menu bar (`Conn`, `File`, `Edit`, `View`, `Window`) + main-window close/quit, header and breadcrumb positions, header Linked items toggle & tooltips, header title truncation, workspace rail wired buttons & tooltips, macOS vibrancy `Root` fix + `NSAppearance` sync (exact RGB match to `Conn.app`), Reduce Transparency toggle.
 - Sidebar: live thread search (title/project/branch) with clear button, project-scope filter popover, native folder picker Add project (`projects.mutate` / `project.create`), hover inline thread rename (`thread.metadata.update`), hover quick Settle / Un-settle row actions, new thread (`⌘N` / compose button via `orchestration.launchThread`).
