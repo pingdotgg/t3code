@@ -2363,7 +2363,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
 
-  // Escape dismisses the suggestion so Tab moves focus again.
+  // Escape dismisses the suggestion so its key (Tab by default) does its usual job again.
   const { suggestion: promptSuggestion, dismiss: dismissPromptSuggestion } = usePromptSuggestion(
     environmentId,
     activeThread,
@@ -2384,6 +2384,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     !showProviderUnavailable
       ? promptSuggestion
       : null;
+  const promptSuggestionShortcutLabel =
+    offeredPromptSuggestion === null
+      ? null
+      : shortcutLabelForCommand(keybindings, "composer.acceptPromptSuggestion", {
+          context: { composerFocus: true, terminalFocus: false },
+        });
 
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
     composerCommandKeyHandler({
@@ -3747,7 +3753,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               : (offeredPromptSuggestion ?? m(DEFAULT_COMPOSER_PLACEHOLDER))
                     }
                     placeholderSuffix={
-                      offeredPromptSuggestion !== null ? (
+                      offeredPromptSuggestion !== null && promptSuggestionShortcutLabel !== null ? (
                         // The placeholder ignores pointer events so clicks reach the editor; only this hint opts back in.
                         <button
                           type="button"
@@ -3763,7 +3769,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             if (accepted !== null) applyPromptReplacementStable(0, 0, accepted);
                           }}
                         >
-                          <Kbd variant="outline">⇥ Tab</Kbd>
+                          <Kbd variant="outline">
+                            {promptSuggestionShortcutLabel === "Tab"
+                              ? "⇥ Tab"
+                              : promptSuggestionShortcutLabel}
+                          </Kbd>
                         </button>
                       ) : undefined
                     }
