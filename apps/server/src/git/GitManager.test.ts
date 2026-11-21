@@ -2853,19 +2853,25 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
       expect(pullRequestWorktree?.number).toBe(300);
 
-      // No pull request in upstream, the repository the host targets: the fork's own counts.
-      const mergedInFork = yield* manager.branchPullRequest({
-        cwd: repoDir,
-        branch: "feature/fork-merged",
-      });
+      // Status keeps searching upstream only, so Create PR there stays available.
+      expect(
+        yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/fork-merged" }),
+      ).toBeNull();
+      // Cleanup also accepts a pull request merged inside the fork.
+      const mergedInFork = yield* manager.branchPullRequest(
+        { cwd: repoDir, branch: "feature/fork-merged" },
+        { refresh: true, includeHeadRepository: true },
+      );
       expect(mergedInFork).toMatchObject({
         number: 12,
         state: "merged",
         repositoryKey: "github.com/contributor/codething-mvp",
       });
-      // An open one there would hide Create PR for the upstream pull request.
       expect(
-        yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/fork-open" }),
+        yield* manager.branchPullRequest(
+          { cwd: repoDir, branch: "feature/fork-open" },
+          { refresh: true, includeHeadRepository: true },
+        ),
       ).toBeNull();
     }),
   );
