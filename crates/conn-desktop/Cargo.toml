@@ -9,18 +9,30 @@ rust-version.workspace = true
 
 [dependencies]
 base64 = "=0.22.1"
-# Also trust the macOS system keychain, so Orbit's local CA for `*.test` hosts works (as in
-# Conn, whose API sender uses Chromium's network stack).
+# Database panel: one async driver stack for MySQL/MariaDB, PostgreSQL and SQLite.
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "mysql", "postgres", "sqlite-bundled", "json", "chrono", "uuid", "bigdecimal"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
+futures.workspace = true
+# Also trust the macOS system keychain: Orbit's root CA (the Gateway, `*.test` app hosts and
+# HTTP MCP servers) lives there, as in Conn, which uses Chromium's network stack.
 reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }
 serde.workspace = true
-# Pretty JSON keeps the body's key order, as JSON.stringify does.
+# Keep JSON object order: pretty bodies as JSON.stringify writes them, tool input schemas list
+# form fields, `.mcp.json` lists servers.
 serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
+# Orbit Tasks realtime: Reverb (Pusher protocol) over wss, trusting the same keychain roots.
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
 url.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# Safe `killpg` for stopping a stdio MCP server's whole process group.
+nix = { version = "=0.31.3", default-features = false, features = ["signal"] }
+
 [dev-dependencies]
-tokio = { workspace = true, features = ["io-util"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "rt-multi-thread", "macros"] }
 
 [lints]
 workspace = true
