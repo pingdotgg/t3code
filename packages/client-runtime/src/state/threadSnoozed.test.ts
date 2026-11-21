@@ -12,6 +12,7 @@ import {
   hasQueuedTurnStart,
   hasUnseenRunFailure,
   pickSnoozePreset,
+  INDEFINITE_SNOOZE_UNTIL,
   resolveSnoozePresets,
   snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
@@ -405,9 +406,22 @@ describe("resolveSnoozePresets", () => {
   const formatTime = (date: Date) =>
     `${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
   const menu = (now: Date, presets?: ReadonlyArray<SnoozePresetSetting>) =>
-    resolveSnoozePresets(now, { formatTime, ...(presets ? { presets } : {}) }).map(
-      (preset) => `${preset.label} ${preset.whenLabel}`,
-    );
+    resolveSnoozePresets(now, { formatTime, ...(presets ? { presets } : {}) })
+      .filter((preset) => preset.id !== "indefinite")
+      .map((preset) => `${preset.label} ${preset.whenLabel}`);
+
+  it("always ends with an indefinite snooze that never wakes", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 20), { presets: [] });
+    expect(presets).toEqual([
+      {
+        id: "indefinite",
+        label: "Indefinitely",
+        whenLabel: "",
+        snoozedUntil: INDEFINITE_SNOOZE_UNTIL,
+      },
+    ]);
+    expect(snoozeWakeLabel(INDEFINITE_SNOOZE_UNTIL, { now: NOW })).toBe("∞");
+  });
 
   it("lists custom presets soonest first and names the day when the label does not", () => {
     // Wednesday 20:00.
@@ -430,7 +444,7 @@ describe("resolveSnoozePresets", () => {
         { kind: "at", day: "monday", time: "09:00" },
       ],
     });
-    expect(presets.map((preset) => preset.id)).toEqual(["at:monday:09:00"]);
+    expect(presets.map((preset) => preset.id)).toEqual(["at:monday:09:00", "indefinite"]);
     expect(new Date(presets[0]!.snoozedUntil)).toEqual(localDate(2026, 4, 20, 9));
   });
 
