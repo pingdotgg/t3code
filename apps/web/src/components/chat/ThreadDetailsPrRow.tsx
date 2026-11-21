@@ -97,6 +97,7 @@ export function ThreadDetailsPrRow({
   onActed,
   onStopWatching,
   composerTarget,
+  handoffDisabled = false,
 }: {
   environmentId: EnvironmentId;
   pr: ThreadPr;
@@ -110,6 +111,8 @@ export function ThreadDetailsPrRow({
   onStopWatching?: (() => void) | undefined;
   /** Fix and Resolve write here instead of checking the pull request out in a new thread. */
   composerTarget?: ComposerThreadTarget | undefined;
+  /** Fix and Resolve wait while the thread's own worktree is still being prepared. */
+  handoffDisabled?: boolean | undefined;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -216,7 +219,7 @@ export function ThreadDetailsPrRow({
   };
 
   const startResolveConflicts = () => {
-    if (detail === null) return;
+    if (detail === null || handoffDisabled) return;
     handOff("conflicts", {
       prompt: buildResolveConflictsPrompt({
         number: detail.number,
@@ -229,7 +232,7 @@ export function ThreadDetailsPrRow({
   };
 
   const startFixChecks = () => {
-    if (detail === null) return;
+    if (detail === null || handoffDisabled) return;
     handOff(
       "findings",
       buildFixFindingsHandoff({
@@ -555,7 +558,11 @@ export function ThreadDetailsPrRow({
                       size="sm"
                       part="meta"
                       tone={trailingAction.destructive ? "destructive" : "primary"}
-                      disabled={actionPending || handoff !== null}
+                      disabled={
+                        actionPending ||
+                        handoff !== null ||
+                        (handoffDisabled && (rowAction === "fix" || rowAction === "resolve"))
+                      }
                       onClick={trailingAction.onClick}
                     />
                   }

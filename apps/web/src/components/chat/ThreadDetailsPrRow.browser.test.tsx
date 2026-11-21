@@ -297,6 +297,67 @@ it("adds the failing checks to a given composer instead of opening a new thread"
   );
 });
 
+it.each([
+  { name: "its checked-out pull request", checkout: "https://github.com/Owner/Repo/pull/1/" },
+  { name: "another pull request's checkout", checkout: "https://github.com/owner/repo/pull/2" },
+  { name: "a worktree still being prepared", checkout: undefined },
+])("hands off Fix in a thread with $name", async ({ checkout }) => {
+  await using screen = await setup();
+  state.status = "failure";
+  state.projects = [repositoryProject];
+  state.prepareThread.mockResolvedValue({
+    _tag: "Success",
+    value: {
+      branch: "feature",
+      worktreePath: "/workspace/pr",
+      isOnPullRequestHead: true,
+      pullRequest: { url: "https://github.com/owner/repo/pull/1" },
+    },
+  });
+  state.pullRequests = [
+    {
+      host: "github.com",
+      repository: "owner/repo",
+      number: 1,
+      url: "https://github.com/owner/repo/pull/1",
+      source: "manual",
+      linkedAt: "2026-10-30T00:00:00.000Z",
+      snapshot: null,
+      stack: null,
+    },
+  ];
+  useComposerDraftStore.getState().setPrompt(threadRef, "Keep my notes");
+  await act(async () => {
+    await screen.rerender(
+      <ThreadDetailsThreadPrRows
+        threadRef={threadRef}
+        project={repositoryProject as never}
+        handoffDisabled={checkout === undefined}
+        checkout={
+          checkout === undefined ? undefined : { target: threadRef, pullRequestUrl: checkout }
+        }
+      />,
+    );
+  });
+  const fix = [...screen.container.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === "Fix",
+  )!;
+  await clickButton(screen.container, "Fix");
+  const prompt = useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt;
+  if (checkout === undefined) {
+    expect(fix.disabled).toBe(true);
+    expect(prompt).toBe("Keep my notes");
+    expect(state.prepareThread).not.toHaveBeenCalled();
+  } else if (checkout.endsWith("/1/")) {
+    expect(prompt).toContain("Keep my notes");
+    expect(prompt).toContain("https://github.com/owner/repo/pull/1");
+    expect(state.prepareThread).not.toHaveBeenCalled();
+  } else {
+    expect(prompt).toBe("Keep my notes");
+    await vi.waitFor(() => expect(state.prepareThread).toHaveBeenCalled());
+  }
+});
+
 const repositoryClone = {
   ...repositoryProject,
   id: ProjectId.make("clone"),
