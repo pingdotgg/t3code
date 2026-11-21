@@ -497,7 +497,9 @@ Without a signature, anyone with the webhook URL can trigger a run.
 Signature checks, filters, and dedupe can skip a webhook request.
 `bindToCurrentThread` defaults to `true` only when the caller has a thread in
 the task's project; otherwise it defaults to `false`. Bound runs post into
-that thread; unbound runs each launch a fresh thread in the task's project.
+that thread; unbound runs each launch a fresh thread in the task's project,
+in a new worktree from the default branch unless `workspace: "checkout"` puts
+them in the project checkout. A task that stays bound rejects `workspace`.
 Explicit `bindToCurrentThread: true` without a caller thread in that project
 is rejected. Pausing uses `schedule_task` with `scheduledTaskId` and `enabled: false`;
 deletion is permanent.

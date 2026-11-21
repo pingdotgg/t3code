@@ -4366,6 +4366,72 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
+    it.effect("creates a task that runs in the project checkout", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(masterRepository, saved)),
+        );
+        yield* mcp.scheduleTask(client, {
+          projectId,
+          prompt: "Check the build",
+          schedule,
+          workspace: "checkout",
+        });
+        assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
+      }),
+    );
+
+    it.effect.each([
+      {
+        name: "unbinding into the checkout in one call",
+        task: { threadId: ThreadId.make("thread:scheduled-base"), threadMode: "continue" },
+        update: { bindToCurrentThread: false, workspace: "checkout" },
+        expected: { type: "root" },
+      },
+      {
+        name: "moving an unbound task from the checkout to worktrees",
+        task: {},
+        update: { workspace: "worktree" },
+        expected: { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
+      },
+      {
+        name: "asking for worktrees again keeps the saved base branch",
+        task: { workspaceStrategy: { type: "worktree", baseRef: "release" } },
+        update: { workspace: "worktree" },
+        expected: { type: "worktree", baseRef: "release" },
+      },
+    ] as const)("$name", ({ task, update, expected }) =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(masterRepository, saved, { ...existing, ...task })),
+        );
+        yield* mcp.updateScheduledTask(client, { scheduledTaskId: existing.id, ...update });
+        assert.deepEqual(yield* Ref.get(saved), [expected]);
+      }),
+    );
+
+    it.effect("refuses a workspace for a task that stays bound to its thread", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(masterRepository, saved, {
+              ...existing,
+              threadId: ThreadId.make("thread:scheduled-base"),
+              threadMode: "continue",
+            }),
+          ),
+        );
+        const refused = yield* mcp
+          .updateScheduledTask(client, { scheduledTaskId: existing.id, workspace: "checkout" })
+          .pipe(Effect.flip);
+        assert.include(refused.message, "bindToCurrentThread: false");
+        assert.deepEqual(yield* Ref.get(saved), []);
+      }),
+    );
+
     it.effect.each([
       {
         name: "no remote, only master",
