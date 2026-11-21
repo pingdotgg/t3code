@@ -554,6 +554,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("ships every Chromium locale", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.notProperty(config, "electronLanguages");
+    }),
+  );
+
   it.effect("names the Electron window class in the Linux desktop entry", () =>
     Effect.gen(function* () {
       const linux = yield* createBuildConfig(
