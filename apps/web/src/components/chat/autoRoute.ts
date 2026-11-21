@@ -15,6 +15,11 @@ export interface AutoRoute {
   readonly label: string;
 }
 
+/** Claude instances are named "Auto" (account A) and "Auto B"; other providers keep their name. */
+export function claudeAccountLetter(displayName: string): "A" | "B" {
+  return /\bB$/.test(displayName) ? "B" : "A";
+}
+
 /**
  * Mirrors the server's routing (same resolver, same live usage snapshots), so the picker shows
  * the model a new message would get. The server still decides per message; a thread already on
@@ -42,13 +47,8 @@ export function describeAutoRoute(input: {
   );
   const model = entry?.models.find((candidate) => candidate.slug === resolution.selection.model);
   if (!entry || !model) return null;
-  // Claude instances are named "Auto" (account A) and "Auto B"; other providers keep their name.
   const account =
-    entry.driverKind === "claudeAgent"
-      ? /\bB$/.test(entry.displayName)
-        ? "B"
-        : "A"
-      : entry.displayName;
+    entry.driverKind === "claudeAgent" ? claudeAccountLetter(entry.displayName) : entry.displayName;
   return {
     driverKind: entry.driverKind,
     label: `${getTriggerDisplayModelName(model, entry.driverKind)} (${account})`,
