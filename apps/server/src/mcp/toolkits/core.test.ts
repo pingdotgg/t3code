@@ -44,6 +44,7 @@ import {
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
+import { DispatchModeLimit } from "../../orchestration-v2/DispatchModeLimit.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
@@ -1335,6 +1336,88 @@ it.effect(
         ),
       ),
     ),
+);
+
+it.effect.each([
+  ["default", "idle", true, "provider.switch full-access/default"],
+  ["default", "usage-limited", true, "message.dispatch run:limited full-access/default"],
+  ["default", "idle", false, "runtime_mode_escalation_denied"],
+  ["plan", "idle", true, "interaction_mode_escalation_denied"],
+] as const)(
+  "t3_thread_configure from an Auto/%s parent moving its %s Full-access child (delegated: %s) gives %s",
+  ([interactionMode, childState, delegated, expected]) => {
+    const childId = ThreadId.make("mcp-core-own-child");
+    const parent = McpToolAccessTestkit.liveThreadShell(threadId, {
+      runtimeMode: "auto",
+      interactionMode,
+    });
+    const child = {
+      ...McpToolAccessTestkit.liveThreadShell(childId),
+      ...(childState === "usage-limited"
+        ? {
+            status: "failed" as const,
+            activeRunId: null,
+            latestRunId: RunId.make("run:limited"),
+            lastErrorClass: "usage_limit" as const,
+          }
+        : {}),
+      lineage: {
+        rootThreadId: threadId,
+        parentThreadId: threadId,
+        relationshipToParent: "subagent" as const,
+      },
+    };
+    let dispatched: string | undefined;
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({
+          name: "t3_thread_configure",
+          arguments: {
+            threadId: childId,
+            modelSelection: { instanceId: "codex-b", model: "gpt-5" },
+          },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(declaredFailure(result)?.code ?? dispatched).toBe(expected);
+    }).pipe(
+      Effect.provide(
+        layerThreadToolkit.pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) => Effect.succeed(id === childId ? child : parent),
+              getProjectThreadRecords: () =>
+                Effect.succeed(McpToolAccessTestkit.idleThreadProjection(child) as never),
+              listAppOwnedChildThreadIds: () => Effect.succeed(delegated ? [childId] : []),
+              // Records the command and the limit the orchestrator rechecks it against under its lock.
+              dispatch: (command) =>
+                DispatchModeLimit.pipe(
+                  Effect.map((limit) => {
+                    const resumes =
+                      command.type === "message.dispatch" ? command.manualContinuationOfRunId : "";
+                    dispatched = [
+                      command.type,
+                      resumes,
+                      `${limit?.runtimeMode}/${limit?.interactionMode}`,
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
+                    return { sequence: 1, storedEvents: [] };
+                  }),
+                ),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+          Layer.provide(NodeCrypto.layer),
+        ),
+      ),
+    );
+  },
 );
 
 it.effect("discovers workflow stop targets and requires orchestration capability", () => {

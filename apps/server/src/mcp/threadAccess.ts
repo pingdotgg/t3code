@@ -5,6 +5,7 @@ import type {
 import {
   CommandId,
   type EnvironmentId,
+  isRuntimeModeAbove,
   OrchestratorMcpFailure,
   type ProjectId,
   type ProviderInstanceId,
@@ -188,6 +189,29 @@ export const assertTargetWithinLimits = (
     ),
   );
 
+/**
+ * A thread acts on a child it delegated at the runtime mode that child already has, so it can
+ * move the child to another account and resume it after its own mode was lowered.
+ */
+export const limitsForOwnChild = Effect.fn("mcp.limitsForOwnChild")(function* (
+  threads: Pick<ThreadManagement.ThreadManagementService["Service"], "listAppOwnedChildThreadIds">,
+  callerThreadId: ThreadId | undefined,
+  limits: CallerLimits,
+  target: Pick<OrchestrationV2ThreadShell, "id" | "runtimeMode" | "lineage">,
+) {
+  if (
+    callerThreadId === undefined ||
+    !isRuntimeModeAbove(target.runtimeMode, limits.runtimeMode) ||
+    target.lineage.parentThreadId !== callerThreadId ||
+    target.lineage.relationshipToParent !== "subagent"
+  )
+    return limits;
+  const delegated = yield* threads
+    .listAppOwnedChildThreadIds(callerThreadId)
+    .pipe(Effect.mapError(unavailable));
+  return delegated.includes(target.id) ? { ...limits, runtimeMode: target.runtimeMode } : limits;
+});
+
 /** Background subagents retain credentials until provider exit; archived threads and other instances cannot act. */
 export const isLiveCallerShell = (
   shell: Pick<
@@ -273,7 +297,7 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
           : unavailable(),
       ),
     );
-  return { ...context, projection };
+  return { ...context, shell, projection };
 });
 
 export const newCommandId = Effect.fn("mcp.newCommandId")(function* () {
