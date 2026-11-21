@@ -150,6 +150,7 @@ export function resolveChatCanvasModel({
   });
   const detailsCardMode: ThreadPanelPresentation = detailsCardPlacement ? "inline" : "popover";
   return {
+    measurements,
     container,
     lane,
     layout,
@@ -158,4 +159,40 @@ export function resolveChatCanvasModel({
     detailsCardPlacement,
     detailsCardMode,
   };
+}
+
+type ChatCanvasModel = ReturnType<typeof resolveChatCanvasModel>;
+type DetailsCardBox = ChatCanvasModel["detailsCardPlacement"];
+
+const cardKey = (card: DetailsCardBox) =>
+  card ? `${card.right},${card.y},${card.width},${card.height}` : "-";
+
+/**
+ * Everything the canvas and its consumers draw from a model. The card is placed from the
+ * right and the player only reads the width with it, so most resizes change none of it.
+ */
+export function chatCanvasDrawnKey({
+  measurements,
+  container,
+  lane,
+  layout,
+  detailsCardTopInset,
+  preferredDetailsCard,
+  detailsCardPlacement,
+}: ChatCanvasModel): string {
+  const { frame, chat } = layout;
+  return [
+    measurements.timelineGutter,
+    chat.insetStart,
+    chat.insetEnd,
+    layout.overlapsChat,
+    layout.overlapsDetailsCard,
+    frame ? `${frame.x},${frame.y},${frame.width},${frame.height},${container.width}` : "-",
+    container.height,
+    lane.padding,
+    lane.minChatWidth,
+    detailsCardTopInset,
+    cardKey(preferredDetailsCard),
+    cardKey(detailsCardPlacement),
+  ].join("|");
 }

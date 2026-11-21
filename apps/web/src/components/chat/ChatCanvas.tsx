@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties } from "react";
-import { useStore } from "zustand";
+import { useSyncExternalStoreWithSelector } from "use-sync-external-store/with-selector";
 import { ChatCanvasContext, ChatCanvasTimelineContext } from "./ChatCanvasContext";
 import type { ChatCanvasPreview } from "./chatCanvasLayout";
-import { resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
+import { chatCanvasDrawnKey, resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
 import { observeResize } from "../../lib/observeResize";
 import type { ScopedThreadRef } from "@t3tools/contracts";
@@ -62,8 +62,28 @@ export function ChatCanvas({
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
   const [timelineElement, registerTimeline] = useState<HTMLElement | null>(null);
-  const measurements = useStore(store, (state) => state.measurements);
-  const detailsCardMeasurement = useStore(store, (state) => state.detailsCardMeasurement);
+  const detailsCardInlineOpen = useRightPanelStore((state) =>
+    threadRef === null
+      ? false
+      : selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
+  );
+  // A resize renders the canvas only when it moves something drawn; most widths (a
+  // column drag, a panel sliding) leave the lane, the card and the player where they were.
+  const model = useSyncExternalStoreWithSelector(
+    store.subscribe,
+    store.getState,
+    store.getState,
+    (state) =>
+      resolveChatCanvasModel({
+        measurements: state.measurements,
+        detailsCardMeasurement: state.detailsCardMeasurement,
+        threadRef,
+        preview,
+        detailsCardInlineOpen,
+      }),
+    (a, b) => chatCanvasDrawnKey(a) === chatCanvasDrawnKey(b),
+  );
+  const { measurements } = model;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes canvas, find bar and timeline resizes and writes the measurements to the canvas store
   useLayoutEffect(() => {
     const element = elementRef.current;
@@ -134,18 +154,6 @@ export function ChatCanvas({
       stopObserving();
     };
   }, [store, composerOverlayElement, timelineElement, detailsCardTopInset]);
-  const detailsCardInlineOpen = useRightPanelStore((state) =>
-    threadRef === null
-      ? false
-      : selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
-  );
-  const model = resolveChatCanvasModel({
-    measurements,
-    detailsCardMeasurement,
-    threadRef,
-    preview,
-    detailsCardInlineOpen,
-  });
   const context = {
     container: model.container,
     lane: model.lane,
