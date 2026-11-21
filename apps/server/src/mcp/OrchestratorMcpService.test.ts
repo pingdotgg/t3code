@@ -1206,13 +1206,13 @@ describe("OrchestratorMcpService", () => {
       }),
   );
 
-  it.effect("refuses to cancel a task whose child now runs above the parent's modes", () =>
+  it.effect("cancels a task whose child now runs above the parent's modes", () =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-cancel-dispose-failed-parent");
       const childThreadId = ThreadId.make("thread:mcp-cancel-dispose-failed-child");
       const childRunId = RunId.make("run:mcp-cancel-dispose-failed-child");
       const taskId = NodeId.make("node:mcp-cancel-dispose-failed-task");
-      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const dispatched = yield* Ref.make<ReadonlyArray<{ readonly type: string }>>([]);
       const parentProjection = {
         thread: { id: parentThreadId, runtimeMode: "approval-required", interactionMode: "plan" },
         runs: [],
@@ -1287,25 +1287,26 @@ describe("OrchestratorMcpService", () => {
 
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const error = yield* service
-          .cancelTask(scope, { taskId, clientRequestId: "cancel-above-modes" })
-          .pipe(Effect.flip);
-        assert.equal(error.code, "runtime_mode_escalation_denied");
-        assert.deepEqual(yield* Ref.get(dispatched), []);
+        const result = yield* service.cancelTask(scope, {
+          taskId,
+          clientRequestId: "cancel-above-modes",
+        });
+        assert.equal(result.status, "cancel_requested");
+        assert.deepEqual(
+          (yield* Ref.get(dispatched)).map((command) => command.type),
+          ["thread.stop", "delegated_task.completion-delivery.dispose"],
+        );
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
 
-  const cancelOverRaisedGrandchild = (child: {
-    readonly deleted: boolean;
-    readonly raisedDuringStop?: boolean;
-  }) =>
+  const cancelOverRaisedGrandchild = (child: { readonly raisedDuringStop?: boolean }) =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-cancel-grandchild-parent");
       const childThreadId = ThreadId.make("thread:mcp-cancel-grandchild-child");
       const grandchildThreadId = ThreadId.make("thread:mcp-cancel-grandchild-grandchild");
       const taskId = NodeId.make("node:mcp-cancel-grandchild-task");
-      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const dispatched = yield* Ref.make<ReadonlyArray<{ readonly type: string }>>([]);
       const stoppedBelow = yield* Ref.make(false);
       const subagentReads = yield* Ref.make<ReadonlyArray<ProjectionRecordFilter | undefined>>([]);
       const appOwnedTask = (
@@ -1418,9 +1419,7 @@ describe("OrchestratorMcpService", () => {
             Effect.succeed(
               threadId === grandchildThreadId && child.raisedDuringStop !== true
                 ? liveThreadShell(threadId)
-                : threadId === childThreadId && child.deleted
-                  ? null
-                  : liveThreadShell(threadId, { runtimeMode: "approval-required" }),
+                : liveThreadShell(threadId, { runtimeMode: "approval-required" }),
             ),
           dispatch: (command) =>
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
@@ -1477,9 +1476,12 @@ describe("OrchestratorMcpService", () => {
 
       return yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const error = yield* service
+        const outcome = yield* service
           .cancelTask(scope, { taskId, clientRequestId: "cancel-grandchild-above-modes" })
-          .pipe(Effect.flip);
+          .pipe(
+            Effect.map((result) => result.status),
+            Effect.catch((error) => Effect.succeed(error.code)),
+          );
         // No read decodes every task a thread has dispatched.
         for (const filter of yield* Ref.get(subagentReads)) {
           assert.isTrue(
@@ -1487,38 +1489,31 @@ describe("OrchestratorMcpService", () => {
           );
         }
         return {
-          code: error.code,
-          dispatched: yield* Ref.get(dispatched),
+          outcome,
+          dispatched: (yield* Ref.get(dispatched)).map((command) => command.type),
           stoppedBelow: yield* Ref.get(stoppedBelow),
         };
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     });
 
-  it.effect("refuses to cancel a task when a task under it now runs above the parent's modes", () =>
+  const cancelledEverything = {
+    outcome: "cancel_requested",
+    dispatched: ["thread.stop", "delegated_task.completion-delivery.dispose"],
+    stoppedBelow: true,
+  };
+
+  it.effect("cancels a task when a task under it now runs above the parent's modes", () =>
     Effect.gen(function* () {
-      assert.deepEqual(yield* cancelOverRaisedGrandchild({ deleted: false }), {
-        code: "runtime_mode_escalation_denied",
-        dispatched: [],
-        stoppedBelow: false,
-      });
+      assert.deepEqual(yield* cancelOverRaisedGrandchild({}), cancelledEverything);
     }),
   );
 
-  it.effect("reports a task under the child that its user raises while it is being stopped", () =>
+  it.effect("stops a task under the child that its user raises while it is being stopped", () =>
     Effect.gen(function* () {
-      const outcome = yield* cancelOverRaisedGrandchild({ deleted: false, raisedDuringStop: true });
-      assert.equal(outcome.code, "runtime_mode_escalation_denied");
-      assert.isFalse(outcome.stoppedBelow);
-    }),
-  );
-
-  it.effect("checks the tasks under a deleted child before cancelling it", () =>
-    Effect.gen(function* () {
-      assert.deepEqual(yield* cancelOverRaisedGrandchild({ deleted: true }), {
-        code: "runtime_mode_escalation_denied",
-        dispatched: [],
-        stoppedBelow: false,
-      });
+      assert.deepEqual(
+        yield* cancelOverRaisedGrandchild({ raisedDuringStop: true }),
+        cancelledEverything,
+      );
     }),
   );
 });
@@ -5550,12 +5545,21 @@ describe("OrchestratorMcpService thread stop", () => {
     {
       name: "a running turn",
       queued: false,
-      stop: { reason: undefined, message: "Stopped by an agent" },
+      stop: { by: "full-access" as const, reason: undefined, message: "Stopped by an agent" },
     },
     {
       name: "a running turn with a queued message",
       queued: true,
-      stop: { reason: "Make room", message: "Stopped by an agent: Make room" },
+      stop: {
+        by: "full-access" as const,
+        reason: "Make room",
+        message: "Stopped by an agent: Make room",
+      },
+    },
+    {
+      name: "a full-access thread stopped by a supervised caller",
+      queued: false,
+      stop: { by: "approval-required" as const, reason: undefined, message: "Stopped by an agent" },
     },
   ])("t3_thread_interrupt stop reports the run it interrupted on $name", ({ queued, stop }) =>
     Effect.gen(function* () {
@@ -5664,7 +5668,8 @@ describe("OrchestratorMcpService thread stop", () => {
         const childThreadId = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!
           .childThreadId!;
 
-        const stopped = yield* service.interruptThread(client, {
+        const caller = { ...client, client: { ...client.client!, access: stop.by } };
+        const stopped = yield* service.interruptThread(caller, {
           threadId,
           stop: true,
           clientRequestId: "stop",

@@ -44,6 +44,7 @@ import {
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
+import { DispatchModeLimit } from "../../orchestration-v2/DispatchModeLimit.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
@@ -1230,7 +1231,7 @@ function scheduledTask(id: string, runtimeMode: "auto" | "full-access"): never {
 }
 
 it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
-  "a caller cannot use %s on a thread that runs above its own modes",
+  "a caller can use %s on a thread that runs above its own modes",
   (toolName) =>
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
@@ -1246,7 +1247,8 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
           Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope("auto")),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-      expect(declaredFailure(result)).toMatchObject({ code: "runtime_mode_escalation_denied" });
+      expect(declaredFailure(result)).toBeUndefined();
+      expect(result.isError).not.toBe(true);
     }).pipe(
       Effect.provide(
         layerOrchestratorToolkit.pipe(
@@ -1272,8 +1274,17 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
                   },
                   runs: [],
                 } as never),
-              stopWorkflow: () => Effect.die("workflow stop must not dispatch above the ceiling"),
-              interruptThread: () => Effect.die("interrupt must not dispatch above the ceiling"),
+              // A mode limit would let the orchestrator refuse the stop under the thread's lock.
+              stopWorkflow: () =>
+                Effect.gen(function* () {
+                  if ((yield* DispatchModeLimit) !== undefined) return yield* Effect.die("limited");
+                  return {} as never;
+                }),
+              interruptThread: () =>
+                Effect.gen(function* () {
+                  if ((yield* DispatchModeLimit) !== undefined) return yield* Effect.die("limited");
+                  return { type: "no_active_run" } as never;
+                }),
             }),
           ),
           Layer.provide(ServerSettings.layerTest()),

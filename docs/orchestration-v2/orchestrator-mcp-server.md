@@ -563,7 +563,10 @@ results use the latest assistant content from the final work turn.
   caller, list and search cover one project: its own unless `projectId` is given.
 - A tool that changes another thread needs the calling thread's live run, and
   the target's runtime and interaction modes may not be broader than the
-  caller's. This is the same privilege ceiling as child creation.
+  caller's. This is the same privilege ceiling as child creation. Stopping or
+  interrupting a thread (`task_cancel`, `t3_thread_interrupt`,
+  `t3_workflow_stop`) only reduces its activity, so it is not subject to this
+  ceiling.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the
