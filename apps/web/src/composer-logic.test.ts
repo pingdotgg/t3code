@@ -22,6 +22,7 @@ import {
   expandCollapsedComposerCursor,
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
+  isAcceptPromptSuggestionKey,
   isPathSuggestionCurrent,
   replaceTextRange,
 } from "./composer-logic";
@@ -265,6 +266,43 @@ describe("composerSubmissionIntentForKey", () => {
     { event: { ...enter, repeat: true } },
   ])("does not submit with %j", (override) => {
     expect(composerSubmissionIntentForKey({ ...input, event: enter, ...override })).toBeNull();
+  });
+});
+
+describe("isAcceptPromptSuggestionKey", () => {
+  const input = { keybindings: DEFAULT_RESOLVED_KEYBINDINGS, context: {}, platform: "Linux" };
+  const key = (name: string, modifiers: { shiftKey?: boolean; ctrlKey?: boolean } = {}) => ({
+    key: name,
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...modifiers,
+  });
+
+  it("accepts on plain Tab by default", () => {
+    expect(isAcceptPromptSuggestionKey({ ...input, event: key("Tab") })).toBe(true);
+    expect(isAcceptPromptSuggestionKey({ ...input, event: key("Tab", { shiftKey: true }) })).toBe(
+      false,
+    );
+    expect(isAcceptPromptSuggestionKey({ ...input, event: key("Tab", { ctrlKey: true }) })).toBe(
+      false,
+    );
+    expect(isAcceptPromptSuggestionKey({ ...input, event: { ...key("Tab"), keyCode: 229 } })).toBe(
+      false,
+    );
+  });
+
+  it("follows a remapped key and frees Tab", () => {
+    const keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "arrowright", command: "composer.acceptPromptSuggestion", when: "composerFocus" },
+      ]),
+    );
+    expect(isAcceptPromptSuggestionKey({ ...input, keybindings, event: key("ArrowRight") })).toBe(
+      true,
+    );
+    expect(isAcceptPromptSuggestionKey({ ...input, keybindings, event: key("Tab") })).toBe(false);
   });
 });
 

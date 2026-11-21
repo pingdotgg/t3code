@@ -103,6 +103,22 @@ export function composerSubmissionIntentForKey(input: {
   return "foreground";
 }
 
+export function isAcceptPromptSuggestionKey(input: {
+  event: ShortcutEventLike & { isComposing?: boolean; keyCode?: number };
+  keybindings: ResolvedKeybindingsConfig;
+  context: Partial<ShortcutMatchContext>;
+  platform?: string;
+}): boolean {
+  const { event } = input;
+  if (event.isComposing || event.keyCode === 229) return false;
+  return (
+    resolveShortcutCommand(event, input.keybindings, {
+      ...(input.platform === undefined ? {} : { platform: input.platform }),
+      context: { ...input.context, composerFocus: true },
+    }) === "composer.acceptPromptSuggestion"
+  );
+}
+
 function clampCursor(text: string, cursor: number): number {
   if (!Number.isFinite(cursor)) return text.length;
   return Math.max(0, Math.min(text.length, Math.floor(cursor)));
