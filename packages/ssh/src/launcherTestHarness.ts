@@ -77,6 +77,8 @@ export function runLauncher(
     readonly initialPort?: number;
     // A boot service between two servers holds the home with no runtime record yet.
     readonly serviceServing?: boolean;
+    // The account's boot service unit serves a home other than ~/.t3.
+    readonly bootServiceHome?: boolean;
     readonly allowFailure?: boolean;
     // The desktop publishes runtime and removes the marker right after the first runtime read.
     readonly publishAfterFirstRuntimeRead?: boolean;
@@ -86,10 +88,11 @@ export function runLauncher(
   const home = NodeFS.mkdtempSync(NodePath.join(root, "packages/ssh/.ssh-launcher-test-"));
   try {
     const bin = NodePath.join(home, "bin");
-    const runtime = NodePath.join(home, ".t3/runtime");
+    const serverHome = NodePath.join(home, options.bootServiceHome ? "service-home" : ".t3");
+    const runtime = NodePath.join(serverHome, "runtime");
     NodeFS.mkdirSync(bin);
     NodeFS.mkdirSync(runtime, { recursive: true });
-    const markerPath = NodePath.join(runtime, "desktop-update-in-progress");
+    const markerPath = NodePath.join(home, ".t3/runtime/desktop-update-in-progress");
     if (options.marker)
       NodeFS.writeFileSync(
         markerPath,
@@ -97,6 +100,7 @@ export function runLauncher(
       );
     NodeFS.writeFileSync(NodePath.join(home, "clock"), "0");
     NodeFS.writeFileSync(NodePath.join(home, "events"), "");
+    NodeFS.writeFileSync(NodePath.join(home, "runtime-files"), "");
     const executable = (name: string, body: string) =>
       NodeFS.writeFileSync(NodePath.join(bin, name), `#!/bin/sh\nset -eu\n${body}\n`, {
         mode: 0o755,
@@ -113,6 +117,7 @@ Date.now = () => Number(fs.readFileSync(process.env.HOME + '/clock', 'utf8'));
       `
 case "\${2:-}" in
   */server-runtime.json)
+    printf '%s\\n' "$2" >> "$HOME/runtime-files"
     # A started server publishes its runtime record, which the launch waits for.
     # The fake nohup runs in the background, so wait for it instead of racing it.
     if [ -e "$HOME/picked-port" ]; then
@@ -159,6 +164,19 @@ if [ -n "$TEST_CLOCK_JUMP" ] && [ ! -e "$HOME/jumped" ]; then
   touch "$HOME/jumped"
 fi`,
     );
+    // Never reach the host's own user manager, which may run a real boot service.
+    executable(
+      "systemctl",
+      '[ -n "$TEST_BOOT_SERVICE_HOME" ] || exit 1\nprintf "T3CODE_HOME=%s T3_BOOT_SERVICE_UNIT=t3code.service\\n" "$TEST_BOOT_SERVICE_HOME"',
+    );
+    if (options.bootServiceHome) {
+      const unitDir = NodePath.join(home, ".config/systemd/user");
+      NodeFS.mkdirSync(unitDir, { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(unitDir, "t3code.service"),
+        `[Service]\nEnvironment=T3CODE_HOME=${serverHome}\n`,
+      );
+    }
     executable("nohup", 'printf "%s" "$$" > "$HOME/started-server"');
     // The test process stands in for a recorded server; report the serve command it would run.
     executable(
@@ -213,6 +231,22 @@ esac
     using _serving = options.serviceServing
       ? holdLock(NodePath.join(runtime, "service-serving.lock"))
       : undefined;
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      XDG_CONFIG_HOME: NodePath.join(home, ".config"),
+      PATH: `${bin}:/usr/bin:/bin`,
+      TEST_REAL_NODE: process.execPath,
+      TEST_CLEAR_MARKER: options.clearMarkerOnReady ? "1" : "0",
+      TEST_CLOCK_JUMP: options.clockJump === undefined ? "" : String(options.clockJump),
+      TEST_SERVER_PID: String(process.pid),
+      TEST_READY_AT: String(options.readyAt ?? 1_000_000),
+      TEST_INITIAL_PORT: options.initialPort === undefined ? "" : String(options.initialPort),
+      TEST_PUBLISH_AFTER_FIRST_READ: options.publishAfterFirstRuntimeRead ? "1" : "0",
+      TEST_BOOT_SERVICE_HOME: options.bootServiceHome ? serverHome : "",
+    };
+    delete env.XDG_RUNTIME_DIR;
+    delete env.DBUS_SESSION_BUS_ADDRESS;
     const result = NodeChildProcess.spawnSync("/bin/sh", ["-s", "--", "test-target"], {
       input: `kill() {
   if [ "$1" = -0 ]; then command kill "$@"; else
@@ -223,18 +257,7 @@ esac
 ${script}`,
       encoding: "utf8",
       timeout: 30_000,
-      env: {
-        ...process.env,
-        HOME: home,
-        PATH: `${bin}:/usr/bin:/bin`,
-        TEST_REAL_NODE: process.execPath,
-        TEST_CLEAR_MARKER: options.clearMarkerOnReady ? "1" : "0",
-        TEST_CLOCK_JUMP: options.clockJump === undefined ? "" : String(options.clockJump),
-        TEST_SERVER_PID: String(process.pid),
-        TEST_READY_AT: String(options.readyAt ?? 1_000_000),
-        TEST_INITIAL_PORT: options.initialPort === undefined ? "" : String(options.initialPort),
-        TEST_PUBLISH_AFTER_FIRST_READ: options.publishAfterFirstRuntimeRead ? "1" : "0",
-      },
+      env,
     });
     if (result.error || (result.status !== 0 && !options.allowFailure))
       throw new Error(
@@ -247,6 +270,11 @@ ${script}`,
       events: NodeFS.readFileSync(NodePath.join(home, "events"), "utf8").trim().split("\n"),
       now: Number(NodeFS.readFileSync(NodePath.join(home, "clock"), "utf8")),
       markerExists: NodeFS.existsSync(markerPath),
+      runtimeFiles: NodeFS.readFileSync(NodePath.join(home, "runtime-files"), "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((file) => NodePath.relative(home, file)),
     };
   } finally {
     NodeFS.rmSync(home, { recursive: true, force: true });

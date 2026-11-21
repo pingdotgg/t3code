@@ -162,7 +162,11 @@ const localRemoteShellLayer = (home: string) =>
             ["-c", `${gate}exec sh -s -- "$1"`, "sh", launchStateKey(command) ?? ""],
             {
               ...command.options,
-              env: { ...command.options.env, HOME: home },
+              env: {
+                ...command.options.env,
+                HOME: home,
+                XDG_CONFIG_HOME: NodePath.join(home, ".config"),
+              },
               // Like an SSH session ending, the shell's exit leaves its nohup'd server running.
               detached: false,
             },
@@ -193,6 +197,7 @@ describe("ssh tunnel scripts", () => {
                 env: {
                   ...command.options.env,
                   HOME: home,
+                  XDG_CONFIG_HOME: NodePath.join(home, ".config"),
                   NVM_DIR: NodePath.join(home, ".nvm"),
                   FNM_DIR: NodePath.join(home, ".fnm"),
                   VOLTA_HOME: NodePath.join(home, ".volta"),
@@ -1402,8 +1407,15 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-stale-pid-" });
       const home = `${root}/home`;
       const fakeServer = `${root}/fake-t3.cjs`;
+      yield* fs.makeDirectory(`${root}/bin`, { recursive: true });
       yield* fs.makeDirectory(home, { recursive: true });
       yield* fs.writeFileString(fakeServer, FAKE_SERVER);
+      // Stands in for the user manager, so no launch reaches this host's real boot service.
+      yield* fs.writeFileString(
+        `${root}/bin/systemctl`,
+        '#!/bin/sh\ncat "$HOME/systemctl-environment" 2>/dev/null\n',
+      );
+      yield* fs.chmod(`${root}/bin/systemctl`, 0o755);
       // Runs the remote command locally under the temp HOME. setsid keeps a launched server alive
       // when the command's process group goes away, as sshd would.
       const sshAsLocalShell = ChildProcessSpawner.make((command) => {
@@ -1419,7 +1431,7 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
         return realSpawner.spawn(
           ChildProcess.make("setsid", ["-w", ...remoteArgs], {
             ...command.options,
-            env: { PATH: process.env.PATH ?? "", HOME: home },
+            env: { PATH: `${root}/bin:${process.env.PATH ?? ""}`, HOME: home },
             extendEnv: false,
           }),
         );
@@ -1438,6 +1450,8 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       assert.isTrue(Number.isInteger(tid));
       return {
         fs,
+        root,
+        realSpawner,
         home,
         fakeServer,
         holder,
@@ -1603,6 +1617,93 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       const final = yield* launch({ ...target, alias: "devbox-final" }, updatedServer);
       assert.equal(final.remoteServerKind, "external");
       assert.isTrue(yield* isRunning(unownedPid), "a stale launcher ID claimed another's server");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("moves to the account's boot service server and never starts one beside it", () =>
+    Effect.gen(function* () {
+      const { fs, root, realSpawner, home, fakeServer, sshAsLocalShell, stateDir } =
+        yield* prepare("an unrelated process");
+      const launch = SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+        nodeScriptPath: fakeServer,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell));
+      const launchedPids: Array<number> = [];
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(launchedPids, (pid) =>
+          Effect.sync(() => {
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {}
+          }),
+        ),
+      );
+
+      // Before the service is installed, the launch starts its own server on ~/.t3.
+      assert.equal((yield* launch).remoteServerKind, "managed");
+      const legacyPid = Number((yield* fs.readFileString(`${stateDir}/pid`)).trim());
+      launchedPids.push(legacyPid);
+
+      const serviceHome = `${home}/service home`;
+      yield* fs.makeDirectory(`${home}/.config/systemd/user`, { recursive: true });
+      yield* fs.writeFileString(
+        `${home}/.config/systemd/user/t3code.service`,
+        `[Service]\nEnvironment=T3CODE_HOME="${serviceHome}"\n`,
+      );
+      yield* fs.writeFileString(
+        `${home}/systemctl-environment`,
+        `"T3CODE_HOME=${serviceHome}" T3_BOOT_SERVICE_UNIT=t3code.service\n`,
+      );
+      const service = yield* realSpawner.spawn(
+        ChildProcess.make("node", [fakeServer, "--port", "0", "--base-dir", serviceHome]),
+      );
+      const servicePort = Number(
+        Option.getOrThrow(
+          yield* service.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead),
+        ),
+      );
+
+      const adopted = yield* launch;
+      assert.deepEqual(
+        [adopted.remotePort, adopted.remoteServerKind],
+        [servicePort, "external"],
+        "the launch did not reuse the boot service's server",
+      );
+      assert.isFalse(yield* isRunning(legacyPid), "the server beside the service kept running");
+
+      // A cleanly stopped service leaves no runtime record and holds no lock.
+      yield* service.kill();
+      yield* fs.remove(`${serviceHome}/userdata/server-runtime.json`);
+      yield* fs.remove(`${home}/.t3/userdata/server-runtime.json`, { force: true });
+      const error = yield* Effect.flip(launch);
+      assert.include(error.message, `serves ${serviceHome} but is not running`);
+      assert.isFalse(
+        yield* fs.exists(`${stateDir}/pid`),
+        "a server was started beside the service",
+      );
+
+      const pairingScript = `${root}/pairing.cjs`;
+      yield* fs.writeFileString(
+        pairingScript,
+        'const args = process.argv.slice(2);\nconsole.log(JSON.stringify({ credential: args[args.indexOf("--base-dir") + 1] }));\n',
+      );
+      // Runs the pairing script it pipes to the remote shell, under the same temp HOME.
+      const pairingShell = ChildProcessSpawner.make((command) =>
+        command._tag !== "StandardCommand" || command.command !== "ssh"
+          ? realSpawner.spawn(command)
+          : command.args.includes("-G")
+            ? Effect.succeed(makeSuccessfulProcess(""))
+            : realSpawner.spawn(
+                ChildProcess.make("sh", ["-s"], {
+                  ...command.options,
+                  env: { PATH: `${root}/bin:${process.env.PATH ?? ""}`, HOME: home },
+                  extendEnv: false,
+                }),
+              ),
+      );
+      const pairing = yield* SshTunnel.issueRemotePairingToken(target, undefined, {
+        nodeScriptPath: pairingScript,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pairingShell));
+      assert.equal(pairing.credential, serviceHome);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -1972,18 +2073,58 @@ describe("SSH launch during desktop update", () => {
     }),
   );
 
-  it.effect.each([false, true])(
-    "waits for a boot service between two servers (archive: %s)",
-    (archive) =>
+  it.effect.each([
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ] as const)(
+    "waits for a boot service between two servers (archive: %s, custom home: %s)",
+    ([archive, bootServiceHome]) =>
       Effect.gen(function* () {
         const script = yield* archive
           ? captureLauncherFor({ archiveVersion: "1.2.3" })
           : captureLauncher;
-        const result = runLauncher(script, { archive, serviceServing: true, readyAt: 5_000 });
+        const result = runLauncher(script, {
+          archive,
+          bootServiceHome,
+          serviceServing: true,
+          readyAt: 5_000,
+        });
         assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
         assert.equal(result.now, 5_000);
         assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+        assert.deepEqual(
+          [...new Set(result.runtimeFiles)],
+          [`${bootServiceHome ? "service-home" : ".t3"}/userdata/server-runtime.json`],
+        );
       }),
+  );
+
+  it.effect("reuses the server of a boot service that serves another home", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        bootServiceHome: true,
+        initialPort: 4888,
+        readyAt: 0,
+      });
+      assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+      assert.deepEqual(result.runtimeFiles, ["service-home/userdata/server-runtime.json"]);
+      assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+    }),
+  );
+
+  it.effect("fails without starting a server beside a stopped boot service", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        bootServiceHome: true,
+        allowFailure: true,
+      });
+      assert.equal(result.status, 1);
+      assert.include(result.stderr, "service-home but is not running");
+      assert.include(result.stderr, "no second server was started");
+      assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+    }),
   );
 
   it.effect("fails without starting a second server when the home's owner never answers", () =>
@@ -2007,6 +2148,9 @@ describe("SSH launch during desktop update", () => {
       assert.equal(result.events.filter((event) => event.startsWith("start ")).length, 1);
       assert.equal(result.events.filter((event) => event.startsWith("marker ")).length, 1);
       assert.equal(result.events.filter((event) => event.startsWith("runtime ")).length, 1);
+      assert.isTrue(
+        result.runtimeFiles.every((file) => file === ".t3/userdata/server-runtime.json"),
+      );
     }),
   );
 });
