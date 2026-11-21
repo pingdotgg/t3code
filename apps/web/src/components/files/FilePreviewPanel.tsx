@@ -22,6 +22,7 @@ import {
   isWorkspaceVideoPreviewPath,
   officePreviewKind,
   binaryPreviewKind,
+  modelPreviewFormat,
 } from "@t3tools/shared/filePreview";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
@@ -1319,6 +1320,7 @@ export default function FilePreviewPanel({
     relativePath !== null &&
     (binaryPreviewKind({ name: relativePath }) !== null ||
       officePreviewKind({ name: relativePath }) !== null ||
+      modelPreviewFormat(relativePath) !== null ||
       isWorkspaceFontPreviewPath(relativePath));
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
   const isHostFile =
