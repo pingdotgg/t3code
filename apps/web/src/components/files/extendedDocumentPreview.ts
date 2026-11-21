@@ -288,6 +288,13 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
       "office:scripts",
       "draw:object",
       "draw:object-ole",
+      "text:table-of-content-source",
+      "text:illustration-index-source",
+      "text:table-index-source",
+      "text:object-index-source",
+      "text:user-index-source",
+      "text:alphabetical-index-source",
+      "text:bibliography-source",
     ].includes(node.name)
   )
     return "";
@@ -727,7 +734,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       else if (word === "uc") state.uc = Math.max(0, Math.min(10, arg));
       else if (word === "u") {
         fallback = 0;
-        emit(String.fromCharCode(arg < 0 ? arg + 65536 : arg));
+        // TextEdit writes a soft line break as U+2028, where Chromium does not break the line.
+        if (arg !== 0x2028) emit(String.fromCharCode(arg < 0 ? arg + 65536 : arg));
+        else if (!hidden()) html += "<br>";
         fallback = state.uc;
       } else if (!hidden() && word === "page") finishPage();
       else if (word === "cell") emit("\t", state.skip);
