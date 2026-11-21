@@ -21,6 +21,7 @@ export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
   readonly host: string;
   readonly username?: string;
+  readonly port?: number;
 }
 
 export type RemoteOpenState =
@@ -52,7 +53,11 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
-  readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
+  readonly sshTarget: {
+    readonly alias: string;
+    readonly username: string | null;
+    readonly port: number | null;
+  } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
   readonly hostEnvironmentId: string | null;
@@ -75,7 +80,7 @@ export function resolveRemoteOpenState(input: {
   }
 
   if (input.sshTarget !== null && input.sshTarget.alias.length > 0) {
-    const { alias } = input.sshTarget;
+    const { alias, port } = input.sshTarget;
     const userSeparator = alias.lastIndexOf("@");
     const host = userSeparator === -1 ? alias : alias.slice(userSeparator + 1);
     const username =
@@ -87,6 +92,8 @@ export function resolveRemoteOpenState(input: {
         kind: "ssh-alias",
         host,
         ...(username === null ? {} : { username }),
+        // Editors default to 22; any other port must ride along or Remote-SSH dials 22.
+        ...(port === null || port === 22 ? {} : { port }),
       },
     };
   }
@@ -103,7 +110,8 @@ function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState)
   return (
     previous.host.kind === next.host.kind &&
     previous.host.host === next.host.host &&
-    previous.host.username === next.host.username
+    previous.host.username === next.host.username &&
+    previous.host.port === next.host.port
   );
 }
 
