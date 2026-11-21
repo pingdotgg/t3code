@@ -51,7 +51,7 @@ import { grokProbeEnvironment } from "./probeEnvironment.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
-  supportsConversationRollback: false,
+  supportsConversationRollback: true,
   showInteractionModeToggle: false,
   supportedRuntimeModes: GROK_SUPPORTED_RUNTIME_MODES,
 } as const;
