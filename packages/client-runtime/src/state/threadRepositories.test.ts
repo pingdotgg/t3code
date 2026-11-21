@@ -7,6 +7,7 @@ import {
   ThreadId,
   type OrchestrationV2Checkpoint,
   type OrchestrationV2CheckpointScope,
+  type VcsStatusResult,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
@@ -19,6 +20,7 @@ import {
   pinThreadRepository,
   repositoryCheckpointScopeIds,
   repositoryFilePath,
+  repositorySectionSummary,
   repositorySectionForPath,
   resolveWorktreeRepositorySelection,
   rewindFileRestore,
@@ -338,6 +340,25 @@ describe("threadRepositorySections", () => {
         ],
       }),
     ).toEqual([{ repositoryPath: "/work/shared", name: "shared" }]);
+  });
+});
+
+describe("repositorySectionSummary", () => {
+  it("counts a branch's unpushed commits when its working tree is clean", () => {
+    const status: VcsStatusResult = {
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      branchChanges: { baseRef: "origin/main", insertions: 12, deletions: 3 },
+      hasUpstream: true,
+      aheadCount: 1,
+      behindCount: 0,
+      pr: null,
+    };
+    expect(repositorySectionSummary(status)).toMatchObject({ insertions: 12, deletions: 3 });
   });
 });
 
