@@ -77,7 +77,7 @@ const voiceInputAvailableAtom = Atom.make((get) => {
  * The app has one microphone and one dictation at a time, so the session
  * lives for the registry's lifetime rather than any screen's.
  */
-const voiceInputAtom = Atom.make((get) => {
+export const voiceInputAtom = Atom.make((get) => {
   const registry = get.registry;
   // Mounted so the recorder can read known microphones synchronously.
   get.mount(mobilePreferencesAtom);
