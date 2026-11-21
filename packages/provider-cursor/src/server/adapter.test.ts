@@ -3102,6 +3102,7 @@ describe("CursorAdapterV2", () => {
             "env-only": { "command": "node", "args": ["server.mjs"], "env": { "PROJECT_ROOT": "\${workspaceFolder}" } },
             "cwd-only": { "command": "node", "args": ["server.mjs"], "cwd": "\${workspaceFolder}" },
             "unset-env": { "command": "node", "env": { "CONFIG": "\${env:T3_MCP_UNSET}" } },
+            "session-env": { "command": "inbox-server", "env": { "T3CODE_THREAD_ID": "\${env:T3CODE_THREAD_ID}" } },
             "wrapped": { "command": "proto", "args": ["run", "node", "--", "\${workspaceFolder}/server.mjs"] },
             "label": { "command": "node", "args": ["server.mjs", "--label", "\${workspaceFolder}/client"] },
             "env-file": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"], "envFile": ".env.mcp" },
@@ -3163,6 +3164,7 @@ describe("CursorAdapterV2", () => {
             CURSOR_DATA_DIR: path.join(scratch, "override"),
             DOCS_TOKEN: "docs-token",
             MCP_TYPE: "stdio",
+            T3CODE_THREAD_ID: "stale-parent-thread",
           },
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -3257,6 +3259,11 @@ describe("CursorAdapterV2", () => {
             cwd: projectRoot,
           },
           "cwd-only": { command: "node", args: ["server.mjs"], cwd: projectRoot },
+          "session-env": {
+            command: "inbox-server",
+            env: { T3CODE_THREAD_ID: threadId },
+            cwd: projectRoot,
+          },
         };
         // The agent is created with T3's server only; the resolved servers go with each turn.
         assert.deepEqual(openedWith?.mcpServers, t3Servers);

@@ -2698,10 +2698,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
         };
 
-        const resolveWorkspaceMcpServers = (cwd: string | null) =>
+        const resolveWorkspaceMcpServers = (cwd: string | null, threadId: ThreadId) =>
           cwd === null
             ? Effect.succeed({})
-            : cursorWorkspaceMcpServers(cwd, adapterOptions.environment).pipe(
+            : cursorWorkspaceMcpServers(cwd, {
+                ...adapterOptions.environment,
+                T3CODE_THREAD_ID: threadId,
+              }).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -2996,7 +2999,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             // A send-time set replaces the create-time set, so the workspace servers go only here and are
             // read again each turn from mcp.json and mcp-disabled.json; both merge with settingSources.
             const turnMcpServers = {
-              ...(yield* resolveWorkspaceMcpServers(turnInput.runtimePolicy.cwd)),
+              ...(yield* resolveWorkspaceMcpServers(
+                turnInput.runtimePolicy.cwd,
+                turnInput.threadId,
+              )),
               ...mcpServers,
             };
             const sdkRun = yield* agent.session
