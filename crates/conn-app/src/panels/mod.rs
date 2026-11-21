@@ -6,12 +6,15 @@ mod browser;
 pub(crate) mod chrome;
 mod color;
 mod database;
+mod device;
 mod diff;
 mod diff_parser;
 mod files;
 pub(crate) mod header;
 mod highlight;
+mod linked_items;
 mod mcp;
+mod pull_request;
 mod tasks;
 mod terminal;
 mod terminal_palette;
@@ -33,18 +36,15 @@ use self::api::ApiPanel;
 use self::browser::BrowserPanel;
 use self::color::to_hsla;
 use self::database::DatabasePanel;
+use self::device::DevicePanel;
 use self::diff::DiffPanel;
 use self::files::FilesPanel;
-use self::header::{
-    PanelHeaderCallbacks, PanelHeaderProps, panel_tab_icon_path, panel_tab_label,
-    render_panel_header, superhero_icon,
-};
+use self::header::{PanelHeaderCallbacks, PanelHeaderProps, render_panel_header};
+use self::linked_items::LinkedItemsPanel;
 use self::mcp::McpPanel;
+use self::pull_request::PullRequestPanel;
 use self::tasks::TasksPanel;
 use self::terminal::TerminalPanel;
-
-const UI_TEXT_PX: f32 = 13.0;
-const UI_LINE_HEIGHT_PX: f32 = 20.0;
 
 /// What the right panel asks of the shell.
 #[derive(Clone, Debug)]
@@ -80,6 +80,9 @@ pub struct RightPanel {
     database: Entity<DatabasePanel>,
     mcp: Entity<McpPanel>,
     tasks: Entity<TasksPanel>,
+    pull_request: Entity<PullRequestPanel>,
+    linked_items: Entity<LinkedItemsPanel>,
+    device: Entity<DevicePanel>,
     /// True while the right panel is open and nothing covers it (see `set_surface_visible`).
     surface_visible: bool,
     /// False when the shell draws the tab strip in its 44px glass header and the card fill.
@@ -117,13 +120,18 @@ impl RightPanel {
             files::FilesEvent::OpenFile(path) => cx.emit(RightPanelEvent::OpenFile(path.clone())),
         })
         .detach();
-        let diff = cx.new(|_| DiffPanel::new(tokens.clone(), connection));
+        let diff = cx.new(|_| DiffPanel::new(tokens.clone(), connection.clone()));
         let terminal = cx.new(|cx| TerminalPanel::new(tokens.clone(), cx));
         let browser = cx.new(|cx| BrowserPanel::new(tokens.clone(), window, cx));
         let api = cx.new(|cx| ApiPanel::new(tokens.clone(), window, cx));
         let database = cx.new(|cx| DatabasePanel::new(tokens.clone(), window, cx));
         let mcp = cx.new(|cx| McpPanel::new(tokens.clone(), window, cx));
         let tasks = cx.new(|cx| TasksPanel::new(tokens.clone(), window, cx));
+        let pull_request =
+            cx.new(|cx| PullRequestPanel::new(tokens.clone(), connection.clone(), window, cx));
+        let linked_items =
+            cx.new(|cx| LinkedItemsPanel::new(tokens.clone(), connection.clone(), window, cx));
+        let device = cx.new(|cx| DevicePanel::new(tokens.clone(), connection.clone(), window, cx));
 
         Self {
             tokens,
@@ -144,6 +152,9 @@ impl RightPanel {
             database,
             mcp,
             tasks,
+            pull_request,
+            linked_items,
+            device,
             chrome: true,
             surface_visible: false,
         }
@@ -196,6 +207,12 @@ impl RightPanel {
             .update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
         self.tasks
             .update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
+        self.pull_request
+            .update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
+        self.linked_items
+            .update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
+        self.device
+            .update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
         self.browser.update(cx, |p, cx| p.set_tokens(tokens, cx));
         cx.notify();
     }
@@ -223,8 +240,11 @@ impl RightPanel {
         }
         if self.thread_id != thread_id {
             self.thread_id = thread_id.clone();
-            self.diff.update(cx, |p, cx| p.set_thread(thread_id, cx));
+            self.diff
+                .update(cx, |p, cx| p.set_thread(thread_id.clone(), cx));
         }
+        let root = self.workspace_root.clone();
+        for_each_thread_panel(self, root, thread_id, cx);
         cx.notify();
     }
 
@@ -421,8 +441,6 @@ impl Render for RightPanel {
 
         let card_bg = to_hsla(self.tokens.shell_card);
         let divider = to_hsla(self.tokens.shell_divider);
-        let muted = to_hsla(self.tokens.muted_foreground);
-
         let body: AnyElement = match self.tab {
             RightPanelTab::Files | RightPanelTab::File => self.files.clone().into_any_element(),
             RightPanelTab::Diff => self.diff.clone().into_any_element(),
@@ -432,12 +450,9 @@ impl Render for RightPanel {
             RightPanelTab::Database => self.database.clone().into_any_element(),
             RightPanelTab::Mcp => self.mcp.clone().into_any_element(),
             RightPanelTab::Tasks => self.tasks.clone().into_any_element(),
-            other => placeholder_surface(
-                panel_tab_label(other),
-                panel_tab_icon_path(other),
-                &self.tokens,
-                muted,
-            ),
+            RightPanelTab::PullRequest => self.pull_request.clone().into_any_element(),
+            RightPanelTab::LinkedItems => self.linked_items.clone().into_any_element(),
+            RightPanelTab::Device => self.device.clone().into_any_element(),
         };
 
         if !self.chrome {
@@ -455,6 +470,24 @@ impl Render for RightPanel {
 }
 
 /// Hands the selected thread's project and folder to the project-scoped surfaces.
+/// Hands the selected thread and its folder to the thread-scoped surfaces.
+fn for_each_thread_panel(
+    panel: &RightPanel,
+    workspace_root: Option<String>,
+    thread_id: Option<String>,
+    cx: &mut Context<'_, RightPanel>,
+) {
+    panel.pull_request.update(cx, |p, cx| {
+        p.set_thread(workspace_root.clone(), thread_id.clone(), cx);
+    });
+    panel.linked_items.update(cx, |p, cx| {
+        p.set_thread(workspace_root.clone(), thread_id.clone(), cx);
+    });
+    panel.device.update(cx, |p, cx| {
+        p.set_thread(workspace_root, thread_id, cx);
+    });
+}
+
 fn for_each_project_panel(
     panel: &RightPanel,
     project_key: Option<String>,
@@ -470,37 +503,4 @@ fn for_each_project_panel(
     panel.tasks.update(cx, |p, cx| {
         p.set_project(project_key, workspace_root, cx);
     });
-}
-
-fn placeholder_surface(
-    title: &str,
-    icon_path: &'static str,
-    tokens: &Tokens,
-    muted: gpui_kit::Hsla,
-) -> AnyElement {
-    v_flex()
-        .size_full()
-        .items_center()
-        .justify_center()
-        .gap(px(10.0))
-        .child(
-            div()
-                .size(px(40.0))
-                .rounded(px(10.0))
-                .bg(to_hsla(tokens.shell_tile))
-                .border_1()
-                .border_color(to_hsla(tokens.shell_tile_border))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(superhero_icon(icon_path, 18.0, to_hsla(tokens.foreground))),
-        )
-        .child(
-            div()
-                .text_size(px(UI_TEXT_PX))
-                .line_height(px(UI_LINE_HEIGHT_PX))
-                .text_color(muted)
-                .child(format!("{title} is not yet connected.")),
-        )
-        .into_any_element()
 }
