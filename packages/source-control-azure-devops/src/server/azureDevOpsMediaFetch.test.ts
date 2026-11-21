@@ -91,9 +91,7 @@ layer("AzureDevOpsMediaFetch", (it) => {
   );
 
   it("preserves root separators when splitting scratch paths across POSIX and Windows roots", () => {
-    expect(
-      AzureDevOpsMediaFetch.azureDevOpsMediaScratchPaths("/tmp/t3-azure-media-123"),
-    ).toEqual({
+    expect(AzureDevOpsMediaFetch.azureDevOpsMediaScratchPaths("/tmp/t3-azure-media-123")).toEqual({
       cwd: "/tmp",
       file: "/tmp/t3-azure-media-123/media",
       outFile: "t3-azure-media-123/media",
@@ -103,9 +101,7 @@ layer("AzureDevOpsMediaFetch", (it) => {
       file: "/t3-azure-media-123/media",
       outFile: "t3-azure-media-123/media",
     });
-    expect(
-      AzureDevOpsMediaFetch.azureDevOpsMediaScratchPaths("C:\\t3-azure-media-123\\"),
-    ).toEqual({
+    expect(AzureDevOpsMediaFetch.azureDevOpsMediaScratchPaths("C:\\t3-azure-media-123\\")).toEqual({
       cwd: "C:\\",
       file: "C:\\t3-azure-media-123/media",
       outFile: "t3-azure-media-123/media",

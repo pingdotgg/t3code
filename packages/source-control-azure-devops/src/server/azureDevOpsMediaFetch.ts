@@ -19,11 +19,9 @@ const MEDIA_TIMEOUT_MS = 60_000;
 const MAX_CONCURRENT_READS = 2;
 
 /**
- * Splits a scratch directory into the parent `cwd` where `az` runs and the relative `--out-file`
- * path it writes to. Keeping `cwd` outside the scratch directory prevents the background
- * telemetry process `az` leaves behind on Windows from locking the directory against removal, and
- * keeping `--out-file` relative lets a Windows `az` launched from WSL write into its inherited
- * `cwd` (`\\wsl.localhost\...`) instead of resolving a leading `/` against a Windows drive root.
+ * `az` runs in the scratch directory's parent: on Windows the telemetry process it leaves behind
+ * locks its cwd against removal. `--out-file` is relative so a Windows `az` under WSL resolves it
+ * against its inherited `\\wsl.localhost\...` cwd rather than a drive root.
  */
 export function azureDevOpsMediaScratchPaths(directory: string): {
   readonly cwd: string;
@@ -34,11 +32,7 @@ export function azureDevOpsMediaScratchPaths(directory: string): {
   const separator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   const parent = trimmed.slice(0, separator);
   const cwd =
-    parent === ""
-      ? "/"
-      : /^[a-z]:$/iu.test(parent)
-        ? `${parent}${trimmed[separator]}`
-        : parent;
+    parent === "" ? "/" : /^[a-z]:$/iu.test(parent) ? `${parent}${trimmed[separator]}` : parent;
   return {
     cwd,
     file: `${trimmed}/media`,

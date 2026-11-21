@@ -26,10 +26,7 @@ function decodeSegment(segment: string): string {
 /** One spelling per segment, rejecting dot segments, path separators, and control characters. */
 function routeValue(segment: string): string | null {
   const decoded = decodeSegment(segment);
-  return decoded.length === 0 ||
-    decoded === "." ||
-    decoded === ".." ||
-    /[\p{Cc}/\\]/u.test(decoded)
+  return decoded.length === 0 || decoded === "." || decoded === ".." || /[\p{Cc}/\\]/u.test(decoded)
     ? null
     : encodeURIComponent(decoded);
 }
