@@ -8,6 +8,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -632,7 +633,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
 
       expect(error).toMatchObject({
         _tag: "AcpRequestError",
-        code: -32602,
+        code: -32603,
         errorMessage: "Attachment 'example.tsx' changed while being read and is too large.",
       });
     }),
@@ -662,21 +663,43 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     }),
   );
 
-  it.effect("reports a missing upload instead of sending only the remaining text", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeAttachmentFixture();
-      const error = yield* buildAntigravityPrompt({
-        input: "Read this image.",
-        attachments: [imageAttachment],
-        resolveAttachmentPath: fixture.resolve,
-        promptCapabilities: { image: true, audio: true, embeddedContext: true },
-      }).pipe(Effect.flip);
+  // A missing upload is refused for good; another read failure may clear on retry.
+  it.effect.each([
+    { reason: undefined, code: -32602 },
+    { reason: "PermissionDenied", code: -32603 },
+  ] as const)(
+    "reports an unreadable upload instead of sending only the remaining text: $reason",
+    ({ reason, code }) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeAttachmentFixture();
+        const error = yield* buildAntigravityPrompt({
+          input: "Read this image.",
+          attachments: [imageAttachment],
+          resolveAttachmentPath: fixture.resolve,
+          promptCapabilities: { image: true, audio: true, embeddedContext: true },
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fixture.fs,
+            stat: (filePath) =>
+              reason === undefined
+                ? fixture.fs.stat(filePath)
+                : Effect.fail(
+                    PlatformError.systemError({
+                      _tag: reason,
+                      module: "FileSystem",
+                      method: "stat",
+                      pathOrDescriptor: filePath,
+                    }),
+                  ),
+          }),
+          Effect.flip,
+        );
 
-      expect(error).toMatchObject({
-        _tag: "AcpRequestError",
-        code: -32602,
-        errorMessage: "Could not read attachment 'screen.png'.",
-      });
-    }),
+        expect(error).toMatchObject({
+          _tag: "AcpRequestError",
+          code,
+          errorMessage: "Could not read attachment 'screen.png'.",
+        });
+      }),
   );
 });
