@@ -12,12 +12,15 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeEvents from "node:events";
 import * as NodeHttp from "node:http";
+import * as NodeStream from "node:stream";
 
 import { npmReleaseDatabaseMigration } from "@t3tools/shared/cliRelease";
 
 import { buildNpmLauncher } from "./build-npm-launcher.ts";
 
 const VERSION = "1.2.3";
+const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024;
+const CURRENT_ARCHIVE_BYTES = 183 * 1024 * 1024;
 const decodeManifest = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -74,6 +77,14 @@ exit 7
   const archive = yield* fs.readFile(path.join(root, "release", archiveName));
   let checksum = NodeCrypto.createHash("sha256").update(archive).digest("hex");
   const requests: Array<string> = [];
+  let archiveMode: "normal" | "current-size" | "declared-overflow" | "streamed-overflow" = "normal";
+  function* archiveChunks(size: number) {
+    yield archive;
+    const padding = new Uint8Array(64 * 1024);
+    for (let remaining = size - archive.length; remaining > 0; remaining -= padding.length) {
+      yield padding.subarray(0, remaining);
+    }
+  }
   const failures: Array<number> = [];
   const server = NodeHttp.createServer((request, response) => {
     requests.push(request.url ?? "");
@@ -83,7 +94,21 @@ exit 7
     } else if (request.url === `/v${VERSION}/SHA256SUMS`) {
       response.end(`${checksum}  ${archiveName}\n`);
     } else if (request.url === `/v${VERSION}/${archiveName}`) {
-      response.writeHead(200, { "Content-Length": archive.length }).end(archive);
+      const size =
+        archiveMode === "current-size"
+          ? CURRENT_ARCHIVE_BYTES
+          : archiveMode === "normal"
+            ? archive.length
+            : MAX_ARCHIVE_BYTES + 1;
+      response.writeHead(200, {
+        ...(archiveMode === "streamed-overflow" ? {} : { "Content-Length": size }),
+        Connection: "close",
+      });
+      const body = NodeStream.Readable.from(
+        archiveChunks(archiveMode === "declared-overflow" ? archive.length : size),
+      );
+      response.once("close", () => body.destroy());
+      body.pipe(response);
     } else {
       response.writeHead(404).end();
     }
@@ -102,6 +127,16 @@ exit 7
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     requests,
+    setArchiveMode: (mode: typeof archiveMode) => {
+      archiveMode = mode;
+      const hash = NodeCrypto.createHash("sha256");
+      for (const chunk of archiveChunks(
+        mode === "current-size" ? CURRENT_ARCHIVE_BYTES : archive.length,
+      )) {
+        hash.update(chunk);
+      }
+      checksum = hash.digest("hex");
+    },
     corruptChecksum: () => {
       checksum = "0".repeat(64);
     },
@@ -174,6 +209,34 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           (yield* fs.readDirectory(path.join(home, "runtime/versions"))).sort(),
           [VERSION],
         );
+
+        release.setArchiveMode("current-size");
+        const currentSize = yield* run(process.execPath, [launcher, "--version"], {
+          cwd: root,
+          env: {
+            ...env,
+            T3CODE_HOME: path.join(root, "current-size-home"),
+            T3CODE_TEST_CALLS: undefined,
+          },
+        });
+        assert.equal(currentSize.exitCode, 0, currentSize.stderr);
+        assert.equal(currentSize.stdout.trim(), VERSION);
+
+        for (const mode of ["declared-overflow", "streamed-overflow"] as const) {
+          release.setArchiveMode(mode);
+          const oversizedHome = path.join(root, mode);
+          const oversized = yield* run(process.execPath, [launcher, "--version"], {
+            cwd: root,
+            env: { ...env, T3CODE_HOME: oversizedHome },
+          });
+          assert.equal(oversized.exitCode, 1);
+          assert.include(oversized.stderr, `${MAX_ARCHIVE_BYTES}-byte limit`);
+          assert.deepStrictEqual(
+            yield* fs.readDirectory(path.join(oversizedHome, "runtime/versions")),
+            [],
+          );
+        }
+        release.setArchiveMode("normal");
 
         const requestsAfterFirst = release.requests.length;
         const second = yield* run(process.execPath, [launcher, "--version"], { cwd: root, env });
