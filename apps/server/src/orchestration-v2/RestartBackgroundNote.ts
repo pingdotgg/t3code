@@ -1,14 +1,15 @@
-import type {
-  NodeId,
-  OrchestrationV2ConversationMessage,
-  OrchestrationV2PendingBackgroundTask,
-  OrchestrationV2ProviderThread,
-  OrchestrationV2ProviderTurn,
-  OrchestrationV2RestartCancelledBackgroundWork,
-  OrchestrationV2Run,
-  OrchestrationV2RunAttempt,
-  OrchestrationV2Subagent,
-  OrchestrationV2TurnItem,
+import {
+  isOrchestrationV2WorkActive,
+  type NodeId,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2PendingBackgroundTask,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2RestartCancelledBackgroundWork,
+  type OrchestrationV2Run,
+  type OrchestrationV2RunAttempt,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { subagentHoldsCompletion } from "@t3tools/provider-core/server/subagentProjection";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -129,6 +130,33 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
     id: task.taskId,
     ...(task.awaited === true ? { awaited: true as const } : {}),
   };
+}
+
+type RosterItem = Pick<
+  OrchestrationV2TurnItem,
+  "type" | "providerThreadId" | "nativeItemRef" | "status"
+>;
+
+/** A listed subagent whose own item already ended was waiting only for its report's wake, not cut off. */
+export function rosterTaskEnded(
+  task: OrchestrationV2PendingBackgroundTask,
+  providerThreadId: OrchestrationV2ProviderThread["id"],
+  projection: {
+    readonly turnItems: ReadonlyArray<RosterItem>;
+    readonly settledRosterSubagents?: ReadonlyArray<RosterItem> | undefined;
+  },
+): boolean {
+  if (task.kind !== "subagent" || task.parentTaskId !== undefined) return false;
+  const ownItem = (item: RosterItem) =>
+    item.type === "subagent" &&
+    item.providerThreadId === providerThreadId &&
+    item.nativeItemRef?.nativeId === task.taskId;
+  return (
+    (projection.settledRosterSubagents ?? []).some(
+      (item) => ownItem(item) && !isOrchestrationV2WorkActive(item.status),
+    ) &&
+    !projection.turnItems.some((item) => ownItem(item) && isOrchestrationV2WorkActive(item.status))
+  );
 }
 
 const MAX_NOTE_ENTRIES = 10;

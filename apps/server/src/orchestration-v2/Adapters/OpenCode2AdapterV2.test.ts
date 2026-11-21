@@ -1777,7 +1777,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         string,
         Record<string, { status: string; result: string | null }>
       >();
-      const state: { roster: ReadonlyArray<unknown> | undefined } = { roster: undefined };
+      const state: { roster: OrchestrationV2ProviderThread["pendingBackgroundTasks"] } = {
+        roster: undefined,
+      };
       let wake = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.tap((event) =>
@@ -1826,7 +1828,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             yield* until(check);
           });
         });
-      return { calls, callsById, callsAtChildTurnStart, childTurns, state, until };
+      // A reported subagent stays listed until the wake that reads its report, which these replays never start.
+      const rosterSettled = () =>
+        state.roster !== undefined &&
+        state.roster.every((task) => callsById.get(task.taskId)?.status !== "running");
+      return { calls, callsById, callsAtChildTurnStart, childTurns, state, until, rosterSettled };
     });
   const launchedAndRunning = [
     ...backgroundLaunch(CHILD),
@@ -2006,13 +2012,112 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         () =>
           watch.calls.get("Again")?.status === "completed" &&
           watch.calls.get("Sleep")?.status === "completed" &&
-          watch.state.roster?.length === 0,
+          watch.rosterSettled(),
       );
       assert.deepEqual(Object.fromEntries(watch.calls), {
         Sleep: { status: "completed", result: "CHILD_OK" },
         Again: { status: "completed", result: "CHILD_OK" },
       });
     }),
+  );
+
+  it.effect.each(["dispatched", "failed", "cleared", "stopped", "cancelled"] as const)(
+    "lists a finished background subagent until its wake's continuation is %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const offered =
+          yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+        const gate = makeProviderReplayGate(["cancel"]);
+        const { runtime, thread } = yield* resumed(
+          [
+            ...launchedAndRunning,
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            event("session.execution.succeeded", { sessionID: CHILD }),
+            childReport("msg_report", "CHILD_OK"),
+            ...(outcome === "cancelled"
+              ? [
+                  event(
+                    "session.inbox.cancelled",
+                    { sessionID: SESSION, inboxID: "msg_report" },
+                    "cancel",
+                  ),
+                ]
+              : [event("session.execution.started", { sessionID: SESSION })]),
+            ...(outcome === "stopped"
+              ? [
+                  out("session.interrupt", { sessionID: SESSION }),
+                  reply("session.interrupt", { interrupted: true }),
+                ]
+              : []),
+          ],
+          outcome === "cancelled" ? { replayGate: gate } : undefined,
+        ).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
+            take: Effect.never,
+          }),
+        );
+        const rosters: Array<ReadonlyArray<string>> = [];
+        const watch = yield* watchCalls(
+          {
+            ...runtime,
+            events: runtime.events.pipe(
+              Stream.tap((event) =>
+                Effect.sync(() => {
+                  if (
+                    event.type === "provider_thread.updated" &&
+                    event.providerThread.id === thread.id
+                  )
+                    rosters.push(
+                      (event.providerThread.pendingBackgroundTasks ?? []).map(
+                        (task) => task.taskId,
+                      ),
+                    );
+                }),
+              ),
+            ),
+          },
+          thread,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* watch.until(() => watch.calls.get("Sleep")?.status === "completed");
+        assert.deepEqual(watch.callsById.get("call-background"), {
+          status: "completed",
+          result: "CHILD_OK",
+        });
+        const listed = rosters.findIndex((roster) => roster.includes("call-background"));
+        // The held task matches the running call, so the roster published at launch stays current.
+        const held = () => {
+          assert.deepEqual(rosters.at(-1), ["call-background"]);
+          assert.isFalse(rosters.slice(listed).some((roster) => roster.length === 0));
+        };
+        held();
+        if (outcome === "cancelled") {
+          gate.release("cancel");
+        } else {
+          const offer = yield* Deferred.await(offered);
+          held();
+          if (outcome === "dispatched" || outcome === "failed") {
+            const dispatched = yield* Effect.exit(
+              offer.dispatchIfCurrent!(
+                outcome === "dispatched" ? Effect.void : Effect.fail("dispatch failed"),
+              ),
+            );
+            assert.strictEqual(Exit.isSuccess(dispatched), outcome === "dispatched");
+          } else if (outcome === "cleared") {
+            yield* offer.clearIfCurrent!();
+          } else {
+            yield* runtime.interruptTurn({
+              providerThread: thread,
+              providerTurnId: yield* providerTurnId,
+              requestRuntimeRestart: true,
+            });
+            yield* watch.until(() => rosters.at(-1)?.length === 0);
+            assert.isTrue(Option.isNone(yield* offer.dispatchIfCurrent!(Effect.void)));
+          }
+        }
+        yield* watch.until(() => watch.state.roster?.length === 0);
+      }),
   );
 
   it.effect("keeps a call to a finished subagent for its own run's report", () =>
@@ -2145,7 +2250,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.startTurn(withLineage(thread));
       yield* watch.until(
         () =>
-          watch.state.roster?.length === 0 &&
+          watch.rosterSettled() &&
           Object.keys(expected).every((id) => watch.callsById.get(id)?.status === "completed"),
       );
       assert.deepEqual(Object.fromEntries(watch.callsById), expected);

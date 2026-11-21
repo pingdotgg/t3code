@@ -34,6 +34,7 @@ import {
   neverStarted,
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
+  rosterTaskEnded,
 } from "./RestartBackgroundNote.ts";
 
 const CONTINUE_PROMPT =
@@ -138,7 +139,7 @@ export const restartStopRequested = Effect.fn("RestartContinuation.restartStopRe
 
 /** App-owned delegations continue in their own threads and report back. */
 function hasOpenAwaitedWork(
-  projection: Pick<ProjectionRuntimeRecoveryState, "runs" | "turnItems">,
+  projection: Pick<ProjectionRuntimeRecoveryState, "runs" | "turnItems" | "settledRosterSubagents">,
   providerThread: ProjectionRuntimeRecoveryState["providerThreads"][number],
 ): boolean {
   const openItem = projection.turnItems.some((item) => {
@@ -156,8 +157,10 @@ function hasOpenAwaitedWork(
   return (
     openItem ||
     (providerThread.ownerNodeId === null &&
-      (providerThread.pendingBackgroundTasks ?? []).some((task) =>
-        isAwaitedWork(cancelledRosterTaskWork(task)),
+      (providerThread.pendingBackgroundTasks ?? []).some(
+        (task) =>
+          isAwaitedWork(cancelledRosterTaskWork(task)) &&
+          !rosterTaskEnded(task, providerThread.id, projection),
       ))
   );
 }
@@ -173,6 +176,7 @@ export function restartContinuationRun(
     | "providerTurns"
     | "runtimeRequests"
     | "turnItems"
+    | "settledRosterSubagents"
   >,
   now: DateTime.Utc,
 ): OrchestrationV2Run | undefined {
