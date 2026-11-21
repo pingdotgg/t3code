@@ -1,8 +1,11 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointRef,
   CheckpointScopeId,
   NodeId,
+  ProjectId,
   ProviderThreadId,
   RunId,
   ThreadId,
@@ -17,12 +20,22 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
+
+const layerNoTrackedFolders = Layer.merge(
+  NodeServices.layer,
+  Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+    forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+    submodules: () => Effect.succeed([]),
+  }),
+);
 
 it.effect(
   "skips unsupported baseline and turn checkpoints without swallowing capture failures",
@@ -58,6 +71,7 @@ it.effect(
           Layer.provide(
             Layer.mergeAll(
               IdAllocator.layer,
+              layerNoTrackedFolders,
               Layer.mock(CheckpointStore.CheckpointStore)({
                 isGitRepository: () => Effect.succeed(true),
                 hasCheckpointRef: () => Effect.succeed(false),
@@ -127,6 +141,7 @@ it.effect(
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
+            layerNoTrackedFolders,
             Layer.mock(CheckpointStore.CheckpointStore)({
               isGitRepository: () => Effect.succeed(true),
               hasCheckpointRef: ({ checkpointRef }) =>
@@ -187,6 +202,183 @@ it.effect(
     }),
 );
 
+it.effect(
+  "asks Git about a tracked repository once a turn and snapshots it only when changed",
+  () =>
+    Effect.gen(function* () {
+      const scope: OrchestrationV2CheckpointScope = {
+        id: CheckpointScopeId.make("checkpoint-scope:repositories"),
+        threadId: ThreadId.make("thread:repositories"),
+        runId: RunId.make("run:repositories:1"),
+        nodeId: NodeId.make("node:repositories:1"),
+        parentScopeId: null,
+        providerThreadId: ProviderThreadId.make("provider-thread:repositories"),
+        kind: "root_run",
+        ordinalWithinParent: 0,
+        advancesAppRunCount: true,
+        cwd: "/wrapper",
+        createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+      };
+      const thread = { projectId: ProjectId.make("project:repositories"), worktreePath: null };
+      const repositories = Array.from({ length: 30 }, (_, index) => `/wrapper/repo-${index}`);
+      const [slowRepository, changedRepository] = [repositories[7]!, repositories[3]!];
+      const unreadableRepository = repositories[5]!;
+      const startHead = "a".repeat(40);
+      const heads = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+      const refs = yield* Ref.make<ReadonlySet<string>>(new Set());
+      const calls = yield* Ref.make<ReadonlyArray<string>>([]);
+      const record = (call: string) => Ref.update(calls, (current) => [...current, call]);
+      const slow = yield* Ref.make(true);
+      const slowStarted = yield* Deferred.make<void>();
+      const othersSeen = yield* Deferred.make<void>();
+      const layerTest = CheckpointService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+              forThread: () =>
+                Effect.succeed({
+                  folders: [
+                    ...repositories.map((path) => ({
+                      name: path,
+                      path,
+                      isGitRepository: true,
+                      // The first is a task folder's worktree of a tracked checkout elsewhere.
+                      ...(path === repositories[0] ? { repositoryPath: "/tracked/repo-0" } : {}),
+                    })),
+                    { name: "notes", path: "/wrapper/notes", isGitRepository: false },
+                  ],
+                  extraRoots: [],
+                }),
+              submodules: () => Effect.succeed([]),
+            }),
+            Layer.mock(CheckpointStore.CheckpointStore)({
+              isGitRepository: (cwd) => record(`probe ${cwd}`).pipe(Effect.as(cwd !== "/wrapper")),
+              resolveCleanHead: (cwd) =>
+                Effect.gen(function* () {
+                  // One repository is too slow for the turn to wait on.
+                  if (cwd === slowRepository && (yield* Ref.get(slow))) {
+                    yield* Deferred.succeed(slowStarted, undefined);
+                    yield* Effect.sleep("1 minute");
+                  }
+                  yield* record(`status ${cwd}`);
+                  if ((yield* Ref.get(calls)).length === repositories.length - 1) {
+                    yield* Deferred.succeed(othersSeen, undefined);
+                  }
+                  return (yield* Ref.get(heads)).get(cwd) ?? startHead;
+                }),
+              hasCheckpointRef: ({ checkpointRef }) =>
+                Ref.get(refs).pipe(Effect.map((current) => current.has(checkpointRef))),
+              captureHeadCheckpoint: ({ cwd, head, checkpointRef }) =>
+                record(`snapshot ${cwd} at ${head[0]}`).pipe(
+                  Effect.andThen(
+                    Ref.update(refs, (current) => new Set([...current, checkpointRef])),
+                  ),
+                ),
+              diffCheckpoints: ({ cwd }) =>
+                cwd === unreadableRepository
+                  ? Effect.fail(
+                      new VcsProcessExitError({
+                        operation: "test.diff",
+                        command: "git",
+                        cwd,
+                        exitCode: 128,
+                        detail: "fatal: unable to read tree",
+                      }),
+                    )
+                  : Effect.succeed("1\t0\tfile.ts\0"),
+              listAuthoredPaths: () => Effect.succeed(null),
+            }),
+          ),
+        ),
+        Layer.provideMerge(NodeCrypto.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+        const scopes = yield* checkpoints.repositoryScopes({ rootScope: scope, ...thread });
+        // The plain folder gets no scope.
+        assert.deepEqual(
+          scopes.map((repository) => repository.cwd),
+          repositories,
+        );
+        // A scope works in the thread's checkout and is known by the tracked folder it stands for.
+        assert.deepEqual(
+          scopes.slice(0, 2).map((repository) => repository.repositoryPath),
+          ["/tracked/repo-0", repositories[1]],
+        );
+        const captureAll = (ordinalWithinScope: number) =>
+          Effect.forEach(scopes, (repository) =>
+            checkpoints.captureRepository({
+              scope: repository,
+              runId: scope.runId!,
+              nodeId: scope.nodeId,
+              ordinalWithinScope,
+              capturedAt: scope.createdAt,
+              baselineCapturedAt: scope.createdAt,
+              baselineRecorded: false,
+            }),
+          );
+
+        // Every baseline shares the turn's budget; the slow repository is left without one.
+        const firstTurn = yield* checkpoints
+          .captureBaseline({ scope, ordinalWithinScope: 0, thread })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(slowStarted);
+        yield* Deferred.await(othersSeen);
+        yield* TestClock.adjust("5 seconds");
+        yield* Fiber.join(firstTurn);
+        yield* Ref.set(slow, false);
+
+        // A turn that changes nothing writes nothing and records nothing.
+        assert.isTrue((yield* captureAll(1)).every(Option.isNone));
+        assert.isFalse((yield* Ref.get(calls)).some((call) => call.startsWith("snapshot")));
+
+        // The next turn starts from what each repository's last run ended with, so only the
+        // thread's own folder is read.
+        yield* Ref.set(calls, []);
+        yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 1, thread });
+        assert.deepEqual(yield* Ref.get(calls), ["probe /wrapper"]);
+
+        // The turn commits in two repositories: each baseline is snapshotted from where it started.
+        // One of them cannot list what changed, which is not the same as nothing having changed.
+        yield* Ref.set(
+          heads,
+          new Map([
+            [changedRepository, "b".repeat(40)],
+            [unreadableRepository, "b".repeat(40)],
+          ]),
+        );
+        yield* Ref.set(calls, []);
+        const recorded = (yield* captureAll(2)).flatMap(Option.toArray);
+        assert.deepEqual(
+          recorded.map(({ baseline, checkpoint }) => ({
+            cwd: scopes.find((repository) => repository.id === checkpoint.scopeId)?.cwd,
+            baseline: baseline?.ordinalWithinScope,
+            ordinal: checkpoint.ordinalWithinScope,
+            files: checkpoint.files.map((file) => file.path),
+          })),
+          [
+            { cwd: changedRepository, baseline: 1, ordinal: 2, files: ["file.ts"] },
+            { cwd: unreadableRepository, baseline: 1, ordinal: 2, files: [] },
+          ],
+        );
+        assert.deepEqual(
+          (yield* Ref.get(calls)).filter((call) => call.startsWith("snapshot")),
+          [changedRepository, unreadableRepository].flatMap((cwd) => [
+            `snapshot ${cwd} at a`,
+            `snapshot ${cwd} at b`,
+          ]),
+        );
+        assert.lengthOf(
+          (yield* Ref.get(calls)).filter((call) => call.startsWith("status")),
+          repositories.length,
+        );
+      }).pipe(Effect.provide(layerTest));
+    }),
+);
+
 it.effect("records a repository probe failure as an error checkpoint, not a missing one", () =>
   Effect.gen(function* () {
     const scope: OrchestrationV2CheckpointScope = {
@@ -206,6 +398,7 @@ it.effect("records a repository probe failure as an error checkpoint, not a miss
       Layer.provide(
         Layer.mergeAll(
           IdAllocator.layer,
+          layerNoTrackedFolders,
           Layer.mock(CheckpointStore.CheckpointStore)({
             isGitRepository: () =>
               Effect.fail(
@@ -281,6 +474,7 @@ it.effect("backs off only baseline retries after repeated workspace capture time
       Layer.provide(
         Layer.mergeAll(
           IdAllocator.layer,
+          layerNoTrackedFolders,
           Layer.mock(CheckpointStore.CheckpointStore)({
             isGitRepository: () => Effect.succeed(true),
             hasCheckpointRef: () => Effect.succeed(false),
@@ -355,3 +549,74 @@ it.effect("backs off only baseline retries after repeated workspace capture time
     }).pipe(Effect.provide(layerTest));
   }),
 );
+
+it.effect("keeps the pre-rewind snapshot of a folder a failed rewind could not put back", () => {
+  const targets = ["first", "second"].map((name) => ({
+    scope: { id: CheckpointScopeId.make(`checkpoint-scope:rewind:${name}`), cwd: `/repo/${name}` },
+    checkpoint: {
+      ordinalWithinScope: 1,
+      ref: CheckpointRef.make(`refs/t3/test/rewind/${name}`),
+      status: "ready" as const,
+    },
+  }));
+  const failure = new VcsProcessTimeoutError({
+    operation: "test.restore",
+    command: "git",
+    cwd: "/repo",
+    timeoutMs: 30000,
+  });
+  const preRewindRefs = new Map<string, string>();
+  const captured: Array<string> = [];
+  const existing = new Set<string>();
+  const deleted: Array<{ readonly cwd: string; readonly ref: string }> = [];
+  const layerTest = CheckpointService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        IdAllocator.layer,
+        layerNoTrackedFolders,
+        Layer.mock(CheckpointStore.CheckpointStore)({
+          hasCheckpointRef: (input) =>
+            Effect.sync(
+              () =>
+                targets.some((target) => target.checkpoint.ref === input.checkpointRef) ||
+                existing.has(input.checkpointRef),
+            ),
+          captureCheckpoint: (input) =>
+            Effect.sync(() => {
+              captured.push(input.cwd);
+              existing.add(input.checkpointRef);
+              preRewindRefs.set(input.cwd, input.checkpointRef);
+            }),
+          // The second folder's rewind fails, and then so does putting the first one back.
+          restoreCheckpoint: (input) =>
+            input.checkpointRef === targets[1]!.checkpoint.ref ||
+            input.checkpointRef === preRewindRefs.get("/repo/first")
+              ? Effect.fail(failure)
+              : Effect.succeed(true),
+          deleteCheckpointRefs: (input) =>
+            Effect.sync(() => {
+              for (const ref of input.checkpointRefs) {
+                existing.delete(ref);
+                deleted.push({ cwd: input.cwd, ref });
+              }
+            }),
+        }),
+      ),
+    ),
+    Layer.provideMerge(NodeCrypto.layer),
+  );
+  return Effect.gen(function* () {
+    const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+    const result = yield* Effect.result(
+      checkpoints.restore({ targets, scopes: targets.map((target) => target.scope) }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+    assert.deepEqual(deleted, [{ cwd: "/repo/second", ref: preRewindRefs.get("/repo/second")! }]);
+
+    // A retry starts from a half-restored folder; the kept snapshot is not taken again.
+    yield* Effect.result(
+      checkpoints.restore({ targets, scopes: targets.map((target) => target.scope) }),
+    );
+    assert.deepEqual(captured, ["/repo/first", "/repo/second", "/repo/second"]);
+  }).pipe(Effect.provide(layerTest));
+});

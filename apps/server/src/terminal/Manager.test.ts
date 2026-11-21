@@ -51,6 +51,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as TerminalManager from "./Manager.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { makePrepareTerminalLaunch } from "../workspace/restoreMissingWorktree.ts";
+import { layerNoTaskFolders } from "../orchestration-v2/ProviderTurnStartService.testkit.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -533,6 +534,7 @@ it.layer(
               Layer.mock(ProjectService.ProjectService)({
                 getById: () => Effect.succeedSome({ workspaceRoot: baseDir } as never),
               }),
+              layerNoTaskFolders,
               Layer.mock(GitWorkflowService.GitWorkflowService)({
                 pruneWorktrees: () => Effect.void,
                 listLocalBranchNames: () => Effect.succeed(["feature"]),

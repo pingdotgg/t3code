@@ -401,7 +401,7 @@ type TurnTerminal =
 type Rule = Permission.Rule;
 type RulesPolicy = Pick<
   ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-  "runtimeMode" | "interactionMode"
+  "runtimeMode" | "interactionMode" | "workspace"
 >;
 type NativeForm = EventOf<"form.created">["data"]["form"];
 
@@ -458,6 +458,15 @@ const sessionRules = (
         rule("shell", "ask"),
         rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
         rule("external_directory", "ask"),
+        // The thread's other folders count as workspace; `edit` still decides whether writes ask.
+        // A glob character in the path would allow sibling folders, so such a root keeps asking.
+        ...(policy.workspace?.extraRoots ?? [])
+          .filter((root) => !/[*?]/.test(root))
+          .map((root): Rule => ({
+            action: "external_directory",
+            resource: `${root.replace(/\/$/, "")}/*`,
+            effect: "allow",
+          })),
       ]),
   ...grants,
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
@@ -4420,7 +4429,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
       }
       const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
+        buildRuntimeInstructions({
+          harness: "OpenCode",
+          model: turnInput.modelSelection.model,
+          runtimePolicy: turnInput.runtimePolicy,
+        }),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
         mcpAvailable
           ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."

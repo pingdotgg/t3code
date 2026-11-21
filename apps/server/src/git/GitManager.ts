@@ -2767,7 +2767,7 @@ export const make = Effect.gen(function* () {
         Effect.map(Option.getOrUndefined),
         Effect.orElseSucceed(() => undefined),
       );
-      const key = createdPullRequestKey({ pr: result }, project);
+      const key = createdPullRequestKey({ pr: result }, project?.repositoryIdentity);
       if (key === null) return false;
       const ref = { projectId: input.projectId, ...key };
       const isDraft =
