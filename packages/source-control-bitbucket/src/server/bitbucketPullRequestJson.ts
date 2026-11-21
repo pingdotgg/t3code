@@ -142,6 +142,7 @@ const RawMemberSchema = Schema.Struct({
 });
 
 const RawViewerSchema = Schema.Struct({
+  uuid: Schema.optional(Schema.NullOr(Schema.String)),
   nickname: Schema.optional(Schema.NullOr(Schema.String)),
   display_name: Schema.optional(Schema.NullOr(Schema.String)),
 });
@@ -314,10 +315,16 @@ export function decodePullRequestJson(
 }
 
 export function decodeViewerJson(raw: string): Result.Result<string | null, DecodeFailure> {
-  const decoded = decodeViewer(raw);
-  return Result.isSuccess(decoded)
-    ? Result.succeed(trimmed(decoded.success.nickname) ?? trimmed(decoded.success.display_name))
-    : Result.fail(decoded.failure);
+  return Result.map(decodeViewerIdentityJson(raw), (viewer) => viewer.login);
+}
+
+export function decodeViewerIdentityJson(
+  raw: string,
+): Result.Result<{ readonly login: string | null; readonly uuid: string | null }, DecodeFailure> {
+  return Result.map(decodeViewer(raw), (viewer) => ({
+    login: trimmed(viewer.nickname) ?? trimmed(viewer.display_name),
+    uuid: trimmed(viewer.uuid),
+  }));
 }
 
 export function decodeRepositoryPermissionJson(raw: string): Result.Result<boolean, DecodeFailure> {

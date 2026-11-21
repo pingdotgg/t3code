@@ -37,6 +37,7 @@ import {
   decodePullRequestPageJson,
   decodeRepositoryPermissionJson,
   decodeStatusesJson,
+  decodeViewerIdentityJson,
   decodeViewerJson,
   decodeWorkspaceMembersJson,
   type BitbucketDiffStat,
@@ -315,9 +316,16 @@ function searchFilter(query: string): string {
   return `(title ~ "${literal}" OR description ~ "${literal}")`;
 }
 
-function authorFilter(login: string): string {
-  const literal = filterLiteral(login);
-  return `(author.nickname = "${literal}" OR author.display_name = "${literal}")`;
+// Bitbucket rejects display_name filters and most accounts have no nickname, so only the viewer
+// can be pushed down (by uuid). Other authors are left to the service's row filter, which
+// compares logins case-insensitively and keeps reading until the page fills.
+function viewerAuthorFilter(
+  login: string,
+  viewer: { readonly login: string | null; readonly uuid: string | null } | null,
+): ReadonlyArray<string> {
+  return viewer?.uuid && viewer.login?.toLowerCase() === login.toLowerCase()
+    ? [`author.uuid = "${filterLiteral(viewer.uuid)}"`]
+    : [];
 }
 
 /**
@@ -554,28 +562,52 @@ export const make = Effect.gen(function* () {
     }),
 
     listPullRequests: Effect.fn("BitbucketPullRequestApi.listPullRequests")(function (input) {
-      return withRepository(input.repository, (path) => {
-        const search = input.query?.trim() ?? "";
-        // Exclude already-sent IDs in the boundary millisecond before applying the page limit.
-        const predicates = [
-          ...(search.length === 0 ? [] : [searchFilter(search)]),
-          ...(input.author === undefined ? [] : [authorFilter(input.author)]),
-          ...(input.draft === undefined ? [] : [`draft = ${input.draft}`]),
-          ...(input.cursor === undefined ? [] : [updatedBeforeFilter(input.cursor.updatedBefore)]),
-          ...(input.cursor?.seenAt ?? []).map((number) => `id != ${number}`),
-        ];
-        return listPage({
-          // Listings omit reviewers needed by `viewerReviewRequested`.
-          url: `${path}/pullrequests?${stateParams(input.state)
-            .map((state) => `state=${state}`)
-            .join("&")}&pagelen=${MAX_PAGE_SIZE}&sort=-updated_on&fields=%2Bvalues.reviewers${
-            predicates.length === 0 ? "" : `&q=${encodeURIComponent(predicates.join(" AND "))}`
-          }`,
-          limit: input.limit,
-          page: 1,
-          collected: [],
-        });
-      });
+      return withRepository(input.repository, (path) =>
+        Effect.gen(function* () {
+          const viewer =
+            input.author === undefined
+              ? null
+              : yield* bitbucket.request({ method: "GET", url: "/user" }).pipe(
+                  Effect.map((response) => {
+                    const decoded = decodeViewerIdentityJson(response.body);
+                    return Result.isSuccess(decoded) ? decoded.success : null;
+                  }),
+                  Effect.catchIf(
+                    (error) =>
+                      error._tag !== "SourceControlRateLimitPausedError" &&
+                      !(
+                        (error._tag === "BitbucketResponseError" ||
+                          error._tag === "BitbucketResponseBodyReadError") &&
+                        error.status === 429
+                      ),
+                    () => Effect.succeed(null),
+                  ),
+                );
+          const search = input.query?.trim() ?? "";
+          // Exclude already-sent IDs in the boundary millisecond before applying the page limit.
+          const predicates = [
+            ...(search.length === 0 ? [] : [searchFilter(search)]),
+            ...(input.author === undefined ? [] : viewerAuthorFilter(input.author, viewer)),
+            ...(input.draft === undefined ? [] : [`draft = ${input.draft}`]),
+            ...(input.cursor === undefined
+              ? []
+              : [updatedBeforeFilter(input.cursor.updatedBefore)]),
+            ...(input.cursor?.seenAt ?? []).map((number) => `id != ${number}`),
+          ];
+          return yield* listPage({
+            // Listings omit the reviewers behind `viewerReviewRequested` and the votes behind
+            // the review decision.
+            url: `${path}/pullrequests?${stateParams(input.state)
+              .map((state) => `state=${state}`)
+              .join("&")}&pagelen=${MAX_PAGE_SIZE}&sort=-updated_on&fields=%2Bvalues.reviewers${
+              predicates.length === 0 ? "" : `&q=${encodeURIComponent(predicates.join(" AND "))}`
+            }`,
+            limit: input.limit,
+            page: 1,
+            collected: [],
+          });
+        }),
+      );
     }),
 
     getPullRequest: Effect.fn("BitbucketPullRequestApi.getPullRequest")(function (input) {
