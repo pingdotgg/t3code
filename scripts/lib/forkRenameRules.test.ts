@@ -256,6 +256,8 @@ describe("FORK_RENAME_RULES", () => {
       "`${dir}/t3code-certificate-approvals.json`",
       "identifier",
     ],
+    // The AUR release test runs upstream's kept packaging, so it keeps upstream's names.
+    ["scripts/aur-release.test.ts", "const prefix = `T3-Code-${version}`;", "upstream-reference"],
     // A Windows task name follows serviceTaskName; the repository name beside it stays.
     [
       "apps/server/src/cloud/bootService.test.ts",

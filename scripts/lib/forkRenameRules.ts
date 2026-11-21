@@ -283,8 +283,8 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "upstream-aur-packaging",
     class: "upstream-reference",
     reason:
-      "packaging/aur is upstream's AUR package, published only by upstream's release workflow.",
-    path: /^packaging\//,
+      "packaging/aur is upstream's AUR package, published only by upstream's release workflow, and the test that runs its release script.",
+    path: /^packaging\/|^scripts\/aur-release\.test\.ts$/,
   },
   {
     id: "upstream-task-cache",

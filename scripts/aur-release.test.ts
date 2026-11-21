@@ -46,7 +46,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("AUR release", 
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const inherited = yield* HostProcess.Environment;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "lathe-aur-release-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-aur-release-" });
       const aur = path.join(root, "packaging/aur");
       yield* fs.copy(path.join(import.meta.dirname, "../packaging/aur"), aur);
       const tools = path.join(root, "tools");
@@ -64,7 +64,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("AUR release", 
       const version = nightly ? "1.2.4-nightly.20261104.1" : "1.2.3";
       const pkgname = nightly ? "t3code-nightly-bin" : "t3code-bin";
       const prefix =
-        naming === "versioned" ? `Lathe-${version}` : nightly ? "Lathe-Nightly" : "Lathe";
+        naming === "versioned" ? `T3-Code-${version}` : nightly ? "T3-Code-Nightly" : "T3-Code";
       const assets = [
         { name: `${prefix}-x86_64.AppImage`, digest: `sha256:${"a".repeat(64)}` },
         ...(failure === "missing"
@@ -72,7 +72,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("AUR release", 
           : [
               {
                 name:
-                  failure === "version" ? "Lathe-1.2.2-arm64.AppImage" : `${prefix}-arm64.AppImage`,
+                  failure === "version"
+                    ? "T3-Code-1.2.2-arm64.AppImage"
+                    : `${prefix}-arm64.AppImage`,
                 digest: failure === "digest" ? "invalid" : `sha256:${"b".repeat(64)}`,
               },
             ]),
@@ -111,7 +113,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("AUR release", 
           { ...env, CARCH: arch },
         );
         assert.equal(Number(selected.code), 0, selected.stderr);
-        const localName = `Lathe-${version}-${upstreamArch}.AppImage`;
+        const localName = `T3-Code-${version}-${upstreamArch}.AppImage`;
         assert.deepEqual(selected.stdout.trim().split("\n"), [
           version.replace("-nightly.", "_nightly."),
           "x86_64 aarch64",
