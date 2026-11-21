@@ -1324,6 +1324,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                 mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
                 reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                getContextUsage: contextUsageUnsupported,
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,

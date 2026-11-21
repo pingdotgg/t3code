@@ -4,7 +4,11 @@ import { threadEnvironment } from "../state/threads";
 import { DEFAULT_RUNTIME_MODE } from "../types";
 /** Resolve surface context independently of ChatView so tabs remain usable after the chat closes,
  * and report when their thread is gone. */
-import { scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { msg, T, useGT, useMessages } from "gt-react";
 import {
   AuthOrchestrationOperateScope,
@@ -92,6 +96,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "../state/query";
 import { focusActivePanelTerminal, focusTerminal } from "../lib/terminalFocus";
 import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
+import { useOpenSurfaceInMainView } from "../hooks/useOpenSurfaceInMainView";
 import type { TerminalContextSelection } from "../lib/terminalContext";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
@@ -552,6 +557,7 @@ function ThreadSurfacePane({
   const threadTitle = useThreadTitle(threadRef);
   const { visible, paneId } = useLayoutPane();
   const handleNewThread = useNewThreadHandler();
+  const openInMainView = useOpenSurfaceInMainView(threadRef);
   const { projectRef } = context;
   const add = (
     kind: LauncherSurfaceKind,
@@ -600,6 +606,7 @@ function ThreadSurfacePane({
         if (active.kind === "thread") requestSideChatComposerFocus(threadRef, active.id);
       }}
       onCloseSurface={close}
+      onOpenInMainView={openInMainView}
       onRenameDevice={(id, title) =>
         useRightPanelStore.getState().renameDevice(threadRef, id, title)
       }
