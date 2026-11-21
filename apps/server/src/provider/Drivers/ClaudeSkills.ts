@@ -20,6 +20,7 @@ type ClaudeSkillRoot = {
   readonly directory: string;
   readonly scope: ClaudeSkillScope;
   readonly prefix?: string;
+  readonly synced?: boolean;
 };
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
@@ -240,6 +241,7 @@ const SkillSettings = fromLenientJson(
     skillOverrides: Schema.optional(Schema.Record(Schema.String, SkillOverrideValue)),
     enabledPlugins: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
     syncClaudeAiPlugins: Schema.optional(Schema.Unknown),
+    syncClaudeAiSkills: Schema.optional(Schema.Unknown),
   }),
 );
 const decodeSkillSettings = Schema.decodeUnknownEffect(SkillSettings);
@@ -274,6 +276,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   const managedPluginNames = new Set<string>();
   const managedPaths = new Set(claudeManagedSettingsPaths(path, platform, environment));
   let syncedPluginsHidden = false;
+  let syncedSkillsHidden = false;
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
   const projectSettingsPath =
     cwd === undefined ? undefined : path.join(cwd, ".claude", "settings.json");
@@ -320,6 +323,9 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
     if (parsed?.syncClaudeAiPlugins === false && settingsPath !== projectSettingsPath) {
       syncedPluginsHidden = true;
     }
+    if (parsed?.syncClaudeAiSkills === false && settingsPath !== projectSettingsPath) {
+      syncedSkillsHidden = true;
+    }
   }
 
   return {
@@ -327,6 +333,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
     enabledPlugins,
     managedPluginNames,
     syncedPluginsHidden,
+    syncedSkillsHidden,
   };
 });
 
@@ -641,6 +648,32 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
   return roots;
 });
 
+const SYNCED_SKILL_PREFIX = "anthropic-skills";
+
+const discoverSyncedSkillRoot = Effect.fn("discoverSyncedSkillRoot")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  configDirPath: string,
+  environment: NodeJS.ProcessEnv,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const bucket = yield* resolveSyncedPluginBucket(config, configDirPath, environment);
+  if (bucket === undefined) return [];
+  const syncedPath = path.join(configDirPath, "skills", "synced");
+  const hasBucketMarker = yield* fileSystem
+    .exists(path.join(syncedPath, `.bucket-${bucket}`))
+    .pipe(Effect.orElseSucceed(() => false));
+  if (!hasBucketMarker) return [];
+  return [
+    {
+      directory: path.join(syncedPath, bucket),
+      scope: "user" as const,
+      prefix: SYNCED_SKILL_PREFIX,
+      synced: true,
+    },
+  ];
+});
+
 const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   environment: NodeJS.ProcessEnv,
@@ -765,8 +798,13 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const path = yield* Path.Path;
   const env = environment ?? process.env;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, env, cwd);
-  const { skillOverrides, enabledPlugins, managedPluginNames, syncedPluginsHidden } =
-    yield* readSkillSettings(configDirPath, cwd, env);
+  const {
+    skillOverrides,
+    enabledPlugins,
+    managedPluginNames,
+    syncedPluginsHidden,
+    syncedSkillsHidden,
+  } = yield* readSkillSettings(configDirPath, cwd, env);
   const managedDirectory = claudeManagedDirectory(path, yield* HostProcess.Platform, env);
   // Most installs have no synced folder; skip reading `.claude.json` for them.
   const hasSyncedPlugins =
@@ -801,6 +839,8 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         directory: path.join(path.resolve(cwd ?? ".", directory), ".claude", "skills"),
         scope: "project" as const,
       })),
+    // Ahead of plugins: Claude Code reserves `anthropic-skills:` names for synced skills.
+    ...(syncedSkillsHidden ? [] : yield* discoverSyncedSkillRoot(config, configDirPath, env)),
     ...inlinePlugins.roots,
     ...(yield* discoverPluginSkillRoots(
       configDirPath,
@@ -844,13 +884,20 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       const directoryName = entry.trim();
       if (!directoryName) continue;
       let name = directoryName;
-      if (root.prefix) {
+      if (!root.prefix) {
+        // Claude Code refuses local skills that claim the synced namespace by folder or name.
+        const names = [directoryName, frontmatter.kind === "parsed" ? frontmatter.name : undefined];
+        const reserved = (n?: string) =>
+          n?.toLowerCase() === SYNCED_SKILL_PREFIX ||
+          n?.toLowerCase().startsWith(`${SYNCED_SKILL_PREFIX}:`);
+        if (names.some(reserved)) continue;
+      } else {
         // Native folder skills use their folder; only a single SKILL.md uses its name field.
         const declaredName = singleSkill && frontmatter.kind === "parsed" ? frontmatter.name : "";
         const unprefixedName = declaredName?.startsWith(`${root.prefix}:`)
           ? declaredName.slice(root.prefix.length + 1)
           : declaredName;
-        name = `${root.prefix}:${(unprefixedName || entry).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+        name = `${root.prefix}:${root.synced ? entry : (unprefixedName || entry).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
         // Advertise only exact native names the shared composer grammar can invoke.
         const [mention] = `$${name}`.matchAll(SKILL_MENTION_PATTERN);
         if (mention?.[2] !== name) continue;
@@ -860,7 +907,12 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
-      const override = root.prefix ? undefined : skillOverrides.get(name);
+      // Plugin skills ignore skillOverrides; synced skills honor their prefixed or bare name.
+      const override = !root.prefix
+        ? skillOverrides.get(name)
+        : root.synced
+          ? (skillOverrides.get(name) ?? skillOverrides.get(directoryName))
+          : undefined;
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
         override?.userInvocationOnly === true;
