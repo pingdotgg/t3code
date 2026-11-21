@@ -421,11 +421,14 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
         `Invalid attachment '${attachment.name}'.`,
       );
     }
+    // Invalid params marks a refusal that repeats on every retry; internal errors may clear.
     const info = yield* fileSystem
       .stat(attachmentPath)
       .pipe(
-        Effect.mapError(() =>
-          EffectAcpErrors.AcpRequestError.invalidParams(
+        Effect.mapError((cause) =>
+          (cause.reason._tag === "NotFound"
+            ? EffectAcpErrors.AcpRequestError.invalidParams
+            : EffectAcpErrors.AcpRequestError.internalError)(
             `Could not read attachment '${attachment.name}'.`,
           ),
         ),
@@ -470,14 +473,14 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       Stream.runCollect,
       Effect.map((chunks) => Buffer.concat(chunks)),
       Effect.mapError(() =>
-        EffectAcpErrors.AcpRequestError.invalidParams(
+        EffectAcpErrors.AcpRequestError.internalError(
           `Could not read attachment '${attachment.name}'.`,
         ),
       ),
     );
     totalBytes += bytes.length - size;
     if (bytes.length > limit || totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
-      return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+      return yield* EffectAcpErrors.AcpRequestError.internalError(
         `Attachment '${attachment.name}' changed while being read and is too large.`,
       );
     }

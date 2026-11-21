@@ -34,6 +34,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -59,7 +60,18 @@ import {
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { ACP_ATTACHMENT_PROMPT_FAILURE_DETAIL } from "@t3tools/provider-acp/server/adapter";
 import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
+
+/** Marks a start failure where the provider refused the attachments, so retries stop re-sending them. */
+export const PROVIDER_PROMPT_REJECTED_FAILURE_CODE = "provider_prompt_rejected";
+
+const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
+
+const attachmentPromptRejected = (error: unknown): boolean =>
+  (isProviderAdapterProtocolError(error) &&
+    error.detail === ACP_ATTACHMENT_PROMPT_FAILURE_DETAIL) ||
+  (Predicate.hasProperty(error, "cause") && attachmentPromptRejected(error.cause));
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -2314,6 +2326,9 @@ export const layer: Layer.Layer<
                             makeProviderFailure({
                               cause: Cause.squash(cause),
                               class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
+                              ...(attachmentPromptRejected(Cause.squash(cause))
+                                ? { code: PROVIDER_PROMPT_REJECTED_FAILURE_CODE }
+                                : {}),
                             }),
                             latestItemOrdinal + 1,
                           ),

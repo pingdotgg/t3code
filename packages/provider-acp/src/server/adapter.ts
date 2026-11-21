@@ -143,6 +143,8 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
+/** A flavor refused the attachments as invalid params, so the same prompt fails every time. */
+export const ACP_ATTACHMENT_PROMPT_FAILURE_DETAIL = "Failed to build ACP attachment prompt";
 
 // Grok summaries can trail hydrated tools by over two seconds; shorter waits split the wake.
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
@@ -8913,7 +8915,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterProtocolError({
                     driver,
-                    detail: "Failed to build ACP attachment prompt",
+                    detail:
+                      cause._tag === "AcpRequestError" && cause.code === -32602
+                        ? ACP_ATTACHMENT_PROMPT_FAILURE_DETAIL
+                        : "Failed to read ACP prompt attachments",
                     payload: cause,
                   }),
               ),
