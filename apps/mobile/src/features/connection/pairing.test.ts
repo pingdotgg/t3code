@@ -7,6 +7,9 @@ describe("buildPairingUrl", () => {
     expect(buildPairingUrl("192.168.1.100:3773", "pairing-token")).toBe(
       "http://192.168.1.100:3773/#token=pairing-token",
     );
+    expect(buildPairingUrl("203.0.113.10:3773", "pairing-token")).toBe(
+      "http://203.0.113.10:3773/#token=pairing-token",
+    );
   });
 
   it("keeps HTTPS as the default for a schemeless hostname", () => {
