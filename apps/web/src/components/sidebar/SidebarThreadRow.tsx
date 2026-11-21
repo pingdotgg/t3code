@@ -1263,8 +1263,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     ) : null;
   const diff = latestRunDiff(thread);
-  // Only the trailing icons would remain, so the row moves them to the title line instead.
+  // Card rows move the trailing icons to the title line when only they would remain.
   const metaLineEmpty =
+    variant !== "folder-multiline" &&
     !checkoutThread.branch &&
     !showsScratchMachine &&
     prBadge === null &&
@@ -1272,7 +1273,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     diff === null &&
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
-    <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+    <div className="mt-0.5 flex min-h-4 min-w-0 items-center gap-1.5 text-secondary-label text-xs">
       {checkoutThread.branch ? (
         <>
           <ThreadWorktreeIndicator thread={checkoutThread} />
@@ -1382,7 +1383,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
-              {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
               {multiline ? null : issueBadge}
