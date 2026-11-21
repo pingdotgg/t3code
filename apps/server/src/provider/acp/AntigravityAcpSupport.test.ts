@@ -133,6 +133,47 @@ describe("Antigravity Auto", () => {
       ).toBe("deny");
     },
   );
+
+  it.each(["auto", "auto-accept-edits"] as const)(
+    "runs only server-qualified T3 MCP calls unasked in %s",
+    (runtimeMode) => {
+      const policy = { runtimeMode, cwd: "/workspace" };
+      const request = (
+        title: string,
+        rawInput?: Record<string, unknown>,
+      ): EffectAcpSchema.RequestPermissionRequest => ({
+        sessionId: "session-1",
+        toolCall: { toolCallId: "call-1", title, kind: "execute", rawInput },
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+      });
+      for (const t3Call of [
+        request("Run mcp_t3-code_t3_thread_list?"),
+        request("MCP Tool delegate_task", { ServerName: "t3-code", ToolName: "delegate_task" }),
+      ]) {
+        expect(antigravityPermissionDisposition(policy, t3Call)).toBe("allow");
+        expect(
+          antigravityPermissionDisposition({ ...policy, approvalPolicy: "on-request" }, t3Call),
+        ).toBe("ask");
+        expect(
+          antigravityPermissionDisposition(
+            { ...policy, sandboxPolicy: { type: "readOnly" } },
+            t3Call,
+          ),
+        ).toBe("deny");
+      }
+      for (const otherCall of [
+        // Names no server, so another MCP server's tool of the same name looks identical.
+        request("Running preview_status"),
+        request("Run mcp_github_create_issue"),
+        request("MCP Tool preview_status", { ServerName: "other", ToolName: "preview_status" }),
+        request("Run mcp_t3-code_preview_status", {
+          CommandLine: "Run mcp_t3-code_preview_status",
+        }),
+      ]) {
+        expect(antigravityPermissionDisposition(policy, otherCall)).toBe("ask");
+      }
+    },
+  );
 });
 
 describe("applyAntigravityAcpModelSelection", () => {
