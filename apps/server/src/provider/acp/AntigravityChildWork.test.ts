@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
+  antigravitySwarmAtWork,
   describeAntigravitySubagentLaunches,
   readAntigravityChildrenAtWork,
   readAntigravityChildWork,
@@ -537,6 +538,55 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
           toolCallIds: ["call_alive", "call_killed"],
         }),
       ).toEqual(["call_alive"]);
+    }),
+  );
+
+  it.effect("counts a parked swarm worker at work only while a sibling call still runs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-swarm-" });
+      const brain = path.join(profile, "antigravity-acp", "brain");
+      const swarm = path.join(brain, ROOT, ".system_generated", "swarm");
+      const logs = path.join(brain, CHILD, ".system_generated", "logs");
+      yield* fs.makeDirectory(swarm, { recursive: true });
+      yield* fs.makeDirectory(logs, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(swarm, "members.json"),
+        JSON.stringify({
+          members: {
+            coordinator: { conversation_id: ROOT, wake_mode: "mentions" },
+            writer: { conversation_id: CHILD, wake_mode: "mentions" },
+          },
+        }),
+      );
+      // agy 1.5.13 parks a worker with swarm_wait after the call it ran beside it.
+      const parked = (sibling: string, siblingStatus: string) =>
+        fs.writeFileString(
+          path.join(logs, "transcript.jsonl"),
+          [
+            { step_index: 0, type: "SYSTEM_MESSAGE", status: "DONE" },
+            {
+              step_index: 1,
+              type: "PLANNER_RESPONSE",
+              status: "DONE",
+              tool_calls: [{ name: sibling }, { name: "swarm_wait" }],
+            },
+            { step_index: 2, type: "GENERIC", status: siblingStatus },
+            { step_index: 3, type: "GENERIC", status: "DONE" },
+          ]
+            .map((step) => JSON.stringify(step))
+            .join("\n") + "\n",
+        );
+
+      for (const [sibling, status, atWork] of [
+        ["post_message", "DONE", false],
+        ["run_command", "ERROR", false],
+        ["run_command", "RUNNING", true],
+      ] as const) {
+        yield* parked(sibling, status);
+        expect(yield* antigravitySwarmAtWork(profile, ROOT), `${sibling} ${status}`).toBe(atWork);
+      }
     }),
   );
 

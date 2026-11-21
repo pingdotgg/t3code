@@ -433,19 +433,25 @@ const decodeSwarmRoster = Schema.decodeUnknownOption(
 
 function swarmWorkerAtWork(transcript: string): boolean {
   const lines = transcript.split("\n");
-  const results: Array<boolean> = [];
+  const results: Array<string | undefined> = [];
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const step = Option.getOrUndefined(decodeTranscriptLine(lines[index]));
     if (index === lines.length - 1 && step?.type === "ERROR_MESSAGE") return false;
     if (step?.type === "GENERIC") {
-      results.push(step.status === "DONE");
+      results.push(step.status);
       continue;
     }
     if (step?.type !== "PLANNER_RESPONSE" || step.status !== "DONE") return true;
     const calls = step.tool_calls ?? [];
     if (calls.length === 0) return results.length > 0;
     const wait = calls.findIndex((call) => call.name === "swarm_wait");
-    return wait < 0 || results.length < calls.length || !results[results.length - 1 - wait];
+    // A sibling call that failed has ended; one still running keeps the worker at work.
+    return (
+      wait < 0 ||
+      results.length < calls.length ||
+      results[results.length - 1 - wait] !== "DONE" ||
+      results.some((status) => status !== "DONE" && status !== "ERROR")
+    );
   }
   return true;
 }
