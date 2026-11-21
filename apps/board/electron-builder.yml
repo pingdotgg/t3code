@@ -1,5 +1,7 @@
 appId: com.13kparkin.agentboard
 productName: Agent Board
+extraMetadata:
+  name: agent-board
 directories:
   output: release
 # The renderer and the main process are bundled, so the app ships no node_modules.
