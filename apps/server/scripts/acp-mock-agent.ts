@@ -29,6 +29,8 @@ const advertisedCommandNames = (process.env.T3_ACP_AVAILABLE_COMMANDS ?? "")
   .map((name) => name.trim())
   .filter((name) => name.length > 0);
 const loadedCommandNames = process.env.T3_ACP_LOADED_COMMANDS?.split(",").filter(Boolean);
+// omp advertises a loaded session's commands only after it answers session/load.
+const loadedCommandsDelayMs = Number(process.env.T3_ACP_LOADED_COMMANDS_DELAY_MS ?? "");
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -699,13 +701,21 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       sessionsLoading.add(requestedSessionId);
       if (loadedCommandNames !== undefined) {
-        yield* agent.client.sessionUpdate({
+        const publishLoadedCommands = agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "available_commands_update",
             availableCommands: loadedCommandNames.map((name) => ({ name, description: name })),
           },
         });
+        if (Number.isFinite(loadedCommandsDelayMs)) {
+          yield* Effect.sleep(`${loadedCommandsDelayMs} millis`).pipe(
+            Effect.andThen(publishLoadedCommands),
+            Effect.forkDetach,
+          );
+        } else {
+          yield* publishLoadedCommands;
+        }
       }
       if (failLoadSession) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
