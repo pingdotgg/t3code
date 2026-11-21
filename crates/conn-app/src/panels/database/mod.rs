@@ -36,6 +36,7 @@ use super::chrome::{
 };
 use super::color::to_hsla;
 use super::header::{CONTROL_RADIUS_PX, superhero_icon};
+use crate::a11y::ConnA11yExt as _;
 use crate::theme::MONO_FONT;
 
 /// Left table-list column width (`w-52` = 208px).
@@ -800,6 +801,13 @@ impl DatabasePanel {
 
         let mut trigger = h_flex()
             .id("db-connection-trigger")
+            .a11y_button(
+                "database.connection.trigger",
+                selected.map_or_else(
+                    || "Choose a connection".to_owned(),
+                    |conn| format!("Database connection: {}", conn.name),
+                ),
+            )
             .min_w_0()
             .max_w_full()
             .h(px(24.0))

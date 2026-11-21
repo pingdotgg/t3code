@@ -4,12 +4,18 @@
 # `--conn-bridge` caller signature check (`com.nckrtl.conn.dev` signed by team `9SVJ4SYB9B`,
 # matching `../conn/apps/desktop/scripts/electron-launcher.mjs`).
 #
-#   scripts/bundle-app.sh [debug|release]     -> target/<profile>/Conn GPUI.app
+#   scripts/bundle-app.sh [debug|release] [--install]
 #
+# With `--install`, installs the signed bundle to `/Applications/Conn GPUI.app` so sandboxed
+# macOS apps like Vault (`Vault --conn-bridge`) can verify its code signature on disk.
 # Override signing with `CONN_DEV_SIGNING_IDENTITY` (`-` forces ad-hoc signing).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="${1:-debug}"
+INSTALL=0
+if [[ "${2:-}" == "--install" || "${CONN_INSTALL_APPLICATIONS:-0}" == "1" ]]; then
+  INSTALL=1
+fi
 BIN="$ROOT/target/$PROFILE/conn-app"
 APP="$ROOT/target/$PROFILE/Conn GPUI.app"
 TEAM_ID="${CONN_APPLE_TEAM_ID:-9SVJ4SYB9B}"
@@ -73,4 +79,11 @@ IDENTITY="$(pick_signing_identity)"
 codesign --force --sign "$IDENTITY" --identifier "$BUNDLE_ID" --timestamp=none "$APP/Contents/MacOS/conn-app"
 codesign --force --sign "$IDENTITY" --identifier "$BUNDLE_ID" --timestamp=none "$APP"
 
-echo "$APP"
+if [[ "$INSTALL" == "1" ]]; then
+  DEST="/Applications/Conn GPUI.app"
+  rm -rf "$DEST"
+  ditto "$APP" "$DEST"
+  echo "$DEST"
+else
+  echo "$APP"
+fi

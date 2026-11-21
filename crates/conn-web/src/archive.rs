@@ -427,6 +427,11 @@ fn set_mode(_path: &Path, _mode: u32) {}
 /// `binary` (the host executable itself, which dispatches subprocesses via
 /// `crate::maybe_run_subprocess()`).
 ///
+/// Re-signs each helper `.app` bundle ad-hoc on macOS so a signed host binary
+/// (whose embedded CodeDirectory seals the host's `Info.plist`) is not killed
+/// with `SIGKILL (Code Signature Invalid)` when launched inside a helper bundle
+/// with a different `Info.plist`.
+///
 /// Reuses existing bundles when `binary`'s SHA-256 and `bundle_id` are unchanged.
 pub(crate) fn make_helpers(
     layout: &Layout,
@@ -434,7 +439,7 @@ pub(crate) fn make_helpers(
     bundle_id: &str,
 ) -> Result<PathBuf, WebError> {
     let bytes = std::fs::read(binary)?;
-    let stamped = format!("{}\n{bundle_id}", hex(&Sha256::digest(&bytes)));
+    let stamped = format!("v2\n{}\n{bundle_id}", hex(&Sha256::digest(&bytes)));
     let stamp = layout.version_dir().join("helpers.stamp");
     let dir = Layout::frameworks_in(&layout.version_dir());
     let all_there = HELPER_KINDS
@@ -459,6 +464,9 @@ pub(crate) fn make_helpers(
         let helper_contents_dir = helper_macos_dir
             .parent()
             .ok_or_else(|| WebError::Runtime("invalid helper Contents path".into()))?;
+        let helper_app_dir = helper_contents_dir
+            .parent()
+            .ok_or_else(|| WebError::Runtime("invalid helper .app path".into()))?;
         std::fs::create_dir_all(helper_macos_dir)?;
         let fresh = exe.with_extension("new");
         std::fs::write(&fresh, &bytes)?;
@@ -468,9 +476,32 @@ pub(crate) fn make_helpers(
             helper_contents_dir.join("Info.plist"),
             helper_plist(&name, &format!("{web_bundle_id}.helper{id_end}")),
         )?;
+        ad_hoc_sign_helper(helper_app_dir)?;
     }
     std::fs::write(&stamp, &stamped)?;
     Ok(layout.helper_executable())
+}
+
+#[cfg(target_os = "macos")]
+fn ad_hoc_sign_helper(helper_app_dir: &Path) -> Result<(), WebError> {
+    let output = std::process::Command::new("/usr/bin/codesign")
+        .args(["--force", "--sign", "-"])
+        .arg(helper_app_dir)
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(WebError::Runtime(format!(
+            "codesign failed for {}: {}",
+            helper_app_dir.display(),
+            stderr.trim()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ad_hoc_sign_helper(_helper_app_dir: &Path) -> Result<(), WebError> {
+    Ok(())
 }
 
 fn xml_escape(text: &str) -> String {

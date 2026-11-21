@@ -21,7 +21,11 @@
 //! - `{"cmd":"resize","width":1440,"height":900}`
 
 use conn_state::RightPanelTab;
-use gpui_kit::{AnyWindowHandle, App, AsyncApp, Entity, WeakEntity, px, size};
+use gpui_kit::test::{TestEventExt as _, TestWindowExt as _};
+use gpui_kit::{
+    AnyWindowHandle, App, AsyncApp, Entity, InputEvent as _, MouseButton, Point, ScrollDelta,
+    ScrollEvent, WeakEntity, point, px, size,
+};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::TcpListener;
@@ -140,6 +144,165 @@ async fn run(
                     macos_ax_hit_test(window, x, y)
                 })
                 .map_err(|e| e.to_string())?
+        }
+        #[cfg(target_os = "macos")]
+        "query" => {
+            let filter = AxFilter::from_cmd(cmd);
+            let nodes = window
+                .update(cx, |_, window, cx| {
+                    window.render_frame(cx);
+                    macos_ax_query(window, &filter)
+                })
+                .map_err(|e| e.to_string())??;
+            Ok(json!({ "matches": nodes }))
+        }
+        #[cfg(target_os = "macos")]
+        "click" => {
+            let button = match text(cmd, "button") {
+                "right" => MouseButton::Right,
+                "middle" => MouseButton::Middle,
+                _ => MouseButton::Left,
+            };
+            let clicks = cmd
+                .get("clicks")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .max(1) as usize;
+            let (pt, matched) = resolve_target_point(window, cmd, cx)?;
+            window
+                .update(cx, |_, window, cx| {
+                    window.pointer_move(pt, None, cx);
+                    for _ in 0..clicks {
+                        window.pointer_down(pt, button, cx);
+                        window.pointer_up(pt, button, cx);
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(json!({
+                "x": f32::from(pt.x),
+                "y": f32::from(pt.y),
+                "target": matched,
+            }))
+        }
+        #[cfg(target_os = "macos")]
+        "hover" => {
+            let (pt, matched) = resolve_target_point(window, cmd, cx)?;
+            window
+                .update(cx, |_, window, cx| {
+                    window.pointer_move(pt, None, cx);
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(json!({
+                "x": f32::from(pt.x),
+                "y": f32::from(pt.y),
+                "target": matched,
+            }))
+        }
+        "press" => {
+            let key = text(cmd, "key").to_owned();
+            if key.is_empty() {
+                return Err(
+                    "`press` requires a non-empty `key` (e.g. `cmd-k`, `escape`)".to_owned(),
+                );
+            }
+            window
+                .update(cx, |_, window, cx| {
+                    window.press(&key, cx);
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "pressed": key }))
+        }
+        "type" => {
+            let value = text(cmd, "text").to_owned();
+            window
+                .update(cx, |_, window, cx| {
+                    window.input(&value, cx);
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "typed": value.len() }))
+        }
+        #[cfg(target_os = "macos")]
+        "scroll" => {
+            let dx = cmd.get("deltaX").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+            let dy = cmd.get("deltaY").and_then(Value::as_f64).unwrap_or(-120.0) as f32;
+            let (pt, matched) = resolve_target_point(window, cmd, cx)?;
+            window
+                .update(cx, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.dispatch_event(
+                        ScrollEvent {
+                            position: pt,
+                            delta: ScrollDelta::Pixels(point(px(dx), px(dy))),
+                            modifiers: window.modifiers(),
+                            ..Default::default()
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    window.render_frame(cx);
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(json!({
+                "x": f32::from(pt.x),
+                "y": f32::from(pt.y),
+                "deltaX": dx,
+                "deltaY": dy,
+                "target": matched,
+            }))
+        }
+        #[cfg(target_os = "macos")]
+        "wait" => {
+            let timeout_ms = cmd
+                .get("timeoutMs")
+                .and_then(Value::as_u64)
+                .unwrap_or(5_000)
+                .min(30_000);
+            let expect_absent = cmd.get("absent").and_then(Value::as_bool).unwrap_or(false)
+                || cmd.get("absentAxId").is_some()
+                || cmd.get("absentLabel").is_some();
+            let filter = if expect_absent {
+                AxFilter {
+                    ax_id: cmd
+                        .get("absentAxId")
+                        .or_else(|| cmd.get("axId"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    label: cmd
+                        .get("absentLabel")
+                        .or_else(|| cmd.get("label"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    role: cmd.get("role").and_then(Value::as_str).map(str::to_owned),
+                }
+            } else {
+                AxFilter::from_cmd(cmd)
+            };
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+            loop {
+                let nodes = window
+                    .update(cx, |_, window, cx| {
+                        window.render_frame(cx);
+                        macos_ax_query(window, &filter)
+                    })
+                    .map_err(|e| e.to_string())??;
+                if expect_absent && nodes.is_empty() {
+                    return Ok(json!({ "matched": false, "absent": true }));
+                }
+                if !expect_absent && !nodes.is_empty() {
+                    return Ok(json!({ "matched": true, "matches": nodes }));
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!(
+                        "timed out waiting for element (absent={expect_absent}, axId={:?}, label={:?})",
+                        filter.ax_id, filter.label
+                    ));
+                }
+                RT.spawn(async {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            }
         }
         "theme" => {
             let id = text(cmd, "id").to_owned();
@@ -516,5 +679,236 @@ fn macos_ax_hit_test(
             "query": { "x": x_from_left, "y": y_from_top },
             "hit": hit_json,
         }))
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct AxFilter {
+    ax_id: Option<String>,
+    label: Option<String>,
+    role: Option<String>,
+}
+
+#[cfg(target_os = "macos")]
+impl AxFilter {
+    fn from_cmd(cmd: &Value) -> Self {
+        Self {
+            ax_id: cmd.get("axId").and_then(Value::as_str).map(str::to_owned),
+            label: cmd.get("label").and_then(Value::as_str).map(str::to_owned),
+            role: cmd.get("role").and_then(Value::as_str).map(str::to_owned),
+        }
+    }
+
+    fn matches(&self, ax_id: Option<&str>, label: Option<&str>, role: Option<&str>) -> bool {
+        if let Some(want) = self.ax_id.as_deref()
+            && ax_id != Some(want)
+        {
+            return false;
+        }
+        if let Some(want) = self.label.as_deref() {
+            let needle = want.to_ascii_lowercase();
+            let got = label.unwrap_or("").to_ascii_lowercase();
+            if !got.contains(&needle) {
+                return false;
+            }
+        }
+        if let Some(want) = self.role.as_deref() {
+            let needle = want.to_ascii_lowercase();
+            let got = role.unwrap_or("").to_ascii_lowercase();
+            if got != needle && !got.ends_with(&needle) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_target_point(
+    window: AnyWindowHandle,
+    cmd: &Value,
+    cx: &mut AsyncApp,
+) -> Result<(Point<gpui_kit::Pixels>, Value), String> {
+    if let (Some(x), Some(y)) = (
+        cmd.get("x").and_then(Value::as_f64),
+        cmd.get("y").and_then(Value::as_f64),
+    ) {
+        return Ok((point(px(x as f32), px(y as f32)), Value::Null));
+    }
+    let filter = AxFilter::from_cmd(cmd);
+    if filter.ax_id.is_none() && filter.label.is_none() && filter.role.is_none() {
+        return Err("target requires `axId`, `label`, `role`, or explicit `x`/`y`".to_owned());
+    }
+    let index = cmd.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let matches = window
+        .update(cx, |_, window, cx| {
+            window.render_frame(cx);
+            macos_ax_query(window, &filter)
+        })
+        .map_err(|e| e.to_string())??;
+    let target = matches
+        .into_iter()
+        .filter(|node| {
+            node["bounds"]["width"].as_f64().unwrap_or(0.0) > 0.0
+                && node["bounds"]["height"].as_f64().unwrap_or(0.0) > 0.0
+        })
+        .nth(index)
+        .ok_or_else(|| {
+            format!(
+                "no visible element matched axId={:?} label={:?} role={:?}",
+                filter.ax_id, filter.label, filter.role
+            )
+        })?;
+    let x = target["bounds"]["x"].as_f64().unwrap_or(0.0)
+        + target["bounds"]["width"].as_f64().unwrap_or(0.0) * 0.5;
+    let y = target["bounds"]["y"].as_f64().unwrap_or(0.0)
+        + target["bounds"]["height"].as_f64().unwrap_or(0.0) * 0.5;
+    Ok((point(px(x as f32), px(y as f32)), target))
+}
+
+/// Walks the window's live in-process AppKit AccessKit tree and returns every matching
+/// node with its `axId`, `role`, `label`, and window-local top-left GPUI `bounds`.
+#[cfg(target_os = "macos")]
+fn macos_ax_query(window: &gpui_kit::Window, filter: &AxFilter) -> Result<Vec<Value>, String> {
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use std::ffi::CStr;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NsPoint {
+        x: f64,
+        y: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NsSize {
+        width: f64,
+        height: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NsRect {
+        origin: NsPoint,
+        size: NsSize,
+    }
+    // SAFETY: `NsPoint` matches AppKit `NSPoint` (`CGPoint`: two f64s).
+    unsafe impl objc2::Encode for NsPoint {
+        const ENCODING: objc2::Encoding =
+            objc2::Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
+    }
+    // SAFETY: `NsSize` matches AppKit `NSSize` (`CGSize`: two f64s).
+    unsafe impl objc2::Encode for NsSize {
+        const ENCODING: objc2::Encoding =
+            objc2::Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
+    }
+    // SAFETY: `NsRect` matches AppKit `NSRect` (`CGRect`: `CGPoint` + `CGSize`).
+    unsafe impl objc2::Encode for NsRect {
+        const ENCODING: objc2::Encoding =
+            objc2::Encoding::Struct("CGRect", &[NsPoint::ENCODING, NsSize::ENCODING]);
+    }
+
+    unsafe fn ax_string(obj: &AnyObject, sel: objc2::runtime::Sel) -> Option<String> {
+        // SAFETY: Caller passes a live Objective-C accessibility object on the AppKit main thread.
+        let responds: bool = unsafe { objc2::msg_send![obj, respondsToSelector: sel] };
+        if !responds {
+            return None;
+        }
+        // SAFETY: Selector existence was checked immediately above.
+        let s: Option<Retained<AnyObject>> = unsafe { objc2::msg_send![obj, performSelector: sel] };
+        let s = s?;
+        // SAFETY: `s` is an `NSString` returned by an accessibility string getter.
+        let ptr: *const std::ffi::c_char = unsafe { objc2::msg_send![&*s, UTF8String] };
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: `ptr` is non-null and NUL-terminated for the lifetime of `s`.
+        let cstr = unsafe { CStr::from_ptr(ptr) };
+        let out = cstr.to_string_lossy().into_owned();
+        if out.is_empty() { None } else { Some(out) }
+    }
+
+    let handle = HasWindowHandle::window_handle(window).map_err(|e| e.to_string())?;
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return Err("window is not AppKit".to_owned());
+    };
+
+    // SAFETY: Executed on the AppKit main thread inside `window.update` with a live GPUI NSView.
+    unsafe {
+        let view: &AnyObject = handle.ns_view.cast::<AnyObject>().as_ref();
+        let ns_window: Option<Retained<AnyObject>> = objc2::msg_send![view, window];
+        let ns_window = ns_window.ok_or("no NSWindow")?;
+        let content: Option<Retained<AnyObject>> = objc2::msg_send![&*ns_window, contentView];
+        let content = content.ok_or("no contentView")?;
+        let content_bounds: NsRect = objc2::msg_send![&*content, bounds];
+        let flipped: bool = objc2::msg_send![&*content, isFlipped];
+        let nil: *mut AnyObject = std::ptr::null_mut();
+
+        let mut stack: Vec<Retained<AnyObject>> = Vec::new();
+        let root_children: Option<Retained<AnyObject>> =
+            objc2::msg_send![&*content, accessibilityChildren];
+        if let Some(arr) = root_children {
+            let count: usize = objc2::msg_send![&*arr, count];
+            for idx in (0..count).rev() {
+                let child: Retained<AnyObject> = objc2::msg_send![&*arr, objectAtIndex: idx];
+                stack.push(child);
+            }
+        }
+
+        let mut results = Vec::new();
+        let mut visited = 0usize;
+        while let Some(el) = stack.pop() {
+            visited += 1;
+            if visited > 4_000 {
+                break;
+            }
+            let role = ax_string(&el, objc2::sel!(accessibilityRole));
+            let ax_id = ax_string(&el, objc2::sel!(accessibilityIdentifier));
+            let label = ax_string(&el, objc2::sel!(accessibilityTitle))
+                .or_else(|| ax_string(&el, objc2::sel!(accessibilityLabel)))
+                .or_else(|| ax_string(&el, objc2::sel!(accessibilityHelp)));
+
+            if filter.matches(ax_id.as_deref(), label.as_deref(), role.as_deref()) {
+                let screen_frame: NsRect = objc2::msg_send![&*el, accessibilityFrame];
+                let win_rect: NsRect =
+                    objc2::msg_send![&*ns_window, convertRectFromScreen: screen_frame];
+                let view_rect: NsRect =
+                    objc2::msg_send![&*content, convertRect: win_rect, fromView: nil];
+                let y = if flipped {
+                    view_rect.origin.y
+                } else {
+                    content_bounds.size.height - (view_rect.origin.y + view_rect.size.height)
+                };
+                results.push(json!({
+                    "axId": ax_id,
+                    "role": role,
+                    "label": label,
+                    "bounds": {
+                        "x": view_rect.origin.x,
+                        "y": y,
+                        "width": view_rect.size.width,
+                        "height": view_rect.size.height,
+                    },
+                }));
+            }
+
+            let responds_children: bool =
+                objc2::msg_send![&*el, respondsToSelector: objc2::sel!(accessibilityChildren)];
+            if responds_children {
+                let kids: Option<Retained<AnyObject>> =
+                    objc2::msg_send![&*el, accessibilityChildren];
+                if let Some(arr) = kids {
+                    let count: usize = objc2::msg_send![&*arr, count];
+                    for idx in (0..count).rev() {
+                        let child: Retained<AnyObject> =
+                            objc2::msg_send![&*arr, objectAtIndex: idx];
+                        stack.push(child);
+                    }
+                }
+            }
+        }
+        Ok(results)
     }
 }

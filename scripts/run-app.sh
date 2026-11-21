@@ -19,9 +19,13 @@ if [[ ! -s "$DEV/bearer" ]]; then
 fi
 (cd "$ROOT" && cargo build -p conn-app --features automation ${CARGO_FLAGS:-})
 # A bundled .app activates like a normal app (clicks and keys reach it); a bare binary does not.
-"$ROOT/scripts/bundle-app.sh" debug >/dev/null
+BUNDLE_ARGS=(debug)
+if [[ "${1:-}" == "--applications" || "${CONN_INSTALL_APPLICATIONS:-0}" == "1" ]]; then
+  BUNDLE_ARGS+=(--install)
+fi
+APP_PATH="$("$ROOT/scripts/bundle-app.sh" "${BUNDLE_ARGS[@]}" | tail -n 1)"
 rm -f "$DEV/automation-port"
-open -n "$ROOT/target/debug/Conn GPUI.app" \
+open -n "$APP_PATH" \
   --env CONN_GPUI_SERVER="http://127.0.0.1:$PORT" \
   --env CONN_GPUI_TOKEN_FILE="$DEV/bearer" \
   --env CONN_GPUI_AUTOMATION="$DEV/automation-port" \
