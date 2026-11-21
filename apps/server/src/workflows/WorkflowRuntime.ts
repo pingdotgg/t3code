@@ -3,6 +3,7 @@
 // not keeps its last good version running. With no definitions there is no engine, unless runs
 // from before are kept: then one with nothing registered serves their history.
 import * as NodeAsyncHooks from "node:async_hooks";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- the CommonJS cache is cleared in the same tick as the import.
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodeURL from "node:url";

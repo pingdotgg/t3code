@@ -64,16 +64,20 @@ it.effect("a run still waits while one of the things it started side by side is 
         input: {},
       });
       // Started again under its key: nothing changed, so nobody is told.
-      const told = yield* PubSub.subscribe(store.changes);
-      yield* store.runStarted({
-        runId: "r1",
-        workflow: "duo",
-        version: 1,
-        engineTag: "duo@1",
-        idempotencyKey: "k",
-        input: {},
-      });
-      assert.equal(yield* PubSub.remaining(told), 0);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const told = yield* PubSub.subscribe(store.changes);
+          yield* store.runStarted({
+            runId: "r1",
+            workflow: "duo",
+            version: 1,
+            engineTag: "duo@1",
+            idempotencyKey: "k",
+            input: {},
+          });
+          assert.equal(yield* PubSub.remaining(told), 0);
+        }),
+      );
       const now = Effect.map(store.run("r1"), (run) => [run?.status, run?.detail]);
       yield* store.stepStarted("r1", "left", "agent");
       yield* store.stepStarted("r1", "right", "agent");
