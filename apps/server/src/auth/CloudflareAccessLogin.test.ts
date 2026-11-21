@@ -9,6 +9,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
@@ -147,6 +148,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           });
           assert.isTrue(session.response.authenticated);
           assert.strictEqual(yield* activeLinkCount, 0);
+          // The lasting row in Sharing & access is the session, under the same label.
+          const [client] = yield* auth.listSessions();
+          assert.strictEqual(client?.client.label, "Google: owner@example.com");
+          assert.strictEqual(client?.subject, "one-time-token");
         }).pipe(Effect.provide(layerLogin({ env: CONFIGURED, certRequests })));
         assert.deepStrictEqual(certRequests, [`https://${TEAM}/cdn-cgi/access/certs`]);
       }),
@@ -236,12 +241,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         };
         for (const [name, env] of Object.entries(configurations)) {
           const certRequests: Array<string> = [];
+          const warnings: Array<string> = [];
           const tag = yield* accessClaims.pipe(
             Effect.flatMap((claims) => loginTag(signAssertion(claims))),
-            Effect.provide(layerLogin({ env, certRequests })),
+            Effect.provide(
+              layerLogin({ env, certRequests }).pipe(
+                Layer.provide(
+                  Logger.layer(
+                    [
+                      Logger.make(({ logLevel, message }) => {
+                        if (logLevel === "Warn") warnings.push(String(message));
+                      }),
+                    ],
+                    { mergeWithExisting: false },
+                  ),
+                ),
+              ),
+            ),
           );
           assert.strictEqual(tag, "CloudflareAccessLoginDisabledError", name);
           assert.deepStrictEqual(certRequests, [], name);
+          // Unset stays quiet; a half-done setup says why the button is missing.
+          assert.strictEqual(
+            warnings.some((warning) => warning.includes("Cloudflare Access sign-in is off")),
+            name !== "none",
+            name,
+          );
         }
       }),
     );
