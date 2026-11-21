@@ -57,6 +57,7 @@ import {
   registerXAiBackgroundTaskTracking,
   XAiAskUserQuestionRequest,
   XAiExitPlanModeRequest,
+  XAiMcpFormRequest,
 } from "./xaiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { parseElicitationForm } from "@t3tools/provider-acp/server/elicitationForm";
@@ -197,19 +198,6 @@ const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensi
       }),
     ),
   );
-
-const XAiMcpFormRequest = Schema.Struct({
-  sessionId: Schema.String,
-  toolCallId: Schema.String,
-  serverName: Schema.String,
-  mode: Schema.Literal("form"),
-  message: Schema.String,
-  requestedSchema: Schema.Struct({
-    type: Schema.Literal("object"),
-    properties: Schema.Record(Schema.String, Schema.Unknown),
-    required: Schema.optional(Schema.Array(Schema.String)),
-  }),
-});
 
 const registerGrokMcpElicitation = ({
   runtime,

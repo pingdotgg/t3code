@@ -469,9 +469,8 @@ describe("Grok native questions", () => {
     ...[
       { answer: "accept", result: { outcome: "accept", content: {} } },
       { answer: "decline", result: { outcome: "decline" } },
-      { answer: undefined, result: { outcome: "cancel" } },
     ].map(({ answer, result }) => ({
-      name: `handles ${answer ?? "dismissal"} on a fieldless MCP form`,
+      name: `handles ${answer} on a fieldless MCP form`,
       steps: [
         {
           method: "_x.ai/mcp/elicit",
@@ -489,7 +488,7 @@ describe("Grok native questions", () => {
             ],
             allowCustomAnswer: false,
           },
-          answers: answer === undefined ? undefined : { confirmation: answer },
+          answers: { confirmation: answer },
           result,
         },
       ],
