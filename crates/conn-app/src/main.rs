@@ -11,6 +11,7 @@ mod fonts;
 mod header;
 mod icons;
 mod live;
+mod menus;
 mod palette;
 mod settings;
 mod shell;
@@ -199,6 +200,7 @@ fn main() {
         vibrancy::sync_appearance(tokens.appearance);
         let server = live::server_config_from_env();
         app::register_keybindings(cx);
+        menus::install(cx);
         app::start_frame_log(cx);
 
         // `CONN_GPUI_WINDOW=x,y,width,height` (points, top-left origin) places the window
@@ -243,7 +245,10 @@ fn main() {
         // Become the active app with the window in front, as a launched app should.
         cx.activate(true);
         window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, cx| {
+                menus::install_main_window(window, cx);
+                window.activate_window();
+            })
             .ok();
         #[cfg(feature = "automation")]
         automation::serve(&app, window, cx);

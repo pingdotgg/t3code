@@ -77,6 +77,7 @@ pub(crate) struct ChatView {
     run_timings: HashMap<String, RunTiming>,
     turn_checkpoints: HashMap<String, TurnCheckpointSummary>,
     expanded_ids: HashSet<String>,
+    wrapped_code_keys: HashSet<String>,
     copied_code_key: Option<String>,
     model_label: String,
     /// Project root; tool row paths under it show relative, as in Conn.
@@ -142,6 +143,7 @@ impl ChatView {
             run_timings: HashMap::new(),
             turn_checkpoints: HashMap::new(),
             expanded_ids: HashSet::new(),
+            wrapped_code_keys: HashSet::new(),
             copied_code_key: None,
             model_label: "Default model".to_owned(),
             workspace_root: None,
@@ -185,6 +187,7 @@ impl ChatView {
             self.run_timings.clear();
             self.turn_checkpoints.clear();
             self.expanded_ids.clear();
+            self.wrapped_code_keys.clear();
             self.copied_code_key = None;
             self.stick_to_bottom = true;
             cx.notify();
@@ -195,6 +198,7 @@ impl ChatView {
         if switched_thread {
             self.thread_id = Some(thread.thread_id.clone());
             self.expanded_ids.clear();
+            self.wrapped_code_keys.clear();
             self.copied_code_key = None;
             self.stick_to_bottom = true;
         }
@@ -249,6 +253,13 @@ impl ChatView {
 
     pub(super) fn mark_code_copied(&mut self, key: String, cx: &mut Context<'_, Self>) {
         self.copied_code_key = Some(key);
+        cx.notify();
+    }
+
+    pub(super) fn toggle_code_wrap(&mut self, key: String, cx: &mut Context<'_, Self>) {
+        if !self.wrapped_code_keys.remove(&key) {
+            self.wrapped_code_keys.insert(key);
+        }
         cx.notify();
     }
 
@@ -482,8 +493,17 @@ impl ChatView {
                 grouped_with_previous,
                 grouped_with_next,
             } => {
-                if let TimelineEntry::User { text, .. } = &row.entry {
-                    self.render_user_bubble(text, *grouped_with_previous, *grouped_with_next)
+                if let TimelineEntry::User {
+                    id,
+                    text,
+                    created_by_agent,
+                } = &row.entry
+                {
+                    if *created_by_agent {
+                        self.render_agent_prompt_row(id, text, cx)
+                    } else {
+                        self.render_user_bubble(text, *grouped_with_previous, *grouped_with_next)
+                    }
                 } else {
                     div().into_any_element()
                 }
@@ -494,12 +514,19 @@ impl ChatView {
             } => {
                 if let TimelineEntry::Assistant { id, .. } = &row.entry {
                     let blocks = row.blocks.as_deref().unwrap_or(&[]);
-                    let entity = cx.entity().downgrade();
+                    let entity_copy = cx.entity().downgrade();
+                    let entity_wrap = cx.entity().downgrade();
                     let options = markdown::MarkdownOptions {
                         heading_style: markdown::HeadingStyle::Scale,
                         copied_code_key: self.copied_code_key.as_deref(),
                         on_copy_code: Some(Rc::new(move |key, _window, cx| {
-                            let _ = entity.update(cx, |view, cx| view.mark_code_copied(key, cx));
+                            let _ =
+                                entity_copy.update(cx, |view, cx| view.mark_code_copied(key, cx));
+                        })),
+                        wrapped_code_keys: Some(&self.wrapped_code_keys),
+                        on_toggle_wrap_code: Some(Rc::new(move |key, _window, cx| {
+                            let _ =
+                                entity_wrap.update(cx, |view, cx| view.toggle_code_wrap(key, cx));
                         })),
                     };
                     // Conn `AssistantTimelineRow`: `px-1 py-0.5`, row spacing `pb-2` before work or `pb-4`.
@@ -580,6 +607,97 @@ impl ChatView {
             .pb(px(if grouped_with_next { 4.0 } else { 16.0 }))
             .child(bubble)
             .into_any_element()
+    }
+
+    /// Renders a thread-opening or delegated prompt sent by an agent/CLI as Conn's collapsed
+    /// `"Agent <single-line preview> ▸"` row, expanding on click to show the full text.
+    fn render_agent_prompt_row(
+        &self,
+        id: &str,
+        text: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let key = format!("agent-msg-{id}");
+        let expanded = self.expanded_ids.contains(&key);
+        let toggle_key = key.clone();
+        let preview = text
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("Prompt");
+        let fg = hsla(self.tokens.foreground);
+        let muted = hsla(self.tokens.muted_foreground);
+
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .min_w_0()
+            .pb(px(12.0))
+            .child(
+                div()
+                    .id(SharedString::from(key))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.0))
+                    .w_full()
+                    .min_w_0()
+                    .px(px(4.0))
+                    .py(px(2.0))
+                    .rounded(px(6.0))
+                    .cursor_pointer()
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .text_color(muted)
+                    .hover(move |s| s.text_color(fg))
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        view.toggle_expanded(&toggle_key, cx);
+                    }))
+                    .child(icons::icon("superhero/agent.svg", 14.0, muted))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("Agent"),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(preview.to_owned()),
+                    )
+                    .child(icons::icon(
+                        if expanded {
+                            "superhero/chevron-down.svg"
+                        } else {
+                            "superhero/chevron-right.svg"
+                        },
+                        13.0,
+                        muted,
+                    )),
+            );
+
+        if expanded {
+            col = col.child(
+                div()
+                    .mt(px(4.0))
+                    .ml(px(20.0))
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .rounded(px(10.0))
+                    .bg(hsla(self.tokens.shell_control))
+                    .border_1()
+                    .border_color(hsla(self.tokens.shell_inner_border))
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .text_color(prose_foreground(&self.tokens))
+                    .child(text.to_owned()),
+            );
+        }
+
+        col.into_any_element()
     }
 
     /// Renders a turn's grouped thinking/tool work entries.

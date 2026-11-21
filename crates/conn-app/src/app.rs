@@ -75,6 +75,10 @@ pub(crate) struct ConnApp {
     /// Live search box at the top of the thread sidebar.
     sidebar_search_input: Entity<gpui_kit::component::input::InputState>,
     _sidebar_search_sub: gpui_kit::Subscription,
+    /// Inline thread-title rename state (`thread_id` being edited + focused input).
+    renaming_thread_id: Option<String>,
+    rename_input: Entity<gpui_kit::component::input::InputState>,
+    _rename_sub: gpui_kit::Subscription,
     /// Whether the sidebar project-scope filter popover is open.
     sidebar_filter_menu_open: bool,
     /// When true, replaces translucent shell fills with opaque `sidebar`/`shell_card`.
@@ -182,6 +186,21 @@ impl ConnApp {
                 }
             },
         );
+        let rename_input = cx.new(|cx| {
+            gpui_kit::component::input::InputState::new(window, cx).placeholder("Thread title")
+        });
+        let rename_sub = cx.subscribe(
+            &rename_input,
+            |app, _, event: &gpui_kit::component::input::InputEvent, cx| match event {
+                gpui_kit::component::input::InputEvent::PressEnter { .. } => {
+                    app.commit_thread_rename(cx);
+                }
+                gpui_kit::component::input::InputEvent::Blur => {
+                    app.cancel_thread_rename(cx);
+                }
+                _ => {}
+            },
+        );
 
         Self {
             tokens,
@@ -211,6 +230,9 @@ impl ConnApp {
             focus_before_overlay: None,
             sidebar_search_input,
             _sidebar_search_sub: sidebar_search_sub,
+            renaming_thread_id: None,
+            rename_input,
+            _rename_sub: rename_sub,
             sidebar_filter_menu_open: false,
             reduce_transparency: false,
             server_url,
@@ -940,6 +962,106 @@ impl ConnApp {
         .detach();
     }
 
+    /// Starts inline renaming for `thread_id` in the sidebar.
+    pub(crate) fn start_thread_rename(
+        &mut self,
+        thread_id: String,
+        current_title: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.renaming_thread_id = Some(thread_id);
+        self.rename_input.update(cx, |input, cx| {
+            input.set_value(current_title, window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Commits the active inline thread rename via `thread.metadata.update`.
+    pub(crate) fn commit_thread_rename(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(thread_id) = self.renaming_thread_id.take() else {
+            return;
+        };
+        let next_title = self.rename_input.read(cx).value().trim().to_owned();
+        if next_title.is_empty() {
+            cx.notify();
+            return;
+        }
+        let Some(connection) = self.connection.clone() else {
+            cx.notify();
+            return;
+        };
+        let Ok(cmd) = crate::commands::rename_thread(&thread_id, &next_title) else {
+            cx.notify();
+            return;
+        };
+        cx.spawn(async move |_, _| {
+            if let Err(e) = connection.dispatch_command(cmd).await {
+                eprintln!("rename thread: dispatchCommand failed: {e}");
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Cancels inline thread renaming without saving.
+    pub(crate) fn cancel_thread_rename(&mut self, cx: &mut Context<'_, Self>) {
+        if self.renaming_thread_id.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Opens a native folder picker and registers the selected directory via `projects.mutate`
+    /// (`project.create`).
+    pub(crate) fn add_project_via_picker(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let paths = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Add project".into()),
+        });
+        cx.spawn_in(window, async move |_this, _cx| {
+            let Ok(Ok(Some(mut chosen))) = paths.await else {
+                return;
+            };
+            let Some(path) = chosen.pop() else {
+                return;
+            };
+            let workspace_root = path.to_string_lossy().trim_end_matches('/').to_owned();
+            if workspace_root.is_empty() {
+                return;
+            }
+            let title = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Project")
+                .to_owned();
+            let Ok(mutation) = crate::commands::create_project_mutation(&workspace_root, &title)
+            else {
+                return;
+            };
+            if let Err(err) = connection
+                .call::<conn_contract::rpc::projects::mutate::Payload, conn_contract::rpc::projects::mutate::Success>(
+                    "projects.mutate",
+                    &mutation,
+                )
+                .await
+            {
+                eprintln!("add project: projects.mutate failed: {err}");
+            }
+        })
+        .detach();
+    }
+
     /// Toggles a project group's collapsed state in the thread sidebar.
     pub(crate) fn toggle_project_collapsed(
         &mut self,
@@ -1413,6 +1535,8 @@ impl Render for ConnApp {
                     self.active_workspace.as_deref(),
                     &self.collapsed_projects,
                     &self.sidebar_search_input,
+                    self.renaming_thread_id.as_deref(),
+                    &self.rename_input,
                     self.sidebar_filter_menu_open,
                     &self.tokens,
                     &self.geometry,

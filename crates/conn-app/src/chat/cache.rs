@@ -75,11 +75,23 @@ pub(super) fn group_rows(rows: &[CachedRow]) -> Vec<TimelineItem<'_>> {
                     has_active,
                 });
             }
-            TimelineEntry::User { .. } => {
+            TimelineEntry::User {
+                created_by_agent, ..
+            } => {
+                let is_human_user = |entry: &TimelineEntry| {
+                    matches!(
+                        entry,
+                        TimelineEntry::User {
+                            created_by_agent: false,
+                            ..
+                        }
+                    )
+                };
                 let grouped_with_previous =
-                    idx > 0 && matches!(rows[idx - 1].entry, TimelineEntry::User { .. });
-                let grouped_with_next = idx + 1 < rows.len()
-                    && matches!(rows[idx + 1].entry, TimelineEntry::User { .. });
+                    !*created_by_agent && idx > 0 && is_human_user(&rows[idx - 1].entry);
+                let grouped_with_next = !*created_by_agent
+                    && idx + 1 < rows.len()
+                    && is_human_user(&rows[idx + 1].entry);
                 items.push(TimelineItem::User {
                     row,
                     grouped_with_previous,
@@ -213,6 +225,7 @@ mod tests {
             TimelineEntry::User {
                 id: "u1".to_owned(),
                 text: "Hello".to_owned(),
+                created_by_agent: false,
             },
             TimelineEntry::Assistant {
                 id: "a1".to_owned(),
@@ -303,10 +316,12 @@ mod tests {
             TimelineEntry::User {
                 id: "u1".to_owned(),
                 text: "First".to_owned(),
+                created_by_agent: false,
             },
             TimelineEntry::User {
                 id: "u2".to_owned(),
                 text: "Second".to_owned(),
+                created_by_agent: false,
             },
             TimelineEntry::Thinking {
                 id: "th1".to_owned(),

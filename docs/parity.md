@@ -22,30 +22,27 @@ Nick's Mac and never by asking Nick to test. Take `/tmp/vm-gui.lock` around GUI 
 ## Gaps (updated 2026-11-21; latest code batch pending `nick-vm` side-by-side capture)
 
 ### Look
-- **Code blocks:** colored language icon and copy button are wired; still missing the line-wrap toggle button.
 - **Inline code:** body size (Conn `0.85em`; GPUI `HighlightStyle` runs cannot change font size); file paths in inline code are not yet clickable link chips with file icons.
-- **Agent-started messages:** still render as a normal bubble instead of Conn's collapsed `"Agent <text> v"` row.
 - **Composer:** ~14px taller than Conn's and lacks the paperclip / attachments row and BranchToolbar.
-- **macOS menu bar:** lacks standard File / Edit / View / Window / Help menus.
 - **Settings modal:** live search, themes, Reduce Transparency, Connections, and Keyboard shortcuts are wired; still needs full Conn nav groups and server-backed settings rows.
-- **Pending VM verification:** shell translucency/vibrancy fix (clearing `gpui-component` `Root` opaque background + `[NSApp setAppearance:]` sync + frosted right-panel roots), header title truncation fix, tooltip placement, Tasks chart gradients, Dark Ocean side-by-side, and new PR/Device/Chat/Diff visuals.
+- **Pending VM verification:** shell translucency/vibrancy fix (clearing `gpui-component` `Root` opaque background + `[NSApp setAppearance:]` sync + frosted right-panel roots), native macOS menu bar, header title truncation fix, tooltip placement, Tasks chart gradients, Dark Ocean side-by-side, and new PR/Device/Chat/Diff visuals.
 
 ### Browser
 - Fixed: native view shown a frame before its panel repainted (flash on tab switch); URL field stuck on `about:blank`; native view hidden when right panel closes or GPUI overlays (palette, Settings) open.
 
 ### Buttons that exist but do nothing yet
-- Sidebar: Add project (`FolderPlus`). Rail: `+` (workspace), Usage, Pull requests.
+- Rail: `+` (workspace), Usage, Pull requests.
 - Chat header: thread details. Right panel: dock to bottom.
 - Composer: microphone has no dictation; `/` commands execute `/model`, `/plan`, `/settle` (other provider slash commands stay in the draft for Enter).
 
 ### Features missing
-- Inline thread rename; Add project flow; multi-workspace management; rail Usage / global Pull Requests surfaces.
-- Diff scopes (`working-tree` / `branch` / `turn`) and side-by-side split diff; terminal tabs/splits.
+- Multi-workspace management; rail Usage / global Pull Requests surfaces.
+- Diff scopes (`working-tree` / `branch` / `turn`); terminal tabs/splits.
 - Linked items `pullRequests.changeBreakdown` popover; Device WebRTC transport (MJPEG + VideoToolbox H.264 implemented).
 
 ### Done so far (code complete; items marked `*` awaiting VM screenshot verification)
-- Core shell: sidebar width (288px column), thread order (latest user message), Claude and OpenAI marks, SF Mono for code and inline code, Settled footer, app activation (bundled `.app`), header and breadcrumb positions, header title truncation `*`, macOS vibrancy `Root` fix + `NSAppearance` sync `*`, Reduce Transparency toggle `*`.
-- Sidebar: live thread search (title/project/branch) with clear button `*`, project-scope filter popover `*`, hover quick Settle / Un-settle row actions `*`, new thread (`⌘N` / compose button via `orchestration.launchThread`).
-- Chat: Markdown + syntect highlighting, approval buttons wired to `runtime-request.respond`, model picker (`server.getConfig` + `thread.model-selection.set`), `/model`/`/plan`/`/settle` slash commands, `@` file mentions (`projects.searchEntries`), `"Worked for Xs"` duration labels `*`, clickable `"N changed files +A -D"` card opening Diff `*`.
-- Right-panel surfaces: Files (colored `@pierre/trees` file-type icons `*`, tree + preview + open file tabs), Diff (syntect highlighting `*`, resizable split handle `*`, colored file icons `*`), Terminal (`alacritty_terminal`, mouse drag/word/line selection + `⌘C`/`⌘V`/`⌘A` `*`), Browser (CEF-on-demand + overlay visibility sync), API, Database, MCP, Tasks, Pull Request (reviewer/label pickers, base-branch update popover, submit review, reactions, PR diff highlighting, agent prompt actions, collapsible header `*`), Linked Items (stacks, watch/unlink/link dialog, gradient hover fade `*`), Device (hub ticket auth, MJPEG + VideoToolbox H.264 decode, touch/keys/hardware buttons, screenshots, foreground & event log SSE, visibility-gated lifecycle `*`).
+- Core shell: sidebar width (288px column), thread order (latest user message), Claude and OpenAI marks, SF Mono for code and inline code, Settled footer, app activation (bundled `.app`), native macOS menu bar (`Conn`, `File`, `Edit`, `View`, `Window`) + main-window close/quit `*`, header and breadcrumb positions, header title truncation `*`, macOS vibrancy `Root` fix + `NSAppearance` sync `*`, Reduce Transparency toggle `*`.
+- Sidebar: live thread search (title/project/branch) with clear button `*`, project-scope filter popover `*`, native folder picker Add project (`projects.mutate` / `project.create`) `*`, hover inline thread rename (`thread.metadata.update`) `*`, hover quick Settle / Un-settle row actions `*`, new thread (`⌘N` / compose button via `orchestration.launchThread`).
+- Chat: Markdown + syntect highlighting, code-block colored language icon + wrap-lines toggle + copy button `*`, collapsed `"Agent <preview> ▸"` row for agent/CLI-dispatched user messages `*`, approval buttons wired to `runtime-request.respond`, model picker (`server.getConfig` + `thread.model-selection.set`), `/model`/`/plan`/`/settle` slash commands, `@` file mentions (`projects.searchEntries`), `"Worked for Xs"` duration labels `*`, clickable `"N changed files +A -D"` card opening Diff `*`.
+- Right-panel surfaces: Files (colored `@pierre/trees` file-type icons `*`, tree + preview + open file tabs), Diff (syntect highlighting `*`, Unified & side-by-side Split diff toggle `*`, resizable split handle `*`, colored file icons `*`), Terminal (`alacritty_terminal`, mouse drag/word/line selection + `⌘C`/`⌘V`/`⌘A` `*`), Browser (CEF-on-demand + overlay visibility sync), API, Database, MCP, Tasks, Pull Request (reviewer/label pickers, base-branch update popover, submit review, reactions, PR diff highlighting, agent prompt actions, collapsible header `*`), Linked Items (stacks, watch/unlink/link dialog, gradient hover fade `*`), Device (hub ticket auth, MJPEG + VideoToolbox H.264 decode, touch/keys/hardware buttons, screenshots, foreground & event log SSE, visibility-gated lifecycle `*`).
 - Settings & Palette: `⌘K` fuzzy command palette, `⌘,` Settings modal with live search `*`, live theme switching, and Reduce Transparency.

@@ -17,7 +17,7 @@ use gpui_kit::{
 use serde_json::{Value, json};
 
 use super::color::to_hsla;
-use super::diff_parser::{DiffFile, DiffLineKind, parse_unified_diff};
+use super::diff_parser::{DiffFile, DiffLine, DiffLineKind, parse_unified_diff};
 use super::header::{CONTROL_RADIUS_PX, superhero_icon};
 use super::highlight::{HighlightSpan, highlight_lines};
 
@@ -43,7 +43,14 @@ enum DiffLoadState {
     Error(String),
 }
 
-/// Thread diff panel displaying changed files on the left and unified diff hunks on the right.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum DiffViewMode {
+    #[default]
+    Unified,
+    Split,
+}
+
+/// Thread diff panel displaying changed files on the left and unified or split diff hunks on the right.
 pub(crate) struct DiffPanel {
     tokens: Tokens,
     connection: Option<Connection>,
@@ -51,6 +58,7 @@ pub(crate) struct DiffPanel {
     turn_count: Option<i64>,
     state: DiffLoadState,
     selected_index: usize,
+    view_mode: DiffViewMode,
     word_wrap: bool,
     file_tree_open: bool,
     file_list_width: f32,
@@ -77,6 +85,7 @@ impl DiffPanel {
             turn_count: None,
             state: DiffLoadState::Empty,
             selected_index: 0,
+            view_mode: DiffViewMode::Unified,
             word_wrap: false,
             file_tree_open: true,
             file_list_width: FILE_LIST_WIDTH_PX,
@@ -199,6 +208,15 @@ impl DiffPanel {
 
         let wrap_color = if self.word_wrap { fg } else { muted };
         let tree_color = if self.file_tree_open { fg } else { muted };
+        let split_color = if self.view_mode == DiffViewMode::Split {
+            fg
+        } else {
+            muted
+        };
+        let split_icon = match self.view_mode {
+            DiffViewMode::Unified => "superhero/diff-split.svg",
+            DiffViewMode::Split => "superhero/diff-unified.svg",
+        };
 
         h_flex()
             .w_full()
@@ -287,6 +305,28 @@ impl DiffPanel {
                                         cx.listener(|this, _, _, cx| this.reload(cx)),
                                     )
                                     .child(superhero_icon("superhero/refresh.svg", 14.0, muted)),
+                            )
+                            .child(
+                                div()
+                                    .id("diff-mode-toggle-btn")
+                                    .size(px(TOOLBAR_BTN_SIZE_PX))
+                                    .rounded(px(9999.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(hover_bg))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.view_mode = match this.view_mode {
+                                                DiffViewMode::Unified => DiffViewMode::Split,
+                                                DiffViewMode::Split => DiffViewMode::Unified,
+                                            };
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .child(superhero_icon(split_icon, 14.0, split_color)),
                             )
                             .child(
                                 div()
@@ -586,9 +626,117 @@ impl DiffPanel {
                     .child(hunk.header.clone()),
             );
 
-            for line in &hunk.lines {
-                let spans = highlighted.get(highlight_idx).map(Vec::as_slice);
-                highlight_idx += 1;
+            let hunk_highlight_base = highlight_idx;
+            highlight_idx += hunk.lines.len();
+
+            if self.view_mode == DiffViewMode::Split {
+                let pairs = pair_split_diff_rows(&hunk.lines);
+                for (left_idx, right_idx) in pairs {
+                    let render_side = |line_opt: Option<usize>| {
+                        let Some(idx) = line_opt else {
+                            return h_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .font_family(mono_font.clone())
+                                .text_size(px(UI_TEXT_PX))
+                                .line_height(px(UI_LINE_HEIGHT_PX))
+                                .child(
+                                    div()
+                                        .w(px(38.0))
+                                        .flex_shrink_0()
+                                        .border_r_1()
+                                        .border_color(divider)
+                                        .child(" "),
+                                )
+                                .child(div().flex_1().min_w_0().child(" "));
+                        };
+                        let line = &hunk.lines[idx];
+                        let spans = highlighted
+                            .get(hunk_highlight_base + idx)
+                            .map(Vec::as_slice);
+                        let (row_bg, gutter_bg, sign, sign_color, line_no) = match line.kind {
+                            DiffLineKind::Added => (
+                                Some(added_bg),
+                                Some(added_gutter_bg),
+                                "+",
+                                added,
+                                line.new_line.map_or_else(String::new, |n| n.to_string()),
+                            ),
+                            DiffLineKind::Removed => (
+                                Some(removed_bg),
+                                Some(removed_gutter_bg),
+                                "-",
+                                removed,
+                                line.old_line.map_or_else(String::new, |n| n.to_string()),
+                            ),
+                            DiffLineKind::Context => (
+                                None,
+                                None,
+                                " ",
+                                muted,
+                                line.old_line
+                                    .or(line.new_line)
+                                    .map_or_else(String::new, |n| n.to_string()),
+                            ),
+                        };
+                        let mut side = h_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .font_family(mono_font.clone())
+                            .text_size(px(UI_TEXT_PX))
+                            .line_height(px(UI_LINE_HEIGHT_PX));
+                        if let Some(bg) = row_bg {
+                            side = side.bg(bg);
+                        }
+                        side.child(
+                            div()
+                                .w(px(38.0))
+                                .flex_shrink_0()
+                                .pr(px(6.0))
+                                .border_r_1()
+                                .border_color(divider)
+                                .when_some(gutter_bg, |el, bg| el.bg(bg))
+                                .text_right()
+                                .text_color(gutter_fg)
+                                .child(line_no),
+                        )
+                        .child(
+                            div()
+                                .w(px(16.0))
+                                .flex_shrink_0()
+                                .text_center()
+                                .text_color(sign_color)
+                                .child(sign),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .pr(px(8.0))
+                                .when(!self.word_wrap, |el| {
+                                    el.overflow_hidden().whitespace_nowrap()
+                                })
+                                .text_color(fg)
+                                .child(styled_diff_line(&line.text, spans)),
+                        )
+                    };
+
+                    scroll = scroll.child(
+                        h_flex()
+                            .w_full()
+                            .items_stretch()
+                            .child(render_side(left_idx))
+                            .child(div().w(px(1.0)).flex_shrink_0().bg(divider))
+                            .child(render_side(right_idx)),
+                    );
+                }
+                continue;
+            }
+
+            for (offset, line) in hunk.lines.iter().enumerate() {
+                let spans = highlighted
+                    .get(hunk_highlight_base + offset)
+                    .map(Vec::as_slice);
 
                 let (row_bg, gutter_bg, sign, sign_color) = match line.kind {
                     DiffLineKind::Added => (Some(added_bg), Some(added_gutter_bg), "+", added),
@@ -854,4 +1002,101 @@ async fn resolve_latest_turn_count(conn: &Connection, thread_id: &str) -> Result
         .unwrap_or(0);
 
     Ok(max_ordinal)
+}
+
+/// Pairs unified hunk lines into `(left_index, right_index)` rows for side-by-side split diff:
+/// context lines appear on both sides, while contiguous `Removed` + `Added` blocks align pairwise.
+fn pair_split_diff_rows(lines: &[DiffLine]) -> Vec<(Option<usize>, Option<usize>)> {
+    let mut rows = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        match lines[i].kind {
+            DiffLineKind::Context => {
+                rows.push((Some(i), Some(i)));
+                i += 1;
+            }
+            DiffLineKind::Removed => {
+                let rem_start = i;
+                while i < lines.len() && lines[i].kind == DiffLineKind::Removed {
+                    i += 1;
+                }
+                let rem_end = i;
+                let add_start = i;
+                while i < lines.len() && lines[i].kind == DiffLineKind::Added {
+                    i += 1;
+                }
+                let add_end = i;
+                let rem_len = rem_end - rem_start;
+                let add_len = add_end - add_start;
+                let count = rem_len.max(add_len);
+                for offset in 0..count {
+                    let left = (offset < rem_len).then_some(rem_start + offset);
+                    let right = (offset < add_len).then_some(add_start + offset);
+                    rows.push((left, right));
+                }
+            }
+            DiffLineKind::Added => {
+                rows.push((None, Some(i)));
+                i += 1;
+            }
+        }
+    }
+    rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pair_split_diff_rows_aligns_removed_and_added_blocks() {
+        let lines = vec![
+            DiffLine {
+                kind: DiffLineKind::Context,
+                old_line: Some(1),
+                new_line: Some(1),
+                text: "a".to_owned(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Removed,
+                old_line: Some(2),
+                new_line: None,
+                text: "old1".to_owned(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Removed,
+                old_line: Some(3),
+                new_line: None,
+                text: "old2".to_owned(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Added,
+                old_line: None,
+                new_line: Some(2),
+                text: "new1".to_owned(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Context,
+                old_line: Some(4),
+                new_line: Some(3),
+                text: "b".to_owned(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Added,
+                old_line: None,
+                new_line: Some(4),
+                text: "new2".to_owned(),
+            },
+        ];
+        assert_eq!(
+            pair_split_diff_rows(&lines),
+            vec![
+                (Some(0), Some(0)),
+                (Some(1), Some(3)),
+                (Some(2), None),
+                (Some(4), Some(4)),
+                (None, Some(5)),
+            ]
+        );
+    }
 }

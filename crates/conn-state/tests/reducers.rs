@@ -498,7 +498,8 @@ fn thread_snapshot_and_streaming_deltas_flip_working() {
         state.entries[0],
         TimelineEntry::User {
             id: "item-u1".to_owned(),
-            text: "Run tests".to_owned()
+            text: "Run tests".to_owned(),
+            created_by_agent: false,
         },
         "first entry should be user message"
     );

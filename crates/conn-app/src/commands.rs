@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use conn_contract::OrchestrationV2Command;
+use conn_contract::{OrchestrationV2Command, ProjectMutation};
 use serde_json::json;
 
 /// A process-unique id with a prefix, such as `gpui-msg-1732150000000-3`.
@@ -156,6 +156,33 @@ pub(crate) fn settle_thread(
     }
 }
 
+/// `thread.metadata.update`: rename `thread_id` to `title`.
+pub(crate) fn rename_thread(
+    thread_id: &str,
+    title: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.metadata.update",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "title": title,
+    }))
+}
+
+/// `projects.mutate` (`project.create`): register a local workspace folder as a project.
+pub(crate) fn create_project_mutation(
+    workspace_root: &str,
+    title: &str,
+) -> Result<ProjectMutation, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "project.create",
+        "commandId": new_id("cmd"),
+        "projectId": new_id("proj"),
+        "title": title,
+        "workspaceRoot": workspace_root,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +218,14 @@ mod tests {
         assert!(
             settle_thread("t1", false).is_ok(),
             "thread.unsettle decodes"
+        );
+        assert!(
+            rename_thread("t1", "New title").is_ok(),
+            "thread.metadata.update decodes"
+        );
+        assert!(
+            create_project_mutation("/tmp/demo", "demo").is_ok(),
+            "project.create mutation decodes"
         );
     }
 

@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use conn_contract::{
-    OrchestrationV2Checkpoint as Checkpoint, OrchestrationV2CheckpointStatus as CheckpointStatus,
-    OrchestrationV2DomainEvent as DomainEvent, OrchestrationV2LinkRequestStatus as LinkStatus,
+    OrchestrationV2Actor as Actor, OrchestrationV2Checkpoint as Checkpoint,
+    OrchestrationV2CheckpointStatus as CheckpointStatus, OrchestrationV2DomainEvent as DomainEvent,
+    OrchestrationV2LinkRequestStatus as LinkStatus,
     OrchestrationV2PlanStepStatus as PlanStepStatus, OrchestrationV2Run as Run,
     OrchestrationV2RunStatus as RunStatus, OrchestrationV2SecretRequestStatus as SecretStatus,
     OrchestrationV2ThreadProjectionTurnItemsItem as ProjectionTurnItem,
@@ -49,6 +50,9 @@ pub enum TimelineEntry {
     User {
         id: String,
         text: String,
+        /// True when the message was dispatched by an agent or system rather than the human user
+        /// (Conn renders these as a collapsible `"Agent <preview>"` row).
+        created_by_agent: bool,
     },
     /// Assistant Markdown. `streaming` is true while deltas still arrive.
     Assistant {
@@ -643,6 +647,7 @@ fn map_user_message(item: UserMessageItem) -> Option<TimelineEntry> {
     Some(TimelineEntry::User {
         id: item.id,
         text: item.text,
+        created_by_agent: item.created_by != Actor::User,
     })
 }
 

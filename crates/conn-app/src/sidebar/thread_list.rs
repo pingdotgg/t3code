@@ -102,6 +102,8 @@ pub(crate) fn render_thread_sidebar(
     active_workspace: Option<&str>,
     collapsed_projects: &HashSet<String>,
     search_input: &Entity<InputState>,
+    renaming_thread_id: Option<&str>,
+    rename_input: &Entity<InputState>,
     filter_menu_open: bool,
     tokens: &Tokens,
     geometry: &ShellGeometry,
@@ -181,7 +183,7 @@ pub(crate) fn render_thread_sidebar(
                 "sidebar-add-project",
                 IconName::FolderPlus,
                 tokens,
-                cx.listener(|_app, _event, _window, _cx| {}),
+                cx.listener(|app, _event, window, cx| app.add_project_via_picker(window, cx)),
             )
             .conn_tooltip("Add project", tokens),
         );
@@ -269,9 +271,20 @@ pub(crate) fn render_thread_sidebar(
     for (idx, thread) in visible_threads.into_iter().enumerate() {
         let project = shell.project(&thread.project_id);
         let selected = layout.selected_thread_id.as_deref() == Some(thread.id.as_str());
+        let is_renaming = renaming_thread_id == Some(thread.id.as_str());
         let activity = thread_activity(shell, thread);
         thread_rows.push(render_thread_card(
-            idx, thread, project, selected, false, activity, now_secs, tokens, cx,
+            idx,
+            thread,
+            project,
+            selected,
+            false,
+            is_renaming,
+            rename_input,
+            activity,
+            now_secs,
+            tokens,
+            cx,
         ));
     }
 
@@ -356,12 +369,15 @@ pub(crate) fn render_thread_sidebar(
             for (idx, thread) in settled_threads.into_iter().enumerate() {
                 let project = shell.project(&thread.project_id);
                 let selected = layout.selected_thread_id.as_deref() == Some(thread.id.as_str());
+                let is_renaming = renaming_thread_id == Some(thread.id.as_str());
                 list_scroll = list_scroll.child(render_thread_card(
                     100_000 + idx,
                     thread,
                     project,
                     selected,
                     true,
+                    is_renaming,
+                    rename_input,
                     ThreadActivity::Idle,
                     now_secs,
                     tokens,
@@ -519,7 +535,7 @@ fn render_project_filter_menu(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "pure view helper taking borrowed thread, project, and theme slices"
+    reason = "pure view helper taking borrowed thread, project, rename, and theme slices"
 )]
 fn render_thread_card(
     row_key: usize,
@@ -527,6 +543,8 @@ fn render_thread_card(
     project: Option<&ProjectShell>,
     selected: bool,
     is_settled: bool,
+    is_renaming: bool,
+    rename_input: &Entity<InputState>,
     activity: ThreadActivity,
     now_secs: i64,
     tokens: &Tokens,
@@ -556,6 +574,33 @@ fn render_thread_card(
         selected,
         tokens,
     );
+
+    let rename_thread_id = thread.id.clone();
+    let rename_initial_title = thread.title.clone();
+    let rename_btn = div()
+        .id(("thread-rename-btn", row_key))
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(20.0))
+        .flex_shrink_0()
+        .rounded(px(5.0))
+        .opacity(0.0)
+        .group_hover("sidebar-row", |s| s.opacity(1.0))
+        .hover(move |s| s.bg(hover_bg))
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |app, _event, window, cx| {
+            cx.stop_propagation();
+            app.start_thread_rename(
+                rename_thread_id.clone(),
+                rename_initial_title.clone(),
+                window,
+                cx,
+            );
+        }))
+        .child(icons::concept("superhero/edit.svg", 13.0, muted))
+        .conn_tooltip("Rename thread", tokens);
 
     let settle_thread_id = thread.id.clone();
     let settle_icon = if is_settled {
@@ -588,7 +633,37 @@ fn render_thread_card(
         .child(icons::concept(settle_icon, 13.0, muted))
         .conn_tooltip(settle_tooltip, tokens);
 
-    let line1 = div()
+    let title_slot = if is_renaming {
+        div()
+            .flex_1()
+            .min_w_0()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_key_down(cx.listener(|app, event: &gpui_kit::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    app.cancel_thread_rename(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(
+                Input::new(rename_input)
+                    .appearance(false)
+                    .text_size(px(TITLE_FONT_SIZE_PX)),
+            )
+            .into_any_element()
+    } else {
+        div()
+            .flex_1()
+            .min_w_0()
+            .truncate()
+            .text_size(px(TITLE_FONT_SIZE_PX))
+            .line_height(px(TITLE_LINE_HEIGHT_PX))
+            .font_weight(gpui_kit::FontWeight::MEDIUM)
+            .text_color(fg)
+            .child(thread.title.clone())
+            .into_any_element()
+    };
+
+    let mut line1 = div()
         .flex()
         .flex_row()
         .items_center()
@@ -597,18 +672,10 @@ fn render_thread_card(
         .h(px(TITLE_LINE_HEIGHT_PX))
         .min_w_0()
         .child(leading_icon)
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_size(px(TITLE_FONT_SIZE_PX))
-                .line_height(px(TITLE_LINE_HEIGHT_PX))
-                .font_weight(gpui_kit::FontWeight::MEDIUM)
-                .text_color(fg)
-                .child(thread.title.clone()),
-        )
-        .child(settle_btn);
+        .child(title_slot);
+    if !is_renaming {
+        line1 = line1.child(rename_btn).child(settle_btn);
+    }
 
     // Line 2 (`cardMetaLine` in `SidebarThreadRow.tsx:1357-1392`):
     // `mt-1 flex min-w-0 items-center gap-1.5 ps-5.5 text-secondary-label text-xs`

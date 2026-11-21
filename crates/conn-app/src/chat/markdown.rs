@@ -1,12 +1,14 @@
 //! Markdown-to-blocks parser (via `markdown::to_mdast`), syntect syntax highlighting,
 //! and GPUI rendering styled to match Conn's `ChatMarkdown` and `MarkdownCodeBlock`.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
 use conn_theme::{Appearance, Tokens};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClipboardItem, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
     IntoElement, ParentElement, SharedString, StatefulInteractiveElement, Styled, StyledText,
@@ -84,6 +86,10 @@ pub(crate) struct MarkdownOptions<'a> {
     pub(crate) copied_code_key: Option<&'a str>,
     /// Optional notification invoked after a code block's copy button writes to the clipboard.
     pub(crate) on_copy_code: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
+    /// Set of code block ids currently toggled to soft-wrap lines.
+    pub(crate) wrapped_code_keys: Option<&'a HashSet<String>>,
+    /// Optional callback invoked when a code block's wrap-lines toggle button is clicked.
+    pub(crate) on_toggle_wrap_code: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
 }
 
 impl fmt::Debug for MarkdownOptions<'_> {
@@ -92,6 +98,10 @@ impl fmt::Debug for MarkdownOptions<'_> {
             .field("heading_style", &self.heading_style)
             .field("copied_code_key", &self.copied_code_key)
             .field("has_on_copy_code", &self.on_copy_code.is_some())
+            .field(
+                "has_on_toggle_wrap_code",
+                &self.on_toggle_wrap_code.is_some(),
+            )
             .finish()
     }
 }
@@ -675,9 +685,14 @@ fn render_code_block(
         Some(other) => other.to_owned(),
     };
     let is_copied = options.copied_code_key == Some(block_id);
+    let is_wrapped = options
+        .wrapped_code_keys
+        .is_some_and(|set| set.contains(block_id));
     let copy_code = code.to_owned();
     let copy_key = block_id.to_owned();
     let on_copy = options.on_copy_code.clone();
+    let wrap_key = block_id.to_owned();
+    let on_wrap = options.on_toggle_wrap_code.clone();
 
     let runs: Vec<(Range<usize>, HighlightStyle)> = highlights
         .iter()
@@ -747,6 +762,35 @@ fn render_code_block(
             .child(lang_label),
     );
 
+    let mut header_actions = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(2.0))
+        .flex_shrink_0();
+    if let Some(on_wrap_cb) = on_wrap {
+        let wrap_color = if is_wrapped {
+            hsla(tokens.code_foreground)
+        } else {
+            hsla_alpha(tokens.code_foreground, 0.72)
+        };
+        let wrap_btn = div()
+            .id(SharedString::from(format!("wrap-{block_id}")))
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(24.0))
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .hover(|s| s.bg(hsla(tokens.shell_highlight)))
+            .on_click(move |_, window, cx| {
+                on_wrap_cb(wrap_key.clone(), window, cx);
+            })
+            .child(icons::icon("superhero/wrap-lines.svg", 12.0, wrap_color));
+        header_actions = header_actions.child(wrap_btn);
+    }
+    header_actions = header_actions.child(copy_btn);
+
     // Conn `MarkdownCodeBlockFrame`: `rounded-bubble` (14px), no header divider,
     // `pt-1.5 pr-1.5 pb-0 pl-3` header, `0.8rem 0.9rem` code body padding.
     let border_color = match tokens.appearance {
@@ -773,10 +817,11 @@ fn render_code_block(
                 .pb(px(0.0))
                 .pl(px(12.0))
                 .child(lang_header)
-                .child(copy_btn),
+                .child(header_actions),
         )
         .child(
             div()
+                .id(SharedString::from(format!("code-scroll-{block_id}")))
                 .w_full()
                 .min_w_0()
                 .px(px(14.4))
@@ -785,6 +830,7 @@ fn render_code_block(
                 .text_size(px(CODE_FONT_PX))
                 .line_height(px(CODE_LINE_HEIGHT_PX))
                 .text_color(hsla(tokens.code_foreground))
+                .when(!is_wrapped, |el| el.overflow_x_scroll().whitespace_nowrap())
                 .child(styled_code),
         )
         .into_any_element()
