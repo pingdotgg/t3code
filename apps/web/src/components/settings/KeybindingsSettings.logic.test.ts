@@ -138,6 +138,23 @@ describe("KeybindingsSettings.logic", () => {
         expected: "alt+p",
         defaultInput: "alt+p",
       },
+      // Dvorak Option+L and AZERTY Option+A: not the US glyph at its US key.
+      {
+        key: "¬",
+        code: "KeyP",
+        altKey: true,
+        shiftKey: false,
+        expected: "alt+¬",
+        defaultInput: "alt+¬",
+      },
+      {
+        key: "æ",
+        code: "KeyQ",
+        altKey: true,
+        shiftKey: false,
+        expected: "alt+æ",
+        defaultInput: "alt+æ",
+      },
     ]) {
       const pressed = {
         key,
