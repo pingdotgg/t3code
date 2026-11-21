@@ -200,13 +200,13 @@ function MenuCheckboxItem({
             className={cn("col-start-1", variant === "icon" && "-mx-0.5")}
           >
             <svg
-              className={variant === "icon" ? "size-3.5" : undefined}
+              className={cn("lucide", variant === "icon" && "size-3.5")}
               fill="none"
               height="24"
               stroke="currentColor"
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth="1.75"
+              strokeWidth="2"
               viewBox="0 0 24 24"
               width="24"
               xmlns="http://www.w3.org/2000/svg"

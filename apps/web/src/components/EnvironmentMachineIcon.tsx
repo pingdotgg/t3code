@@ -2,9 +2,10 @@ import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { CloudIcon, LaptopIcon, MonitorIcon, ServerIcon, type LucideProps } from "lucide-react";
 import type { FunctionComponent, SVGProps } from "react";
+import { cn } from "~/lib/utils";
 import { LinuxIcon } from "./Icons";
 
-function LucideLike(props: SVGProps<SVGSVGElement>) {
+function LucideLike({ className, ...props }: SVGProps<SVGSVGElement>) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -13,10 +14,11 @@ function LucideLike(props: SVGProps<SVGSVGElement>) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.75"
+      strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
       {...props}
+      className={cn("lucide", className)}
     />
   );
 }
