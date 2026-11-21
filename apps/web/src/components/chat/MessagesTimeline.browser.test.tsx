@@ -693,6 +693,35 @@ describe("MessagesTimeline messages", () => {
     });
   });
 
+  it("lets the browser scroll the timeline for a wheel over the minimap", async () => {
+    setup();
+    const props = baseProps();
+    const entries = Array.from({ length: 16 }, (_, index) => [
+      message(`Question ${index}`, {}, `user-${index}`),
+      message(`Answer ${index}`, { role: "assistant" }, `assistant-${index}`),
+    ]).flat();
+    await using screen = await renderTimeline(entries, props);
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
+    const start = viewport.scrollTop;
+    const reached: WheelEvent[] = [];
+    const record = (event: WheelEvent) => reached.push(event);
+    viewport.addEventListener("wheel", record);
+    using _listener = { [Symbol.dispose]: () => viewport.removeEventListener("wheel", record) };
+
+    await userEvent.wheel(screen.button(/^Jump to message/), { delta: { y: -100 } });
+
+    await vi.waitFor(() => expect(viewport.scrollTop).toBeLessThan(start));
+    expect(
+      reached.map((event) => [
+        event.isTrusted,
+        event.target instanceof Element &&
+          event.target.closest('[data-testid="timeline-minimap"]') !== null,
+        event.defaultPrevented,
+      ]),
+    ).toEqual([[true, true, false]]);
+  });
+
   it("enables the minimap's next turn button on a thread restored above its bottom", async () => {
     setup();
     const base = baseProps();

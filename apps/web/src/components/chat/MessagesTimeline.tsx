@@ -104,7 +104,6 @@ import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
-import { forwardWheelToTimeline } from "./timelineMinimapWheel";
 import { TimelineMinimap } from "./TimelineMinimap";
 import {
   type TimelineRowSharedState,
@@ -837,6 +836,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  const [timelineScrollNode, setTimelineScrollNode] = useState<HTMLElement | null>(null);
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,
@@ -1060,7 +1060,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setMinimapHasPersistentGutter((current) =>
       current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
     );
-    setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
+    const scrollNode = listRef.current?.getScrollableNode();
+    const scrollbarGutter = scrollNode ? (scrollNode.offsetWidth - scrollNode.clientWidth) / 2 : 0;
+    setMinimapHitStripWidth(
+      resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth, scrollbarGutter),
+    );
   };
   // Rows added, removed or rewrapped (chat width) change the content size,
   // which moves the scroll position, the overflow, and the content lane width.
@@ -1257,6 +1261,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listRef.current = list;
     const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
     registerTimeline?.(scrollNode);
+    setTimelineScrollNode(scrollNode);
     const viewport = scrollNode
       ? attachTimelineViewport(scrollNode, (frame) => {
           const rowId = frame.closest<HTMLElement>("[data-timeline-row-id]")?.dataset.timelineRowId;
@@ -1311,6 +1316,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       }
       listRef.current = null;
       registerTimeline?.(null);
+      setTimelineScrollNode(null);
     };
   });
 
@@ -1408,11 +1414,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     </TimelineListFooter>
   );
 
-  const forwardMinimapWheel = (event: WheelEvent) => {
-    const scrollNode = listRef.current?.getScrollableNode();
-    if (scrollNode) forwardWheelToTimeline(event, scrollNode);
-  };
-
   if (showsEmptyState) {
     if (hideEmptyPlaceholder) {
       return (
@@ -1444,7 +1445,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         <TimelineRowActivityCtx value={activityState}>
           <TooltipScrollDismissArea
             ref={attachTimelineViewportElement}
-            className="relative h-full min-h-0"
+            className="relative h-full min-h-0 @container-size"
             data-assistant-citation-viewport="true"
           >
             {onCiteAssistantText && citationThreadRef ? (
@@ -1503,23 +1504,25 @@ const ConversationTimeline = memo(function ConversationTimeline({
               ListHeaderComponent={listHeader}
               ListFooterComponent={timelineListFooter}
             />
-            <TimelineMinimap
-              items={minimapItems}
-              hasPersistentGutter={minimapHasPersistentGutter}
-              hitStripWidth={minimapHitStripWidth}
-              currentIndex={minimapCurrentIndex}
-              atEnd={minimapAtEnd}
-              stripMap={minimapStripMap}
-              onWheel={forwardMinimapWheel}
-              onSelect={(item) => {
-                navigateTimeline();
-                void listRef.current?.scrollToIndex({
-                  index: item.rowIndex,
-                  animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-                  viewOffset: TIMELINE_MINIMAP_TARGET_OFFSET,
-                });
-              }}
-            />
+            {timelineScrollNode ? (
+              <TimelineMinimap
+                scrollNode={timelineScrollNode}
+                items={minimapItems}
+                hasPersistentGutter={minimapHasPersistentGutter}
+                hitStripWidth={minimapHitStripWidth}
+                currentIndex={minimapCurrentIndex}
+                atEnd={minimapAtEnd}
+                stripMap={minimapStripMap}
+                onSelect={(item) => {
+                  navigateTimeline();
+                  void listRef.current?.scrollToIndex({
+                    index: item.rowIndex,
+                    animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+                    viewOffset: TIMELINE_MINIMAP_TARGET_OFFSET,
+                  });
+                }}
+              />
+            ) : null}
           </TooltipScrollDismissArea>
         </TimelineRowActivityCtx>
       </MarkdownFindContext>
