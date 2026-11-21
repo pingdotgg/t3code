@@ -329,13 +329,13 @@ describe("readMedia", () => {
         webContents: { id: 1, session: { fetch } },
       } as unknown as Electron.BrowserWindow;
       const read = (url: string, senderId: number) =>
-        readMedia
-          .handler(url, { sender: { id: senderId } })
-          .pipe(
-            Effect.provide(
-              Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(main) }),
-            ),
-          );
+        readMedia.handler(url, { sender: { id: senderId } }).pipe(
+          Effect.provide(
+            Layer.mock(ElectronWindow.ElectronWindow)({
+              mainForSender: () => Effect.succeedSome(main),
+            }),
+          ),
+        );
 
       assert.strictEqual(yield* read("https://example.com/a.png", 2), null);
       assert.strictEqual(yield* read("file:///etc/passwd", 1), null);
@@ -463,7 +463,9 @@ describe("syncHtmlFullscreen", () => {
         if (event === "leave-full-screen") leaveListeners.push(listener);
       },
     } as unknown as Electron.BrowserWindow;
-    const layer = Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(window) });
+    const layer = Layer.mock(ElectronWindow.ElectronWindow)({
+      mainForSender: () => Effect.succeedSome(window),
+    });
     return { window, setFullScreen, finishExit, layer };
   };
   const fromMainRenderer = { sender: { id: 1 } };

@@ -9,7 +9,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
@@ -118,6 +117,9 @@ export class ElectronWindow extends Context.Service<
     readonly main: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly currentMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    readonly mainForSender: (
+      id: number | undefined,
+    ) => Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly clearMain: (window: Option.Option<Electron.BrowserWindow>) => Effect.Effect<void>;
     readonly prepareReveal: (window: Electron.BrowserWindow) => Effect.Effect<boolean>;
@@ -146,7 +148,7 @@ export const make = Effect.gen(function* () {
   };
   const captureRevealWindows = new Set<number>();
   yield* Effect.addFinalizer(() => Effect.sync(() => windowsForegroundFocus?.close()));
-  const mainWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+  const mainWindows = new Set<Electron.BrowserWindow>();
   const auxiliaryWindows = new WeakSet<Electron.BrowserWindow>();
   const titleBarOverlayWindows = new WeakSet<Electron.BrowserWindow>();
 
@@ -175,12 +177,9 @@ export const make = Effect.gen(function* () {
         }),
     }).pipe(Effect.orDie);
 
-  const liveMain = Effect.gen(function* () {
-    const main = yield* Ref.get(mainWindowRef);
-    if (Option.isNone(main) || (yield* isWindowDestroyed(main.value))) {
-      return Option.none<Electron.BrowserWindow>();
-    }
-    return main;
+  const liveMain = Effect.sync(() => {
+    const windows = [...mainWindows].filter((window) => !window.isDestroyed());
+    return Option.fromNullishOr(windows.find((window) => window.isFocused()) ?? windows.at(-1));
   });
 
   const currentMainOrFirst = Effect.gen(function* () {
@@ -256,20 +255,24 @@ export const make = Effect.gen(function* () {
     main: liveMain,
     currentMainOrFirst,
     focusedMainOrFirst,
-    setMain: Effect.fn("ElectronWindow.setMain")(function (window) {
-      return Ref.set(mainWindowRef, Option.some(window));
-    }),
-    clearMain: Effect.fn("ElectronWindow.clearMain")(function (window) {
-      return Ref.update(mainWindowRef, (current) => {
-        if (Option.isNone(current)) {
-          return current;
-        }
-        if (Option.isSome(window) && current.value !== window.value) {
-          return current;
-        }
-        return Option.none();
-      });
-    }),
+    mainForSender: Effect.fn("ElectronWindow.mainForSender")((id) =>
+      Effect.sync(() =>
+        Option.fromNullishOr(
+          [...mainWindows].find((window) => !window.isDestroyed() && window.webContents.id === id),
+        ),
+      ),
+    ),
+    setMain: Effect.fn("ElectronWindow.setMain")((window) =>
+      Effect.sync(() => {
+        mainWindows.add(window);
+      }),
+    ),
+    clearMain: Effect.fn("ElectronWindow.clearMain")((window) =>
+      Effect.sync(() => {
+        if (Option.isSome(window)) mainWindows.delete(window.value);
+        else mainWindows.clear();
+      }),
+    ),
     prepareReveal: Effect.fn("ElectronWindow.prepareReveal")(function (window) {
       return Effect.promise(async () => {
         if (platform !== "win32" || window.isDestroyed()) {
