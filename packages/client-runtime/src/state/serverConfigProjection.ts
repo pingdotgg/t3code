@@ -51,16 +51,29 @@ export function reuseUnchanged<T>(previous: unknown, next: T): T {
   }
   // Decoded settings carry Durations, which are fresh instances on every push.
   if (Equal.isEqual(next)) return (Equal.equals(previous, next) ? previous : next) as T;
-  if (Object.getPrototypeOf(next) !== Object.prototype) return next;
+  const proto = Object.getPrototypeOf(next);
+  if (proto !== Object.prototype && proto !== null) return next;
+  if (Object.getPrototypeOf(previous) !== proto) return next;
   const before = previous as Record<string, unknown>;
   const after = next as Record<string, unknown>;
   const keys = Object.keys(after);
   let same = keys.length === Object.keys(before).length;
-  const merged: Record<string, unknown> = {};
+  const isNullProto = proto === null;
+  const merged = (isNullProto ? Object.create(null) : {}) as Record<string, unknown>;
   for (const key of keys) {
-    const reused = reuseUnchanged(before[key], after[key]);
-    if (reused !== before[key] || !(key in before)) same = false;
-    merged[key] = reused;
+    const hasBefore = Object.hasOwn(before, key);
+    const reused = reuseUnchanged(hasBefore ? before[key] : undefined, after[key]);
+    if (!hasBefore || reused !== before[key]) same = false;
+    if (!isNullProto && key === "__proto__") {
+      Object.defineProperty(merged, key, {
+        value: reused,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    } else {
+      merged[key] = reused;
+    }
   }
   return (same ? previous : merged) as T;
 }
