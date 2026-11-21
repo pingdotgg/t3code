@@ -326,7 +326,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
   readonly readKeyringSecret?: Effect.Effect<string | undefined, AntigravityKeyringError>;
-  /** The runtime's app data folder, which holds its sign-in; the profile's when absent. */
+  /** The user's own CLI's app data folder, which holds its sign-in; the profile's when absent. */
   readonly appDirectory?: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
@@ -363,10 +363,10 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     let projectId: string | undefined;
     if (!(yield* fs.exists(tokenPath))) {
       cached = undefined;
-      // Google account instances bypass the keyring, whose one entry every profile shares.
+      // T3's Google account profiles bypass the keyring, whose one entry every profile shares.
       const stored = (yield* fs.exists(cliTokenPath))
         ? yield* fs.readFileString(cliTokenPath)
-        : input.authMethod === "oauth-business"
+        : input.authMethod === "oauth-business" || input.appDirectory !== undefined
           ? yield* readKeyringSecret
           : undefined;
       if (stored === undefined) {

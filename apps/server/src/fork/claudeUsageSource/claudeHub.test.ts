@@ -55,6 +55,10 @@ function fixture(options: {
       if (path.endsWith("/auth-files")) {
         return HttpClientResponse.fromWeb(request, Response.json({ files: options.accounts }));
       }
+      // A hub without upstream's per-account model list.
+      if (path.endsWith("/auth-files/models")) {
+        return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
+      }
       if (path.endsWith("/reset-quota")) {
         return HttpClientResponse.fromWeb(request, Response.json({}));
       }

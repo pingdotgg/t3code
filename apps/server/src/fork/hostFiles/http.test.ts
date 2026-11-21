@@ -17,6 +17,7 @@ import { HttpRouter } from "effect/http";
 
 import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as NativeAppIconResolver from "../../assets/NativeAppIconResolver.ts";
+import * as WorkspacePreviewRevisions from "../../assets/WorkspacePreviewRevisions.ts";
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -60,6 +61,7 @@ const layerUnusedAssetServices = Layer.mergeAll(
   Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
   Layer.succeed(BuiltInDrivers.SourceControlDrivers, []),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
+  Layer.mock(WorkspacePreviewRevisions.WorkspacePreviewRevisions)({}),
 );
 
 const layerTest = ServerConfig.layerTest(process.cwd(), { prefix: "t3-host-files-http-" }).pipe(

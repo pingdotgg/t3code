@@ -904,13 +904,8 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
     ),
   ),
-<<<<<<< origin/main
   Layer.provide(PreviewBrowserMode.layer),
-  // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
-=======
-  Layer.provide(PreviewBrowser.layer),
   // Links to other environments, shared by clients (WebSocket) and agents (/mcp).
->>>>>>> upstream/main
   Layer.provide(
     Layer.mergeAll(PeerForwarding.layer, PeerThreadRelay.layer, PeerClientPairing.layer).pipe(
       Layer.provideMerge(PeerMcpClient.layer),

@@ -851,9 +851,7 @@ export const make = Effect.gen(function* () {
     }
     return result;
   });
-<<<<<<< origin/main
   const hostPlatform = yield* HostProcess.Platform;
-=======
   const createPrNeedsPush = Effect.fn("GitManager.createPrNeedsPush")(function* (
     cwd: string,
     status: {
@@ -870,7 +868,6 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.orElseSucceed(() => null));
     return target?.viaPushRemote === true;
   });
->>>>>>> upstream/main
   const readWorktreeCreationSettings = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => ({
       worktreesDirectory: settings.worktreesDirectory,

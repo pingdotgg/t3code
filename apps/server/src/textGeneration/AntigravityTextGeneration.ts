@@ -11,20 +11,15 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { type AcpError, AcpRequestError } from "effect-acp/errors";
 
-<<<<<<< origin/main
-import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAcpSupport.ts";
+import {
+  antigravityThinkingConfig,
+  applyAntigravityAcpModelSelection,
+} from "../provider/acp/AntigravityAcpSupport.ts";
 import {
   antigravityRuntimeStateOf,
   removeAntigravityRuntimeSessionFiles,
   type AntigravityRuntimeState,
 } from "../fork/antigravityCliRuntime/antigravityCliRuntime.ts";
-=======
-import {
-  antigravityThinkingConfig,
-  applyAntigravityAcpModelSelection,
-} from "../provider/acp/AntigravityAcpSupport.ts";
-import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
->>>>>>> upstream/main
 import {
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
   isAntigravitySignInRequiredError,

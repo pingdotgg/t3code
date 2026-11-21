@@ -135,9 +135,8 @@ describe("sidebar header new thread", () => {
 // regression: #38623 unsent drafts are listed above threads but mod+1..9 skipped them
 describe("sidebar numbered jumps", () => {
   it("numbers the unsent draft at the top before the threads below it", async () => {
-    const initial = useComposerDraftStore.getState();
     using stack = new DisposableStack();
-    stack.defer(() => useComposerDraftStore.setState(initial, true));
+    const initial = emptyDraftStore(stack);
     const previousSettings = getClientSettings();
     stack.defer(() => __setClientSettingsForTests(previousSettings));
     __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
@@ -194,6 +193,14 @@ describe("sidebar numbered jumps", () => {
   });
 });
 
+// Earlier browser test files share this origin's localStorage, so the store loads their drafts.
+function emptyDraftStore(stack: DisposableStack) {
+  const saved = useComposerDraftStore.getState();
+  stack.defer(() => useComposerDraftStore.setState(saved, true));
+  useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+  return useComposerDraftStore.getState();
+}
+
 function threadShell(projectId: ProjectId, index: number): EnvironmentThreadShell {
   return makeThreadFixture({
     environmentId: EnvironmentId.make("local"),
@@ -207,6 +214,7 @@ describe("sidebar render isolation", () => {
   // regression: #33100 Cmd+J re-rendered every sidebar row, which took hundreds of ms with many threads
   it("does not re-render thread rows when a quick Mod shortcut opens and focuses the terminal", async () => {
     using stack = new DisposableStack();
+    emptyDraftStore(stack);
     const activeProject = project("active");
     const threads = Array.from({ length: 5 }, (_, index) => threadShell(activeProject.id, index));
     const routeThreadRef: ScopedThreadRef = {

@@ -11,13 +11,10 @@ import * as CursorAgentSdkProcessRunner from "@t3tools/provider-cursor/server/Cu
 import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-<<<<<<< origin/main
 import * as DisplayModeCompactionNote from "../fork/displayModeWrap/DisplayModeCompactionNote.ts";
 import type * as FyiDelivery from "../fork/fyi/FyiDelivery.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
-=======
 import * as HostProcess from "@t3tools/shared/HostProcess";
->>>>>>> upstream/main
 
 export type ProviderOrchestrationAdapterInfrastructure =
   | ClaudeAdapterV2.ClaudeAgentSdkQueryRunner
@@ -70,11 +67,6 @@ const resolveCursorWorkerLaunch = Effect.gen(function* () {
 export const layer = Layer.mergeAll(
   ClaudeAdapterV2.layerQueryRunner,
   CodexAdapterV2.layerAppServerClientFactory,
-<<<<<<< origin/main
-  CursorAgentSdk.layer.pipe(Layer.provideMerge(CursorSdk.layer)),
-  DisplayModeCompactionNote.layer,
-  RuntimeLayer.layerFyiDelivery,
-=======
   Layer.unwrap(
     Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -84,7 +76,8 @@ export const layer = Layer.mergeAll(
     }),
   ),
   CursorSdk.layer,
->>>>>>> upstream/main
+  DisplayModeCompactionNote.layer,
+  RuntimeLayer.layerFyiDelivery,
   layerIdAllocator,
   ProviderContinuationRequests.layer,
 );

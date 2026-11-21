@@ -297,15 +297,12 @@ export function layerWithRegistry<Error>(
       store: ProjectionStore.ProjectionStoreV2Shape,
     ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly managedPolicy?: ManagedPolicyDocument;
-<<<<<<< origin/main
     /** Turns on MCP setup for each thread, with credentials from this registry. */
     readonly mcpSessionRegistry?: McpSessionRegistry.McpSessionRegistryShape;
-=======
     /** The instances the ingestor reads snapshots from, such as an endpoint behind a hub. */
     readonly providerInstances?: Partial<
       ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
     >;
->>>>>>> upstream/main
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2

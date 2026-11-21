@@ -139,14 +139,9 @@ export function AttachmentFilePreview(props: {
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: namedClipboardTarget(props.name),
   });
-<<<<<<< origin/main
-  // useAssetUrlRefresh keys its callback on these objects, so they must stay cached. A parent may
-  // rebuild `asset` on any render, so the attachment's own resource depends only on its fields.
-=======
   // useAssetUrlRefresh keys its callback on these objects, so they must stay cached. Parents
   // rebuild `asset` on every render, so the attachment resource derives only from its fields.
   const assetResource = props.asset && "resource" in props.asset ? props.asset.resource : null;
->>>>>>> upstream/main
   const attachmentResource = attachmentId
     ? {
         _tag: "attachment" as const,
@@ -156,12 +151,7 @@ export function AttachmentFilePreview(props: {
         disposition: "inline" as const,
       }
     : null;
-<<<<<<< origin/main
-  const resource =
-    props.asset && "resource" in props.asset ? props.asset.resource : attachmentResource;
-=======
   const resource = assetResource ?? attachmentResource;
->>>>>>> upstream/main
   const downloadResource = resource
     ? resource._tag === "draft-workspace-file"
       ? resource

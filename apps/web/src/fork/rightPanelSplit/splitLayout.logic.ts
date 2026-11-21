@@ -359,6 +359,21 @@ export function restorePersistedSplit<T extends PanelArrangement>(record: T, raw
   });
 }
 
+// Builds before side chat tabs became `thread` tabs saved their ids as `side-chat:<thread>`.
+const renamedSideChatIds = (rawSplit: unknown): unknown => {
+  if (!rawSplit || typeof rawSplit !== "object") return rawSplit;
+  const rename = (id: unknown) =>
+    typeof id === "string" && id.startsWith("side-chat:")
+      ? `thread:${id.slice("side-chat:".length)}`
+      : id;
+  const { rightIds, otherShownId } = rawSplit as Record<string, unknown>;
+  return {
+    ...rawSplit,
+    rightIds: Array.isArray(rightIds) ? rightIds.map(rename) : rightIds,
+    otherShownId: rename(otherShownId),
+  };
+};
+
 /** The migration's hook: the split, and the order it needs, for a record rebuilt from storage. */
 export function persistedSplitFields(
   record: { readonly surfaces: RightPanelSurface[]; readonly activeSurfaceId: string | null },
@@ -366,7 +381,7 @@ export function persistedSplitFields(
 ): Partial<Pick<ThreadRightPanelState, "split" | "surfaces">> {
   const restored = restorePersistedSplit<
     Pick<ThreadRightPanelState, "surfaces" | "activeSurfaceId" | "split">
-  >(record, rawSplit);
+  >(record, renamedSideChatIds(rawSplit));
   return restored.split === undefined ? {} : { split: restored.split, surfaces: restored.surfaces };
 }
 

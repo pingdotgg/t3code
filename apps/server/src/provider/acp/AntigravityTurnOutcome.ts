@@ -11,10 +11,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import {
-  antigravityCliApiError,
-  type AntigravityRuntimeState,
-} from "../../fork/antigravityCliRuntime/antigravityCliRuntime.ts";
+import type { AntigravityRuntimeState } from "../../fork/antigravityCliRuntime/antigravityCliRuntime.ts";
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
 
 // CORTEX_STEP_TYPE_ERROR_MESSAGE in the native trajectory.
@@ -26,7 +23,9 @@ const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
 const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
 // Antigravity 1.5 with a Google account writes "STATUS (code NNN): message".
-const STATUS_ERROR = /(?<![A-Z_])([A-Z_]+) \(code (\d{3})\): (\P{Cc}+)/u;
+// A protobuf length byte leads it and can be a capital, so only a google.rpc.Code name starts it.
+const STATUS_ERROR =
+  /(CANCELLED|UNKNOWN|INVALID_ARGUMENT|DEADLINE_EXCEEDED|NOT_FOUND|ALREADY_EXISTS|PERMISSION_DENIED|RESOURCE_EXHAUSTED|FAILED_PRECONDITION|ABORTED|OUT_OF_RANGE|UNIMPLEMENTED|INTERNAL|UNAVAILABLE|DATA_LOSS|UNAUTHENTICATED) \(code (\d{3})\): (\P{Cc}+)/u;
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
 // Claude rejects a saved thinking block without a valid signature. It sits in the native
 // history, so every later prompt to that session fails the same way.
@@ -147,11 +146,7 @@ function turnFailure(
   // The agent maps only the SDK's QUOTA_EXHAUSTED stop reason to `refusal`.
   if (errorText === undefined && stopReason !== "refusal") return undefined;
   const text = errorText ?? "";
-<<<<<<< origin/main
-  const apiError = API_ERROR.exec(text) ?? antigravityCliApiError(text);
-=======
   const apiError = API_ERROR.exec(text) ?? statusError(text);
->>>>>>> upstream/main
   const reusable = (failure: OrchestrationV2ProviderFailure) =>
     ({ failure, threadDisposition: "reusable" }) as const;
   if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text)) {

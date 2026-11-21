@@ -992,21 +992,6 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-<<<<<<< origin/main
-      const wrapInput = {
-        threadId: run.threadId,
-        message: providerMessage,
-        text: withMessageSenderNote(
-          providerMessage,
-          projectComposerContextForProvider({
-            text: providerMessage.text,
-            records: providerMessage.context?.records ?? [],
-          }),
-        ),
-      };
-      let wrapped = yield* displayModeWrap.wrapUserText(wrapInput);
-      let userText = wrapped.text;
-=======
       const messageText = withMessageSenderNote(
         providerMessage,
         projectComposerContextForProvider({
@@ -1014,7 +999,6 @@ export const layer: Layer.Layer<
           records: providerMessage.context?.records ?? [],
         }),
       );
->>>>>>> upstream/main
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =
         session.driver === "codex" ||
@@ -1022,10 +1006,13 @@ export const layer: Layer.Layer<
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
       const goalCommand = goalDriver && parseGoalCommand(providerMessage) !== null;
       // Part of the user text, so every way a turn starts carries it, after the user's own words.
-      const userText =
+      const unwrappedText =
         run.outputSchema === undefined || goalCommand || isProviderCommand(providerMessage)
           ? messageText
           : `${messageText}\n\n${outputInstructions(run.outputSchema)}`;
+      const wrapInput = { threadId: run.threadId, message: providerMessage, text: unwrappedText };
+      let wrapped = yield* displayModeWrap.wrapUserText(wrapInput);
+      let userText = wrapped.text;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,

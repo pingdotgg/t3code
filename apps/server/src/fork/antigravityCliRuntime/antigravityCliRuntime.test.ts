@@ -223,15 +223,24 @@ describe("Antigravity CLI runtime", () => {
       const path = yield* Path.Path;
       const input = { profileDirectory: "/profile", userHome: "/home/user", path };
       const profileArgs = ["acp", "--gemini-dir", "/profile", "--app-data-dir", "antigravity-acp"];
-      const spawn = { command: "agy", args: profileArgs, cwd: "/project" };
-      for (const [found, managedVersionDirectory, runtime, args] of [
-        ["the user's own", null, "cli", ["acp"]],
-        ["a managed release", "/managed/versions/release", "managed", profileArgs],
+      // Upstream marks a Google sign-in as an SSH session, so the CLI keeps it in a file.
+      const profileEnv = { GEMINI_HOME: "/profile", SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 0" };
+      const spawn = { command: "agy", args: profileArgs, cwd: "/project", env: profileEnv };
+      for (const [found, managedVersionDirectory, runtime, args, env] of [
+        ["the user's own", null, "cli", ["acp"], { GEMINI_HOME: "/profile" }],
+        ["a managed release", "/managed/versions/release", "managed", profileArgs, profileEnv],
       ] as const) {
         const executable = { managedVersionDirectory };
         assert.equal(antigravityRuntimeState(executable, input).runtime, runtime, found);
-        assert.deepEqual(withUserAgyState(executable, spawn).args, args, found);
+        assert.deepEqual(withUserAgyState(executable, spawn, {}).args, args, found);
+        assert.deepEqual(withUserAgyState(executable, spawn, {}).env, env, found);
       }
+      const sshEnv = { SSH_CONNECTION: "10.0.0.1 50000 10.0.0.2 22" };
+      assert.deepEqual(
+        withUserAgyState({ managedVersionDirectory: null }, spawn, sshEnv).env,
+        { GEMINI_HOME: "/profile", ...sshEnv },
+        "the user's own SSH session stays",
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -444,11 +453,12 @@ describe("Antigravity CLI runtime", () => {
         }),
       );
       let runtime: "cli" | "managed" = "cli";
+      let keyring: string | undefined;
       const { probe } = yield* makeAntigravityRuntimeUsageProbe({
         profileDirectory,
         userHome,
         authMethod: "oauth-personal",
-        readKeyringSecret: Effect.undefined,
+        readKeyringSecret: Effect.sync(() => keyring),
         runtimeState: Effect.sync(() =>
           runtime === "cli"
             ? antigravityRuntimeState(
@@ -481,6 +491,17 @@ describe("Antigravity CLI runtime", () => {
         JSON.stringify([cli, managed]),
         /cli-access|cli-refresh|profile-access|profile-refresh|profile-secret/,
       );
+
+      // The user's own CLI may keep its Google sign-in only in the system keyring.
+      yield* fileSystem.remove(path.join(cliApp, "antigravity-oauth-token"));
+      keyring = JSON.stringify({
+        token: { access_token: "keyring-access", expiry: "1970-01-01T01:00:00.123456789Z" },
+      });
+      runtime = "cli";
+      requests.length = 0;
+      const fromKeyring = yield* probe;
+      assert.isUndefined(fromKeyring.unavailable);
+      assert.isTrue(requests.some((request) => request.bearer === "Bearer keyring-access"));
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

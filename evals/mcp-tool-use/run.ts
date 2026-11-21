@@ -51,13 +51,10 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { THEME_GUIDE } from "@t3tools/shared/themeCss";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
-<<<<<<< origin/main
 import { isHiddenClaudeTool, withoutCodexSubagentTools } from "./fork/hiddenNativeTools.ts";
 import { DashboardToolkit } from "../../apps/server/src/fork/threadDashboard/DashboardTools.ts";
 import { SendToUserToolkit } from "../../apps/server/src/fork/userMessageTools/SendToUser.ts";
-=======
 import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
->>>>>>> upstream/main
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";

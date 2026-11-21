@@ -499,19 +499,16 @@ export interface ThreadManagementServiceShape {
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
-<<<<<<< origin/main
   /** Starts no turn, so it neither restores the worktree nor needs the provider enabled. */
   readonly postFyi: (
     input: ThreadManagementFyiInput,
   ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, ThreadManagementFailure>;
-=======
   /** Stores what the thread's running turn returns, once it fits the schema that turn declared. */
   readonly submitRunOutput: (input: {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly json: string;
   }) => Effect.Effect<{ readonly runId: RunId }, ThreadManagementFailure>;
->>>>>>> upstream/main
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
@@ -1050,7 +1047,6 @@ const make = Effect.gen(function* () {
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
   });
 
-<<<<<<< origin/main
   const postFyi: ThreadManagementServiceShape["postFyi"] = Effect.fn(
     "ThreadManagementService.postFyi",
   )(function* (input) {
@@ -1074,7 +1070,8 @@ const make = Effect.gen(function* () {
     return yield* ensureCommandTranscripts(command).pipe(
       Effect.andThen(orchestrator.dispatch(command)),
     );
-=======
+  });
+
   const submitRunOutput: ThreadManagementServiceShape["submitRunOutput"] = Effect.fn(
     "ThreadManagementService.submitRunOutput",
   )(function* (input) {
@@ -1114,7 +1111,6 @@ const make = Effect.gen(function* () {
       value: checked.success,
     });
     return { runId: run.id };
->>>>>>> upstream/main
   });
 
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(
@@ -1910,11 +1906,8 @@ const make = Effect.gen(function* () {
     getThreadLinkMetadata: orchestrator.getThreadLinkMetadata,
     listProjectThreads,
     sendToThread,
-<<<<<<< origin/main
     postFyi,
-=======
     submitRunOutput,
->>>>>>> upstream/main
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,

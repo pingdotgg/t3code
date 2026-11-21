@@ -41,15 +41,11 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "issue",
-<<<<<<< origin/main
-  "side-chat",
+  "thread",
+  "linked-thread",
   "dashboard",
   "replies",
   "whiteboard",
-=======
-  "thread",
-  "linked-thread",
->>>>>>> upstream/main
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -121,19 +117,16 @@ export type RightPanelSurface =
       key: string;
       url?: string;
     }
-<<<<<<< origin/main
-  | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId }
-  | { id: "dashboard"; kind: "dashboard" }
-  | { id: "replies"; kind: "replies" }
-  | { id: "whiteboard"; kind: "whiteboard" };
-=======
   /**
    * A thread of the panel's environment shown beside it: a side chat or a subagent. Which one is
    * the thread's own lineage, so the surface only names it.
    */
   | ThreadSurface
   /** A linked environment's thread, read through `viaEnvironmentId`; it has no thread here. */
-  | LinkedThreadSurface;
+  | LinkedThreadSurface
+  | { id: "dashboard"; kind: "dashboard" }
+  | { id: "replies"; kind: "replies" }
+  | { id: "whiteboard"; kind: "whiteboard" };
 
 export type ThreadSurface = { id: `thread:${string}`; kind: "thread"; threadId: ThreadId };
 
@@ -152,7 +145,6 @@ export function decodeThreadSurface(surface: object): ThreadSurface | null {
   if ((kind !== "thread" && kind !== "side-chat") || typeof threadId !== "string") return null;
   return threadId === "" ? null : threadSurface(ThreadId.make(threadId));
 }
->>>>>>> upstream/main
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 16;
@@ -211,15 +203,11 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-<<<<<<< origin/main
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue" | "side-chat">,
-    automatic?: boolean,
-=======
     kind: Exclude<
       RightPanelKind,
       "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread"
     >,
->>>>>>> upstream/main
+    automatic?: boolean,
   ) => void;
   /** Opens a side chat or subagent of `ref`'s environment as a tab; `ref` itself has no tab. */
   openThread: (ref: ScopedThreadRef, threadId: ThreadId) => void;

@@ -320,11 +320,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
         path={path}
         environmentId={actions.environmentId}
         cwd={actions.cwd}
-<<<<<<< origin/main
-        label={boardMatch?.[1] ?? basenameOfPath(path)}
-=======
-        label={basenameOfPath(path).normalize("NFC")}
->>>>>>> upstream/main
+        label={boardMatch?.[1] ?? basenameOfPath(path).normalize("NFC")}
         theme={resolvedThemeFromDocument()}
       />
     </ContextChip>

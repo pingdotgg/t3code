@@ -72,7 +72,7 @@ describe("right panel split in the store", () => {
     expect(thread().activeSurfaceId).toBe("file:a.ts");
   });
 
-  it("migrates a v14 record without a split and keeps a v15 split", () => {
+  it("migrates a v14 record without a split and keeps a later split, side chats renamed", () => {
     const record = {
       isOpen: true,
       activeSurfaceId: "file:b.ts",
@@ -102,6 +102,19 @@ describe("right panel split in the store", () => {
         key
       ]?.split,
     ).toEqual(split);
+    const sideChat = { id: "side-chat:child", kind: "side-chat", threadId: "child" };
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          [key]: {
+            ...record,
+            activeSurfaceId: "side-chat:child",
+            surfaces: [record.surfaces[0], sideChat],
+            split: { rightIds: ["side-chat:child"], otherShownId: "file:a.ts", ratio: 0.4 },
+          },
+        },
+      }).byThreadKey[key]?.split,
+    ).toEqual({ rightIds: ["thread:child"], otherShownId: "file:a.ts", ratio: 0.4 });
   });
 
   it("round-trips a split through storage and repairs a same-version record", async () => {
@@ -110,7 +123,7 @@ describe("right panel split in the store", () => {
     const saved = thread().split;
     const { storage, name } = useRightPanelStore.persist.getOptions();
     const persisted = (await storage!.getItem(name!))!;
-    expect(persisted.version).toBe(15);
+    expect(persisted.version).toBe(16);
     // Resetting the store writes it to storage, so the saved value goes back before rehydrating.
     const reload = async (value: typeof persisted) => {
       useRightPanelStore.setState(useRightPanelStore.getInitialState());

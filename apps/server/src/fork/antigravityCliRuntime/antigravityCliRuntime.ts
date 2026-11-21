@@ -57,20 +57,32 @@ export function antigravityRuntimeState(
 
 const PROFILE_FLAGS = new Set(["--gemini-dir", "--app-data-dir"]);
 
-/** Upstream points every `agy` at T3's profile; the user's own `agy` keeps its own login and state. */
+/**
+ * Upstream points every `agy` at T3's profile, and marks a Google sign-in as an SSH session so the
+ * CLI keeps it in that profile; the user's own `agy` keeps its own login, keyring and state.
+ */
 export const withUserAgyState = (
   executable: Pick<AntigravityExecutable, "managedVersionDirectory">,
   spawn: AcpSessionRuntime.AcpSpawnInput,
-): AcpSessionRuntime.AcpSpawnInput =>
-  isUserAgy(executable)
-    ? {
-        ...spawn,
-        args: spawn.args.filter(
-          (arg, index) =>
-            !PROFILE_FLAGS.has(arg) && !PROFILE_FLAGS.has(spawn.args[index - 1] ?? ""),
-        ),
-      }
-    : spawn;
+  baseEnv: NodeJS.ProcessEnv,
+): AcpSessionRuntime.AcpSpawnInput => {
+  if (!isUserAgy(executable)) return spawn;
+  const { SSH_CONNECTION: _profileSsh, ...env } = spawn.env ?? {};
+  return {
+    ...spawn,
+    args: spawn.args.filter(
+      (arg, index) => !PROFILE_FLAGS.has(arg) && !PROFILE_FLAGS.has(spawn.args[index - 1] ?? ""),
+    ),
+    ...(spawn.env === undefined
+      ? {}
+      : {
+          env:
+            baseEnv.SSH_CONNECTION === undefined
+              ? env
+              : { ...env, SSH_CONNECTION: baseEnv.SSH_CONNECTION },
+        }),
+  };
+};
 
 /** The state a caller was given, or the managed profile's when it was given none. */
 export const antigravityRuntimeStateOf = (options: {
@@ -88,7 +100,7 @@ const antigravityTokenPath = (state: AntigravityRuntimeState, path: Path.Path) =
  */
 export const makeAntigravityRuntimeUsageProbe = Effect.fn("makeAntigravityRuntimeUsageProbe")(
   function* (
-    input: Parameters<typeof makeAntigravityUsageProbe>[0] & {
+    input: Omit<Parameters<typeof makeAntigravityUsageProbe>[0], "appDirectory"> & {
       readonly userHome: string;
       readonly runtimeState: Effect.Effect<AntigravityRuntimeState>;
     },
@@ -141,17 +153,6 @@ export const readAntigravityAccount = Effect.fn("AntigravityAdapterV2.readAccoun
     .pipe(Effect.option);
   return Option.map(digest, Hex.encode);
 });
-
-// google.rpc.Code names. The CLI's error step is length-prefixed, so a length byte that may be
-// a capital letter leads the status; only a known name finds where the status starts.
-const CLI_API_ERROR =
-  /(CANCELLED|UNKNOWN|INVALID_ARGUMENT|DEADLINE_EXCEEDED|NOT_FOUND|ALREADY_EXISTS|PERMISSION_DENIED|RESOURCE_EXHAUSTED|FAILED_PRECONDITION|ABORTED|OUT_OF_RANGE|UNIMPLEMENTED|INTERNAL|UNAVAILABLE|DATA_LOSS|UNAUTHENTICATED) \(code (\d{3})\): ([^\p{Cc}]+)/u;
-
-/** The CLI's `STATUS (code NNN): message`, in the managed pattern's group order: code, message, status. */
-export function antigravityCliApiError(text: string) {
-  const match = CLI_API_ERROR.exec(text);
-  return match === null ? null : ([match[0], match[2], match[3], match[1]] as const);
-}
 
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
 

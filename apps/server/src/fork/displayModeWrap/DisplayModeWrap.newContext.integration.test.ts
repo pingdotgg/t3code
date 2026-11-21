@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import type * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
@@ -38,6 +39,7 @@ import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
 } from "../../orchestration-v2/testkit/fixtures/shared.ts";
+import { outputInstructions } from "../../orchestration-v2/runOutput.ts";
 import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -219,6 +221,7 @@ const notesPerAttempt = (
       ordinal: number,
       selection?: ModelSelection,
       text?: string,
+      outputSchema?: Readonly<Record<string, Schema.Json>>,
     ) => Effect.Effect<void>;
     readonly failResume: Ref.Ref<boolean>;
     readonly failStart: Ref.Ref<boolean>;
@@ -297,6 +300,7 @@ const notesPerAttempt = (
         ordinal: number,
         selection: ModelSelection = CLAUDE_MODEL_SELECTION,
         text = `Request ${ordinal}`,
+        outputSchema?: Readonly<Record<string, Schema.Json>>,
       ) {
         const providerSessionId = (yield* orchestrator.getThreadProjection(
           threadId,
@@ -321,6 +325,7 @@ const notesPerAttempt = (
           attachments: [],
           modelSelection: selection,
           dispatchMode: { type: "start_immediately" },
+          ...(outputSchema === undefined ? {} : { outputSchema }),
         });
         yield* orchestrator.streamStoredEvents.pipe(
           Stream.filter(
@@ -465,16 +470,26 @@ const notesPerAttempt = (
 describe("display mode note at turn start", () => {
   it.live("goes once on the first message, and again after a failed native resume", () =>
     Effect.gen(function* () {
-      const notes = yield* notesPerAttempt("display-wrap-resume", ({ send, failResume }) =>
-        Effect.gen(function* () {
-          yield* send(1);
-          yield* send(2);
-          yield* Ref.set(failResume, true);
-          yield* send(3);
-          yield* send(4);
-        }),
+      const outputSchema = { type: "object" };
+      const rewrapped = yield* Ref.make("");
+      const notes = yield* notesPerAttempt(
+        "display-wrap-resume",
+        ({ send, failResume, lastAttempt }) =>
+          Effect.gen(function* () {
+            yield* send(1);
+            yield* send(2);
+            yield* Ref.set(failResume, true);
+            yield* send(3, undefined, undefined, outputSchema);
+            yield* Ref.set(rewrapped, yield* lastAttempt);
+            yield* send(4);
+          }),
       );
       assert.deepEqual(notes, [true, false, true, false]);
+      // The re-wrapped prompt keeps one copy of the output instructions, after the user's words.
+      const text = yield* Ref.get(rewrapped);
+      const instructions = outputInstructions(outputSchema);
+      assert.strictEqual(text.split(instructions).length, 2);
+      assert.isTrue(text.endsWith(`Request 3\n\n${instructions}`));
     }),
   );
 

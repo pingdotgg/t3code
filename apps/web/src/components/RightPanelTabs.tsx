@@ -148,20 +148,14 @@ export interface RightPanelTabsProps {
   onActivate: (surface: RightPanelSurface) => void;
   onRenameDevice?: (surfaceId: string, title: string) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
-<<<<<<< origin/main
-  /** `strip` is the strip that opened the menu: one pane of a split, or every tab. */
-  onCloseOtherSurfaces: (surface: RightPanelSurface, strip: readonly RightPanelSurface[]) => void;
-  onCloseSurfacesToRight: (surface: RightPanelSurface, strip: readonly RightPanelSurface[]) => void;
-  onCloseAllSurfaces: (strip: readonly RightPanelSurface[]) => void;
-=======
   /** Moves a subagent, side chat or linked thread tab to the main screen. */
   onOpenInMainView?: (
     surface: Extract<RightPanelSurface, { kind: "thread" | "linked-thread" }>,
   ) => void;
-  onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
-  onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
-  onCloseAllSurfaces: () => void;
->>>>>>> upstream/main
+  /** `strip` is the strip that opened the menu: one pane of a split, or every tab. */
+  onCloseOtherSurfaces: (surface: RightPanelSurface, strip: readonly RightPanelSurface[]) => void;
+  onCloseSurfacesToRight: (surface: RightPanelSurface, strip: readonly RightPanelSurface[]) => void;
+  onCloseAllSurfaces: (strip: readonly RightPanelSurface[]) => void;
   onMoveSurface?: (surfaceId: string, toIndex: number) => void;
   onCopyFilePath: (relativePath: string) => void;
   onDuplicateBrowser?: (surface: RightPanelSurface) => void;
@@ -652,14 +646,6 @@ function surfaceTitle(
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
     case "device":
       return surface.title ?? surface.target?.name ?? resolve(msg("Device"));
-<<<<<<< origin/main
-    case "side-chat":
-      return resolve(msg("Side chat"));
-    case "dashboard":
-    case "replies":
-    case "whiteboard":
-      return modeSurfaceLabel(surface.kind);
-=======
     case "thread":
       // Until the thread's own title loads.
       return resolve(msg("Thread"));
@@ -668,7 +654,10 @@ function surfaceTitle(
         surface,
         resolve(msg("Thread on {label}", { label: surface.label })),
       );
->>>>>>> upstream/main
+    case "dashboard":
+    case "replies":
+    case "whiteboard":
+      return modeSurfaceLabel(surface.kind);
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return resolve(msg("Browser"));
@@ -761,15 +750,12 @@ function SurfaceIcon({
       return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "thread":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
-<<<<<<< origin/main
+    case "linked-thread":
+      return <MessagesSquare className="size-3 shrink-0" />;
     case "dashboard":
     case "replies":
     case "whiteboard":
       return <ModeSurfaceIcon kind={surface.kind} />;
-=======
-    case "linked-thread":
-      return <MessagesSquare className="size-3 shrink-0" />;
->>>>>>> upstream/main
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1221,33 +1207,24 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       setAddSurfaceMenuOpen(true);
     }
   });
-<<<<<<< origin/main
-  // Inside ChatView's split view, which owns the shell and the split menu entries.
-  const pane = useRightPanelPane();
-  const takesNewSurfaceShortcut = props.open !== false && pane?.focused !== false;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for the new surface shortcut while the panel is open
-=======
   // Forwarded from a focused browser page. Focusing the trigger here would let ChatView's
   // window-focus handler see a plain button and refocus the composer, closing the menu.
   const onMenuAction = useEffectEvent((action: string) => {
     if (action === "rightPanel.new" && !addSurfaceMenuBlocked()) setAddSurfaceMenuOpen(true);
   });
+  // Inside ChatView's split view, which owns the shell and the split menu entries.
+  const pane = useRightPanelPane();
+  const takesNewSurfaceShortcut = props.open !== false && pane?.focused !== false;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes document keydown and the desktop menu action (forwarded from a focused browser page) for the new surface shortcut while the panel is open
->>>>>>> upstream/main
   useEffect(() => {
     if (!takesNewSurfaceShortcut) return;
     document.addEventListener("keydown", onNewSurfaceKeyDown, true);
-<<<<<<< origin/main
-    return () => document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
-  }, [takesNewSurfaceShortcut]);
-=======
     const unsubscribe = window.desktopBridge?.onMenuAction(onMenuAction);
     return () => {
       document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
       unsubscribe?.();
     };
-  }, [props.open]);
->>>>>>> upstream/main
+  }, [takesNewSurfaceShortcut]);
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {
     const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
@@ -1377,14 +1354,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const surfaceIndex = props.surfaces.findIndex((entry) => entry.id === surface.id);
     if (surfaceIndex < 0) return;
 
-<<<<<<< origin/main
     const items: ContextMenuItem<TabContextMenuAction | SplitMenuAction>[] = [];
-=======
-    const items: ContextMenuItem<TabContextMenuAction>[] = [];
     if ((surface.kind === "thread" || surface.kind === "linked-thread") && props.onOpenInMainView) {
       items.push({ id: "open-in-main-view", label: gt("Open in main view") });
     }
->>>>>>> upstream/main
     if (surface.kind === "device" && props.onRenameDevice)
       items.push({ id: "rename", label: gt("Rename") });
     if (surface.kind === "file" && surface.attachment === undefined) {
