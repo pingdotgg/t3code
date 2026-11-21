@@ -51,6 +51,7 @@
   "d810ecd91e8cf9d0": "Instala la CLI de Origin con {install} y ejecuta {login}.",
   "eb0f60ef4f92ab7d": "Instala {fj} 0.6 o posterior desde {fjUrl} y ejecuta {fjLogin}, o instala {tea} 0.16 o posterior desde {teaUrl} y ejecuta {teaLogin} para cada servidor de Forgejo o Gitea.",
   "d026a85e2e50e675": "Instala la CLI de GitCafe con {install} y ejecuta {login}, guarda un token en Ajustes o define {variable} en el servidor.",
+  "22d3c0c48a34b5b3": "Instala la CLI de TanStack Source con {install} y ejecuta {login}, guarda un token en Ajustes o define {variable} en el servidor.",
   "79d776428f4d0650": "No se pudo cargar el archivo. Vuelve a conectarte e inténtalo de nuevo.",
   "3ea34cbb1ca5ba9b": "Vista previa cancelada.",
   "7c0af279ecb3da3a": "Las vistas previas de archivos en streaming no están disponibles en este entorno de ejecución.",

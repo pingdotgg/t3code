@@ -102,10 +102,14 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends Omit<
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
   readonly refreshIntervalMs?: number;
-  readonly refreshTrigger?: (target: {
-    readonly environmentId: EnvironmentIdType;
-    readonly input: Input;
-  }) => Atom.Atom<unknown> | undefined;
+  /** Each change of the returned signal refreshes the query; `query` is the data it refreshes. */
+  readonly refreshTrigger?: (
+    target: {
+      readonly environmentId: EnvironmentIdType;
+      readonly input: Input;
+    },
+    query: Atom.Atom<AsyncResult.AsyncResult<A, unknown>>,
+  ) => Atom.Atom<unknown> | undefined;
   readonly isFinal?: (value: A) => boolean;
   /**
    * Runs where each server answer lands, before readers see it, so derived records (summaries,
@@ -905,7 +909,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
       options.refreshIntervalMs === undefined
         ? queryAtom
         : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
-    const refreshTrigger = options.refreshTrigger?.(target);
+    const refreshTrigger = options.refreshTrigger?.(target, intervalQuery);
     return (
       refreshTrigger === undefined
         ? intervalQuery

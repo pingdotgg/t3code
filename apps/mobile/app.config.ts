@@ -346,7 +346,12 @@ const config: ExpoConfig = {
             },
             {
               fontFamily: "DMSans-Bold",
-              fontDefinitions: [{ path: dmSansFonts.bold, weight: 700 }],
+              // Android picks fallback glyphs (such as Vietnamese) at the requested weight, so bold text
+              // asks for 700; the 400 entry lets a relative bold step (Typeface.BOLD) land on 700 too.
+              fontDefinitions: [
+                { path: dmSansFonts.bold, weight: 400 },
+                { path: dmSansFonts.bold, weight: 700 },
+              ],
             },
           ],
         },

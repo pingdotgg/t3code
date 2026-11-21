@@ -51,6 +51,7 @@
   "d810ecd91e8cf9d0": "Installez la CLI Origin avec {install}, puis exécutez {login}.",
   "eb0f60ef4f92ab7d": "Installez {fj} 0.6 ou version ultérieure depuis {fjUrl} et exécutez {fjLogin}, ou installez {tea} 0.16 ou version ultérieure depuis {teaUrl} et exécutez {teaLogin} pour chaque serveur Forgejo ou Gitea.",
   "d026a85e2e50e675": "Installez la CLI GitCafe avec {install}, puis exécutez {login}, enregistrez un jeton dans Paramètres ou définissez {variable} sur le serveur.",
+  "22d3c0c48a34b5b3": "Installez la CLI TanStack Source avec {install}, puis exécutez {login}, enregistrez un jeton dans Paramètres ou définissez {variable} sur le serveur.",
   "79d776428f4d0650": "Le fichier n’a pas pu être chargé. Reconnectez-vous et réessayez.",
   "3ea34cbb1ca5ba9b": "Aperçu annulé.",
   "7c0af279ecb3da3a": "Les aperçus de fichiers en streaming ne sont pas disponibles dans cet environnement d’exécution.",

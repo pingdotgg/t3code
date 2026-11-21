@@ -51,6 +51,7 @@
   "d810ecd91e8cf9d0": "Installera Origin CLI med {install} och kör sedan {login}.",
   "eb0f60ef4f92ab7d": "Installera {fj} 0.6 eller senare från {fjUrl} och kör {fjLogin}, eller installera {tea} 0.16 eller senare från {teaUrl} och kör {teaLogin} för varje Forgejo- eller Gitea-server.",
   "d026a85e2e50e675": "Installera GitCafe CLI med {install} och kör sedan {login}, spara en token i Inställningar eller ange {variable} på servern.",
+  "22d3c0c48a34b5b3": "Installera TanStack Source CLI med {install} och kör sedan {login}, spara en token i Inställningar eller ange {variable} på servern.",
   "79d776428f4d0650": "Filen kunde inte läsas in. Återanslut och försök igen.",
   "3ea34cbb1ca5ba9b": "Förhandsvisningen avbröts.",
   "7c0af279ecb3da3a": "Strömmande förhandsvisning av filer är inte tillgänglig i den här körmiljön.",

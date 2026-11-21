@@ -1680,6 +1680,30 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "does not open picture-in-picture against a destroyed webview's WebContents",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const guest = makeAttachingGuest(49);
+          fromId.mockImplementation((id) =>
+            id === 49 && !guest.wc.isDestroyed() ? guest.wc : null,
+          );
+          yield* manager.prepareWebview(guest.wc);
+          yield* manager.createTab("tab_destroyed_guest");
+          yield* manager.registerWebview("tab_destroyed_guest", 49);
+
+          guest.destroy();
+          yield* Effect.yieldNow;
+
+          const pictureInPicture = yield* Effect.flip(
+            manager.openPictureInPicture("tab_destroyed_guest"),
+          ).pipe(Effect.orDie);
+          expect(pictureInPicture._tag).toBe("PreviewWebviewNotInitializedError");
+        }),
+      ),
+  );
+
   effectIt.effect("skips a guest destroyed while another guest's session opens", () =>
     withManager((manager) =>
       Effect.gen(function* () {
