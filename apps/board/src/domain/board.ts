@@ -10,6 +10,8 @@ export const DEFAULT_BUILDER_CAP = 2;
 
 const Text = Schema.String.check(Schema.isNonEmpty());
 
+const Doc = Schema.Struct({ name: Text, sentAt: Text });
+
 export const Board = Schema.Struct({
   id: Text,
   slug: Text,
@@ -22,6 +24,8 @@ export const Board = Schema.Struct({
   builderCap: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   /** The name of the board's review template. No value means the system template. */
   reviewTemplate: Schema.optionalKey(Text),
+  /** The files the user has sent the orchestrator as the board's docs, oldest first. */
+  docs: Schema.optionalKey(Schema.Array(Doc)),
 });
 export type Board = typeof Board.Type;
 

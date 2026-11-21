@@ -1,10 +1,13 @@
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { createVcsEnvironmentAtoms } from "@t3tools/client-runtime/state/vcs";
-import type { EnvironmentId } from "@t3tools/contracts";
-import type { AtomRegistry } from "effect/reactivity";
+import { EnvironmentId, ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { failureText } from "../settings/failureText";
+import { setupLine } from "./worktreeSetup";
 
 export const vcsEnvironment = createVcsEnvironmentAtoms(connectionAtomRuntime);
 
@@ -22,3 +25,28 @@ export async function deleteWorktree(
   );
   return result._tag === "Failure" ? failureText(result) : null;
 }
+
+const decodeSetupKey = Schema.decodeUnknownSync(Schema.Tuple([EnvironmentId, ThreadId]));
+
+/**
+ * T3's setup snapshot for a thread, kept for the session after its stream closes or its card
+ * remounts, because T3 sends nothing once the agent's run ends. A later snapshot replaces it.
+ * Keyed by `[environmentId, threadId]` as JSON.
+ */
+export const lastSetupSnapshotAtom = Atom.family((key: string) => {
+  const [environmentId, threadId] = decodeSetupKey(JSON.parse(key));
+  return Atom.make((get): WorktreeSetupSnapshot | null => {
+    const live = AsyncResult.getOrElse(
+      get(
+        vcsEnvironment.worktreeSetup({
+          environmentId,
+          input: { threadId },
+        }),
+      ),
+      () => null,
+    );
+    if (live !== null) return live;
+    const previous = Option.getOrNull(get.self<WorktreeSetupSnapshot | null>());
+    return setupLine(previous)?.kind === "failed" ? previous : null;
+  }).pipe(Atom.keepAlive, Atom.withLabel(`worktree-setup-last:${key}`));
+});

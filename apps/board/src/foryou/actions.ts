@@ -12,7 +12,13 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
-import { type EnvironmentId, MessageId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
+import {
+  type ChatAttachment,
+  type EnvironmentId,
+  MessageId,
+  RuntimeRequestId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 
@@ -82,6 +88,7 @@ export async function messageOrchestrator(
   orchestratorThreadId: string | null,
   text: () => Promise<string>,
   beforeSend: () => void = () => undefined,
+  attachments: ReadonlyArray<ChatAttachment> = [],
 ): Promise<string | null> {
   if (orchestratorThreadId === null) return "Start this board's orchestrator before answering.";
   const threadId = ThreadId.make(orchestratorThreadId);
@@ -103,7 +110,7 @@ export async function messageOrchestrator(
           messageId: MessageId.make(newId()),
           role: "user",
           text: await text(),
-          attachments: [],
+          attachments,
         },
         runtimeMode: projection.thread.runtimeMode,
         interactionMode: projection.thread.interactionMode,

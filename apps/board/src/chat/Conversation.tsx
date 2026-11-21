@@ -110,7 +110,13 @@ export function Conversation({
           ))}
           {live && rows.at(-1)?.kind === "user" && <p className="text-faint">Thinking</p>}
         </div>
-        <Composer project={project} threadId={threadId} projection={projection} live={live} />
+        <Composer
+          project={project}
+          listed={listed}
+          threadId={threadId}
+          projection={projection}
+          live={live}
+        />
       </ArtifactLookupContext>
     </SkillsContext>
   );

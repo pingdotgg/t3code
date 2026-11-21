@@ -54,6 +54,7 @@ export function OrchestratorCard({
   const custom = useAtomValue(reviewTemplatesAtom);
   const [pickError, setPickError] = useState<string | null>(null);
   const picked = pickTemplate(board.reviewTemplate, custom);
+  const docs = board.docs ?? [];
   const status =
     board.orchestratorThreadId === null
       ? "Not started"
@@ -123,6 +124,23 @@ export function OrchestratorCard({
           </div>
         ))}
       </dl>
+      {docs.length > 0 && (
+        <div data-testid="board-docs" className="mt-2">
+          <p className="text-[10px] text-faint">
+            Docs{" "}
+            <span data-testid="docs-count" className="text-fg">
+              {docs.length}
+            </span>
+          </p>
+          <ul data-scroll className="max-h-12 overflow-y-auto">
+            {docs.map((doc) => (
+              <li key={doc.name} className="truncate text-[11px] text-muted">
+                {doc.name}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="mt-3 flex items-center justify-between border-t border-line pt-2">
         <span className="text-muted">
           For you{" "}
