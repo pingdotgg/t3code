@@ -87,6 +87,25 @@ class NativePluginBoundary extends Component<
   }
 }
 
+const subscribeEnabled = (listener: () => void) => {
+  enabledListeners.add(listener);
+  return () => {
+    enabledListeners.delete(listener);
+  };
+};
+const slotSubscribers = new Map<string, (listener: () => void) => () => void>();
+/** One subscribe function per slot, so useSyncExternalStore never resubscribes on render. */
+function featureSlotSubscriber(slot: string) {
+  let subscribe = slotSubscribers.get(slot);
+  if (!subscribe) {
+    subscribe = (listener) =>
+      nativePluginFeatures.subscribeSlot?.(slot, listener) ??
+      nativePluginFeatures.subscribe(listener);
+    slotSubscribers.set(slot, subscribe);
+  }
+  return subscribe;
+}
+
 function setWorkspaceEnvironment(environmentId: EnvironmentId | null) {
   if (workspace.environmentId === environmentId) return;
   workspace.environmentId = environmentId;
@@ -219,12 +238,7 @@ function NativeFeature<Props extends object>({
   const inheritedEnvironmentId = useContext(NativePluginEnvironmentContext);
   const environmentId = resolveFeatureEnvironment(props) ?? inheritedEnvironmentId;
   const enabled = useSyncExternalStore(
-    (listener) => {
-      enabledListeners.add(listener);
-      return () => {
-        enabledListeners.delete(listener);
-      };
-    },
+    subscribeEnabled,
     () =>
       environmentId === null ||
       builtinEnabled.get(environmentId)?.get(nativeBuiltinPluginId(slot)) !== false,
@@ -241,9 +255,7 @@ function NativeFeature<Props extends object>({
     return () => setWorkspaceEnvironment(null);
   }, [slot, workspaceEnvironment]);
   const contributions = useSyncExternalStore(
-    (listener) =>
-      nativePluginFeatures.subscribeSlot?.(slot, listener) ??
-      nativePluginFeatures.subscribe(listener),
+    featureSlotSubscriber(slot),
     () => nativePluginFeatures.entries(slot),
     () => nativePluginFeatures.entries(slot),
   );
@@ -274,19 +286,31 @@ function NativeFeature<Props extends object>({
       </NativePluginBoundary>
     );
   };
+  // The boundary falls back to the builtin, so it only isolates a replacement. The keyed
+  // default survives additions appearing around it without remounting.
+  const defaultNode = !Default ? null : Default === Builtin ? (
+    createElement(Builtin, { ...props, key: "default" })
+  ) : (
+    <NativePluginBoundary
+      key="default"
+      resetKeys={[Default]}
+      renderFallback={() => (enabled ? createElement(Builtin, props) : null)}
+    >
+      {createElement(Default, props)}
+    </NativePluginBoundary>
+  );
+  const content =
+    additions.length === 0 ? (
+      defaultNode
+    ) : (
+      <>
+        {additions.filter((entry) => entry.order < 0).map(renderAddition)}
+        {defaultNode}
+        {additions.filter((entry) => entry.order >= 0).map(renderAddition)}
+      </>
+    );
   return (
-    <NativePluginEnvironmentContext value={environmentId}>
-      {additions.filter((entry) => entry.order < 0).map(renderAddition)}
-      {Default ? (
-        <NativePluginBoundary
-          resetKeys={[Default]}
-          renderFallback={() => (enabled ? createElement(Builtin, props) : null)}
-        >
-          {createElement(Default, props)}
-        </NativePluginBoundary>
-      ) : null}
-      {additions.filter((entry) => entry.order >= 0).map(renderAddition)}
-    </NativePluginEnvironmentContext>
+    <NativePluginEnvironmentContext value={environmentId}>{content}</NativePluginEnvironmentContext>
   );
 }
 

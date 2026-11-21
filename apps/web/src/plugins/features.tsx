@@ -34,9 +34,17 @@ export function createPluginContext<Value>(key: string, initial: Value): Context
 export const pluginFeatures = pluginSharedState("features", () =>
   createPluginRegistry<FeatureComponents>(),
 );
-function subscribeFeatureSlot(slot: string, listener: () => void) {
-  // A registry retained by an earlier hot module still exposes the global subscription.
-  return pluginFeatures.subscribeSlot?.(slot, listener) ?? pluginFeatures.subscribe(listener);
+const slotSubscribers = new Map<string, (listener: () => void) => () => void>();
+/** One subscribe function per slot, so useSyncExternalStore never resubscribes on render. */
+function featureSlotSubscriber(slot: string) {
+  let subscribe = slotSubscribers.get(slot);
+  if (!subscribe) {
+    // A registry retained by an earlier hot module still exposes the global subscription.
+    subscribe = (listener) =>
+      pluginFeatures.subscribeSlot?.(slot, listener) ?? pluginFeatures.subscribe(listener);
+    slotSubscribers.set(slot, subscribe);
+  }
+  return subscribe;
 }
 export const PluginEnvironmentContext = createPluginContext<EnvironmentId | null>(
   "environment",
@@ -282,7 +290,7 @@ export function PluginSlot<Props extends object>({
     ? EnvironmentId.make(explicitEnvironmentId)
     : inheritedEnvironmentId;
   const contributions = useSyncExternalStore(
-    (listener) => subscribeFeatureSlot(slot, listener),
+    featureSlotSubscriber(slot),
     () => slotSnapshot(slot),
     () => slotSnapshot(slot),
   );
@@ -305,8 +313,22 @@ export function PluginSlot<Props extends object>({
     builtinActivationOwners.has(slot) &&
     defaultEntry?.pluginId.startsWith(`${environmentId}:${builtinPluginId(slot)}#`);
   const Default = ownsBuiltin ? (builtin ?? resolved) : (resolved ?? builtin);
-  const fallbackNode = builtin ? createElement(builtin, props) : null;
   const additions = entries.filter((entry) => entry.id !== "default");
+  const fallbackNode = builtin ? createElement(builtin, props) : null;
+  // The boundary and Suspense fall back to the builtin, so they only isolate a replacement.
+  const defaultNode = !Default ? null : Default === builtin ? (
+    createElement(builtin, { ...props, key: "default" })
+  ) : (
+    <Suspense key="default" fallback={fallbackNode}>
+      <FeatureErrorBoundary
+        key={slot}
+        fallback={fallbackNode}
+        target={Default as ComponentType<never>}
+      >
+        {createElement(Default, props)}
+      </FeatureErrorBoundary>
+    </Suspense>
+  );
   const renderAddition = (entry: (typeof additions)[number]) => {
     const Feature = entry.load() as ComponentType<Props>;
     return (
@@ -317,24 +339,17 @@ export function PluginSlot<Props extends object>({
       </Suspense>
     );
   };
-
-  const content = (
-    <>
-      {additions.filter((entry) => entry.order < 0).map(renderAddition)}
-      {Default ? (
-        <Suspense key="default" fallback={fallbackNode}>
-          <FeatureErrorBoundary
-            key={slot}
-            fallback={fallbackNode}
-            target={Default as ComponentType<never>}
-          >
-            {createElement(Default, props)}
-          </FeatureErrorBoundary>
-        </Suspense>
-      ) : null}
-      {additions.filter((entry) => entry.order >= 0).map(renderAddition)}
-    </>
-  );
+  // The keyed default survives additions appearing around it without remounting.
+  const content =
+    additions.length === 0 ? (
+      defaultNode
+    ) : (
+      <>
+        {additions.filter((entry) => entry.order < 0).map(renderAddition)}
+        {defaultNode}
+        {additions.filter((entry) => entry.order >= 0).map(renderAddition)}
+      </>
+    );
   return environmentId === inheritedEnvironmentId ? (
     content
   ) : (
