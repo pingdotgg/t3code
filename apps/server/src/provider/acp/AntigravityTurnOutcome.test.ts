@@ -50,6 +50,10 @@ const STATUS_NOT_FOUND_ERROR = Buffer.concat([
     'NOT_FOUND (code 404): Requested entity was not found.\u001a\u0080\u0001HTTP 404 Not Found\n\n{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}',
   ),
 ]);
+// Antigravity 1.5's quota error carries its reset in the JSON body.
+const STATUS_QUOTA_ERROR = Buffer.from(
+  'RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 2h10m40s.\u001a\u0080\u0001HTTP 429 Too Many Requests\n\n{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","domain":"cloudcode-pa.googleapis.com","metadata":{"quotaResetDelay":"2h10m40.817699543s","quotaResetTimeStamp":"1970-01-01T02:10:40Z"},"reason":"QUOTA_EXHAUSTED"},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"7840.817699543s"}],"message":"Individual quota reached. Resets in 2h10m40s.","status":"RESOURCE_EXHAUSTED"}}',
+);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -148,6 +152,13 @@ describe("watchAntigravityPromptOutcome", () => {
           code: "INVALID_ARGUMENT",
           retryable: false,
         }),
+      );
+      assert.equal(
+        (yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, STATUS_QUOTA_ERROR],
+        ]))?.failure.resetAt,
+        "1970-01-01T02:10:40.000Z",
       );
       // A 404 after the turn already reached the model is a transient edge error, not a bad model.
       for (const error of [NOT_FOUND_ERROR, STATUS_NOT_FOUND_ERROR]) {
