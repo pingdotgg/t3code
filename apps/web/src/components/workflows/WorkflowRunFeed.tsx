@@ -213,12 +213,13 @@ export function WorkflowRunFeed({
   };
   const cancelRun = async () => {
     if (busy) return;
+    // Busy while the dialog is up, so a second click does not open a second one.
+    setBusy(true);
     const confirmed = await (requestConfirmDialog(
       gt("Cancel {title}? Its agents stop and the run cannot be resumed.", { title: run.title }),
       { variant: "destructive" },
     ) ?? Promise.resolve(false));
-    if (!confirmed) return;
-    setBusy(true);
+    if (!confirmed) return setBusy(false);
     const result = await cancel(target);
     setBusy(false);
     reportFailure(gt("Could not cancel the run"), result);
