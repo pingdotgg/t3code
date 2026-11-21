@@ -272,6 +272,41 @@ export const legacyCascadeCommandId = Effect.fn("CommandReceiptStore.cascadeComm
   return undefined;
 });
 
+export const matchesLegacyCascadePath = Effect.fn("CommandReceiptStore.matchesLegacyCascadePath")(
+  function* (
+    receipts: CommandReceiptStoreV2Shape,
+    anchorId: CommandId,
+    path: ReadonlyArray<ThreadId>,
+    completedId: CommandId,
+  ) {
+    const retries: Array<{ baseId: CommandId; retry: number }> = [];
+    let id: string = completedId;
+    for (const threadId of path.toReversed()) {
+      const segment = `:subagent:${threadId}`;
+      if (!id.endsWith(segment)) {
+        const suffix = /:retry:([1-9][0-9]*)$/.exec(id);
+        if (suffix === null) return false;
+        const retry = Number(suffix[1]);
+        if (retry >= cascadeCommandIdLimit) return false;
+        id = id.slice(0, suffix.index);
+        retries.push({ baseId: CommandId.make(id), retry });
+      }
+      if (!id.endsWith(segment)) return false;
+      id = id.slice(0, -segment.length);
+    }
+    if (id !== anchorId) return false;
+
+    // Legacy selection could only reach a suffix after rejecting every earlier ID.
+    for (const { baseId, retry } of retries) {
+      for (let previous = 0; previous < retry; previous++) {
+        const receipt = yield* receipts.getByCommandId(cascadeCommandIdAt(baseId, previous));
+        if (Option.isNone(receipt) || receipt.value.status !== "rejected") return false;
+      }
+    }
+    return true;
+  },
+);
+
 /** A lifecycle choice made after the cascade's source command, other than `ownCommandId`. */
 export const supersedesCascade = (
   latest: CommandReceiptV2 | null,

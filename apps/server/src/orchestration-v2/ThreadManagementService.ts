@@ -1858,11 +1858,13 @@ const make = Effect.gen(function* () {
         cutoff: sideChat?.cutoff ?? receipt.resultSequence,
         archiveCommandId: sideChat?.archiveCommandId,
       };
+      type LegacyPath = { readonly anchorId: CommandId; readonly depth: number };
       const dispatchChild = Effect.fn("ThreadManagementService.dispatchCascadeChild")(function* (
         threadId: ThreadId,
         baseId: CommandId,
         path: ReadonlyArray<ThreadId>,
         parentArchiveCommandId: CommandId,
+        legacyPath: LegacyPath | undefined,
       ) {
         for (let retry = 0; retry < CommandReceiptStore.cascadeCommandIdLimit; retry++) {
           const commandId = CommandReceiptStore.cascadeCommandIdAt(baseId, retry);
@@ -1874,6 +1876,7 @@ const make = Effect.gen(function* () {
                 source,
                 path,
                 parentArchiveCommandId,
+                legacyPath,
               }),
               Effect.catchTags({
                 OrchestratorThreadAboveModeLimitError: () => Effect.undefined,
@@ -1881,7 +1884,9 @@ const make = Effect.gen(function* () {
             );
           if (result === undefined) return;
           if (!result.cascadeIdOccupied)
-            return result.replayed || result.storedEvents.length > 0 ? commandId : null;
+            return result.replayed || result.storedEvents.length > 0
+              ? (result.cascadeReplayedCommandId ?? commandId)
+              : null;
         }
         return yield* new Orchestrator.OrchestratorDispatchError({
           commandId: baseId,
@@ -1896,17 +1901,22 @@ const make = Effect.gen(function* () {
           readonly deletedAt: unknown;
           readonly projectId?: unknown;
         },
-        baseId: CommandId,
+        parentCommandId: CommandId,
         path: ReadonlyArray<ThreadId>,
         parentArchiveCommandId: CommandId,
+        legacyPath?: LegacyPath,
       ) => ReturnType<ThreadManagementServiceShape["cascadeSubagentLifecycle"]> = Effect.fn(
         "ThreadManagementService.visitSubagentCascade",
-      )(function* (thread, baseId, path, parentArchiveCommandId) {
+      )(function* (thread, parentCommandId, path, parentArchiveCommandId, legacyPath) {
+        const baseId =
+          path.length === 0
+            ? parentCommandId
+            : CommandId.make(`${parentCommandId}:subagent:${thread.id}`);
         const ownCommandId =
           path.length === 0
             ? baseId
             : thread.deletedAt === null
-              ? yield* dispatchChild(thread.id, baseId, path, parentArchiveCommandId)
+              ? yield* dispatchChild(thread.id, baseId, path, parentArchiveCommandId, legacyPath)
               : null;
         if (ownCommandId === undefined) return;
         // Holds each thread's lock while visiting its subagents, so locks nest parent before child.
@@ -1956,17 +1966,20 @@ const make = Effect.gen(function* () {
             const children = yield* orchestrator.getSubagentChildThreads(thread.id);
             if (children.length === 0) return;
             // Older jobs may have committed descendants under a suffixed skip.
-            const prefix =
-              ownCommandId ??
-              (input.stableSkipPrefix
-                ? baseId
-                : ((yield* CommandReceiptStore.legacyCascadeCommandId(receipts, baseId)) ??
-                  baseId));
+            const legacyPrefix =
+              ownCommandId === null && !input.stableSkipPrefix
+                ? yield* CommandReceiptStore.legacyCascadeCommandId(receipts, baseId)
+                : baseId;
+            const prefix = ownCommandId ?? legacyPrefix ?? baseId;
+            const skippedPath =
+              ownCommandId === null
+                ? (legacyPath ??
+                  (source && legacyPrefix !== baseId
+                    ? { anchorId: parentCommandId, depth: path.length - 1 }
+                    : undefined))
+                : undefined;
             const [, failures] = yield* Effect.partition(children, (child) =>
-              Effect.gen(function* () {
-                const base = CommandId.make(`${prefix}:subagent:${child.id}`);
-                yield* visit(child, base, [...path, child.id], archiveCommandId);
-              }),
+              visit(child, prefix, [...path, child.id], archiveCommandId, skippedPath),
             );
             // Finish healthy siblings before reporting a failure to the durable worker.
             if (failures[0] !== undefined) return yield* failures[0];

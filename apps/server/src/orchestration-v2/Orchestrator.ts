@@ -133,6 +133,7 @@ import {
   archivedByCascade,
   CommandReceiptStoreV2,
   type CommandReceiptV2,
+  matchesLegacyCascadePath,
   supersedesCascade,
 } from "./CommandReceiptStore.ts";
 import {
@@ -407,6 +408,7 @@ export interface OrchestratorV2DispatchResult {
   readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
   readonly subagentCascades?: ReadonlyArray<EffectOutbox.SubagentCascadeEffect>;
   readonly cascadeIdOccupied?: true;
+  readonly cascadeReplayedCommandId?: CommandId;
   /** The command id was already accepted; analytics skip it. */
   readonly replayed?: true;
 }
@@ -16210,6 +16212,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
+  const ownsLegacyCascadeReceipt = Effect.fn("Orchestrator.ownsLegacyCascadeReceipt")(function* (
+    command: OrchestrationV2ServerCommand,
+    threadId: ThreadId,
+    receipt: CommandReceiptV2,
+    parentArchiveCommandId: CommandId,
+  ) {
+    if (receipt.archiveSourceCommandId !== undefined)
+      return receipt.archiveSourceCommandId === parentArchiveCommandId;
+
+    const read = mapDispatchError(command);
+    const directEffect = yield* effectOutbox
+      .get(`effect:${receipt.commandId}:subagent-threads.cascade`)
+      .pipe(read);
+    if (Option.isSome(directEffect)) return false;
+
+    // A direct command would have kept its own effect if an eligible child already existed.
+    const cutoff = DateTime.subtractDuration(
+      yield* DateTime.now,
+      EffectOutbox.SETTLED_EFFECT_RETENTION,
+    );
+    if (
+      !DateTime.isLessThan(receipt.acceptedAt, cutoff) &&
+      (yield* eventSink.latestSequence({ threadId }).pipe(read)) <= receipt.resultSequence
+    ) {
+      const children = yield* projectionStore.getSubagentChildThreads(threadId).pipe(read);
+      for (const child of children) {
+        const sequence = yield* eventSink.latestSequence({ threadId: child.id }).pipe(read);
+        if (sequence > 0 && sequence <= receipt.resultSequence) return true;
+      }
+    }
+    return yield* new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: "Cannot verify the archive or restore that owns the legacy cascade path.",
+    });
+  });
+
   /** `sideChatIds` are the live side chats a delete, archive, or unarchive cascades to, read under their locks. */
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
@@ -16239,6 +16278,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return { sequence: cascade?.source?.cutoff ?? 0, storedEvents: [] };
       yield* refuseAboveDispatchModeLimit(command, cascadeThread.id, cascadeThread);
     }
+    const legacyLatest =
+      cascadeThread !== undefined &&
+      cascade?.source !== undefined &&
+      cascade.legacyPath !== undefined
+        ? yield* commandReceipts
+            .getLatestLifecycle(cascadeThread.id, ["thread.archive", "thread.unarchive"])
+            .pipe(read)
+        : undefined;
+    if (
+      cascadeThread !== undefined &&
+      cascade?.source !== undefined &&
+      cascade.legacyPath !== undefined &&
+      legacyLatest?.status === "accepted" &&
+      legacyLatest.commandType === command.type &&
+      legacyLatest.commandId !== command.commandId &&
+      legacyLatest.resultSequence > cascade.source.cutoff &&
+      cascadeThread.deletedAt === null &&
+      (command.type === "thread.archive"
+        ? cascadeThread.archivedAt !== null
+        : cascadeThread.archivedAt === null) &&
+      (yield* matchesLegacyCascadePath(
+        commandReceipts,
+        cascade.legacyPath.anchorId,
+        cascade.path.slice(cascade.legacyPath.depth),
+        legacyLatest.commandId,
+      ).pipe(read))
+    ) {
+      if (
+        !(yield* ownsLegacyCascadeReceipt(
+          command,
+          cascadeThread.id,
+          legacyLatest,
+          cascade.parentArchiveCommandId,
+        ))
+      )
+        return { sequence: legacyLatest.resultSequence, storedEvents: [] };
+      const replay = yield* replayCommandReceipt(
+        { ...command, commandId: legacyLatest.commandId },
+        legacyLatest,
+      );
+      return { ...replay, cascadeReplayedCommandId: legacyLatest.commandId };
+    }
+
     const occupiedCascadeId = (receipt: AnyCommandReceiptV2) =>
       cascadeThread !== undefined &&
       ("projectId" in receipt ||
@@ -16246,9 +16328,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         receipt.status !== "accepted" ||
         receipt.commandType !== command.type ||
         (command.type === "thread.delete" && cascadeThread.deletedAt === null) ||
-        (command.type === "thread.unarchive" &&
-          cascade?.source !== undefined &&
-          receipt.resultSequence < cascade.source.cutoff) ||
+        (cascade?.source !== undefined && receipt.resultSequence < cascade.source.cutoff) ||
         (command.type === "thread.archive" &&
           receipt.archiveSourceCommandId !== undefined &&
           receipt.archiveSourceCommandId !== cascade?.parentArchiveCommandId));
@@ -16302,9 +16382,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type !== "thread.delete"
     ) {
       const { source, path } = cascade;
-      const latest = yield* commandReceipts
-        .getLatestLifecycle(cascadeThread.id, ["thread.archive", "thread.unarchive"])
-        .pipe(read);
+      const latest =
+        legacyLatest === undefined
+          ? yield* commandReceipts
+              .getLatestLifecycle(cascadeThread.id, ["thread.archive", "thread.unarchive"])
+              .pipe(read)
+          : legacyLatest;
       const applies =
         cascadeThread.deletedAt === null &&
         (command.type === "thread.archive"
