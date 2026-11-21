@@ -12,6 +12,7 @@ import {
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
+import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
@@ -297,7 +298,8 @@ function sameSidebarProviderEntries(
       other.accentColor !== entry.accentColor ||
       other.acpRegistryAgentId !== entry.acpRegistryAgentId ||
       other.acpRegistryIconUrl !== entry.acpRegistryIconUrl ||
-      other.models !== entry.models
+      // Each provider push decodes a fresh models array, usually with the same content.
+      !Equal.equals(other.models, entry.models)
     ) {
       return false;
     }
