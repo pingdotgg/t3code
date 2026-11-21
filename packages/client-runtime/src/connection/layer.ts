@@ -89,8 +89,10 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
       const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
       yield* watchDiscoveredCompatibility().pipe(Effect.forkScoped);
       yield* registry.start;
-      yield* platformSource.registrations.pipe(
-        Stream.runForEach(registry.reconcilePlatform),
+      yield* platformSource.snapshots.pipe(
+        Stream.runForEach(({ registrations, discoveryComplete }) =>
+          registry.reconcilePlatform(registrations, discoveryComplete),
+        ),
         Effect.forkScoped,
       );
     }).pipe(Effect.withSpan("clientRuntime.connection.application.start")),

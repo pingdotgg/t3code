@@ -1595,6 +1595,43 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("publishes the catalog only once platform discovery completes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([], [], [], {
+        beforeCredentialPut: () =>
+          Effect.fail(
+            new ConnectionTransientError({
+              reason: "remote-unavailable",
+              detail: "Storage unavailable",
+            }),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const discoveredNow = registry.entriesAfterPlatformDiscovery.pipe(
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        yield* registry.reconcilePlatform([], false);
+        expect(yield* discoveredNow).toBeNull();
+
+        // A failed credential write must not keep discovery pending.
+        yield* registry.reconcilePlatform([
+          new BearerConnectionRegistration({
+            target: BEARER_TARGET,
+            profile: BEARER_PROFILE,
+            credential: new BearerConnectionCredential({ token: "platform-bearer" }),
+          }),
+        ]);
+
+        const discovered = yield* discoveredNow;
+        expect(discovered?.has(BEARER_TARGET.environmentId)).toBe(true);
+        expect(discovered?.has(TARGET.environmentId)).toBe(false);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("applies overlapping platform snapshots in order", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();

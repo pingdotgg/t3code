@@ -673,17 +673,18 @@ const layerPlatformConnectionSource = Layer.effect(
   Effect.gen(function* () {
     if (isHostedStaticApp() || isLocalEnvironmentDisabled()) {
       return PlatformConnectionSource.PlatformConnectionSource.of({
-        registrations: Stream.empty,
+        snapshots: Stream.succeed({ registrations: [], discoveryComplete: true }),
       });
     }
     const cacheRef = yield* Ref.make(new Map<string, CachedPlatformRegistration>());
     const rejectedRef = yield* Ref.make(new Map<string, RejectedSecondaryBootstrap>());
 
-    const buildPlatformRegistrations = Effect.gen(function* () {
+    const discoverPlatformConnections = Effect.gen(function* () {
       const previous = yield* Ref.get(cacheRef);
       const nowEpochMs = yield* Clock.currentTimeMillis;
       const next = new Map<string, CachedPlatformRegistration>();
       const registrations: Array<PlatformConnectionRegistration> = [];
+      let discoveryComplete = true;
 
       const primaryTopologyRead = readPrimaryEnvironmentTargetResult();
       const retainedPrimary = primaryRegistrationToRetainAfterTopologyRead(
@@ -696,6 +697,7 @@ const layerPlatformConnectionSource = Layer.effect(
       }
 
       if (primaryTopologyRead._tag === "Failure") {
+        discoveryComplete = false;
         yield* Effect.logWarning("Could not read the primary environment topology.", {
           cause: primaryTopologyRead.cause,
         });
@@ -720,6 +722,8 @@ const layerPlatformConnectionSource = Layer.effect(
             const cacheEntry = { signature, registration: built.value };
             next.set(PRIMARY_LOCAL_ENVIRONMENT_ID, cacheEntry);
             registrations.push(built.value);
+          } else {
+            discoveryComplete = false;
           }
         }
       }
@@ -735,6 +739,7 @@ const layerPlatformConnectionSource = Layer.effect(
       }
 
       if (topologyRead._tag === "Failure") {
+        discoveryComplete = false;
         yield* Effect.logWarning("Could not read the desktop-local backend topology.", {
           cause: topologyRead.cause,
         });
@@ -758,6 +763,7 @@ const layerPlatformConnectionSource = Layer.effect(
           }
           const previouslyRejected = rejected.get(bootstrap.id);
           if (isRejectedSecondaryBootstrap(previouslyRejected, signature, nowEpochMs)) {
+            discoveryComplete = false;
             nextRejected.set(bootstrap.id, previouslyRejected);
             if (
               cached !== undefined &&
@@ -808,28 +814,31 @@ const layerPlatformConnectionSource = Layer.effect(
             };
             next.set(bootstrap.id, cacheEntry);
             registrations.push(built.value.registration);
-          } else if (
-            cached !== undefined &&
-            canRetainCachedPlatformRegistrationAfterRefreshFailure(
-              cached,
-              endpointSignature,
-              nowEpochMs,
-            )
-          ) {
-            next.set(bootstrap.id, cached);
-            registrations.push(cached.registration);
+          } else {
+            discoveryComplete = false;
+            if (
+              cached !== undefined &&
+              canRetainCachedPlatformRegistrationAfterRefreshFailure(
+                cached,
+                endpointSignature,
+                nowEpochMs,
+              )
+            ) {
+              next.set(bootstrap.id, cached);
+              registrations.push(cached.registration);
+            }
           }
         }
         yield* Ref.set(rejectedRef, nextRejected);
       }
 
       yield* Ref.set(cacheRef, next);
-      return registrations as ReadonlyArray<PlatformConnectionRegistration>;
+      return { registrations, discoveryComplete };
     }).pipe(Effect.provide(FetchHttpClient.layer));
 
     return PlatformConnectionSource.PlatformConnectionSource.of({
-      registrations: Stream.tick(PLATFORM_POLL_INTERVAL).pipe(
-        Stream.mapEffect(() => buildPlatformRegistrations),
+      snapshots: Stream.tick(PLATFORM_POLL_INTERVAL).pipe(
+        Stream.mapEffect(() => discoverPlatformConnections),
       ),
     });
   }),

@@ -258,7 +258,7 @@ const layerCapabilities = Layer.effectContext(
 const layerPlatformConnectionSource = Layer.succeed(
   PlatformConnectionSource.PlatformConnectionSource,
   PlatformConnectionSource.PlatformConnectionSource.of({
-    registrations: Stream.empty,
+    snapshots: Stream.succeed({ registrations: [], discoveryComplete: true }),
   }),
 );
 
