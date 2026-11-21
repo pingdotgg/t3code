@@ -1,5 +1,6 @@
 /* oxlint-disable react/no-array-index-key -- Positions identify source rows and columns. */
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { useClientSettings } from "~/hooks/useSettings";
 import { observeResize } from "~/lib/observeResize";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
@@ -177,7 +178,7 @@ function RowPage(
     page: number;
     columnsVisible: number[];
     sizes: number[];
-    rowHeights?: ReadonlyMap<readonly string[], number> | undefined;
+    rowHeights?: ReadonlyMap<number, number> | undefined;
     rowHeader: number;
     firstColumn: number;
     viewportHeight: number;
@@ -200,7 +201,7 @@ function RowPage(
         const row = rows?.[local];
         const index = start + local;
         if (props.header && index === 0) return null;
-        const rowMinHeight = !props.source && row ? props.rowHeights?.get(row) : undefined;
+        const rowMinHeight = !props.source && row ? props.rowHeights?.get(index) : undefined;
         return (
           <div
             key={local}
@@ -270,12 +271,16 @@ function ScaledRows(
   const rowProbeRef = useRef<HTMLDivElement>(null);
   const rowHeightCacheRef = useRef<{
     key: string;
-    heights: WeakMap<readonly string[], number>;
-  }>({ key: "", heights: new WeakMap() });
+    entries: Map<number, CachedRowHeight>;
+  }>({ key: "", entries: new Map() });
   const [rowHeights, setRowHeights] = useState<{
     key: string;
-    heights: ReadonlyMap<readonly string[], number>;
+    heights: ReadonlyMap<number, number>;
   }>({ key: "", heights: new Map() });
+  const [, setRowMeasureTick] = useState(0);
+  const typographyKey = useClientSettings(
+    (settings) => `${settings.fontFamilySans}:${settings.fontSizeInterface}`,
+  );
   const [layout, setLayout] = useState({ offset: 0, height: 0, rowHeight: 29 });
   const [top, setTop] = useState(0);
   const handledReveal = useRef<string | null>(null);
@@ -365,7 +370,7 @@ function ScaledRows(
   }, []);
   const page = Math.floor(first / PREVIEW_PAGE_ROWS);
   const visibleEnd = (first % PREVIEW_PAGE_ROWS) + Math.ceil(position.height / 29) + 1;
-  const sizesKey = props.sizes.join(",");
+  const sizesKey = `${props.sizes.join(",")}|${typographyKey}`;
   const pageCount = Math.min(
     Math.ceil(visibleEnd / PREVIEW_PAGE_ROWS),
     Math.ceil(props.count / PREVIEW_PAGE_ROWS) - page,
@@ -374,12 +379,14 @@ function ScaledRows(
   useLayoutEffect(() => {
     const probe = rowProbeRef.current;
     if (!props.hasHorizontalOverflow || !probe) return;
-    if (rowHeightCacheRef.current.key !== sizesKey) {
-      rowHeightCacheRef.current = { key: sizesKey, heights: new WeakMap() };
+    const probeStyle = getComputedStyle(probe);
+    const cacheKey = `${sizesKey}|${probeStyle.font}`;
+    if (rowHeightCacheRef.current.key !== cacheKey) {
+      rowHeightCacheRef.current = { key: cacheKey, entries: new Map() };
     }
-    const cache = rowHeightCacheRef.current.heights;
-    const mounted: (readonly string[])[] = [];
-    const uncached = new Set<readonly string[]>();
+    const cache = rowHeightCacheRef.current.entries;
+    const mountedIndices: number[] = [];
+    const uncached: Array<{ index: number; row: readonly string[] }> = [];
     for (let pageOffset = 0; pageOffset < pageCount; pageOffset++) {
       const currentPage = page + pageOffset;
       const rows = props.getRows(currentPage);
@@ -388,35 +395,62 @@ function ScaledRows(
       const limit = visibleEnd - pageOffset * PREVIEW_PAGE_ROWS;
       const count = Math.min(PREVIEW_PAGE_ROWS, props.count - start, limit);
       for (let local = 0; local < count; local++) {
-        if (props.header && start + local === 0) continue;
+        const index = start + local;
+        if (props.header && index === 0) continue;
         const row = rows[local];
         if (!row) continue;
-        mounted.push(row);
-        if (!cache.has(row)) uncached.add(row);
+        mountedIndices.push(index);
+        const existing = cache.get(index);
+        if (existing && (existing.row === row || sameRowCells(existing.row, row))) {
+          existing.row = row;
+        } else {
+          uncached.push({ index, row });
+        }
       }
     }
-    if (uncached.size > 0) {
-      const measuredHeights = measureRowsFullHeight(
+    let hasRemainingUncached = false;
+    if (uncached.length > 0) {
+      const fontSize = Number.parseFloat(probeStyle.fontSize) || 12;
+      const lineHeight = Number.parseFloat(probeStyle.lineHeight) || fontSize * 1.333;
+      const { measured, remaining } = measureRowsFullHeight(
         probe,
-        [...uncached],
+        uncached,
         props.columns,
         props.sizes,
+        fontSize,
+        lineHeight,
+        MAX_SYNC_SCAN_CHARS,
       );
-      for (const [row, height] of measuredHeights) cache.set(row, height);
+      hasRemainingUncached = remaining;
+      for (const [index, entry] of measured) cache.set(index, entry);
+      if (cache.size > MAX_CACHED_ROW_HEIGHTS) {
+        const keep = new Set(mountedIndices);
+        for (const key of cache.keys()) {
+          if (cache.size <= MAX_CACHED_ROW_HEIGHTS) break;
+          if (!keep.has(key)) cache.delete(key);
+        }
+      }
     }
-    const next = new Map<readonly string[], number>();
-    for (const row of mounted) {
-      const height = cache.get(row);
-      if (height && height > BASE_ROW_HEIGHT) next.set(row, height);
+    const next = new Map<number, number>();
+    for (const index of mountedIndices) {
+      const height = cache.get(index)?.height;
+      if (height && height > BASE_ROW_HEIGHT) next.set(index, height);
     }
     setRowHeights((old) =>
-      old.key === sizesKey && sameRowHeightMap(old.heights, next)
+      old.key === cacheKey && sameRowHeightMap(old.heights, next)
         ? old
-        : { key: sizesKey, heights: next },
+        : { key: cacheKey, heights: next },
     );
+    if (hasRemainingUncached) {
+      const frameId = requestAnimationFrame(() => setRowMeasureTick((tick) => tick + 1));
+      return () => cancelAnimationFrame(frameId);
+    }
+    return undefined;
   });
   const activeRowHeights =
-    props.hasHorizontalOverflow && rowHeights.key === sizesKey ? rowHeights.heights : undefined;
+    props.hasHorizontalOverflow && rowHeights.key.startsWith(`${sizesKey}|`)
+      ? rowHeights.heights
+      : undefined;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure mounted row offsets and observe content resizes to position the virtual rows against the scroll track.
   useLayoutEffect(() => {
     if (atStart) return;
@@ -571,57 +605,111 @@ function ScaledRows(
 
 const BASE_ROW_HEIGHT = 29;
 const CELL_HORIZONTAL_INSET = 25;
+const CELL_VERTICAL_INSET = 13;
 const MAX_MEASURED_CELLS_PER_ROW = 16;
+const MAX_CACHED_ROW_HEIGHTS = 512;
+const MAX_SYNC_SCAN_CHARS = 128_000;
 const PROBE_CELL_CLASS_NAME =
   "box-border border-r border-b border-transparent px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums";
 
-let textMeasureContext: CanvasRenderingContext2D | null | undefined;
-
-function getTextMeasureContext(probe: HTMLElement): CanvasRenderingContext2D | null {
-  if (textMeasureContext === undefined) {
-    textMeasureContext = document.createElement("canvas").getContext("2d");
-  }
-  if (textMeasureContext) {
-    textMeasureContext.font = getComputedStyle(probe).font;
-  }
-  return textMeasureContext;
+interface CachedRowHeight {
+  row: readonly string[];
+  height: number;
 }
 
-function estimateWrappedLines(
-  text: string,
-  innerWidth: number,
-  ctx: CanvasRenderingContext2D | null,
-  fontSize: number,
-): number {
-  let lines = 0;
-  let start = 0;
-  while (start <= text.length) {
-    const next = text.indexOf("\n", start);
-    const end = next === -1 ? text.length : next;
-    const lineEnd = end > start && text.charCodeAt(end - 1) === 13 ? end - 1 : end;
-    const segment = text.slice(start, lineEnd);
-    if (segment.length === 0) {
-      lines += 1;
-    } else {
-      const width = ctx ? ctx.measureText(segment).width : segment.length * (fontSize * 0.65);
-      lines += Math.max(1, Math.ceil(width / innerWidth));
-    }
-    if (next === -1) break;
-    start = next + 1;
+interface RowCellCandidate {
+  readonly column: number;
+  readonly text: string;
+  readonly upperLines: number;
+}
+
+function charWidthUpperFactor(code: number): number {
+  if (code <= 32) return 0.38;
+  if (
+    code === 105 ||
+    code === 108 ||
+    code === 102 ||
+    code === 106 ||
+    code === 114 ||
+    code === 116 ||
+    code === 73 ||
+    code === 46 ||
+    code === 44 ||
+    code === 58 ||
+    code === 59 ||
+    code === 39 ||
+    code === 33 ||
+    code === 124
+  ) {
+    return 0.5;
   }
+  if (code >= 48 && code <= 57) return 0.78;
+  if (code >= 65 && code <= 90) return 0.95;
+  if (code < 128) return 0.72;
+  return 1.2;
+}
+
+/** Conservative greedy word-wrap upper bound on rendered lines without native text shaping. */
+function estimateUpperLines(text: string, innerWidth: number, fontSize: number): number {
+  const length = text.length;
+  let lines = 1;
+  let lineWidth = 0;
+  let wordWidth = 0;
+  for (let index = 0; index < length; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 10 || code === 13) {
+      if (code === 13 && index + 1 < length && text.charCodeAt(index + 1) === 10) index++;
+      if (wordWidth > 0) {
+        if (lineWidth > 0 && lineWidth + wordWidth > innerWidth) lines++;
+        wordWidth = 0;
+      }
+      lines++;
+      lineWidth = 0;
+      continue;
+    }
+    if (code === 32 || code === 9) {
+      const spaceWidth = (code === 9 ? 4.5 : 0.38) * fontSize;
+      if (wordWidth > 0) {
+        if (lineWidth > 0 && lineWidth + wordWidth > innerWidth) {
+          lines++;
+          lineWidth = wordWidth;
+        } else {
+          lineWidth += wordWidth;
+        }
+        wordWidth = 0;
+      }
+      lineWidth += spaceWidth;
+      if (lineWidth > innerWidth) {
+        lines++;
+        lineWidth = 0;
+      }
+      continue;
+    }
+    const charWidth = charWidthUpperFactor(code) * fontSize;
+    wordWidth += charWidth;
+    if (wordWidth > innerWidth) {
+      if (lineWidth > 0) {
+        lines++;
+        lineWidth = 0;
+      }
+      lines++;
+      wordWidth = charWidth;
+    }
+  }
+  if (wordWidth > 0 && lineWidth > 0 && lineWidth + wordWidth > innerWidth) lines++;
   return lines;
 }
 
-function selectRowHeightCandidates(
+function collectRowHeightCandidates(
   row: readonly string[],
   columns: number,
   sizes: readonly number[],
-  ctx: CanvasRenderingContext2D | null,
   fontSize: number,
-): Array<{ column: number; text: string }> {
-  const candidates: Array<{ column: number; text: string; score: number }> = [];
+): { candidates: RowCellCandidate[]; scannedChars: number } {
+  const candidates: RowCellCandidate[] = [];
   const limit = Math.min(columns, row.length);
-  const maxGlyphWidth = fontSize * 1.5;
+  const maxGlyphWidth = fontSize * 1.35;
+  let scannedChars = 0;
   for (let column = 0; column < limit; column++) {
     const text = row[column];
     if (!text) continue;
@@ -630,68 +718,113 @@ function selectRowHeightCandidates(
     const innerWidth = Math.max(1, width - CELL_HORIZONTAL_INSET);
     const hasControlWhitespace = text.includes("\n") || text.includes("\r") || text.includes("\t");
     if (!hasControlWhitespace && text.length * maxGlyphWidth <= innerWidth) continue;
-    if (
-      !hasControlWhitespace &&
-      ctx &&
-      ctx.measureText(text.replace(/\d/g, "0")).width <= innerWidth - 8
-    ) {
-      continue;
-    }
-    candidates.push({
-      column,
-      text,
-      score: estimateWrappedLines(text, innerWidth, ctx, fontSize),
-    });
+    scannedChars += text.length;
+    const upperLines = estimateUpperLines(text, innerWidth, fontSize);
+    if (!hasControlWhitespace && upperLines <= 1) continue;
+    candidates.push({ column, text, upperLines });
   }
   if (candidates.length > MAX_MEASURED_CELLS_PER_ROW) {
-    candidates.sort((left, right) => right.score - left.score);
-    candidates.length = MAX_MEASURED_CELLS_PER_ROW;
+    candidates.sort((left, right) => right.upperLines - left.upperLines);
   }
-  return candidates;
+  return { candidates, scannedChars };
+}
+
+function measureProbeEntries(
+  probe: HTMLElement,
+  entries: ReadonlyArray<{ index: number; column: number; text: string }>,
+  sizes: readonly number[],
+  results: Map<number, CachedRowHeight>,
+): void {
+  if (entries.length === 0) return;
+  const fragment = document.createDocumentFragment();
+  const nodes: Array<{ index: number; node: HTMLDivElement }> = [];
+  for (const entry of entries) {
+    const node = document.createElement("div");
+    node.className = PROBE_CELL_CLASS_NAME;
+    node.style.width = `${sizes[entry.column]}px`;
+    node.textContent = entry.text;
+    fragment.append(node);
+    nodes.push({ index: entry.index, node });
+  }
+  probe.replaceChildren(fragment);
+  for (const { index, node } of nodes) {
+    const height = node.getBoundingClientRect().height;
+    const current = results.get(index);
+    if (current && height > current.height) current.height = height;
+  }
+  probe.replaceChildren();
 }
 
 function measureRowsFullHeight(
   probe: HTMLElement,
-  rows: readonly (readonly string[])[],
+  rows: ReadonlyArray<{ index: number; row: readonly string[] }>,
   columns: number,
   sizes: readonly number[],
-): Map<readonly string[], number> {
-  const results = new Map<readonly string[], number>();
-  const fontSize = Number.parseFloat(getComputedStyle(probe).fontSize) || 12;
-  const ctx = getTextMeasureContext(probe);
-  const fragment = document.createDocumentFragment();
-  const entries: Array<{ row: readonly string[]; node: HTMLDivElement }> = [];
-  for (const row of rows) {
-    const candidates = selectRowHeightCandidates(row, columns, sizes, ctx, fontSize);
-    results.set(row, BASE_ROW_HEIGHT);
-    for (const candidate of candidates) {
-      const node = document.createElement("div");
-      node.className = PROBE_CELL_CLASS_NAME;
-      node.style.width = `${sizes[candidate.column]}px`;
-      node.textContent = candidate.text;
-      fragment.append(node);
-      entries.push({ row, node });
+  fontSize: number,
+  lineHeight: number,
+  maxScanChars: number,
+): { measured: Map<number, CachedRowHeight>; remaining: boolean } {
+  const measured = new Map<number, CachedRowHeight>();
+  const firstPassEntries: Array<{ index: number; column: number; text: string }> = [];
+  const overflowRows: Array<{ index: number; candidates: RowCellCandidate[] }> = [];
+  let scannedChars = 0;
+  let remaining = false;
+  for (const { index, row } of rows) {
+    if (measured.size > 0 && scannedChars >= maxScanChars) {
+      remaining = true;
+      break;
+    }
+    const collected = collectRowHeightCandidates(row, columns, sizes, fontSize);
+    scannedChars += collected.scannedChars;
+    measured.set(index, { row, height: BASE_ROW_HEIGHT });
+    const firstBatchCount = Math.min(collected.candidates.length, MAX_MEASURED_CELLS_PER_ROW);
+    for (let candidateIndex = 0; candidateIndex < firstBatchCount; candidateIndex++) {
+      const candidate = collected.candidates[candidateIndex]!;
+      firstPassEntries.push({ index, column: candidate.column, text: candidate.text });
+    }
+    if (collected.candidates.length > MAX_MEASURED_CELLS_PER_ROW) {
+      overflowRows.push({ index, candidates: collected.candidates });
     }
   }
-  if (entries.length > 0) {
-    probe.replaceChildren(fragment);
-    for (const entry of entries) {
-      const height = entry.node.getBoundingClientRect().height;
-      const current = results.get(entry.row) ?? BASE_ROW_HEIGHT;
-      if (height > current) results.set(entry.row, height);
+  measureProbeEntries(probe, firstPassEntries, sizes, measured);
+  if (overflowRows.length > 0) {
+    const secondPassEntries: Array<{ index: number; column: number; text: string }> = [];
+    for (const { index, candidates } of overflowRows) {
+      const bestHeight = measured.get(index)?.height ?? BASE_ROW_HEIGHT;
+      const measuredLines = Math.max(
+        1,
+        Math.floor((bestHeight - CELL_VERTICAL_INSET + 0.5) / lineHeight),
+      );
+      for (
+        let candidateIndex = MAX_MEASURED_CELLS_PER_ROW;
+        candidateIndex < candidates.length;
+        candidateIndex++
+      ) {
+        const candidate = candidates[candidateIndex]!;
+        if (candidate.upperLines <= measuredLines) break;
+        secondPassEntries.push({ index, column: candidate.column, text: candidate.text });
+      }
     }
-    probe.replaceChildren();
+    measureProbeEntries(probe, secondPassEntries, sizes, measured);
   }
-  return results;
+  return { measured, remaining };
+}
+
+function sameRowCells(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 function sameRowHeightMap(
-  left: ReadonlyMap<readonly string[], number>,
-  right: ReadonlyMap<readonly string[], number>,
+  left: ReadonlyMap<number, number>,
+  right: ReadonlyMap<number, number>,
 ): boolean {
   if (left.size !== right.size) return false;
-  for (const [row, height] of left) {
-    if (right.get(row) !== height) return false;
+  for (const [index, height] of left) {
+    if (right.get(index) !== height) return false;
   }
   return true;
 }

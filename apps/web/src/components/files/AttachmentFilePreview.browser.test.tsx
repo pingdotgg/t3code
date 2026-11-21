@@ -72,7 +72,7 @@ vi.mock(import("./office/WordDocument"), async () => {
   };
 });
 
-import { getClientSettings } from "~/hooks/useSettings";
+import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import LargeTextViewer from "./LargeTextViewer";
 import VirtualTablePreview from "./VirtualTablePreview";
@@ -840,119 +840,105 @@ describe("large text preview recovery", () => {
     expect(screen.container.textContent).toContain("C19");
   });
 
-  it("keeps row height and vertical position stable when scrolling horizontally past multiline cells", async () => {
-    const columns = 16;
+  it("keeps row height and vertical position stable across horizontal scroll, fresh row arrays, resize, and typography changes", async () => {
+    const columns = 35;
     const header = Array.from({ length: columns }, (_, i) => `Col ${i}`);
-    const wrapped = "long wrapped description text ".repeat(12).trim();
-    const multiline = "first line\nsecond line\nthird line\nfourth line";
-    const rows = [
+    const forcedEightLines = Array.from({ length: 8 }, (_, i) => `L${i + 1}`).join("\n");
+    const wrappedTwelveWords = Array.from({ length: 12 }, (_, i) => `segment${i + 1}`).join(" ");
+    const makeRows = () => [
       header,
       ...Array.from({ length: 24 }, (_, rowIndex) =>
         Array.from({ length: columns }, (_, columnIndex) => {
-          if (columnIndex === 14 && rowIndex % 3 === 0) return wrapped;
-          if (columnIndex === 13 && rowIndex % 3 === 1) return multiline;
+          if (rowIndex === 0) {
+            if (columnIndex >= 10 && columnIndex < 28) return forcedEightLines;
+            if (columnIndex === 34) return wrappedTwelveWords;
+          }
+          if (columnIndex === 33 && rowIndex % 3 === 1) return forcedEightLines;
           return `r${rowIndex + 1}-c${columnIndex}`;
         }),
       ),
     ];
-    await using screen = await render(
-      <div style={{ display: "flex", height: 320, width: 480 }}>
+    const view = (width: number) => (
+      <div style={{ display: "flex", height: 320, width }}>
         <VirtualTablePreview
           name="wide-wrapped.csv"
-          count={rows.length}
+          count={25}
           columns={columns}
           header={header}
-          getRows={(page) => (page === 0 ? rows : undefined)}
-        />
-      </div>,
-    );
-    const horizontal = () => screen.container.querySelector('[role="table"]')!.parentElement!;
-    const vertical = () => screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
-    const row = (index: number) =>
-      screen.container.querySelector<HTMLElement>(`[data-preview-row="${index}"]`)!;
-
-    await vi.waitFor(() => {
-      expect(row(1)).not.toBeNull();
-      expect(row(1).getBoundingClientRect().height).toBeGreaterThan(60);
-    });
-
-    const initialRow1Height = row(1).getBoundingClientRect().height;
-    const initialRow2Height = row(2).getBoundingClientRect().height;
-    const initialRow4Top = row(4).getBoundingClientRect().top;
-
-    // Scroll to the far right where the multiline columns mount and leading columns unmount.
-    await act(() => {
-      horizontal().scrollLeft = horizontal().scrollWidth;
-      horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
-    });
-    await vi.waitFor(() => expect(screen.container.textContent).toContain("fourth line"));
-
-    expect(Math.abs(row(1).getBoundingClientRect().height - initialRow1Height)).toBeLessThan(1);
-    expect(Math.abs(row(2).getBoundingClientRect().height - initialRow2Height)).toBeLessThan(1);
-    expect(Math.abs(row(4).getBoundingClientRect().top - initialRow4Top)).toBeLessThan(1);
-
-    // Scroll vertically into the table, then sweep horizontally back to the left edge.
-    await act(() => {
-      vertical().scrollTop = 120;
-      vertical().dispatchEvent(new Event("scroll", { bubbles: true }));
-    });
-    await vi.waitFor(() => expect(row(7)).not.toBeNull());
-    const scrolledRow7Top = row(7).getBoundingClientRect().top;
-    const scrolledRow7Height = row(7).getBoundingClientRect().height;
-
-    await act(() => {
-      horizontal().scrollLeft = 0;
-      horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
-    });
-    await vi.waitFor(() => expect(screen.container.textContent).toContain("r8-c0"));
-
-    expect(Math.abs(row(7).getBoundingClientRect().height - scrolledRow7Height)).toBeLessThan(1);
-    expect(Math.abs(row(7).getBoundingClientRect().top - scrolledRow7Top)).toBeLessThan(1);
-  });
-
-  it("keeps row height stable on wide tables above 30 columns and updates after resize", async () => {
-    const columns = 35;
-    const header = Array.from({ length: columns }, (_, i) => `C${i}`);
-    const wrapped = "wide table wrapped cell content ".repeat(10).trim();
-    const rows = [
-      header,
-      Array.from({ length: columns }, (_, c) => (c === 34 ? wrapped : `v-${c}`)),
-      Array.from({ length: columns }, (_, c) => `plain-${c}`),
-    ];
-    const view = (width: number) => (
-      <div style={{ display: "flex", height: 300, width }}>
-        <VirtualTablePreview
-          name="very-wide.csv"
-          count={rows.length}
-          columns={columns}
-          header={header}
-          getRows={(page) => (page === 0 ? rows : undefined)}
+          // Fresh arrays per call must not loop or lose measured row heights.
+          getRows={(page) => (page === 0 ? makeRows() : undefined)}
         />
       </div>
     );
-    await using screen = await render(view(420));
-    const horizontal = () => screen.container.querySelector('[role="table"]')!.parentElement!;
-    const row = (index: number) =>
-      screen.container.querySelector<HTMLElement>(`[data-preview-row="${index}"]`)!;
+    const previousSettings = getClientSettings();
+    const previousRootFontSize = document.documentElement.style.fontSize;
+    try {
+      await using screen = await render(view(420));
+      const horizontal = () => screen.container.querySelector('[role="table"]')!.parentElement!;
+      const vertical = () => screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
+      const row = (index: number) =>
+        screen.container.querySelector<HTMLElement>(`[data-preview-row="${index}"]`)!;
 
-    await vi.waitFor(() => {
-      expect(row(1)).not.toBeNull();
-      expect(row(1).getBoundingClientRect().height).toBeGreaterThan(60);
-    });
-    const narrowHeight = row(1).getBoundingClientRect().height;
+      await vi.waitFor(() => {
+        expect(row(1)).not.toBeNull();
+        expect(row(1).getBoundingClientRect().height).toBeGreaterThan(150);
+      });
 
-    await act(() => {
-      horizontal().scrollLeft = horizontal().scrollWidth;
-      horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
-    });
-    await vi.waitFor(() => expect(screen.container.textContent).toContain("wide table wrapped"));
-    expect(Math.abs(row(1).getBoundingClientRect().height - narrowHeight)).toBeLessThan(1);
+      const initialRow1Height = row(1).getBoundingClientRect().height;
+      const initialRow2Height = row(2).getBoundingClientRect().height;
+      const initialRow4Top = row(4).getBoundingClientRect().top;
 
-    // Widening the container widens each uniform column, reducing wrapped line count.
-    await screen.rerender(view(1600));
-    await vi.waitFor(() =>
-      expect(row(1).getBoundingClientRect().height).toBeLessThan(narrowHeight),
-    );
+      // Scroll to the far right where the word-wrapped column 34 mounts after 18 newline cells.
+      await act(() => {
+        horizontal().scrollLeft = horizontal().scrollWidth;
+        horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("segment12"));
+
+      expect(Math.abs(row(1).getBoundingClientRect().height - initialRow1Height)).toBeLessThan(1);
+      expect(Math.abs(row(2).getBoundingClientRect().height - initialRow2Height)).toBeLessThan(1);
+      expect(Math.abs(row(4).getBoundingClientRect().top - initialRow4Top)).toBeLessThan(1);
+
+      // Scroll vertically into the table, then sweep horizontally back to the left edge.
+      await act(() => {
+        vertical().scrollTop = 120;
+        vertical().dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await vi.waitFor(() => expect(row(5)).not.toBeNull());
+      const scrolledRow5Top = row(5).getBoundingClientRect().top;
+      const scrolledRow5Height = row(5).getBoundingClientRect().height;
+
+      await act(() => {
+        horizontal().scrollLeft = 0;
+        horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("r6-c0"));
+
+      expect(Math.abs(row(5).getBoundingClientRect().height - scrolledRow5Height)).toBeLessThan(1);
+      expect(Math.abs(row(5).getBoundingClientRect().top - scrolledRow5Top)).toBeLessThan(1);
+
+      // Widening the container widens each uniform column, reducing wrapped line count.
+      await screen.rerender(view(1600));
+      await vi.waitFor(() =>
+        expect(row(1).getBoundingClientRect().height).toBeLessThan(initialRow1Height),
+      );
+      const widenedRow1Height = row(1).getBoundingClientRect().height;
+
+      // Typography changes invalidate cached minimums even at the same container width.
+      await act(() => {
+        document.documentElement.style.fontSize = "20px";
+        __setClientSettingsForTests({
+          ...previousSettings,
+          fontSizeInterface: previousSettings.fontSizeInterface + 4,
+        });
+      });
+      await vi.waitFor(() =>
+        expect(row(1).getBoundingClientRect().height).toBeGreaterThan(widenedRow1Height),
+      );
+    } finally {
+      document.documentElement.style.fontSize = previousRootFontSize;
+      __setClientSettingsForTests(previousSettings);
+    }
   });
 
   it("reveals and highlights requested source lines again for a new request", async () => {
