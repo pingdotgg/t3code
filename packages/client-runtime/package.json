@@ -658,7 +658,8 @@
   },
   "scripts": {
     "typecheck": "effect-tsgo tsrs --noEmit",
-    "test": "vp test run"
+    "test": "vp test run",
+    "bench": "vp test bench"
   },
   "dependencies": {
     "@pierre/diffs": "catalog:",
