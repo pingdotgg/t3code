@@ -220,6 +220,8 @@ const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
+// Turn end looks up the PR ~0.5 s after local status; older reads are read again.
+const LOCAL_STATUS_GIT_READS_HANDOFF_TTL = Duration.seconds(5);
 const SETTLED_PR_LOOKUP_RECHECK_INTERVAL = Duration.minutes(15);
 // Shared by every background caller (backfill, settlement, cleanup), so startup discovery
 // cannot fill the git and forge process slots that foreground work also needs.
@@ -1289,7 +1291,7 @@ export const make = Effect.gen(function* () {
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
     const hostingProvider = details.hasOriginRemote
-      ? yield* resolveHostingProvider(cwd, details.branch)
+      ? yield* resolveHostingProviderForLocalStatus(cwd, details.branch)
       : null;
 
     return {
@@ -1333,7 +1335,31 @@ export const make = Effect.gen(function* () {
     cwd: string,
   ): shared is SharedPrLookupGitReads =>
     shared !== null && shared.open && shared.cwd === cwd && prLookupEpoch(cwd) === shared.epoch;
-  const withPrLookupGitReads = <A, E, R>(effect: Effect.Effect<A, E, R>, cwd: string) =>
+  // Branch remote and remote URLs that local status just read, handed once to the PR lookup that
+  // follows it (turn end runs both) so it does not spawn the same git reads again.
+  const localStatusGitReads = new Map<
+    string,
+    Pick<SharedPrLookupGitReads, "epoch" | "configValues" | "remoteUrls">
+  >();
+  const takeLocalStatusGitReads = (cwd: string) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.map((now) => {
+        const handoff = localStatusGitReads.get(cwd);
+        localStatusGitReads.delete(cwd);
+        if (handoff === undefined || handoff.epoch !== prLookupEpoch(cwd)) return undefined;
+        const isFresh = (entry: RememberedPrLookupValue) =>
+          now - entry.readAtMs < Duration.toMillis(LOCAL_STATUS_GIT_READS_HANDOFF_TTL);
+        return {
+          configValues: new Map([...handoff.configValues].filter(([, entry]) => isFresh(entry))),
+          remoteUrls: new Map([...handoff.remoteUrls].filter(([, entry]) => isFresh(entry))),
+        };
+      }),
+    );
+  const openPrLookupGitReads = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    cwd: string,
+    handoff: Pick<SharedPrLookupGitReads, "configValues" | "remoteUrls"> | undefined,
+  ) =>
     Effect.suspend(() => {
       const shared: SharedPrLookupGitReads = {
         open: true,
@@ -1341,8 +1367,8 @@ export const make = Effect.gen(function* () {
         cwd,
         epoch: prLookupEpoch(cwd),
         remotes: undefined,
-        configValues: new Map(),
-        remoteUrls: new Map(),
+        configValues: handoff?.configValues ?? new Map(),
+        remoteUrls: handoff?.remoteUrls ?? new Map(),
       };
       return effect.pipe(
         Effect.provideService(prLookupGitReads, shared),
@@ -1357,9 +1383,16 @@ export const make = Effect.gen(function* () {
         ),
       );
     });
+  const withPrLookupGitReads = <A, E, R>(effect: Effect.Effect<A, E, R>, cwd: string) =>
+    openPrLookupGitReads(effect, cwd, undefined);
+  // Only status lookups take the handoff: a fresh identity check (branchPullRequest) must read git.
   const withActivePrLookupGitReads = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     Effect.flatMap(prLookupGitReads, (shared) =>
-      isActivePrLookupGitReads(shared, cwd) ? effect : withPrLookupGitReads(effect, cwd),
+      isActivePrLookupGitReads(shared, cwd)
+        ? effect
+        : Effect.flatMap(takeLocalStatusGitReads(cwd), (handoff) =>
+            openPrLookupGitReads(effect, cwd, handoff),
+          ),
     );
   const prLookupCacheKey = (
     cwd: string,
@@ -1781,6 +1814,32 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.orElseSucceed(() => null));
     return handle?.context?.provider ?? provider;
   });
+  const resolveHostingProviderForLocalStatus = (cwd: string, branch: string | null) =>
+    Effect.suspend(() => {
+      const reads: SharedPrLookupGitReads = {
+        open: true,
+        queriedProvider: false,
+        cwd,
+        epoch: prLookupEpoch(cwd),
+        remotes: undefined,
+        configValues: new Map(),
+        remoteUrls: new Map(),
+      };
+      return resolveHostingProvider(cwd, branch).pipe(
+        Effect.provideService(prLookupGitReads, reads),
+        Effect.ensuring(
+          Effect.sync(() => {
+            reads.open = false;
+            localStatusGitReads.delete(cwd);
+            if (localStatusGitReads.size >= STATUS_RESULT_CACHE_CAPACITY) {
+              const oldestCwd = localStatusGitReads.keys().next().value;
+              if (oldestCwd !== undefined) localStatusGitReads.delete(oldestCwd);
+            }
+            localStatusGitReads.set(cwd, reads);
+          }),
+        ),
+      );
+    });
 
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
     cwd: string,

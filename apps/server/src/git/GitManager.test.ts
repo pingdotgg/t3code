@@ -1100,6 +1100,43 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("a turn-end status refresh reads the branch remote and remote URL once", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/turn-end"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/turn-end"]);
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({ gitCommands });
+      const count = (cmd: string) => gitCommands.filter((args) => args === cmd).length;
+
+      // Turn end: local status, then the PR lookup for a branch that has no PR yet.
+      yield* manager.invalidateLocalStatus(repoDir);
+      yield* manager.localStatus({ cwd: repoDir });
+      yield* manager.invalidateRemoteStatus(repoDir);
+      const remote = yield* manager.remoteStatus(
+        { cwd: repoDir },
+        { refreshUpstream: false, refreshMissingPullRequest: true },
+      );
+
+      expect(remote?.pr ?? null).toBeNull();
+      expect(count("config --get branch.feature/turn-end.remote")).toBe(1);
+      expect(count("config --get-all remote.origin.url")).toBe(1);
+
+      // A fresh identity check reads git itself, not what local status just read.
+      yield* manager.invalidateLocalStatus(repoDir);
+      yield* manager.localStatus({ cwd: repoDir });
+      gitCommands.length = 0;
+      yield* manager.branchPullRequest(
+        { cwd: repoDir, branch: "feature/turn-end" },
+        { freshGitState: true },
+      );
+      expect(count("config --get-all remote.origin.url")).toBe(1);
+    }),
+  );
+
   it.effect("a git read in flight during a T3 git action does not outlive it", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
