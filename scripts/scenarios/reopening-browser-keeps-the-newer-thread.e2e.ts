@@ -1,4 +1,5 @@
 /// <reference lib="dom" />
+import { WS_METHODS } from "@t3tools/contracts";
 import { expect } from "e2e";
 
 import { test, WEB } from "./t3.ts";
@@ -6,8 +7,13 @@ import { test, WEB } from "./t3.ts";
 interface ReopenGate {
   readonly closed: Promise<void>;
   readonly requested: Promise<void>;
+  readonly observeHistory: (modulePath: string) => Promise<void>;
   readonly arm: () => void;
   readonly release: () => Promise<void>;
+}
+
+interface ClosedViewHistory {
+  readonly entries: readonly { readonly id: string }[];
 }
 
 declare global {
@@ -28,29 +34,19 @@ test(
       messages: ["Stay in this conversation"],
     });
 
-    await browser.addInitScript(() => {
+    await browser.addInitScript((previewOpenMethod) => {
       const closed = Promise.withResolvers<void>();
       const requested = Promise.withResolvers<void>();
       const restored = Promise.withResolvers<void>();
-      let hasClosedBrowser = false;
       let armed = false;
       let sendHeld = () => {};
-      const setItem = Storage.prototype.setItem;
-      Storage.prototype.setItem = function (key, value) {
-        setItem.call(this, key, value);
-        if (key !== "t3code:closed-views:v2") return;
-        const hasBrowser = value.includes('"kind":"browser"');
-        if (hasBrowser) closed.resolve();
-        else if (hasClosedBrowser) restored.resolve();
-        hasClosedBrowser = hasBrowser;
-      };
       const send = WebSocket.prototype.send;
       WebSocket.prototype.send = function (data) {
         if (!armed || typeof data !== "string") return send.call(this, data);
         const parsed = JSON.parse(data);
         const messages = [parsed].flat();
         const isOpen = (message: { _tag?: string; tag?: string }) =>
-          message._tag === "Request" && message.tag === "preview.open";
+          message._tag === "Request" && message.tag === previewOpenMethod;
         const previewOpens = messages.filter(isOpen);
         if (previewOpens.length === 0) return send.call(this, data);
         armed = false;
@@ -63,6 +59,27 @@ test(
       window.reopenGate = {
         closed: closed.promise,
         requested: requested.promise,
+        observeHistory: async (modulePath) => {
+          const { useClosedViewStore } = (await import(modulePath)) as {
+            useClosedViewStore: {
+              subscribe: (
+                listener: (state: ClosedViewHistory, previous: ClosedViewHistory) => void,
+              ) => () => void;
+            };
+          };
+          let closedId: string | undefined;
+          const unsubscribe = useClosedViewStore.subscribe(({ entries }, previous) => {
+            if (closedId === undefined) {
+              closedId = entries.find(
+                (entry) => !previous.entries.some((old) => old.id === entry.id),
+              )?.id;
+              if (closedId !== undefined) closed.resolve();
+            } else if (!entries.some((entry) => entry.id === closedId)) {
+              unsubscribe();
+              restored.resolve();
+            }
+          });
+        },
         arm: () => {
           armed = true;
         },
@@ -71,11 +88,15 @@ test(
           return restored.promise;
         },
       };
-    });
+    }, WS_METHODS.previewOpen);
 
     await t3.open(owner);
     await screen.getByRole("button", "Toggle right panel").tap();
     await screen.getByRole("button", "Browser B").tap();
+    await browser.evaluate(async (modulePath) => {
+      await window.reopenGate.observeHistory(modulePath);
+      return null;
+    }, "/src/closedViewStore.ts");
     await screen.getByRole("button", "Close Browser", { exact: true }).tap();
     await browser.evaluate(async () => {
       await window.reopenGate.closed;
