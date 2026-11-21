@@ -4,7 +4,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
+import {
+  discoverAntigravitySkills,
+  dispatchAntigravitySkillMentions,
+} from "./AntigravitySkills.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const writeSkill = Effect.fn("writeSkill")(function* (directory: string, contents: string) {
@@ -94,20 +97,25 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
-  it.effect("parses disable-model-invocation and user-invocable frontmatter flags", () =>
+  it.effect("dispatches $skill mentions by their frontmatter invocation flags", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const input = yield* makeWorkspace();
       const shipPath = yield* writeSkill(
         path.join(input.userHome, ".gemini", "config", "skills", "ship"),
-        "---\nname: ship\ndescription: Ship changes.\ndisable-model-invocation: true\n---\n# Ship instructions\n",
+        "---\nname: ship\ndescription: Ship changes.\ndisable-model-invocation: true\n---\n# Ship\nRun tests before commit.\n",
       );
       const internalPath = yield* writeSkill(
         path.join(input.cwd, ".gemini", "skills", "internal"),
         "---\nname: internal\ndescription: Internal skill.\nuser-invocable: false\n---\n",
       );
+      const reviewPath = yield* writeSkill(
+        path.join(input.cwd, ".gemini", "skills", "review"),
+        "---\nname: review\ndescription: Review changes.\n---\n",
+      );
 
-      assert.deepEqual(yield* discoverAntigravitySkills(input), [
+      const skills = yield* discoverAntigravitySkills(input);
+      assert.deepEqual(skills, [
         {
           name: "internal",
           description: "Internal skill.",
@@ -115,6 +123,13 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           scope: "project",
           enabled: true,
           userInvocable: false,
+        },
+        {
+          name: "review",
+          description: "Review changes.",
+          path: reviewPath,
+          scope: "project",
+          enabled: true,
         },
         {
           name: "ship",
@@ -125,6 +140,18 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           userInvocationOnly: true,
         },
       ]);
+
+      assert.equal(
+        yield* dispatchAntigravitySkillMentions("Fix it then $ship", skills),
+        'Fix it then /ship\n\nThe user invoked these skills. Follow their instructions:\n\n<skill name="ship">\n# Ship\nRun tests before commit.\n</skill>',
+      );
+      assert.equal(
+        yield* dispatchAntigravitySkillMentions(
+          "$review it for $25, not $internal or $unknown",
+          skills,
+        ),
+        "/review it for $25, not $internal or $unknown",
+      );
     }),
   );
 
