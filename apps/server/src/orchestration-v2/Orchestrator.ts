@@ -10109,8 +10109,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
-    if (!mayStartSubagentFollowup(command)) return;
     const pending = yield* Ref.get(events);
+    const answeredQuestion = pending.some(
+      (event) =>
+        event.type === "runtime-request.updated" &&
+        event.payload.kind === "user_input" &&
+        event.payload.status === "resolved" &&
+        event.payload.responseCapability.type === "message" &&
+        command.messageId === MessageId.make(`async-answer:${event.payload.id}`),
+    );
+    if (!answeredQuestion && !mayStartSubagentFollowup(command)) return;
     const message = pending
       .flatMap((event) =>
         event.type === "message.updated" && event.payload.id === command.messageId
@@ -10132,7 +10140,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       child.lineage.relationshipToParent !== "subagent" ||
       parentThreadId === null ||
-      (command.notification === undefined &&
+      (!answeredQuestion &&
+        command.notification === undefined &&
         command.createdBy !== "user" &&
         command.usageLimitContinuationOfRunId === undefined &&
         command.senderThreadId !== undefined &&
@@ -11410,10 +11419,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const now = yield* DateTime.now;
+      const responseProvenance =
+        command.createdBy !== undefined && command.creationSource !== undefined
+          ? { createdBy: command.createdBy, creationSource: command.creationSource }
+          : undefined;
+      const messageProvenance = responseProvenance ?? {
+        createdBy: "system" as const,
+        creationSource: "server" as const,
+      };
       const resolvedRequest = {
         ...runtimeRequest,
         status: "resolved" as const,
         resolvedAt: now,
+        ...(responseProvenance === undefined ? {} : { responseProvenance }),
         ...(command.decision === undefined ? {} : { decision: command.decision }),
         ...(command.feedback === undefined ? {} : { feedback: command.feedback }),
         ...(answers === undefined ? {} : { answers }),
@@ -11438,8 +11456,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             text: command.feedback,
             attachments: [],
             streaming: false,
-            createdBy: "user",
-            creationSource: "server",
+            ...messageProvenance,
             createdAt: now,
             updatedAt: now,
           },
@@ -11477,8 +11494,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             inputIntent: "steer",
             text: command.feedback,
             attachments: [],
-            createdBy: "user",
-            creationSource: "server",
+            ...messageProvenance,
           },
         });
       }
@@ -11595,8 +11611,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageId: MessageId.make(`async-answer:${command.requestId}`),
           text: replies.join("\n\n"),
           attachments: [],
-          createdBy: "user" as const,
-          creationSource: "server" as const,
+          ...messageProvenance,
           dispatchMode,
         };
         yield* dispatchMessage(answer, events, effects);

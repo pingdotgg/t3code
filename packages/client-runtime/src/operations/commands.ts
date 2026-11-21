@@ -1002,6 +1002,7 @@ export const respondToThreadApproval = Effect.fn("EnvironmentCommands.respondToT
   function* (input: RespondToThreadApprovalInput) {
     return yield* dispatch({
       type: "runtime-request.respond",
+      creationSource: input.creationSource ?? "web",
       commandId: yield* allocateCommandId(input),
       threadId: input.threadId,
       requestId: input.requestId,
@@ -1015,6 +1016,7 @@ export const respondToThreadUserInput = Effect.fn("EnvironmentCommands.respondTo
   function* (input: RespondToThreadUserInputInput) {
     return yield* dispatch({
       type: "runtime-request.respond",
+      creationSource: input.creationSource ?? "web",
       commandId: yield* allocateCommandId(input),
       threadId: input.threadId,
       requestId: input.requestId,
