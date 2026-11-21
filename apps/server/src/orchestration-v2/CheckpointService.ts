@@ -220,7 +220,11 @@ export interface CheckpointServiceV2Shape {
     readonly capturedAt: DateTime.Utc;
     readonly forceMissing?: boolean;
     readonly excludePaths?: ReadonlyArray<string>;
+    /** `capturesSoFar` from before an earlier wait on the folder's lock, when there was one. */
+    readonly capturesBeforeLock?: number;
   }) => Effect.Effect<OrchestrationV2Checkpoint, CheckpointServiceV2Error>;
+  /** How many captures have finished in a folder, for a caller that waits on it before `capture`. */
+  readonly capturesSoFar: (cwd: string) => Effect.Effect<number>;
   /**
    * A tracked repository's checkpoint for a run, with the baseline before it unless that is
    * already recorded. None when the run left the repository as it found it, which costs one
@@ -612,8 +616,6 @@ export const layer: Layer.Layer<
       input: Parameters<CheckpointServiceV2Shape["capture"]>[0] & {
         /** The commit a clean folder matches, which then needs no staging to snapshot. */
         readonly cleanHead?: string;
-        /** Captures seen before an earlier wait on this folder's lock, when there was one. */
-        readonly capturesBeforeLock?: number;
       },
     ) =>
       withCaptureLock(input.scope.cwd, input.capturesBeforeLock, (capturesBeforeLock) =>
@@ -1177,6 +1179,7 @@ export const layer: Layer.Layer<
       captureBaseline,
       materializeBaselineCheckpoint,
       capture,
+      capturesSoFar: (cwd: string) => Effect.sync(() => capturesSoFar(cwd)),
       captureRepository,
       restore,
       deleteStaleRefs,

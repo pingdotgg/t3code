@@ -644,15 +644,36 @@ it.effect("skips post-turn captures that waited out another capture's timeout in
           baselineRecorded: true,
         })
         .pipe(Effect.forkChild);
+      // A thread's root capture first materializes its baseline, which waits on the lock too.
+      const root = scopeFor("root");
+      const rootWaiting = yield* Effect.gen(function* () {
+        const capturesBeforeLock = yield* checkpoints.capturesSoFar(root.cwd);
+        yield* checkpoints.materializeBaselineCheckpoint({
+          scope: root,
+          ordinalWithinScope: 0,
+          nodeId: root.nodeId!,
+          capturedAt: root.createdAt,
+        });
+        return yield* checkpoints.capture({
+          scope: root,
+          ordinalWithinScope: 1,
+          runId: root.runId!,
+          nodeId: root.nodeId!,
+          appRunOrdinal: 1,
+          capturedAt: root.createdAt,
+          capturesBeforeLock,
+        });
+      }).pipe(Effect.forkChild);
       yield* TestClock.adjust("30 seconds");
       assert.strictEqual((yield* Fiber.join(first)).status, "error");
       // Room for every waiter to probe, so the count below is what fails without the fix.
-      yield* TestClock.adjust("90 seconds");
+      yield* TestClock.adjust("120 seconds");
       for (const fiber of waiting) {
         assert.strictEqual((yield* Fiber.join(fiber)).status, "error");
       }
       const repositoryCaptured = yield* Fiber.join(repositoryWaiting);
       assert.strictEqual(Option.getOrThrow(repositoryCaptured).checkpoint.status, "error");
+      assert.strictEqual((yield* Fiber.join(rootWaiting)).status, "error");
       assert.strictEqual(yield* Ref.get(attempts), 3, "each waiter spent its own full timeout");
 
       // A capture that starts after the timeout still probes for recovery.
