@@ -1,6 +1,6 @@
 # Status
 
-**State:** Phases 1–5 integrated and verified live against a disposable `conn-server`, including the CEF browser in the Browser panel. `scripts/check.sh` green. Final Dark Ocean + Light captures in `.shots/final/`.
+**State:** Phases 1–5 + right-panel parity surfaces (Files, Diff, Terminal, Browser/CEF, API, Database, MCP, Tasks, Pull Request, Linked Items, Device live streaming) integrated and passing `scripts/check.sh` + `--features automation` + `--features cef` clippy. Side-by-side VM visual verification for the latest batch (including the macOS vibrancy `Root` background fix) is queued on `nick-vm` unlock.
 
 Keep this file accurate. Update it whenever a milestone lands, a proof passes, or a blocker is found.
 
@@ -28,6 +28,9 @@ Keep this file accurate. Update it whenever a milestone lands, a proof passes, o
 - **GPUI version:** Pinned to `gpui-kit = "=0.9.0"` (matching `.refs/threadbear`). If macOS polish requires vendoring `gpui-component`, `gpui-base`, or `gpui-pre`, follow `.refs/threadbear/desktop/Cargo.toml`'s `[patch.crates-io]` pattern and record each patch here.
 - **Vendored `gpui-pre-macos` (2026-11-21):** Threadbear's copy (plain keys go to an embedded web view that holds the keyboard), plus frames paced by CVDisplayLink instead of `CAMetalDisplayLink`. Under the Metal link, a frame drawn during key dispatch stayed off screen until the next mouse event (Cmd+K from the composer, typing in the palette); reproduced and verified fixed in nick-vm. `CONN_GPUI_METAL_DISPLAY_LINK=1` opts back in.
 - **Overlay focus:** closing the palette or Settings returns the keyboard to what had it before (else the shell root), so shortcuts keep working after Escape.
+- **macOS vibrancy root fix (2026-11-21):** `gpui-component`'s `RootPlugin` painted an opaque `cx.theme().tokens.background` over the `NSVisualEffectView`, making T3 Code Light render RGB 251 instead of Conn's ~RGB 233. `vibrancy::install` now clears `root.style().background = Some(transparent_black())` (proven by `vibrancy_install_clears_root_opaque_background`), `vibrancy::sync_appearance` syncs `[NSApp setAppearance:]` (`NSAppearanceNameAqua` / `NSAppearanceNameDarkAqua`) on startup and theme switches, and right-panel surfaces drop opaque root `.bg(...)` overrides so they share `inset_card`'s frosted tint.
+- **Device screen streaming (2026-11-21):** Authenticated device hub ticket minting (`device_hub` in `conn-client`), MJPEG + AVCC/SEMU H.264 demuxing, macOS VideoToolbox BGRA hardware decode (tested end-to-end with a real H.264 IDR frame), iOS/Android touch + keyboard + hardware buttons, screenshot save to `~/Downloads`, foreground app & event log SSE, and visibility-gated stream lifecycle (`RightPanel::sync_surface_visibility` -> `DevicePanel::set_visible`).
+- **Pull Request & Linked Items surfaces (2026-11-21):** Reviewer/label pickers, base-branch freshness/update popover, submit review (`Comment`/`Approve`/`RequestChanges`), emoji reactions, PR Code tab diff syntax highlighting, agent prompt actions (`SendPrompt`), collapsible header on scroll, and gradient hover fade in Linked Items.
 - **Diagnostics:** GPUI warnings/errors go to stderr; `CONN_GPUI_FRAME_LOG=1` also logs keys, the palette action and renders per second.
 
 ## How to run (reproduction)
@@ -72,11 +75,12 @@ CEF lint check: `CARGO_TARGET_DIR=target-cef cargo clippy -p conn-web -p conn-ap
 
 ## Next
 
-- Composer: model/effort picker, attachments, BranchToolbar.
-- Approval cards: wire buttons to `runtime-request.respond`.
-- Files/Diff: resizable split; Terminal: mouse selection.
-- Browser: hide the native view while GPUI overlays (palette, Settings) cover it.
-- Reference: capture fresh Conn screenshots once screen recording is granted to the agent shell.
+- **VM side-by-side visual verification** (queued on `nick-vm` unlock): capture T3 Code Light + Dark Ocean screenshots in `nick-vm` against `Conn.app` to verify shell RGB (~233 vs 251), tooltip placement, Tasks chart gradients, and every right-panel surface (PR pickers/review/reactions, Device live stream, Diff syntax highlight & split drag, chat worked duration & changed-files card).
+- **Composer:** attachments (paperclip / image paste), BranchToolbar, effort/reasoning picker.
+- **Sidebar & Rail:** Add project dialog (`projects.create`), inline thread rename (`thread.metadata.update`), rail `+` workspace / Usage / Pull requests views.
+- **Chat:** collapsed agent-started row, inline file-path link chips, code-block wrap toggle.
+- **Diff & Terminal:** diff scopes (`working-tree`/`branch`/`turn`) & split diff view; terminal tabs/splits.
+- **macOS menu bar:** standard File / Edit / View / Window / Help menus.
 
 ## Phase 2 drift (fixed)
 
