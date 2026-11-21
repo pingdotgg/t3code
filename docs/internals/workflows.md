@@ -42,8 +42,9 @@ modes to pass on, so the link's access is the only ceiling on what it starts the
 linking machines is the workflow author's own code in a `step`; nothing here knows how.
 
 **An agent step's thread says which run it belongs to.** The thread is created with the run, the
-workflow and the step it is, and its lineage marks it as a workflow step, so every list of
-threads leaves it out the way it leaves out subagents: a run can have dozens, and they are read
+workflow and the step it is, and its lineage marks it as a workflow step, so the default lists
+of threads leave it out the way they leave out subagents (a list that asks for subagents gets
+them too): a run can have dozens, and they are read
 through the run. Only the server may set this, as with a link's origin; over a link the launch
 tool carries it and it is kept only for a link session.
 
@@ -98,7 +99,8 @@ verifies a copy beside the real file first, so its imports resolve the same way.
 
 **A workflow body is replayed.** After a restart or a wait, the body runs again from the top and
 each journaled action returns what it stored. Anything that touches the world goes through
-`journaled` (`step`, `agent` and `wait` are built on it). Code between steps must give the same
+a durable activity: `journaled` for `step` and `agent`, and a pair of open and close activities
+around a `DurableDeferred` for `wait`, so a fix to one is not a fix to the other. Code between steps must give the same
 answer on every pass: no clock, no randomness, no reads.
 
 **Names are the journal's keys.** A step's result and its row in the step list are both kept by
@@ -109,7 +111,8 @@ old one registered until its runs have ended. A run whose version is gone shows 
 **The engine reads integers as BigInt, and nothing else may.** It stores 64-bit ids, which
 `node:sqlite` only reads when asked for BigInts, so the engine's fibers and every call into it run
 with `SqlClient.SafeIntegers` on. That setting is inherited by whatever those fibers call.
-`journaled` turns it off again around a step's own code; without that, a step that reads a project
+`journaled` turns it off again around a step's own code, and the sweep turns it off around the
+turn stops and the `onEnd` it runs for a cancelled run; without that, a step that reads a project
 gets rows it cannot decode.
 
 **The pause is recorded in two places, a moment apart.** A failing step marks its run paused from
