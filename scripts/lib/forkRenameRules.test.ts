@@ -234,6 +234,17 @@ describe("FORK_RENAME_RULES", () => {
     ["apps/server/src/provider/model-manifest.json", '"t3CodeRange": ">=0.0.44",', "kept"],
     ["apps/server/src/provider/x.ts", "satisfies(version, entry.t3CodeRange)", "kept"],
     ["scripts/install.test.ts", 'pack(root, "legacy", { t3: "t3 v1.2.3" })', "kept"],
+    // Fuzzy-match samples stay as upstream wrote them, so names and queries still match.
+    [
+      "packages/client-runtime/src/state/filesystem.test.ts",
+      'expect(names("t3c")).toEqual([]);',
+      "upstream-reference",
+    ],
+    [
+      "packages/shared/src/speech.test.ts",
+      'hints: ["  T3   Code ", "t3 code"],',
+      "upstream-reference",
+    ],
     // A Windows task name follows serviceTaskName; the repository name beside it stays.
     [
       "apps/server/src/cloud/bootService.test.ts",

@@ -995,6 +995,13 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     path: /^packages\/shared\/src\/paletteSearch(?:\.test)?\.ts$/,
   },
   {
+    id: "upstream-text-match-samples",
+    class: "upstream-reference",
+    reason:
+      "Sample names and queries in the filesystem browse filter and speech hint tests, which only have to match one another; renaming some of them breaks the match.",
+    path: /^packages\/(?:client-runtime\/src\/state\/filesystem|shared\/src\/speech)\.test\.ts$/,
+  },
+  {
     id: "kept-upstream-alpha-dir",
     class: "kept",
     reason:
