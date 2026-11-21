@@ -24,4 +24,6 @@ CONN_GPUI_SERVER="http://127.0.0.1:$PORT" CONN_GPUI_TOKEN_FILE="$DEV/bearer" \
   nohup "$ROOT/target/debug/conn-app" > "$DEV/app.log" 2>&1 &
 echo $! > "$DEV/app.pid"
 for _ in $(seq 1 100); do [[ -s "$DEV/automation-port" ]] && break; sleep 0.1; done
+# Launched from a background shell, the window opens behind other apps: bring it forward.
+osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $(cat "$DEV/app.pid")) to true" >/dev/null 2>&1 || true
 echo "app pid $(cat "$DEV/app.pid"), automation port $(cat "$DEV/automation-port" 2>/dev/null)"
