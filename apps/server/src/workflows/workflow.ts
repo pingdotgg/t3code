@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Activity, DurableClock, DurableDeferred, Workflow, WorkflowEngine } from "effect/workflow";
 
-import { checkOptions } from "./options.ts";
+import { checkOptions, durationOf } from "./options.ts";
 import {
   EngineLink,
   forStep,
@@ -175,7 +175,10 @@ export interface StepRetry {
 // Once, unless asked: a step that posts or merges must not do it again after a lost reply.
 const DEFAULT_RETRY: StepRetry = { times: 0 };
 
-const STEP_OPTIONS = ["returns", "retry"];
+const checkStepOptions = (what: string, options: { readonly retry?: StepRetry | undefined }) => {
+  checkOptions(what, options, ["returns", "retry"]);
+  checkOptions(`${what}'s retry`, options?.retry, ["times", "schedule"]);
+};
 
 /** How `step.try` ended: its value, or why it failed once its retries were used up. */
 export type StepAttempt<A> =
@@ -201,7 +204,7 @@ export const step = Object.assign(
     options: { readonly returns: Schema.Codec<A, I>; readonly retry?: StepRetry },
     code: Effect.Effect<A, E, InStep>,
   ): Effect.Effect<A, never, InRun> => {
-    checkOptions(`step("${name}")`, options, STEP_OPTIONS);
+    checkStepOptions(`step("${name}")`, options);
     return Effect.orDie(stepAs(claim(name), name, options, code));
   },
   {
@@ -211,7 +214,7 @@ export const step = Object.assign(
       options: { readonly returns: Schema.Codec<A, I>; readonly retry?: StepRetry },
       code: Effect.Effect<A, E, InStep>,
     ): Effect.Effect<StepAttempt<A>, never, InRun> => {
-      checkOptions(`step.try("${name}")`, options, STEP_OPTIONS);
+      checkStepOptions(`step.try("${name}")`, options);
       return Effect.orDie(
         stepAs(
           claim(name),
@@ -286,19 +289,24 @@ export const sleep = Effect.fn("workflow.sleep")(function* (
   name: string,
   duration: Duration.Input,
 ): Effect.fn.Return<void, never, InRun> {
+  const length = durationOf(`sleep("${name}")`, duration);
   const run = yield* claim(name);
   // Listed like any step, with when it wakes, so a run that sleeps for days says so.
   yield* Activity.make({
     name: `sleep/${name}/open`,
     execute: Effect.gen(function* () {
-      const wakes = DateTime.addDuration(yield* DateTime.now, Duration.fromInputUnsafe(duration));
+      const wakes = DateTime.addDuration(yield* DateTime.now, length);
       yield* run.store.stepStarted(run.runId, name, "sleep");
       yield* run.store.stepDetail(run.runId, name, DateTime.formatIso(wakes));
       yield* run.store.runStatus(run.runId, "waiting", `sleep ${name}`);
     }),
   });
   // Effect keeps a short sleep in memory, where a restart would start it over.
-  yield* DurableClock.sleep({ name: `sleep/${name}`, duration, inMemoryThreshold: Duration.zero });
+  yield* DurableClock.sleep({
+    name: `sleep/${name}`,
+    duration: length,
+    inMemoryThreshold: Duration.zero,
+  });
   yield* Activity.make({
     name: `sleep/${name}/close`,
     execute: Effect.andThen(
@@ -625,7 +633,8 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
     "onEnd",
   ]);
   // Read once now, so a duration that does not parse fails the file and not a paused run later.
-  for (const rest of options.resumeAfter ?? []) Duration.fromInputUnsafe(rest);
+  for (const rest of options.resumeAfter ?? [])
+    durationOf(`workflow("${name}")'s resumeAfter`, rest);
   checkTriggers(name, options.triggers ?? []);
   return definitionOf(name, options, body);
 };
