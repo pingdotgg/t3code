@@ -463,6 +463,37 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("searches only the picture file chips visible in the viewer's theme", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      yield* putItems([
+        item(
+          "picture",
+          1,
+          '<picture><source media="(prefers-color-scheme: dark)" srcset="/workspace/repo/notes.ts#L42-L64"><img src="/workspace/repo/screenshot.png" alt="notes"></picture>',
+        ),
+        item(
+          "fallback",
+          2,
+          '<picture><source media="(prefers-color-scheme: dark)" srcset="/workspace/repo/dark.png"><img src="/workspace/repo/fallback.ts#L42-L64" alt="notes"></picture>',
+        ),
+      ]);
+      const dark = { threadId, query: "L42–64", theme: "dark" } as const;
+      const light = { ...dark, theme: "light" } as const;
+      const darkResult = yield* projection.searchThread(dark);
+      assert.equal(darkResult.totalMatches, 1);
+      assert.equal(darkResult.match?.entryId, "picture");
+      assert.equal(
+        (yield* projection.searchThread({ ...light, query: "notes.ts" })).totalMatches,
+        0,
+      );
+      const lightResult = yield* projection.searchThread(light);
+      assert.equal(lightResult.totalMatches, 1);
+      assert.equal(lightResult.match?.entryId, "fallback");
+      assert.equal((yield* projection.searchThread(dark)).match?.entryId, "picture");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("refreshes file labels when the project cwd changes without a thread event", () =>
     Effect.gen(function* () {
       const projection = yield* setup;

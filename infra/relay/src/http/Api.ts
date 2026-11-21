@@ -527,12 +527,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
             environmentId: link.environmentId,
             environmentPublicKey: link.environmentPublicKey,
           });
-    // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
-    const deprovisioned = yield* managedEndpointProvider.deprovision({
-      userId: input.userId,
-      environmentId: input.environmentId,
-      target: deprovisionTarget,
-    });
+    // Cleared before teardown, which can fail: a later link under another key shares this inbox.
     const endpointKey =
       deprovisionTarget && input.managedEndpointNamespace
         ? HeldHooks.endpointKeyForTunnelName(
@@ -551,6 +546,12 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
         ),
       );
     }
+    // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
+    const deprovisioned = yield* managedEndpointProvider.deprovision({
+      userId: input.userId,
+      environmentId: input.environmentId,
+      target: deprovisionTarget,
+    });
     if (!deprovisioned) {
       const key = { userId: input.userId, environmentId: input.environmentId };
       const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
@@ -895,6 +896,12 @@ export const layerClientApi = HttpApiBuilder.group(
               new RelayEnvironmentLinkProofInvalidError({
                 code: "environment_link_proof_invalid",
                 reason: "origin_not_allowed",
+                traceId,
+              }),
+            ManagedEndpointDeprovisioningFailed: (_error, traceId) =>
+              new RelayEnvironmentLinkUnavailableError({
+                code: "environment_link_unavailable",
+                reason: "managed_endpoint_provisioning_failed",
                 traceId,
               }),
             ManagedTunnelLimitExceeded: (limitError, traceId) =>
@@ -1424,6 +1431,21 @@ export const layerServerApi = HttpApiBuilder.group(
             holdWebhooksWhileOffline: payload.holdWebhooksWhileOffline,
           });
           return payload;
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "updateLiveActivityPreference",
+        Effect.fn("relay.api.server.updateLiveActivityPreference")(function* ({ params, payload }) {
+          yield* requireOwnEnvironment(params.environmentId);
+          const principal = yield* RelayEnvironmentPrincipal;
+          const links = yield* EnvironmentLinks.EnvironmentLinks;
+          const ok = yield* links.updateLiveActivityPreference({
+            userId: payload.cloudUserId,
+            environmentId: params.environmentId,
+            environmentPublicKey: principal.environmentPublicKey,
+            liveActivitiesEnabled: payload.liveActivitiesEnabled,
+          });
+          return { ok };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(

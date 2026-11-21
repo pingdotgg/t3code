@@ -114,13 +114,15 @@ A provider lives in its own `packages/provider-<name>` package, with
   the server's replay testkits drive; testkits that need the orchestrator stay in the server.
   Settings live in `providerInstances`; new providers are off by default.
 - **Package boundaries.** Server code imports only `@t3tools/provider-core/server/*`, contracts,
-  and shared. It reaches the server through `ProviderHost` (paths, settings, background demand,
+  and shared. It reaches the server through `ProviderHost` (paths, settings, background demand, version policy,
   attachments, stored credentials), never through `apps/server`. Tests use `@t3tools/provider-testing`.
 - **Server registration:** the driver's entry in
   [`builtInDrivers.ts`](../../apps/server/src/provider/builtInDrivers.ts). The driver carries its
   adapter driver. Also its position in the [status order](../../apps/server/src/provider/providerStatusCache.ts), a
   compatibility policy in [`model-manifest.json`](../../apps/server/src/provider/model-manifest.json)
   (bump `updatedAt`; see [model manifest](./model-manifest.md)), and its default model in contracts.
+  A `broken` range refuses new sessions for that driver, so declare a minimum there, not as a
+  constant in the driver. A version that is not plain `X.Y.Z` needs the policy's `versionPattern`.
 - **Client registration:** the client definition in the web and mobile provider registries, and
   settings search terms. Clients draw the package icon; do not add a per-driver icon branch.
 - **Docs:** a `docs/user/providers-<name>.md` guide in the product's voice, a row in the

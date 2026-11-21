@@ -31,6 +31,7 @@ import {
   type PullRequestDetail,
   type PullRequestComment,
   PullRequestOperationError,
+  type PullRequestWatchUntil,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -48,6 +49,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -64,6 +66,7 @@ import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
+import * as ModelManifest from "../provider/ModelManifest.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -207,9 +210,9 @@ const antigravityProviderInstance = {
   },
 } satisfies ProviderInstance;
 
-const layerTestProviderInstanceRegistry = Layer.succeed(
-  ProviderInstanceRegistry.ProviderInstanceRegistry,
-  {
+const layerTestProviderInstanceRegistry = Layer.merge(
+  ModelManifest.layerTest,
+  Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
     getInstance: (instanceId) =>
       Effect.succeed(
         [
@@ -228,7 +231,7 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
     listUnavailable: Effect.succeed([]),
     streamChanges: Stream.empty,
     subscribeChanges: Effect.never,
-  },
+  }),
 );
 
 const watchedPullRequestDetail = (input: {
@@ -4276,6 +4279,100 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isUndefined(yield* watchOf);
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(messages, []);
+
+      // A client start sends no CI state, so the link's last sync seeds it.
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("pr-watch-ci-running"),
+        threadId,
+        ...key,
+        snapshot: {
+          state: "open",
+          title: "Watched pull request",
+          headBranch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-02T12:30:00.000Z",
+          checksState: "pending",
+        },
+        stack: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-client-start"),
+        threadId,
+        ...key,
+        watching: true,
+      });
+      assert.isTrue((yield* watchOf)?.checksPending);
+    }),
+  );
+
+  it.effect("keeps how long a watch holds across reads until the agent changes it", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
+      const threadId = ThreadId.make("runtime-pull-request-watch-until-merged");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-until-create"),
+        threadId,
+        projectId: ProjectId.make("pr-watch-project"),
+        title: "Watch until merged",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+      const watchOf = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.watch,
+      );
+      const watch = (id: string, until?: PullRequestWatchUntil) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(id),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" },
+          ...(until !== undefined && { until }),
+        });
+
+      yield* watch("pr-watch-until-start");
+      assert.isUndefined((yield* watchOf)?.until);
+
+      yield* watch("pr-watch-until-on", "merged");
+      const started = yield* watchOf;
+      assert.equal(started?.until, "merged");
+      if (started === undefined) return;
+
+      // A read that began before the agent set it must not drop it.
+      const { until: _read, ...readBefore } = started;
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make("pr-watch-until-record"),
+        threadId,
+        ...key,
+        startedAt: started.startedAt,
+        watch: { ...readBefore, headSha: "abc123", checksPending: false },
+      });
+      assert.equal((yield* watchOf)?.until, "merged");
+      assert.equal((yield* watchOf)?.headSha, "abc123");
+
+      yield* watch("pr-watch-until-again");
+      assert.equal((yield* watchOf)?.until, "merged");
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.equal((yield* watchOf)?.until, "merged");
+
+      yield* watch("pr-watch-until-off", "checks");
+      assert.isUndefined((yield* watchOf)?.until);
+      assert.equal((yield* watchOf)?.headSha, "abc123");
     }),
   );
 
@@ -4593,6 +4690,494 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  // regression: watched #26248 merged and its agent kept saying it was still watching
+  it.effect("wakes once when a watched pull request merges, naming the merge commit", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-merged");
+      const projectId = ProjectId.make("pr-watch-merged-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch merged",
+        workspaceRoot: "/workspace/watch-merged",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-merged-create"),
+        threadId,
+        projectId,
+        title: "Watch merged",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-merged-start"),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 15,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
+      });
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              detail: () =>
+                Effect.succeed({
+                  ...watchedPullRequestDetail({
+                    projectId,
+                    number: 15,
+                    at: "2026-10-02T12:00:00.000Z",
+                  }),
+                  state: "merged" as const,
+                  mergedAt: "2026-10-02T12:00:00.000Z",
+                  mergeCommitSha: "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9",
+                  mergedBy: { login: "juliusmarminge", name: null, avatarUrl: null },
+                }),
+              activity: () =>
+                Effect.succeed({
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                }),
+            }),
+          ),
+        ),
+      );
+      yield* reactor.sweep;
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+
+      assert.isUndefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
+      const wakes = (yield* orchestrator.getThreadRecords(threadId, ["messages"])).messages.filter(
+        (message) => message.notification != null,
+      );
+      assert.deepEqual(
+        wakes.map((message) => message.notification?.summary),
+        ["#15: merged, stopped watching"],
+      );
+      assert.include(wakes[0]!.text, "merged into main by juliusmarminge as 3b2f958");
+    }),
+  );
+
+  it.effect.each([
+    // The agent's merge of #19 needs no wake, but its command did not close #20.
+    { name: "completed", status: "completed", wakes: ["#20: closed, stopped watching"] },
+    // A merge command that failed ended nothing itself.
+    {
+      name: "failed",
+      status: "failed",
+      wakes: ["#19: merged, stopped watching", "#20: closed, stopped watching"],
+    },
+    {
+      name: "exit-1",
+      status: "completed",
+      exitCode: 1,
+      wakes: ["#19: merged, stopped watching", "#20: closed, stopped watching"],
+    },
+    {
+      name: "failure-output",
+      status: "completed",
+      output: "GraphQL: Pull request is not mergeable\n<exited with exit code 1>",
+      wakes: ["#19: merged, stopped watching", "#20: closed, stopped watching"],
+    },
+  ] as const)(
+    "ends a watch without a wake when the thread's own agent merged it ($name)",
+    ({ name: key, status: ended, wakes: expected, ...result }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-own-merge-${key}`);
+        const projectId = ProjectId.make(`pr-watch-own-merge-${key}-project`);
+        yield* seedProject({
+          projectId,
+          title: "Watch own merge",
+          workspaceRoot: `/workspace/watch-own-merge-${key}`,
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-own-merge-${key}-create`),
+          threadId,
+          projectId,
+          title: "Watch own merge",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        for (const number of [19, 20]) {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`pr-watch-own-merge-${key}-start-${number}`),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number,
+            watching: true,
+            link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
+          });
+        }
+
+        const states = new Map<number, PullRequestDetail["state"]>([
+          [19, "open"],
+          [20, "open"],
+        ]);
+        const detailReads = yield* Queue.unbounded<number>();
+        const agentRead = yield* Deferred.make<void>();
+        // Each of the reactor's subscribers reads every event, as each event sink stream does.
+        const agentEvents = yield* PubSub.unbounded<OrchestrationV2DomainEvent>({ replay: 16 });
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            detail: (input) =>
+              Effect.sync(() => states.get(input.number)!).pipe(
+                Effect.tap(() => Queue.offer(detailReads, input.number)),
+                // Reads of an open pull request are slow, so the first sweep outlasts the merge.
+                Effect.tap((state) => (state === "open" ? Effect.sleep("1 second") : Effect.void)),
+                Effect.map((state) => ({
+                  ...watchedPullRequestDetail({
+                    projectId,
+                    number: input.number,
+                    at: "2026-10-02T12:00:00.000Z",
+                  }),
+                  state,
+                })),
+              ),
+            activity: () =>
+              Effect.succeed({
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+            // A fingerprint that never changes, so only a forced read sees an end.
+            watchFingerprint: () => Effect.succeed({ status: "steady", remarks: "" }),
+            invalidate: () => Effect.void,
+            changes: () => Stream.never,
+          }),
+          Layer.succeed(Orchestrator.OrchestratorV2, {
+            ...orchestrator,
+            streamDomainEvents: Stream.fromPubSub(agentEvents),
+          }),
+          // Only the read at a command's end asks for one thread's watches.
+          Layer.effect(
+            ProjectionStore.ProjectionStoreV2,
+            Effect.map(ProjectionStore.ProjectionStoreV2, (store) => ({
+              ...store,
+              getThreadsWithPullRequests: (thread?: ThreadId) =>
+                store
+                  .getThreadsWithPullRequests(thread)
+                  .pipe(
+                    Effect.tap(() =>
+                      thread === undefined ? Effect.void : Deferred.succeed(agentRead, undefined),
+                    ),
+                  ),
+            })),
+          ),
+        );
+        const runId = RunId.make(`run:${threadId}:1`);
+        const command = (status: "running" | typeof ended) =>
+          Effect.map(DateTime.now, (at): OrchestrationV2DomainEvent => ({
+            type: "turn-item.updated",
+            id: EventId.make(`event:${threadId}:merge-${status}`),
+            threadId,
+            runId,
+            occurredAt: at,
+            payload: {
+              id: TurnItemId.make(`item:${threadId}:merge`),
+              threadId,
+              runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status,
+              title: null,
+              startedAt: at,
+              completedAt: status === "completed" ? at : null,
+              updatedAt: at,
+              type: "command_execution",
+              input: "gh pr merge 19 --squash",
+              ...(status === "running" ? {} : result),
+            },
+          }));
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* reactor.start();
+        // The first sweep has read both as open, and has not recorded that yet.
+        yield* Queue.take(detailReads);
+        yield* Queue.take(detailReads);
+
+        // While the agent merges #19, someone else closes #20.
+        yield* PubSub.publish(agentEvents, yield* command("running"));
+        states.set(19, "merged");
+        states.set(20, "closed");
+        // The command's end reads the thread's watches in full, after that sweep.
+        yield* PubSub.publish(agentEvents, yield* command(ended));
+        yield* Deferred.await(agentRead);
+        yield* TestClock.adjust("1 second");
+        yield* Queue.take(detailReads);
+        yield* Queue.take(detailReads);
+        // A sweep waits for that read to finish.
+        yield* reactor.sweep;
+        yield* worker.drain();
+        const thread = yield* orchestrator.getThreadShell(threadId);
+        assert.isTrue(thread?.pullRequests?.every((link) => link.watch === undefined));
+        const wakes = (yield* orchestrator.getThreadRecords(threadId, [
+          "messages",
+        ])).messages.flatMap((message) => message.notification?.summary ?? []);
+        assert.sameMembers(wakes, [...expected]);
+      }),
+  );
+
+  it.effect("a pull request closed, reopened, and then merged wakes once for each end", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-reopened");
+      const projectId = ProjectId.make("pr-watch-reopened-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch reopened",
+        workspaceRoot: "/workspace/watch-reopened",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-reopened-create"),
+        threadId,
+        projectId,
+        title: "Watch reopened",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 16 };
+      const watch = (id: string) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-reopened-${id}`),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/16", source: "agent" },
+        });
+      yield* watch("start");
+
+      let state: PullRequestDetail["state"] = "closed";
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          detail: () =>
+            Effect.sync(() => ({
+              ...watchedPullRequestDetail({
+                projectId,
+                number: 16,
+                at: "2026-10-02T12:00:00.000Z",
+              }),
+              state,
+              checks: [{ name: "lint", status: "pending" as const, description: null, url: null }],
+            })),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+      const summaries = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
+      );
+      const watching = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.watch !== undefined,
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      assert.deepEqual(yield* summaries, ["#16: closed, stopped watching"]);
+      assert.isFalse(yield* watching);
+
+      // Reopening does not restart the watch; the agent was told to watch again.
+      state = "open";
+      yield* watch("again");
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      assert.isTrue(yield* watching);
+      assert.deepEqual(yield* summaries, ["#16: closed, stopped watching"]);
+
+      // The link's own sync can see the merge before the watch reads it.
+      state = "merged";
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("pr-watch-reopened-synced"),
+        threadId,
+        ...key,
+        snapshot: {
+          state: "merged",
+          title: "Watched pull request",
+          headBranch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-02T12:30:00.000Z",
+          mergedAt: "2026-10-02T12:30:00.000Z",
+        },
+        stack: null,
+      });
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      assert.deepEqual(yield* summaries, [
+        "#16: closed, stopped watching",
+        "#16: merged, stopped watching",
+      ]);
+      assert.isFalse(yield* watching);
+    }),
+  );
+
+  it.effect.each([
+    // A transport failure, which an open pull request's watch outlasts.
+    { name: "unreachable", reason: "failed" },
+    // A rate limit pauses the watch before its detail read.
+    { name: "rate-limited", reason: "rate-limited" },
+  ] as const)(
+    "wakes from a merged snapshot when the host cannot be read ($name)",
+    ({ name, reason }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const projectId = ProjectId.make(`pr-watch-merged-unreadable-${name}-project`);
+        yield* seedProject({
+          projectId,
+          title: "Watch merged unreadable",
+          workspaceRoot: `/workspace/watch-merged-unreadable-${name}`,
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 8 };
+        // Another thread watches the same pull request, before its own link syncs.
+        const [merged, unsynced] = (["merged", "unsynced"] as const).map((which) =>
+          ThreadId.make(`runtime-pull-request-watch-merged-unreadable-${name}-${which}`),
+        ) as [ThreadId, ThreadId];
+        for (const threadId of [merged, unsynced]) {
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${threadId}-create`),
+            threadId,
+            projectId,
+            title: "Watch merged unreadable",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`${threadId}-start`),
+            threadId,
+            ...key,
+            watching: true,
+            link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
+          });
+        }
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`${merged}-synced`),
+          threadId: merged,
+          ...key,
+          snapshot: {
+            state: "merged",
+            title: "Watched pull request",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: "2026-10-02T12:30:00.000Z",
+            mergedAt: "2026-10-02T12:30:00.000Z",
+          },
+          stack: null,
+        });
+        const failure = (operation: string) =>
+          new PullRequestOperationError({
+            operation,
+            detail: "host unreadable",
+            cause: new PullRequestProviderError({
+              provider: SourceControlProviderKind.make("github"),
+              operation,
+              reason,
+              detail: "host unreadable",
+            }),
+          });
+        const reactor = yield* PullRequestWatchReactor.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              NodeCrypto.layer,
+              Layer.mock(PullRequestService.PullRequestService)({
+                watchFingerprint: () =>
+                  reason === "rate-limited"
+                    ? Effect.fail(failure("watchFingerprint"))
+                    : Effect.succeed(null),
+                invalidate: () => Effect.void,
+                detail: () => Effect.fail(failure("detail")),
+                activity: () => Effect.fail(failure("activity")),
+              }),
+            ),
+          ),
+        );
+        yield* reactor.sweep;
+        yield* TestClock.adjust("10 minutes");
+        yield* reactor.sweep;
+
+        const watchOf = (threadId: ThreadId) =>
+          Effect.map(
+            orchestrator.getThreadShell(threadId),
+            (thread) => thread?.pullRequests?.[0]?.watch,
+          );
+        assert.isUndefined(yield* watchOf(merged));
+        assert.isDefined(yield* watchOf(unsynced));
+        const wakes = (yield* orchestrator.getThreadRecords(merged, ["messages"])).messages.filter(
+          (message) => message.notification != null,
+        );
+        assert.deepEqual(
+          wakes.map((message) => message.notification?.summary),
+          ["#8: merged, stopped watching"],
+        );
+        assert.include(wakes[0]!.text, "merged into main, so");
+      }),
+  );
+
   it.effect("ends a watch on a closed pull request whose activity cannot be read", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -4660,6 +5245,156 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ["#8: closed, stopped watching"],
       );
     }),
+  );
+
+  it.effect.each([
+    // Failures from before the watch stay baseline, even with checks still running.
+    {
+      label: "finished failing",
+      atStart: "failing",
+      reads: [
+        { lint: "failure", test: "success" },
+        { lint: "failure", test: "success" },
+      ],
+      told: [[], []],
+    },
+    {
+      label: "failing and still running",
+      atStart: "failing",
+      reads: [
+        { lint: "failure", test: "pending" },
+        { lint: "failure", test: "failure" },
+      ],
+      told: [[], ["test"]],
+    },
+    // Pending CI had no failure, so one the first read finds landed after the start.
+    {
+      label: "pending",
+      atStart: "pending",
+      reads: [
+        { lint: "failure", test: "pending" },
+        { lint: "failure", test: "failure" },
+      ],
+      told: [["lint"], ["test"]],
+    },
+  ] as const)(
+    "reports only failures after a watch that starts on $label CI",
+    ({ label, atStart, reads, told }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-start-${label}`);
+        const projectId = ProjectId.make("pr-watch-start-project");
+        yield* seedProject({
+          projectId,
+          title: "Watch start",
+          workspaceRoot: "/workspace/watch-start",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-start-create-${label}`),
+          threadId,
+          projectId,
+          title: "Watch start",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 13 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`pr-watch-start-link-${label}`),
+          threadId,
+          ...key,
+          url: "https://github.com/pingdotgg/t3code/pull/13",
+          source: "manual",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`pr-watch-start-sync-${label}`),
+          threadId,
+          ...key,
+          snapshot: {
+            state: "open",
+            title: "Watched pull request",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: "2026-10-02T12:00:00.000Z",
+            checksState: atStart,
+          },
+          stack: null,
+        });
+        // A client start, which carries no CI state of its own.
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-start-watch-${label}`),
+          threadId,
+          ...key,
+          watching: true,
+        });
+
+        let read = 0;
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            detail: () =>
+              Effect.sync(() => ({
+                ...watchedPullRequestDetail({
+                  projectId,
+                  number: 13,
+                  at: "2026-10-02T12:00:00.000Z",
+                }),
+                headSha: "ad70160aaa",
+                checks: Object.entries(reads[read]!).map(([name, status]) => ({
+                  name,
+                  status,
+                  description: null,
+                  url: null,
+                })),
+              })),
+            activity: () =>
+              Effect.succeed({
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+          }),
+        );
+        const texts = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) => messages.map((message) => message.text),
+        );
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        for (const [index, names] of told.entries()) {
+          read = index;
+          const before = (yield* texts).length;
+          if (index > 0) yield* TestClock.adjust("10 minutes");
+          yield* reactor.sweep;
+          yield* worker.drain();
+          const wakes = (yield* texts).slice(before);
+          assert.equal(wakes.length, names.length === 0 ? 0 : 1);
+          // The finished section lists every failing check, so only the failed one counts here.
+          const failedSections = wakes.map((text) => text.split("- Every check has finished")[0]!);
+          for (const name of ["lint", "test"]) {
+            assert.equal(
+              failedSections.some((text) => text.includes(`  - ${name}`)),
+              names.includes(name as never),
+              `read ${index} told ${name}`,
+            );
+          }
+        }
+      }),
   );
 
   it.effect("baselines a new watch across restarts and reports later changes", () =>
@@ -5015,7 +5750,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         e2e = "success";
         yield* TestClock.adjust("10 minutes");
         yield* reactor.sweep;
-        assert.deepEqual(yield* summaries, []);
+        assert.deepEqual(yield* summaries, ["#17: checks finished; #18: checks finished"]);
         assert.isFalse(yield* checksPending);
 
         // A push clears the answer while a read with news is in flight. That read's answer is the
@@ -5044,7 +5779,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         gate = null;
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(inFlight);
-        assert.lengthOf(yield* summaries, 1);
+        assert.lengthOf(yield* summaries, 2);
         assert.isUndefined(yield* checksPending);
 
         // The next sweep reads it again though nothing on the host changed.
@@ -5570,7 +6305,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ];
         const detailReads = yield* Queue.unbounded<void>();
         const watchListings = yield* Queue.unbounded<void>();
-        const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const domainEvents = yield* PubSub.unbounded<OrchestrationV2DomainEvent>({ replay: 16 });
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
@@ -5602,10 +6337,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             invalidate: () => Effect.void,
             changes: () => Stream.never,
           }),
-          // Events come from a queue that exists before the reactor subscribes, so none is missed.
+          // Each subscriber reads every event, as each event sink stream does, and replay means one
+          // that subscribes late misses none.
           Layer.mock(Orchestrator.OrchestratorV2)({
             dispatch: orchestrator.dispatch,
-            streamDomainEvents: Stream.fromQueue(domainEvents),
+            streamDomainEvents: Stream.fromPubSub(domainEvents),
           }),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThreadsWithPullRequests: (id) =>
@@ -5636,7 +6372,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           watching: true,
           link: { url: "https://github.com/pingdotgg/t3code/pull/16", source: "agent" },
         });
-        yield* Queue.offerAll(
+        yield* PubSub.publishAll(
           domainEvents,
           started.storedEvents.map((stored) => stored.event),
         );
@@ -10918,6 +11654,247 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
       );
       assert.deepEqual(interrupted.providerTurns, []);
       assert.isFalse(yield* effectWorker.runOnce());
+    }),
+  );
+});
+
+it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) => {
+  it.effect("takes a result a completed turn still owes from the turn after it", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-owed-output-project");
+      const threadId = ThreadId.make("runtime-layer-owed-output-thread");
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-owed-output-project-create"),
+        projectId,
+        title: "Owed output project",
+        workspaceRoot: "/tmp/runtime-layer-owed-output-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-owed-output-create"),
+        threadId,
+        projectId,
+        title: "Owed output",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const send = (key: string, outputSchema?: { readonly type: "object" }) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-owed-output-${key}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-owed-output-${key}`),
+          text: key,
+          attachments: [],
+          modelSelection,
+          ...(outputSchema === undefined ? {} : { outputSchema }),
+          dispatchMode: { type: "start_immediately" },
+        });
+      yield* send("asked", { type: "object" });
+      const asked = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      // The agent ended its turn to wait for something, without the result.
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}-asked-completed`),
+            type: "run.updated",
+            threadId,
+            runId: asked.id,
+            occurredAt: asked.requestedAt,
+            payload: { ...asked, status: "completed", completedAt: asked.requestedAt },
+          },
+        ],
+      });
+      yield* send("woken");
+
+      const accepted = yield* threadManagement.submitRunOutput({
+        threadId,
+        commandId: CommandId.make("runtime-layer-owed-output-submit"),
+        json: '{"head":"abc"}',
+      });
+      assert.equal(accepted.runId, asked.id);
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(after.runs.find((run) => run.id === asked.id)?.output?.value, {
+        head: "abc",
+      });
+    }),
+  );
+
+  it.effect("turns down a provider command asked for a result", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make("runtime-layer-command-output-project");
+      const threadId = ThreadId.make("runtime-layer-command-output-thread");
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-command-output-project-create"),
+        projectId,
+        title: "Command output project",
+        workspaceRoot: "/tmp/runtime-layer-command-output-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-command-output-create"),
+        threadId,
+        projectId,
+        title: "Command output",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const rejected = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("runtime-layer-command-output-message"),
+          threadId,
+          messageId: MessageId.make("runtime-layer-command-output-message"),
+          text: "/goal Review the changes",
+          attachments: [],
+          modelSelection,
+          outputSchema: { type: "object" },
+          dispatchMode: { type: "start_immediately" },
+        })
+        .pipe(Effect.flip);
+      assert.include(String(rejected.cause), "cannot be asked for a result");
+      assert.deepEqual((yield* orchestrator.getThreadProjection(threadId)).runs, []);
+
+      // Nor can a queued request for a result be edited into one.
+      for (const [key, text, dispatchMode] of [
+        ["active", "Start", { type: "start_immediately" }],
+        ["queued", "Return a verdict.", { type: "queue_after_active" }],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-command-output-${key}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-command-output-${key}`),
+          text,
+          attachments: [],
+          modelSelection,
+          ...(key === "queued" ? { outputSchema: { type: "object" } } : {}),
+          dispatchMode,
+        });
+      }
+      const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.status === "queued",
+      )!;
+      const edit = (key: string, text: string) =>
+        orchestrator.dispatch({
+          type: "queued-run.edit",
+          commandId: CommandId.make(`runtime-layer-command-output-edit-${key}`),
+          threadId,
+          runId: queued.id,
+          text,
+        });
+      const refused = yield* edit("goal", "/goal Review the changes").pipe(Effect.flip);
+      assert.include(String(refused.cause), "cannot be asked for a result");
+      yield* edit("prompt", "Return a verdict, briefly.");
+    }),
+  );
+
+  it.effect("turns down a result submitted after a stop was requested", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-stopped-output-project");
+      const threadId = ThreadId.make("runtime-layer-stopped-output-thread");
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-stopped-output-project-create"),
+        projectId,
+        title: "Stopped output project",
+        workspaceRoot: "/tmp/runtime-layer-stopped-output-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-stopped-output-create"),
+        threadId,
+        projectId,
+        title: "Stopped output",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-stopped-output-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-stopped-output-message"),
+        text: "Return a verdict.",
+        attachments: [],
+        modelSelection,
+        outputSchema: { type: "object" },
+        dispatchMode: { type: "start_immediately" },
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      // The stop is asked for while the provider has not settled it, so the run is still active.
+      const at = run.requestedAt;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}-interrupt-request`),
+            type: "turn-item.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: at,
+            payload: {
+              id: TurnItemId.make(`${threadId}-interrupt-request`),
+              type: "run_interrupt_request",
+              threadId,
+              runId: run.id,
+              nodeId: run.rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 90,
+              status: "completed",
+              title: "Interrupt requested",
+              startedAt: at,
+              completedAt: at,
+              updatedAt: at,
+              message: "Stopped by user",
+            },
+          },
+        ],
+      });
+
+      const rejected = yield* threadManagement
+        .submitRunOutput({
+          threadId,
+          commandId: CommandId.make("runtime-layer-stopped-output-submit"),
+          json: "{}",
+        })
+        .pipe(Effect.flip);
+      assert.include(String((rejected as { cause?: unknown }).cause), "was stopped");
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.isUndefined(after.runs[0]?.output);
     }),
   );
 });

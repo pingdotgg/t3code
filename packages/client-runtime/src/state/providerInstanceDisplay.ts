@@ -29,12 +29,15 @@ export function resolveProviderInstanceDisplayName(
 export function providerInstanceInitials(label: string): string {
   // Punctuation separates words so "Codex (hub)" reads CH, not C(. An apostrophe
   // inside a word stays ("Theo's Codex" is TC); a quoting one does not
-  // ("Codex 'hub'" is CH).
-  const words = label
-    .replace(/[^\P{P}'’]+/gu, " ")
-    .split(/\s+/u)
-    .map((word) => word.replace(/^['’]+|['’]+$/gu, ""))
-    .filter(Boolean);
+  // ("Codex 'hub'" is CH). A single camel-case word splits at its humps, so
+  // "ClaudeProx" is CP, but "ClaudeProx Work" keeps its own words and is CW.
+  const toWords = (text: string) =>
+    text
+      .split(/\s+/u)
+      .map((word) => word.replace(/^['’]+|['’]+$/gu, ""))
+      .filter(Boolean);
+  let words = toWords(label.replace(/[^\P{P}'’]+/gu, " "));
+  if (words.length === 1) words = toWords(words[0]!.replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2"));
   if (words.length === 0) return "";
   if (words.length === 1) return Array.from(words[0]!).slice(0, 2).join("").toUpperCase();
   return words

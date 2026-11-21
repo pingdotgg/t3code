@@ -25,15 +25,17 @@ jobs:
         with:
           sparse-checkout: apps/server/src/provider/agentContextBudget.json
           sparse-checkout-cone-mode: false
+          fetch-depth: 2
 
+      # The checkout is the PR merged onto main; compare with that merge's main parent. A fresh
+      # fetch of main can be newer and lower, which reports the PR as growing what main just cut.
       - name: Compare with main
         run: |
-          git fetch --quiet --depth=1 origin main
-          if ! git cat-file -e "FETCH_HEAD:$BUDGET" 2>/dev/null; then
+          if ! git cat-file -e "HEAD^1:$BUDGET" 2>/dev/null; then
             echo "main has no agent context budget yet."
             exit 0
           fi
-          git show "FETCH_HEAD:$BUDGET" > "$RUNNER_TEMP/main.json"
+          git show "HEAD^1:$BUDGET" > "$RUNNER_TEMP/main.json"
           grown=$(jq -r --slurpfile main "$RUNNER_TEMP/main.json" '
             to_entries[]
             | select($main[0][.key] != null and .value > $main[0][.key])

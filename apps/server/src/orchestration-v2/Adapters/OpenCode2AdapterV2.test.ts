@@ -330,6 +330,7 @@ const resumed = (
     readonly lastRunOrdinal?: number;
     readonly pendingBackgroundTasks?: OrchestrationV2ProviderThread["pendingBackgroundTasks"];
     readonly goal?: OrchestrationV2ProviderThread["goal"];
+    readonly contextUsage?: OrchestrationV2ProviderThread["contextUsage"];
     readonly external?: boolean;
     readonly supervised?: boolean;
     readonly processExit?: Effect.Effect<void>;
@@ -398,6 +399,7 @@ const resumed = (
           ? {}
           : { lastRunOrdinal: options.lastRunOrdinal }),
         ...(options?.goal === undefined ? {} : { goal: options.goal }),
+        ...(options?.contextUsage === undefined ? {} : { contextUsage: options.contextUsage }),
         ...(options?.pendingBackgroundTasks === undefined
           ? {}
           : { pendingBackgroundTasks: options.pendingBackgroundTasks }),
@@ -506,6 +508,52 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
+  it.effect("drops context usage carried over from before a completed compaction", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.step.ended", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+            finish: "stop",
+            cost: 0,
+            tokens: { input: 150_000, output: 40, reasoning: 0, cache: { read: 0, write: 0 } },
+          }),
+          event("session.compaction.started", { sessionID: SESSION, reason: "manual", recent: "" }),
+          event("session.compaction.ended", {
+            sessionID: SESSION,
+            reason: "manual",
+            text: "Summary",
+            recent: "",
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { contextUsage: { usedTokens: 150_000, maxTokens: 160_000 } },
+      );
+      assert.equal(thread.contextUsage?.usedTokens, 150_000);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const seen = yield* Fiber.join(collected);
+      const usage = seen.flatMap((event) =>
+        event.type === "provider_thread.updated" ? [event.providerThread.contextUsage] : [],
+      );
+      assert.isNull(usage.at(-1));
+      const settled = seen.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+      );
+      assert.isUndefined(
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.tokenUsage : "missing",
+      );
     }),
   );
 
@@ -2294,6 +2342,151 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect.each(["running", "exited", "timeout", "held", "sync"] as const)(
+    "marks a shell OpenCode started on its own before T3 runs the wake, shell %s",
+    (shell) =>
+      Effect.gen(function* () {
+        const shellID = "sh_wake";
+        const tool = { sessionID: SESSION, assistantMessageID: "msg_wake", id: "call-wake-shell" };
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const shellReport = (state: string, extra: Record<string, unknown> = {}) =>
+          event("session.inbox.enqueued", {
+            inboxID: "msg_shell_report",
+            sessionID: SESSION,
+            item: {
+              type: "synthetic",
+              payload: {
+                text: `<shell id="${shellID}" state="${state}">done</shell>`,
+                description: "vp test",
+                metadata: { source: "shell", shellID, state, ...extra },
+              },
+              delivery: "steer",
+            },
+          });
+        const { runtime, thread } = yield* resumed([
+          ...backgroundLaunch(CHILD),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          childReport("msg_report", "CHILD_OK"),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.tool.input.started", { ...tool, name: "shell" }),
+          event("session.tool.called", {
+            ...tool,
+            name: "shell",
+            input: { command: "vp test", background: true },
+            executed: false,
+          }),
+          event(
+            "session.tool.success",
+            {
+              ...tool,
+              content: [{ type: "text", text: "Launched" }],
+              // A foreground shell's result already carries its exit.
+              metadata: shell === "sync" ? { shellID, exit: 0 } : { shellID },
+              executed: false,
+            },
+            undefined,
+            2,
+          ),
+          event("shell.created", {
+            info: {
+              id: shellID,
+              status: "running",
+              command: "vp test",
+              cwd: WORK,
+              shell: "bash",
+              file: "/tmp/sh_wake.log",
+              metadata: { sessionID: SESSION },
+              time: { started: 1 },
+            },
+          }),
+          ...(shell === "held" ? [shellReport("completed")] : []),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          ...(shell === "exited"
+            ? [
+                event("shell.exited", { id: shellID, exit: 7, status: "exited" }),
+                shellReport("error"),
+              ]
+            : []),
+          ...(shell === "timeout"
+            ? [
+                event("shell.exited", { id: shellID, status: "timeout" }),
+                shellReport("completed", { timeout: true }),
+              ]
+            : []),
+          // Routed once the held execution ended, so its update proves the launch reached the adapter.
+          event("session.model.selected", {
+            sessionID: SESSION,
+            model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
+          }),
+          ...Array.from({ length: shell === "held" ? 2 : shell === "sync" ? 0 : 1 }, () => [
+            out("shell.output", "<any>"),
+            reply("shell.output", {
+              location: { directory: WORK },
+              data: { output: "", cursor: 0, size: 0, truncated: false },
+            }),
+          ]).flat(),
+        ]).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) =>
+              Effect.sync(() => {
+                offers.push(request);
+              }),
+            take: Effect.never,
+          }),
+        );
+        // One reader: the runtime's event queue hands each event to only one taker.
+        const launchSeen = yield* Deferred.make<void>();
+        const marked = yield* Deferred.make<boolean | undefined>();
+        const settled =
+          yield* Deferred.make<import("@t3tools/contracts").OrchestrationV2TurnItem>();
+        yield* runtime.events.pipe(
+          Stream.tap((e) =>
+            e.type === "turn_item.updated" &&
+            e.turnItem.type === "command_execution" &&
+            e.turnItem.status !== "running"
+              ? Deferred.succeed(settled, e.turnItem)
+              : e.type !== "provider_thread.updated"
+                ? Effect.void
+                : Effect.gen(function* () {
+                    const variant =
+                      e.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value;
+                    if (variant === "thinking") yield* Deferred.succeed(launchSeen, undefined);
+                    const listed = e.providerThread.pendingBackgroundTasks?.find(
+                      (task) => task.taskId === shellID,
+                    );
+                    // The first roster that lists the shell must hold the thread already.
+                    if (listed !== undefined) yield* Deferred.succeed(marked, listed.awaited);
+                  }),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(launchSeen);
+        assert.deepEqual(
+          yield* runtime.awaitBackgroundTasks!({
+            providerThread: thread,
+            taskIds: [shellID],
+            awaited: true,
+          }),
+          { matched: shell === "running" ? [shellID] : [] },
+        );
+        if (shell === "sync") return;
+        yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+        if (shell === "running") return assert.isTrue(yield* Deferred.await(marked));
+        // A shell that ended before the wake ran never holds the thread.
+        assert.deepInclude(
+          yield* Deferred.await(settled),
+          shell === "exited"
+            ? { status: "failed", exitCode: 7 }
+            : { status: shell === "timeout" ? "failed" : "completed" },
+        );
+        const listed = yield* Deferred.poll(marked);
+        if (Option.isSome(listed)) assert.notStrictEqual(yield* listed.value, true);
+      }),
+  );
+
   it.effect("clears the caller's pending work when a called session's held wake runs", () =>
     Effect.gen(function* () {
       const OTHER = "ses_other00000000000000000000";
@@ -3554,6 +3747,38 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  // regression: #39120 a live owned server failed after five stalled event subscriptions
+  it.effect("keeps owned work through more than five stalled event subscriptions", () =>
+    Effect.gen(function* () {
+      let subscriptions = 0;
+      const [exit, ...restored] = reconnected({}, "succeeded");
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          exit!,
+          ...Array.from({ length: 5 }, () => out("event.subscribe")),
+          ...restored,
+        ],
+        {
+          beforeResponse: (path) =>
+            path === "/api/event"
+              ? Effect.suspend(() => {
+                  subscriptions += 1;
+                  return subscriptions >= 2 && subscriptions <= 6 ? Effect.never : Effect.void;
+                })
+              : Effect.void,
+        },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      // Each stalled subscription waits out its 10s deadline before the next attempt.
+      for (let attempt = 0; attempt < 8; attempt++) yield* TestClock.adjust("15 seconds");
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      assert.equal(subscriptions, 7);
+    }),
+  );
+
   it.effect("reconciles a session deleted after the active snapshot", () =>
     Effect.gen(function* () {
       const otherId = "ses_other_stalled_session";
@@ -4721,7 +4946,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             event("session.execution.succeeded", { sessionID: SESSION }),
             { type: "runtime_exit", status: "success" },
           ],
-          { borrowers },
+          // A live owned server is retried until it answers; only an external one runs out of attempts.
+          { borrowers, external: true },
         );
         const events = yield* runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
         yield* runtime.startTurn(withLineage(thread));

@@ -388,7 +388,6 @@ index 0d63c9b949cfae7a101902fc3bb70fcf46094f68..a312b8fcdaf728220db3d6c04d92fd78
       * Replaces the current audio source with a new one.
       */
 diff --git a/ios/AudioModule.swift b/ios/AudioModule.swift
-index 42ce9e8f213ebc243db25ef836456757b0daeb09..b422c3c10349b14803d5e9d7afeed617e76e09af 100644
 --- a/ios/AudioModule.swift
 +++ b/ios/AudioModule.swift
 @@ -6,6 +6,7 @@ public class AudioModule: Module {
@@ -428,7 +427,22 @@ index 42ce9e8f213ebc243db25ef836456757b0daeb09..b422c3c10349b14803d5e9d7afeed617
            self.deactivateSession()
          }
        }
-@@ -957,6 +968,7 @@ public class AudioModule: Module {
+@@ -486,11 +497,12 @@ public class AudioModule: Module {
+       AsyncFunction("prepareToRecordAsync") { (recorder, options: RecordingOptions?) in
+         try AudioRecordingRequester.requireUsageDescription()
+-        let deactivateSessionOnFailure = sessionQueue.sync {
+-          !sessionIsActive && audioSessionActivityKeepers.isEmpty
++        let (activateSession, deactivateSessionOnFailure) = sessionQueue.sync {
++          (!hasAudioSessionOwner || !sessionIsActive, !sessionIsActive && audioSessionActivityKeepers.isEmpty)
+         }
+         try recorder.prepare(
+           options: options,
+           sessionOptions: sessionOptions,
++          activateSession: activateSession,
+           deactivateSessionOnFailure: deactivateSessionOnFailure
+         )
+         recordSessionActive(true)
+@@ -957,6 +969,7 @@ public class AudioModule: Module {
      sessionQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
        guard let self,
          self.sessionIsActive,
@@ -437,10 +451,32 @@ index 42ce9e8f213ebc243db25ef836456757b0daeb09..b422c3c10349b14803d5e9d7afeed617
          !self.isSessionInUse else {
          return
 diff --git a/ios/AudioRecorder.swift b/ios/AudioRecorder.swift
-index 198fe6dc95b564ff3916657f14ea67fc44d2e424..5b396114bbeb5e1c99da54f4e6d2376ad978dfa0 100644
 --- a/ios/AudioRecorder.swift
 +++ b/ios/AudioRecorder.swift
-@@ -285,16 +285,16 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
+@@ -81,6 +81,7 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
+   func prepare(
+     options: RecordingOptions?,
+     sessionOptions: AVAudioSession.CategoryOptions = [],
++    activateSession: Bool = true,
+     deactivateSessionOnFailure: Bool = true
+   ) throws {
+     if currentState == .recording {
+@@ -93,7 +94,12 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
+     let session = AVAudioSession.sharedInstance()
+     do {
+-      try session.setCategory(.playAndRecord, mode: .default, options: sessionOptions)
+-      try session.setActive(true)
++      let categoryMatches = session.category == .playAndRecord && session.mode == .default && session.categoryOptions == sessionOptions
++      if !categoryMatches {
++        try session.setCategory(.playAndRecord, mode: .default, options: sessionOptions)
++      }
++      if activateSession || !categoryMatches {
++        try session.setActive(true)
++      }
+     } catch {
+       currentState = .error
+       throw AudioRecordingException("Failed to configure audio session: \(error.localizedDescription)")
+@@ -285,16 +291,16 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
    }
  
    func didFinish(_ recorder: AVAudioRecorder, successfully flag: Bool) {
@@ -461,6 +497,19 @@ index 198fe6dc95b564ff3916657f14ea67fc44d2e424..5b396114bbeb5e1c99da54f4e6d2376a
        "url": recorder.url.absoluteString
      ])
    }
+diff --git a/ios/AudioUtils.swift b/ios/AudioUtils.swift
+--- a/ios/AudioUtils.swift
++++ b/ios/AudioUtils.swift
+@@ -23,4 +23,9 @@ struct RecordingUtils {
+   static func setInput(_ input: String) throws {
++    let session = AVAudioSession.sharedInstance()
++    if session.currentRoute.inputs.first?.uid == input && session.preferredInput?.uid == input {
++      return
++    }
++
+     var preferredInput: AVAudioSessionPortDescription?
+     if let currentInputs = AVAudioSession.sharedInstance().availableInputs {
+       for desc in currentInputs where desc.uid == input {
 diff --git a/src/AudioModule.types.ts b/src/AudioModule.types.ts
 index 3194a8ebd1b91793d03a1692c563b5d2e83c2738..d8822a6c2ad8a581275e2ca428f4b5d0ed961be2 100644
 --- a/src/AudioModule.types.ts

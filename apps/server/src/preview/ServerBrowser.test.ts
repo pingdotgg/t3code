@@ -3047,6 +3047,11 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
       expect(
         yield* resize({ mode: "freeform", width: 900, height: 600 }, 900, 600),
       ).toBeUndefined();
+      // A hidden guest takes the new size only while the desktop paints it, which a capture asks for.
+      expect(cdp.send).toHaveBeenCalledWith(
+        "Page.captureScreenshot",
+        expect.objectContaining({ clip: expect.anything() }),
+      );
       desktopSizeAnswer = null;
       expect(yield* resize({ mode: "freeform", width: 1280, height: 760 }, 1280, 760)).toEqual({
         width: 1280,

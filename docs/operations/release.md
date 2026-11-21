@@ -484,8 +484,9 @@ A nightly install finds the newest nightly in up to three places.
 The release workflow's `Check the update feed` job runs on every scheduled tick, unless
 `PAUSE_NIGHTLY` is set, and after every nightly. It waits in the same queue as nightlies and
 previews. It rewrites a missing or outdated pointer. Its last step fails when the first nightly
-in the feed is not the newest one. A feed it could not read is only a warning: that says nothing
-about the tags, and the next tick reads it again.
+in the feed is not the newest one. The feed can lag a release published seconds earlier, so the
+job first reads it up to three more times, 30 seconds apart. A feed it could not read is only a
+warning: that says nothing about the tags, and the next tick reads it again.
 
 When that step fails, installs that read only the feed cannot reach the newest nightly. If the
 feed still names an older nightly first, installs from `4603` up to the first build with the

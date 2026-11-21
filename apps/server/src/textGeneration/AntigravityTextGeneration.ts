@@ -11,13 +11,17 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { type AcpError, AcpRequestError } from "effect-acp/errors";
 
-import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAcpSupport.ts";
+import {
+  antigravityThinkingConfig,
+  applyAntigravityAcpModelSelection,
+} from "../provider/acp/AntigravityAcpSupport.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
 import {
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
   isAntigravitySignInRequiredError,
 } from "../provider/antigravityAuthSupport.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { collectSessionConfigOptionValues } from "@t3tools/provider-acp/server/runtimeModel";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 const ANTIGRAVITY_TIMEOUT_MS = 180_000;
@@ -260,6 +264,29 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
                   cause,
                 }),
             });
+            const savedOptions = input.modelSelection.options;
+            if (savedOptions?.length) {
+              const thinking = antigravityThinkingConfig(yield* runtime.getConfigOptions);
+              const selected = savedOptions.find((option) => option.id === thinking?.id)?.value;
+              if (
+                thinking !== undefined &&
+                typeof selected === "string" &&
+                selected !== thinking.currentValue &&
+                collectSessionConfigOptionValues(thinking).includes(selected)
+              ) {
+                yield* runtime.setConfigOption(thinking.id, selected).pipe(
+                  Effect.catchTags({
+                    AcpRequestError: (error) =>
+                      error.code === -32602
+                        ? Effect.logDebug("Antigravity rejected the saved thinking level", {
+                            optionId: thinking.id,
+                            value: selected,
+                          })
+                        : Effect.fail(error),
+                  }),
+                );
+              }
+            }
 
             const result = yield* runtime.prompt({
               prompt: [

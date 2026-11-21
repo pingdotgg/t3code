@@ -376,6 +376,29 @@ describe("sourceControlClients project hosts", () => {
     ).toBe("service");
     expect(sourceControlClients.repositorySelector({ owner: "o", name: "r" })).toBe("o/r");
   });
+
+  it.each([
+    ["https://github.com/acme/web.git", "https://github.com/me/web.git", true],
+    ["git@github.com:acme/web.git", "https://github.com/me/web.git", true],
+    ["https://github.com/acme/web.git", "https://gitlab.com/me/web.git", false],
+    ["https://github.com/acme/web.git", "https://github.com:8443/me/web.git", false],
+    ["git@github.com:acme/web.git", "https://github.com:8443/me/web.git", false],
+    ["http://github.com/acme/web.git", "https://github.com/me/web.git", false],
+  ] as const)(
+    "reads a fork's issues beside upstream %s's only when origin %s is on its server",
+    (remoteUrl, originUrl, both) => {
+      const identity = {
+        canonicalKey: "github.com/acme/web",
+        locator: { source: "git-remote" as const, remoteName: "upstream", remoteUrl },
+        provider: SourceControlProviderKind.make("github"),
+        displayName: "acme/web",
+        origin: { canonicalKey: `${new URL(originUrl).hostname}/me/web`, remoteUrl: originUrl },
+      };
+      expect(sourceControlClients.issueBindings(identity).map((binding) => binding.scope)).toEqual(
+        both ? ["acme/web", "me/web"] : ["acme/web"],
+      );
+    },
+  );
 });
 
 describe("sourceControlClients.findByPublicDomain", () => {

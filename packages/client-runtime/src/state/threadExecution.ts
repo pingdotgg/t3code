@@ -1,6 +1,7 @@
 import {
   latestExecutedRun,
   latestRootProviderFailure,
+  latestRootProviderFailureItem,
   latestUnheldRun,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
@@ -35,6 +36,7 @@ import {
   resolveSelectableModel,
   withLegacyUltracodeEffort,
 } from "@t3tools/shared/model";
+import { unsentManualContinuationSource } from "@t3tools/shared/orchestrationV2ManualContinuation";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
@@ -317,16 +319,41 @@ export function formatProviderSubagentStatus(
 
 /** The run a manual continuation resumes; the server holds the queue until it does. */
 export function deriveResumableRunId(
-  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+  projection: Pick<
+    ThreadStructure,
+    "runs" | "turnItems" | "attempts" | "providerTurns" | "providerThreads" | "providerSessions"
+  >,
   runtime: Pick<ThreadStructureRuntime, "lastErrorClass"> | null,
 ): RunId | null {
   const run = latestExecutedRun(projection.runs);
-  if (run?.status === "interrupted") return run.id;
-  return run?.status === "failed" &&
-    runtime?.lastErrorClass === "usage_limit" &&
-    latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit"
-    ? run.id
-    : null;
+  const resumable =
+    run?.status === "interrupted" ||
+    (run?.status === "failed" &&
+      runtime?.lastErrorClass === "usage_limit" &&
+      latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit");
+  if (!resumable) return null;
+  // Without native resume the server can only resend a message the provider never received.
+  if (
+    runProviderSession(projection, run)?.capabilities.turns.supportsNativeResume === false &&
+    unsentManualContinuationSource({ manualContinuationOfRunId: run.id }, projection) === undefined
+  ) {
+    return null;
+  }
+  return run.id;
+}
+
+function runProviderSession(
+  projection: Pick<ThreadStructure, "providerThreads" | "providerSessions">,
+  run: ThreadStructure["runs"][number],
+) {
+  const sessionId = projection.providerThreads.find(
+    (thread) => thread.id === run.providerThreadId,
+  )?.providerSessionId;
+  return sessionId == null
+    ? projection.providerSessions.findLast(
+        (session) => session.providerInstanceId === run.providerInstanceId,
+      )
+    : projection.providerSessions.find((session) => session.id === sessionId);
 }
 
 /**
@@ -379,6 +406,8 @@ export function deriveThreadStructureRuntime(
   if (latestRun === null && !backgroundWorkHoldsRun) return null;
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
+  const failureItem = latestRootProviderFailureItem(latestRunProjection, projection.turnItems);
+  const sessionError = providerSession?.lastError ?? null;
   return {
     status: usageLimitedRun
       ? "failed"
@@ -392,11 +421,44 @@ export function deriveThreadStructureRuntime(
         : DateTime.formatIso(orchestrationV2RunWorkStartedAt(liveActivityRun)),
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
-    ...threadErrorSummary(
-      latestRootProviderFailure(latestRunProjection, projection.turnItems),
-      providerSession?.lastError ?? null,
-    ),
+    ...threadErrorSummary(failureItem?.failure ?? null, sessionError),
+    lastErrorSource: threadErrorSource(failureItem, sessionError, projection),
   };
+}
+
+const isoOrEmpty = (at: DateTime.Utc | null) => (at === null ? "" : DateTime.formatIso(at));
+
+/**
+ * A session error belongs to the latest ended run, as that run's failure when the text matches.
+ * Session timestamps are not used: providers rewrite them on unrelated updates.
+ */
+function threadErrorSource(
+  failureItem: ReturnType<typeof latestRootProviderFailureItem>,
+  sessionError: string | null,
+  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+): string | null {
+  const itemSource = (item: NonNullable<typeof failureItem>) =>
+    `${item.id}@${isoOrEmpty(item.completedAt)}`;
+  if (
+    failureItem !== null &&
+    (sessionError === null || sessionError === failureItem.failure.message)
+  ) {
+    return itemSource(failureItem);
+  }
+  if (sessionError === null) return null;
+  let ended: ThreadStructure["runs"][number] | null = null;
+  for (const run of projection.runs) {
+    if (run.status !== "failed" && run.status !== "completed") continue;
+    if (ended === null || run.ordinal > ended.ordinal) ended = run;
+  }
+  if (ended === null) return null;
+  const endedFailure =
+    failureItem?.runId === ended.id
+      ? failureItem
+      : latestRootProviderFailureItem(ended, projection.turnItems);
+  return endedFailure?.failure.message === sessionError
+    ? itemSource(endedFailure)
+    : `${ended.id}@${isoOrEmpty(ended.completedAt)}`;
 }
 
 export interface UsageLimitNoticeRows {

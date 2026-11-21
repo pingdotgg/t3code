@@ -253,9 +253,8 @@ const readDatabase = Effect.fn("readDatabase")(function* (
         "SELECT name FROM sqlite_master WHERE type = 'table'",
       )).map((row) => row.name),
     );
-    if (!tables.has("gen_metadata") && !tables.has("steps")) {
-      return yield* new AntigravityDatabaseDecodeError({ path });
-    }
+    // Not a conversation store, e.g. agy's conversation_summaries.db index.
+    if (!tables.has("gen_metadata") && !tables.has("steps")) return null;
     // Seek by rowid regardless of indexes; idx normally aliases rowid, but sort for layouts where it does not.
     const readMetadata = Effect.fnUntraced(function* (
       query: string,
@@ -421,7 +420,7 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
   const files: Array<{ root: string; path: string; records: UsageRecord[] }> = [];
   const errors: string[] = [];
   const models = new Map<number, string | null>();
-  const pending: Array<{ data: CachedDatabase["data"]; fileIndex: number }> = [];
+  const pending: Array<{ data: NonNullable<CachedDatabase["data"]>; fileIndex: number }> = [];
   const identities = new Map<string, number>();
   const groups: Array<
     UsageCandidate & { parent: number; size: number; owner: number; fileIndex: number }

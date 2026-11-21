@@ -76,7 +76,7 @@ it("shows a route added after a reorder was saved, once another route is removed
   await userEvent.keyboard("{ArrowDown}");
   await userEvent.keyboard(" ");
   await expect
-    .element(screen.getByRole("button", { name: "Reorder Tailscale, position 1" }))
+    .element(screen.getByRole("button", { name: "Reorder Tailscale HTTPS, position 1" }))
     .toBeVisible();
 
   await screen.rerender(routesList([TAILNET, LAN]));

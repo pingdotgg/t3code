@@ -67,6 +67,19 @@ const PROVIDER_FAILURE_CATEGORIES: Partial<
   },
 };
 
+// macOS privacy protection (TCC) refuses a CLI the project folder with EPERM.
+const PERMISSION_DENIED_OUTPUT = /\bEPERM\b|Operation not permitted/u;
+
+/**
+ * What to do after a provider CLI exits on its own. Only recognises the
+ * output; the output itself stays out of the message.
+ */
+export function providerProcessExitGuidance(output: unknown): string {
+  return typeof output === "string" && PERMISSION_DENIED_OUTPUT.test(output)
+    ? "It was denied access to a file or folder (EPERM). On macOS, allow T3 Code under System Settings > Privacy & Security > Files and Folders, or move the project out of Desktop, Documents, or Downloads, then retry the turn."
+    : "Check the server logs for the provider's output, then retry the turn.";
+}
+
 // codex_protocol::protocol::validate_thread_goal_objective
 const CODEX_GOAL_VALIDATION_MESSAGE =
   /^goal objective must (?:not be empty|be at most \d{1,6} characters)$/u;
@@ -122,6 +135,7 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeSettingsLaunchArgError":
         case "ClaudeMcpRegistrationTimeoutError":
         case "ClaudeCodeRootRefusalError":
+        case "ClaudeCodeStartupExitError":
         case "ClaudeConversationNotFoundError":
         case "CursorModelUnavailableError":
         case "CodexGoalObjectiveTooLongError":
@@ -150,11 +164,13 @@ function curatedCauseMessages(cause: unknown): {
           }
           break;
         }
-        case "AcpProcessExitedError": {
+        case "AcpProcessExitedError":
+        case "CodexAppServerProcessExitedError": {
           const exit = `provider process exited${processExitStatus(cause)}`;
           const stage = category === undefined ? `The ${exit}` : `${category.summary}: the ${exit}`;
+          const guidance = providerProcessExitGuidance((cause as Record<string, unknown>).stderr);
           return {
-            known: `${stage}. Check the server logs for the provider's output, then retry the turn.`,
+            known: `${stage}. ${guidance}`,
             category: categoryMessage(),
           };
         }

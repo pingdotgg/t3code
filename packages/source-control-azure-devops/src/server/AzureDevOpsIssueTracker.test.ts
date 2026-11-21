@@ -214,12 +214,38 @@ describe("AzureDevOpsIssueTracker", () => {
     }),
   );
 
+  it.effect("reads a Bug's text from Repro Steps when it has no Description", () =>
+    Effect.gen(function* () {
+      const { "System.Description": _description, ...fields } = WORK_ITEM.fields;
+      const bug = {
+        ...WORK_ITEM,
+        fields: { ...fields, "Microsoft.VSTS.TCM.ReproSteps": "<div>Open the composer.</div>" },
+      };
+      const writes: Array<string[]> = [];
+      const api = yield* tracker((args) => {
+        if (args[0] === "boards" && args[2] === "update") writes.push([...args]);
+        return args[0] === "boards" ? encode(bug) : answer(args);
+      });
+      const scope = { cwd: "/w", host: "dev.azure.com", scope: "acme/Web App", key: "7" };
+      const issue = yield* api.getIssue(scope);
+      expect(issue.body).toBe("<div>Open the composer.</div>");
+      yield* api.update!({ ...scope, body: "Close it.", labels: ["ui"] });
+      expect(
+        writes.map((args) =>
+          args.slice(args.indexOf("--id") + 2, args.indexOf("--only-show-errors")),
+        ),
+      ).toEqual([["--fields", "System.Tags=ui", "Microsoft.VSTS.TCM.ReproSteps=Close it."]]);
+    }),
+  );
+
   it.effect("filters open work items by the project's own finished states", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const bodies: string[] = [];
       const hydrated: string[] = [];
       let typeReads = 0;
+      let finished = "Shipped";
+      let workflowUnavailable = false;
       const api = yield* AzureDevOpsIssueTracker.make.pipe(
         Effect.provide(
           Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
@@ -238,8 +264,28 @@ describe("AzureDevOpsIssueTracker", () => {
                   }),
                 );
               }
+              if (resource === "workitemtypes") {
+                typeReads += 1;
+                if (workflowUnavailable) {
+                  return Effect.fail(
+                    new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+                      operation: "execute",
+                      command: "az",
+                      cwd: "/w",
+                      argumentCount: args.length,
+                      cause: "workflow metadata unavailable",
+                    }),
+                  );
+                }
+                return Effect.succeed(
+                  TestSourceControlHost.processOutput(
+                    encode({
+                      value: [{ name: "Bug", states: [{ name: finished, category: "Completed" }] }],
+                    }),
+                  ),
+                );
+              }
               if (resource !== "wiql" && resource !== "workitemsbatch") {
-                if (resource === "workitemtypes") typeReads += 1;
                 return Effect.succeed(TestSourceControlHost.processOutput(answer(args)));
               }
               return fs.readFileString(args[args.indexOf("--in-file") + 1]!).pipe(
@@ -294,6 +340,27 @@ describe("AzureDevOpsIssueTracker", () => {
           " AND ([System.CreatedDate] < '2026-07-01T00:00:00Z' OR ([System.CreatedDate] = '2026-07-01T00:00:00Z' AND [System.Id] < 7))" +
           " ORDER BY [System.CreatedDate] DESC, [System.Id] DESC",
       );
+
+      // An explicit refresh rereads the workflow; a failed one keeps the last good states.
+      const firstPage = {
+        cwd: "/w",
+        host: "dev.azure.com",
+        scope: "acme/Web App",
+        state: "open",
+        involvement: "all",
+        sort: "updated",
+        limit: 2,
+      } as const;
+      finished = "Released";
+      yield* api.listIssues({ ...firstPage, refresh: true });
+      expect(typeReads).toBe(2);
+      expect(bodies[2]).toContain("AND [System.State] NOT IN ('released')");
+      workflowUnavailable = true;
+      const refreshError = yield* Effect.flip(api.listIssues({ ...firstPage, refresh: true }));
+      expect(refreshError).toMatchObject({ operation: "listIssues", reason: "failed" });
+      yield* api.listIssues(firstPage);
+      expect(typeReads).toBe(3);
+      expect(bodies[3]).toContain("AND [System.State] NOT IN ('released')");
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 

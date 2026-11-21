@@ -76,6 +76,12 @@ export type AcpSessionRuntimeEvent =
   | {
       readonly _tag: "ConnectionTerminated";
       readonly error: EffectAcpErrors.AcpError;
+    }
+  | {
+      // A session/load response that arrived after replay idle replaced the
+      // provisional setup; its config/mode events were emitted just before.
+      readonly _tag: "SessionSetupAdopted";
+      readonly result: AcpSessionRuntimeStartResult;
     };
 
 const defaultSessionLoadTimeout = Duration.seconds(90);
@@ -1291,6 +1297,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     Option.none(),
   );
   const stoppingRef = yield* Ref.make(false);
+  const terminationRecorded = yield* Deferred.make<void>();
   const stderrFailure = yield* Deferred.make<never, EffectAcpErrors.AcpError>();
   const stderrTailRef = yield* Ref.make("");
   const homeDirectory = yield* HostProcess.HomeDirectory;
@@ -1302,6 +1309,23 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const activePromptRef = yield* Ref.make<Option.Option<AcpActivePrompt>>(Option.none());
   const assistantUpdatesOpenRef = yield* Ref.make(true);
   const sessionLoadGateRef = yield* Ref.make<Option.Option<SessionLoadGate>>(Option.none());
+  // When replay idle makes a loaded session usable first, the agent's real
+  // session/load response is still pending; it is adopted once it arrives.
+  const lateSessionLoadRef = yield* Ref.make<
+    Option.Option<{
+      readonly payload: EffectAcpSchema.LoadSessionRequest;
+      readonly provisional: EffectAcpSchema.LoadSessionResponse;
+      readonly response: Fiber.Fiber<
+        Option.Option<EffectAcpSchema.LoadSessionResponse>,
+        EffectAcpErrors.AcpError
+      >;
+    }>
+  >(Option.none());
+  // Counts mode, config, and model writes sent to the agent and the mode and
+  // config notifications it sent back. A late session/load response predates
+  // all of them, even a write still pending or a notification that left the
+  // mode state unchanged.
+  const sessionChangeCountRef = yield* Ref.make(0);
 
   const ensureConnected = Effect.gen(function* () {
     const error = yield* Ref.get(terminationErrorRef);
@@ -1352,14 +1376,26 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         : ([true, Option.some(enriched)] as const),
     );
     if (!firstTermination) {
-      return;
+      return yield* Deferred.await(terminationRecorded);
     }
-    yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
-    yield* Queue.offer(eventQueue, { _tag: "ConnectionTerminated", error: enriched });
+    yield* Effect.gen(function* () {
+      yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
+      yield* Queue.offer(eventQueue, { _tag: "ConnectionTerminated", error: enriched });
+      yield* options.onTermination?.(enriched) ?? Effect.void;
+    }).pipe(Effect.ensuring(Deferred.succeed(terminationRecorded, undefined)));
   });
 
   const logRequest = (event: AcpSessionRequestLogEvent) =>
     options.requestLogger ? options.requestLogger(event) : Effect.void;
+
+  const runLoggedSessionWrite = <A>(
+    method: string,
+    payload: unknown,
+    effect: Effect.Effect<A, EffectAcpErrors.AcpError>,
+  ): Effect.Effect<A, EffectAcpErrors.AcpError> =>
+    Ref.update(sessionChangeCountRef, (count) => count + 1).pipe(
+      Effect.andThen(runLoggedRequest(method, payload, effect)),
+    );
 
   const runLoggedRequest = <A>(
     method: string,
@@ -1666,8 +1702,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         ),
         Effect.catch((error) =>
           Effect.gen(function* () {
-            yield* Deferred.fail(stderrFailure, error);
             yield* recordTermination(error);
+            yield* Deferred.fail(stderrFailure, error);
             yield* child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore);
           }),
         ),
@@ -1694,7 +1730,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ...(options.onIncomingRequest ? { onIncomingRequest: options.onIncomingRequest } : {}),
       onTermination: (error) =>
         recordTermination(error).pipe(
-          Effect.andThen(options.onTermination?.(error) ?? Effect.void),
           Effect.ensuring(
             Scope.close(runtimeScope, Exit.fail(error)).pipe(Effect.forkDetach, Effect.asVoid),
           ),
@@ -1712,8 +1747,12 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const configOptionUpdates = yield* Ref.make(0);
   const processSessionUpdate = (notification: EffectAcpSchema.SessionNotification) =>
     (notification.update.sessionUpdate === "config_option_update"
-      ? Ref.update(configOptionUpdates, (count) => count + 1)
-      : Effect.void
+      ? Ref.update(configOptionUpdates, (count) => count + 1).pipe(
+          Effect.andThen(Ref.update(sessionChangeCountRef, (count) => count + 1)),
+        )
+      : notification.update.sessionUpdate === "current_mode_update"
+        ? Ref.update(sessionChangeCountRef, (count) => count + 1)
+        : Effect.void
     ).pipe(
       Effect.andThen(
         handleSessionUpdate({
@@ -1969,6 +2008,110 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     return nextState;
   });
 
+  const cancelLateSessionLoad = Ref.getAndSet(lateSessionLoadRef, Option.none()).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.void,
+        onSome: (late) => Fiber.interrupt(late.response),
+      }),
+    ),
+    Effect.asVoid,
+  );
+
+  // Adopts the agent's real session/load response after a replay-idle start.
+  // Anything that changed the session or its configuration in between is newer
+  // than this response, so the response is dropped instead of applied.
+  const followLateSessionLoad = Effect.fn("AcpSessionRuntime.followLateSessionLoad")(function* (
+    started: AcpStartedState,
+    // Notifications counted after this baseline are newer than the response.
+    provisionalChangeCount?: number,
+  ) {
+    const late = yield* Ref.get(lateSessionLoadRef);
+    if (Option.isNone(late) || late.value.provisional !== started.sessionSetupResult) {
+      return;
+    }
+    const { payload, response: lateFiber } = late.value;
+    const provisionalConfigOptions = yield* SubscriptionRef.get(configOptionsRef);
+    const provisionalModeState = yield* Ref.get(modeStateRef);
+    const baselineChangeCount = provisionalChangeCount ?? (yield* Ref.get(sessionChangeCountRef));
+    const adoptLateResponse = Effect.fn("AcpSessionRuntime.adoptLateSessionLoad")(function* (
+      response: EffectAcpSchema.LoadSessionResponse,
+    ) {
+      const current = yield* Ref.get(lateSessionLoadRef);
+      const startState = yield* Ref.get(startStateRef);
+      if (
+        Option.isNone(current) ||
+        current.value.response !== lateFiber ||
+        startState._tag !== "Started" ||
+        startState.result !== started ||
+        (yield* Ref.get(stoppingRef)) ||
+        (yield* SubscriptionRef.get(configOptionsRef)) !== provisionalConfigOptions ||
+        (yield* Ref.get(modeStateRef)) !== provisionalModeState ||
+        (yield* Ref.get(sessionChangeCountRef)) !== baselineChangeCount
+      ) {
+        return;
+      }
+      yield* Ref.set(lateSessionLoadRef, Option.none());
+      const result = {
+        ...started,
+        sessionSetupResult: response,
+        modelConfigId: extractModelConfigId(response) ?? started.modelConfigId,
+      };
+      yield* Ref.set(startStateRef, { _tag: "Started", result });
+      const modeState = parseSessionModeState(response);
+      if (modeState !== undefined) {
+        yield* Ref.set(modeStateRef, modeState);
+      }
+      if (response.configOptions != null) {
+        yield* processSessionUpdate({
+          sessionId: started.sessionId,
+          update: { sessionUpdate: "config_option_update", configOptions: response.configOptions },
+        });
+      } else if (modeState !== undefined) {
+        yield* processSessionUpdate({
+          sessionId: started.sessionId,
+          update: { sessionUpdate: "current_mode_update", currentModeId: modeState.currentModeId },
+        });
+      }
+      yield* Queue.offer(eventQueue, { _tag: "SessionSetupAdopted", result });
+    });
+    yield* Fiber.join(lateFiber).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              new EffectAcpErrors.AcpTransportError({
+                operation: "call-rpc",
+                method: "session/load",
+                detail: "session/load timed out after replay idle",
+                cause: undefined,
+              }),
+            ),
+          onSome: (response) =>
+            notificationSemaphore.withPermit(adoptLateResponse(response)).pipe(
+              Effect.andThen(
+                logRequest({
+                  method: "session/load",
+                  payload,
+                  status: "succeeded",
+                  result: response,
+                }),
+              ),
+            ),
+        }),
+      ),
+      // Supersession and shutdown interrupt the request; only a real failure
+      // or timeout is worth a failed log.
+      Effect.onError((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : logRequest({ method: "session/load", payload, status: "failed", cause }),
+      ),
+      Effect.ignore,
+      Effect.forkIn(runtimeScope),
+    );
+  });
+
   const runLoadSessionWithReplayIdle = (
     loadPayload: EffectAcpSchema.LoadSessionRequest,
     initializeResult: EffectAcpSchema.InitializeResponse,
@@ -1993,6 +2136,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           }),
         );
 
+        yield* cancelLateSessionLoad;
         return yield* Effect.gen(function* () {
           yield* logRequest({
             method: "session/load",
@@ -2000,6 +2144,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             status: "started",
           });
 
+          // Forked so a replay-idle win leaves the request running; the timeout
+          // still bounds it and the runtime scope cancels it on shutdown.
+          const responseFiber = yield* acp.agent
+            .loadSession(loadPayload)
+            .pipe(Effect.timeoutOption(sessionLoadTimeout), Effect.forkIn(runtimeScope));
+          const awaitResponse = Fiber.join(responseFiber).pipe(
+            Effect.map(Option.map((response) => ({ response, provisional: false }))),
+          );
           const loadOrReplayIdle =
             options.sessionLoadReplayIdleReadiness === true
               ? Effect.gen(function* () {
@@ -2007,16 +2159,18 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                     gateRef: sessionLoadGateRef,
                   }).pipe(Effect.forkIn(runtimeScope));
                   return yield* Effect.raceFirst(
-                    acp.agent.loadSession(loadPayload),
-                    Fiber.join(idleFiber),
+                    awaitResponse,
+                    Fiber.join(idleFiber).pipe(
+                      Effect.map((response) => Option.some({ response, provisional: true })),
+                    ),
                   ).pipe(Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)));
                 })
-              : acp.agent.loadSession(loadPayload);
+              : awaitResponse;
           const loaded = yield* loadOrReplayIdle.pipe(
             Effect.timeoutOption(sessionLoadTimeout),
             Effect.flatMap((result) =>
               Effect.fromOption(
-                result,
+                Option.flatten(result),
                 () =>
                   new EffectAcpErrors.AcpTransportError({
                     operation: "call-rpc",
@@ -2026,12 +2180,17 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                   }),
               ),
             ),
-            Effect.tap((result) =>
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit) && exit.value.provisional
+                ? Effect.void
+                : Fiber.interrupt(responseFiber).pipe(Effect.ignore),
+            ),
+            Effect.tap(({ response }) =>
               logRequest({
                 method: "session/load",
                 payload: loadPayload,
                 status: "succeeded",
-                result,
+                result: response,
               }),
             ),
             Effect.onError((cause) =>
@@ -2048,9 +2207,17 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           const candidateConfigOptions = Option.isSome(gate)
             ? gate.value.candidateConfigOptions
             : undefined;
-          return loaded.configOptions == null && candidateConfigOptions !== undefined
-            ? { ...loaded, configOptions: candidateConfigOptions }
-            : loaded;
+          const response =
+            loaded.response.configOptions == null && candidateConfigOptions !== undefined
+              ? { ...loaded.response, configOptions: candidateConfigOptions }
+              : loaded.response;
+          if (loaded.provisional) {
+            yield* Ref.set(
+              lateSessionLoadRef,
+              Option.some({ payload: loadPayload, provisional: response, response: responseFiber }),
+            );
+          }
+          return response;
         }).pipe(Effect.ensuring(Ref.set(sessionLoadGateRef, Option.none())));
       }),
     );
@@ -2097,7 +2264,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             // handled before this fiber resumes. The result then stays out.
             return Ref.get(configOptionUpdates).pipe(
               Effect.flatMap((updatesBefore) =>
-                runLoggedRequest(
+                runLoggedSessionWrite(
                   "session/set_config_option",
                   requestPayload,
                   acp.agent.setSessionConfigOption(requestPayload),
@@ -2350,12 +2517,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                       return yield* error.value;
                     }
                     yield* Ref.set(startStateRef, { _tag: "Started", result });
+                    const changeCountBeforeMetadata = yield* Ref.get(sessionChangeCountRef);
                     const metadata = yield* Ref.getAndSet(startupMetadataRef, []);
                     for (const notification of metadata) {
                       if (notification.sessionId === result.sessionId) {
                         yield* processSessionUpdate(notification);
                       }
                     }
+                    yield* followLateSessionLoad(result, changeCountBeforeMetadata);
                     yield* Deferred.succeed(deferred, result);
                   }),
                 ),
@@ -2510,9 +2679,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           return runLoadSessionWithReplayIdle(requestPayload, started.initializeResult);
         }),
         Effect.flatMap((response) => adoptSession(sessionId, response)),
+        Effect.tap((started) => followLateSessionLoad(started)),
       ),
     resumeSession: (sessionId, activationOptions) =>
       start.pipe(
+        Effect.tap(() => cancelLateSessionLoad),
         Effect.flatMap((started) => {
           const requestPayload = {
             sessionId,
@@ -2530,6 +2701,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ),
     forkSession: (sessionId, activationOptions, meta) =>
       start.pipe(
+        Effect.tap(() => cancelLateSessionLoad),
         Effect.flatMap((started) => {
           const requestPayload = {
             sessionId,
@@ -2760,7 +2932,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       if (modeConfigOption === undefined && modeState !== undefined) {
         const started = yield* getStartedState;
         const payload = { sessionId: started.sessionId, modeId };
-        yield* runLoggedRequest("session/set_mode", payload, acp.agent.setSessionMode(payload));
+        yield* runLoggedSessionWrite(
+          "session/set_mode",
+          payload,
+          acp.agent.setSessionMode(payload),
+        );
         yield* updateCurrentModeId(modeId);
         return {} satisfies EffectAcpSchema.SetSessionModeResponse;
       }
@@ -2781,7 +2957,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             modelId,
             ...(meta === undefined ? {} : { _meta: meta }),
           };
-          return runLoggedRequest("session/set_model", payload, acp.agent.setSessionModel(payload));
+          return runLoggedSessionWrite(
+            "session/set_model",
+            payload,
+            acp.agent.setSessionModel(payload),
+          );
         }),
       ),
     setConfigOption,

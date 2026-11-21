@@ -36,7 +36,10 @@ export function useFileChipShare(
     requestRef.current = request;
     void (async () => {
       if (httpBaseUrl === null) throw new Error(gt("Reconnect to the environment and try again."));
-      const result = await createUrl({ environmentId, input: { resource: source.resource } });
+      const result = await createUrl(
+        { environmentId, input: { resource: source.resource } },
+        { signal: request.signal },
+      );
       if (request.signal.aborted) return;
       const url =
         result._tag === "Success" ? resolveAssetUrl(httpBaseUrl, result.value.relativeUrl) : null;

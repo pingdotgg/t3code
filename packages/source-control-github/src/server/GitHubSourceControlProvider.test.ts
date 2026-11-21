@@ -612,6 +612,15 @@ describe("GitHubSourceControlProvider writes", () => {
         body: "Body",
         maintainer_can_modify: true,
       });
+      yield* gh.createChangeRequest({
+        cwd: "/repo",
+        baseRefName: "main",
+        headSelector: "me:feature",
+        title: "Title",
+        bodyFile,
+        draft: true,
+      });
+      assert.strictEqual((requests[1]!.body as { draft?: unknown }).draft, true);
     }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)));
   });
 

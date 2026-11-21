@@ -126,6 +126,12 @@ const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
 /** A desktop page that keeps its size draws nothing on a resize, so the wait gives up. */
 const DESKTOP_RESIZE_WAIT_MS = 1000;
+/** Answered only once the guest paints a frame; one pixel keeps it cheap. */
+const DESKTOP_PAINT_CAPTURE = {
+  format: "jpeg",
+  quality: 1,
+  clip: { x: 0, y: 0, width: 1, height: 1, scale: 1 },
+} as const;
 // A revealed tab's client opens the panel and attaches its stream a few round trips later, remote ones included.
 const REVEAL_VIEWER_WAIT_MS = 1000;
 // A desktop panel's shown report waits on the renderer's layout, which a busy machine can push past a second.
@@ -2827,7 +2833,20 @@ const make = Effect.gen(function* () {
         // The desktop draws the new size after the session update; its page resize says it has.
         // Half the time left keeps room for the read, which runs even if nothing was drawn,
         // because a page can keep another size than the one asked for.
-        if (changed) await within(drawn, Math.min(DESKTOP_RESIZE_WAIT_MS, remainingMs() / 2));
+        if (changed) {
+          // Electron resizes no hidden guest it does not paint; a pending capture makes the desktop paint it.
+          let waiting = true;
+          void (async () => {
+            while (waiting && !tab.closing) {
+              await tab.cdp.send("Page.captureScreenshot", DESKTOP_PAINT_CAPTURE);
+            }
+          })().catch(constVoid);
+          try {
+            await within(drawn, Math.min(DESKTOP_RESIZE_WAIT_MS, remainingMs() / 2));
+          } finally {
+            waiting = false;
+          }
+        }
         const changes = tab.desktopViewportChanges;
         const measured = await within(measureDesktopViewport(tab), remainingMs());
         // Only a read after the draw, with no page resize or load during it, measures this resize.
@@ -3423,7 +3442,13 @@ const make = Effect.gen(function* () {
     } satisfies ServerBrowserViewer;
   });
 
-  yield* manager.events.pipe(Stream.runForEach(mirrorManagerEvent), Effect.forkScoped);
+  // Subscribe before forking: a forked stream subscribes only once it runs, so a tab opened
+  // right after startup would publish its `opened` event to no one and never load.
+  const managerEvents = yield* manager.subscribeEvents;
+  yield* Stream.fromSubscription(managerEvents).pipe(
+    Stream.runForEach(mirrorManagerEvent),
+    Effect.forkScoped,
+  );
   if (
     !PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment) &&
     (yield* PreviewBrowserHost.sandboxBlocked)

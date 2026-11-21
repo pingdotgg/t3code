@@ -120,6 +120,12 @@ const policies = (): ReadonlyArray<Policy> => [
     toggle: "BrowserCookieImport",
   },
   {
+    id: "PreviewTunnel",
+    title: "Allow the preview tunnel",
+    help: "Disabled stops other devices from opening this machine's local servers through T3 Code: no in-app browser tabs loaded on the device, no Open on this device, no port forwarding. Browser tabs still stream from this machine.",
+    toggle: "PreviewTunnel",
+  },
+  {
     id: "Telemetry",
     title: "Allow usage data",
     help: "Disabled stops T3 Code from sending product usage data and relay connection traces. Enabled cannot turn them on for a user who turned them off.",

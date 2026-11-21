@@ -370,6 +370,7 @@ export const make = Effect.gen(function* () {
     const settleThread = Effect.fnUntraced(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
         if (thread.lineage.relationshipToParent === "subagent") {
+          if (yield* terminals.hasActiveSubprocess({ threadId: thread.id })) return null;
           // The store returns a subagent only once its parent is done, so it
           // settles with the parent and never runs its own lookup.
           const uuid = yield* random.uuidV4();
@@ -396,6 +397,8 @@ export const make = Effect.gen(function* () {
           autoSettleKeepPullRequests: currentSettings.sidebarAutoSettleKeepPullRequests,
         });
         if (settledAt === null) return thread;
+        // A terminal still running a program keeps its thread open; a later sweep settles it.
+        if (yield* terminals.hasActiveSubprocess({ threadId: thread.id })) return null;
         const uuid = yield* random.uuidV4();
         yield* orchestrator.dispatch({
           type: "thread.auto-settle",

@@ -129,7 +129,8 @@ export type ManagedCapability =
   | "remoteClients"
   | "connect"
   | "webhookTasks"
-  | "browserCookieImport";
+  | "browserCookieImport"
+  | "previewTunnel";
 
 function managedCapabilityDeniedMessage(
   organization: string,
@@ -154,6 +155,13 @@ function managedCapabilityDeniedMessage(
         msg("{organization}'s policy does not allow importing browser cookies.", {
           organization,
         }),
+      );
+    case "previewTunnel":
+      return resolve(
+        msg(
+          "{organization}'s policy does not allow opening this machine's local servers on other devices.",
+          { organization },
+        ),
       );
   }
 }

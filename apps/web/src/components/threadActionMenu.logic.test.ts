@@ -75,6 +75,11 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
 
+  it("disables only rename where no inline title editor exists", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, canRename: false });
+    expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(["rename"]);
+  });
+
   it("offers pop-out only for delegated children, disabled with a hint until it can run", () => {
     const popOut = (state: Partial<ThreadActionMenuState>) =>
       buildThreadActionMenuItems({ ...baseState, ...state }).find((item) => item.id === "pop-out");

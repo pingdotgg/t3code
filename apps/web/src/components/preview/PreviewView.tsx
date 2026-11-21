@@ -46,7 +46,10 @@ import {
   updatePreviewServerSnapshot,
   useThreadPreviewState,
 } from "~/previewStateStore";
-import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import {
+  resolveDiscoveredServerUrl,
+  resolveExternalServerUrl,
+} from "~/browser/browserTargetResolver";
 import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
 import {
   useEnvironment,
@@ -88,7 +91,11 @@ import type { MessageResolver } from "~/i18n/messages";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
-import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
+import {
+  alternatePreviewRuntime,
+  useDesktopLoadsLoopback,
+  useRendersServerTabNatively,
+} from "~/browser/previewRuntime";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
 import { cn } from "~/lib/utils";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
@@ -202,6 +209,7 @@ export function PreviewView({
   const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? null;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
+  const desktopLoadsLoopback = useDesktopLoadsLoopback(threadRef.environmentId);
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
 
   usePreviewSession(threadRef);
@@ -238,7 +246,7 @@ export function PreviewView({
   }, [serverToolbarShown]);
   const [serverControlledTabId, setServerControlledTabId] = useState<string | null>(null);
   const serverInputDisabled = isServerTab && serverControlledTabId !== runtimeTabId;
-  const [serverFrameTabId, setServerFrameTabId] = useState<string | null>(null);
+  const [serverStreamSettledTabId, setServerStreamSettledTabId] = useState<string | null>(null);
   // A desktop page that mounted before its tab went headless leaves its stale state here.
   const desktopOverlay =
     tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
@@ -257,7 +265,7 @@ export function PreviewView({
   const isUnreachable = navStatus._tag === "LoadFailed";
   const showEmptyState = navStatus._tag === "Idle";
   const serverStreamPending =
-    isServerTab && !showEmptyState && !isUnreachable && serverFrameTabId !== runtimeTabId;
+    isServerTab && !showEmptyState && !isUnreachable && serverStreamSettledTabId !== runtimeTabId;
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
@@ -451,13 +459,16 @@ export function PreviewView({
 
   const handleOpenInBrowser = () => {
     if (!localApi || !url) return;
-    void localApi.shell.openExternal(url).catch(() => undefined);
+    // A desktop tab's localhost is the environment's; the system browser needs its own route there.
+    const externalUrl = isServerTab ? url : resolveExternalServerUrl(threadRef.environmentId, url);
+    void localApi.shell.openExternal(externalUrl).catch(() => undefined);
   };
 
   const moveTarget = alternatePreviewRuntime(
     threadRef.environmentId,
     primaryEnvironmentId,
     serverBrowser,
+    desktopLoadsLoopback,
     snapshot,
   );
   const moveLabel =
@@ -983,6 +994,7 @@ export function PreviewView({
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
+      data-preview-view
     >
       {pickActive && runtimeTabId && annotationVoice ? (
         <PreviewAnnotationSpeech
@@ -1105,7 +1117,8 @@ export function PreviewView({
                     : null
                 }
                 visible={visible}
-                onFirstFrame={() => setServerFrameTabId(runtimeTabId)}
+                onFirstFrame={() => setServerStreamSettledTabId(runtimeTabId)}
+                onNoFrames={() => setServerStreamSettledTabId(runtimeTabId)}
                 onControl={(control) =>
                   setServerControlledTabId(control?.controller === "you" ? runtimeTabId : null)
                 }

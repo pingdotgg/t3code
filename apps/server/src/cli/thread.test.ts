@@ -24,6 +24,7 @@ import {
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import {
+  latestRunError,
   launchModelSelection,
   readLatestMessages,
   resolveProject,
@@ -501,6 +502,32 @@ it.effect("show returns a --messages count larger than one call can spread", () 
       messages.map((item) => item.itemId),
       latest(200_000),
     );
+  }),
+);
+
+it.effect("show gives the latest run's last error only when that run did not complete", () =>
+  Effect.gen(function* () {
+    const page = {
+      thread: {},
+      items: [
+        { itemId: "item-0", runId: RunId.make("run-0"), type: "error", text: "earlier run" },
+        { itemId: "item-1", runId, type: "error", text: "first try" },
+        { itemId: "item-2", runId, type: "error", text: "Usage limit reached" },
+      ],
+      nextPosition: null,
+      hasMore: false,
+    };
+    const { tools, calls } = scriptedTools({ t3_thread_read: [page] });
+
+    assert.strictEqual(
+      yield* latestRunError(tools, { threadId, status: "failed", latestRunId: runId }),
+      "Usage limit reached",
+    );
+    assert.deepInclude(calls[0]?.args, { view: "activity" });
+    for (const status of ["completed", "running", "queued", "idle"] as const) {
+      assert.isNull(yield* latestRunError(tools, { threadId, status, latestRunId: runId }), status);
+    }
+    assert.lengthOf(calls, 1);
   }),
 );
 

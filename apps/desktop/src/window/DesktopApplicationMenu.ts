@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import type { DesktopUpdateChannel } from "@t3tools/contracts";
 import * as Electron from "electron";
 import { msg } from "gt-i18n";
 
@@ -67,6 +68,11 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   yield* desktopWindow.runMainContentsCommand(command);
 });
+
+const trackLabel = (channel: DesktopUpdateChannel) =>
+  channel === "nightly"
+    ? m(msg("Nightly", { $context: "release track" }))
+    : m(msg("Stable", { $context: "release track" }));
 
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
@@ -134,7 +140,18 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
       type: "warning",
       title: m(msg("Update check failed")),
       message: m(msg("Could not check for updates.")),
-      detail: updateState.message ?? m(msg("An unknown error occurred. Please try again later.")),
+      detail:
+        updateState.trackMismatch !== undefined
+          ? m(
+              msg(
+                "This {build} build can't update from the {saved} track on its own. Switch the update track back to {build}, or use Review beside Update track to retry the switch to {saved}.",
+              ),
+              {
+                build: trackLabel(updateState.trackMismatch.buildChannel),
+                saved: trackLabel(updateState.channel),
+              },
+            )
+          : (updateState.message ?? m(msg("An unknown error occurred. Please try again later."))),
       buttons: [m(msg("OK"))],
     });
   }
@@ -230,11 +247,14 @@ export const make = Effect.gen(function* () {
             click: settingsClick,
           },
           { type: "separator" },
-          { role: "services" },
+          { role: "services", label: m(msg("Services", { $context: "macOS app menu item" })) },
           { type: "separator" },
           { role: "hide", label: m(msg("Hide {appName}"), { appName: environment.displayName }) },
-          { role: "hideOthers" },
-          { role: "unhide" },
+          { role: "hideOthers", label: m(msg("Hide Others")) },
+          {
+            role: "unhide",
+            label: m(msg("Show All", { $context: "macOS app menu item, shows hidden apps" })),
+          },
           { type: "separator" },
           { role: "quit", label: m(msg("Quit {appName}"), { appName: environment.displayName }) },
         ],
@@ -269,32 +289,41 @@ export const make = Effect.gen(function* () {
           // Cmd/Ctrl+W belongs to the renderer's tab close; it must never close the window.
           environment.platform === "darwin"
             ? { label: m(msg("Close Window")), click: (_item, window) => window?.close() }
-            : { role: "quit" },
+            : {
+                role: "quit",
+                label:
+                  environment.platform === "win32"
+                    ? m(msg("Exit", { $context: "File menu item, quits the app" }))
+                    : m(msg("Quit")),
+              },
         ],
       },
       {
         label: m(msg("Edit", { $context: "menu bar title" })),
         submenu: [
-          { role: "undo" },
-          { role: "redo" },
+          { role: "undo", label: m(msg("Undo", { $context: "Edit menu item" })) },
+          { role: "redo", label: m(msg("Redo", { $context: "Edit menu item" })) },
           { type: "separator" },
-          { role: "cut" },
-          { role: "copy" },
-          { role: "paste" },
+          { role: "cut", label: m(msg("Cut", { $context: "Edit menu item" })) },
+          { role: "copy", label: m(msg("Copy", { $context: "Edit menu item" })) },
+          { role: "paste", label: m(msg("Paste", { $context: "Edit menu item" })) },
           {
             label: m(msg("Paste as Text")),
             accelerator: "CmdOrCtrl+Shift+V",
             click: pasteAsTextClick,
           },
-          { role: "delete" },
+          { role: "delete", label: m(msg("Delete", { $context: "Edit menu item" })) },
           { type: "separator" },
-          { role: "selectAll" },
+          { role: "selectAll", label: m(msg("Select All", { $context: "Edit menu item" })) },
           ...(environment.platform === "darwin"
             ? [
                 { type: "separator" as const },
                 {
                   label: m(msg("Speech", { $context: "menu, text-to-speech" })),
-                  submenu: [{ role: "startSpeaking" as const }, { role: "stopSpeaking" as const }],
+                  submenu: [
+                    { role: "startSpeaking" as const, label: m(msg("Start Speaking")) },
+                    { role: "stopSpeaking" as const, label: m(msg("Stop Speaking")) },
+                  ],
                 },
               ]
             : []),
@@ -359,22 +388,30 @@ export const make = Effect.gen(function* () {
             click: zoomClick("out"),
           },
           { type: "separator" },
-          { role: "togglefullscreen" },
+          { role: "togglefullscreen", label: m(msg("Toggle Full Screen")) },
         ],
       },
       {
         // Electron's default Window submenu adds a Ctrl+W close role off macOS.
         role: "windowMenu",
+        label: m(msg("Window", { $context: "menu bar title" })),
         submenu: [
-          { role: "minimize" },
-          { role: "zoom" },
+          { role: "minimize", label: m(msg("Minimize", { $context: "Window menu item" })) },
+          {
+            role: "zoom",
+            label: m(msg("Zoom", { $context: "Window menu item, resizes the window" })),
+          },
           ...(environment.platform === "darwin"
-            ? [{ type: "separator" as const }, { role: "front" as const }]
+            ? [
+                { type: "separator" as const },
+                { role: "front" as const, label: m(msg("Bring All to Front")) },
+              ]
             : []),
         ],
       },
       {
         role: "help",
+        label: m(msg("Help", { $context: "menu bar title" })),
         submenu: [
           {
             label: m(msg("Check for Updates...")),

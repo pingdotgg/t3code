@@ -18,7 +18,6 @@ import {
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
   environmentConnectionAtom,
-  mapAtomCommandResult,
 } from "./runtime.ts";
 import { waitForTitleRegenerationOutcome } from "./threadTitleRegeneration.ts";
 import {
@@ -149,12 +148,44 @@ export function createThreadEnvironmentAtoms<R, E>(
     command: AtomCommand<W, A, E>,
   ): AtomCommand<W, A, E> => ({
     label: command.label,
-    run: (registry, target) => {
-      registry.update(rowActionsAtom(target.environmentId), (count) => count + 1);
-      return command.run(registry, target);
-    },
+    run: (registry, target) =>
+      Effect.suspend(() => {
+        registry.update(rowActionsAtom(target.environmentId), (count) => count + 1);
+        return command.run(registry, target);
+      }),
   });
 
+  // The environment's time of the last sign-in to a server in a thread, until the app reloads.
+  const mcpSignedInAtFamily = Atom.family((_key: string) =>
+    Atom.make<number | null>(null).pipe(Atom.keepAlive),
+  );
+  const mcpSignInKey = (
+    environmentId: EnvironmentId,
+    input: { readonly threadId: ThreadId; readonly server: string },
+  ) => JSON.stringify([environmentId, input.threadId, input.server]);
+  const markMcpSignedIn = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    input: { readonly threadId: ThreadId; readonly server: string },
+    signedInAt: string,
+  ) =>
+    registry.update(mcpSignedInAtFamily(mcpSignInKey(environmentId, input)), (current) =>
+      Math.max(current ?? 0, Date.parse(signedInAt)),
+    );
+  const mcpNoticeSignedInFamily = Atom.family((key: string) => {
+    const [signInKey, noticeAt] = JSON.parse(key) as [string, number];
+    // A notice newer than the sign-in means the server needs one again.
+    return Atom.make((get) => {
+      const signedInAt = get(mcpSignedInAtFamily(signInKey));
+      return signedInAt !== null && noticeAt <= signedInAt;
+    });
+  });
+  /** Whether a sign-in notice, by its environment time, came before the server was signed in. */
+  const mcpSignedInAtom = (
+    environmentId: EnvironmentId,
+    input: { readonly threadId: ThreadId; readonly server: string; readonly noticeAt: number },
+  ) =>
+    mcpNoticeSignedInFamily(JSON.stringify([mcpSignInKey(environmentId, input), input.noticeAt]));
   const sent = {
     armTitleRegeneration: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:regenerate-title",
@@ -442,6 +473,23 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    // Outside the thread's queue: finishing can wait on the agent, and messages must not.
+    mcpSignInStart: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:mcp-sign-in-start",
+      tag: WS_METHODS.providerMcpSignInStart,
+      onSuccess: ({ environmentId, input }, registry, result) =>
+        Effect.sync(() => {
+          if (result.signedInAt !== null) {
+            markMcpSignedIn(registry, environmentId, input, result.signedInAt);
+          }
+        }),
+    }),
+    mcpSignInComplete: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:mcp-sign-in-complete",
+      tag: WS_METHODS.providerMcpSignInComplete,
+      onSuccess: ({ environmentId, input }, registry, result) =>
+        Effect.sync(() => markMcpSignedIn(registry, environmentId, input, result.signedInAt)),
+    }),
   };
   const commands = {
     ...sent,
@@ -468,29 +516,28 @@ export function createThreadEnvironmentAtoms<R, E>(
   );
   const regenerateTitle = {
     label: commands.armTitleRegeneration.label,
-    run: async (
+    run: (
       registry: AtomRegistry.AtomRegistry,
       target: { readonly environmentId: EnvironmentId; readonly input: { threadId: ThreadId } },
-    ) => {
-      const armed = await commands.armTitleRegeneration.run(registry, target);
-      const outcome =
-        armed._tag === "Success"
-          ? await waitForTitleRegenerationOutcome(
-              registry,
-              {
-                snapshot: snapshotAtom(target.environmentId),
-                disconnected: disconnectedAtom(target.environmentId),
-              },
-              { threadId: target.input.threadId, ...armed.value },
-            )
-          : null;
-      return mapAtomCommandResult(armed, () => outcome);
-    },
+    ) =>
+      commands.armTitleRegeneration.run(registry, target).pipe(
+        Effect.flatMap((armed) =>
+          waitForTitleRegenerationOutcome(
+            registry,
+            {
+              snapshot: snapshotAtom(target.environmentId),
+              disconnected: disconnectedAtom(target.environmentId),
+            },
+            { threadId: target.input.threadId, ...armed },
+          ),
+        ),
+      ),
   };
   return {
     ...commands,
     regenerateTitle,
     rowActionsAtom,
+    mcpSignedInAtom,
     snapshotAtom: optimistic.snapshotAtom,
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>

@@ -200,7 +200,11 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
     case "lan":
       return "LAN";
     case "tailnet":
-      return "Tailscale";
+      // Tailscale Serve answers over HTTPS on the machine's name; the same machine's
+      // plain address is another route, so the two are told apart.
+      return routeHttpBaseUrl(route)?.startsWith("https:") === true
+        ? msg("Tailscale HTTPS")
+        : "Tailscale";
     case "vpn":
       return "VPN";
     case "ssh": {

@@ -39,7 +39,7 @@ function harness(ids = ["a"], modelFilters: Record<string, UsageModelFilter> = {
   const environments = ids.map((id) => {
     const environmentId = EnvironmentId.make(id);
     const rates = Promise.withResolvers<
-      AsyncResult.Success<typeof pricing> | AsyncResult.Failure<never, unknown>
+      AsyncResult.Success<typeof pricing> | AsyncResult.Failure<never, Error>
     >();
     const scan = Promise.withResolvers<UsageSummary>();
     const scanStarted = Promise.withResolvers<void>();
@@ -78,7 +78,14 @@ function harness(ids = ["a"], modelFilters: Record<string, UsageModelFilter> = {
         run: (
           _registry: AtomRegistry.AtomRegistry,
           { environmentId }: { environmentId: EnvironmentId },
-        ) => get(environmentId).rates.promise,
+        ) =>
+          Effect.promise(() => get(environmentId).rates.promise).pipe(
+            Effect.flatMap((result) =>
+              AsyncResult.isSuccess(result)
+                ? Effect.succeed(result.value)
+                : Effect.failCause(result.cause),
+            ),
+          ),
       },
     },
     presentations: {

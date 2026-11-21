@@ -114,6 +114,7 @@ interface HarnessOptions {
   readonly project?: OrchestrationProjectShell | null;
   readonly readFailure?: PullRequestService.PullRequestError;
   readonly readState?: PullRequestSummary["state"];
+  readonly readChecksState?: PullRequestSummary["checksState"];
 }
 
 const makeHarness = Effect.fn("makePullRequestWatchHarness")(function* (
@@ -144,6 +145,9 @@ const makeHarness = Effect.fn("makePullRequestWatchHarness")(function* (
               title: "Pull request",
               url: `https://github.com/${input.repository}/pull/${input.number}`,
               state: options.readState ?? "open",
+              ...(options.readChecksState !== undefined && {
+                checksState: options.readChecksState,
+              }),
               headBranch: "feature",
               baseBranch: "main",
               updatedAt: "2026-08-20T00:00:00.000Z",
@@ -164,21 +168,28 @@ const makeHarness = Effect.fn("makePullRequestWatchHarness")(function* (
 describe("PullRequestWatchService", () => {
   it.effect("links an unlinked watch even while the host has a transient read failure", () =>
     Effect.gen(function* () {
-      for (const options of [
-        {},
-        {
-          readFailure: new PullRequestOperationError({
-            operation: "summary",
-            detail: "The host is temporarily unavailable.",
-          }),
-        },
-      ]) {
+      const cases: ReadonlyArray<readonly [HarnessOptions, boolean | undefined]> = [
+        [{ readChecksState: "pending" }, true],
+        [{ readChecksState: "failing" }, false],
+        [{}, false],
+        [
+          {
+            readFailure: new PullRequestOperationError({
+              operation: "summary",
+              detail: "The host is temporarily unavailable.",
+            }),
+          },
+          undefined,
+        ],
+      ];
+      for (const [options, checksPending] of cases) {
         const harness = yield* makeHarness(options);
         const result = yield* harness.setWatching(true, {
           url: "https://github.com/t3tools/t3code/pull/9",
         });
         expect(result).toMatchObject({ number: 9, wasWatching: false });
-        expect(yield* Ref.get(harness.commands)).toMatchObject([
+        const commands = yield* Ref.get(harness.commands);
+        expect(commands).toMatchObject([
           {
             type: "thread.pull-request.watch",
             number: 9,
@@ -186,6 +197,10 @@ describe("PullRequestWatchService", () => {
             link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
           },
         ]);
+        const [command] = commands;
+        expect(command?.type === "thread.pull-request.watch" ? command.checksPending : null).toBe(
+          checksPending,
+        );
       }
     }),
   );
@@ -210,13 +225,12 @@ describe("PullRequestWatchService", () => {
     }),
   );
 
-  it.effect("rejects merged PRs and keeps an active watch usable without hosting access", () =>
+  it.effect("reports merged PRs without watching and keeps an active watch usable offline", () =>
     Effect.gen(function* () {
       const freshMerged = yield* makeHarness({ readState: "merged" });
-      const freshError = yield* freshMerged
-        .setWatching(true, { repository: "t3tools/t3code", number: 1 })
-        .pipe(Effect.flip);
-      expect(freshError).toMatchObject({ _tag: "PullRequestNotOpenError", state: "merged" });
+      expect(
+        yield* freshMerged.setWatching(true, { repository: "t3tools/t3code", number: 1 }),
+      ).toMatchObject({ number: 1, watching: false, wasWatching: false, state: "merged" });
       expect(yield* Ref.get(freshMerged.commands)).toEqual([]);
 
       const watch = {
@@ -239,10 +253,9 @@ describe("PullRequestWatchService", () => {
           makeLink(3, { headBranch: "watched", watch }),
         ]),
       });
-      const error = yield* harness
-        .setWatching(true, { repository: "t3tools/t3code", number: 1 })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "PullRequestNotOpenError", state: "merged" });
+      expect(
+        yield* harness.setWatching(true, { repository: "t3tools/t3code", number: 1 }),
+      ).toMatchObject({ number: 1, watching: false, state: "merged" });
       expect(
         yield* harness.setWatching(true, { repository: "t3tools/t3code", number: 3 }),
       ).toMatchObject({ watching: true, wasWatching: true });
@@ -256,15 +269,19 @@ describe("PullRequestWatchService", () => {
     }),
   );
 
-  it.effect("watches a pull request saved as closed, since it may have reopened", () =>
+  it.effect("re-reads a pull request saved as closed, and watches it only if it reopened", () =>
     Effect.gen(function* () {
       const closed = makeLink(1, { headBranch: "closed" });
-      const harness = yield* makeHarness({
-        readState: "closed",
-        thread: makeThread([
-          { ...closed, snapshot: closed.snapshot && { ...closed.snapshot, state: "closed" } },
-        ]),
-      });
+      const closedThread = makeThread([
+        { ...closed, snapshot: closed.snapshot && { ...closed.snapshot, state: "closed" } },
+      ]);
+      const stillClosed = yield* makeHarness({ readState: "closed", thread: closedThread });
+      expect(
+        yield* stillClosed.setWatching(true, { repository: "t3tools/t3code", number: 1 }),
+      ).toMatchObject({ watching: false, state: "closed" });
+      expect(yield* Ref.get(stillClosed.commands)).toEqual([]);
+
+      const harness = yield* makeHarness({ readState: "open", thread: closedThread });
       yield* harness.setWatching(true, { repository: "t3tools/t3code", number: 1 });
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.watch", number: 1, watching: true },

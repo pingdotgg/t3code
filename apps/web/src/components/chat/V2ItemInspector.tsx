@@ -246,7 +246,9 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   // Command rows stream their output, including the final output, from the server.
   const environmentStreamsOutput = useCommandOutputStreaming(props.environmentId);
   const streamsOutput =
-    (props.source !== undefined || environmentStreamsOutput) &&
+    (props.source === undefined
+      ? environmentStreamsOutput
+      : props.source.commandOutput !== undefined) &&
     props.projectedItem.item.type === "command_execution";
   const fetched = useFetchedTurnItem(
     props.projectedItem,

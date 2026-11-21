@@ -252,3 +252,148 @@ it.effect.each([
       assert.equal(result, isolated);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect.each([
+  { name: "completed child", isolated: true },
+  { name: "completed native child", isolated: true },
+  { name: "native child with running tool", isolated: false },
+  { name: "native child with provider background task", isolated: false },
+  { name: "native child with parent background task", isolated: false },
+  { name: "native child with another provider parent task", isolated: true },
+  { name: "native child grandchild with root background task", isolated: false },
+  { name: "missing task record", isolated: false },
+  { name: "task belongs to another child", isolated: false },
+  { name: "completed child with pending task", isolated: false },
+  { name: "grandchild through fork", isolated: false },
+  { name: "completed grandchild", isolated: true },
+  { name: "unrelated child", isolated: false },
+  { name: "running child", isolated: false },
+  { name: "held queue", isolated: false },
+  { name: "failed child", isolated: false },
+  { name: "cyclic ancestry", isolated: false },
+] as const)("parent file restore with $name: $isolated", ({ name, isolated }) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const worktreePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-restore-child-" });
+    const parentId = ThreadId.make("restore-parent");
+    const childId = ThreadId.make("restore-child");
+    const ancestorId = ThreadId.make("restore-ancestor");
+    const child = {
+      id: childId,
+      projectId: ProjectId.make("restore-project"),
+      deletedAt: null,
+      worktreePath,
+      activeRunId: name === "running child" ? "child-run" : null,
+      activityRunStatus: null,
+      latestRunId: name.includes("native child") ? null : "child-run",
+      creationSource: name.includes("native child") ? "provider" : "user",
+      forkedFrom: { type: "node", nodeId: "child-task" },
+      status: name.includes("native child")
+        ? "idle"
+        : name === "running child"
+          ? "running"
+          : name === "failed child"
+            ? "failed"
+            : "completed",
+      pendingRuntimeRequest: null,
+      pendingBackgroundTasks: [],
+      lineage: {
+        parentThreadId:
+          name === "completed grandchild" ||
+          name === "native child grandchild with root background task" ||
+          name === "grandchild through fork" ||
+          name === "cyclic ancestry"
+            ? ancestorId
+            : name === "unrelated child"
+              ? ThreadId.make("another-parent")
+              : parentId,
+        relationshipToParent: "subagent",
+        rootThreadId: parentId,
+      },
+    };
+    const ancestor = {
+      ...child,
+      id: ancestorId,
+      forkedFrom: { type: "node", nodeId: "ancestor-task" },
+      lineage: {
+        ...child.lineage,
+        relationshipToParent: name === "grandchild through fork" ? "fork" : "subagent",
+        parentThreadId: name === "cyclic ancestry" ? childId : parentId,
+      },
+    };
+    const children =
+      name === "completed grandchild" ||
+      name === "native child grandchild with root background task" ||
+      name === "grandchild through fork" ||
+      name === "cyclic ancestry"
+        ? [child, ancestor]
+        : [child];
+    const projections = {
+      getShellSnapshot: () =>
+        Effect.succeed({
+          threads: children,
+          archivedThreads: [],
+        }),
+      getCheckpointContext: () =>
+        Effect.succeed({
+          checkpointScopes: [],
+          runs: name === "held queue" ? [{ status: "queued" }] : [],
+        }),
+      getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+      getThreadRecords: (
+        _threadId: unknown,
+        _fields: readonly string[],
+        filter: { subagentIds?: string[]; turnItemStatuses?: string[] } = {},
+      ) =>
+        Effect.succeed({
+          providerThreads:
+            _threadId === parentId &&
+            (name.includes("parent") ||
+              name === "native child grandchild with root background task") &&
+            name.includes("native child")
+              ? [
+                  {
+                    providerInstanceId:
+                      name === "native child with another provider parent task"
+                        ? "other-provider"
+                        : "claude",
+                    status: "idle",
+                    pendingBackgroundTasks: [{ taskId: "background", kind: "command" }],
+                  },
+                ]
+              : name === "native child with provider background task"
+                ? [{ status: "idle", pendingBackgroundTasks: [{ taskId: "background" }] }]
+                : [],
+          turnItems:
+            filter.turnItemStatuses !== undefined && name === "native child with running tool"
+              ? [{ type: "command_execution", status: "running" }]
+              : [],
+          subagents:
+            name === "missing task record"
+              ? []
+              : [
+                  {
+                    id: filter.subagentIds?.[0],
+                    providerInstanceId: "claude",
+                    nativeTaskRef: { nativeId: "native-task" },
+                    childThreadId:
+                      name === "task belongs to another child"
+                        ? "another-child"
+                        : filter.subagentIds?.[0] === "ancestor-task"
+                          ? ancestorId
+                          : childId,
+                    origin: name.includes("native child") ? "provider_native" : "app_owned",
+                    status: name === "completed child with pending task" ? "running" : "completed",
+                  },
+                ],
+        }),
+    };
+    const result = yield* isCheckpointRestoreIsolated(
+      { id: parentId, worktreePath },
+      { cwd: worktreePath },
+      { fileSystem, path, projections: projections as never, projects: {} as never },
+    );
+    assert.equal(result, isolated);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

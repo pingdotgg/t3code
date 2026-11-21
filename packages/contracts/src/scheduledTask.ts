@@ -287,7 +287,10 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   enabled: Schema.Boolean,
   schedule: ScheduledTaskUpsertSchedule,
   projectId: ProjectId,
+  /** Omitted or null: keep the stored thread, which a first run may have bound since the form opened. */
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
+  /** True with no `threadId`: the user cleared the thread, so the next run starts one. */
+  unbindThread: Schema.optional(Schema.Boolean),
   /** Omitted: keep the stored mode, or derive it from `threadId` for a new or rebound task. */
   threadMode: Schema.optional(ScheduledTaskThreadMode),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,

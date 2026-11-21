@@ -88,7 +88,10 @@ export const ThreadPullRequestWatch = Schema.Struct({
   passedChecks: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
-  /** Checks still pending when required ones passed early, owed one wake once all settle. */
+  /**
+   * Marks one wake owed once every check has finished: the checks still pending when the required
+   * ones passed early, or the failed ones while a failure keeps the required ones from passing.
+   */
   owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** Approval holds keyed by workflow run URL, or check name when no run URL is known. */
   awaitingApproval: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
@@ -118,8 +121,14 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * watch keep its thread waiting; absent on watches not read since it existed.
    */
   checksPending: Schema.optional(Schema.Boolean),
+  /** How long the watch holds its thread. Absent means until every check finished. */
+  until: Schema.optional(Schema.Literal("merged")),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
+
+/** `merged` also ends when the PR closes or the agent unwatches it. */
+export const PullRequestWatchUntil = Schema.Literals(["checks", "merged"]);
+export type PullRequestWatchUntil = typeof PullRequestWatchUntil.Type;
 
 export const ThreadPullRequestLink = Schema.Struct({
   ...ThreadPullRequestKey.fields,
