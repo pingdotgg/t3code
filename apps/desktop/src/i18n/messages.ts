@@ -11,6 +11,7 @@ const DEFAULT_LOCALE = "en";
 
 // English is the source text and loads nothing. Keep the keys in step with gt.config.json.
 const CATALOGS: Readonly<Record<string, () => Promise<{ readonly default: Catalog }>>> = {
+  ar: () => import("./translations/ar.json", { with: { type: "json" } }),
   de: () => import("./translations/de.json", { with: { type: "json" } }),
   es: () => import("./translations/es.json", { with: { type: "json" } }),
   fr: () => import("./translations/fr.json", { with: { type: "json" } }),

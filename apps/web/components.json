@@ -11,7 +11,7 @@
     "prefix": ""
   },
   "iconLibrary": "lucide",
-  "rtl": false,
+  "rtl": true,
   "menuColor": "default",
   "menuAccent": "bold",
   "aliases": {

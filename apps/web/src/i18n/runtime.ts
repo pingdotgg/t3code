@@ -1,4 +1,5 @@
 import { resolveLocale } from "@t3tools/client-runtime/locales";
+import { setErrorMessageResolver } from "@t3tools/contracts";
 import { getTranslationsSnapshot } from "gt-react";
 
 import {
@@ -7,8 +8,8 @@ import {
   updateClientSettings,
 } from "../hooks/useSettings";
 import { initializeI18n } from "./initializeI18n";
-import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
-import { setActiveLocale } from "./messages";
+import { DEFAULT_LOCALE, localeDirection, SUPPORTED_LOCALES } from "./locales";
+import { m, setActiveLocale } from "./messages";
 
 type LocaleTranslations = Awaited<ReturnType<typeof getTranslationsSnapshot>>;
 
@@ -49,6 +50,7 @@ function activateLocale(locale: string): void {
   snapshot = { locale, translations: { ...loadedTranslations } };
   setActiveLocale(locale);
   document.documentElement.lang = locale;
+  document.documentElement.dir = localeDirection(locale);
   for (const listener of listeners) listener();
 }
 
@@ -70,6 +72,7 @@ export function persistGTLocale(locale: string): void {
 
 export function startI18n(): void {
   initializeI18n(persistGTLocale);
+  setErrorMessageResolver(m);
   subscribeClientSettings(applyLanguageSetting);
   applyLanguageSetting();
 }

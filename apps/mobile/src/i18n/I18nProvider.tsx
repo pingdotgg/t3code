@@ -1,14 +1,23 @@
 import "./intl-polyfills";
+import { reloadAppAsync } from "expo";
 import { resolveLocale } from "@t3tools/client-runtime/locales";
+import { setErrorMessageResolver } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { GTProvider, initializeGT, useLocale } from "gt-react-native";
-import { useDeferredValue, useEffect, type ReactNode } from "react";
-import { Platform, TurboModuleRegistry, View, type TurboModule } from "react-native";
+import { useDeferredValue, useEffect, useState, type ReactNode } from "react";
+import {
+  AppState,
+  I18nManager,
+  Platform,
+  TurboModuleRegistry,
+  View,
+  type TurboModule,
+} from "react-native";
 
-import { mobilePreferencesAtom } from "../state/preferences";
+import { mobilePreferencesAtom, savedMobileLanguageAtom } from "../state/preferences";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
-import { setActiveLocale } from "./messages";
+import { m, setActiveLocale } from "./messages";
 
 // Committed catalogs, so forks and offline installs never reach GT's CDN. English is the source.
 // Required on demand: Metro runs every statically imported module at startup, and only one
@@ -23,6 +32,7 @@ const CATALOGS: Readonly<Record<string, () => unknown>> = {
   ko: () => require("./translations/ko.json"),
   ru: () => require("./translations/ru.json"),
   sv: () => require("./translations/sv.json"),
+  ar: () => require("./translations/ar.json"),
 };
 
 initializeGT({
@@ -32,6 +42,7 @@ initializeGT({
   // Loaded catalogs never go stale; GT's default 60 s expiry would only reload the same file.
   cacheExpiryTime: null,
 });
+setErrorMessageResolver(m);
 
 // Read the device languages from gt-react-native's own native module: GT's getLocale() prefers
 // the last locale passed to GTProvider, which it persists, so it can't express "system".
@@ -58,11 +69,35 @@ export function useLanguagePreference(): string {
 
 /** Translates the app into the saved language; "system" follows the device. Mounted once in App. */
 export function I18nProvider(props: { readonly children: ReactNode }) {
-  // GT suspends while a locale's catalog loads. Deferring the switch keeps the current language
-  // on screen until then, instead of GT's full-screen spinner.
-  const locale = useDeferredValue(
-    resolveLocale(useLanguagePreference(), readSystemLocales(), SUPPORTED_LOCALES, DEFAULT_LOCALE),
+  const saved = useAtomValue(savedMobileLanguageAtom);
+  const language = AsyncResult.isSuccess(saved) ? (saved.value ?? DEFAULT_LOCALE) : null;
+  const [systemLocales, setSystemLocales] = useState(readSystemLocales);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Android device language can change while the app is in the background.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") setSystemLocales(readSystemLocales());
+    });
+    return () => subscription.remove();
+  }, []);
+  const resolved = resolveLocale(
+    language ?? DEFAULT_LOCALE,
+    systemLocales,
+    SUPPORTED_LOCALES,
+    DEFAULT_LOCALE,
   );
+  const wantedRTL = language === null ? null : resolved === "ar";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- React Native applies persisted layout direction when it recreates the app.
+  useEffect(() => {
+    if (wantedRTL === null || I18nManager.isRTL === wantedRTL) return;
+    // Allowing device RTL with forceRTL(false) would keep an Arabic device in RTL.
+    I18nManager.allowRTL(wantedRTL);
+    I18nManager.forceRTL(wantedRTL);
+    void reloadAppAsync().catch((error: unknown) =>
+      console.warn("Could not reload the app after a layout direction change.", error),
+    );
+  }, [wantedRTL]);
+  // Keep the current catalog on screen while GT loads the next one.
+  const locale = useDeferredValue(resolved);
   return (
     <GTProvider locale={locale} fallback={<View className="flex-1 bg-screen" />}>
       <ActiveLocale />
