@@ -1055,6 +1055,15 @@ it.effect("a cancelled run ends, and two steps with one name pause their run", (
         const cancelled = (yield* workflows.get(waiting.runId)).run;
         assert.equal(cancelled.status, "cancelled");
         assert.equal(cancelled.detail, "not needed");
+        // A cancel with no reason gives none, rather than repeating that the run was cancelled.
+        const unexplained = yield* workflows.start(
+          "review",
+          { change: "c5" },
+          { idempotencyKey: "c5" },
+        );
+        yield* workflows.waitFor(unexplained.runId, atVerdict);
+        yield* workflows.cancel(unexplained.runId);
+        assert.equal((yield* workflows.get(unexplained.runId)).run.detail, null);
         // A signal for the wait it had is kept as mail, not delivered to a run that ended.
         assert.equal(
           yield* workflows.signal(
