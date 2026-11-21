@@ -683,7 +683,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
 });
 
 it.layer(NodeServices.layer)("readAntigravityProfileMcpServers", (it) => {
-  it.effect("names the profile's enabled stdio servers so agy preloads them", () =>
+  it.effect("names the profile's enabled servers so agy preloads them", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -702,7 +702,9 @@ it.layer(NodeServices.layer)("readAntigravityProfileMcpServers", (it) => {
             zebra: { command: "zebra-mcp", args: ["--fast"], env: { TOKEN: "${TOKEN}" } },
             plain: { command: "plain-mcp" },
             off: { command: "off-mcp", disabled: true },
-            remote: { url: "https://mcp.example.com/mcp" },
+            remote: { url: "https://mcp.example.com/mcp", headers: { Authorization: "secret" } },
+            legacy: { serverUrl: "https://legacy.example.com/mcp" },
+            neither: { args: ["--orphan"] },
           },
         }),
       );
@@ -714,6 +716,8 @@ it.layer(NodeServices.layer)("readAntigravityProfileMcpServers", (it) => {
           env: [{ name: "TOKEN", value: "${TOKEN}" }],
         },
         { name: "plain", command: "plain-mcp", args: [], env: [] },
+        { type: "http", name: "remote", url: "https://mcp.example.com/mcp", headers: [] },
+        { type: "http", name: "legacy", url: "https://legacy.example.com/mcp", headers: [] },
       ]);
     }),
   );

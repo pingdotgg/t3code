@@ -517,10 +517,12 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
   return blocks;
 });
 
-const AntigravityStdioMcpServer = Schema.Struct({
-  command: Schema.String,
+const AntigravityConfigMcpServer = Schema.Struct({
+  command: Schema.optional(Schema.String),
   args: Schema.optional(Schema.Array(Schema.String)),
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  url: Schema.optional(Schema.String),
+  serverUrl: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
 });
 const decodeAntigravityMcpConfig = Schema.decodeEffect(
@@ -528,12 +530,12 @@ const decodeAntigravityMcpConfig = Schema.decodeEffect(
     Schema.Struct({ mcpServers: Schema.Record(Schema.String, Schema.Unknown) }),
   ),
 );
-const decodeAntigravityStdioMcpServer = Schema.decodeUnknownOption(AntigravityStdioMcpServer);
+const decodeAntigravityConfigMcpServer = Schema.decodeUnknownOption(AntigravityConfigMcpServer);
 
 /**
  * agy preloads only the servers a session names and loads the rest of `config/mcp_config.json`
- * after the first prompt has started. It resolves a named server from its own config, so
- * naming the profile's stdio servers makes their tools part of every turn's first model call.
+ * after the first prompt has started. It resolves a named server from its own config, headers
+ * and OAuth included, so naming the profile's servers puts their tools in the first model call.
  */
 export const readAntigravityProfileMcpServers = Effect.fn("readAntigravityProfileMcpServers")(
   function* (profileDirectory: string) {
@@ -545,17 +547,24 @@ export const readAntigravityProfileMcpServers = Effect.fn("readAntigravityProfil
     if (Option.isNone(config)) return [];
     const servers: EffectAcpSchema.McpServer[] = [];
     for (const [name, value] of Object.entries(config.value.mcpServers)) {
-      const server = decodeAntigravityStdioMcpServer(value);
+      const server = decodeAntigravityConfigMcpServer(value);
       if (Option.isNone(server) || server.value.disabled === true) continue;
-      servers.push({
-        name,
-        command: server.value.command,
-        args: [...(server.value.args ?? [])],
-        env: Object.entries(server.value.env ?? {}).map(([key, envValue]) => ({
-          name: key,
-          value: envValue,
-        })),
-      });
+      const { command, args, env } = server.value;
+      const url = server.value.url ?? server.value.serverUrl;
+      if (command !== undefined) {
+        servers.push({
+          name,
+          command,
+          args: [...(args ?? [])],
+          env: Object.entries(env ?? {}).map(([key, envValue]) => ({
+            name: key,
+            value: envValue,
+          })),
+        });
+      } else if (url !== undefined) {
+        // Headers stay in agy's config; the session entry only names the server.
+        servers.push({ type: "http", name, url, headers: [] });
+      }
     }
     return servers;
   },
