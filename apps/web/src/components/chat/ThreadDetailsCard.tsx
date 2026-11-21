@@ -10,7 +10,8 @@ import {
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ScrollArea } from "../ui/scroll-area";
 import { cn } from "../../lib/utils";
-import { Popover, PopoverPopup, PopoverCreateHandle } from "../ui/popover";
+import { Popover, PopoverPopup, PopoverPopupSurface, PopoverCreateHandle } from "../ui/popover";
+import { Collapsible, CollapsiblePanel } from "../ui/collapsible";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
 import { useChatCanvas } from "./ChatCanvasContext";
 import {
@@ -148,8 +149,11 @@ export function ThreadDetailsCard({
         useRightPanelStore.getState().setThreadPanelOpen(threadRef, "popover", open);
       }}
     >
-      {placement && inlineOpen ? (
-        <aside
+      {placement ? (
+        <Collapsible
+          key={`${threadRef.environmentId}:${threadRef.threadId}`}
+          open={inlineOpen}
+          render={<aside />}
           {...detailsArea}
           data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
           // Skip the return transition to avoid overlapping the rising preview.
@@ -165,9 +169,12 @@ export function ThreadDetailsCard({
           }}
           data-density={density}
           data-thread-details-panel="inline"
+          inert={!inlineOpen}
         >
-          {card}
-        </aside>
+          <CollapsiblePanel animate={false} render={<PopoverPopupSurface />}>
+            {card}
+          </CollapsiblePanel>
+        </Collapsible>
       ) : null}
       {/* Rendered in both modes: base-ui keeps a popup that unmounts mid-open
           mounted, because its exit animation never finishes. Staying in the tree
