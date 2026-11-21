@@ -29,8 +29,10 @@ import {
   type ProviderUserInputAnswers,
   type RuntimeMode,
   type RuntimeRequestId,
+  type TextGenerationError,
   type ThreadTokenUsageSnapshot,
   type ThreadId,
+  isDelegatedAppThread,
   isRuntimeModeAbove,
   type TurnTokenUsage,
 } from "@t3tools/contracts";
@@ -57,6 +59,7 @@ import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as FiberHandle from "effect/FiberHandle";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -702,6 +705,16 @@ export interface AcpAdapterV2Flavor {
   readonly sessionCarriesPullRequestLinking?: (
     initializeResult: EffectAcpSchema.InitializeResponse,
   ) => boolean;
+  /** Labs flag, read live: predict the next user message after a completed root turn. */
+  readonly samplePromptSuggestion?: (input: {
+    readonly modelSelection: ModelSelection;
+    readonly messages: ReadonlyArray<AcpPromptSuggestionMessage>;
+  }) => Effect.Effect<string | null, EffectAcpErrors.AcpError | TextGenerationError>;
+}
+
+export interface AcpPromptSuggestionMessage {
+  readonly role: "user" | "assistant";
+  readonly text: string;
 }
 
 /**
@@ -2368,6 +2381,85 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const nextElicitationOrdinal = yield* Ref.make(0);
         const providerTurns = yield* Ref.make(new Map<string, OrchestrationV2ProviderTurn>());
         const snapshot = yield* Ref.make(emptySnapshotState());
+        const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
+        const promptSuggestionHandle = yield* FiberHandle.make();
+        let promptSuggestionGeneration = 0;
+        const cancelPromptSuggestion = Effect.fnUntraced(function* () {
+          promptSuggestionGeneration += 1;
+          yield* FiberHandle.clear(promptSuggestionHandle);
+        });
+        const samplePromptSuggestion = Effect.fn("AcpAdapterV2.samplePromptSuggestion")(function* (
+          context: ActiveAcpTurn,
+        ) {
+          const sampler = flavor.samplePromptSuggestion;
+          if (
+            sampler === undefined ||
+            isDelegatedAppThread(context.input.appThread) ||
+            acpIsProviderContinuationMessage(context.input.message) ||
+            isCompactCommand(context.input.message) ||
+            !(yield* promptSuggestionsEnabled)
+          ) {
+            return;
+          }
+          const state = yield* Ref.get(snapshot);
+          const messages: Array<AcpPromptSuggestionMessage> = [];
+          for (const key of state.order) {
+            const message = state.messages.get(key);
+            if (
+              message === undefined ||
+              state.reasoningIds.has(message.id) ||
+              (message.role !== "user" && message.role !== "assistant") ||
+              (message.role === "user" && acpIsProviderContinuationMessage(message))
+            ) {
+              continue;
+            }
+            const rawText =
+              message.id === context.input.message.messageId &&
+              context.input.inlineContextLength !== undefined
+                ? message.text.slice(context.input.inlineContextLength)
+                : message.text;
+            const text = rawText.trim();
+            if (text.length === 0) continue;
+            messages.push({ role: message.role, text });
+          }
+          if (!messages.some((message) => message.role === "assistant")) {
+            return;
+          }
+          const generation = ++promptSuggestionGeneration;
+          yield* FiberHandle.run(
+            promptSuggestionHandle,
+            sampler({
+              modelSelection: context.input.modelSelection,
+              messages,
+            }).pipe(
+              Effect.flatMap((raw) => {
+                const suggestion = raw?.trim() ?? "";
+                // Delegated completion wakes arrive as user input, so samples can imitate one.
+                if (suggestion.length === 0 || suggestion.startsWith("Delegated task")) {
+                  return Effect.void;
+                }
+                return Effect.gen(function* () {
+                  if (
+                    (yield* Ref.get(activeTurn)) !== null ||
+                    promptSuggestionGeneration !== generation
+                  ) {
+                    return;
+                  }
+                  yield* emitProviderEvent({
+                    type: "prompt_suggestion.updated",
+                    driver,
+                    threadId: context.input.threadId,
+                    runId: context.input.runId,
+                    text: suggestion,
+                  });
+                });
+              }),
+              Effect.catchCause((cause) =>
+                Effect.logDebug("orchestration-v2.acp-prompt-suggestion-failed", { driver, cause }),
+              ),
+            ),
+          );
+        });
 
         const awaitRuntimeTeardown = Effect.fnUntraced(function* () {
           const state = yield* Ref.get(runtimeTeardownState);
@@ -8726,6 +8818,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* detachBackgroundCommands(context);
           }
           steerInjections.clear();
+          let offeredContinuation = false;
           if (
             postSettleContinuationEnabled &&
             settledStatus === "completed" &&
@@ -8737,11 +8830,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ) {
             const sessionId = yield* Ref.get(activeSessionId);
             if (sessionId !== null) {
+              offeredContinuation = true;
               yield* offerContinuationRun(sessionId);
             }
           }
           if (settledStatus !== "completed") {
             yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
+          }
+          if (settledStatus === "completed" && !directStopQuarantine && !offeredContinuation) {
+            yield* samplePromptSuggestion(context);
           }
           yield* Deferred.succeed(context.completed, undefined).pipe(Effect.ignore);
         });
@@ -9359,6 +9456,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
             yield* validateModelSelection(turnInput.modelSelection);
+            yield* cancelPromptSuggestion();
             yield* Ref.set(lastTurnRoute, {
               threadId: turnInput.threadId,
               providerThreadId: turnInput.providerThread.id,
@@ -9775,6 +9873,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
+            yield* cancelPromptSuggestion();
             yield* continuationPermit.withPermit(
               Effect.gen(function* () {
                 yield* Ref.set(continuationClosed, true);
@@ -10153,6 +10252,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   // a stalled hard teardown keeps its state and permit without holding the caller.
                   const transitionFiber = yield* Effect.gen(function* () {
                     const transition = yield* Effect.gen(function* () {
+                      yield* cancelPromptSuggestion();
                       const interruptContext = yield* Ref.get(activeTurn);
                       if (
                         followsAgentWorkState &&
