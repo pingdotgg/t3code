@@ -1224,6 +1224,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "conn-desktop"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "conn-state"
 version = "0.1.0"
 dependencies = [
