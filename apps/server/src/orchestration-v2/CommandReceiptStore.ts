@@ -151,13 +151,15 @@ const layerBase: Layer.Layer<
     const receipts = yield* OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository;
 
     return CommandReceiptStoreV2.of({
-      getLatestLifecycle: (threadId, commandTypes) =>
-        receipts.getLatestLifecycle({ threadId, commandTypes }).pipe(
-          Effect.flatMap((receipt) =>
-            Option.isSome(receipt) ? fromApplicationReceipt(receipt.value) : Effect.succeed(null),
+      getLatestLifecycle: Effect.fn("CommandReceiptStore.getLatestLifecycle")(
+        (threadId, commandTypes) =>
+          receipts.getLatestLifecycle({ threadId, commandTypes }).pipe(
+            Effect.flatMap((receipt) =>
+              Option.isSome(receipt) ? fromApplicationReceipt(receipt.value) : Effect.succeed(null),
+            ),
+            Effect.mapError((cause) => new CommandReceiptStoreLifecycleError({ threadId, cause })),
           ),
-          Effect.mapError((cause) => new CommandReceiptStoreLifecycleError({ threadId, cause })),
-        ),
+      ),
       insertIfAbsent: (receipt) =>
         receipts.insertIfAbsent(toApplicationReceipt(receipt)).pipe(
           Effect.mapError(

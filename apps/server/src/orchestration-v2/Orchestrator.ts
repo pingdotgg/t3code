@@ -17229,11 +17229,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       },
     ),
-    getSubagentChildThreads: Effect.fn("OrchestratorV2.getSubagentChildThreads")((threadId) =>
-      projectionStore
+    // The projection read owns the discovery span.
+    getSubagentChildThreads: Effect.fnUntraced(function* (threadId: ThreadId) {
+      return yield* projectionStore
         .getSubagentChildThreads(threadId)
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
-    ),
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+    }),
     getThreadProjection: Effect.fn("OrchestratorV2.getThreadProjection")(function (threadId) {
       return projectionStore
         .getThreadProjection(threadId)

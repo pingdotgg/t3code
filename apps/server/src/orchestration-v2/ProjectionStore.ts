@@ -5997,7 +5997,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       "ProjectionStore.findThread",
     )(selectThread);
     // Subagents inherit the parent's immutable project. Use its index to bound the scan.
-    const getSubagentChildThreads: ProjectionStoreV2Shape["getSubagentChildThreads"] = (threadId) =>
+    const getSubagentChildThreads: ProjectionStoreV2Shape["getSubagentChildThreads"] = Effect.fn(
+      "OrchestratorV2.getSubagentChildThreads",
+    )((threadId) =>
       sql<PayloadRow>`
         SELECT child.payload_json FROM orchestration_v2_projection_threads AS child
         JOIN orchestration_v2_projection_threads AS parent
@@ -6008,7 +6010,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       `.pipe(
         Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
         Effect.flatMap(decodeRows(decodeThreadPayload, threadId)),
-      );
+      ),
+    );
 
     const requireThread = Effect.fn("ProjectionStore.requireThread")(function* (
       threadId: ThreadId,
