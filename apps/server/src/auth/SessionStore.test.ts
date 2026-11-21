@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -138,6 +139,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
   it.effect.each([
     { name: "a renewal for the same key", renewal: {}, closesAtMinute: 119 },
     {
+      name: "a renewal for the same key, on a media ticket",
+      renewal: {},
+      closesAtMinute: 119,
+      ticket: "media",
+    },
+    {
       name: "a renewal for another key",
       renewal: { proofKeyThumbprint: "other-proof-key" },
       closesAtMinute: 60,
@@ -164,8 +171,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const sessions = yield* SessionStore.SessionStore;
       const client = yield* sessions.issue(relaySessionInput);
       const invalidated = yield* Deferred.make<void>();
+      // Media tickets carry no proof key, so their routes wait without one.
+      const watched =
+        "ticket" in testCase
+          ? yield* sessions.verifyWebSocketToken(
+              (yield* sessions.issueWebSocketToken(client.sessionId, { audience: "media" })).token,
+            )
+          : {
+              sessionId: client.sessionId,
+              proofKeyThumbprint: relaySessionInput.proofKeyThumbprint,
+            };
       const watcher = yield* sessions
-        .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+        .awaitInvalidation(watched.sessionId, watched.proofKeyThumbprint)
         .pipe(
           Effect.andThen(Deferred.succeed(invalidated, undefined)),
           Effect.forkScoped({ startImmediately: true }),
@@ -180,6 +197,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
           testCase.revoke === "original" ? client.sessionId : renewal.sessionId,
         );
       }
+      yield* Fiber.join(watcher);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("keeps a socket on a session renewed in place until its moved deadline", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const renewable = { ttl: Duration.hours(1), renewalWindow: Duration.hours(2) };
+      const client = yield* sessions.issue({ ...relaySessionInput, ...renewable });
+      const invalidated = yield* Deferred.make<void>();
+      const watcher = yield* sessions
+        .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      yield* TestClock.adjust(Duration.minutes(90));
+      yield* sessions.renew(client.token, {
+        proofKeyThumbprint: relaySessionInput.proofKeyThumbprint,
+        consumeProof: Effect.void,
+        ...renewable,
+      });
+      yield* TestClock.adjust(Duration.millis(120 * 60_000 - 1));
+      expect(yield* Deferred.isDone(invalidated)).toBe(false);
+      yield* TestClock.adjust(Duration.millis(1));
       yield* Fiber.join(watcher);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
@@ -529,6 +571,51 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
           error.expiresAt.epochMilliseconds,
         );
       }
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("extends a session once per step and refuses one that has ended", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const step = Duration.days(1);
+      const issued = yield* sessions.issue({ subject: "owner" });
+      const idle = yield* sessions.issue({ subject: "owner" });
+      const millis = (expiresAt: Option.Option<DateTime.Utc>) =>
+        Option.getOrNull(Option.map(expiresAt, (value) => value.epochMilliseconds));
+      const stored = sessions
+        .listActive()
+        .pipe(
+          Effect.map(
+            (active) =>
+              active.find((entry) => entry.sessionId === issued.sessionId)?.expiresAt
+                .epochMilliseconds,
+          ),
+        );
+
+      // Less than a step short: the row keeps its expiry.
+      const near = DateTime.toUtc(DateTime.add(issued.expiresAt, { hours: 12 }));
+      expect(millis(yield* sessions.extend(issued.sessionId, near, step))).toBe(
+        issued.expiresAt.epochMilliseconds,
+      );
+      expect(yield* stored).toBe(issued.expiresAt.epochMilliseconds);
+
+      const renewed = DateTime.toUtc(DateTime.add(issued.expiresAt, { days: 20 }));
+      expect(millis(yield* sessions.extend(issued.sessionId, renewed, step))).toBe(
+        renewed.epochMilliseconds,
+      );
+      // A second use that read the old expiry finds the row renewed and takes its deadline.
+      const overlapping = DateTime.add(renewed, { minutes: 1 });
+      expect(millis(yield* sessions.extend(issued.sessionId, overlapping, step))).toBe(
+        renewed.epochMilliseconds,
+      );
+      expect(yield* stored).toBe(renewed.epochMilliseconds);
+
+      yield* sessions.revoke(issued.sessionId);
+      expect(millis(yield* sessions.extend(issued.sessionId, overlapping, step))).toBeNull();
+
+      yield* TestClock.setTime(idle.expiresAt.epochMilliseconds);
+      const afterExpiry = DateTime.toUtc(DateTime.add(idle.expiresAt, { days: 30 }));
+      expect(millis(yield* sessions.extend(idle.sessionId, afterExpiry, step))).toBeNull();
     }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 

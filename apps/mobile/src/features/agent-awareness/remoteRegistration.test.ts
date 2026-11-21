@@ -21,23 +21,33 @@ import * as Dpop from "../cloud/dpop";
 import * as ManagedRelayLayer from "../cloud/managedRelayLayer";
 import {
   clearAgentAwarenessRegistrationRecord,
+  loadAgentAwarenessDeviceId,
   loadAgentAwarenessRegistrationRecord,
   loadOrCreateAgentAwarenessDeviceId,
   loadPreferences,
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
-import type { Preferences } from "../../persistence/mobile-preferences";
+import {
+  MobilePreferencesLoadError,
+  MobilePreferencesStore,
+  type Preferences,
+} from "../../persistence/mobile-preferences";
+import { MobileSecureStorageError } from "../../persistence/mobile-secure-storage";
+import * as MobileStorage from "../../persistence/mobile-storage";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
   __resetAgentAwarenessRemoteRegistrationForTest,
+  agentAwarenessNotificationsReady,
   getAgentAwarenessRegistrationStatus,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
   registerLiveActivityPushToken,
   releaseAgentAwarenessRelayTokenProvider,
   setAgentAwarenessRelayTokenProvider,
+  subscribeAgentAwarenessRegistrationStatus,
   updateAgentAwarenessRegistrationPreferences,
   type AgentAwarenessRegistrationError,
+  type AgentAwarenessRegistrationServices,
 } from "./remoteRegistration";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
@@ -216,8 +226,53 @@ function proofIat(proof: string): number {
   return decoded.iat;
 }
 
+const storageFailure = (cause: unknown) =>
+  new MobileSecureStorageError({ operation: "read", key: "test", cause });
+const unexpectedStorage = () => Effect.die("Unexpected storage request");
+
+// Delegates to the persistence/imperative mocks so each test steers both paths the same way.
+const layerPersistenceTest = Layer.merge(
+  Layer.succeed(
+    MobileStorage.MobileStorage,
+    MobileStorage.MobileStorage.of({
+      loadOrCreateAgentAwarenessDeviceId: Effect.tryPromise({
+        try: () => loadOrCreateAgentAwarenessDeviceId(),
+        catch: storageFailure,
+      }),
+      loadAgentAwarenessDeviceId: Effect.tryPromise({
+        try: () => loadAgentAwarenessDeviceId(),
+        catch: storageFailure,
+      }),
+      loadAgentAwarenessRegistrationRecord: Effect.tryPromise({
+        try: () => loadAgentAwarenessRegistrationRecord(),
+        catch: storageFailure,
+      }),
+      saveAgentAwarenessRegistrationRecord: (record) =>
+        Effect.tryPromise({
+          try: () => saveAgentAwarenessRegistrationRecord(record),
+          catch: storageFailure,
+        }),
+      clearAgentAwarenessRegistrationRecord: unexpectedStorage(),
+      loadRecentThreadShortcuts: unexpectedStorage(),
+      saveRecentThreadShortcuts: unexpectedStorage,
+    }),
+  ),
+  Layer.succeed(
+    MobilePreferencesStore,
+    MobilePreferencesStore.of({
+      load: Effect.tryPromise({
+        try: () => loadPreferences(),
+        catch: (cause) => new MobilePreferencesLoadError({ cause }),
+      }),
+      savePatch: unexpectedStorage,
+      update: unexpectedStorage,
+    }),
+  ),
+);
+
 const layerRelayTest = ManagedRelayLayer.layer("https://relay.example.test").pipe(
   Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
+  Layer.merge(layerPersistenceTest),
 );
 
 const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundOperations")(
@@ -239,7 +294,7 @@ const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundO
         pending.operation as Effect.Effect<
           unknown,
           AgentAwarenessRegistrationError,
-          ManagedRelay.ManagedRelayClient
+          AgentAwarenessRegistrationServices
         >,
       );
       yield* Effect.sync(() => {
@@ -597,6 +652,22 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     }).pipe(Effect.provide(layerRelayTest));
   });
 
+  it.effect("leaves the signed-out status alone when an obsolete registration fails", () => {
+    Constants.expoConfig!.extra = {
+      relay: {
+        url: "https://relay.example.test/",
+      },
+    };
+    vi.mocked(loadOrCreateAgentAwarenessDeviceId).mockRejectedValue(new Error("storage failure"));
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+    setAgentAwarenessRelayTokenProvider(null);
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      expect(getAgentAwarenessRegistrationStatus()).toBe("unknown");
+    }).pipe(Effect.provide(layerRelayTest));
+  });
+
   it.effect("does not re-register the same account when nothing has changed", () => {
     Constants.expoConfig!.extra = {
       relay: {
@@ -704,11 +775,121 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         Effect.provide(
           ManagedRelayLayer.layer("https://permission-relay.example.test").pipe(
             Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
+            Layer.merge(layerPersistenceTest),
           ),
         ),
       );
     },
   );
+
+  const stubAndroidDeviceRelay = () => {
+    vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+    vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+    const registrations: Array<{
+      readonly preferences: { readonly notificationsEnabled: boolean };
+    }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "relay-dpop-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      if (request.url.endsWith("/v1/mobile/devices")) {
+        registrations.push(await request.json());
+      }
+      return Response.json({ ok: true });
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+    return registrations;
+  };
+
+  it.effect("does not report notifications ready when its push token lookup fails", () => {
+    const registrations = stubAndroidDeviceRelay();
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValue(
+      new Error("Default FirebaseApp is not initialized"),
+    );
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+
+      // Live Activities register with their own tokens, so the device stays registered.
+      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+      expect(agentAwarenessNotificationsReady()).toBe(false);
+      expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
+      expect(registrations[0]).not.toHaveProperty("pushToken");
+
+      const onStatusChange = vi.fn();
+      subscribeAgentAwarenessRegistrationStatus(onStatusChange);
+      const listener = vi.mocked(Notifications.addPushTokenListener).mock.calls.at(-1)![0];
+      listener({ type: "android", data: "fcm-token" } as never);
+      yield* runBackgroundOperations();
+
+      expect(agentAwarenessNotificationsReady()).toBe(true);
+      expect(onStatusChange).toHaveBeenCalled();
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
+  it.effect("keeps notifications enabled when a refresh cannot read the push token", () => {
+    const registrations = stubAndroidDeviceRelay();
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
+      type: "android",
+      data: "fcm-token",
+    });
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
+      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValueOnce(
+        new Error("SERVICE_NOT_AVAILABLE"),
+      );
+      yield* refreshAgentAwarenessRegistration();
+
+      expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
+      expect(agentAwarenessNotificationsReady()).toBe(true);
+
+      // A lookup that started before a rotation must not replace the rotated token.
+      let resolveStaleLookup: (token: { type: "android"; data: string }) => void = () => {};
+      let markLookupStarted: () => void = () => {};
+      const lookupStarted = new Promise<void>((resolve) => {
+        markLookupStarted = resolve;
+      });
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockImplementationOnce(() => {
+        markLookupStarted();
+        return new Promise((resolve) => {
+          resolveStaleLookup = resolve;
+        });
+      });
+      const staleRefresh = yield* Effect.forkChild(refreshAgentAwarenessRegistration());
+      yield* Effect.promise(() => lookupStarted);
+      const listener = vi.mocked(Notifications.addPushTokenListener).mock.calls.at(-1)![0];
+      listener({ type: "android", data: "rotated-fcm-token" } as never);
+      yield* runBackgroundOperations();
+      resolveStaleLookup({ type: "android", data: "fcm-token" });
+      yield* Fiber.join(staleRefresh);
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValueOnce(
+        new Error("SERVICE_NOT_AVAILABLE"),
+      );
+      yield* refreshAgentAwarenessRegistration();
+
+      expect(registrations.at(-1)).toMatchObject({ pushToken: "rotated-fcm-token" });
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
   it.effect.each(["blocked", "unavailable"] as const)(
     "keeps Android push delivery registered when the alert channel is %s",
     (channelState) => {
@@ -894,7 +1075,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           getAgentActivitySnapshot,
           resetTokenCache: Effect.void,
         }),
-      );
+      ).pipe(Layer.merge(layerPersistenceTest));
     }
 
     it.effect("registers an existing Live Activity before waiting on the widget read", () => {

@@ -3,7 +3,9 @@ import {
   readHostCredentialSettings,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
-import { Linking, Pressable, View } from "react-native";
+import { T, Var } from "gt-react-native";
+import { Pressable, View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironmentPresentation } from "../../state/presentation";
@@ -45,14 +47,20 @@ export function SourceControlAppAccessNotice(props: {
   return (
     <View className="mb-4 gap-1 rounded-2xl bg-grouped-card px-4 py-3">
       <Text className="text-sm text-foreground-muted">
-        {appSignIn.appName} isn't installed on {owner}, so requests here use your own GitHub login
-        and its lower rate limit.
+        <T>
+          <Var>{appSignIn.appName}</Var> isn't installed on <Var>{owner}</Var>, so requests here use
+          your own GitHub login and its lower rate limit.
+        </T>
       </Text>
       <Pressable
         accessibilityRole="link"
-        onPress={() => void Linking.openURL(appSignIn.installUrl).catch(() => undefined)}
+        onPress={() => void tryOpenExternalUrl(appSignIn.installUrl, "provider-auth")}
       >
-        <Text className="text-sm font-t3-bold text-foreground">Install on {owner}</Text>
+        <Text className="text-sm font-t3-bold text-foreground">
+          <T>
+            Install on <Var>{owner}</Var>
+          </T>
+        </Text>
       </Pressable>
     </View>
   );
