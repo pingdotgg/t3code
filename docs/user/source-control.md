@@ -146,8 +146,9 @@ Merging a stack lands it through GitCafe, and updating a branch restacks the lay
 
 ### TanStack Source
 
-TanStack Source is in private beta, so the server shows it only when started with
-`T3CODE_TANSTACK_SOURCE=1` in its environment. Install its CLI and sign in:
+TanStack Source is in private beta, so the server shows it only when its environment turns the flag
+on: `T3CODE_FEATURE_FLAGS=tanstack_source`. Separate several flags with commas. The server reads them
+when it starts. Install its CLI and sign in:
 
 ```sh
 curl -fsSL https://source.tanstack.com/install | sh
