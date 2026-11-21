@@ -83,6 +83,26 @@ it.effect("a run still waits while one of the things it started side by side is 
   ),
 );
 
+it.effect("a key is taken by the first run started under it, whatever its version", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      for (const version of [1, 2]) {
+        yield* store.runStarted({
+          runId: `r${version}`,
+          workflow: "fix",
+          version,
+          engineTag: `fix@${version}`,
+          idempotencyKey: "k",
+          input: {},
+        });
+      }
+      assert.isUndefined(yield* store.run("r2"));
+      assert.equal((yield* store.runByKey("fix", "k"))?.run_id, "r1");
+    }),
+  ),
+);
+
 it.effect("counts what waits on a person, and finds the run's latest agent thread", () =>
   withStore(
     Effect.gen(function* () {

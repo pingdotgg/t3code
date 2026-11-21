@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -963,7 +964,21 @@ it.effect("a wait past its timeout wakes with nothing, and a workflow may stop o
 
 it.effect("a cancelled run ends, and two steps with one name pause their run", () =>
   Effect.gen(function* () {
-    const { boot } = yield* harness();
+    // The start of `v3` is cut off once its row is written, before the engine has it.
+    const cutOff = new Set(["v3"]);
+    const store = Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.map(WorkflowStore.make, (real) =>
+        WorkflowStore.WorkflowStore.of({
+          ...real,
+          runStarted: (run) =>
+            Effect.tap(real.runStarted(run), () =>
+              cutOff.delete(run.idempotencyKey) ? Effect.die("the server stopped") : Effect.void,
+            ),
+        }),
+      ),
+    );
+    const { boot } = yield* harness(store);
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -1013,6 +1028,13 @@ it.effect("a cancelled run ends, and two steps with one name pause their run", (
           yield* workflows.start("versioned", {}, { idempotencyKey: "v1" }),
           older,
         );
+        // A start cut off between its row and the engine is executed by the next start.
+        const cut = yield* Effect.exit(
+          workflows.start("versioned", {}, { idempotencyKey: "v3", version: 1 }),
+        );
+        assert.isTrue(Exit.isFailure(cut));
+        const again = yield* workflows.start("versioned", {}, { idempotencyKey: "v3" });
+        assert.equal((yield* workflows.waitFor(again.runId, status("completed"))).result, 1);
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

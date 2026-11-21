@@ -185,8 +185,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       const [definition, engine] = found;
       // A key is one run of the workflow: the engine's own id also counts the version, so a
       // start after a new version would otherwise begin the same work again.
-      const earlier = yield* store.runByKey(name, options.idempotencyKey);
-      if (earlier !== undefined && earlier.engine_tag !== engineTag(definition)) {
+      const other = Effect.fnUntraced(function* (earlier: WorkflowStore.RunRow) {
         if (
           options.parent !== undefined &&
           (earlier.parent_run_id !== options.parent.runId ||
@@ -196,7 +195,25 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
             problem: `Run ${earlier.run_id} of ${name} was started by something else under this key, so it cannot be invoked. Give the invoke a key of its own.`,
           });
         }
+        // A start cut off between its row and the engine left a run nothing executes. Executing
+        // one the engine has is a no-op.
+        const its = byTag.get(earlier.engine_tag);
+        if (earlier.ended_at === null && its !== undefined && earlier.input_json !== null) {
+          yield* withEngine(
+            its.execute(
+              {
+                idempotencyKey: earlier.idempotency_key,
+                input: WorkflowStore.jsonValue(earlier.input_json),
+              },
+              { discard: true },
+            ),
+          );
+        }
         return { runId: earlier.run_id };
+      });
+      const earlier = yield* store.runByKey(name, options.idempotencyKey);
+      if (earlier !== undefined && earlier.engine_tag !== engineTag(definition)) {
+        return yield* other(earlier);
       }
       const payloadCodec = Schema.toCodecJson(definition.payload);
       const encode = Schema.encodeUnknownEffect(payloadCodec);
@@ -221,6 +238,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         input: payload.input,
         parent: options.parent,
       });
+      // The key is unique, so the row holding it is the run, even one another version started.
+      const holder = yield* store.runByKey(name, options.idempotencyKey);
+      if (holder !== undefined && holder.run_id !== runId) return yield* other(holder);
       yield* withEngine(engine.execute(payload, { discard: true }));
       if (options.parent !== undefined) {
         // The key named a run that someone else started: it would never tell this parent.

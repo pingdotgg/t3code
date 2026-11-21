@@ -125,8 +125,8 @@ required while a cancelled run's cleanup has not worked, since only that version
 
 **A key is one run whatever the version.** The engine's own run id hashes `name@version` with the
 key, so after a version bump the same key would be a new run: a trigger that sees its newest issue
-again, or a webhook retry, would start the work twice. `start` looks the key up first and returns
-the run it finds.
+again, or a webhook retry, would start the work twice. The key is unique per workflow, so the row
+that takes it is the run; a start that finds a row the engine never got executes it.
 
 **One signal wakes one wait.** A wait is taken by the first signal for it; a second signal on the
 same channel is for the next run that waits on that channel, and is kept until one does or its `ttl` runs
