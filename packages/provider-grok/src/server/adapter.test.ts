@@ -297,3 +297,30 @@ it.effect("a steer reaches Grok as an interjection that carries its images", () 
     assert.strictEqual(refused._tag, "AcpRequestError");
   }),
 );
+
+it.effect("answers Grok's MCP elicitation request instead of leaving it unhandled", () =>
+  Effect.gen(function* () {
+    const requestMethods: Array<string> = [];
+    const runtime = {
+      handleExtRequest: (method: string) => {
+        requestMethods.push(method);
+        return Effect.void;
+      },
+      handleExtNotification: () => Effect.void,
+    } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+    const flavor = makeGrokAcpAdapterFlavor(
+      { makeRuntime: () => Effect.never } as unknown as Parameters<
+        typeof makeGrokAcpAdapterFlavor
+      >[0],
+      "/home/ada",
+    );
+    yield* flavor.registerExtensions!({
+      runtime,
+      lastProposedPlanMarkdown: Effect.succeed(undefined),
+    } as unknown as Parameters<NonNullable<typeof flavor.registerExtensions>>[0]);
+
+    // Grok 1.0.77+ sends MCP forms as `_x.ai/mcp/elicit`; an unknown method is answered -32601,
+    // which Grok forwards to the MCP server as `cancel`.
+    assert.include(requestMethods, "_x.ai/mcp/elicit");
+  }),
+);
