@@ -517,7 +517,15 @@ function ThreadSettingsSessionProvider(
   const providerSectionsCollapsed = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelProviderSectionsCollapsed ?? EMPTY_PROVIDER_SECTIONS_COLLAPSED)
     : EMPTY_PROVIDER_SECTIONS_COLLAPSED;
+  // This session's choices win over stored ones, so a failed save never undoes a tap.
+  const sectionChoices = useRef<Readonly<Record<string, boolean>>>(
+    EMPTY_PROVIDER_SECTIONS_COLLAPSED,
+  );
+  const [sessionSectionChoices, setSessionSectionChoices] = useState(
+    EMPTY_PROVIDER_SECTIONS_COLLAPSED,
+  );
   const savedSectionCollapsed = (sectionKey: string) =>
+    savedProviderSectionCollapsed(sessionSectionChoices, props.environmentId, sectionKey) ??
     savedProviderSectionCollapsed(providerSectionsCollapsed, props.environmentId, sectionKey);
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
@@ -609,14 +617,20 @@ function ThreadSettingsSessionProvider(
     }
   };
 
-  // Transforms read optimistic state, so quick toggles of different sections all persist.
+  // The ref sees earlier taps before React re-renders the header, so quick taps each toggle.
   const toggleProvider = (sectionKey: string, collapsed: boolean) => {
     const preferenceKey = providerSectionPreferenceKey(props.environmentId, sectionKey);
+    const choices = sectionChoices.current;
+    const nextCollapsed = !(Object.hasOwn(choices, preferenceKey)
+      ? choices[preferenceKey]
+      : collapsed);
+    sectionChoices.current = { ...choices, [preferenceKey]: nextCollapsed };
+    setSessionSectionChoices(sectionChoices.current);
     void savePreferences({
       transform: (current) => ({
         modelProviderSectionsCollapsed: {
           ...current.modelProviderSectionsCollapsed,
-          [preferenceKey]: !collapsed,
+          [preferenceKey]: nextCollapsed,
         },
       }),
     });
