@@ -23,6 +23,7 @@ export const SEND_TO_USER_MAX_BYTES = 1_000;
 export const ACK_MAX_BYTES = 200;
 export const DASHBOARD_SET_TOOL_NAME = "dashboard_set";
 export const DASHBOARD_GET_TOOL_NAME = "dashboard_get";
+export const DASHBOARD_LINK_HREF = "t3-dashboard:";
 
 /** The kind of the context record that a user's reply carries: `{ first }`, the id of its sub-thread's first message. */
 export const SUB_THREAD_RECORD_KIND = "fork-reply";
@@ -393,9 +394,16 @@ export interface ThreadDisplay {
 
 export const NORMAL_DISPLAY: ThreadDisplay = { mode: NORMAL_DISPLAY_MODE, dashboard: false };
 
-/** What the server records once the agent knows `display`: the mode's `toldId`, then `+dashboard` when on. */
+// Bump when DASHBOARD_RULES changes, so threads told the old rules hear them again.
+const DASHBOARD_TOLD_ID = "dashboard@2";
+const DASHBOARD_RULES = `They see this thread's Dashboard beside the chat, six slots in this order: decide (needs their decision), waiting, working, autoreview, humanreview, merged. Read it with dashboard_get. To change a slot, call dashboard_set with the slot's current text as old_text and the whole new text as new_text. In your messages, the link [Dashboard](${DASHBOARD_LINK_HREF}) opens it for them.`;
+
+/**
+ * What the server records once the agent knows `display`: the mode's `toldId`, then
+ * `+${DASHBOARD_TOLD_ID}` when the Dashboard is on.
+ */
 export function toldKey(display: ThreadDisplay): string {
-  return display.dashboard ? `${display.mode.toldId}+dashboard` : display.mode.toldId;
+  return display.dashboard ? `${display.mode.toldId}+${DASHBOARD_TOLD_ID}` : display.mode.toldId;
 }
 
 /** Every display by its told key, so equal displays are one object and keep React identities stable. */
@@ -419,8 +427,6 @@ export function threadDisplay(
   return DISPLAYS.get(toldKey({ mode, dashboard })) ?? NORMAL_DISPLAY;
 }
 
-const DASHBOARD_RULES =
-  "They see this thread's Dashboard beside the chat, six slots in this order: decide (needs their decision), waiting, working, autoreview, humanreview, merged. Read it with dashboard_get. To change a slot, call dashboard_set with the slot's current text as old_text and the whole new text as new_text.";
 const DASHBOARD_ON_NOTICE = `<t3-display-mode>The user turned on this thread's Dashboard. ${DASHBOARD_RULES}</t3-display-mode>`;
 const DASHBOARD_OFF_NOTICE =
   "<t3-display-mode>The user turned off this thread's Dashboard. They no longer see it, and dashboard_get and dashboard_set are refused.</t3-display-mode>";

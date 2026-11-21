@@ -14,8 +14,14 @@ import "~/index.css";
 
 import { observeAssistantCitationCommentSource } from "../../components/chat/AssistantCitationSource";
 import ChatMarkdown from "../../components/ChatMarkdown";
+import { toastManager } from "../../components/ui/toast";
 import { render } from "../../../test/render";
-import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
+import {
+  hostRightPanel,
+  selectActiveRightPanel,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../../rightPanelStore";
 import { DashboardCards } from "./ThreadDashboardPanel";
 import { DashboardLinkScope, DashboardMarkdown } from "./dashboardMarkdown";
 
@@ -23,10 +29,19 @@ import { DashboardLinkScope, DashboardMarkdown } from "./dashboardMarkdown";
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");
+  const { DEFAULT_SERVER_SETTINGS } = await import("@t3tools/contracts");
   const noConfig = Atom.make(null);
+  const settings = Atom.make({
+    ...DEFAULT_SERVER_SETTINGS,
+    threadDashboards: { "dashboard-thread": true, "side-chat": true },
+  });
   return {
     ...actual,
-    serverEnvironment: { ...actual.serverEnvironment, configValueAtom: (() => noConfig) as never },
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      configValueAtom: (() => noConfig) as never,
+      settingsValueAtom: (() => settings) as never,
+    },
   };
 });
 vi.mock(import("../../state/session"), async (original) => {
@@ -510,5 +525,72 @@ describe("Dashboard file references match chat", () => {
     await vi.waitFor(() => expect(fileLinks(chat)).toHaveLength(chipCount));
 
     expect(fileLinks(dashboardRoot)).toEqual(fileLinks(chat));
+  });
+});
+
+describe("Dashboard links", () => {
+  const ref = (threadId: string) => ({ ...threadRef, threadId: ThreadId.make(threadId) });
+  const activePanel = (target: typeof threadRef) =>
+    selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, target);
+  const openButton = () => page.getByRole("button", { name: "Open the Dashboard" });
+
+  it.each([
+    { from: "its own thread with the Dashboard on", thread: threadRef, host: null, toast: null },
+    {
+      from: "a thread with the Dashboard off",
+      thread: ref("plain-thread"),
+      host: null,
+      toast: "This thread's Dashboard is off",
+    },
+    {
+      from: "a side chat with its Dashboard on, hosted in another thread's panel",
+      thread: ref("side-chat"),
+      host: ref("host-thread"),
+      toast: "Open this thread on its own to see its Dashboard",
+    },
+  ])("a click from $from opens the Dashboard or says why not", async ({ thread, host, toast }) => {
+    using _hosted = host ? { [Symbol.dispose]: hostRightPanel(thread, host) } : null;
+    await using _screen = await render(
+      <ChatMarkdown
+        text="See the [Dashboard](t3-dashboard:)."
+        cwd={undefined}
+        threadRef={thread}
+      />,
+    );
+    await expect.element(openButton()).toHaveTextContent("Dashboard");
+    expect(openButton().element().getAttribute("data-markdown-copy")).toBe(
+      "[Dashboard](t3-dashboard:)",
+    );
+    using addToast = vi.spyOn(toastManager, "add");
+
+    await userEvent.click(openButton());
+
+    expect(activePanel(thread)).toBe(toast === null ? "dashboard" : null);
+    if (host) expect(activePanel(host)).toBeNull();
+    expect(addToast.mock.calls.map(([options]) => options.title)).toEqual(
+      toast === null ? [] : [toast],
+    );
+  });
+
+  it("shows a link to a slot in chat, and any Dashboard link in a slot, as its label", async () => {
+    await using screen = await render(
+      <>
+        <div data-renderer="chat">
+          <ChatMarkdown
+            text="Pick in [decide](t3-dashboard:decide)."
+            cwd={undefined}
+            threadRef={threadRef}
+          />
+        </div>
+        <div data-renderer="dashboard">
+          <DashboardMarkdown text="See the [Dashboard](t3-dashboard:)." />
+        </div>
+      </>,
+    );
+    const chat = screen.container.querySelector("[data-renderer=chat]")!;
+    const slot = screen.container.querySelector("[data-renderer=dashboard]")!;
+    await vi.waitFor(() => expect(chat.textContent).toBe("Pick in decide."));
+    expect(slot.textContent).toBe("See the Dashboard.");
+    expect(screen.container.querySelector("a, button")).toBeNull();
   });
 });

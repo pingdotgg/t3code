@@ -105,6 +105,7 @@ import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { postWhiteboardHover, remarkWhiteboardLinks } from "../fork/whiteboard/markdown-whiteboard";
 import { showBoardRef } from "../fork/whiteboard/boardChannel";
 import { remarkEndLinksAtCjkPunctuation } from "../fork/cjkLinkEnd";
+import { DashboardLinkChip, parseDashboardHref } from "../fork/dashboard/dashboardLink";
 import type { Pluggable, PluggableList } from "unified";
 import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
@@ -457,6 +458,7 @@ function markdownUrlTransform(href: string) {
   if (parseThreadLinkHref(href)) return href;
   if (isWindowsDrivePathHref(href)) return href;
   if (href.startsWith("board://")) return href;
+  if (parseDashboardHref(href) !== null) return href;
   if (isLocalEditorFileHref(href)) return href;
   return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
 }
@@ -1276,6 +1278,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
       ) : (
         <span>{label ?? gt("Thread")}</span>
       );
+    }
+    if (href && parseDashboardHref(href)) {
+      return <DashboardLinkChip threadRef={threadRef} node={node} href={href} />;
     }
     const contextReference = href ? parseComposerContextHref(href) : null;
     if (contextReference) {

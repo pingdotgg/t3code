@@ -61,7 +61,7 @@ it.layer(notes)("DisplayModeCompactionNote", (it) => {
           (yield* toldRows).map((row) => [row.thread_id, row.mode_id]),
           [
             [chatId, "chat-replies@3"],
-            [dashboardId, "normal+dashboard"],
+            [dashboardId, "normal+dashboard@2"],
             [toldNormalId, "normal"],
             [unknownToldId, "normal"],
           ],

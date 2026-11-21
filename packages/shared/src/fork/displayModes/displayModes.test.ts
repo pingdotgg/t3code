@@ -604,7 +604,7 @@ describe("threadDisplay", () => {
 
 describe("displayNote", () => {
   const RULES =
-    "They see this thread's Dashboard beside the chat, six slots in this order: decide (needs their decision), waiting, working, autoreview, humanreview, merged. Read it with dashboard_get. To change a slot, call dashboard_set with the slot's current text as old_text and the whole new text as new_text.";
+    "They see this thread's Dashboard beside the chat, six slots in this order: decide (needs their decision), waiting, working, autoreview, humanreview, merged. Read it with dashboard_get. To change a slot, call dashboard_set with the slot's current text as old_text and the whole new text as new_text. In your messages, the link [Dashboard](t3-dashboard:) opens it for them.";
   const ON = `<t3-display-mode>The user turned on this thread's Dashboard. ${RULES}</t3-display-mode>`;
   const OFF =
     "<t3-display-mode>The user turned off this thread's Dashboard. They no longer see it, and dashboard_get and dashboard_set are refused.</t3-display-mode>";
@@ -615,16 +615,18 @@ describe("displayNote", () => {
   const CHAT = CHAT_REPLIES_DISPLAY_MODE;
 
   it.each<readonly [string, string, boolean, ReadonlyArray<string> | null]>([
-    ["chat-replies@3+dashboard", "chat-replies", true, null],
+    ["chat-replies@3+dashboard@2", "chat-replies", true, null],
     ["normal", "chat-replies", false, [CHAT.notice]],
     ["normal", "normal", true, [ON]],
-    ["chat-replies@3+dashboard", "chat-replies", false, [OFF]],
+    ["chat-replies@3+dashboard@2", "chat-replies", false, [OFF]],
     ["normal", "chat-replies", true, [CHAT.notice, ON]],
     ["chat-replies@3", "normal", true, [NORMAL.notice, ON]],
     ["unknown", "chat-replies", true, [CHAT.stateNotice, ON_STATE]],
     ["messages-dashboard", "chat-replies", true, [CHAT.stateNotice, ON_STATE]],
     ["messages-dashboard", "chat-replies", false, [CHAT.stateNotice, OFF_STATE]],
     ["chat-replies@2", "chat-replies", false, [CHAT.stateNotice, OFF_STATE]],
+    ["chat-replies@3+dashboard", "chat-replies", true, [CHAT.stateNotice, ON_STATE]],
+    ["chat-replies@3+dashboard", "chat-replies", false, [CHAT.stateNotice, OFF_STATE]],
   ])("brings an agent told %s up to %s with the Dashboard on: %s", (told, modeId, on, notes) => {
     expect(displayNote(told, displayOf(resolveDisplayMode(modeId), on))).toBe(
       notes?.join("\n") ?? null,
@@ -639,7 +641,7 @@ describe("displayNote", () => {
   it("records what the agent was told in one key per display", () => {
     expect([NORMAL_DISPLAY, displayOf(CHAT, true)].map(toldKey)).toEqual([
       "normal",
-      "chat-replies@3+dashboard",
+      "chat-replies@3+dashboard@2",
     ]);
   });
 });

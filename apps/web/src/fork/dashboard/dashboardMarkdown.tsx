@@ -29,6 +29,7 @@ import {
   hostFileLinkLabel,
   useHostFileOrigins,
 } from "../hostFileLinks";
+import { dashboardLinkLabel, parseDashboardHref } from "./dashboardLink";
 
 interface LinkScope {
   readonly threadRef: ScopedThreadRef;
@@ -119,6 +120,8 @@ const renderMarkdown = createMarkdownRenderer({
     a: function DashboardLink({ node, children, ...props }) {
       const scope = use(DashboardLinkScope);
       const { text, hostFileOrigins } = use(SlotCopyContext);
+      // The user is already on the Dashboard.
+      if (props.href && parseDashboardHref(props.href)) return dashboardLinkLabel(node, props.href);
       const href = props.href ? normalizeHref(props.href) : "";
       const linkPath = hostFileAnchorHref(href, node, hostFileOrigins);
       const fileLinkMeta =
@@ -161,7 +164,7 @@ const renderMarkdown = createMarkdownRenderer({
   },
   urlTransform: (url) =>
     rewriteMarkdownFileUriHref(url) ??
-    (isWindowsDrivePathHref(url) ? url : defaultUrlTransform(url)),
+    (isWindowsDrivePathHref(url) || parseDashboardHref(url) ? url : defaultUrlTransform(url)),
 });
 
 /**
