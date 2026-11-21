@@ -1751,14 +1751,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       returnedRunning(tool.id),
     ];
   };
-  const childReport = (inboxID: string, text: string, description = "Sleep") =>
+  const childReport = (inboxID: string, text: string, description = "Sleep", tag = "completed") =>
     event("session.inbox.enqueued", {
       inboxID,
       sessionID: SESSION,
       item: {
         type: "synthetic",
         payload: {
-          text: `<subagent sessionID="${CHILD}" state="completed" description="${description}">\n${text}\n</subagent>`,
+          text: `<subagent sessionID="${CHILD}" state="${tag}" description="${description}">\n${text}\n</subagent>`,
           description,
           metadata: { source: "subagent", childID: CHILD, agent: "General", state: "completed" },
         },
@@ -1777,7 +1777,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         string,
         Record<string, { status: string; result: string | null }>
       >();
-      const state: { roster: ReadonlyArray<unknown> | undefined } = { roster: undefined };
+      const state: { roster: OrchestrationV2ProviderThread["pendingBackgroundTasks"] } = {
+        roster: undefined,
+      };
       let wake = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.tap((event) =>
@@ -2150,6 +2152,122 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       assert.deepEqual(Object.fromEntries(watch.callsById), expected);
     }),
+  );
+
+  const childStep = (run: number) =>
+    event("session.step.started", {
+      sessionID: CHILD,
+      assistantMessageID: `msg_child_${run}`,
+      agent: "general",
+      model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+      started: 1,
+    });
+  const STARTED = "TESTS_STARTED\n\nBackground work still running:\n- shell (sh_tests): npm test";
+  // The child goes idle with its own work running, and OpenCode reports it as running.
+  const reportedRunning = [
+    ...launchedAndRunning,
+    childSaid("TESTS_STARTED"),
+    event("session.execution.succeeded", { sessionID: CHILD }),
+    event("session.execution.succeeded", { sessionID: SESSION }),
+    childReport("msg_report_1", STARTED, "Sleep", "running"),
+  ];
+  const finished = (labelled = false): ReadonlyArray<ProviderReplayEntry> => [
+    event("session.execution.started", { sessionID: CHILD }),
+    childStep(2),
+    childSaid("TESTS_PASSED", 2),
+    event("session.execution.succeeded", { sessionID: CHILD }),
+    { ...childReport("msg_report_2", "TESTS_PASSED"), ...(labelled ? { label: "final" } : {}) },
+  ];
+
+  it.effect(
+    "keeps a background subagent pending while its report says its own work still runs",
+    () =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["final"]);
+        const { runtime, thread } = yield* resumed([...reportedRunning, ...finished(true)], {
+          replayGate: gate,
+        });
+        const watch = yield* watchCalls(runtime, thread);
+        yield* runtime.startTurn(withLineage(thread));
+        assert.isTrue(yield* Effect.promise(() => gate.waitForReached("final")));
+        yield* watch.until(() => watch.childTurns.get(`${CHILD}:turn:2`) === "completed");
+        assert.deepEqual(watch.calls.get("Sleep"), { status: "running", result: null });
+        assert.deepEqual(
+          watch.state.roster?.map((task) => task.taskId),
+          ["call-background"],
+        );
+        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        gate.release("final");
+        yield* watch.until(
+          () =>
+            watch.calls.get("Sleep")?.status === "completed" && watch.state.roster?.length === 0,
+        );
+        assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result: "TESTS_PASSED" });
+      }),
+  );
+
+  it.effect(
+    "settles a subagent kept by a running report when its next busy period writes nothing",
+    () =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["idle"]);
+        const { runtime, thread } = yield* resumed(
+          [
+            ...reportedRunning,
+            event("session.execution.started", { sessionID: CHILD }),
+            event("session.execution.succeeded", { sessionID: CHILD }, "idle"),
+          ],
+          { replayGate: gate },
+        );
+        const watch = yield* watchCalls(runtime, thread);
+        yield* runtime.startTurn(withLineage(thread));
+        assert.isTrue(yield* Effect.promise(() => gate.waitForReached("idle")));
+        yield* watch.until(() => watch.childTurns.get(`${CHILD}:turn:2`) === "running");
+        assert.deepEqual(watch.calls.get("Sleep"), { status: "running", result: null });
+        gate.release("idle");
+        yield* watch.until(
+          () =>
+            watch.calls.get("Sleep")?.status === "completed" && watch.state.roster?.length === 0,
+        );
+        assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result: STARTED });
+      }),
+  );
+
+  it.effect.each([
+    { name: "nothing runs below it", active: {}, result: STARTED },
+    {
+      name: "its child runs again",
+      active: { [CHILD]: { type: "running" } },
+      result: "TESTS_PASSED",
+    },
+  ])(
+    "after a reconnect, settles a subagent kept by a running report only when $name",
+    ({ active, result }) =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed([
+          ...reportedRunning,
+          { type: "runtime_exit", status: "success" } as const,
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", active),
+          ...(CHILD in active
+            ? [
+                out("permission.list", { sessionID: CHILD }),
+                replyData("permission.list", []),
+                out("session.form.list", { sessionID: CHILD }),
+                replyData("session.form.list", []),
+                ...finished().slice(1),
+              ]
+            : []),
+        ]);
+        const watch = yield* watchCalls(runtime, thread);
+        yield* runtime.startTurn(withLineage(thread));
+        yield* watch.until(() => {
+          const status = watch.calls.get("Sleep")?.status;
+          return status !== undefined && status !== "running" && watch.state.roster?.length === 0;
+        });
+        assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result });
+      }),
   );
 
   const MIDDLE = "ses_middle0000000000000000000";

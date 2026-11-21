@@ -298,6 +298,8 @@ interface SubagentCall {
   run: number | undefined;
   /** That turn's last text once it ended, which OpenCode sends as the run's report. */
   answer: string | undefined;
+  /** The output of a report sent while the child's own background work still ran; a later report settles the call. */
+  reported: string | undefined;
   child: ThreadState | undefined;
   status: OrchestrationV2Subagent["status"];
   result: string | null;
@@ -604,6 +606,11 @@ const reportOutcome = (state: string | undefined) =>
 
 const subagentOutput = (text: string) =>
   /^<subagent\b[^>]*>\n?([\s\S]*?)\n?<\/subagent>$/.exec(text.trim())?.[1] ?? text;
+
+// OpenCode keeps "completed" in a report's metadata and says "running" only in its tag
+// when the child goes idle with its own background work still running.
+const reportsRunningWork = (text: string) =>
+  /^<(?:subagent|background-result)\b[^>]*?\sstate="running"/.test(text.trimStart());
 
 const isContinuation = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
   turnInput.message.createdBy === "agent" && turnInput.message.creationSource === "provider";
@@ -2437,6 +2444,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           for (const attached of callsAttachedTo(state)) {
             yield* settleCall(attached, terminal.status, terminal.failure.message);
           }
+        } else if (
+          turn.startedSteps === 0 &&
+          turn.answer === undefined &&
+          !turn.missedEvents &&
+          !hasBackground(state)
+        ) {
+          // OpenCode reports a busy period only when it wrote a new answer, so no later report comes.
+          for (const attached of callsAttachedTo(state)) {
+            if (attached.reported !== undefined)
+              yield* settleCall(attached, "completed", attached.reported);
+          }
         }
         return;
       }
@@ -2818,6 +2836,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         background: false,
         run: undefined,
         answer: undefined,
+        reported: undefined,
         child: undefined,
         status: "running",
         result: null,
@@ -3245,6 +3264,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         written !== undefined && candidate.run < written ? [candidate.call] : [],
       );
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
+      const running = outcome === "completed" && reportsRunningWork(payload.text);
       state.reports.set(inboxId, {
         inboxId,
         childId,
@@ -3253,7 +3273,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           kind: "subagent",
           label: call?.title ?? stringField(payload.metadata, "description"),
           childThreadId: call?.child?.subagent?.appThread.id,
-          outcome,
+          outcome: running ? "updated" : outcome,
         },
       });
       const status = state.stoppedChildren.has(childId)
@@ -3264,7 +3284,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ? "cancelled"
             : "completed";
       for (const each of lost) yield* settleCall(each, "completed", each.answer);
-      for (const each of calls) yield* settleCall(each, status, output);
+      for (const each of calls) {
+        if (running && status === "completed" && each.background) each.reported = output;
+        else yield* settleCall(each, status, output);
+      }
     });
 
     const holderOf = (sessionId: string) => {
@@ -3807,7 +3830,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           for (const state of background) {
             for (const call of runningCalls(state)) {
               const child = call.child?.sessionId;
-              if (child === undefined || !(child in active)) {
+              if (call.reported !== undefined && call.child !== undefined) {
+                // Its child already reported; only work still running below it keeps the call.
+                const below = sessionsOf(call.child);
+                const working =
+                  below.some((session) => session.sessionId in active) ||
+                  [...shells.values()].some(
+                    (shell) => shell.running && below.includes(shell.state),
+                  );
+                if (!working) yield* settleCall(call, "completed", call.reported);
+              } else if (child === undefined || !(child in active)) {
                 yield* settleCall(call, "interrupted", LOST_BACKGROUND);
               }
             }
