@@ -695,6 +695,11 @@ it.effect.each([
   { status: "completed" as const, followUp: "held-notification", settles: true },
   { status: "completed" as const, followUp: "user", settles: false },
   { status: "completed" as const, followUp: "steered-notification", settles: false },
+  // Send now cancels the queued run; its message joins the run that asked to settle.
+  { status: "completed" as const, followUp: "promoted-to-steer", settles: true },
+  // A delegated-completion wake cancelled unstarted because the turn already took the result.
+  { status: "completed" as const, followUp: "cancelled-delegated", settles: true },
+  { status: "completed" as const, followUp: "stopped-delegated", settles: false },
 ])("settleAfterRun handles $status with $followUp follow-up", ({ status, followUp, settles }) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:settle-after-run");
@@ -713,6 +718,7 @@ it.effect.each([
       ordinal: 2,
       status: "running" as OrchestrationV2Run["status"],
       userMessageId: MessageId.make("follow-up"),
+      startedAt: followUp === "stopped-delegated" ? "2026-01-01T00:00:00.000Z" : null,
     };
     const dispatched: Array<string> = [];
     // The notification starts after the completed run was observed, before settlement commits.
@@ -742,10 +748,10 @@ it.effect.each([
                     { id: MessageId.make("original"), runId, role: "user" as const },
                     {
                       id: nextRun.userMessageId,
-                      runId: followUpId,
+                      runId: followUp === "promoted-to-steer" ? runId : followUpId,
                       role: "user" as const,
                       ...(followUp.endsWith("notification") ? { notification: {} } : {}),
-                      ...(followUp === "delegated" ? { delegatedCompletion: {} } : {}),
+                      ...(followUp.endsWith("delegated") ? { delegatedCompletion: {} } : {}),
                     },
                     { id: MessageId.make("reply"), runId: followUpId, role: "assistant" as const },
                     ...(followUp === "steered-notification"
@@ -809,7 +815,9 @@ it.effect.each([
           ? "failed"
           : followUp === "held-notification"
             ? "queued"
-            : "completed";
+            : followUp === "promoted-to-steer" || followUp.endsWith("ed-delegated")
+              ? "cancelled"
+              : "completed";
       yield* Queue.offer(events, {
         sequence: 1,
         event: { type: "run.updated", threadId, payload: nextRun },
