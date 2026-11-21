@@ -1886,6 +1886,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       readonly count: number;
       readonly retryAt: number;
       readonly detail: string;
+      readonly cause: GitCommandError | undefined;
     }
   >();
   // Keyed by cwd: the HEAD and merge base whose totals diff failed, retried after a backoff.
@@ -4100,7 +4101,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(
       Effect.catchTags({
         GitCommandError: (error) =>
-          Effect.succeed({ unavailable: `Could not list untracked files: ${error.detail}` }),
+          Effect.succeed({
+            unavailable: `Could not list untracked files: ${error.detail}`,
+            cause: error,
+          }),
       }),
     );
     if ("unavailable" in untracked) return untracked;
@@ -4233,6 +4237,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         command: "git ls-files",
         cwd,
         detail: remembered.detail,
+        ...(remembered.cause === undefined ? {} : { cause: remembered.cause }),
       });
     }
     // Status always lists untracked files, so no roots means there are none to scan.
@@ -4256,6 +4261,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           (yield* Clock.currentTimeMillis) +
           Math.min(UNTRACKED_TOTALS_RETRY_MIN_MS * 2 ** (count - 1), UNTRACKED_TOTALS_RETRY_MAX_MS),
         detail: untracked.unavailable,
+        cause: "cause" in untracked ? untracked.cause : undefined,
       });
       if (untrackedTotalsFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
         const oldestKey = untrackedTotalsFailures.keys().next().value;
@@ -4266,6 +4272,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         command: "git ls-files",
         cwd,
         detail: untracked.unavailable,
+        ...("cause" in untracked ? { cause: untracked.cause } : {}),
       });
     }
     untrackedTotalsFailures.delete(cwd);
