@@ -1,3 +1,5 @@
+import { forEachSidebarListRow } from "./Sidebar.motion";
+
 // How long a row the list just moved ignores presses. A click that was already
 // on its way when the row slid under the pointer lands within this window.
 const MOVED_ROW_PRESS_DELAY_MS = 500;
@@ -22,9 +24,9 @@ function editsText(event: KeyboardEvent) {
 
 function readTops(list: HTMLElement) {
   const tops = new Map<HTMLElement, number>();
-  for (const child of list.children) {
-    if (child instanceof HTMLElement) tops.set(child, child.offsetTop);
-  }
+  forEachSidebarListRow(list, (row, folder) => {
+    tops.set(row, row.offsetTop + (folder?.offsetTop ?? 0));
+  });
   return tops;
 }
 
@@ -32,7 +34,7 @@ function readTops(list: HTMLElement) {
  * Drops presses on rows that something other than the user just moved, so a
  * thread settling, waking or arriving above the pointer cannot hand its click
  * to the neighbouring row. Call `update` after each commit that can move rows.
- * The list must be positioned so every direct child's offsetTop shares its origin.
+ * The list and project folders must be positioned to provide row offsets.
  */
 export function createSidebarShiftGuard(list: HTMLElement) {
   const view = list.ownerDocument.defaultView;
@@ -47,8 +49,11 @@ export function createSidebarShiftGuard(list: HTMLElement) {
 
   const rowOf = (target: EventTarget | null) => {
     let node = target instanceof Node ? target : null;
-    while (node !== null && node.parentNode !== list) node = node.parentNode;
-    return node instanceof Element ? node : null;
+    while (node !== null && node !== list) {
+      if (node instanceof HTMLElement && tops.has(node)) return node;
+      node = node.parentNode;
+    }
+    return null;
   };
   const swallow = (event: Event) => {
     event.preventDefault();

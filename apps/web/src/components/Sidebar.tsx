@@ -17,16 +17,21 @@ import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import {
   DndContext,
+  getClientRect,
+  pointerWithin,
   useSensor,
   useSensors,
   type AutoScrollOptions,
+  type ClientRect,
+  type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
   type Modifier,
 } from "@dnd-kit/core";
-import { SortableContext } from "@dnd-kit/sortable";
+import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import type { Coordinates } from "@dnd-kit/utilities";
 import {
   canSnooze,
   effectiveSnoozed,
@@ -136,7 +141,7 @@ import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { getClientSettings, updateClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -273,10 +278,7 @@ import {
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
 import { SidebarDraftBlock, useSidebarDrafts } from "./sidebar/SidebarDraftBlock";
-import {
-  SidebarProjectFolderHeader,
-  sidebarFolderRowId,
-} from "./sidebar/SidebarProjectFolderHeader";
+import { SidebarProjectFolder, sidebarFolderRowId } from "./sidebar/SidebarProjectFolder";
 import {
   SidebarDragBoundary,
   SidebarSectionHeader,
@@ -893,6 +895,16 @@ const SIDEBAR_DRAG_DISTANCE = 6;
 // dnd-kit's 20% edge zone at full speed runs the list away while the pointer rests near the bottom.
 const SIDEBAR_AUTO_SCROLL: AutoScrollOptions = { threshold: { x: 0, y: 0.05 }, acceleration: 3 };
 
+function sameProjectFolderSection(source: SidebarProjectSnapshot, target: SidebarProjectSnapshot) {
+  return (
+    source.archived === target.archived && (source.archived || source.pinned === target.pinned)
+  );
+}
+
+function rectContainsPoint(rect: ClientRect, { x, y }: Coordinates) {
+  return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+}
+
 const SIDEBAR_DRAG_LABEL_HEIGHT = 24;
 
 const threadSearchResultId = (index: number) => `sidebar-thread-search-result-${index}`;
@@ -1060,6 +1072,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     readonly targetSection: SidebarSection | null;
     readonly contextDrag: boolean;
   } | null>(null);
+  const [draggedProjectFolderId, setDraggedProjectFolderId] = useState<string | null>(null);
+  const projectReleasePointRef = useRef<Coordinates | null>(null);
   const dragSensorRef = useRef<SidebarPointerSensor | null>(null);
   const contextDragKeyRef = useRef<string | null>(null);
   const dragScrollRef = useRef<{ readonly viewport: Element; readonly top: number } | null>(null);
@@ -1363,6 +1377,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
   });
+  const projectFolderById = new Map(
+    projectFolders?.map(({ group }) => [sidebarFolderRowId(group.projectKey), group] as const),
+  );
 
   // Ranked across environments as the palette ranks them, so one
   // environment's list does not sit above another's better matches; rows
@@ -1708,13 +1725,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
     })();
   };
-  const restrictBelowPins: Modifier = (args) =>
-    restrictBelowSidebarLabel(args, dragLabelOffsetRef.current);
-  const dndModifiers = [
-    restrictToVerticalAxis,
-    restrictBelowPins,
-    restrictToFirstScrollableAncestor,
-  ];
+  const restrictThreadDrag: Modifier = (args) =>
+    args.active && projectFolderById.has(String(args.active.id))
+      ? args.transform
+      : restrictToFirstScrollableAncestor({
+          ...args,
+          transform: restrictBelowSidebarLabel(args, dragLabelOffsetRef.current),
+        });
+  const dndModifiers = [restrictToVerticalAxis, restrictThreadDrag];
   const attachListMotionRef = (node: HTMLUListElement) => {
     threadListRef.current = node;
     const motion = createSidebarListMotion(node);
@@ -1744,13 +1762,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     };
   };
 
-  // Folder rows only drag out to the composer; folders own their order, so nothing drops in the list.
+  // Thread rows in folders only drag out to the composer.
   const isContextDrag =
     projectFolders !== null ||
     dragState?.contextDrag === true ||
     dragState?.activeSection === "working";
   const dragTargetSection = isContextDrag ? null : (dragState?.targetSection ?? null);
-  const finishThreadDrag = (started: boolean) => {
+  const finishSidebarDrag = (started: boolean) => {
     dragSensorRef.current = null;
     contextDragKeyRef.current = null;
     dragScrollRef.current = null;
@@ -1758,12 +1776,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (started) {
       listMotionRef.current?.release();
       setDragState(null);
+      setDraggedProjectFolderId(null);
     }
   };
   const attachDragSensor = (sensor: SidebarPointerSensor) => {
     dragSensorRef.current = sensor;
   };
-  const cancelThreadDrag = () => {
+  const cancelSidebarDrag = () => {
     dragSensorRef.current?.cancel();
   };
   const contextDragThreads = (): ReadonlyArray<ScopedThreadRef> => {
@@ -1781,12 +1800,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const bounds = (threadListRef.current ?? searchResultsListRef.current)?.getBoundingClientRect();
     return bounds !== undefined && (point.x < bounds.left || point.x > bounds.right);
   };
+  const pointerInsideSidebarViewport = (point: Coordinates) => {
+    const bounds = threadListRef.current
+      ?.closest('[data-slot="scroll-area-viewport"]')
+      ?.getBoundingClientRect();
+    return bounds !== undefined && rectContainsPoint(bounds, point);
+  };
   // The path out of the list often crosses dnd-kit's edge zone, which autoscrolls the sidebar.
   const restoreDragScroll = () => {
     const scroll = dragScrollRef.current;
     if (scroll && scroll.viewport.scrollTop !== scroll.top) scroll.viewport.scrollTop = scroll.top;
   };
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
+    if (contextDragKeyRef.current === null) return false;
     // Search results cannot reorder, so their context preview starts inside the list.
     const contextDrag = searchResultsListRef.current !== null || pointerOutsideThreadList(point);
     setDragState((current) =>
@@ -1805,7 +1831,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     moveThreadContextDragGhost(point, { title, count: threads.length });
     return true;
   };
-  const dropThreadContextDrag = (point: { x: number; y: number }) => {
+  const dropSidebarDrag = (point: Coordinates) => {
+    if (contextDragKeyRef.current === null) {
+      // dnd-kit's last target can predate the pointer release.
+      const insideViewport = pointerInsideSidebarViewport(point);
+      projectReleasePointRef.current = insideViewport ? point : null;
+      return !insideViewport;
+    }
     if (!pointerOutsideThreadList(point)) return false;
     restoreDragScroll();
     dropThreadContext(point, contextDragThreads());
@@ -1815,9 +1847,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const pointerSensorOptions = {
     distance: SIDEBAR_DRAG_DISTANCE,
     onAttach: attachDragSensor,
-    onFinish: finishThreadDrag,
+    onFinish: finishSidebarDrag,
     onMove: moveThreadContextDrag,
-    onDrop: dropThreadContextDrag,
+    onDrop: dropSidebarDrag,
   };
   const dndSensors = useSensors(useSensor(SidebarPointerSensor, pointerSensorOptions));
   const sectionByThreadKeyRef = useRef(sectionByThreadKey);
@@ -1927,8 +1959,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     })();
   };
 
-  const handleThreadDragStart = (event: DragStartEvent) => {
+  const handleSidebarDragStart = (event: DragStartEvent) => {
     const activeKey = String(event.active.id);
+    if (projectFolderById.has(activeKey)) {
+      listMotionRef.current?.suspend();
+      projectReleasePointRef.current = null;
+      setDraggedProjectFolderId(activeKey);
+      return;
+    }
     contextDragKeyRef.current = activeKey;
     const activeSection = sectionByThreadKey.get(activeKey);
     if (activeSection === undefined) return;
@@ -2014,12 +2052,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the dnd-kit drag sensor when the dragged row leaves the list
   useEffect(() => {
     if (
-      dragState !== null &&
-      !sidebarListItems.some((item) => item.kind === "thread" && item.key === dragState.activeKey)
+      (draggedProjectFolderId !== null && !projectFolderById.has(draggedProjectFolderId)) ||
+      (dragState !== null &&
+        !sidebarListItems.some(
+          (item) => item.kind === "thread" && item.key === dragState.activeKey,
+        ))
     ) {
-      cancelThreadDrag();
+      cancelSidebarDrag();
     }
-  }, [cancelThreadDrag, dragState, sidebarListItems]);
+  }, [cancelSidebarDrag, dragState, draggedProjectFolderId, projectFolderById, sidebarListItems]);
   // Only order, section, or draft changes need layout reads and motion.
   const listMotionLayoutKey = [
     sidebarListItemsKey,
@@ -2030,7 +2071,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     routeDraftIdForRows ?? "",
   ].join("\0");
   const listMotionAnimate =
-    dragState === null && sidebarListItems.length + visibleDraftSessionCount > 0;
+    dragState === null &&
+    draggedProjectFolderId === null &&
+    sidebarListItems.length + visibleDraftSessionCount > 0;
   // Cache on both fields so layout-key changes trigger the effect even when animate is unchanged.
   const listMotionPass = { layoutKey: listMotionLayoutKey, animate: listMotionAnimate };
   const shelfExpansionKey = [workingShelfExpanded, snoozedShelfExpanded, settledShelfExpanded].join(
@@ -2046,6 +2089,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     listMotionRef.current?.update(listMotionPass.animate && shelvesUnchanged);
   }, [listMotionPass, shelfExpansionKey]);
   const handleThreadDragOver = (event: DragOverEvent) => {
+    if (projectFolders !== null) return;
     const target = event.over
       ? resolveSidebarDropTarget(sidebarListItems, String(event.active.id), String(event.over.id))
       : null;
@@ -2081,7 +2125,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
   const dragActivationY = dragState?.activationY;
-  const dndCollisionDetection = (() => {
+  const threadCollisionDetection = (() => {
     if (draggedThreadKey === undefined || draggedFromSection === undefined)
       return createSidebarCollisionDetection(() => true);
     const source = threadByKey.get(draggedThreadKey);
@@ -2114,8 +2158,56 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       },
     );
   })();
-  const handleThreadDragEnd = (event: DragEndEvent) => {
-    if (projectFolders !== null) return;
+  const dndCollisionDetection: CollisionDetection = (args) => {
+    const source = projectFolderById.get(String(args.active.id));
+    if (source === undefined) return threadCollisionDetection(args);
+    // A sortable target keeps the dragged folder translated even in a gap.
+    const stayOnSource = [{ id: args.active.id }];
+    if (!args.pointerCoordinates || !pointerInsideSidebarViewport(args.pointerCoordinates)) {
+      return stayOnSource;
+    }
+    const collisions = pointerWithin({
+      ...args,
+      droppableContainers: args.droppableContainers.filter(({ id }) => {
+        const target = projectFolderById.get(String(id));
+        return target !== undefined && sameProjectFolderSection(source, target);
+      }),
+    });
+    return collisions.length === 0 ? stayOnSource : collisions;
+  };
+  const handleSidebarDragEnd = (event: DragEndEvent) => {
+    if (projectFolders !== null) {
+      const point = projectReleasePointRef.current;
+      projectReleasePointRef.current = null;
+      const source = projectFolderById.get(String(event.active.id));
+      if (!point || !source) return;
+      const folders = threadListRef.current?.querySelectorAll<HTMLElement>(
+        ":scope > [data-sidebar-folder-group]",
+      );
+      let target: SidebarProjectSnapshot | undefined;
+      // The preview displaces other folders, so hit-test their untransformed slots.
+      for (const folder of folders ?? []) {
+        const candidate = projectFolderById.get(folder.dataset.sidebarFolderGroup!);
+        if (
+          candidate &&
+          sameProjectFolderSection(source, candidate) &&
+          rectContainsPoint(getClientRect(folder, { ignoreTransform: true }), point)
+        ) {
+          target = candidate;
+          break;
+        }
+      }
+      if (!target || target === source) return;
+      const orderKeys = (group: SidebarProjectSnapshot) =>
+        group.memberProjects.map((project) => project.physicalProjectKey);
+      useUiStateStore
+        .getState()
+        .reorderProjects(projectGroups.flatMap(orderKeys), orderKeys(source), orderKeys(target));
+      if (getClientSettings().sidebarProjectSortOrder !== "manual") {
+        void updateClientSettings({ sidebarProjectSortOrder: "manual" });
+      }
+      return;
+    }
     const activeKey = String(event.active.id);
     const activeSection = sectionByThreadKey.get(activeKey);
     const target =
@@ -3420,12 +3512,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             >
               <DndContext
                 sensors={dndSensors}
-                autoScroll={isContextDrag ? false : SIDEBAR_AUTO_SCROLL}
+                autoScroll={
+                  isContextDrag && draggedProjectFolderId === null ? false : SIDEBAR_AUTO_SCROLL
+                }
                 collisionDetection={dndCollisionDetection}
                 modifiers={dndModifiers}
-                onDragStart={handleThreadDragStart}
+                onDragStart={handleSidebarDragStart}
                 onDragOver={handleThreadDragOver}
-                onDragEnd={handleThreadDragEnd}
+                onDragEnd={handleSidebarDragEnd}
               >
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
@@ -3587,28 +3681,33 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           continue;
                         }
                         if (projectFolders !== null && item.marker === "active-placeholder") {
-                          for (const folder of projectFolders) {
-                            items.push(
-                              <SidebarProjectFolderHeader
-                                key={`project-folder:${folder.group.projectKey}`}
-                                group={folder.group}
-                                collapsed={folder.collapsed}
-                                hiddenThreads={folder.hiddenThreads}
-                                onToggle={toggleProjectFolder}
-                                onNewThread={startThreadInProjectFolder}
-                                onContextMenu={handleProjectFolderContextMenu}
-                              />,
-                            );
-                            for (const thread of folder.threads) {
-                              items.push(
-                                renderThreadRow(
-                                  thread,
-                                  "active",
-                                  sidebarFolderRowId(folder.group.projectKey),
-                                ),
-                              );
-                            }
-                          }
+                          items.push(
+                            <SortableContext
+                              key="project-folders"
+                              items={[...projectFolderById.keys()]}
+                              strategy={verticalListSortingStrategy}
+                            >
+                              {projectFolders.map((folder) => {
+                                const rowId = sidebarFolderRowId(folder.group.projectKey);
+                                return (
+                                  <SidebarProjectFolder
+                                    key={rowId}
+                                    group={folder.group}
+                                    collapsed={folder.collapsed}
+                                    hiddenThreads={folder.hiddenThreads}
+                                    sortableDisabled={projectFolderById.size < 2}
+                                    onToggle={toggleProjectFolder}
+                                    onNewThread={startThreadInProjectFolder}
+                                    onContextMenu={handleProjectFolderContextMenu}
+                                  >
+                                    {folder.threads.map((thread) =>
+                                      renderThreadRow(thread, "active", rowId),
+                                    )}
+                                  </SidebarProjectFolder>
+                                );
+                              })}
+                            </SortableContext>,
+                          );
                           continue;
                         }
                         switch (item.marker) {
