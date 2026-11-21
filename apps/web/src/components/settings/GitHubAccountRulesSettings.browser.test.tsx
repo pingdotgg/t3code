@@ -198,7 +198,7 @@ describe("GitHubAccountRulesSettings", () => {
     await using screen = await render(["personal", "work"]);
 
     await expect
-      .element(screen.getByText(/Rules apply to every connected machine/))
+      .element(screen.getByText(/Rules cover every machine unless you pick one/))
       .toBeInTheDocument();
     await expect
       .element(screen.getByText(/incus run a server without account rules/))

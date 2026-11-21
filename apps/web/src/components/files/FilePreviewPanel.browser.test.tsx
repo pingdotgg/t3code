@@ -58,6 +58,8 @@ vi.mock(import("~/remoteOpen"), async (original) => ({
 vi.mock(import("~/hooks/useTheme"), async (original) => ({
   ...(await original()),
   useTheme: () => ({ resolvedTheme: "dark" }) as never,
+  // The fork's code surfaces pick their syntax theme from the rendered appearance.
+  useRenderedAppearance: () => "dark",
 }));
 vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
   useWorkspaceMutationRefresh: vi.fn(),

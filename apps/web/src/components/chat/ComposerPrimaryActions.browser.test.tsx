@@ -10,7 +10,7 @@ vi.mock("~/hooks/useSettings", () => ({
 }));
 vi.mock("../SidebarStageBackdrop", () => ({
   StageBackdropButtonArt: () => null,
-  useSidebarStageBackdropVariant: () => null,
+  useStageArtworkEdition: () => null,
 }));
 
 import { CollapsedComposerStopAction, ComposerPrimaryActions } from "./ComposerPrimaryActions";
