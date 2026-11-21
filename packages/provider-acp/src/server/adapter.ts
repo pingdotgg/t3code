@@ -5734,6 +5734,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 type: "provider_thread.updated",
                 driver,
                 providerThread,
+                // Agents like Kimi report usage after the prompt settles, when no run receives it.
+                ...(context === null ? { sessionScoped: true } : {}),
               });
             }
             return;
