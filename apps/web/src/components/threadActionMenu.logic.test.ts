@@ -147,7 +147,7 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "snooze",
     );
     expect(snooze?.children?.map((child) => [child.id, child.label])).toEqual([
-      ["snooze:hour", "In 1 hour (3:00 PM)"],
+      ["snooze:hour", "In 1 hour"],
       ["snooze:custom", "Custom…"],
       ["snooze:reminder", "Snooze with reminder…"],
     ]);
