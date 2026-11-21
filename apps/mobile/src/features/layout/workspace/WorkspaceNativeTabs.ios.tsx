@@ -1,4 +1,3 @@
-import { nativeSidebarColumnWidth } from "../../../lib/layout";
 import { useGT, useMessages } from "gt-react-native";
 import {
   WORKSPACE_TAB_LABELS,
@@ -14,7 +13,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
+import { View, type NativeSyntheticEvent } from "react-native";
 import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -30,17 +29,12 @@ import {
   WorkspaceSlotOptionsContext,
 } from "../../../native/v5-workspace-context";
 import type { NativeLayoutMetrics } from "../../../lib/reserved-regions";
-import {
-  useCompactWorkspaceTabs,
-  useFloatingWorkspaceTabs,
-  useSystemWorkspaceTabBar,
-} from "./useSystemWorkspaceTabBar";
+import { useCompactWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../../components/ui/useControlTheme";
 import { useDeviceType } from "../../../native/native-layout-metrics";
-import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
+import { WorkspaceTabDock } from "./WorkspaceTabDock";
 import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
-import { useWorkspaceCompose } from "./useWorkspaceCompose";
 
 const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
 const ISSUE_ICON = require("../../../../assets/icons/issue.png");
@@ -168,8 +162,6 @@ export function WorkspaceNativeTabs(props: {
     layout.usesSplitView &&
     workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
     !panes.primarySidebarVisible;
-  const floatingTabs = useFloatingWorkspaceTabs();
-  const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
@@ -279,39 +271,8 @@ export function WorkspaceNativeTabs(props: {
       !props.hidden &&
       !props.tabsInSidebarColumn &&
       !hiddenWithSidebar ? (
-        <View
-          pointerEvents="box-none"
-          style={{
-            position: "absolute",
-            left: 0,
-            bottom: 0,
-            // Over a page, the bar takes the sidebar column's width, so it matches the one the
-            // column draws on the other tabs.
-            width:
-              deviceType === "pad" && floatingTabs
-                ? Math.min(280, width)
-                : layout.usesSplitView
-                  ? nativeSidebarColumnWidth(layout)
-                  : width,
-            height: 128,
-          }}
-        >
-          <WorkspaceSidebarTabsFooter />
-        </View>
+        <WorkspaceTabDock placement="window" />
       ) : null}
     </View>
-  );
-}
-
-/** The workspace tabs at the foot of the sidebar. */
-export function WorkspaceSidebarTabsFooter() {
-  const compose = useWorkspaceCompose();
-  const compact = useFloatingWorkspaceTabs();
-  return (
-    <WorkspaceSidebarTabs
-      compact={compact}
-      reserveComposeSpace={compact}
-      onNewTask={compact ? compose?.onPress : undefined}
-    />
   );
 }

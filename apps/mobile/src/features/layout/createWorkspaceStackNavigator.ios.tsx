@@ -43,10 +43,8 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { NATIVE_INSPECTOR_MIN_MAIN_WIDTH, nativeSidebarColumnWidth } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { WorkspaceTabsProvider, useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
-import {
-  WorkspaceNativeTabs,
-  WorkspaceSidebarTabsFooter,
-} from "./workspace/WorkspaceNativeTabs.ios";
+import { WorkspaceNativeTabs } from "./workspace/WorkspaceNativeTabs.ios";
+import { WorkspaceTabDock } from "./workspace/WorkspaceTabDock";
 import { workspaceUsesColumns } from "./workspace/workspace-tabs-state";
 import { useWorkspaceCompose } from "./workspace/useWorkspaceCompose";
 import { NAVIGATION_TAB_ORDER } from "./workspace/navigation-tab-order";
@@ -432,16 +430,7 @@ function WorkspaceColumns(
           <ColumnScreen
             descriptor={primary}
             primary
-            footer={
-              deviceType === "pad" ? (
-                <View
-                  pointerEvents="box-none"
-                  style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 128 }}
-                >
-                  <WorkspaceSidebarTabsFooter />
-                </View>
-              ) : undefined
-            }
+            footer={deviceType === "pad" ? <WorkspaceTabDock placement="column" /> : undefined}
             selectedThreadKey={selectedThreadKey}
             selectedPullRequestKey={selectedPullRequestKey}
             selectedIssueKey={selectedIssueKey}
