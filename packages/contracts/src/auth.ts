@@ -190,6 +190,8 @@ export const ServerAuthDescriptor = Schema.Struct({
   sessionCookieName: TrimmedNonEmptyString,
   /** Older servers omit this and authorize self-updates with orchestration:operate. */
   serverUpdateScope: Schema.optionalKey(Schema.Literal(AuthEnvironmentMaintainScope)),
+  /** Present when `/api/auth/cloudflare-access` can mint a pairing link; older servers omit it. */
+  cloudflareAccessLogin: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 

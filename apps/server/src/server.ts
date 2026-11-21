@@ -169,6 +169,7 @@ import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
+import * as CloudflareAccessLoginHttp from "./auth/cloudflareAccessLoginHttp.ts";
 import {
   relayHookBaseUrl,
   ScheduledTaskWebhookOrigin,
@@ -867,6 +868,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
+    CloudflareAccessLoginHttp.layer,
     LinkThreadHttp.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,

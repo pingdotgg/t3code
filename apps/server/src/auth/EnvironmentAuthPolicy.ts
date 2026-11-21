@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { readCloudflareAccessConfig } from "./cloudflareAccessConfig.ts";
 import { isRemoteReachableHost, resolveSessionCookieName } from "./utils.ts";
 
 export class EnvironmentAuthPolicy extends Context.Service<
@@ -44,6 +45,9 @@ export const make = Effect.gen(function* () {
     bootstrapMethods,
     sessionMethods: ["browser-session-cookie", "bearer-access-token", "dpop-access-token"],
     serverUpdateScope: AuthEnvironmentMaintainScope,
+    ...((yield* readCloudflareAccessConfig)._tag === "Enabled"
+      ? { cloudflareAccessLogin: true }
+      : {}),
     sessionCookieName: resolveSessionCookieName({
       mode: config.mode,
       port: config.port,
