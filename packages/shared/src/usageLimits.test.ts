@@ -1403,6 +1403,33 @@ describe("/usage-limits", () => {
     },
   ];
 
+  it("keeps the selected proxied instance's notice when a direct instance supplies the account limits", () => {
+    const direct = provider({
+      ...selected,
+      auth: { ...selected.auth, workspaceId: "ws-a" },
+    });
+    const message = "Check your proxy for its usage limits.";
+    const proxy = provider({
+      ...selected,
+      instanceId: ProviderInstanceId.make("codex-proxy"),
+      auth: { ...selected.auth, endpoint: "http://127.0.0.1:10100" },
+      usageLimits: {
+        checkedAt: limits.checkedAt,
+        windows: [],
+        unavailable: { reason: "unsupported", message },
+      },
+    });
+    const report = collectProviderUsageLimits(proxy.instanceId, [direct, proxy], [], now);
+    expect(report?.accounts.map(({ id }) => id)).toEqual([direct.instanceId]);
+    expect(report?.notices).toEqual([message]);
+    expect(
+      collectProviderUsageLimits(direct.instanceId, [direct, proxy], [], now)?.notices,
+    ).toEqual([]);
+    const proxyOnly = collectProviderUsageLimits(proxy.instanceId, [proxy], [], now);
+    expect(proxyOnly?.accounts[0]?.limits.unavailable?.message).toBe(message);
+    expect(proxyOnly?.notices).toEqual([]);
+  });
+
   it("uses hub credit balances and redemption targets in the composer, including native duplicates", () => {
     const hubs = sources.map((source) => ({
       ...source,
