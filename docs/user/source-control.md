@@ -148,7 +148,8 @@ Merging a stack lands it through GitCafe, and updating a branch restacks the lay
 
 TanStack Source is in private beta, so the server shows it only when its environment turns the flag
 on: `export T3CODE_FEATURE_FLAGS=tanstack_source` in your shell profile, then restart T3 Code. Separate
-several flags with commas. Install its CLI and sign in:
+several flags with commas. A value already set in the server's own environment, such as a service
+definition, is used instead of the profile. Install its CLI and sign in:
 
 ```sh
 curl -fsSL https://source.tanstack.com/install | sh
