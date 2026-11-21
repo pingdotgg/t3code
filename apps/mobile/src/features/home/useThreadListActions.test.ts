@@ -21,7 +21,6 @@ const state = vi.hoisted(() => ({
   failedAction: null as string | null,
   titleOutcome: null as ThreadTitleRegenerationOutcome | null,
   archivedRefreshes: [] as string[],
-  onArchivedRefresh: undefined as (() => void) | undefined,
   scopes: new Map<string, Set<string>>(),
   shells: [] as EnvironmentThreadShell[],
   requests: [] as {
@@ -60,7 +59,6 @@ vi.mock("../../components/ui/Dialog", () => ({
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: (environmentId: string) => {
     state.archivedRefreshes.push(environmentId);
-    state.onArchivedRefresh?.();
   },
 }));
 vi.mock("../../state/session", () => ({
@@ -118,6 +116,7 @@ vi.mock("../../state/atom-registry", async () => {
         typeof atom === "string"
           ? stub.set(atom, value as boolean)
           : registry.set(atom as Parameters<typeof registry.set>[0], value),
+      subscribe: registry.subscribe.bind(registry),
     },
   };
 });
@@ -215,7 +214,6 @@ beforeEach(() => {
   state.failedAction = null;
   state.titleOutcome = null;
   state.archivedRefreshes = [];
-  state.onArchivedRefresh = undefined;
   state.pendingOrder = null;
   state.dropBusy = false;
   state.holdingRows = false;
@@ -283,7 +281,12 @@ describe("thread list operation permissions", () => {
     expect(Object.keys(appAtomRegistry.get(composerDraftsAtom))).toContain("primary:thread");
 
     state.scopes.get(primaryEnvironmentId)!.add(AuthOrchestrationOperateScope);
-    const deleted = new Promise<void>((resolve) => (state.onArchivedRefresh = resolve));
+    const deleted = new Promise<void>((resolve) => {
+      const stop = appAtomRegistry.subscribe(composerDraftsAtom, () => {
+        stop();
+        resolve();
+      });
+    });
     confirm!();
     await deleted;
 
@@ -459,7 +462,7 @@ describe("thread action undo", () => {
     expect(await actions.archiveThread(thread)).toBe(false);
     expect(await first).toBe(true);
     expect(state.requests.map(({ action }) => action)).toEqual(["archive"]);
-    expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
+    expect(state.archivedRefreshes).toEqual([]);
   });
 
   it("sends a different action while one is pending for the same thread", async () => {

@@ -11,10 +11,7 @@ import {
   type ArchivedThreadsHeaderEnvironment,
 } from "./ArchivedThreadsScreen";
 import { buildArchivedThreadGroups, type ArchivedThreadSortOrder } from "./archivedThreadList";
-import {
-  refreshArchivedThreadsForEnvironment,
-  useArchivedThreadSnapshots,
-} from "./useArchivedThreadSnapshots";
+import { useArchivedThreadSnapshots } from "./useArchivedThreadSnapshots";
 
 export function ArchivedThreadsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
@@ -57,11 +54,7 @@ export function ArchivedThreadsRouteScreen() {
       }),
     [environmentLabels, searchQuery, selectedEnvironmentId, snapshots, sortOrder],
   );
-  const refreshChangedEnvironment = (thread: { readonly environmentId: EnvironmentId }) => {
-    refreshArchivedThreadsForEnvironment(thread.environmentId);
-  };
-  const { unarchiveThread, confirmDeleteThread } =
-    useArchivedThreadListActions(refreshChangedEnvironment);
+  const { unarchiveThread, confirmDeleteThread } = useArchivedThreadListActions();
 
   useFocusEffect(
     useCallback(() => {
