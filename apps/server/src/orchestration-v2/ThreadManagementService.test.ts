@@ -528,6 +528,16 @@ it.effect(
       const wait = { projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 };
       // Without the option the ended turn is the answer, as before.
       expect(yield* service.waitForThread(wait)).toMatchObject({ timedOut: false });
+      // A turn asked for nothing owes nothing, so the option does not hold it.
+      const plainRunId = RunId.make("run:thread-management:owed:plain");
+      runs = [run(plainRunId, 0, { status: "completed" }), ...runs];
+      expect(
+        yield* Effect.raceFirst(
+          service.waitForThread({ ...wait, runId: plainRunId, untilOutput: true }),
+          Effect.as(Deferred.await(subscribed), "waited for a result"),
+        ),
+      ).toMatchObject({ timedOut: false, run: { id: plainRunId } });
+      runs = runs.slice(1);
 
       const fiber = yield* service
         .waitForThread({ ...wait, untilOutput: true })

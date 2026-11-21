@@ -109,9 +109,13 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
     }
   }
   const run = yield* claim(name);
-  const quiet = options.quiet === undefined ? undefined : Duration.fromInputUnsafe(options.quiet);
   const agents = yield* WorkflowAgents;
   const outputSchema = options.returns === undefined ? undefined : jsonSchemaOf(options.returns);
+  // Only a turn asked for a result can owe one from a later turn.
+  const quiet =
+    options.quiet === undefined || outputSchema === undefined
+      ? undefined
+      : Duration.fromInputUnsafe(options.quiet);
   const outputCodec =
     options.returns === undefined ? undefined : Schema.toCodecJson(options.returns);
   const decodeOutput = outputCodec === undefined ? undefined : Schema.decodeEffect(outputCodec);
