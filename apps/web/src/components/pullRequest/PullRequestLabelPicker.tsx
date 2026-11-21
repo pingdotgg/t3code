@@ -17,6 +17,7 @@ import {
   toggleSelection,
 } from "@t3tools/client-runtime/pull-request-selection";
 
+import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { readableFailure } from "./pullRequestDetail.logic";
@@ -43,6 +44,7 @@ export function PullRequestLabelPicker({
   const gt = useGT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(new Set());
   const [draft, setDraft] = useState(emptySelection<PullRequestLabelCandidate>);
 
   const candidatesQuery = useEnvironmentQuery(
@@ -62,9 +64,13 @@ export function PullRequestLabelPicker({
   };
   const sendBatch = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
     const names = labels.map((label) => label.name);
+    const keys = labels.map((candidate) => candidate.name);
+    setPendingKeys((current) => new Set([...current, ...keys]));
     const result = await setLabels({
       environmentId,
       input: { ...reference, labels: names, applied },
+    }).finally(() => {
+      setPendingKeys((current) => new Set([...current].filter((key) => !keys.includes(key))));
     });
     if (result._tag === "Success") return;
     toastManager.add({
@@ -114,13 +120,14 @@ export function PullRequestLabelPicker({
         "This repository has more labels than are listed here. Apply the rest on the host.",
       )}
       candidateKey={(candidate) => candidate.name}
+      pendingKeys={pendingKeys}
       onSelect={(candidate) =>
         setDraft((current) =>
           toggleSelection(current, candidate.name, candidate, candidate.isApplied),
         )
       }
     >
-      {(candidate) => {
+      {(candidate, busy) => {
         const dot = pullRequestLabelColor(candidate.color);
         return (
           <>
@@ -135,7 +142,9 @@ export function PullRequestLabelPicker({
                 <span className="text-muted-foreground"> · {candidate.description}</span>
               ) : null}
             </span>
-            {isSelected(draft, candidate.name, candidate.isApplied) ? (
+            {busy ? (
+              <Spinner size="sm" className="shrink-0" />
+            ) : isSelected(draft, candidate.name, candidate.isApplied) ? (
               <CheckIcon
                 aria-label={gt("Applied", { $context: "label is applied" })}
                 className="size-3.5 shrink-0"
