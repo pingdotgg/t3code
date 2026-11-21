@@ -552,7 +552,17 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       }),
     }).pipe(Effect.asVoid);
 
-  const handleTermination = (classify: () => Effect.Effect<AcpError.AcpError>) =>
+  // A broken pipe can win the race against the exit that explains it; wait briefly on the live clock.
+  const preferProcessExit = Effect.fn("preferProcessExit")(function* (error: AcpError.AcpError) {
+    if (!options.terminationError) return error;
+    return yield* options.terminationError.pipe(
+      Effect.timeoutOption("250 millis"),
+      Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+      Effect.map(Option.getOrElse(() => error)),
+    );
+  });
+
+  const handleTermination = (classify: Effect.Effect<AcpError.AcpError>) =>
     Ref.modify(terminationHandled, (handled) => {
       if (handled) {
         return [Effect.void, true] as const;
@@ -561,7 +571,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         Effect.gen(function* () {
           yield* Queue.offer(disconnects, 0);
           yield* Queue.end(rawNotifications);
-          const error = yield* classify();
+          const error = yield* classify;
           yield* Deferred.fail(terminationFailure, error);
           yield* failAllExtPending(error);
           yield* emitClientProtocolError(error);
@@ -873,19 +883,15 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               operation: "read-input-stream",
               cause: error,
             });
-        return handleTermination(() => Effect.succeed(normalized));
+        // A failed read may be the exit's echo; an ACP error or a defect is the cause itself.
+        return handleTermination(
+          Option.isSome(failure) && !isAcpError(failure.value)
+            ? preferProcessExit(normalized)
+            : Effect.succeed(normalized),
+        );
       },
       onSuccess: () =>
-        handleTermination(() => {
-          const ended = new AcpError.AcpInputStreamEndedError({});
-          if (!options.terminationError) return Effect.succeed(ended);
-          // Stdout can close without process exit; use a live-clock diagnostic grace period.
-          return options.terminationError.pipe(
-            Effect.timeoutOption("250 millis"),
-            Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
-            Effect.map(Option.getOrElse(() => ended)),
-          );
-        }),
+        handleTermination(preferProcessExit(new AcpError.AcpInputStreamEndedError({}))),
     }),
     Effect.forkScoped,
   );
@@ -960,7 +966,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
             Effect.andThen(
               Cause.hasInterruptsOnly(cause)
                 ? Effect.void
-                : handleTermination(() => Effect.succeed(error)),
+                : handleTermination(preferProcessExit(error)),
             ),
           );
         },
@@ -975,7 +981,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
                       cause: "Output writer ended",
                     });
                     return failOutgoingWrites(error).pipe(
-                      Effect.andThen(handleTermination(() => Effect.succeed(error))),
+                      Effect.andThen(handleTermination(preferProcessExit(error))),
                     );
                   })();
               return handled.pipe(
