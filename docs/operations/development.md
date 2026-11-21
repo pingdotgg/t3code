@@ -270,8 +270,10 @@ unused exports in `apps/web/src/components/ui/*.tsx`, while still reporting an e
 Use `vp run fallow --workspace apps/web` to audit one workspace with every dead-code check,
 or `vp run fallow:production --workspace apps/web` to find code kept alive only by tests.
 The export check still has findings in the workspaces listed above, so an override in
-[.fallowrc.jsonc](../../.fallowrc.jsonc) turns it off there. Remove a path from that override when
-its workspace is clean. Review callers before deleting code; production mode can also report
+[.fallowrc.jsonc](../../.fallowrc.jsonc) turns it off there. The override also applies to
+`vp run fallow`. To see the export findings of one of those workspaces, remove its path from the
+override in your working copy and run `vp run fallow:check`. Keep the removal when the workspace is
+clean. Review callers before deleting code; production mode can also report
 development scripts and test fixtures.
 Runtime-discovered entrypoints and dependency exceptions belong in
 [.fallowrc.jsonc](../../.fallowrc.jsonc).
