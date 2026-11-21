@@ -711,14 +711,15 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
 
 it.effect.each([
   { notice: "delegated task question", goal: null, steers: true },
+  { notice: "delegated task question", goal: null, steers: false, summary: "/review is ready" },
   { notice: "background command", goal: "active", steers: true },
   { notice: "background command", goal: null, steers: false },
 ] as const)(
   "a $notice notice steers into the running turn: $steers (goal $goal)",
-  ({ notice, goal, steers }) =>
+  ({ notice, goal, steers, ...row }) =>
     Effect.gen(function* () {
       const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-        `notice-steer-${notice.replaceAll(" ", "-")}-${goal ?? "none"}`,
+        `notice-steer-${notice.replaceAll(" ", "-")}-${goal ?? "none"}-${steers}`,
       );
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -762,7 +763,7 @@ it.effect.each([
                   childThreadId: ThreadId.make("thread:question-child"),
                 },
                 outcome: "updated" as const,
-                summary: "Delegated task has a question",
+                summary: "summary" in row ? row.summary : "Delegated task has a question",
               }
             : {
                 source: { kind: "command" as const },
