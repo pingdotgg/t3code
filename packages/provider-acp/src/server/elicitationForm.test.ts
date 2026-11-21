@@ -45,6 +45,28 @@ describe("parseElicitationForm", () => {
     );
   }
 
+  it.each([
+    { enumNames: ["Allow once", "Decline"], labels: ["Allow once", "Decline"] },
+    { enumNames: ["Same", "Same"], labels: ["once", "decline"] },
+    { enumNames: ["Only one"], labels: ["once", "decline"] },
+  ])("labels string enum values with usable enumNames: $enumNames", ({ enumNames, labels }) => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: { choice: { type: "string", enum: ["once", "decline"], enumNames } },
+        required: ["choice"],
+      },
+      "Allow?",
+    );
+    const question = form?.questions[0];
+    assert(form !== undefined && question !== undefined);
+    assert.deepStrictEqual(
+      question.options.map((option) => option.label),
+      labels,
+    );
+    assert.deepStrictEqual(form.content({ choice: "once" }), { choice: "once" });
+  });
+
   it("asks each question once when a choice has a free-text companion field", () => {
     // OMP's ask dialog follows each choice `q<n>` with a free-text `q<n>__other` field.
     const ask = (question: string, header: string) => ({

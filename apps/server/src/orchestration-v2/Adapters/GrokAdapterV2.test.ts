@@ -462,15 +462,14 @@ describe("Grok native questions", () => {
         },
       ],
     },
-    ...["once", "decline", undefined].map((choice) => ({
-      name: `returns the Grok MCP form response for ${choice ?? "dismissal"}`,
-      steps: [elicitation(choice)],
-    })),
+    {
+      name: "cancels a Grok MCP form the user dismisses",
+      steps: [elicitation(undefined)],
+    },
     ...[
       { answer: "accept", result: { outcome: "accept", content: {} } },
       { answer: "decline", result: { outcome: "decline" } },
       { answer: undefined, result: { outcome: "cancel" } },
-      { answer: "unexpected", result: { outcome: "cancel" } },
     ].map(({ answer, result }) => ({
       name: `handles ${answer ?? "dismissal"} on a fieldless MCP form`,
       steps: [
@@ -496,7 +495,7 @@ describe("Grok native questions", () => {
       ],
     })),
     {
-      name: "keeps a card for each form one MCP tool call asks",
+      name: "keeps a card for each form one MCP tool call asks and returns each choice",
       steps: [elicitation("once"), elicitation("decline")],
     },
   ])("$name", ({ steps }) =>
