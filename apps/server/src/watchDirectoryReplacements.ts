@@ -99,7 +99,7 @@ const resolveWatchTarget = Effect.fn("watchDirectoryReplacements.resolveWatchTar
   return yield* resolveSymlinkTarget(unresolved).pipe(Effect.orElseSucceed(() => unresolved));
 });
 
-/** Watch replacements of a configured directory, its symlink target, and the target's parent. */
+/** Watch replacements of a configured directory and each entry along its symlink target path. */
 export const watchDirectoryPath = (directory: string, watchChild: Stream.Stream<void>) => {
   const entry = NodePath.resolve(directory);
   return watchDirectoryReplacements(
@@ -108,10 +108,19 @@ export const watchDirectoryPath = (directory: string, watchChild: Stream.Stream<
       resolveWatchTarget(entry).pipe(
         Effect.map((target) => {
           if (target === entry) return watchChild;
-          return watchDirectoryReplacements(
-            (ready) => watchDirectoryEntry(NodePath.dirname(target), ready),
-            watchDirectoryReplacements((ready) => watchDirectoryEntry(target, ready), watchChild),
-          );
+          let watch = watchChild;
+          // An ancestor replacement invalidates every inode watch below it.
+          for (
+            let current = target;
+            current !== NodePath.dirname(current);
+            current = NodePath.dirname(current)
+          ) {
+            watch = watchDirectoryReplacements(
+              (ready) => watchDirectoryEntry(current, ready),
+              watch,
+            );
+          }
+          return watch;
         }),
       ),
     ),
