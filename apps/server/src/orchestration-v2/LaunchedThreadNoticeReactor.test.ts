@@ -89,6 +89,8 @@ const runToEnd = Effect.fn("test.runToEnd")(function* (input: {
   readonly notification?: OrchestrationV2Notification;
   /** The user typed the message in the worker itself. */
   readonly typed?: boolean;
+  /** Queues a message behind the run before it ends, as a restart or `/goal` does. */
+  readonly queueBehind?: boolean;
 }) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -111,6 +113,19 @@ const runToEnd = Effect.fn("test.runToEnd")(function* (input: {
     creationSource:
       input.typed === true ? "web" : input.notification === undefined ? "mcp" : "server",
   });
+  if (input.queueBehind === true) {
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`send:${input.key}:next`),
+      threadId: input.threadId,
+      messageId: MessageId.make(`message:${input.key}:next`),
+      text: `Continue ${input.key}`,
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+  }
   const { runs } = yield* projections.getThreadRecords(input.threadId, ["runs"]);
   const run = runs.find((candidate) => candidate.userMessageId === messageId)!;
   const now = yield* DateTime.now;
@@ -237,6 +252,30 @@ it.layer(layerTest)("a thread launched from another", (it) => {
       });
       yield* reactor.handle(typed);
       assert.equal((yield* notices(launcher)).length, 2);
+    }),
+  );
+
+  it.effect("says nothing of a run that a queued message stopped to carry on the work", () =>
+    Effect.gen(function* () {
+      const reactor = yield* LaunchedThreadNoticeReactor.LaunchedThreadNoticeReactor;
+      const launcher = ThreadId.make("thread:restart-launcher");
+      const worker = ThreadId.make("thread:restart-worker");
+      yield* createThread(launcher, "Launcher");
+      yield* createThread(worker, "Worker", {
+        environmentId: here,
+        threadId: launcher,
+        title: "Launcher",
+      });
+      yield* reactor.handle(
+        yield* runToEnd({
+          threadId: worker,
+          key: "restarted",
+          status: "interrupted",
+          senderThreadId: launcher,
+          queueBehind: true,
+        }),
+      );
+      assert.equal((yield* notices(launcher)).length, 0);
     }),
   );
 
