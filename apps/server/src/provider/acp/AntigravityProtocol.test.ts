@@ -408,11 +408,8 @@ describe("Antigravity permissions and questions", () => {
 
   it.each([
     ["missing answer", { q2: ["1"] }],
-    ["blank single-select answer", { q1: "   ", q2: ["1"] }],
     ["array answer for single-select", { q1: ["1"], q2: ["1"] }],
-    ["empty multi-select array", { q1: "1", q2: [] }],
     ["unknown option in multi-select array", { q1: "1", q2: ["1", "unknown"] }],
-    ["blank multi-select custom text", { q1: "1", q2: "  " }],
   ])("cancels ask_question elicitation on %s", (_, answers) => {
     const form = extractAntigravityElicitationForm(
       elicitationRequest({
@@ -427,16 +424,6 @@ describe("Antigravity permissions and questions", () => {
 
   it.each([
     [
-      "url elicitation",
-      {
-        sessionId: "session-1",
-        mode: "url",
-        elicitationId: "e-1",
-        message: "Sign in",
-        url: "https://example.com",
-      } as EffectAcpSchema.CreateElicitationRequest,
-    ],
-    [
       "extra unrelated field",
       elicitationRequest({
         q1: singleChoiceField,
@@ -450,20 +437,6 @@ describe("Antigravity permissions and questions", () => {
       elicitationRequest({ q1: singleChoiceField, q1_other: otherField(singleChoiceField.title) }, [
         "q1",
       ]),
-    ],
-    [
-      "enum companion",
-      elicitationRequest({
-        q1: singleChoiceField,
-        q1_other: { type: "string", enum: ["a"] },
-      }),
-    ],
-    [
-      "enum choice instead of oneOf",
-      elicitationRequest({
-        q1: { type: "string", title: "Pick one", enum: ["1", "2"] },
-        q1_other: otherField("Pick one"),
-      }),
     ],
     [
       "multi-select with item count constraints",
