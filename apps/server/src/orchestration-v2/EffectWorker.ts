@@ -689,6 +689,7 @@ export const layerExecutor: Layer.Layer<
                 operation: effect.request.operation,
                 sideChat: effect.request.sideChat,
                 directDelete: effect.request.directDelete,
+                stableSkipPrefix: effect.request.stableSkipPrefix,
               })
               .pipe(
                 Effect.provideService(DispatchModeLimit, effect.request.limit),

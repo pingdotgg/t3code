@@ -559,6 +559,7 @@ export interface ThreadManagementServiceShape {
     readonly operation: "thread.archive" | "thread.unarchive" | "thread.delete";
     readonly sideChat?: EffectOutbox.EmbeddedSideChatCascade | undefined;
     readonly directDelete?: true | undefined;
+    readonly stableSkipPrefix?: true | undefined;
   }) => Effect.Effect<
     void,
     Orchestrator.OrchestratorV2Error | CommandReceiptStore.CommandReceiptStoreV2Error
@@ -872,6 +873,7 @@ const make = Effect.gen(function* () {
           operation: request.operation,
           sideChat: request.sideChat,
           directDelete: request.directDelete,
+          stableSkipPrefix: request.stableSkipPrefix,
         }).pipe(
           Effect.catch((cause) =>
             Effect.logWarning("Subagent lifecycle cascade left to the effect worker", {
@@ -1878,7 +1880,8 @@ const make = Effect.gen(function* () {
               }),
             );
           if (result === undefined) return;
-          if (!result.cascadeIdOccupied) return commandId;
+          if (!result.cascadeIdOccupied)
+            return result.replayed || result.storedEvents.length > 0 ? commandId : null;
         }
         return yield* new Orchestrator.OrchestratorDispatchError({
           commandId: baseId,
@@ -1899,11 +1902,13 @@ const make = Effect.gen(function* () {
       ) => ReturnType<ThreadManagementServiceShape["cascadeSubagentLifecycle"]> = Effect.fn(
         "ThreadManagementService.visitSubagentCascade",
       )(function* (thread, baseId, path, parentArchiveCommandId) {
-        const commandId =
-          path.length > 0 && thread.deletedAt === null
-            ? yield* dispatchChild(thread.id, baseId, path, parentArchiveCommandId)
-            : baseId;
-        if (commandId === undefined) return;
+        const ownCommandId =
+          path.length === 0
+            ? baseId
+            : thread.deletedAt === null
+              ? yield* dispatchChild(thread.id, baseId, path, parentArchiveCommandId)
+              : null;
+        if (ownCommandId === undefined) return;
         // Holds each thread's lock while visiting its subagents, so locks nest parent before child.
         yield* threadDispatch.withLock(
           thread.id,
@@ -1933,18 +1938,33 @@ const make = Effect.gen(function* () {
                   "thread.unarchive",
                 ])
               : null;
-            if (source && CommandReceiptStore.supersedesCascade(latest, source.cutoff, commandId))
+            if (
+              source &&
+              CommandReceiptStore.supersedesCascade(
+                latest,
+                source.cutoff,
+                ownCommandId ?? undefined,
+              )
+            )
               return;
             const archiveCommandId =
               input.operation === "thread.archive" &&
               latest?.commandType === "thread.archive" &&
-              latest.commandId === commandId
-                ? commandId
+              latest.commandId === ownCommandId
+                ? ownCommandId
                 : parentArchiveCommandId;
             const children = yield* orchestrator.getSubagentChildThreads(thread.id);
+            if (children.length === 0) return;
+            // Older jobs may have committed descendants under a suffixed skip.
+            const prefix =
+              ownCommandId ??
+              (input.stableSkipPrefix
+                ? baseId
+                : ((yield* CommandReceiptStore.legacyCascadeCommandId(receipts, baseId)) ??
+                  baseId));
             const [, failures] = yield* Effect.partition(children, (child) =>
               Effect.gen(function* () {
-                const base = CommandId.make(`${commandId}:subagent:${child.id}`);
+                const base = CommandId.make(`${prefix}:subagent:${child.id}`);
                 yield* visit(child, base, [...path, child.id], archiveCommandId);
               }),
             );

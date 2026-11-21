@@ -260,7 +260,7 @@ export const cascadeCommandIdAt = (base: CommandId, retry: number) =>
   retry === 0 ? base : CommandId.make(`${base}:retry:${retry}`);
 
 /** Older receipts encode cascade ownership in the command ID. */
-const cascadeCommandId = Effect.fn("CommandReceiptStore.cascadeCommandId")(function* (
+export const legacyCascadeCommandId = Effect.fn("CommandReceiptStore.cascadeCommandId")(function* (
   receipts: CommandReceiptStoreV2Shape,
   base: CommandId,
 ) {
@@ -276,7 +276,7 @@ const cascadeCommandId = Effect.fn("CommandReceiptStore.cascadeCommandId")(funct
 export const supersedesCascade = (
   latest: CommandReceiptV2 | null,
   cutoff: number,
-  ownCommandId: CommandId,
+  ownCommandId?: CommandId,
 ) => latest !== null && latest.resultSequence > cutoff && latest.commandId !== ownCommandId;
 
 /** Whether a cascade from an archive of `rootThreadId`, along `path`, archived this thread. */
@@ -331,7 +331,10 @@ export const archivedByCascade = Effect.fn("CommandReceiptStore.archivedByCascad
   let derived = valid && root.commandType === "thread.archive" ? root.commandId : undefined;
   for (const threadId of legacyPath) {
     if (derived === undefined) return false;
-    derived = yield* cascadeCommandId(receipts, CommandId.make(`${derived}:subagent:${threadId}`));
+    derived = yield* legacyCascadeCommandId(
+      receipts,
+      CommandId.make(`${derived}:subagent:${threadId}`),
+    );
   }
   return derived === archive.commandId && (root?.resultSequence ?? 0) <= archive.resultSequence;
 });

@@ -1941,6 +1941,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       type: "subagent-threads.cascade",
       operation,
       limit,
+      stableSkipPrefix: true,
       ...(operation === "thread.delete" && sideChat === undefined
         ? { directDelete: true as const }
         : {}),
@@ -16245,6 +16246,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         receipt.status !== "accepted" ||
         receipt.commandType !== command.type ||
         (command.type === "thread.delete" && cascadeThread.deletedAt === null) ||
+        (command.type === "thread.unarchive" &&
+          cascade?.source !== undefined &&
+          receipt.resultSequence < cascade.source.cutoff) ||
         (command.type === "thread.archive" &&
           receipt.archiveSourceCommandId !== undefined &&
           receipt.archiveSourceCommandId !== cascade?.parentArchiveCommandId));

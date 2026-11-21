@@ -159,6 +159,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     operation: Schema.Literals(["thread.archive", "thread.unarchive", "thread.delete"]),
     sideChat: Schema.optional(EmbeddedSideChatCascade),
     directDelete: Schema.optional(Schema.Literal(true)),
+    stableSkipPrefix: Schema.optional(Schema.Literal(true)),
     limit: Schema.optional(
       Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
     ),
