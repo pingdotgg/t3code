@@ -854,6 +854,8 @@ describe("large text preview recovery", () => {
             if (columnIndex === 34) return wrappedTwelveWords;
           }
           if (columnIndex === 33 && rowIndex % 3 === 1) return forcedEightLines;
+          // Wide lowercase glyphs that wrap without spaces or newlines.
+          if (rowIndex === 2 && columnIndex === 34) return "m".repeat(11);
           return `r${rowIndex + 1}-c${columnIndex}`;
         }),
       ),
@@ -886,6 +888,7 @@ describe("large text preview recovery", () => {
 
       const initialRow1Height = row(1).getBoundingClientRect().height;
       const initialRow2Height = row(2).getBoundingClientRect().height;
+      const initialRow3Height = row(3).getBoundingClientRect().height;
       const initialRow4Top = row(4).getBoundingClientRect().top;
 
       // Scroll to the far right where the word-wrapped column 34 mounts after 18 newline cells.
@@ -897,6 +900,8 @@ describe("large text preview recovery", () => {
 
       expect(Math.abs(row(1).getBoundingClientRect().height - initialRow1Height)).toBeLessThan(1);
       expect(Math.abs(row(2).getBoundingClientRect().height - initialRow2Height)).toBeLessThan(1);
+      expect(row(3).getBoundingClientRect().height).toBeGreaterThan(40);
+      expect(Math.abs(row(3).getBoundingClientRect().height - initialRow3Height)).toBeLessThan(1);
       expect(Math.abs(row(4).getBoundingClientRect().top - initialRow4Top)).toBeLessThan(1);
 
       // Scroll vertically into the table, then sweep horizontally back to the left edge.

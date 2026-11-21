@@ -607,6 +607,8 @@ const BASE_ROW_HEIGHT = 29;
 const CELL_HORIZONTAL_INSET = 25;
 const CELL_VERTICAL_INSET = 13;
 const MAX_MEASURED_CELLS_PER_ROW = 16;
+// Wider than any common glyph, so estimates never undercount lines.
+const MAX_GLYPH_WIDTH_EM = 1.35;
 const MAX_CACHED_ROW_HEIGHTS = 512;
 const MAX_SYNC_SCAN_CHARS = 128_000;
 const PROBE_CELL_CLASS_NAME =
@@ -621,32 +623,6 @@ interface RowCellCandidate {
   readonly column: number;
   readonly text: string;
   readonly upperLines: number;
-}
-
-function charWidthUpperFactor(code: number): number {
-  if (code <= 32) return 0.38;
-  if (
-    code === 105 ||
-    code === 108 ||
-    code === 102 ||
-    code === 106 ||
-    code === 114 ||
-    code === 116 ||
-    code === 73 ||
-    code === 46 ||
-    code === 44 ||
-    code === 58 ||
-    code === 59 ||
-    code === 39 ||
-    code === 33 ||
-    code === 124
-  ) {
-    return 0.5;
-  }
-  if (code >= 48 && code <= 57) return 0.78;
-  if (code >= 65 && code <= 90) return 0.95;
-  if (code < 128) return 0.72;
-  return 1.2;
 }
 
 /** Conservative greedy word-wrap upper bound on rendered lines without native text shaping. */
@@ -685,7 +661,7 @@ function estimateUpperLines(text: string, innerWidth: number, fontSize: number):
       }
       continue;
     }
-    const charWidth = charWidthUpperFactor(code) * fontSize;
+    const charWidth = MAX_GLYPH_WIDTH_EM * fontSize;
     wordWidth += charWidth;
     if (wordWidth > innerWidth) {
       if (lineWidth > 0) {
@@ -708,7 +684,7 @@ function collectRowHeightCandidates(
 ): { candidates: RowCellCandidate[]; scannedChars: number } {
   const candidates: RowCellCandidate[] = [];
   const limit = Math.min(columns, row.length);
-  const maxGlyphWidth = fontSize * 1.35;
+  const maxGlyphWidth = fontSize * MAX_GLYPH_WIDTH_EM;
   let scannedChars = 0;
   for (let column = 0; column < limit; column++) {
     const text = row[column];
