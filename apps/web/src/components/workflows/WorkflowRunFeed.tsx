@@ -10,6 +10,7 @@ import {
   ThreadId,
   type WorkflowQuestion,
   type WorkflowRun,
+  type WorkflowRunReference,
 } from "@t3tools/contracts";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
@@ -55,12 +56,15 @@ import {
   workflowRunNow,
   workflowRunState,
   workflowSaidStart,
+  workflowStepReferences,
   type WorkflowBeat,
   type WorkflowFeedRow,
   type WorkflowQuickSteps,
   type WorkflowRunNode,
   type WorkflowRunTone,
 } from "@t3tools/client-runtime/workflows";
+import type { WorkflowPaneTab } from "./workflowPane.logic";
+import { WorkflowReferenceChip } from "./WorkflowReferences";
 
 /** An agent's thread, as a step names it: the linked environment it is in, or null for this one. */
 export interface WorkflowThreadTarget {
@@ -179,17 +183,19 @@ export function WorkflowRunFeed({
   environmentId,
   node,
   parent,
-  openThreadId,
+  shownTab,
   onSelect,
   onOpenThread,
+  onOpenReference,
 }: {
   readonly environmentId: EnvironmentId;
   readonly node: WorkflowRunNode;
   readonly parent: WorkflowRun | null;
-  /** The thread shown beside the run, so its card can say so. */
-  readonly openThreadId: string | null;
+  /** What shows beside the run, so the card or chip that opened it can say so. */
+  readonly shownTab: WorkflowPaneTab | null;
   readonly onSelect: (runId: string | null) => void;
   readonly onOpenThread: (thread: WorkflowThreadTarget) => void;
+  readonly onOpenReference: (reference: WorkflowRunReference) => void;
 }) {
   const { run } = node;
   const gt = useGT();
@@ -230,6 +236,22 @@ export function WorkflowRunFeed({
     ? Date.parse(run.endedAt) - Date.parse(run.startedAt)
     : wholeSeconds(nowMs - Date.parse(run.startedAt));
   const steps = detail.data?.steps;
+  const references = detail.data?.references ?? [];
+  const openThreadId = shownTab !== null && "thread" in shownTab ? shownTab.thread : null;
+  const chip = (reference: WorkflowRunReference, small = false) => (
+    <WorkflowReferenceChip
+      key={`${reference.kind}:${reference.key}`}
+      reference={reference}
+      small={small}
+      open={
+        shownTab !== null &&
+        "kind" in shownTab &&
+        shownTab.kind === reference.kind &&
+        shownTab.key === reference.key
+      }
+      onOpen={() => onOpenReference(reference)}
+    />
+  );
   const feed =
     steps === undefined
       ? null
@@ -407,6 +429,15 @@ export function WorkflowRunFeed({
             </>
           )}
         </p>
+        {references.length === 0 ? null : (
+          <ul aria-label={gt("What the run touched")} className="flex flex-wrap gap-1.5 pt-1.5">
+            {references.map((reference) => (
+              <li key={`${reference.kind}:${reference.key}`} className="min-w-0">
+                {chip(reference)}
+              </li>
+            ))}
+          </ul>
+        )}
       </header>
 
       {detail.error || feed === null ? (
@@ -444,6 +475,9 @@ export function WorkflowRunFeed({
             loose={loose}
             paused={pausedApart}
             end={ended ? endWord : null}
+            touched={(name) =>
+              workflowStepReferences(references, name).map((reference) => chip(reference, true))
+            }
           />
           <section
             ref={panel}
@@ -582,6 +616,7 @@ function FlowNode({
   aside,
   selected,
   onPick,
+  extra,
 }: {
   readonly tone: keyof typeof MARK_TONE;
   readonly mark: ReactNode;
@@ -590,15 +625,22 @@ function FlowNode({
   readonly aside?: string | undefined;
   readonly selected: boolean;
   readonly onPick: () => void;
+  /** Controls of its own under the line, which are not part of picking the node. */
+  readonly extra?: ReactNode;
 }) {
-  return (
+  const node = (
     <button
       type="button"
       aria-current={selected}
       className={cn(
-        "flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-xl border px-2 py-1.5 text-left shadow-xs hover:bg-accent",
-        NODE_TONE[tone === "done" ? "plain" : tone],
-        selected ? "border-primary ring-2 ring-primary/25" : null,
+        "flex w-full min-w-0 cursor-pointer items-center gap-2 text-left",
+        extra === undefined
+          ? cn(
+              "rounded-xl border px-2 py-1.5 shadow-xs hover:bg-accent",
+              NODE_TONE[tone === "done" ? "plain" : tone],
+              selected ? "border-primary ring-2 ring-primary/25" : null,
+            )
+          : "rounded-t-xl px-2 pt-1.5 pb-1 hover:bg-accent",
       )}
       onClick={onPick}
     >
@@ -621,6 +663,19 @@ function FlowNode({
       </span>
     </button>
   );
+  if (extra === undefined) return node;
+  return (
+    <div
+      className={cn(
+        "overflow-hidden rounded-xl border shadow-xs",
+        NODE_TONE[tone === "done" ? "plain" : tone],
+        selected ? "border-primary ring-2 ring-primary/25" : null,
+      )}
+    >
+      {node}
+      <div className="flex flex-wrap gap-1 ps-10 pe-2 pb-1.5">{extra}</div>
+    </div>
+  );
 }
 
 /**
@@ -637,6 +692,7 @@ function WorkflowFlow({
   loose,
   paused,
   end,
+  touched,
 }: {
   readonly environmentId: EnvironmentId;
   readonly rows: ReadonlyArray<WorkflowFeedRow>;
@@ -650,6 +706,8 @@ function WorkflowFlow({
   readonly paused: boolean;
   /** How the run ended, once it has. */
   readonly end: string | null;
+  /** Chips for what a step touched. */
+  readonly touched: (step: string) => ReadonlyArray<ReactNode>;
 }) {
   const gt = useGT();
   const beatNode = (beat: WorkflowBeat) => (
@@ -661,6 +719,7 @@ function WorkflowFlow({
       nowMs={nowMs}
       selected={focus === `step:${beat.name}`}
       onPick={() => onPick(`step:${beat.name}`)}
+      touched={touched(beat.name)}
     />
   );
   const waits = node.questions.length > 0;
@@ -813,6 +872,7 @@ function WorkflowBeatNode({
   nowMs,
   selected,
   onPick,
+  touched,
 }: {
   readonly environmentId: EnvironmentId;
   readonly beat: WorkflowBeat;
@@ -822,6 +882,7 @@ function WorkflowBeatNode({
   readonly nowMs: number;
   readonly selected: boolean;
   readonly onPick: () => void;
+  readonly touched: ReadonlyArray<ReactNode>;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -909,6 +970,7 @@ function WorkflowBeatNode({
       aside={length}
       selected={selected}
       onPick={onPick}
+      extra={touched.length === 0 ? undefined : touched}
     />
   );
 }

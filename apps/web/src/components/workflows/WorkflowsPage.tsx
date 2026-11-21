@@ -1,5 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, type WorkflowRunReference } from "@t3tools/contracts";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
 import { FileCode2Icon } from "lucide-react";
@@ -28,19 +27,21 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { WorkflowRunsView, WorkflowsEmpty } from "./WorkflowRunsView";
-import WorkflowThreadPane from "./WorkflowThreadPane";
+import WorkflowPane from "./WorkflowPane";
+import {
+  activeWorkflowPaneTab,
+  toggleWorkflowPaneTab,
+  type WorkflowPaneState,
+} from "./workflowPane.logic";
 
 const COPY_PATH = "copy-path";
 
 // The editor brings the code view's highlighter with it, which the run list has no use for.
 const WorkflowDefinitionEditor = lazy(() => import("./WorkflowDefinitionEditor"));
 
-export interface WorkflowsSearch {
+export interface WorkflowsSearch extends WorkflowPaneState {
   readonly env?: string;
   readonly run?: string;
-  /** The agent thread open beside the run, and the linked environment it is in when not `env`. */
-  readonly thread?: string;
-  readonly threadEnv?: string;
   /** Show the definition files instead of the runs: all of them, or `file` in the editor. */
   readonly definitions?: boolean;
   readonly file?: string;
@@ -117,27 +118,32 @@ export function WorkflowsPage() {
   };
   const openDefinitions = (file: string | null) =>
     go({ ...env, definitions: true, ...(file === null ? {} : { file }) });
-  const threadRef =
-    environmentId === null || search.thread === undefined || editing
-      ? null
-      : scopeThreadRef(
-          search.threadEnv === undefined ? environmentId : EnvironmentId.make(search.threadEnv),
-          ThreadId.make(search.thread),
-        );
+  // What is open beside the run, which belongs to the run: picking another one closes it.
+  const pane: WorkflowPaneState =
+    environmentId === null || editing || search.pane === undefined
+      ? {}
+      : search.tab === undefined
+        ? { pane: search.pane }
+        : { pane: search.pane, tab: search.tab };
+  const paneOpen = pane.pane !== undefined;
+  const shownTab = activeWorkflowPaneTab(pane);
+  // Opening something pins the run it is from, so the address keeps naming the run it belongs to.
+  const togglePane = (runId: string, tab: Parameters<typeof toggleWorkflowPaneTab>[1]) =>
+    select({ ...env, run: runId, ...toggleWorkflowPaneTab(pane, tab) });
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <div className="flex min-h-0 min-w-0 flex-1">
-        {/* Below md there is room for one thing, and an open transcript is that thing. */}
+        {/* Below md there is room for one thing, and an open pane is that thing. */}
         <div
           className={cn(
             "min-h-0 min-w-0 flex-1 flex-col bg-background",
-            threadRef === null ? "flex" : "hidden md:flex",
+            paneOpen ? "hidden md:flex" : "flex",
           )}
         >
           <WorkspacePageHeader
             electron={isElectron}
-            reserveNativeControls={threadRef === null}
+            reserveNativeControls={!paneOpen}
             className="border-b"
           >
             <WorkspaceBreadcrumb ariaLabel={gt("Workflows breadcrumb")} className="flex-1">
@@ -287,35 +293,31 @@ export function WorkflowsPage() {
               onOpenDefinitions={() => openDefinitions(null)}
               environmentId={environmentId}
               selectedRunId={search.run ?? null}
-              openThreadId={search.thread ?? null}
+              paneOpen={paneOpen}
+              shownTab={shownTab}
               onSelect={(runId) => select({ ...env, ...(runId === null ? {} : { run: runId }) })}
-              onOpenThread={(thread) =>
-                select(
-                  // Asking for the open one again closes it, as the pressed button says it will.
-                  thread.threadId === search.thread
-                    ? { ...env, ...run }
-                    : {
-                        ...env,
-                        ...run,
-                        thread: thread.threadId,
-                        ...(thread.environmentId === null
-                          ? {}
-                          : { threadEnv: thread.environmentId }),
-                      },
-                )
+              onOpenThread={(runId, thread) =>
+                togglePane(runId, {
+                  thread: thread.threadId,
+                  ...(thread.environmentId === null ? {} : { env: thread.environmentId }),
+                })
+              }
+              onOpenReference={(runId, reference: WorkflowRunReference) =>
+                togglePane(runId, { kind: reference.kind, key: reference.key })
               }
             />
           )}
         </div>
-        {threadRef === null ? null : (
+        {environmentId === null || !paneOpen ? null : (
           <aside
-            aria-label={gt("Agent transcript")}
+            aria-label={gt("Beside the run")}
             className="min-h-0 w-full shrink-0 bg-background md:w-1/2 md:max-w-2xl md:border-s"
           >
-            <WorkflowThreadPane
-              key={`${threadRef.environmentId}:${threadRef.threadId}`}
-              threadRef={threadRef}
-              onClose={() => select({ ...env, ...run })}
+            <WorkflowPane
+              environmentId={environmentId}
+              runId={search.run ?? null}
+              state={pane}
+              onChange={(next) => select({ ...env, ...run, ...next })}
             />
           </aside>
         )}
