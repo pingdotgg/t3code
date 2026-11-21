@@ -826,7 +826,20 @@ fn write_history(
     Ok(())
 }
 
+// An AppImage server runs from a FUSE mount that vanishes with it; a survivor faults with SIGBUS.
+#[cfg(target_os = "linux")]
+fn exit_with_parent() {
+    // SAFETY: PR_SET_PDEATHSIG takes a signal number and touches no memory.
+    unsafe {
+        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn exit_with_parent() {}
+
 fn main() -> io::Result<()> {
+    exit_with_parent();
     let mut writer = BufWriter::new(io::stdout().lock());
     write_event(
         &mut writer,
