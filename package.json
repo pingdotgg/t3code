@@ -31,6 +31,8 @@
     "tc": "vp run -r --cache --concurrency-limit 4 typecheck",
     "check:changed": "node scripts/check-changed.ts",
     "report:renders": "node scripts/render-metrics.ts",
+    "stress": "node apps/web/stress/run.ts",
+    "stress:record-pr": "node apps/web/stress/record.ts",
     "lint": "vp lint --report-unused-disable-directives",
     "i18n:untranslated": "node scripts/i18n-untranslated.ts",
     "knip": "knip --preprocessor ./scripts/knip-schemas.ts",

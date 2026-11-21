@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
+import * as PullRequestFixtures from "./PullRequestFixtures.ts";
 import type { PullRequestProviderApi } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 export class PullRequestProviderRegistry extends Context.Service<
@@ -27,7 +28,12 @@ export function fromProviders(
 /** @public */
 export const make = Effect.gen(function* () {
   const drivers = yield* BuiltInDrivers.SourceControlDrivers;
-  return fromProviders(drivers.flatMap(({ instance }) => instance.pullRequests ?? []));
+  return fromProviders(
+    yield* Effect.forEach(
+      drivers.flatMap(({ instance }) => instance.pullRequests ?? []),
+      PullRequestFixtures.applyFixtures,
+    ),
+  );
 });
 
 export const layer = Layer.effect(PullRequestProviderRegistry, make).pipe(
