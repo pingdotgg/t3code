@@ -175,6 +175,13 @@ or endpoint configurations do not report subscription limits.
 Muse Code reports its session and weekly windows and its tier once the Muse CLI has run in a thread.
 Until then it shows no limits. Readings are not kept across a server restart.
 
+fx reports how much of its Vercel team's [Token Pass](https://vercel.com/docs/ai-gateway/token-pass)
+credit is left and when it resets. This needs fx 0.0.17 or later, a sign-in to Vercel AI Gateway
+with `fx login`, and an active Token Pass on the team `fx teams` selects. The bar measures against
+the $150 a pass refills to each billing period, so a pass bought partway through a period starts
+partly used. With `fx login`, fx keeps running on the team's AI Gateway credits after the pass is
+used up; those credits and fx's Codex and Grok subscriptions are not reported.
+
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 

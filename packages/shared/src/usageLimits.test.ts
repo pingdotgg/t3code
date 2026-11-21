@@ -181,6 +181,7 @@ describe("new thread model fallback", () => {
       ["opencode", "console-custom"],
     ],
     ["opencode", ["budget_all"], "opencode/model", false, undefined, []],
+    ["fx", ["token_pass"], "gateway:moonshotai/kimi-k3.1-pro", false, undefined, undefined],
   ] as const)(
     "matches %s pools %s to %s",
     (driver, ids, model, usesFallback, modelIds, providerIds) => {
