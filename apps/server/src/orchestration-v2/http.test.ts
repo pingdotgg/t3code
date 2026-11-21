@@ -30,6 +30,7 @@ import * as Etag from "effect/http/Etag";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -37,12 +38,14 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
 import * as OrchestrationHttp from "./http.ts";
+import { OrchestratorProjectionError } from "./Orchestrator.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 class TranscriptTestApi extends HttpApi.make("environment").add(
   EnvironmentHttpApi.groups.orchestration,
@@ -118,7 +121,10 @@ const rolledBackRun = Schema.decodeSync(OrchestrationV2Run)({
 });
 
 // Serves the orchestration HTTP routes over real stores; `allowed` gates the read scope.
-const serveOrchestrationHttp = (allowed: () => boolean) =>
+const serveOrchestrationHttp = (
+  allowed: () => boolean,
+  getThreadSnapshot?: ThreadManagementService.ThreadManagementServiceShape["getThreadSnapshot"],
+) =>
   Effect.gen(function* () {
     const runtime = ProviderReplayHarness.layerWithRegistry(
       { name: "thread-transcript" },
@@ -170,7 +176,16 @@ const serveOrchestrationHttp = (allowed: () => boolean) =>
           ),
         ),
       ),
-      Layer.provide(Layer.succeedContext(services)),
+      Layer.provide(
+        Layer.succeedContext(
+          getThreadSnapshot === undefined
+            ? services
+            : Context.add(services, ThreadManagementService.ThreadManagementService, {
+                ...Context.get(services, ThreadManagementService.ThreadManagementService),
+                getThreadSnapshot,
+              }),
+        ),
+      ),
       Layer.provide(Layer.mock(ProjectEnrichmentService)({})),
       Layer.provide(HttpPlatform.layer),
       Layer.provide(Etag.layerWeak),
@@ -337,6 +352,152 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
     expect((yield* read(ThreadId.make("missing"))).status).toBe(404);
     allowed = false;
     expect((yield* read(thread.id)).status).toBe(403);
+  }),
+);
+
+// No progress: the wire sets it to undefined, which the endpoint's JSON codec sends as null.
+const subagentItem = Schema.decodeSync(OrchestrationV2TurnItem)({
+  id: "item-subagent",
+  threadId: "source-thread",
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: items.length,
+  status: "completed",
+  title: "Find the failing import",
+  startedAt: now,
+  completedAt: now,
+  updatedAt: now,
+  type: "subagent",
+  subagentId: "node:subagent",
+  origin: "app_owned",
+  driver: "codex",
+  providerInstanceId: "codex",
+  childThreadId: null,
+  prompt: "Find the failing import.",
+  result: null,
+});
+
+class SnapshotReferenceApi extends HttpApi.make("reference").add(
+  HttpApiGroup.make("orchestration").add(
+    EnvironmentHttpApi.groups.orchestration.endpoints.threadSnapshot,
+  ),
+) {}
+
+// The endpoint before streaming: HttpApiBuilder encodes and stringifies the returned snapshot.
+const serveReferenceSnapshot = (
+  services: Context.Context<ThreadManagementService.ThreadManagementService>,
+) =>
+  Effect.gen(function* () {
+    const management = Context.get(services, ThreadManagementService.ThreadManagementService);
+    const routes = HttpApiBuilder.layer(SnapshotReferenceApi).pipe(
+      Layer.provide(
+        HttpApiBuilder.group(SnapshotReferenceApi, "orchestration", (handlers) =>
+          handlers.handle("threadSnapshot", ({ params }) =>
+            management.getThreadSnapshot(params.threadId).pipe(
+              Effect.map((snapshot) => ({
+                snapshotSequence: snapshot.snapshotSequence,
+                projection: projectThreadProjectionForWire(snapshot.projection),
+              })),
+              Effect.orDie,
+            ),
+          ),
+        ),
+      ),
+      Layer.provide(
+        Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
+          effect.pipe(
+            Effect.provideService(EnvironmentAuthenticatedPrincipal, {
+              sessionId: AuthSessionId.make("reference-session"),
+              subject: "reference",
+              method: "bearer-access-token",
+              scopes: new Set<AuthEnvironmentScope>(["orchestration:read"]),
+            }),
+          ),
+        ),
+      ),
+      Layer.provide(HttpPlatform.layer),
+      Layer.provide(Etag.layerWeak),
+      Layer.provide(NodeServices.layer),
+    );
+    const { handler, dispose } = HttpRouter.toWebHandler(routes, { disableLogger: true });
+    yield* Effect.addFinalizer(() => Effect.promise(dispose));
+    return handler;
+  });
+
+it.effect("serves the full snapshot as the HttpApiBuilder endpoint did, with the same errors", () =>
+  Effect.gen(function* () {
+    const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+    yield* eventSink.write({
+      events: [...items, subagentItem].map((item) => ({
+        id: EventId.make(`create-${item.id}`),
+        type: "turn-item.updated" as const,
+        threadId: thread.id,
+        occurredAt: now,
+        payload: item,
+      })),
+    });
+    const read = (serve: typeof handler, threadId: ThreadId) =>
+      Effect.promise(() =>
+        serve(
+          new Request(`http://localhost/api/orchestration/threads/${threadId}`, {
+            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+          }),
+        ),
+      );
+    const snapshot = yield* Context.get(
+      services,
+      ThreadManagementService.ThreadManagementService,
+    ).getThreadSnapshot(thread.id);
+
+    const response = yield* read(handler, thread.id);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    const reference = yield* read(yield* serveReferenceSnapshot(services), thread.id);
+    expect(reference.status).toBe(200);
+    const body = yield* Effect.promise(() => response.text());
+    expect(body).toContain('"progress":null');
+    expect(body).toBe(yield* Effect.promise(() => reference.text()));
+
+    const missing = yield* read(handler, ThreadId.make("missing"));
+    expect(missing.status).toBe(404);
+    expect(yield* Effect.promise(() => missing.json())).toMatchObject({
+      _tag: "EnvironmentResourceNotFoundError",
+      reason: "thread_not_found",
+    });
+    const failing = yield* serveOrchestrationHttp(
+      () => true,
+      (threadId) =>
+        Effect.fail(new OrchestratorProjectionError({ threadId, cause: new Error("disk I/O") })),
+    );
+    const failed = yield* read(failing.handler, thread.id);
+    expect(failed.status).toBe(500);
+    expect(yield* Effect.promise(() => failed.json())).toMatchObject({
+      _tag: "EnvironmentInternalError",
+      reason: "orchestration_thread_snapshot_failed",
+    });
+    // A projection its schema rejects is an empty 500, as a failed response encoding is.
+    const [first, ...rest] = snapshot.projection.turnItems;
+    const unencodable = yield* serveOrchestrationHttp(
+      () => true,
+      () =>
+        Effect.succeed({
+          ...snapshot,
+          projection: {
+            ...snapshot.projection,
+            turnItems: [
+              { ...first!, status: "unknown" } as unknown as OrchestrationV2TurnItem,
+              ...rest,
+            ],
+          },
+        }),
+    );
+    const rejected = yield* read(unencodable.handler, thread.id);
+    expect(rejected.status).toBe(500);
+    expect(yield* Effect.promise(() => rejected.text())).toBe("");
   }),
 );
 
