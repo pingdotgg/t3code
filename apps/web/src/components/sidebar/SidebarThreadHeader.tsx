@@ -1,5 +1,7 @@
-import { useGT } from "gt-react";
-import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import { SidebarProjectSortOrder } from "@t3tools/contracts/settings";
+import * as Schema from "effect/Schema";
+import { msg, useGT, useMessages } from "gt-react";
+import { ArrowDownUpIcon, FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -8,10 +10,30 @@ import {
   type RefObject,
 } from "react";
 
+import { updateClientSettings, useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRadioItemIndicator,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
 import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+export const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string> = {
+  updated_at: msg("Last user message"),
+  created_at: msg("Created at"),
+  manual: msg("Manual"),
+};
+export const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
 
 export interface SidebarThreadHeaderProps {
   hasProjects: boolean;
@@ -102,6 +124,7 @@ export function SidebarThreadHeader({
         {hasProjects ? (
           <>
             {projectScope}
+            <SidebarViewMenu />
             <SidebarHeaderIconButton label={gt("Add project")} onClick={onNewProject}>
               <FolderPlusIcon />
             </SidebarHeaderIconButton>
@@ -132,6 +155,77 @@ export function SidebarThreadHeader({
         </SidebarHeaderIconButton>
       </div>
     </div>
+  );
+}
+
+function SidebarViewMenu() {
+  const gt = useGT();
+  const m = useMessages();
+  const groupByProject = useClientSettings((settings) => settings.boringSidebarEnabled);
+  const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
+  const workingShelfEnabled = useClientSettings((settings) => settings.sidebarWorkingShelfEnabled);
+  const multilineRows = useClientSettings((settings) => settings.boringSidebarMultilineRows);
+
+  return (
+    <Menu>
+      <MenuTrigger render={<SidebarHeaderIconButton label={gt("View options")} />}>
+        <ArrowDownUpIcon className="size-4" />
+      </MenuTrigger>
+      {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
+      <MenuPopup align="end" finalFocus={(closeType) => closeType === "keyboard"}>
+        <MenuCheckboxItem
+          variant="switch"
+          checked={groupByProject}
+          onCheckedChange={(checked) =>
+            void updateClientSettings({ boringSidebarEnabled: checked })
+          }
+        >
+          {gt("Group by project")}
+        </MenuCheckboxItem>
+        {groupByProject ? (
+          <MenuCheckboxItem
+            variant="switch"
+            checked={multilineRows}
+            onCheckedChange={(checked) =>
+              void updateClientSettings({ boringSidebarMultilineRows: checked })
+            }
+          >
+            {gt("Two-line rows")}
+          </MenuCheckboxItem>
+        ) : (
+          <MenuCheckboxItem
+            variant="switch"
+            checked={workingShelfEnabled}
+            onCheckedChange={(checked) =>
+              void updateClientSettings({ sidebarWorkingShelfEnabled: checked })
+            }
+          >
+            {gt("Working section")}
+          </MenuCheckboxItem>
+        )}
+        <MenuSeparator />
+        <MenuGroup>
+          <MenuGroupLabel>{gt("Sort projects")}</MenuGroupLabel>
+          <MenuRadioGroup
+            value={projectSortOrder}
+            onValueChange={(value) => {
+              if (isSidebarProjectSortOrder(value)) {
+                void updateClientSettings({ sidebarProjectSortOrder: value });
+              }
+            }}
+          >
+            {SidebarProjectSortOrder.literals.map((sortOrder) => (
+              <MenuRadioItem key={sortOrder} value={sortOrder}>
+                <span className="flex items-center justify-between gap-2">
+                  {m(SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder])}
+                  <MenuRadioItemIndicator />
+                </span>
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
   );
 }
 
