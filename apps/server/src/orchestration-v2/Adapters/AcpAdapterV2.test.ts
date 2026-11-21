@@ -1638,6 +1638,243 @@ describe("AcpAdapterV2", () => {
       assert.deepEqual(promptTexts.slice(3), ["continue"], "a turn resumes only once");
     }).pipe(Effect.provide(layerTest)),
   );
+  it.effect(
+    "re-checks prompt outcome before deferred finalize and discards stale in-flight checks",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const instanceId = ProviderInstanceId.make("acp-test-deferred-outcome");
+        const threadId = ThreadId.make("thread-acp-deferred-outcome");
+        const quota = {
+          class: "usage_limit",
+          message: "Quota reached after background work.",
+          code: "QUOTA_EXHAUSTED",
+          retryable: true,
+          resetAt: "2030-01-01T00:00:00.000Z",
+        } as const;
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        type PromptOutcome = {
+          readonly failure: typeof quota;
+          readonly threadDisposition: "reusable" | "broken";
+        };
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const subagentStatuses = new Map<string, "running" | "completed">([
+          ["tool-call-generic-1", "running"],
+        ]);
+        const promptRuntimes: Array<number> = [];
+        const checkStopReasons: Array<string> = [];
+        let nextOutcome: () => Effect.Effect<PromptOutcome | undefined> = () => Effect.undefined;
+        const promptSettled = yield* Queue.unbounded<void>();
+        const deferredScheduled = yield* Queue.unbounded<void>();
+        const deferredFinalized = yield* Queue.unbounded<void>();
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation,
+          testHooks: {
+            afterPromptSettledWithBackgroundWork: () =>
+              Queue.offer(promptSettled, undefined).pipe(Effect.asVoid),
+            onDeferredFinalizeScheduled: () =>
+              Queue.offer(deferredScheduled, undefined).pipe(Effect.asVoid),
+            afterDeferredFinalize: () =>
+              Queue.offer(deferredFinalized, undefined).pipe(Effect.asVoid),
+          },
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            deferFinalizeForBackgroundWork: true,
+            extractSubagentUpdate: (toolCall) => {
+              const status = subagentStatuses.get(toolCall.toolCallId);
+              if (status === undefined) return undefined;
+              return {
+                nativeTaskId: `task-${toolCall.toolCallId}`,
+                prompt: toolCall.toolCallId,
+                title: toolCall.toolCallId,
+                model: null,
+                status,
+                childSessionId: null,
+                result: status === "completed" ? "DONE" : null,
+              };
+            },
+            watchPromptOutcome: () =>
+              Effect.succeed((result: EffectAcpSchema.PromptResponse) =>
+                Effect.sync(() => {
+                  checkStopReasons.push(result.stopReason);
+                }).pipe(Effect.andThen(Effect.suspend(() => nextOutcome()))),
+              ),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              wrapRuntime: (runtime, runtimeOrdinal) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: (payload, promptOptions) =>
+                  Effect.sync(() => {
+                    promptRuntimes.push(runtimeOrdinal);
+                  }).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-deferred-outcome"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const terminals =
+          yield* Queue.unbounded<
+            Extract<ProviderAdapter.ProviderAdapterV2Event, { readonly type: "turn.terminal" }>
+          >();
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runForEach((event) => Queue.offer(terminals, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const startTurn = Effect.fnUntraced(function* (ordinal: number) {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal,
+            }),
+          );
+        });
+        const emitSubagent = (
+          toolCallId: string,
+          status: "running" | "completed",
+          sessionUpdate: "tool_call" | "tool_call_update" = "tool_call_update",
+        ) => {
+          subagentStatuses.set(toolCallId, status);
+          return sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate,
+              toolCallId,
+              title: toolCallId,
+              kind: "other",
+              status: status === "running" ? "in_progress" : "completed",
+              ...(status === "completed" ? { rawOutput: { content: "DONE" } } : {}),
+            },
+          });
+        };
+
+        yield* startTurn(1);
+        yield* Queue.take(promptSettled);
+        assert.deepEqual(checkStopReasons, ["end_turn"]);
+        assert.isDefined(sessionUpdateHandler);
+
+        nextOutcome = () => Effect.succeed({ failure: quota, threadDisposition: "broken" });
+        yield* emitSubagent("tool-call-generic-1", "completed");
+        yield* Queue.take(deferredScheduled);
+        yield* TestClock.adjust("3000 millis");
+
+        const firstTerminal = yield* Queue.take(terminals);
+        yield* Queue.take(deferredFinalized);
+        assert.equal(firstTerminal.status, "failed");
+        assert.deepEqual(firstTerminal.failure, quota);
+        assert.equal(firstTerminal.threadDisposition, "broken");
+        assert.deepEqual(checkStopReasons, ["end_turn", "end_turn"]);
+
+        nextOutcome = () => Effect.undefined;
+        subagentStatuses.set("tool-call-generic-1", "running");
+        yield* startTurn(2);
+        yield* Queue.take(promptSettled);
+        assert.deepEqual(promptRuntimes, [1, 2], "hidden deferred failure must restart runtime");
+
+        const workRaceStarted = yield* Deferred.make<void>();
+        const releaseWorkRace = yield* Deferred.make<void>();
+        nextOutcome = () =>
+          Deferred.succeed(workRaceStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseWorkRace)),
+            Effect.as({ failure: quota, threadDisposition: "reusable" }),
+          );
+        yield* emitSubagent("tool-call-generic-1", "completed");
+        yield* Queue.take(deferredScheduled);
+        yield* TestClock.adjust("3000 millis");
+        yield* Deferred.await(workRaceStarted);
+
+        yield* emitSubagent("tool-call-generic-2", "running", "tool_call");
+        nextOutcome = () => Effect.undefined;
+        yield* Deferred.succeed(releaseWorkRace, undefined);
+        // Settle the stale callback while the second subagent still holds the turn open.
+        yield* Queue.take(deferredFinalized);
+        assert.deepEqual(yield* Queue.clear(terminals), []);
+
+        yield* emitSubagent("tool-call-generic-2", "completed");
+        yield* Queue.take(deferredScheduled);
+        yield* TestClock.adjust("3000 millis");
+        const secondTerminal = yield* Queue.take(terminals);
+        yield* Queue.take(deferredFinalized);
+        assert.equal(secondTerminal.status, "completed");
+
+        subagentStatuses.set("tool-call-generic-1", "running");
+        yield* startTurn(3);
+        yield* Queue.take(promptSettled);
+        assert.deepEqual(
+          promptRuntimes,
+          [1, 2, 2],
+          "discarded deferred failure must not restart runtime",
+        );
+
+        const interruptRaceStarted = yield* Deferred.make<void>();
+        const releaseInterruptRace = yield* Deferred.make<void>();
+        nextOutcome = () =>
+          Deferred.succeed(interruptRaceStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseInterruptRace)),
+            Effect.as({ failure: quota, threadDisposition: "reusable" }),
+          );
+        yield* emitSubagent("tool-call-generic-1", "completed");
+        yield* Queue.take(deferredScheduled);
+        yield* TestClock.adjust("3000 millis");
+        yield* Deferred.await(interruptRaceStarted);
+
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ACP_TEST_DRIVER,
+            nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:3"),
+          }),
+        });
+        const thirdTerminal = yield* Queue.take(terminals);
+        assert.equal(thirdTerminal.status, "interrupted");
+
+        nextOutcome = () => Effect.undefined;
+        yield* Deferred.succeed(releaseInterruptRace, undefined);
+        yield* Queue.take(deferredFinalized);
+        assert.deepEqual(yield* Queue.clear(terminals), []);
+
+        subagentStatuses.set("tool-call-generic-1", "completed");
+        yield* startTurn(4);
+        const fourthTerminal = yield* Queue.take(terminals);
+        assert.equal(fourthTerminal.status, "completed");
+        assert.deepEqual(
+          promptRuntimes,
+          [1, 2, 2, 2],
+          "interrupted deferred check must not restart runtime",
+        );
+      }).pipe(Effect.provide(layerTest)),
+  );
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-test-prompt-usage-stop");
