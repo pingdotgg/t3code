@@ -12,9 +12,9 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 export const appleSpeechAvailable = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.APPLE_SPEECH_AVAILABLE_CHANNEL,
   payload: Schema.Void,
-  result: Schema.Boolean,
+  result: Schema.Array(Schema.String),
   handler: Effect.fn("desktop.ipc.appleSpeech.available")(function* () {
-    return yield* (yield* AppleSpeech.AppleSpeech).isAvailable;
+    return yield* (yield* AppleSpeech.AppleSpeech).supportedLocales;
   }),
 });
 

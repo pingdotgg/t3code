@@ -60,7 +60,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { useAppleSpeechAvailable } from "../../speech/appleSpeech";
+import { useAppleSpeechLocales } from "../../speech/appleSpeech";
 import { cn } from "~/lib/utils";
 import {
   listAudioInputs,
@@ -1325,7 +1325,8 @@ export function VoiceSettingsPanel() {
   const settings = useClientSettings();
   const settingsScope = useOptionalSettingsScope();
   const destination = useVoiceTranscriptionDestination();
-  const appleSpeechAvailable = useAppleSpeechAvailable();
+  const appleSpeechLocales = useAppleSpeechLocales();
+  const appleSpeechAvailable = appleSpeechLocales.length > 0;
   const appleSpeechLabel = appleSpeechAvailable
     ? APPLE_SPEECH_LABEL
     : gt("Apple Speech (unavailable)");
@@ -1693,7 +1694,11 @@ export function VoiceSettingsPanel() {
             control={
               <SpeechLanguageSelect
                 model={
-                  destination.cloudProvider || destination.device ? cloudSpeechLanguages : model
+                  destination.device
+                    ? { languages: appleSpeechLocales, supportsLanguageDetection: true }
+                    : destination.cloudProvider
+                      ? cloudSpeechLanguages
+                      : model
                 }
               />
             }

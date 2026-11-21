@@ -1,7 +1,7 @@
 // Adapted from AppleTranscriptionImpl.swift in @react-native-ai/apple (MIT, Callstack),
 // including this repo's patch, so the Mac and iPhone transcribe the same way.
 //
-// t3-apple-speech available                      -> {"value":""}
+// t3-apple-speech available                      -> {"value":"en-US,fr-FR,..."}
 // t3-apple-speech prepare <locale>               -> {"value":"en-US"}  (resolved locale)
 // t3-apple-speech transcribe <locale> <wav-path> -> {"value":"..."}    (transcript)
 // Exit codes are consumed by AppleSpeech.ts; failures print one message line to stderr.
@@ -30,7 +30,8 @@ struct AppleSpeech {
       switch (arguments.first, arguments.count) {
       case ("available", 1):
         try requireAvailable()
-        try write("")
+        let locales = await SpeechTranscriber.supportedLocales
+        try write(locales.map { $0.identifier(.bcp47) }.joined(separator: ","))
       case ("prepare", 2):
         try write(try await prepare(arguments[1]))
       case ("transcribe", 3):

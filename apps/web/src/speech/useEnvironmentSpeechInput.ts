@@ -33,7 +33,7 @@ import {
 } from "../hooks/useSettings";
 import { useEnvironment } from "../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../state/session";
-import { useAppleSpeechAvailable } from "./appleSpeech";
+import { useAppleSpeechLocales } from "./appleSpeech";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { useAudioChoice } from "./voiceConsent";
@@ -125,7 +125,7 @@ export function useVoiceTranscriptionDestination() {
   const hydrated = useClientSettingsHydrated();
   const choice = useAudioChoice();
   const grant = choice === "off" ? null : choice;
-  const appleSpeechAvailable = useAppleSpeechAvailable();
+  const appleSpeechAvailable = useAppleSpeechLocales().length > 0;
   const device = hydrated && grant?.destination.kind === "device";
   const environmentId =
     hydrated && grant && grant.destination.kind !== "device"

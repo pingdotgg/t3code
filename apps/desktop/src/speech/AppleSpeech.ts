@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -15,7 +16,6 @@ const SAMPLE_RATE = 16_000;
 const MAX_PCM_BYTES = SAMPLE_RATE * Float32Array.BYTES_PER_ELEMENT * 5 * 60;
 // Preparing a language for the first time downloads Apple's model.
 const PREPARE_TIMEOUT = Duration.minutes(10);
-// Matches the longest accepted recording, so analysis can never outlast its deadline.
 const TRANSCRIBE_TIMEOUT = Duration.minutes(5);
 
 const decodeOutput = Schema.decodeUnknownEffect(
@@ -63,7 +63,7 @@ function encodeSpeechWav(pcmBytes: Uint8Array): Uint8Array {
 export class AppleSpeech extends Context.Service<
   AppleSpeech,
   {
-    readonly isAvailable: Effect.Effect<boolean>;
+    readonly supportedLocales: Effect.Effect<readonly string[]>;
     readonly prepare: (locale: string) => Effect.Effect<DesktopAppleSpeechResult>;
     readonly transcribe: (
       locale: string,
@@ -135,24 +135,39 @@ export const layer = Layer.effect(
       );
 
     // Only a definite answer is kept; a slow or failed probe is asked again next time.
-    let available: boolean | undefined;
-    const isAvailable = Effect.suspend(() =>
-      available === undefined
+    let locales: readonly string[] | undefined;
+    const supportedLocales = Effect.suspend(() =>
+      locales === undefined
         ? run(["available"], Duration.seconds(10)).pipe(
-            Effect.tap((result) =>
-              Effect.sync(() => {
-                if (result.ok || result.code === "unavailable") available = result.ok;
-              }),
-            ),
-            Effect.map((result) => result.ok),
+            Effect.map((result) => {
+              if (result.ok) locales = result.value.split(",").filter(Boolean);
+              else if (result.code === "unavailable") locales = [];
+              return locales ?? [];
+            }),
           )
-        : Effect.succeed(available),
+        : Effect.succeed(locales),
     );
 
+    const pending = new Map<string, Effect.Effect<DesktopAppleSpeechResult>>();
+    const preparePermit = yield* Semaphore.make(1);
+    const getPendingPrepare = Effect.fn("AppleSpeech.getPendingPrepare")(function* (
+      locale: string,
+    ) {
+      const existing = pending.get(locale);
+      if (existing) return existing;
+      const preparation = yield* Effect.cached(
+        run(["prepare", locale], PREPARE_TIMEOUT).pipe(
+          Effect.ensuring(Effect.sync(() => pending.delete(locale))),
+        ),
+      );
+      pending.set(locale, preparation);
+      return preparation;
+    }, preparePermit.withPermits(1));
+
     return AppleSpeech.of({
-      isAvailable,
+      supportedLocales,
       prepare: Effect.fn("AppleSpeech.prepare")(function* (locale) {
-        return yield* run(["prepare", locale], PREPARE_TIMEOUT);
+        return yield* yield* getPendingPrepare(locale);
       }),
       transcribe: Effect.fn("AppleSpeech.transcribe")(function* (locale, pcm) {
         if (

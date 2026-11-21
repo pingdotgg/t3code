@@ -20,6 +20,7 @@ import type {
 import type { CloudSpeechModelId, CloudSpeechProvider } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { readAppleSpeechLocales } from "./appleSpeech";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { msg } from "gt-react";
@@ -146,6 +147,18 @@ export function createBrowserVoiceInputPlatform(input: {
   });
 }
 
+async function waitForAppleSpeech<T>(request: Promise<T>, signal: AbortSignal): Promise<T> {
+  const aborted = Promise.withResolvers<never>();
+  const onAbort = () => aborted.reject(signal.reason);
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) onAbort();
+  try {
+    return await Promise.race([request, aborted.promise]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 /** Records like the environment path, then transcribes in the desktop main process; audio stays on this Mac. */
 export function createAppleSpeechVoiceInputPlatform(input: {
   readonly hasAudioConsent: () => boolean;
@@ -160,11 +173,15 @@ export function createAppleSpeechVoiceInputPlatform(input: {
     const { speechLanguage } = input.getTranscriptionOptions();
     // The packaged app pins `navigator.language` to en-US, so "auto" asks the OS.
     const system = window.desktopBridge?.getPreferredSystemLanguages?.()[0] ?? navigator.language;
-    const prepared = await appleSpeech?.prepare(
-      speechLanguage === "auto" ? system : speechLanguage,
+    if (!appleSpeech) throw new Error("Apple Speech is not available.");
+    signal.throwIfAborted();
+    const prepared = await waitForAppleSpeech(
+      appleSpeech.prepare(
+        readAppleSpeechLocales().includes(speechLanguage) ? speechLanguage : system,
+      ),
+      signal,
     );
     throwIfVoiceTranscriptionAborted(signal);
-    if (!appleSpeech || !prepared) throw new Error("Apple Speech is not available.");
     if (!prepared.ok) {
       if (prepared.code === "failed") throw new Error("Apple Speech could not prepare.");
       throw new VoiceTranscriptionError({
@@ -187,7 +204,10 @@ export function createAppleSpeechVoiceInputPlatform(input: {
             code: "cancelled",
             message: m(msg("Voice transcription was cancelled.")),
           });
-        const result = await appleSpeech.transcribe({ locale, pcm });
+        const result = await waitForAppleSpeech(
+          appleSpeech.transcribe({ locale, pcm }),
+          transcriptionSignal,
+        );
         throwIfVoiceTranscriptionAborted(transcriptionSignal);
         if (!result.ok) throw new Error("Apple Speech could not transcribe.");
         return result.value;
