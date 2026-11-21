@@ -1,9 +1,8 @@
 /// <reference lib="dom" />
-import { SecretProviderId, SecretProviderKind, WS_METHODS } from "@t3tools/contracts";
+import { SecretProviderId, SecretProviderKind } from "@t3tools/contracts";
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import type { FromClientEncoded } from "effect/rpc/RpcMessage";
 
 import { T3_HOME } from "../e2e.config.ts";
 import { environmentId, rpcClient, runPromise, test, WEB } from "./t3.ts";
@@ -14,10 +13,9 @@ const REFERENCE_B = "op://Scenario/GitHub/second";
 
 declare global {
   interface Window {
-    IS_REACT_ACT_ENVIRONMENT?: boolean | undefined;
     secretCheckGate?: {
-      readonly captured: ReadonlyArray<Promise<() => void>>;
-      finishFirst?: () => Promise<void>;
+      readonly count: () => number;
+      readonly finishFirst: () => Promise<void>;
     };
   }
 }
@@ -59,98 +57,76 @@ test(
       }).pipe(Effect.scoped),
     );
 
-    // Hold the real requests until the scenario releases one.
-    await browser.addInitScript((method) => {
-      const checks = Array.from({ length: 3 }, () => Promise.withResolvers<() => void>());
-      let count = 0;
+    // Delay the real checks independently so only the older A can produce a reply.
+    await browser.addInitScript(() => {
+      type Frame = { readonly _tag?: string; readonly tag?: string; readonly id?: string | number };
+      const checks: Array<() => Promise<void>> = [];
       const send = WebSocket.prototype.send;
       WebSocket.prototype.send = function (this: WebSocket, data) {
         if (typeof data !== "string") return send.call(this, data);
-        const parsed: FromClientEncoded | FromClientEncoded[] = JSON.parse(data);
-        const batched = Array.isArray(parsed);
-        const frames = batched ? parsed : [parsed];
-        const other = frames.filter((frame) => {
-          if (frame._tag !== "Request" || frame.tag !== method) return true;
-          const check = checks[count++];
-          if (!check) throw new Error("Unexpected extra secret check");
-          check.resolve(() => send.call(this, JSON.stringify(batched ? [frame] : frame)));
-          return false;
-        });
-        if (other.length === frames.length) return send.call(this, data);
+        const parsed: Frame | Frame[] = JSON.parse(data);
+        const frames = [parsed].flat();
+        const check = frames.find(
+          (frame) => frame._tag === "Request" && frame.tag === "server.checkSecretSource",
+        );
+        if (!check) return send.call(this, data);
+        const other = frames.filter((frame) => frame !== check);
         if (other.length > 0) send.call(this, JSON.stringify(other));
+        checks.push(
+          () =>
+            new Promise<void>((resolve) => {
+              const receive = (event: MessageEvent) => {
+                if (typeof event.data !== "string") return;
+                const replies: Array<{ _tag?: string; requestId?: string | number }> = [
+                  JSON.parse(event.data),
+                ].flat();
+                if (!replies.some((reply) => reply._tag === "Exit" && reply.requestId === check.id))
+                  return;
+                this.removeEventListener("message", receive);
+                resolve();
+              };
+              this.addEventListener("message", receive);
+              send.call(this, JSON.stringify(Array.isArray(parsed) ? [check] : check));
+            }),
+        );
       };
-      window.secretCheckGate = { captured: checks.map((check) => check.promise) };
-    }, WS_METHODS.serverCheckSecretSource);
+      window.secretCheckGate = {
+        count: () => checks.length,
+        finishFirst: () => checks[0]!(),
+      };
+    });
 
     await t3.open(`/settings/source-control?machine=${encodeURIComponent(environment)}`);
     await screen.getByRole("button", "Toggle GitHub details", { exact: true }).tap();
     const input = screen.getByRole("textbox", "GitHub token reference", { exact: true });
     const check = screen.getByRole("button", "Check GitHub token", { exact: true });
-    await browser.evaluate(async () => {
-      // Reuse the dev app's modules so the command and React renderer share their singletons.
-      const loadedModule = (pattern: RegExp) => {
-        const entry = performance
-          .getEntriesByType("resource")
-          .find(({ name }) => pattern.test(new URL(name).pathname));
-        if (!entry) throw new Error(`The app did not load ${pattern}`);
-        return entry.name;
-      };
-      const effect: typeof Effect = await import(loadedModule(/\/(effect_Effect|Effect)\.js$/));
-      const {
-        default: react,
-      }: { default: { act: (work: () => Promise<void>) => PromiseLike<void> } } = await import(
-        loadedModule(/\/react\.js$/)
-      );
-      const serverModule = "/src/state/server.ts";
-      type Run = (...args: never[]) => Effect.Effect<unknown, { readonly _tag: string }>;
-      const { serverEnvironment }: { serverEnvironment: { checkSecretSource: { run: Run } } } =
-        await import(serverModule);
-      const command = serverEnvironment.checkSecretSource;
-      const run = command.run;
-      const settled = Promise.withResolvers<void>();
-      command.run = (...args) => {
-        command.run = run;
-        // Observe completion of the command's root fiber, including its finalizers.
-        return effect.withFiber((fiber) => {
-          fiber.addObserver(() => settled.resolve());
-          return run(...args);
-        });
-      };
-      const gate = window.secretCheckGate!;
-      gate.finishFirst = async () => {
-        const release = await gate.captured[0]!;
-        const wasActEnvironment = window.IS_REACT_ACT_ENVIRONMENT;
-        window.IS_REACT_ACT_ENVIRONMENT = true;
-        try {
-          await react.act(async () => {
-            release();
-            await settled.promise;
-          });
-        } finally {
-          window.IS_REACT_ACT_ENVIRONMENT = wasActEnvironment;
+    const waitForCheck = (count: number) =>
+      browser.evaluate(async (count) => {
+        for (let frame = 0; frame < 120; frame++) {
+          if (window.secretCheckGate?.count() === count) return true;
+          await new Promise<number>((resolve) => requestAnimationFrame(resolve));
         }
-      };
-      return null;
-    });
-    const startCheck = async (index: number) => {
+        return false;
+      }, count);
+    const startCheck = async (count: number) => {
       await check.tap();
-      await browser.evaluate(async (index) => {
-        await window.secretCheckGate!.captured[index];
-        return null;
-      }, index);
+      if (!(await waitForCheck(count))) throw new Error("The check did not reach the transport");
     };
     const commit = async (reference: string) => {
       await input.fill(reference);
       await input.press("Enter");
     };
 
-    await startCheck(0);
-    await commit(REFERENCE_B);
     await startCheck(1);
-    await commit(REFERENCE_A);
+    await commit(REFERENCE_B);
     await startCheck(2);
+    await commit(REFERENCE_A);
+    await startCheck(3);
     const pending = await browser.evaluate(async () => {
-      await window.secretCheckGate!.finishFirst!();
+      await window.secretCheckGate!.finishFirst();
+      for (let frame = 0; frame < 10; frame++) {
+        await new Promise<number>((resolve) => requestAnimationFrame(resolve));
+      }
       return (
         document.querySelector<HTMLButtonElement>('button[aria-label="Check GitHub token"]')
           ?.disabled === true
