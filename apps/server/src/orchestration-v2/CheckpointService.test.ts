@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -568,7 +569,7 @@ it.effect("skips post-turn captures that waited out another capture's timeout in
     const attempts = yield* Ref.make(0);
     // Outcomes for upcoming attempts; an attempt with none scripted times out.
     const script = yield* Ref.make<ReadonlyArray<"ready" | "timeout">>([]);
-    const firstStarted = yield* Deferred.make<void>();
+    const started = yield* Queue.unbounded<void>();
     const layerTest = CheckpointService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -580,7 +581,7 @@ it.effect("skips post-turn captures that waited out another capture's timeout in
             captureCheckpoint: ({ cwd }) =>
               Effect.gen(function* () {
                 yield* Ref.update(attempts, (count) => count + 1);
-                yield* Deferred.succeed(firstStarted, undefined);
+                yield* Queue.offer(started, undefined);
                 yield* Effect.sleep("30 seconds");
                 const [next = "timeout", ...rest] = yield* Ref.get(script);
                 yield* Ref.set(script, rest);
@@ -610,8 +611,21 @@ it.effect("skips post-turn captures that waited out another capture's timeout in
             capturedAt: scope.createdAt,
           })
           .pipe(Effect.forkChild);
+      // A baseline's short budget running out says nothing about a post-turn capture.
+      const baseline = yield* checkpoints
+        .captureBaseline({ scope: scopeFor("baseline"), ordinalWithinScope: 0 })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Queue.take(started);
+      const afterBaseline = yield* captureTurn(scopeFor("after-baseline"));
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(baseline);
+      yield* Queue.take(started);
+      yield* TestClock.adjust("30 seconds");
+      assert.strictEqual((yield* Fiber.join(afterBaseline)).status, "error");
+      assert.strictEqual(yield* Ref.get(attempts), 2);
+
       const first = yield* captureTurn(scopeFor("first"));
-      yield* Deferred.await(firstStarted);
+      yield* Queue.take(started);
       // Other threads in the same folder finish their turns while the first capture hangs.
       const waiting = [
         yield* captureTurn(scopeFor("second")),
@@ -624,13 +638,13 @@ it.effect("skips post-turn captures that waited out another capture's timeout in
       for (const fiber of waiting) {
         assert.strictEqual((yield* Fiber.join(fiber)).status, "error");
       }
-      assert.strictEqual(yield* Ref.get(attempts), 1, "each waiter spent its own full timeout");
+      assert.strictEqual(yield* Ref.get(attempts), 3, "each waiter spent its own full timeout");
 
       // A capture that starts after the timeout still probes for recovery.
       const later = yield* captureTurn(scopeFor("later"));
       yield* TestClock.adjust("30 seconds");
       assert.strictEqual((yield* Fiber.join(later)).status, "error");
-      assert.strictEqual(yield* Ref.get(attempts), 2);
+      assert.strictEqual(yield* Ref.get(attempts), 4);
 
       // A success ahead in the queue does not hide a timeout that follows it.
       yield* Ref.set(script, ["ready", "timeout"]);
@@ -646,7 +660,7 @@ it.effect("skips post-turn captures that waited out another capture's timeout in
         ],
         ["ready", "error", "error"],
       );
-      assert.strictEqual(yield* Ref.get(attempts), 4, "the waiter probed after a later timeout");
+      assert.strictEqual(yield* Ref.get(attempts), 6, "the waiter probed after a later timeout");
     }).pipe(Effect.provide(layerTest));
   }),
 );

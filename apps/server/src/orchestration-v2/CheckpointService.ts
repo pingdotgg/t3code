@@ -388,7 +388,8 @@ export const layer: Layer.Layer<
       capacity: 128,
       lookup: () => Effect.succeed(0),
     });
-    // Unlike the streak, a success never rewinds the count, so a waiter can order outcomes.
+    // Unlike the streak, a success never rewinds the count, so a waiter can order outcomes. A
+    // baseline running out of its short budget is not a post-turn capture timing out.
     const lastCaptures = new Map<string, { readonly count: number; readonly timedOut: boolean }>();
     const noteCapture = (cwd: string, timedOut: boolean) =>
       Effect.sync(() => {
@@ -416,7 +417,7 @@ export const layer: Layer.Layer<
               ? Effect.gen(function* () {
                   const previous = yield* Cache.get(captureTimeouts, input.cwd);
                   yield* Cache.set(captureTimeouts, input.cwd, previous + 1);
-                  yield* noteCapture(input.cwd, true);
+                  yield* noteCapture(input.cwd, !baseline);
                 })
               : Effect.andThen(
                   Cache.invalidate(captureTimeouts, input.cwd),
