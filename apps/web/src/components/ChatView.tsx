@@ -496,12 +496,18 @@ export function BuiltinChatView(props: ChatViewProps) {
     if (targetRoot !== null && targetRoot !== chatViewRootRef.current) return;
     activeChatViewRoot = chatViewRootRef.current;
   };
+  // A side chat shares its host's global input (its panel may be portaled into a sheet);
+  // an embedded thread owns its own.
+  const ownsChatViewRoot = (root: Element) =>
+    root === chatViewRootRef.current ||
+    (!embedded &&
+      root.getAttribute("data-chat-view") === "side" &&
+      root.getAttribute("data-chat-view-host") ===
+        scopedThreadKey(scopeThreadRef(environmentId, threadId)));
   const ownsChatInteraction = (target: EventTarget | null = document.activeElement) => {
     const targetRoot = target instanceof Element ? target.closest("[data-chat-view]") : null;
-    if (targetRoot !== null) return targetRoot === chatViewRootRef.current;
-    return activeChatViewRoot?.isConnected
-      ? activeChatViewRoot === chatViewRootRef.current
-      : !embedded;
+    if (targetRoot !== null) return ownsChatViewRoot(targetRoot);
+    return activeChatViewRoot?.isConnected ? ownsChatViewRoot(activeChatViewRoot) : !embedded;
   };
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
@@ -3537,7 +3543,8 @@ export function BuiltinChatView(props: ChatViewProps) {
   const content = (
     <div
       ref={attachChatViewRoot}
-      data-chat-view={embedded ? "embedded" : "workspace"}
+      data-chat-view={parentPanel ? "side" : embedded ? "embedded" : "workspace"}
+      data-chat-view-host={parentPanel ? scopedThreadKey(parentPanel.hostRef) : undefined}
       onFocusCapture={activateChatView}
       onPointerDownCapture={activateChatView}
       className={cn(
