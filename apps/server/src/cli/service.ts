@@ -120,6 +120,9 @@ export const reconcileService = Effect.fn("cli.service.reconcile")(function* (op
     return yield* new BootService.BootServiceOtherBaseDirError({
       installedBaseDir: status.otherBaseDir,
       baseDir,
+      ...(status.otherBaseDirHostname === undefined
+        ? {}
+        : { hostname: status.otherBaseDirHostname }),
     });
   }
   if (status.installed && status.current) {
@@ -189,11 +192,15 @@ function formatServiceStatus(
     return `T3 Code service\n  Status: not installed\n  Next: Run \`${commands.install}\`.`;
   }
   if (status.otherBaseDir !== undefined) {
+    const manage =
+      status.otherBaseDirHostname === undefined
+        ? `Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to manage it.`
+        : `Manage it on \`${status.otherBaseDirHostname}\` with \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\`.`;
     return [
       "T3 Code service",
       "  Status: installed for another T3 home",
       `  Base dir: ${status.otherBaseDir}`,
-      `  Next: Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to manage it.`,
+      `  Next: ${manage}`,
     ].join("\n");
   }
   const installedVersion = status.installedVersion ?? cliVersion;

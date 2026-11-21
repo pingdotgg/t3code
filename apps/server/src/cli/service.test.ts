@@ -76,8 +76,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       {
         command,
         label: "another home's service",
-        status: { ...newerServiceStatus, otherBaseDir: "/srv/t3" },
-        error: { _tag: "BootServiceOtherBaseDirError", installedBaseDir: "/srv/t3" },
+        status: { ...newerServiceStatus, otherBaseDir: "/srv/t3", otherBaseDirHostname: "peer" },
+        error: {
+          _tag: "BootServiceOtherBaseDirError",
+          installedBaseDir: "/srv/t3",
+          hostname: "peer",
+        },
       },
     ]),
   )(
