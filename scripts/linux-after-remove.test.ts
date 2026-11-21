@@ -27,19 +27,15 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("deb after-remo
       const apparmor = NodePath.join(root, "apparmor.d");
       const profile = NodePath.join(apparmor, "t3code");
       const alternativesLog = NodePath.join(root, "update-alternatives.log");
-      const parserLog = NodePath.join(root, "apparmor_parser.log");
       await NodeFSP.mkdir(bin);
       await NodeFSP.mkdir(apparmor);
       await NodeFSP.writeFile(profile, "profile t3code {}\n");
       await NodeFSP.writeFile(NodePath.join(bin, "update-alternatives"), stub(alternativesLog), {
         mode: 0o755,
       });
-      await NodeFSP.writeFile(NodePath.join(bin, "apparmor_parser"), stub(parserLog), {
-        mode: 0o755,
-      });
-      await NodeFSP.writeFile(NodePath.join(bin, "apparmor_status"), "#!/bin/sh\nexit 0\n", {
-        mode: 0o755,
-      });
+      for (const tool of ["apparmor_parser", "apparmor_status"]) {
+        await NodeFSP.writeFile(NodePath.join(bin, tool), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      }
       const script = NodePath.join(root, "postrm");
       const rendered = (await NodeFSP.readFile(template, "utf8"))
         .replaceAll("${executable}", "t3code")
