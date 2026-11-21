@@ -33,6 +33,7 @@ import {
   CompactWhenIdleSettingsPatch,
 } from "./fork/idleCompactionLevels.ts";
 import { RightPanelMenuOverrides } from "./fork/rightPanelMenu.ts";
+import { FileLinkPathDepth, StoredFileLinkPathDepth } from "./fork/fileLinkPathDepth.ts";
 import {
   CustomModelSetting,
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -622,6 +623,8 @@ export const ClientSettingsSchema = Schema.Struct({
   rightPanelMenuOverrides: RightPanelMenuOverrides.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  // Fork: how many path segments chat file links show in this browser.
+  fileLinkPathDepth: StoredFileLinkPathDepth,
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -2200,5 +2203,6 @@ export const ClientSettingsPatch = Schema.Struct({
   wordWrap: Schema.optionalKey(Schema.Boolean),
   mathRenderingEnabled: Schema.optionalKey(Schema.Boolean),
   rightPanelMenuOverrides: Schema.optionalKey(RightPanelMenuOverrides),
+  fileLinkPathDepth: Schema.optionalKey(FileLinkPathDepth),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;
