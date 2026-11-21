@@ -2006,13 +2006,12 @@ export default function ChatView(props: ChatViewProps) {
   });
   const {
     saveProjectScript: saveProjectScriptStable,
+    importProjectScript: importProjectScriptStable,
     updateProjectScript: updateProjectScriptStable,
     deleteProjectScript: deleteProjectScriptStable,
   } = useProjectScriptEditing({
     environmentId,
     project: activeProject,
-    scripts: activeProjectScripts,
-    settings,
   });
   const canOperatePreview = useEnvironmentScope(
     activeThreadRef?.environmentId ?? null,
@@ -4074,6 +4073,7 @@ export default function ChatView(props: ChatViewProps) {
                     : {})}
                   onRunProjectScript={runProjectScriptStable}
                   onAddProjectScript={saveProjectScriptStable}
+                  onImportProjectScript={importProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
                   usage={{

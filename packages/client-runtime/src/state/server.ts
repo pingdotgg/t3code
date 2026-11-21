@@ -40,6 +40,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
+  createEnvironmentCommand,
   createEnvironmentRpcCommand,
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcQueryAtomFamily,
@@ -1770,6 +1771,21 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverRemoveKeybinding,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    readKeybindings: createEnvironmentCommand(runtime, {
+      label: "environment-data:server:read-keybindings",
+      // Older environments expose the authoritative bindings through getConfig.
+      execute: (_input: Record<string, never>, registry, environmentId) =>
+        registry.get(configValueAtom(environmentId))?.environment.capabilities
+          .keybindingsSnapshot === true
+          ? request(WS_METHODS.serverGetKeybindings, {})
+          : request(WS_METHODS.serverGetConfig, {}).pipe(
+              Effect.map(({ keybindings }) => ({ keybindings })),
+            ),
+    }),
+    readSettings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:read-settings",
+      tag: WS_METHODS.serverGetSettings,
     }),
     updateSettings,
     mutateProviderInstance: updateSettings,

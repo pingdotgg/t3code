@@ -5,13 +5,17 @@ import {
   ProjectId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
+  type ServerSettings,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { NewProjectScriptInput } from "../projectScriptEditor";
 
 const commands = vi.hoisted(() => ({
+  readSettings: vi.fn(),
   updateSettings: vi.fn(),
   upsertKeybinding: vi.fn(),
   removeKeybinding: vi.fn(),
@@ -31,6 +35,7 @@ vi.mock(import("../../state/server"), async (original) => {
     ...actual,
     serverEnvironment: {
       ...actual.serverEnvironment,
+      readSettings: "readSettings",
       updateSettings: "updateSettings",
       upsertKeybinding: "upsertKeybinding",
       removeKeybinding: "removeKeybinding",
@@ -78,6 +83,11 @@ const input: NewProjectScriptInput = {
 
 type ProjectScriptSettings = ReturnType<typeof useProjectScriptSettings>;
 
+const settingsFor = (scope: "project" | "environment"): ServerSettings => ({
+  ...DEFAULT_SERVER_SETTINGS,
+  defaultProjectScripts: scope === "environment" ? [lint] : [],
+});
+
 function Probe(props: {
   targets: Parameters<typeof useProjectScriptSettings>[0];
   onResult: (settings: ProjectScriptSettings) => void;
@@ -96,10 +106,7 @@ async function renderSettings(
       targets={[
         {
           environmentId,
-          settings: {
-            ...DEFAULT_SERVER_SETTINGS,
-            defaultProjectScripts: scope === "environment" ? [lint] : [],
-          },
+          settings: settingsFor(scope),
           keybindings,
           ...(scope === "project"
             ? { project: { id: ProjectId.make("project"), scripts: [lint] } }
@@ -134,10 +141,48 @@ function setup() {
 }
 
 describe("useProjectScriptSettings", () => {
+  it("keeps consecutive imports and adds when the streamed settings have not caught up", async () => {
+    setup();
+    const projectId = ProjectId.make("project");
+    let stored: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+    };
+    commands.readSettings.mockImplementation(async () => AsyncResult.success(stored));
+    commands.updateSettings.mockImplementation(
+      async ({ input }: { input: { patch: ServerSettingsPatch } }) => {
+        stored = applyServerSettingsPatch(stored, input.patch);
+        return AsyncResult.success(stored);
+      },
+    );
+    await using screen = await renderSettings([]);
+    const build = { ...input, name: "Build", command: "vp build" };
+    const check = { ...input, name: "Check", command: "vp check" };
+    const format = { ...input, name: "Format", command: "vp fmt" };
+    for (const action of [build, check, build]) {
+      await act(async () => {
+        const result = await screen.settings.importScript(action);
+        expect(result._tag).toBe("Success");
+      });
+    }
+    await act(async () => {
+      const result = await screen.settings.submit(null, format);
+      expect(result._tag).toBe("Success");
+    });
+
+    expect(stored.projectSettingsOverrides[projectId]).toMatchObject({
+      defaultAutoPull: true,
+      defaultProjectScripts: [lint, build, check, format].map(({ name, command }) =>
+        expect.objectContaining({ name, command }),
+      ),
+    });
+  });
+
   it.each(["project", "environment"] as const)(
     "preserves the shortcut for %s action name and command edits",
     async (scope) => {
       setup();
+      commands.readSettings.mockResolvedValue(AsyncResult.success(settingsFor(scope)));
       await using screen = await renderSettings(lintBinding, scope);
       const { submit } = screen.settings;
       const changes = { name: "Lint and fix", command: "vp lint --fix" };
@@ -151,7 +196,7 @@ describe("useProjectScriptSettings", () => {
         input: {
           patch:
             scope === "project"
-              ? { projectSettingsOverrides: { project: { defaultProjectScripts: scripts } } }
+              ? { projectScriptOverrides: { project: scripts } }
               : { defaultProjectScripts: scripts },
         },
       });

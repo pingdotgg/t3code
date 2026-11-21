@@ -30,7 +30,8 @@ it.each(["edit", "dismiss", "newer import fails first"] as const)(
           { name: "Shared lint", command: "echo lint" },
         ]}
         onRunScript={() => {}}
-        onAddScript={({ name }) => (name === "Shared build" ? older.promise : newer.promise)}
+        onAddScript={async () => AsyncResult.success(undefined)}
+        onImportScript={({ name }) => (name === "Shared build" ? older.promise : newer.promise)}
         onUpdateScript={async () => AsyncResult.success(undefined)}
         onDeleteScript={async () => AsyncResult.success(undefined)}
       />,

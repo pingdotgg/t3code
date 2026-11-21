@@ -15,7 +15,6 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
-import { clearProjectSettingsOverrides } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { msg } from "gt-react";
@@ -26,10 +25,10 @@ import {
   keybindingValueForCommand,
 } from "../../lib/projectScriptKeybindings";
 import {
-  buildProjectScript,
   commandForProjectScript,
+  hasMatchingProjectScript,
   nextProjectScriptId,
-  releaseClaimedRoles,
+  saveProjectScriptToList,
 } from "../../projectScripts";
 import { useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
@@ -64,6 +63,7 @@ export function useProjectScriptSettings(
   const projects = useProjects();
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const readSettings = useAtomCommand(serverEnvironment.readSettings, { reportFailure: false });
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "project actions update");
   const upsertKeybinding = useAtomCommand(
     serverEnvironment.upsertKeybinding,
@@ -74,10 +74,8 @@ export function useProjectScriptSettings(
     "action shortcut removal",
   );
 
-  async function persist(
-    transform: (current: readonly ProjectScript[]) => readonly ProjectScript[] | null,
-    scriptId?: string,
-    keybinding?: string | null,
+  async function withSave(
+    write: () => Promise<AtomCommandResult<void, unknown>>,
   ): Promise<AtomCommandResult<void, unknown>> {
     if (savingRef.current || targets.length === 0) {
       const message = m(msg("No available machine, or another action change is saving."));
@@ -106,43 +104,70 @@ export function useProjectScriptSettings(
     }
     savingRef.current = true;
     setSaving(true);
-    return writeTargets(transform, scriptId, keybinding).finally(() => {
+    return write().finally(() => {
       savingRef.current = false;
       setSaving(false);
     });
   }
 
+  type Target = (typeof targets)[number];
+
+  // The config stream can still be behind the previous save's acknowledged write.
+  async function readCurrentTargets(): Promise<AtomCommandResult<readonly Target[], unknown>> {
+    const settingsByEnvironment = new Map<EnvironmentId, ServerSettings>();
+    const currentTargets: Target[] = [];
+    for (const target of targets) {
+      let settings = settingsByEnvironment.get(target.environmentId);
+      if (settings === undefined) {
+        const result = await readSettings({ environmentId: target.environmentId, input: {} });
+        if (result._tag === "Failure") return mapAtomCommandResult(result, () => []);
+        settings = result.value;
+        settingsByEnvironment.set(target.environmentId, settings);
+      }
+      currentTargets.push({ ...target, settings });
+    }
+    return AsyncResult.success(currentTargets);
+  }
+
+  function withCurrentTargets(
+    write: (currentTargets: readonly Target[]) => Promise<AtomCommandResult<void, unknown>>,
+  ) {
+    return withSave(async () => {
+      const currentTargets = await readCurrentTargets();
+      return currentTargets._tag === "Failure"
+        ? reportScriptFailure(currentTargets)
+        : write(currentTargets.value);
+    });
+  }
+
+  function writeScripts(
+    environmentId: EnvironmentId,
+    projectId: ProjectId | undefined,
+    scripts: readonly ProjectScript[] | null,
+  ) {
+    return updateSettings({
+      environmentId,
+      input: {
+        patch: projectId
+          ? { projectScriptOverrides: { [projectId]: scripts } }
+          : { defaultProjectScripts: scripts ?? [] },
+      },
+    });
+  }
+
   async function writeTargets(
+    currentTargets: readonly Target[],
     transform: (current: readonly ProjectScript[]) => readonly ProjectScript[] | null,
     scriptId: string | undefined,
     keybinding: string | null | undefined,
   ): Promise<AtomCommandResult<void, unknown>> {
-    for (const { environmentId, settings, keybindings, project } of targets) {
+    for (const { environmentId, settings, keybindings, project } of currentTargets) {
       const current = project
         ? resolveProjectScripts(settings, project)
         : settings.defaultProjectScripts;
       const nextScripts = transform(current);
       const effectiveScripts = nextScripts ?? settings.defaultProjectScripts;
-      const result = await updateSettings({
-        environmentId,
-        input: {
-          patch: project
-            ? {
-                projectSettingsOverrides: {
-                  [project.id]:
-                    nextScripts === null
-                      ? clearProjectSettingsOverrides(settings, project.id, [
-                          "defaultProjectScripts",
-                        ])
-                      : {
-                          ...settings.projectSettingsOverrides[project.id],
-                          defaultProjectScripts: nextScripts,
-                        },
-                },
-              }
-            : { defaultProjectScripts: nextScripts ?? [] },
-        },
-      });
+      const result = await writeScripts(environmentId, project?.id, nextScripts);
       if (result._tag === "Failure") return reportScriptFailure(result);
       const changedIds = scriptId
         ? [scriptId]
@@ -189,10 +214,20 @@ export function useProjectScriptSettings(
     return AsyncResult.success(undefined);
   }
 
-  function submit(scriptId: string | null, input: NewProjectScriptInput) {
+  function persist(
+    transform: (current: readonly ProjectScript[]) => readonly ProjectScript[] | null,
+    scriptId?: string,
+    keybinding?: string | null,
+  ) {
+    return withCurrentTargets((currentTargets) =>
+      writeTargets(currentTargets, transform, scriptId, keybinding),
+    );
+  }
+
+  function nextAvailableId(input: NewProjectScriptInput, currentTargets: readonly Target[]) {
     const existingIds = [
       ...projects.flatMap((project) => project.scripts.map((script) => script.id)),
-      ...targets.flatMap(({ settings, project }) =>
+      ...currentTargets.flatMap(({ settings, project }) =>
         [
           ...settings.defaultProjectScripts,
           ...Object.values(settings.projectSettingsOverrides).flatMap(
@@ -202,19 +237,42 @@ export function useProjectScriptSettings(
         ].map((script) => script.id),
       ),
     ];
-    const id = scriptId ?? nextProjectScriptId(input.name, existingIds);
-    const next = buildProjectScript(id, input);
-    return persist(
-      (current) => {
-        const updated = current.map((script) =>
-          script.id === id ? next : releaseClaimedRoles(script, input),
-        );
-        return scriptId === null ? [...updated, next] : updated;
-      },
-      id,
-      input.keybinding,
-    );
+    return nextProjectScriptId(input.name, existingIds);
   }
 
-  return { saving, persist, submit };
+  async function writeImport(currentTargets: readonly Target[], input: NewProjectScriptInput) {
+    const id = nextAvailableId(input, currentTargets);
+    for (const { environmentId, project, settings } of currentTargets) {
+      const current = project
+        ? resolveProjectScripts(settings, project)
+        : settings.defaultProjectScripts;
+      if (hasMatchingProjectScript(current, input)) continue;
+
+      const scripts = saveProjectScriptToList(current, id, input, "add");
+      const result = await writeScripts(environmentId, project?.id, scripts);
+      if (result._tag === "Failure") return reportScriptFailure(result);
+    }
+    return AsyncResult.success(undefined);
+  }
+
+  function submit(scriptId: string | null, input: NewProjectScriptInput) {
+    return withCurrentTargets((currentTargets) => {
+      const id = scriptId ?? nextAvailableId(input, currentTargets);
+      return writeTargets(
+        currentTargets,
+        (current) =>
+          saveProjectScriptToList(current, id, input, scriptId === null ? "add" : "edit"),
+        id,
+        input.keybinding,
+      );
+    });
+  }
+
+  return {
+    saving,
+    persist,
+    submit,
+    importScript: (input: NewProjectScriptInput) =>
+      withCurrentTargets((currentTargets) => writeImport(currentTargets, input)),
+  };
 }

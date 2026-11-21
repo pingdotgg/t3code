@@ -87,6 +87,7 @@ interface ThreadDetailsPanelProps extends Pick<
   onOpenChanges?: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
+  onImportProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
     scriptId: string,
     input: NewProjectScriptInput,
@@ -243,6 +244,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         preferredScriptId={props.preferredScriptId}
                         onRunScript={props.onRunProjectScript}
                         onAddScript={props.onAddProjectScript}
+                        onImportScript={props.onImportProjectScript}
                         onUpdateScript={props.onUpdateProjectScript}
                         onDeleteScript={props.onDeleteProjectScript}
                       />

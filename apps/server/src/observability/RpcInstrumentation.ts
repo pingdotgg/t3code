@@ -38,6 +38,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectsMutate]: "orchestration",
   [WS_METHODS.serverProbe]: "server",
   [WS_METHODS.serverGetConfig]: "server",
+  [WS_METHODS.serverGetKeybindings]: "server",
   [WS_METHODS.serverGetNpmRelease]: "server",
   [WS_METHODS.serverRefreshProviders]: "server",
   [WS_METHODS.serverUpdateProvider]: "server",

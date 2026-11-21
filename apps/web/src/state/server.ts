@@ -36,6 +36,7 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   usageLimitSources: true,
   usageLimitsCommand: true,
 });
+export const readEnvironmentKeybindings = serverEnvironment.readKeybindings;
 export const environmentUpdateStatesAtom = environmentAtomList(
   "web-environment-update-states",
   serverEnvironment.updateStateAtom,

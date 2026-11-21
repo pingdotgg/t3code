@@ -12,6 +12,7 @@ import { ChevronDownIcon, PlusIcon } from "lucide-react";
 import { T, useGT } from "gt-react";
 import { useState } from "react";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
+import { hasMatchingProjectScript } from "../../projectScripts";
 import { useEnvironments } from "../../state/environments";
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,
@@ -56,7 +57,7 @@ export function ProjectActionsSettings() {
   const memberById = new Map(
     isProjectScope ? scope.members.map((member) => [member.id, member]) : [],
   );
-  const { saving, persist, submit } = useProjectScriptSettings(
+  const { saving, persist, submit, importScript } = useProjectScriptSettings(
     targets.flatMap((candidate) => {
       const environment = environments.find(
         (entry) => entry.environmentId === candidate.environmentId,
@@ -80,12 +81,7 @@ export function ProjectActionsSettings() {
     representativeMember?.workspaceRoot ?? null,
   );
   const importableScripts = t3File.scripts.filter(
-    (fileScript) =>
-      !scripts.some(
-        (script) =>
-          script.command === fileScript.command ||
-          script.name.toLowerCase() === fileScript.name.toLowerCase(),
-      ),
+    (fileScript) => !hasMatchingProjectScript(scripts, fileScript),
   );
   const importFileScript = async (fileScript: T3ProjectFileScript) => {
     const payload: NewProjectScriptInput = {
@@ -100,7 +96,7 @@ export function ProjectActionsSettings() {
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
     };
-    const result = await submit(null, payload);
+    const result = await importScript(payload);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       setRequest({
