@@ -2,6 +2,7 @@ import { Schema } from "effect";
 
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
+  PREVIEW_URL_MAX_LENGTH,
   PREVIEW_VIEWPORT_MAX_AREA,
   PreviewRenderedViewportSize,
   PreviewTabId,
@@ -14,7 +15,7 @@ import { BrowserProfileId } from "./browserProfile.ts";
 
 const BoundedUrl = Schema.String.check(Schema.isTrimmed())
   .check(Schema.isNonEmpty())
-  .check(Schema.isMaxLength(2048));
+  .check(Schema.isMaxLength(PREVIEW_URL_MAX_LENGTH));
 const URL_GUIDANCE = "Absolute http(s) URL, or a bare host (https; http for loopback).";
 const PROFILE_GUIDANCE =
   "Profile id or name from preview_status, for a new tab. Default: the user's. A tab keeps its profile.";

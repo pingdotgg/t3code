@@ -5,6 +5,7 @@ import {
   BrowserProfile,
   BrowserProfileId,
   BUILT_IN_BROWSER_PROFILES,
+  PREVIEW_URL_MAX_LENGTH,
   DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
   FILL_PREVIEW_VIEWPORT,
@@ -780,7 +781,7 @@ const make = Effect.gen(function* () {
       return;
     report(tab, {
       _tag: "Success",
-      url: ServerBrowserPage.withoutDataPayload(url).slice(0, 2048),
+      url: ServerBrowserPage.withoutDataPayload(url).slice(0, PREVIEW_URL_MAX_LENGTH),
       title,
     });
     void watchTitle(tab, title);
@@ -1273,7 +1274,7 @@ const make = Effect.gen(function* () {
       }
       report(tab, {
         _tag: "Loading",
-        url: ServerBrowserPage.withoutDataPayload(request.url()).slice(0, 2048),
+        url: ServerBrowserPage.withoutDataPayload(request.url()).slice(0, PREVIEW_URL_MAX_LENGTH),
         title: "",
       });
     });
@@ -1331,7 +1332,10 @@ const make = Effect.gen(function* () {
       }
       tab.loading = false;
       const { code, description } = ServerBrowserPage.parseNetError(errorText);
-      const url = ServerBrowserPage.withoutDataPayload(request.url()).slice(0, 2048);
+      const url = ServerBrowserPage.withoutDataPayload(request.url()).slice(
+        0,
+        PREVIEW_URL_MAX_LENGTH,
+      );
       tab.loadError = { url, code, description };
       report(tab, { _tag: "LoadFailed", url, title: "", code, description });
     });
@@ -1447,7 +1451,7 @@ const make = Effect.gen(function* () {
     }
     report(tab, {
       _tag: "LoadFailed",
-      url: ServerBrowserPage.withoutDataPayload(url).slice(0, 2048),
+      url: ServerBrowserPage.withoutDataPayload(url).slice(0, PREVIEW_URL_MAX_LENGTH),
       title: "",
       code: -3,
       description: "ERR_ABORTED",
