@@ -33,6 +33,7 @@ import {
 } from "../hooks/useSettings";
 import { useEnvironment } from "../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../state/session";
+import { useAppleSpeechLocales } from "./appleSpeech";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { useAudioChoice } from "./voiceConsent";
@@ -44,6 +45,9 @@ import {
   useVoiceInputSessionSnapshot,
   type VoiceInputTarget,
 } from "./voiceInputSession";
+
+/** A product name, shown untranslated. */
+export const APPLE_SPEECH_LABEL = "Apple Speech";
 
 const INITIAL_SETUP = {
   open: false,
@@ -114,13 +118,19 @@ type HookInput = {
  * Microphone audio leaves this device only for the environment the person chose in
  * Voice settings. Nothing is inferred from the primary or the draft's environment, and
  * the recording is abandoned the moment that choice changes or its connection drops.
+ * Apple Speech ("device") keeps audio on this Mac and needs no environment.
  */
 export function useVoiceTranscriptionDestination() {
   const gt = useGT();
   const hydrated = useClientSettingsHydrated();
   const choice = useAudioChoice();
   const grant = choice === "off" ? null : choice;
-  const environmentId = hydrated && grant ? grant.destination.environmentId : null;
+  const appleSpeechAvailable = useAppleSpeechLocales().length > 0;
+  const device = hydrated && grant?.destination.kind === "device";
+  const environmentId =
+    hydrated && grant && grant.destination.kind !== "device"
+      ? grant.destination.environmentId
+      : null;
   const environment = useEnvironment(environmentId);
   const connection = Option.getOrNull(usePreparedConnection(environmentId));
   const canDictate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
@@ -134,11 +144,13 @@ export function useVoiceTranscriptionDestination() {
   return {
     ...(hydrated && choice === null ? { offerFirstRunSetup: true } : {}),
     environmentId,
+    ...(device ? { device: true, onDevice: appleSpeechAvailable } : {}),
     ...(provider ? { cloudProvider: provider } : {}),
     ...(model ? { cloudModel: model } : {}),
     grantId: grant?.id ?? null,
-    label:
-      provider && environment
+    label: device
+      ? APPLE_SPEECH_LABEL
+      : provider && environment
         ? gt("{provider} via {environment}", {
             provider: CLOUD_SPEECH_LABELS[provider],
             environment: environment.label,
@@ -152,6 +164,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const navigate = useNavigate();
   const destination = useVoiceTranscriptionDestination();
   const prepared = destination.prepared;
+  const onDevice = destination.onDevice === true;
   const grantId = destination.grantId;
   const cloudProvider = destination.cloudProvider;
   const cloudModel = destination.cloudModel;
@@ -189,7 +202,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setSetup(INITIAL_SETUP);
   }
 
-  const session = useRetainedVoiceInputSession({ prepared, grantId, cloudProvider, cloudModel });
+  const session = useRetainedVoiceInputSession({
+    prepared,
+    grantId,
+    onDevice,
+    cloudProvider,
+    cloudModel,
+  });
   const snapshot = useVoiceInputSessionSnapshot(session);
   const owns = snapshot.target?.ownerKey === input.ownerKey;
   const activity = useVoiceInputSessionActivity(session, input.ownerKey);
@@ -395,9 +414,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
       return;
     }
-    if (!session || !prepared || voiceInputBlocksSubmission(session.state)) return;
+    if (!session || voiceInputBlocksSubmission(session.state)) return;
     const request = ++startRequestRef.current;
     const owner = latestRef.current.input.ownerKey;
+    if (onDevice) {
+      await session.start(createTarget());
+      return;
+    }
+    if (!prepared) return;
     if (cloudProvider) {
       await session.start(createTarget());
       return;
@@ -515,9 +539,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const destinationReady =
     grantId === null
       ? Boolean(destination.offerFirstRunSetup) && input.offerSetup !== false
-      : prepared !== null &&
-        (cloudProvider !== undefined ||
-          (status?.prepared === prepared && status.value?.supported !== false));
+      : onDevice ||
+        (prepared !== null &&
+          (cloudProvider !== undefined ||
+            (status?.prepared === prepared && status.value?.supported !== false)));
   return {
     available:
       destinationReady &&
