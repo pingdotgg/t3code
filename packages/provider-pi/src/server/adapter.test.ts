@@ -20,6 +20,7 @@ import {
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as PlatformError from "effect/PlatformError";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -2077,6 +2078,30 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("counts a running Pi for port discovery until its session closes", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      let running = 0;
+      yield* Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        yield* openRuntime(fake);
+        assert.equal(running, 1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(ProviderHost.ProviderHost, {
+          ...host,
+          trackAgent: () => {
+            running += 1;
+            return () => {
+              running -= 1;
+            };
+          },
+        }),
+      );
+      assert.equal(running, 0);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("gives notify and extension-error items distinct ids in each thread", () =>
     Effect.gen(function* () {
       const itemIds = new Set<string>();
@@ -3839,6 +3864,8 @@ describe("PiAdapterV2", () => {
         statuses: ["running", "running"],
         pending: [true],
       });
+      // pi-subagents can mark the run settled one snapshot before the member that ran last.
+      yield* emitSnapshot("failed", "running", "failed");
       yield* emitSnapshot("failed", "complete", "failed");
       assert.deepEqual(yield* collect("marker-2"), {
         statuses: ["completed", "failed"],
@@ -7180,6 +7207,51 @@ process.stdout.write('{"type":"ready"}\\n');
 
         const cues = (yield* fileSystem.readFileString(cuesPath)).split("\n").filter(Boolean);
         assert.deepEqual(cues, ["SIGTERM"]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "returns once the pi process group exits instead of waiting out the grace",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const childExit = yield* Deferred.make<
+          ChildProcessSpawner.ExitCode,
+          PlatformError.PlatformError
+        >();
+        const spawner = ChildProcessSpawner.make((command) =>
+          realSpawner
+            .spawn(command)
+            .pipe(
+              Effect.tap((handle) =>
+                handle.exitCode.pipe(Deferred.into(childExit), Effect.forkDetach),
+              ),
+            ),
+        );
+        const scope = yield* Scope.make();
+        const connection = yield* makePiRpcConnection({
+          command: process.execPath,
+          args: [
+            "-e",
+            'process.on("SIGTERM",()=>process.exit(0));process.stdin.resume();' +
+              'process.stdout.write(\'{"type":"ready"}\\n\');',
+          ],
+          cwd: undefined,
+          env: {},
+        }).pipe(
+          Scope.provide(scope),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        assert.equal((yield* Queue.take(connection.events))["type"], "ready");
+
+        const closing = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+        yield* Deferred.await(childExit);
+        yield* TestClock.adjust(Duration.millis(999));
+        const closedBeforeGrace = closing.pollUnsafe() !== undefined;
+
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Fiber.join(closing);
+        assert.isTrue(closedBeforeGrace);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

@@ -52,7 +52,7 @@ import {
 } from "effect/process/ChildProcessSpawner"
 import * as CommandLine from "effect/process/CommandLine"
 import * as Redacted from "effect/Redacted"
-import type * as Scope from "effect/Scope"
+import * as Scope from "effect/Scope"
 import * as Sink from "effect/Sink"
 import * as Stream from "effect/Stream"
 import * as NodeChildProcess from "node:child_process"
@@ -674,24 +674,38 @@ const make = Effect.gen(function*() {
         const env = resolveEnvironment(cmd.options)
         const stdio = buildStdioArray(stdinConfig, stdoutConfig, stderrConfig, resolvedAdditionalFds)
 
+        const releaseProcess = Effect.fnUntraced(function*(
+          childProcess: NodeChildProcess.ChildProcess,
+          exitSignal: Deferred.Deferred<readonly [code: number | null, signal: NodeJS.Signals | null]>
+        ) {
+          const exited = yield* Deferred.isDone(exitSignal)
+          if (exited) {
+            const [code] = yield* Deferred.await(exitSignal)
+            if (code !== 0 && Predicate.isNotNull(code)) {
+              yield* Effect.ignore(terminateProcessGroup(cmd, childProcess, exitSignal, cmd.options))
+            } else if (isReferenced && process.platform !== "win32" && cmd.options.detached !== false) {
+              yield* Effect.ignore(terminateProcessGroup(cmd, childProcess, exitSignal, cmd.options))
+            }
+            return
+          }
+          if (!isReferenced) {
+            return
+          }
+          yield* Effect.ignore(terminateProcessGroup(cmd, childProcess, exitSignal, cmd.options))
+        })
+        // The input feeders run in a standalone scope, so a failed spawn leaves
+        // nothing behind in the caller's scope. It is closed concurrently with
+        // process termination, since either may wait on the other: Bun does not
+        // settle a destroyed, backpressured stdin while the child is alive, and
+        // a child may wait for stdin EOF before exiting.
+        const inputScope = Scope.makeUnsafe()
         const [childProcess, exitSignal] = yield* Effect.acquireRelease(
           spawn(cmd, buildSpawnOptions(cmd.options, { cwd, env, stdio }, process.platform)),
-          Effect.fnUntraced(function*([childProcess, exitSignal]) {
-            const exited = yield* Deferred.isDone(exitSignal)
-            if (exited) {
-              const [code] = yield* Deferred.await(exitSignal)
-              if (code !== 0 && Predicate.isNotNull(code)) {
-                yield* Effect.ignore(terminateProcessGroup(cmd, childProcess, exitSignal, cmd.options))
-              } else if (isReferenced && process.platform !== "win32" && cmd.options.detached !== false) {
-                yield* Effect.ignore(terminateProcessGroup(cmd, childProcess, exitSignal, cmd.options))
-              }
-              return
-            }
-            if (!isReferenced) {
-              return
-            }
-            yield* Effect.ignore(terminateProcessGroup(cmd, childProcess, exitSignal, cmd.options))
-          })
+          ([childProcess, exitSignal], exit) =>
+            Effect.all([Scope.close(inputScope, exit), releaseProcess(childProcess, exitSignal)], {
+              concurrency: "unbounded",
+              discard: true
+            })
         )
 
         const pid = ProcessId(childProcess.pid!)
@@ -717,13 +731,10 @@ const make = Effect.gen(function*() {
           return reref
         })
         const inputFailure = Deferred.makeUnsafe<never, PlatformError.PlatformError>()
-        const stdin = yield* setupChildStdin(cmd, childProcess, stdinConfig, inputFailure)
+        const stdin = yield* Scope.provide(inputScope)(setupChildStdin(cmd, childProcess, stdinConfig, inputFailure))
         const { all, stderr, stdout } = setupChildOutputStreams(cmd, childProcess, stdoutConfig, stderrConfig)
-        const { getInputFd, getOutputFd } = yield* setupAdditionalFds(
-          cmd,
-          childProcess,
-          resolvedAdditionalFds,
-          inputFailure
+        const { getInputFd, getOutputFd } = yield* Scope.provide(inputScope)(
+          setupAdditionalFds(cmd, childProcess, resolvedAdditionalFds, inputFailure)
         )
         const isRunning = Effect.map(Deferred.isDone(exitSignal), (done) => !done)
         // A failed input stream truncates the input of the child process, so

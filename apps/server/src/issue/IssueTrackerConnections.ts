@@ -87,6 +87,7 @@ const make = Effect.gen(function* () {
         connected: true,
         account: probe.account,
         detail: null,
+        ...(probe.workspace === undefined ? {} : { workspace: probe.workspace }),
         scopes: probe.scopes,
       })),
       Effect.catch((error) =>
@@ -156,6 +157,7 @@ const make = Effect.gen(function* () {
       connected: true,
       account: probe.account,
       detail: null,
+      ...(probe.workspace === undefined ? {} : { workspace: probe.workspace }),
       scopes: probe.scopes,
     };
   });

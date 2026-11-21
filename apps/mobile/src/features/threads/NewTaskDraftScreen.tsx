@@ -1,4 +1,4 @@
-import { T, useGT, useMessages } from "gt-react-native";
+import { T, useGT, useMessages, Var } from "gt-react-native";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
@@ -98,6 +98,7 @@ import { newTaskFlowKey } from "./new-task-flow-state";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { mobilePreferencesAtom } from "../../state/preferences";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
@@ -473,6 +474,8 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
+    const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+    const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
     const selection = resolveDraftProjectSelection(
       selectedProjectKey,
       projects,
@@ -480,6 +483,8 @@ export function NewTaskDraftScreen(props: {
       {
         incomingShareId: props.incomingShareId,
         pickerClosed: initialPickerRef.current === "open" && isFocused,
+        useLastProject: saved?.useLastProjectForNewThreads,
+        lastProject: saved?.lastThreadProject,
       },
     );
     if (selection.kind === "preserve") {
@@ -613,7 +618,7 @@ export function NewTaskDraftScreen(props: {
       !modelSelection ||
       (initialMessageText.length === 0 && draft.attachments.length === 0) ||
       flow.submitting ||
-      (workspaceMode === "worktree" && !selectedBranchName)
+      (workspaceMode === "worktree" && flow.isGitRepo && !selectedBranchName)
     ) {
       return null;
     }
@@ -723,7 +728,8 @@ export function NewTaskDraftScreen(props: {
         ? gt("Wait for the project clone to finish.")
         : flow.submitting
           ? gt("Starting the thread…")
-          : flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
+          : flow.workspaceMode === "worktree" &&
+              (!flow.isGitRepoKnown || (flow.isGitRepo && !flow.selectedBranchName))
             ? gt("Choose a base branch before creating a worktree.")
             : null
       : gt("Wait for shared content to finish importing.");
@@ -735,7 +741,9 @@ export function NewTaskDraftScreen(props: {
     void KeyboardController.dismiss({ animated: true });
     navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
   };
-  const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
+  const openContextPicker = (
+    routeName: "NewTaskBranch" | "NewTaskEnvironment" | "NewTaskRepositories",
+  ) => {
     if (isComposerInteractionLocked) {
       return;
     }
@@ -903,8 +911,11 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  const startsNewWorktree = flow.workspaceMode === "worktree";
+  const offersRepositoryChoice =
+    startsNewWorktree && (flow.worktreeRepositoryChoices?.length ?? 0) > 0;
   const workspaceControls = (
-    <View className="flex-row items-center gap-1 px-2">
+    <View className="flex-row flex-wrap items-center gap-x-1 px-2">
       <ComposerInlineControl
         accessibilityHint={
           flow.workspaceMode === "local"
@@ -912,7 +923,7 @@ export function NewTaskDraftScreen(props: {
             : gt("Switches to the current checkout")
         }
         accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked || !flow.isGitRepo}
+        disabled={isComposerInteractionLocked || !(flow.isGitRepo || flow.tracksGitRepositories)}
         renderIcon={(size) => (
           <NewTaskWorkspaceIcon
             workspaceMode={flow.workspaceMode}
@@ -926,21 +937,46 @@ export function NewTaskDraftScreen(props: {
         showChevron={false}
       />
 
-      <View className="min-w-0 shrink">
-        <ComposerInlineControl
-          accessibilityLabel={
-            flow.workspaceMode === "worktree"
-              ? gt("Base branch: {branch}", { branch: selectedBranchLabel })
-              : gt("Branch: {branch}", { branch: selectedBranchLabel })
-          }
-          chevronDirection="right"
-          disabled={isComposerInteractionLocked || !flow.isGitRepo}
-          icon="arrow.triangle.branch"
-          label={showBranchLoading ? gt("Loading branches…") : selectedBranchLabel}
-          maxWidth="100%"
-          onPress={() => openContextPicker("NewTaskBranch")}
-        />
-      </View>
+      {offersRepositoryChoice ? (
+        <View className="min-w-0 shrink">
+          <ComposerInlineControl
+            accessibilityHint={gt("Chooses the repositories the new worktree holds")}
+            accessibilityLabel={gt("Repositories in the new worktree: {selection}", {
+              selection: flow.worktreeRepositorySelection.label,
+            })}
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked}
+            icon="folder.badge.plus"
+            label={flow.worktreeRepositorySelection.label}
+            maxWidth="100%"
+            onPress={() => openContextPicker("NewTaskRepositories")}
+            {...(flow.worktreeRepositorySelection.needsChoice ? { tone: "warning" as const } : {})}
+          />
+        </View>
+      ) : null}
+      {startsNewWorktree && !flow.isGitRepo ? (
+        <View className="min-h-8 min-w-0 shrink justify-center px-2">
+          <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+            <T>Each repository starts from its own default branch</T>
+          </Text>
+        </View>
+      ) : (
+        <View className="min-w-0 shrink">
+          <ComposerInlineControl
+            accessibilityLabel={
+              startsNewWorktree
+                ? gt("Base branch: {branch}", { branch: selectedBranchLabel })
+                : gt("Branch: {branch}", { branch: selectedBranchLabel })
+            }
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked || !flow.isGitRepo}
+            icon="arrow.triangle.branch"
+            label={showBranchLoading ? gt("Loading branches…") : selectedBranchLabel}
+            maxWidth="100%"
+            onPress={() => openContextPicker("NewTaskBranch")}
+          />
+        </View>
+      )}
     </View>
   );
 
@@ -981,10 +1017,17 @@ export function NewTaskDraftScreen(props: {
         <View className="flex-1 justify-end gap-3 p-4">
           {environmentControl}
           <Text className="text-foreground-muted">
-            <T>
-              Your draft is saved on this device. Connect to an environment to choose its first
-              model.
-            </T>
+            {environmentConnected && selectedEnvironmentServerConfig ? (
+              <T>
+                Your draft is saved on this device. <Var>{selectedEnvironmentLabel}</Var> has no
+                model available. Install or sign in to a provider there to choose one.
+              </T>
+            ) : (
+              <T>
+                Your draft is saved on this device. Connect to an environment to choose its first
+                model.
+              </T>
+            )}
           </Text>
           <ComposerEditor
             draftKey={flow.draftKey}
@@ -1081,6 +1124,7 @@ export function NewTaskDraftScreen(props: {
         onResumeQueue={null}
         onSendMessage={handleStart}
         offersSideChat={false}
+        onSendCommand={async () => null}
         onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}
         canSwitchThreadProvider
         onRespondToApproval={async () => {}}
